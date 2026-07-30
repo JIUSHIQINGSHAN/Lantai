@@ -36,7 +36,8 @@ class Settings(BaseSettings):
         "fact": 1.3, "rule": 1.2, "experience": 1.0,
         "preference": 1.1, "chat": 0.7, "general": 1.0,
     }
-    DEFAULT_LANE: str = "general"
+    # 安全
+    API_KEY: str = ""
 
     # Reranker 配置（硅基流 /v1/rerank）
     RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"
