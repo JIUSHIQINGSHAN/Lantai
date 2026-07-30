@@ -1,12 +1,12 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 
 class AddMemoryReq(BaseModel):
     source_type: str = "manual"
-    title: str
+    title: str = Field(min_length=1, max_length=500)
     url: str = ""
-    content: str
+    content: str = Field(min_length=10, max_length=50000)
     authors: list[str] = []
     tags: list[str] = []
 

@@ -4,8 +4,10 @@ Remembrance-System 端到端测试
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, Session, create_engine, select
+from unittest.mock import patch
 
 from api_server import app
+import remembrance.storage.db as db_module
 from remembrance.storage.db import get_session, init_db
 from remembrance.core.settings import settings
 from remembrance.models.tables import (
@@ -16,17 +18,17 @@ from remembrance.models.tables import (
 
 @pytest.fixture(scope="function")
 def client():
-    """创建测试客户端，使用内存数据库"""
+    """创建测试客户端，使用内存数据库（通过 monkeypatch 替换 engine）"""
     test_engine = create_engine("sqlite:///:memory:", echo=False)
     SQLModel.metadata.create_all(test_engine)
 
     def get_test_session():
         return Session(test_engine)
 
-    app.dependency_overrides[get_session] = get_test_session
-    with TestClient(app) as c:
-        yield c
-    app.dependency_overrides.clear()
+    # 必须 monkeypatch 模块级 get_session，因为 gate/decision.py 直接调用而非通过 Depends 注入
+    with patch.object(db_module, "get_session", get_test_session):
+        with TestClient(app) as c:
+            yield c
 
 
 class TestHealth:
@@ -131,15 +133,26 @@ class TestSources:
 class TestGate:
     """闸门测试"""
 
-    def test_gate_reject_low_confidence(self, client):
-        """低置信度候选应被拒绝"""
+    def test_add_reject_short_content(self, client):
+        """min_length=10 约束：过短内容应返回 422"""
         resp = client.post("/add", json={
-            "title": "x",
+            "title": "short",
             "content": "y"
         })
+        assert resp.status_code == 422
+
+    def test_gate_reject_low_confidence(self, client):
+        """低置信度候选应被 Gate 拒绝"""
+        resp = client.post("/add", json={
+            "title": "minimal content",
+            "content": "1234567890"  # 10 字符，刚好通过校验
+        })
+        assert resp.status_code == 200
         cand_id = resp.json()["candidate_id"]
         resp = client.post("/gate", json={"candidate_id": cand_id})
         assert resp.status_code == 200
+        # 极低内容 → 提取器兜底 0.3 < GATE_MIN 0.55 → REJECT
+        assert resp.json()["decision"] == "reject"
 
 
 class TestEvolution:
