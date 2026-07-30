@@ -6,4 +6,5 @@ router = APIRouter()
 
 @router.post("/search")
 def search(req: SearchReq):
-    return {"results": hybrid_search(req.query, req.top_k, req.memory_types, req.lanes)}
+    return {"results": hybrid_search(req.query, req.top_k, req.memory_types,
+                                     req.lanes, req.use_rerank)}

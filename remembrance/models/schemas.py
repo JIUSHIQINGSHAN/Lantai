@@ -17,6 +17,7 @@ class SearchReq(BaseModel):
     top_k: int = 5
     memory_types: list[str] = []
     lanes: list[str] = []
+    use_rerank: bool = True
 
 
 class GateReq(BaseModel):

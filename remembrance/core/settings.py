@@ -38,5 +38,20 @@ class Settings(BaseSettings):
     }
     DEFAULT_LANE: str = "general"
 
+    # Reranker 配置（硅基流 /v1/rerank）
+    RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"
+    RERANKER_BASE_URL: str = "https://api.siliconflow.cn/v1"
+    RERANKER_ENABLED: bool = True
+    RERANKER_TIMEOUT: int = 30  # 秒
+    RERANKER_RETRY_DELAY: float = 1.0  # 重试等待秒数
+    RERANKER_CANDIDATE_MULTIPLIER: int = 2  # 混合检索返回候选数 = top_k * multiplier
+    # 意图分类 → 候选集大小
+    INTENT_CANDIDATE_SIZES: dict = {
+        "fact_lookup": 10,
+        "procedural": 15,
+        "exploratory": 20,
+    }
+    DEFAULT_INTENT: str = "fact_lookup"
+
 
 settings = Settings()

@@ -32,7 +32,10 @@ def client():
     def get_test_session():
         return Session(test_engine)
 
-    with patch.object(db_module, "get_session", get_test_session):
+    with patch.object(db_module, "get_session", get_test_session), \
+         patch("remembrance.retrieval.intent.chat_json",
+               return_value={"intent": "fact_lookup", "reason": "test"}), \
+         patch("remembrance.retrieval.reranker.rerank", return_value=[]):
         with TestClient(app) as c:
             yield c
 
