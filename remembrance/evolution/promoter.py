@@ -2,8 +2,8 @@ from sqlmodel import select
 from remembrance.core.ids import new_id
 from remembrance.core.time import utcnow
 from remembrance.core.settings import settings
-from remembrance.core.settings import settings
 from remembrance.llm.client import embed
+from remembrance.retrieval.hybrid import index_memory_item, delete_memory_item
 from remembrance.models.enums import ProposalStatus, MemoryTier
 from remembrance.models.tables import (MemoryProposal, MemoryItem, MemoryCheckpoint)
 from remembrance.storage import db
@@ -53,6 +53,7 @@ def apply_proposal(proposal_id: str) -> dict:
             )
             s.add(mem); s.flush()
             _make_checkpoint(s, mem, {}, prop.id, trigger="gate")
+            index_memory_item(mem.id, emb, {"key": mem.key, "memory_type": mem.memory_type})
         else:
             before = existing.model_dump(mode="json")
             existing.content = content
@@ -63,6 +64,7 @@ def apply_proposal(proposal_id: str) -> dict:
             existing.confidence = max(existing.confidence, prop.confidence)
             s.add(existing); s.flush()
             _make_checkpoint(s, existing, before, prop.id, trigger="evolve")
+            index_memory_item(existing.id, emb, {"key": existing.key, "memory_type": existing.memory_type})
 
         prop.status = ProposalStatus.APPLIED
         prop.applied_at = utcnow()
@@ -91,3 +93,14 @@ def rollback(memory_id: str) -> dict:
         _make_checkpoint(s, mem, before, proposal_id="", trigger="rollback")
         s.commit()
         return {"ok": True}
+
+
+def delete_memory(memory_id: str) -> dict:
+    """删除记忆（从 SQLite + 向量存储）"""
+    with db.get_session() as s:
+        mem = s.get(MemoryItem, memory_id)
+        if mem:
+            s.delete(mem)
+            s.commit()
+    delete_memory_item(memory_id)
+    return {"ok": True}

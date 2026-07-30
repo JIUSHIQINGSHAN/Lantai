@@ -19,6 +19,7 @@ dependencies = [
   "lxml>=5.2",
   "openai>=1.40",
   "tenacity>=8.5",
+  "chromadb>=0.4",
 ]
 
 [build-system]

@@ -54,5 +54,10 @@ class Settings(BaseSettings):
     }
     DEFAULT_INTENT: str = "fact_lookup"
 
+    # 向量存储配置（默认 Chromadb 内嵌，无需外部依赖）
+    VECTOR_STORE_TYPE: str = "chromadb"  # chromadb / pgvector
+    VECTOR_DIMENSION: int = 1024  # bge-m3 输出维度
+    CHROMADB_PATH: str = "./.chromadb"
+
 
 settings = Settings()

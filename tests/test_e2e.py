@@ -35,7 +35,8 @@ def client():
     with patch.object(db_module, "get_session", get_test_session), \
          patch("remembrance.retrieval.intent.chat_json",
                return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("remembrance.retrieval.reranker.rerank", return_value=[]):
+         patch("remembrance.retrieval.reranker.rerank", return_value=[]), \
+         patch("remembrance.storage.vector_store.ChromaVectorStore"):
         with TestClient(app) as c:
             yield c
 

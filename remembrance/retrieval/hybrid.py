@@ -8,6 +8,7 @@ from remembrance.storage import db
 from remembrance.core.settings import settings
 from remembrance.retrieval.intent import classify_intent
 from remembrance.retrieval.reranker import rerank
+from remembrance.storage.vector_store import get_vector_store
 
 
 def _cos(a, b):
@@ -25,20 +26,31 @@ def hybrid_search(query: str, top_k: int = 5,
     intent_info = classify_intent(query)
     candidate_n = intent_info["candidate_n"]
 
-    # Step 2: 混合检索，返回 candidate_n * multiplier 条候选
+    # Step 2: 向量检索（ChromaDB HNSW 索引）
     fetch_n = candidate_n * settings.RERANKER_CANDIDATE_MULTIPLIER
+    qv = embed([query])[0]
+    vector_store = get_vector_store()
+    vector_results = vector_store.search(qv, top_k=fetch_n)
+
+    if not vector_results:
+        return []
+
+    # 从 SQLite 加载完整记忆项（仅候选集，不是全表）
+    ids = [r["id"] for r in vector_results]
     with db.get_session() as s:
-        stmt = select(MemoryItem).where(MemoryItem.status == "active")
-        if memory_types:
-            stmt = stmt.where(MemoryItem.memory_type.in_(memory_types))
-        if lanes:
-            stmt = stmt.where(MemoryItem.lane.in_(lanes))
-        items = s.exec(stmt).all()
+        items = s.exec(select(MemoryItem).where(MemoryItem.id.in_(ids))).all()
+    items_by_id = {m.id: m for m in items}
+
+    # 过滤 memory_types / lanes
+    if memory_types:
+        items = [m for m in items if m.memory_type in memory_types]
+    if lanes:
+        items = [m for m in items if m.lane in lanes]
 
     if not items:
         return []
 
-    qv = embed([query])[0]
+    # Step 3: BM25 + 向量 + 衰减 混合打分
     corpus = [m.content.split() for m in items]
     bm25 = BM25Okapi(corpus)
     bm_scores = bm25.get_scores(query.split())
@@ -55,13 +67,26 @@ def hybrid_search(query: str, top_k: int = 5,
     scored_items.sort(key=lambda x: -x[0])
     candidates = scored_items[:fetch_n]
 
-    # Step 3: Reranker（可选）
+    # Step 4: Reranker（可选）
     if use_rerank and settings.RERANKER_ENABLED and candidates:
         docs = [m.content for _, m in candidates]
         reranked = rerank(query, docs, top_k)
         if reranked:
             return [{"score": r["score"], "document": r["document"]} for r in reranked]
-        # 降级：reranker 失败，返回混合检索结果
 
     return [{"score": s, "memory": m.model_dump(mode="json")}
             for s, m in candidates[:top_k]]
+
+
+def index_memory_item(memory_id: str, embedding: list[float], metadata: dict):
+    """将记忆项索引到向量存储（创建/更新时调用）"""
+    get_vector_store().add(
+        ids=[memory_id],
+        embeddings=[embedding],
+        metadatas=[metadata],
+    )
+
+
+def delete_memory_item(memory_id: str):
+    """从向量存储删除记忆项"""
+    get_vector_store().delete([memory_id])
