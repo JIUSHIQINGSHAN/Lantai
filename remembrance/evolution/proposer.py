@@ -5,11 +5,11 @@ from remembrance.llm.client import chat_json
 from remembrance.llm.prompts import PROPOSAL_SYS
 from remembrance.models.enums import ProposalType, ProposalStatus
 from remembrance.models.tables import MemoryCandidate, MemoryItem, MemoryProposal
-from remembrance.storage.db import get_session
+from remembrance.storage import db
 
 
 def propose_from_candidate(candidate_id: str, gate_result: dict) -> MemoryProposal:
-    with get_session() as s:
+    with db.get_session() as s:
         cand = s.get(MemoryCandidate, candidate_id)
         related = s.exec(select(MemoryItem).where(MemoryItem.status == "active")).all()
         existing_snippets = "\n".join(f"- ({m.memory_type}) {m.key}: {m.content}"
@@ -35,6 +35,7 @@ def propose_from_candidate(candidate_id: str, gate_result: dict) -> MemoryPropos
                 "memory_type": data.get("memory_type", "semantic"),
                 "key": data.get("target_key") or cand.summary[:60],
                 "content": data.get("new_content", cand.summary),
+                "lane": cand.lane,
             },
             confidence=float(data.get("confidence", 0.5)),
             conflict_ids=[c["memory_id"] for c in gate_result.get("conflicts", [])],

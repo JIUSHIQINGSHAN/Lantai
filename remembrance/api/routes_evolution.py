@@ -4,7 +4,7 @@ from sqlmodel import select
 from remembrance.models.tables import MemoryProposal
 from remembrance.models.schemas import ProposalDecisionReq, FeedbackReq
 from remembrance.models.enums import ProposalStatus
-from remembrance.storage.db import get_session
+from remembrance.storage import db
 from remembrance.evolution.promoter import apply_proposal, rollback
 from remembrance.evolution.reflector import record_feedback
 from remembrance.workers.evolve_worker import run_evolve_once
@@ -14,7 +14,7 @@ router = APIRouter()
 
 @router.get("/proposals")
 def list_proposals(status: str = "pending", limit: int = 50):
-    with get_session() as s:
+    with db.get_session() as s:
         rows = s.exec(select(MemoryProposal)
                       .where(MemoryProposal.status == status)
                       .order_by(MemoryProposal.created_at.desc())
@@ -24,7 +24,7 @@ def list_proposals(status: str = "pending", limit: int = 50):
 
 @router.post("/proposals/{proposal_id}/decide")
 def decide_proposal(proposal_id: str, req: ProposalDecisionReq):
-    with get_session() as s:
+    with db.get_session() as s:
         prop = s.get(MemoryProposal, proposal_id)
         if not prop:
             raise HTTPException(404, "proposal not found")

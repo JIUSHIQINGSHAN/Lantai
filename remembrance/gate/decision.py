@@ -2,13 +2,13 @@ from sqlmodel import select
 from remembrance.core.settings import settings
 from remembrance.models.enums import GateDecision
 from remembrance.models.tables import MemoryCandidate, MemoryItem
-from remembrance.storage.db import get_session
+from remembrance.storage import db
 from remembrance.gate.scorer import novelty_score
 from remembrance.gate.contradiction import check_contradiction
 
 
 def decide(candidate_id: str) -> dict:
-    with get_session() as s:
+    with db.get_session() as s:
         cand = s.get(MemoryCandidate, candidate_id)
         if not cand:
             return {"decision": GateDecision.REJECT, "reason": "candidate not found"}

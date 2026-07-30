@@ -41,6 +41,7 @@ class MemoryCandidate(SQLModel, table=True):
     actions: list = Field(default_factory=list, sa_column=Column(JSON))
     contradictions: list = Field(default_factory=list, sa_column=Column(JSON))
     extractor_confidence: float = 0.0
+    lane: str = Field(default="general")  # 分轨：从 AddMemoryReq 传入
     status: str = "new"
     created_at: datetime = Field(default_factory=utcnow)
 
@@ -57,6 +58,7 @@ class MemoryItem(SQLModel, table=True):
     confidence: float = 0.5
     importance: float = 0.5
     tier: str = "working"
+    lane: str = Field(default="general", index=True)         # 分轨：fact/rule/experience/preference/chat/general
     source_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     version: int = 1
     status: str = "active"

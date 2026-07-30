@@ -2,10 +2,11 @@ from sqlmodel import select
 from remembrance.core.ids import new_id
 from remembrance.core.time import utcnow
 from remembrance.core.settings import settings
+from remembrance.core.settings import settings
 from remembrance.llm.client import embed
 from remembrance.models.enums import ProposalStatus, MemoryTier
 from remembrance.models.tables import (MemoryProposal, MemoryItem, MemoryCheckpoint)
-from remembrance.storage.db import get_session
+from remembrance.storage import db
 
 
 def _make_checkpoint(session, mem: MemoryItem, before: dict,
@@ -19,7 +20,7 @@ def _make_checkpoint(session, mem: MemoryItem, before: dict,
 
 
 def apply_proposal(proposal_id: str) -> dict:
-    with get_session() as s:
+    with db.get_session() as s:
         prop = s.get(MemoryProposal, proposal_id)
         if not prop or prop.status != ProposalStatus.PENDING:
             return {"ok": False, "reason": "not applicable"}
@@ -28,6 +29,7 @@ def apply_proposal(proposal_id: str) -> dict:
         mem_type = patch.get("memory_type", "semantic")
         key = patch.get("key")
         content = patch.get("content", "")
+        lane = patch.get("lane", settings.DEFAULT_LANE)
 
         existing = None
         if key:
@@ -47,6 +49,7 @@ def apply_proposal(proposal_id: str) -> dict:
                 memory_type=mem_type, key=key or content[:60], content=content,
                 embedding=emb, tier=tier, source_ids=source_ids,
                 confidence=prop.confidence, importance=0.5,
+                lane=lane,
             )
             s.add(mem); s.flush()
             _make_checkpoint(s, mem, {}, prop.id, trigger="gate")
@@ -68,7 +71,7 @@ def apply_proposal(proposal_id: str) -> dict:
 
 
 def rollback(memory_id: str) -> dict:
-    with get_session() as s:
+    with db.get_session() as s:
         ckpts = s.exec(select(MemoryCheckpoint)
                        .where(MemoryCheckpoint.memory_id == memory_id)
                        .order_by(MemoryCheckpoint.version.desc())).all()

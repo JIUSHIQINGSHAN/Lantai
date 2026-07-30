@@ -9,12 +9,14 @@ class AddMemoryReq(BaseModel):
     content: str = Field(min_length=10, max_length=50000)
     authors: list[str] = []
     tags: list[str] = []
+    lane: str = Field(default="general")  # fact/rule/experience/preference/chat/general
 
 
 class SearchReq(BaseModel):
     query: str
     top_k: int = 5
     memory_types: list[str] = []
+    lanes: list[str] = []
 
 
 class GateReq(BaseModel):

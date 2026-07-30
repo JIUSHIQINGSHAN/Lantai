@@ -1,13 +1,13 @@
 from fastapi import APIRouter
 from sqlmodel import select
 from remembrance.models.tables import MemoryCheckpoint
-from remembrance.storage.db import get_session
+from remembrance.storage import db
 
 router = APIRouter()
 
 @router.get("/checkpoint")
 def list_checkpoints(memory_id: str, limit: int = 20):
-    with get_session() as s:
+    with db.get_session() as s:
         rows = s.exec(select(MemoryCheckpoint)
                       .where(MemoryCheckpoint.memory_id == memory_id)
                       .order_by(MemoryCheckpoint.version.desc())

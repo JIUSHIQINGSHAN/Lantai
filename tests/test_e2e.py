@@ -18,14 +18,20 @@ from remembrance.models.tables import (
 
 @pytest.fixture(scope="function")
 def client():
-    """创建测试客户端，使用内存数据库（通过 monkeypatch 替换 engine）"""
-    test_engine = create_engine("sqlite:///:memory:", echo=False)
+    """创建测试客户端，使用内存数据库"""
+    from sqlalchemy.pool import StaticPool
+    test_engine = create_engine(
+        "sqlite:///:memory:",
+        echo=False,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    # 在内存库上创建所有表（models 已在导入时注册到 SQLModel.metadata）
     SQLModel.metadata.create_all(test_engine)
 
     def get_test_session():
         return Session(test_engine)
 
-    # 必须 monkeypatch 模块级 get_session，因为 gate/decision.py 直接调用而非通过 Depends 注入
     with patch.object(db_module, "get_session", get_test_session):
         with TestClient(app) as c:
             yield c

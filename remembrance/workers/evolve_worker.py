@@ -2,7 +2,7 @@ from sqlmodel import select
 from remembrance.core.logger import logger
 from remembrance.models.tables import MemoryCandidate, MemoryProposal
 from remembrance.models.enums import ProposalStatus
-from remembrance.storage.db import get_session
+from remembrance.storage import db
 from remembrance.gate.decision import decide
 from remembrance.evolution.proposer import propose_from_candidate
 from remembrance.evolution.promoter import apply_proposal
@@ -10,14 +10,14 @@ from remembrance.core.settings import settings
 
 
 def run_evolve_once():
-    with get_session() as s:
+    with db.get_session() as s:
         cands = s.exec(select(MemoryCandidate)
                        .where(MemoryCandidate.status == "new")).all()
 
     for cand in cands:
         result = decide(cand.id)
         if result["decision"] in ("reject", "archive_conflict"):
-            with get_session() as s:
+            with db.get_session() as s:
                 c = s.get(MemoryCandidate, cand.id)
                 c.status = "rejected"; s.add(c); s.commit()
             continue
@@ -32,7 +32,7 @@ def run_evolve_once():
 
 
 def run_pending_proposals():
-    with get_session() as s:
+    with db.get_session() as s:
         props = s.exec(select(MemoryProposal)
                        .where(MemoryProposal.status == ProposalStatus.APPROVED)).all()
     for p in props:

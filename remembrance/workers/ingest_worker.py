@@ -6,23 +6,23 @@ from remembrance.ingestion.registry import ADAPTERS
 from remembrance.parsing.extractor import extract_candidate
 from remembrance.models.tables import (Source, IngestJob, RawDocument,
                                        MemoryCandidate)
-from remembrance.storage.db import get_session
+from remembrance.storage import db
 
 
 def run_ingest_once():
-    with get_session() as s:
+    with db.get_session() as s:
         sources = s.exec(select(Source).where(Source.enabled == True)).all()
     for src in sources:
         job = IngestJob(id=new_id("job"), source_id=src.id,
                         status="running", started_at=utcnow())
-        with get_session() as s:
+        with db.get_session() as s:
             s.add(job); s.commit(); s.refresh(job)
 
         try:
             adapter = ADAPTERS[src.kind]
             docs = adapter.fetch(src.config)
             new_docs, new_cands = 0, 0
-            with get_session() as s:
+            with db.get_session() as s:
                 for d in docs:
                     exists = s.exec(select(RawDocument)
                                     .where(RawDocument.content_hash == d.content_hash)).first()
@@ -42,7 +42,7 @@ def run_ingest_once():
                     s.add(cand); new_cands += 1
                 s.commit()
 
-            with get_session() as s:
+            with db.get_session() as s:
                 job = s.get(IngestJob, job.id)
                 job.status = "done"
                 job.finished_at = utcnow()
@@ -52,7 +52,7 @@ def run_ingest_once():
             logger.info("ingest src=%s docs=%d cand=%d", src.id, new_docs, new_cands)
         except Exception as e:
             logger.exception("ingest failed for %s", src.id)
-            with get_session() as s:
+            with db.get_session() as s:
                 job = s.get(IngestJob, job.id)
                 job.status = "failed"; job.error = str(e)
                 job.finished_at = utcnow()

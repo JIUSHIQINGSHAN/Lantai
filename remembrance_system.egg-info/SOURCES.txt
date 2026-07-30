@@ -50,3 +50,4 @@ remembrance_system.egg-info/SOURCES.txt
 remembrance_system.egg-info/dependency_links.txt
 remembrance_system.egg-info/requires.txt
 remembrance_system.egg-info/top_level.txt
+tests/test_e2e.py

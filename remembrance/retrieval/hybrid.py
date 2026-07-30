@@ -4,7 +4,8 @@ from sqlmodel import select
 
 from remembrance.llm.client import embed
 from remembrance.models.tables import MemoryItem
-from remembrance.storage.db import get_session
+from remembrance.storage import db
+from remembrance.core.settings import settings
 
 
 def _cos(a, b):
@@ -15,11 +16,14 @@ def _cos(a, b):
 
 
 def hybrid_search(query: str, top_k: int = 5,
-                  memory_types: list[str] | None = None) -> list[dict]:
-    with get_session() as s:
+                  memory_types: list[str] | None = None,
+                  lanes: list[str] | None = None) -> list[dict]:
+    with db.get_session() as s:
         stmt = select(MemoryItem).where(MemoryItem.status == "active")
         if memory_types:
             stmt = stmt.where(MemoryItem.memory_type.in_(memory_types))
+        if lanes:
+            stmt = stmt.where(MemoryItem.lane.in_(lanes))
         items = s.exec(stmt).all()
 
     if not items:
@@ -34,7 +38,9 @@ def hybrid_search(query: str, top_k: int = 5,
     results = []
     for i, m in enumerate(items):
         vs = _cos(qv, m.embedding) if m.embedding else 0.0
-        score = 0.6 * vs + 0.3 * float(bm_norm[i]) + 0.1 * m.decay_score
+        lane = getattr(m, "lane", "general") or "general"
+        lane_boost = settings.LANE_RETRIEVAL_BOOST.get(lane, 1.0)
+        score = (0.6 * vs + 0.3 * float(bm_norm[i]) + 0.1 * m.decay_score) * lane_boost
         results.append((score, m))
     results.sort(key=lambda x: -x[0])
     return [{"score": s, "memory": m.model_dump(mode="json")}

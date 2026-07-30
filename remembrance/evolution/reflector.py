@@ -1,13 +1,13 @@
 from remembrance.core.time import utcnow
 from remembrance.models.tables import MemoryItem, MemoryUsageFeedback
-from remembrance.storage.db import get_session
+from remembrance.storage import db
 from remembrance.core.ids import new_id
 
 
 def record_feedback(memory_id: str, query: str,
                     helped: bool, user_accepted: bool,
                     hallucination_risk: float) -> dict:
-    with get_session() as s:
+    with db.get_session() as s:
         mem = s.get(MemoryItem, memory_id)
         if not mem:
             return {"ok": False}
