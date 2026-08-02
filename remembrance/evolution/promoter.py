@@ -24,7 +24,8 @@ def _make_checkpoint(session, mem: MemoryItem, before: dict,
 def apply_proposal(proposal_id: str) -> dict:
     with db.get_session() as s:
         prop = s.get(MemoryProposal, proposal_id)
-        if not prop or prop.status != ProposalStatus.PENDING:
+        # 可应用状态：PENDING（evolve 自动路径）或 APPROVED（人工审批/补跑路径）
+        if not prop or prop.status not in (ProposalStatus.PENDING, ProposalStatus.APPROVED):
             return {"ok": False, "reason": "not applicable"}
 
         patch = prop.proposed_patch
