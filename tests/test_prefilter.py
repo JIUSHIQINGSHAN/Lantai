@@ -5,6 +5,18 @@ import pytest
 from remembrance.gate.prefilter import relevance_check
 
 
+@pytest.fixture(autouse=True)
+def _reset_gate_cache(monkeypatch):
+    """隔离 prefilter 热缓存（15s TTL）跨测试污染：每个测试从冷缓存开始。
+
+    注意：prefilter._update_cache 用 global 重新赋值 dict，必须 patch 模块属性本身。
+    """
+    import remembrance.gate.prefilter as pf
+    monkeypatch.setattr(pf, "_LAST_GATE_DECISION",
+                        {"time": 0.0, "query": "", "needs_memory": False})
+    yield
+
+
 class TestGateCorrection:
     """纠错/纠偏 → 一定需要记忆"""
 
@@ -103,3 +115,19 @@ class TestGateDefault:
     def test_too_short(self):
         res = relevance_check("好")
         assert res["needs_memory"] is False
+
+
+class TestGateHotCache:
+    """追问热缓存：上一轮需要记忆且新查询 <12 字符 → 沿用上一轮判定（设计行为）"""
+
+    def test_followup_hot(self):
+        relevance_check("上次我们聊的项目")  # 置缓存 needs_memory=True
+        res = relevance_check("然后呢")
+        assert res["needs_memory"] is True
+        assert res["reason"] == "session_followup_hot"
+
+    def test_followup_cold_after_long_query(self):
+        relevance_check("上次我们聊的项目")
+        res = relevance_check("一个超过十二个字符的追问内容")
+        # 长查询不沿用热缓存，走完整判定
+        assert res["reason"] != "session_followup_hot"
