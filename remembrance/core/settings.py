@@ -100,6 +100,12 @@ class Settings(BaseSettings):
     SHELL_HOOK_TOP_K: int = 5
     SHELL_HOOK_MIN_CHARS: int = 3
 
+    # SSRF 防护
+    SSRF_ALLOWED_SCHEMES: tuple = ("http", "https")
+    SSRF_MAX_REDIRECTS: int = 3
+    SSRF_MAX_BYTES: int = 5 * 1024 * 1024  # 5MB
+    RSS_TIMEOUT: int = 30
+
     def model_post_init(self, __context):
         """DATABASE_URL / CHROMADB_PATH 未显式设置时从 REMEMBRANCE_HOME 推导。"""
         home = Path(self.REMEMBRANCE_HOME) if self.REMEMBRANCE_HOME else _REPO_ROOT

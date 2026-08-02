@@ -1,9 +1,11 @@
-import hashlib, feedparser, httpx
+import hashlib, feedparser
 from datetime import datetime, timezone
 
 from remembrance.core.ids import new_id
-from remembrance.models.tables import RawDocument
+from remembrance.core.logger import logger
 from remembrance.ingestion.base import SourceAdapter
+from remembrance.ingestion.safety import fetch_with_safety
+from remembrance.models.tables import RawDocument
 
 
 class RSSAdapter(SourceAdapter):
@@ -11,8 +13,12 @@ class RSSAdapter(SourceAdapter):
 
     def fetch(self, config: dict) -> list[RawDocument]:
         url = config["url"]
-        r = httpx.get(url, timeout=30, follow_redirects=True)
-        feed = feedparser.parse(r.text)
+        try:
+            raw = fetch_with_safety(url)
+        except ValueError as e:
+            logger.warning("RSS fetch rejected for %s: %s", url, e)
+            return []
+        feed = feedparser.parse(raw)
         out = []
         for e in feed.entries:
             content = (e.get("summary") or e.get("description") or "").strip()
