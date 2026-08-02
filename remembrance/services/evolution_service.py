@@ -1,7 +1,7 @@
 """演化与提案 service 层"""
 from sqlmodel import select
 
-from remembrance.models.tables import MemoryProposal
+from remembrance.models.tables import MemoryProposal, MemoryCheckpoint
 from remembrance.models.schemas import ProposalDecisionReq, FeedbackReq
 from remembrance.models.enums import ProposalStatus
 from remembrance.storage import db
@@ -53,3 +53,13 @@ def run_evolve() -> dict:
     """运行演化 worker。"""
     run_evolve_once()
     return {"ok": True}
+
+
+def list_checkpoints(memory_id: str, limit: int = 20) -> dict:
+    """列出指定记忆的检查点。"""
+    with db.get_session() as s:
+        rows = s.exec(select(MemoryCheckpoint)
+                      .where(MemoryCheckpoint.memory_id == memory_id)
+                      .order_by(MemoryCheckpoint.version.desc())
+                      .limit(limit)).all()
+        return {"checkpoints": [r.model_dump(mode="json") for r in rows]}
