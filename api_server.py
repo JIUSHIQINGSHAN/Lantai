@@ -21,6 +21,7 @@ from remembrance.api import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings.validate_config()
     init_db()
     start_scheduler()
     logger.info("Remembrance-System started on port %s", settings.PORT)

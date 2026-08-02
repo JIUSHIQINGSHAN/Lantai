@@ -1,11 +1,20 @@
+import warnings
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 仓库根 = remembrance/core/settings.py → core/ → remembrance/ → 仓库根
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # 数据根目录——为空时通过 __file__ 自解析仓库根
+    REMEMBRANCE_HOME: str = ""
+
     PORT: int = 8767
-    DATABASE_URL: str = "sqlite:///./remembrance.db"
+    DATABASE_URL: str = ""  # 为空时从 REMEMBRANCE_HOME 自动推导
 
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
@@ -36,6 +45,9 @@ class Settings(BaseSettings):
         "fact": 1.3, "rule": 1.2, "experience": 1.0,
         "preference": 1.1, "chat": 0.7, "general": 1.0,
     }
+    # 默认 lane（修 P0: promoter.py AttributeError）
+    DEFAULT_LANE: str = "general"
+
     # 安全
     API_KEY: str = ""
 
@@ -55,12 +67,28 @@ class Settings(BaseSettings):
     DEFAULT_INTENT: str = "fact_lookup"
 
     # 向量存储配置（默认 Chromadb 内嵌，无需外部依赖）
-    VECTOR_STORE_TYPE: str = "chromadb"  # chromadb / pgvector
-    VECTOR_DIMENSION: int = 1024  # bge-m3 输出维度
-    CHROMADB_PATH: str = "./.chromadb"
+    VECTOR_STORE_TYPE: str = "chromadb"
+    CHROMADB_PATH: str = ""  # 为空时从 REMEMBRANCE_HOME 自动推导
 
     # 闸门配置
     GATE_CACHE_TTL: float = 15.0  # 热缓存秒数
+
+    def model_post_init(self, __context):
+        """DATABASE_URL / CHROMADB_PATH 未显式设置时从 REMEMBRANCE_HOME 推导。"""
+        home = Path(self.REMEMBRANCE_HOME) if self.REMEMBRANCE_HOME else _REPO_ROOT
+        if not self.DATABASE_URL:
+            self.DATABASE_URL = f"sqlite:///{home / 'remembrance.db'}"
+        if not self.CHROMADB_PATH:
+            self.CHROMADB_PATH = str(home / ".chromadb")
+
+    def validate_config(self):
+        """轻量校验——只 warn 不 crash。"""
+        if not self.OPENAI_API_KEY:
+            warnings.warn("OPENAI_API_KEY not set — LLM features will fail")
+        if self.RERANKER_ENABLED and not self.OPENAI_API_KEY:
+            warnings.warn(
+                "Reranker enabled but no API key — will fall back to no rerank"
+            )
 
 
 settings = Settings()
