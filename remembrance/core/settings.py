@@ -59,5 +59,8 @@ class Settings(BaseSettings):
     VECTOR_DIMENSION: int = 1024  # bge-m3 输出维度
     CHROMADB_PATH: str = "./.chromadb"
 
+    # 闸门配置
+    GATE_CACHE_TTL: float = 15.0  # 热缓存秒数
+
 
 settings = Settings()

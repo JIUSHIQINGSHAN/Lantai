@@ -18,3 +18,4 @@ Requires-Dist: beautifulsoup4>=4.12
 Requires-Dist: lxml>=5.2
 Requires-Dist: openai>=1.40
 Requires-Dist: tenacity>=8.5
+Requires-Dist: chromadb>=0.4

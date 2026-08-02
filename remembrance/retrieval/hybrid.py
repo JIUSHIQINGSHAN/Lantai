@@ -47,6 +47,18 @@ def hybrid_search(query: str, top_k: int = 5,
     if lanes:
         items = [m for m in items if m.lane in lanes]
 
+    # Step 2.5: Chronos 双时间过滤
+    from remembrance.core.time import utcnow
+    now = utcnow()
+    temporally_valid = []
+    for m in items:
+        if m.valid_from and m.valid_from > now:
+            continue  # 未生效，跳过
+        if m.valid_to and m.valid_to < now:
+            m.decay_score *= 0.3  # 过期降权
+        temporally_valid.append(m)
+    items = temporally_valid
+
     if not items:
         return []
 

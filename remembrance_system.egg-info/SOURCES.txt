@@ -2,6 +2,7 @@ pyproject.toml
 remembrance/__init__.py
 remembrance/api/__init__.py
 remembrance/api/routes_checkpoint.py
+remembrance/api/routes_edges.py
 remembrance/api/routes_evolution.py
 remembrance/api/routes_gate.py
 remembrance/api/routes_health.py
@@ -9,6 +10,7 @@ remembrance/api/routes_memory.py
 remembrance/api/routes_search.py
 remembrance/api/routes_sources.py
 remembrance/core/__init__.py
+remembrance/core/auth.py
 remembrance/core/ids.py
 remembrance/core/logger.py
 remembrance/core/scheduler.py
@@ -39,8 +41,13 @@ remembrance/models/tables.py
 remembrance/parsing/extractor.py
 remembrance/retrieval/__init__.py
 remembrance/retrieval/hybrid.py
+remembrance/retrieval/intent.py
+remembrance/retrieval/reranker.py
 remembrance/storage/__init__.py
 remembrance/storage/db.py
+remembrance/storage/edges.py
+remembrance/storage/fts.py
+remembrance/storage/vector_store.py
 remembrance/workers/__init__.py
 remembrance/workers/evolve_worker.py
 remembrance/workers/forgetting_worker.py
@@ -50,4 +57,7 @@ remembrance_system.egg-info/SOURCES.txt
 remembrance_system.egg-info/dependency_links.txt
 remembrance_system.egg-info/requires.txt
 remembrance_system.egg-info/top_level.txt
+tests/test_auth.py
 tests/test_e2e.py
+tests/test_p0.py
+tests/test_reranker.py

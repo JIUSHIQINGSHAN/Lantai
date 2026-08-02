@@ -32,3 +32,10 @@ class ProposalStatus(StrEnum):
     REJECTED = "rejected"
     APPLIED = "applied"
     ROLLED_BACK = "rolled_back"
+
+
+class EdgeRelation(StrEnum):
+    SUPPORTS = "supports"
+    CONTRADICTS = "contradicts"
+    REFINES = "refines"
+    SUPERSEDES = "supersedes"

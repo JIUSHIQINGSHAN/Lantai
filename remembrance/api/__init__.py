@@ -7,6 +7,7 @@ from .routes_gate import router as routes_gate_router
 from .routes_checkpoint import router as routes_checkpoint_router
 from .routes_sources import router as routes_sources_router
 from .routes_evolution import router as routes_evolution_router
+from .routes_edges import router as routes_edges_router
 
 __all__ = [
     "routes_health_router",
@@ -16,4 +17,5 @@ __all__ = [
     "routes_checkpoint_router",
     "routes_sources_router",
     "routes_evolution_router",
+    "routes_edges_router",
 ]

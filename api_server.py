@@ -15,6 +15,7 @@ from remembrance.api import (
     routes_sources_router,
     routes_evolution_router,
     routes_health_router,
+    routes_edges_router,
 )
 
 
@@ -40,6 +41,7 @@ protected_routers = [
     routes_checkpoint_router,
     routes_sources_router,
     routes_evolution_router,
+    routes_edges_router,
 ]
 for router in protected_routers:
     app.include_router(router, dependencies=[Depends(verify_api_key)])

@@ -66,8 +66,19 @@ class MemoryItem(SQLModel, table=True):
     use_count: int = 0
     helpful_count: int = 0
     decay_score: float = 1.0
+    valid_from: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class MemoryEdge(SQLModel, table=True):
+    id: str = Field(primary_key=True)
+    source_memory_id: str = Field(index=True)
+    target_memory_id: str = Field(index=True)
+    relation: str  # supports / contradicts / refines / supersedes
+    confidence: float = 0.5
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class CoreMemoryBlock(SQLModel, table=True):
