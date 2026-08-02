@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from remembrance.core.auth import verify_api_key
 from remembrance.core import scheduler
+from remembrance.core.settings import settings
 from remembrance.storage import db
 from remembrance.models.tables import MemoryItem
 from remembrance.ingestion.coalesce import get_coalesce_buffer
@@ -45,40 +46,40 @@ def health_deep():
     except Exception as e:
         checks["chromadb"] = f"fail: {e}"
 
-    # LLM 端点
-    try:
-        from remembrance.llm.client import _client
-        _client.models.list()
-        checks["llm"] = "ok"
-    except Exception as e:
-        checks["llm"] = f"fail: {e}"
+    # LLM 端点（未配置 key 时跳过，避免每次探活触发外部调用）
+    if not settings.OPENAI_API_KEY:
+        checks["llm"] = "skipped (no key)"
+    else:
+        try:
+            from remembrance.llm.client import _client
+            _client.models.list()
+            checks["llm"] = "ok"
+        except Exception as e:
+            checks["llm"] = f"fail: {e}"
 
-    all_ok = all(v == "ok" for v in checks.values())
+    all_ok = all(v in ("ok", "skipped (no key)") for v in checks.values())
     return {"ok": all_ok, "checks": checks}
 
 
 @protected_router.get("/stats")
 def stats():
-    """记忆统计——总数/分布/coalesce 水位"""
+    """记忆统计——SQL 聚合，避免全表加载到内存"""
+    from sqlmodel import func
     with db.get_session() as s:
-        all_items = s.exec(select(MemoryItem)).all()
-        total = len(all_items)
-
-        lane_dist = {}
-        status_dist = {}
-        tier_dist = {}
-        for m in all_items:
-            lane_dist[m.lane] = lane_dist.get(m.lane, 0) + 1
-            status_dist[m.status] = status_dist.get(m.status, 0) + 1
-            tier_dist[m.tier] = tier_dist.get(m.tier, 0) + 1
+        total = s.exec(select(func.count()).select_from(MemoryItem)).one()
+        lane_rows = s.exec(select(MemoryItem.lane, func.count())
+                           .group_by(MemoryItem.lane)).all()
+        status_rows = s.exec(select(MemoryItem.status, func.count())
+                             .group_by(MemoryItem.status)).all()
+        tier_rows = s.exec(select(MemoryItem.tier, func.count())
+                           .group_by(MemoryItem.tier)).all()
 
     buffer = get_coalesce_buffer().water_level()
-
     return {
         "total_memories": total,
-        "by_lane": lane_dist,
-        "by_status": status_dist,
-        "by_tier": tier_dist,
+        "by_lane": {k: v for k, v in lane_rows},
+        "by_status": {k: v for k, v in status_rows},
+        "by_tier": {k: v for k, v in tier_rows},
         "coalesce_buffer": buffer,
         "workers": scheduler.WORKER_LAST_RUN,
     }

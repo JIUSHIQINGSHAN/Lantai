@@ -6,6 +6,8 @@
 import json
 import sys
 
+from pydantic import ValidationError
+
 from remembrance.models.schemas import AddMemoryReq, SearchReq, FeedbackReq
 from remembrance.services.memory_service import add_memory
 from remembrance.services.evolution_service import record_feedback_entry
@@ -17,7 +19,11 @@ PROTOCOL_VERSION = "2024-11-05"
 
 def handle_search(params: dict) -> dict:
     query = params.get("query", "")
+    if not isinstance(query, str) or not (1 <= len(query) <= 8000):
+        raise ValueError("query must be a string of 1..8000 chars")
     top_k = params.get("top_k", 5)
+    if not isinstance(top_k, int) or isinstance(top_k, bool) or not (1 <= top_k <= 100):
+        raise ValueError("top_k must be an int in [1, 100]")
     gate = relevance_check(query)
     if not gate["needs_memory"]:
         return {"results": [], "gate": gate}
@@ -91,10 +97,20 @@ def handle(msg: dict) -> dict | None:
         params = msg.get("params", {})
         name = params.get("name", "")
         args = params.get("arguments", {})
+        if not isinstance(params, dict) or not isinstance(args, dict):
+            return {"jsonrpc": "2.0", "id": mid,
+                    "error": {"code": -32602, "message": "params/arguments must be objects"}}
         if name not in TOOLS:
             return {"jsonrpc": "2.0", "id": mid,
                     "error": {"code": -32602, "message": f"unknown tool: {name}"}}
-        result = TOOL_HANDLERS[name](args)
+        try:
+            result = TOOL_HANDLERS[name](args)
+        except (ValueError, ValidationError) as e:
+            return {"jsonrpc": "2.0", "id": mid,
+                    "error": {"code": -32602, "message": str(e)}}
+        except Exception as e:
+            return {"jsonrpc": "2.0", "id": mid,
+                    "error": {"code": -32603, "message": f"internal error: {type(e).__name__}"}}
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}}
     return {"jsonrpc": "2.0", "id": mid,
@@ -106,6 +122,8 @@ def main():
         line = line.strip()
         if not line:
             continue
+        if len(line) > 1_000_000:
+            continue  # 超长行丢弃，防内存耗尽
         try:
             msg = json.loads(line)
         except json.JSONDecodeError:

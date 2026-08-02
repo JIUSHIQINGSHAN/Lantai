@@ -13,8 +13,8 @@ class AddMemoryReq(BaseModel):
 
 
 class SearchReq(BaseModel):
-    query: str
-    top_k: int = 5
+    query: str = Field(min_length=1, max_length=8000)
+    top_k: int = Field(5, ge=1, le=100)
     memory_types: list[str] = []
     lanes: list[str] = []
     use_rerank: bool = True
