@@ -45,3 +45,6 @@ htmlcov/
 # 日志
 *.log
 logs/
+
+# 会话工作区元数据（不入库）
+.workbuddy/
