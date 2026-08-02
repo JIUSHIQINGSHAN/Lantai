@@ -10,9 +10,8 @@ def init_fts(conn: sqlite3.Connection):
     try:
         conn.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+                memory_id UNINDEXED,
                 content,
-                content='MemoryItem',
-                content_rowid='rowid',
                 tokenize='trigram'
             )
         """)
@@ -26,7 +25,7 @@ def index_fts(conn: sqlite3.Connection, memory_id: str, content: str):
     """将记忆内容索引到 FTS5"""
     try:
         conn.execute(
-            "INSERT INTO memory_fts(rowid, content) VALUES (?, ?)",
+            "INSERT INTO memory_fts(memory_id, content) VALUES (?, ?)",
             (memory_id, content)
         )
         conn.commit()
@@ -43,7 +42,7 @@ def search_fts(conn: sqlite3.Connection, query: str, top_k: int = 5) -> list[str
             return []
         match_query = " AND ".join(keywords)
         cursor = conn.execute(
-            "SELECT rowid FROM memory_fts WHERE content MATCH ? ORDER BY rank LIMIT ?",
+            "SELECT memory_id FROM memory_fts WHERE content MATCH ? ORDER BY rank LIMIT ?",
             (match_query, top_k)
         )
         return [row[0] for row in cursor.fetchall()]

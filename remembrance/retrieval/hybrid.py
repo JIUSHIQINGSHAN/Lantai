@@ -70,14 +70,21 @@ def hybrid_search(query: str, top_k: int = 5,
     if lanes:
         items = [m for m in items if m.lane in lanes]
 
-    # Step 2.5: Chronos 双时间过滤
+    # Step 2.5: Chronos 双时间过滤（DB 读出的 datetime 为 naive，需先归一时区）
+    from datetime import timezone
     from remembrance.core.time import utcnow
     now = utcnow()
     temporally_valid = []
     for m in items:
-        if m.valid_from and m.valid_from > now:
+        vf = m.valid_from
+        if vf and vf.tzinfo is None:
+            vf = vf.replace(tzinfo=timezone.utc)
+        vt = m.valid_to
+        if vt and vt.tzinfo is None:
+            vt = vt.replace(tzinfo=timezone.utc)
+        if vf and vf > now:
             continue
-        if m.valid_to and m.valid_to < now:
+        if vt and vt < now:
             m.decay_score *= 0.3
         temporally_valid.append(m)
     items = temporally_valid
@@ -99,7 +106,9 @@ def hybrid_search(query: str, top_k: int = 5,
     corpus = [jieba.lcut(m.content) for m in items]
     bm25 = BM25Okapi(corpus)
     bm_scores = bm25.get_scores(jieba.lcut(query))
-    bm_norm = (bm_scores - bm_scores.min()) / (bm_scores.ptp() + 1e-8)
+    # 不用 ndarray.ptp()（numpy>=2 已移除），min/max 兼容各版本
+    bm_range = bm_scores.max() - bm_scores.min()
+    bm_norm = (bm_scores - bm_scores.min()) / (bm_range + 1e-8)
 
     scored_items = []
     for i, m in enumerate(items):

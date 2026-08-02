@@ -21,7 +21,7 @@
 | ADR 产出 | 7 份（0001-0007） |
 | 新增/修改 Python 模块 | 44 个（git diff 2966b3d..HEAD 非测试 .py 实测） |
 | 新增测试 | 39 个（14+5+15+3+2），全绿 |
-| 全量测试通过率 | 88/94（6 个预存 bug 非本次引入） |
+| 全量测试通过率 | 95/97（2 个预存 bug 非本次引入） |
 | 零回归 | ✅ |
 
 ---
@@ -134,15 +134,14 @@ scripts/
 | `test_dedup.py` | 3 | ✅ 全绿 |
 | `test_shell_hook.py` | 2 | ✅ 全绿 |
 | `test_e2e.py` | 18 | ✅ 全绿 |
-| `test_auth.py` | 6 | ✅ 全绿 |
+| `test_auth.py` | 9 | ✅ 全绿（v0.3.2 新增 3 个绑定安全测试） |
 | `test_prefilter.py` | 16 | 14✅ 2❌ (预存 bug) |
-| `test_p0.py` | 7 | 3✅ 4❌ (预存 bug) |
+| `test_p0.py` | 7 | ✅ 全绿（v0.3.2 重写为 fts/hybrid 层单元测试） |
 | `test_reranker.py` | 8 | ✅ 全绿 |
-| **总计** | **94** | **88✅ 6❌** |
+| **总计** | **97** | **95✅ 2❌** |
 
-6 个预存 bug（非本次引入），经基线 d579d35 复现确认：
-- `test_p0.py`: `resp.json["results"]` 缺括号（TypeError）+ FTS5 未 mock
-- `test_prefilter.py`: 短查询/随机查询行为变化
+2 个预存 bug（非 v0.3.2 引入），经基线 d579d35 复现确认：
+- `test_prefilter.py`: 短查询/随机查询行为变化（v0.2.0 遗留，另立项）
 
 ---
 
@@ -204,4 +203,16 @@ scripts/
 | 5 | `951e238` | dedup/forgetting/shell_hook tests, fix hollow trace test |
 | 6 | (this commit) | correct results doc numbers, resolve tickets 04-14, update glossary |
 
-修复后全量测试：88 passed / 6 failed（6 个预存 bug 不变）。
+修复后全量测试：95 passed / 2 failed（2 个预存 bug 不变，v0.3.2 进一步收敛）。
+
+## v0.3.2 P0 修复
+
+基于 `v0.3.1-audit-report.md` 三项 P0：
+
+| Wave | Commit | 范围 |
+|------|--------|------|
+| 1 | `41e0ad1` | 生成物移出 Git（.venv-audit/.chromadb/egg-info），.gitignore 收紧 |
+| 2 | `41e08c2` | 默认回环绑定 + 非回环强制 API_KEY + 恒时比较（hmac） |
+| 3 | (见 git log) | test_p0 重写为单元测试；修复 FTS schema、Chronos 时区、BM25 ptp 三个潜在 bug |
+
+附带记录：FTS5 当前零生产调用方（仅 init，未接入写入/检索链路），另立项决策接入或移除。执行方案见 `docs/plans/v0.3.2-p0-remediation-plan.md`。
