@@ -4,14 +4,73 @@ import hashlib
 from sqlmodel import select
 
 from remembrance.core.ids import new_id
+from remembrance.core.settings import settings
 from remembrance.models.tables import RawDocument, MemoryCandidate, CoreMemoryBlock
 from remembrance.models.schemas import AddMemoryReq
 from remembrance.parsing.extractor import extract_candidate
+from remembrance.parsing.fastpath import fastpath_check
+from remembrance.ingestion.coalesce import get_coalesce_buffer
 from remembrance.storage import db
 
 
 def add_memory(req: AddMemoryReq) -> dict:
-    """创建 RawDocument + MemoryCandidate，返回 document_id 和 candidate_id。"""
+    """创建 RawDocument + MemoryCandidate。
+
+    当 COALESCE_ENABLED=true 时走缓冲路径。
+    fastpath 命中时直接写入（绕过 LLM 提取）。
+    """
+    # Fastpath 白名单直写——缓冲前判断
+    fp = fastpath_check(req.content)
+    if fp:
+        return _create_candidate_direct(req, fp)
+
+    # Coalesce 开关——true 时走缓冲
+    if settings.COALESCE_ENABLED:
+        buffer = get_coalesce_buffer()
+        result = buffer.add(
+            user_id="default", lane=req.lane,
+            content=req.content, title=req.title,
+        )
+        if result.get("buffered"):
+            return {"buffered": True, "count": result.get("count", 0)}
+        # 缓冲冲刷——批量提取
+        if result.get("flushed"):
+            combined = result.get("combined_content", req.content)
+            req_copy = req.model_copy()
+            req_copy.content = combined
+            return _create_candidate_with_extraction(req_copy)
+
+    # 默认同步路径
+    return _create_candidate_with_extraction(req)
+
+
+def _create_candidate_direct(req: AddMemoryReq, fp_data: dict) -> dict:
+    """fastpath 命中——直接创建 RawDocument + MemoryCandidate，不走 LLM"""
+    h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
+    with db.get_session() as s:
+        doc = RawDocument(
+            id=new_id("doc"), source_type=req.source_type,
+            source_id=req.url or h[:12], url=req.url,
+            title=req.title, content=req.content, content_hash=h,
+        )
+        s.add(doc); s.commit(); s.refresh(doc)
+
+        cand = MemoryCandidate(
+            id=new_id("cand"), document_id=doc.id,
+            topic=fp_data["topic"] or req.tags,
+            summary=fp_data["summary"],
+            claims=fp_data["claims"], methods=fp_data["methods"],
+            constraints=fp_data["constraints"], actions=fp_data["actions"],
+            extractor_confidence=fp_data["extractor_confidence"],
+            lane=fp_data.get("lane", req.lane),
+            status="fastpath",
+        )
+        s.add(cand); s.commit(); s.refresh(cand)
+        return {"document_id": doc.id, "candidate_id": cand.id, "fastpath": True}
+
+
+def _create_candidate_with_extraction(req: AddMemoryReq) -> dict:
+    """LLM 提取路径——原始逻辑"""
     h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
     with db.get_session() as s:
         existed = s.exec(select(RawDocument)
@@ -22,8 +81,7 @@ def add_memory(req: AddMemoryReq) -> dict:
             doc = RawDocument(
                 id=new_id("doc"), source_type=req.source_type,
                 source_id=req.url or h[:12], url=req.url,
-                title=req.title, content=req.content,
-                content_hash=h,
+                title=req.title, content=req.content, content_hash=h,
             )
             s.add(doc); s.commit(); s.refresh(doc)
 

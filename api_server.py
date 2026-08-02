@@ -15,6 +15,7 @@ from remembrance.api import (
     routes_sources_router,
     routes_evolution_router,
     routes_health_router,
+    routes_health_protected_router,
     routes_edges_router,
 )
 
@@ -29,7 +30,7 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-app = FastAPI(title="Remembrance-System", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Remembrance-System", version="0.3.0", lifespan=lifespan)
 
 # 公共端点（不需要鉴权）
 app.include_router(routes_health_router)
@@ -43,6 +44,7 @@ protected_routers = [
     routes_sources_router,
     routes_evolution_router,
     routes_edges_router,
+    routes_health_protected_router,
 ]
 for router in protected_routers:
     app.include_router(router, dependencies=[Depends(verify_api_key)])

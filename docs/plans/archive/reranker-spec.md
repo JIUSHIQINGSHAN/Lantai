@@ -1,3 +1,5 @@
+> **已归档**：2026-08-02 起由 aiduMEM 移植流程取代，见 docs/plans/aidumem-port-skill-workflow.md。Reranker 已实现且与代码一致，作为历史决策存档，不进新 map。
+
 # Reranker 集成 Spec
 
 **日期**: 2026-07-30

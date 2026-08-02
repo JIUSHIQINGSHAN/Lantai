@@ -1,4 +1,5 @@
 import jieba
+import time
 from rank_bm25 import BM25Okapi
 from sqlmodel import select
 
@@ -14,10 +15,24 @@ from remembrance.storage.vector_store import get_vector_store
 def hybrid_search(query: str, top_k: int = 5,
                   memory_types: list[str] | None = None,
                   lanes: list[str] | None = None,
-                  use_rerank: bool = True) -> list[dict]:
-    # Step 1: 意图分类，确定候选集大小
+                  use_rerank: bool = True,
+                  trace: bool = False) -> list[dict] | tuple[list[dict], list[dict]]:
+    """混合检索：向量 + BM25 + 衰减。
+
+    trace=True 时返回 (results, trace_steps)。
+    """
+    trace_steps = []
+    t0 = time.perf_counter()
+
+    # Step 1: 意图分类
     intent_info = classify_intent(query)
     candidate_n = intent_info["candidate_n"]
+    if trace:
+        t1 = time.perf_counter()
+        trace_steps.append({
+            "step": "intent", "elapsed_ms": round((t1 - t0) * 1000, 1),
+            "candidate_count": None, "score_range": None,
+        })
 
     # Step 2: 向量检索（ChromaDB HNSW 索引）
     fetch_n = candidate_n * settings.RERANKER_CANDIDATE_MULTIPLIER
@@ -25,13 +40,28 @@ def hybrid_search(query: str, top_k: int = 5,
     vector_store = get_vector_store()
     vector_results = vector_store.search(qv, top_k=fetch_n)
 
+    if trace:
+        t2 = time.perf_counter()
+        scores = [1.0 - r["distance"] for r in vector_results] if vector_results else []
+        trace_steps.append({
+            "step": "vector_search", "elapsed_ms": round((t2 - t1) * 1000, 1),
+            "candidate_count": len(vector_results),
+            "score_range": [round(min(scores), 3), round(max(scores), 3)] if scores else None,
+        })
+
     if not vector_results:
+        if trace:
+            return [], trace_steps
         return []
 
-    # 从 SQLite 加载完整记忆项（仅候选集，不是全表）
+    # 从 SQLite 加载完整记忆项——仅 active
     ids = [r["id"] for r in vector_results]
     with db.get_session() as s:
-        items = s.exec(select(MemoryItem).where(MemoryItem.id.in_(ids))).all()
+        items = s.exec(
+            select(MemoryItem)
+            .where(MemoryItem.id.in_(ids))
+            .where(MemoryItem.status == "active")
+        ).all()
     items_by_id = {m.id: m for m in items}
 
     # 过滤 memory_types / lanes
@@ -46,17 +76,25 @@ def hybrid_search(query: str, top_k: int = 5,
     temporally_valid = []
     for m in items:
         if m.valid_from and m.valid_from > now:
-            continue  # 未生效，跳过
+            continue
         if m.valid_to and m.valid_to < now:
-            m.decay_score *= 0.3  # 过期降权
+            m.decay_score *= 0.3
         temporally_valid.append(m)
     items = temporally_valid
 
+    if trace:
+        t3 = time.perf_counter()
+        trace_steps.append({
+            "step": "decay_filter", "elapsed_ms": round((t3 - t2) * 1000, 1),
+            "candidate_count": len(items), "score_range": None,
+        })
+
     if not items:
+        if trace:
+            return [], trace_steps
         return []
 
     # Step 3: BM25 + 向量距离 + 衰减 混合打分
-    # 向量距离来自 ChromaDB（cosine space），similarity = 1 - distance
     distances = {r["id"]: r["distance"] for r in vector_results}
     corpus = [jieba.lcut(m.content) for m in items]
     bm25 = BM25Okapi(corpus)
@@ -79,10 +117,35 @@ def hybrid_search(query: str, top_k: int = 5,
         docs = [m.content for _, m in candidates]
         reranked = rerank(query, docs, top_k)
         if reranked:
-            return [{"score": r["score"], "document": r["document"]} for r in reranked]
+            results = [{"score": r["score"], "document": r["document"]} for r in reranked]
+            if trace:
+                t4 = time.perf_counter()
+                rr_scores = [r["score"] for r in reranked]
+                trace_steps.append({
+                    "step": "rerank", "elapsed_ms": round((t4 - t3) * 1000, 1),
+                    "candidate_count": len(results),
+                    "score_range": [round(min(rr_scores), 3), round(max(rr_scores), 3)],
+                })
+                trace_steps.append({
+                    "step": "final", "elapsed_ms": round((t4 - t0) * 1000, 1),
+                    "candidate_count": len(results),
+                    "score_range": [round(min(rr_scores), 3), round(max(rr_scores), 3)],
+                })
+                return results, trace_steps
+            return results
 
-    return [{"score": s, "memory": m.model_dump(mode="json")}
-            for s, m in candidates[:top_k]]
+    results = [{"score": s, "memory": m.model_dump(mode="json")}
+               for s, m in candidates[:top_k]]
+    if trace:
+        t4 = time.perf_counter()
+        final_scores = [s for s, _ in candidates[:top_k]]
+        trace_steps.append({
+            "step": "final", "elapsed_ms": round((t4 - t0) * 1000, 1),
+            "candidate_count": len(results),
+            "score_range": [round(min(final_scores), 3), round(max(final_scores), 3)] if final_scores else None,
+        })
+        return results, trace_steps
+    return results
 
 
 def index_memory_item(memory_id: str, embedding: list[float], metadata: dict):

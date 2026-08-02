@@ -73,6 +73,29 @@ class Settings(BaseSettings):
     # 闸门配置
     GATE_CACHE_TTL: float = 15.0  # 热缓存秒数
 
+    # Coalesce 潮波合并配置
+    COALESCE_ENABLED: bool = False  # 默认 false 向后兼容
+    LANE_COALESCE_PROFILES: dict = {
+        "fact":       {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
+        "rule":       {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
+        "experience": {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
+        "preference": {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
+        "chat":       {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
+        "general":    {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
+    }
+
+    # 遗忘配置
+    ARCHIVE_DECAY_THRESHOLD: float = 0.01  # decay 低于此值自动 archived
+
+    # 去重配置
+    DEDUP_MERGE_THRESHOLD: float = 0.80  # 余弦相似度 > 此值 → merge
+    DEDUP_UPDATE_THRESHOLD: float = 0.65  # 余弦相似度 > 此值 → update
+
+    # Shell Hook 配置
+    SHELL_HOOK_TIMEOUT: int = 2  # 秒
+    SHELL_HOOK_TOP_K: int = 5
+    SHELL_HOOK_MIN_CHARS: int = 3
+
     def model_post_init(self, __context):
         """DATABASE_URL / CHROMADB_PATH 未显式设置时从 REMEMBRANCE_HOME 推导。"""
         home = Path(self.REMEMBRANCE_HOME) if self.REMEMBRANCE_HOME else _REPO_ROOT
