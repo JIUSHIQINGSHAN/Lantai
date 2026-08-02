@@ -1,5 +1,8 @@
+import logging
 import warnings
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -112,6 +115,8 @@ class Settings(BaseSettings):
             warnings.warn(
                 "Reranker enabled but no API key — will fall back to no rerank"
             )
+        if not self.API_KEY:
+            logger.warning("API_KEY 为空：API 将以无鉴权模式运行（仅建议本机开发）")
 
 
 settings = Settings()

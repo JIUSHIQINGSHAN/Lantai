@@ -6,21 +6,23 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /build
 
-# 编译依赖
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# 编译依赖 + 源码（必须 COPY remembrance/ 否则 wheel 为空）
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir build && python -m build --wheel --outdir /wheels
+COPY remembrance/ ./remembrance/
+RUN pip install --upgrade pip build && python -m build --wheel --outdir /wheels
 
 # ---- runtime ----
 FROM python:3.11-slim AS runtime
 
 WORKDIR /app
 
-# 安装运行时依赖
+# 安装运行时依赖（wheel 内含 remembrance 包，无需 COPY 源码）
 COPY --from=builder /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
 
-# 复制代码
-COPY remembrance/ ./remembrance/
+# 复制入口与脚本
 COPY api_server.py ./
 COPY scripts/ ./scripts/
 

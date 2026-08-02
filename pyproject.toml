@@ -1,6 +1,6 @@
 [project]
 name = "remembrance-system"
-version = "0.2.0"
+version = "0.3.1"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",
@@ -20,6 +20,8 @@ dependencies = [
   "openai>=1.40",
   "tenacity>=8.5",
   "chromadb>=0.4",
+  "jieba>=0.42",
+  "requests>=2.31",
 ]
 
 [build-system]

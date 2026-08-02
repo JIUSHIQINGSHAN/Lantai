@@ -15,3 +15,5 @@ lxml>=5.2
 openai>=1.40
 tenacity>=8.5
 chromadb>=0.4
+jieba>=0.42
+requests>=2.31
