@@ -21,7 +21,7 @@
 | ADR 产出 | 7 份（0001-0007） |
 | 新增/修改 Python 模块 | 44 个（git diff 2966b3d..HEAD 非测试 .py 实测） |
 | 新增测试 | 39 个（14+5+15+3+2），全绿 |
-| 全量测试通过率 | **118/118 全绿（v0.3.5 起零失败）** |
+| 全量测试通过率 | **120/120 全绿（v0.3.5 起零失败）** |
 | 零回归 | ✅ |
 
 ---
@@ -138,11 +138,13 @@ scripts/
 | `test_prefilter.py` | 18 | ✅ 全绿（v0.3.5 修复热缓存测试隔离 + 新增热缓存行为测试） |
 | `test_p0.py` | 7 | ✅ 全绿（v0.3.2 重写为 fts/hybrid 层单元测试） |
 | `test_reranker.py` | 8 | ✅ 全绿 |
-| `test_ssrf.py` | 4 | ✅ 全绿（v0.3.3 新增，SSRF 防护） |
+| `test_ssrf.py` | 7 | ✅ 全绿（v0.3.3 SSRF + v0.3.6 API allowlist 校验） |
 | `test_ops.py` | 5 | ✅ 全绿（v0.3.3 新增，备份/恢复加固） |
 | `test_mcp.py` | 6 | ✅ 全绿（v0.3.3 新增，MCP 协议校验） |
 | `test_fts_integration.py` | 4 | ✅ 全绿（v0.3.4 新增，FTS 同步与融合） |
-| **总计** | **118** | **118✅ 0❌ 全绿** |
+| **总计** | **120** | **120✅ 0❌ 全绿** |
+
+v0.3.6：M7 修复（LLM/reranker 端点 https+host allowlist、独立 RERANKER_API_KEY、密钥不落日志，+3 测试）+ M6 修复（GH Actions 锁 SHA、Docker 非 root USER、新增 .dockerignore）。
 
 v0.3.5：test_prefilter 的 2 个"预存失败"实为测试隔离缺陷——prefilter 15s 热缓存（设计行为）被文件内测试顺序串味；加 autouse fixture（monkeypatch 模块属性）隔离 + 新增 2 个热缓存行为测试。至此全量测试首次全绿。
 
