@@ -7,6 +7,7 @@ from remembrance.retrieval.hybrid import index_memory_item, delete_memory_item
 from remembrance.storage.edges import create_edge
 from remembrance.models.enums import ProposalStatus, MemoryTier
 from remembrance.models.tables import (MemoryProposal, MemoryItem, MemoryCheckpoint)
+from remembrance.storage.fts import sync_fts
 from remembrance.storage import db
 
 
@@ -55,6 +56,7 @@ def apply_proposal(proposal_id: str) -> dict:
             s.add(mem); s.flush()
             _make_checkpoint(s, mem, {}, prop.id, trigger="gate")
             index_memory_item(mem.id, emb, {"key": mem.key, "memory_type": mem.memory_type})
+            sync_fts(s, mem.id, mem.content)
             # 自动创建关系边
             for evidence_id in prop.evidence_ids:
                 create_edge(evidence_id, mem.id, "supports", prop.confidence)
@@ -68,6 +70,7 @@ def apply_proposal(proposal_id: str) -> dict:
             s.add(existing); s.flush()
             _make_checkpoint(s, existing, before, prop.id, trigger="evolve")
             index_memory_item(existing.id, emb, {"key": existing.key, "memory_type": existing.memory_type})
+            sync_fts(s, existing.id, existing.content)
 
         prop.status = ProposalStatus.APPLIED
         prop.applied_at = utcnow()
@@ -94,6 +97,7 @@ def rollback(memory_id: str) -> dict:
         mem.updated_at = utcnow()
         s.add(mem)
         _make_checkpoint(s, mem, before, proposal_id="", trigger="rollback")
+        sync_fts(s, mem.id, mem.content)
         s.commit()
         return {"ok": True}
 
@@ -104,6 +108,7 @@ def delete_memory(memory_id: str) -> dict:
         mem = s.get(MemoryItem, memory_id)
         if mem:
             s.delete(mem)
+            sync_fts(s, memory_id, None)
             s.commit()
     delete_memory_item(memory_id)
     return {"ok": True}

@@ -109,6 +109,13 @@ class Settings(BaseSettings):
     # 备份恢复
     BACKUP_MANIFEST_VERSION: str = "0.3.3"
 
+    # 混合检索权重（ADR-0008）
+    RETRIEVAL_W_VECTOR: float = 0.6
+    RETRIEVAL_W_BM25: float = 0.25
+    RETRIEVAL_W_FTS: float = 0.05
+    RETRIEVAL_W_DECAY: float = 0.1
+    FTS_RECALL_TOP_K: int = 20  # FTS 子串召回上限
+
     def model_post_init(self, __context):
         """DATABASE_URL / CHROMADB_PATH 未显式设置时从 REMEMBRANCE_HOME 推导。"""
         home = Path(self.REMEMBRANCE_HOME) if self.REMEMBRANCE_HOME else _REPO_ROOT
