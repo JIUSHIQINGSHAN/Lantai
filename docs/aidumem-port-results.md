@@ -21,7 +21,7 @@
 | ADR 产出 | 7 份（0001-0007） |
 | 新增/修改 Python 模块 | 44 个（git diff 2966b3d..HEAD 非测试 .py 实测） |
 | 新增测试 | 39 个（14+5+15+3+2），全绿 |
-| 全量测试通过率 | 110/112（2 个预存 bug 非本次引入） |
+| 全量测试通过率 | 114/116（2 个预存 bug 非本次引入） |
 | 零回归 | ✅ |
 
 ---
@@ -141,7 +141,8 @@ scripts/
 | `test_ssrf.py` | 4 | ✅ 全绿（v0.3.3 新增，SSRF 防护） |
 | `test_ops.py` | 5 | ✅ 全绿（v0.3.3 新增，备份/恢复加固） |
 | `test_mcp.py` | 6 | ✅ 全绿（v0.3.3 新增，MCP 协议校验） |
-| **总计** | **112** | **110✅ 2❌** |
+| `test_fts_integration.py` | 4 | ✅ 全绿（v0.3.4 新增，FTS 同步与融合） |
+| **总计** | **116** | **114✅ 2❌** |
 
 2 个预存 bug（非 v0.3.2 引入），经基线 d579d35 复现确认：
 - `test_prefilter.py`: 短查询/随机查询行为变化（v0.2.0 遗留，另立项）
@@ -231,3 +232,13 @@ scripts/
 | 3 | `701c903` | MCP 输入校验 + JSON-RPC 错误隔离；SearchReq 限界；/stats SQL 聚合；/health/deep 空 key 跳过 |
 
 新增测试：test_ssrf 4 / test_ops 5 / test_mcp 6，全部通过。执行方案见 `docs/plans/v0.3.3-p1-remediation-plan.md`。
+
+## v0.3.4 FTS5 接入（ADR-0008 实施）
+
+| Wave | Commit | 范围 |
+|------|--------|------|
+| 1 | `c2c4c57` | FTS5 同事务写入同步（promoter 4 点）+ 旧 schema 自动迁移 + 检索权重进 settings |
+| 2 | `70a3ec3` | hybrid 融合打分（0.6/0.25/0.05/0.1）+ FTS 追加召回 + BM25 语料缓存（M4） |
+| 3 | (见 git log) | test_fts_integration 4 测试 + 文档 |
+
+新增测试：test_fts_integration 4 个全绿。已知限制（ADR-0008）：trigram 对 2 字中文查询无效（测试已用 ≥3 字查询词规避）。
