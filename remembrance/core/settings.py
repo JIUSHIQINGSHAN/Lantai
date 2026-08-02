@@ -116,6 +116,11 @@ class Settings(BaseSettings):
     RETRIEVAL_W_DECAY: float = 0.1
     FTS_RECALL_TOP_K: int = 20  # FTS 子串召回上限
 
+    # API 端点 allowlist（审计 M7）：LLM/reranker 客户端只允许访问这些 host
+    ALLOWED_API_HOSTS: list = ["api.openai.com", "api.siliconflow.cn"]
+    # reranker 独立最小权限密钥；为空时回退 OPENAI_API_KEY（并记录警告）
+    RERANKER_API_KEY: str = ""
+
     def model_post_init(self, __context):
         """DATABASE_URL / CHROMADB_PATH 未显式设置时从 REMEMBRANCE_HOME 推导。"""
         home = Path(self.REMEMBRANCE_HOME) if self.REMEMBRANCE_HOME else _REPO_ROOT

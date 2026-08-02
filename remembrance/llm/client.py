@@ -2,7 +2,12 @@ import json
 from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from remembrance.core.logger import logger
 from remembrance.core.settings import settings
+from remembrance.ingestion.safety import validate_api_url
+
+# 审计 M7：base_url host 必须命中 allowlist，防止密钥/全文发往任意地址
+validate_api_url(settings.OPENAI_BASE_URL)
 
 _client = OpenAI(api_key=settings.OPENAI_API_KEY,
                  base_url=settings.OPENAI_BASE_URL)

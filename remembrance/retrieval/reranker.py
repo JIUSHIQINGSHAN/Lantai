@@ -1,7 +1,9 @@
 """Reranker 客户端：调用硅基流 /v1/rerank 做精排"""
 import time
 import requests
+from remembrance.core.logger import logger
 from remembrance.core.settings import settings
+from remembrance.ingestion.safety import validate_api_url
 
 
 def rerank(query: str, documents: list[str], top_k: int) -> list[dict]:
@@ -12,9 +14,18 @@ def rerank(query: str, documents: list[str], top_k: int) -> list[dict]:
     if not documents:
         return []
 
+    # 审计 M7：base_url host 必须命中 allowlist
+    try:
+        validate_api_url(settings.RERANKER_BASE_URL)
+    except ValueError as e:
+        logger.warning("RERANKER_BASE_URL rejected: %s", e)
+        return []
+
     url = f"{settings.RERANKER_BASE_URL}/rerank"
+    # 独立最小权限密钥优先，回退 OPENAI_API_KEY（不打印任何密钥）
+    api_key = settings.RERANKER_API_KEY or settings.OPENAI_API_KEY
     headers = {
-        "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     payload = {

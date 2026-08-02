@@ -35,6 +35,22 @@ def validate_fetch_url(url: str) -> str:
     return url
 
 
+def validate_api_url(url: str) -> str:
+    """校验 API 端点 host 在 allowlist（审计 M7）。
+
+    防止配置被篡改后，把 Bearer 密钥与记忆全文发送到任意地址。
+    强制 https + host ∈ settings.ALLOWED_API_HOSTS。
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"api url must be https: {url}")
+    host = (parsed.hostname or "").lower()
+    allowed = set(settings.ALLOWED_API_HOSTS)
+    if host not in allowed:
+        raise ValueError(f"api host not allowed: {host}")
+    return url
+
+
 def fetch_with_safety(url: str, max_bytes: int | None = None,
                       timeout: float | None = None,
                       max_redirects: int | None = None) -> bytes:
