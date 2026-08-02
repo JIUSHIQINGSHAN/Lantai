@@ -17,12 +17,3 @@ async def verify_api_key(
         raise HTTPException(status_code=403, detail="Invalid API Key")
 
     return x_api_key
-
-
-# 公共端点前缀（不需要鉴权）
-PUBLIC_PATHS = {"/health", "/api/memory/health", "/docs", "/openapi.json"}
-
-
-def is_public_path(path: str) -> bool:
-    """判断是否为公共端点"""
-    return path.startswith("/health") or path.startswith("/docs") or path == "/openapi.json"

@@ -4,9 +4,9 @@
 
 **Blocked by:** 01 — P0 修复 + 零硬编码
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 路由 handler 只做 HTTP 解析/返回，业务逻辑在 service 函数
-- [ ] `auth.py` 三个死代码函数删除
-- [ ] 所有旧 import 路径保持可用（门面铁律）
-- [ ] 所有现有测试通过
+- [x] 路由 handler 只做 HTTP 解析/返回，业务逻辑在 service 函数
+- [x] `auth.py` 死代码函数删除（`is_public_path` + `PUBLIC_PATHS`）
+- [x] 所有旧 import 路径保持可用（门面铁律）
+- [x] 43/43 关键测试通过（E2E + auth + settings + infra），零回归
