@@ -151,8 +151,11 @@ class TestGate:
         })
         assert resp.status_code == 422
 
-    def test_gate_reject_low_confidence(self, client):
+    def test_gate_reject_low_confidence(self, client, monkeypatch):
         """低置信度候选应被 Gate 拒绝"""
+        # 显式固定阈值，避免被宿主 .env 的 GATE_MIN_EXTRACTOR_CONF 污染
+        from remembrance.core.settings import settings
+        monkeypatch.setattr(settings, "GATE_MIN_EXTRACTOR_CONF", 0.55)
         resp = client.post("/add", json={
             "title": "minimal content",
             "content": "1234567890"  # 10 字符，刚好通过校验
