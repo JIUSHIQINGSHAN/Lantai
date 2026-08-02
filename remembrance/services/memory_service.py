@@ -5,12 +5,49 @@ from sqlmodel import select
 
 from remembrance.core.ids import new_id
 from remembrance.core.settings import settings
-from remembrance.models.tables import RawDocument, MemoryCandidate, CoreMemoryBlock
+from remembrance.core.time import utcnow
+from remembrance.models.tables import RawDocument, MemoryCandidate, CoreMemoryBlock, MemoryItem, MemoryProposal
 from remembrance.models.schemas import AddMemoryReq
 from remembrance.parsing.extractor import extract_candidate
 from remembrance.parsing.fastpath import fastpath_check
 from remembrance.ingestion.coalesce import get_coalesce_buffer
+from remembrance.gate.dedup import find_similar
 from remembrance.storage import db
+from remembrance.storage.vector_store import get_vector_store
+
+vector_store = get_vector_store()
+
+
+def _apply_dedup(s, title: str, content: str, lane: str) -> dict | None:
+    """candidate 创建前的三态去重。返回 None 表示 insert（继续正常建候选）。"""
+    try:
+        vec_results = vector_store.search(content, top_k=1)
+        if not isinstance(vec_results, list):
+            return None
+        action, target, sim = find_similar(s, vec_results)
+    except Exception:
+        return None
+
+    if action == "insert" or target is None:
+        return None
+    if action == "merge":
+        target.last_accessed = utcnow()
+        target.importance = min(1.0, target.importance + 0.1)
+        s.add(target)
+        s.commit()
+        return {"dedup_action": "merge", "target_memory_id": target.id, "similarity": round(sim, 4)}
+    prop = MemoryProposal(
+        target_memory_id=target.id,
+        proposal_type="update",
+        proposed_patch={"title": title, "content": content, "lane": lane},
+        confidence=round(sim, 4),
+        status="pending",
+    )
+    s.add(prop)
+    s.commit()
+    s.refresh(prop)
+    return {"dedup_action": "update", "target_memory_id": target.id,
+            "proposal_id": prop.id, "similarity": round(sim, 4)}
 
 
 def add_memory(req: AddMemoryReq) -> dict:
@@ -48,6 +85,9 @@ def _create_candidate_direct(req: AddMemoryReq, fp_data: dict) -> dict:
     """fastpath 命中——直接创建 RawDocument + MemoryCandidate，不走 LLM"""
     h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
     with db.get_session() as s:
+        dedup_result = _apply_dedup(s, req.title, req.content, req.lane)
+        if dedup_result is not None:
+            return dedup_result
         doc = RawDocument(
             id=new_id("doc"), source_type=req.source_type,
             source_id=req.url or h[:12], url=req.url,
@@ -73,6 +113,9 @@ def _create_candidate_with_extraction(req: AddMemoryReq) -> dict:
     """LLM 提取路径——原始逻辑"""
     h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
     with db.get_session() as s:
+        dedup_result = _apply_dedup(s, req.title, req.content, req.lane)
+        if dedup_result is not None:
+            return dedup_result
         existed = s.exec(select(RawDocument)
                          .where(RawDocument.content_hash == h)).first()
         if existed:

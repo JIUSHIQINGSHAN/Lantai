@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 from remembrance.core.auth import verify_api_key
+from remembrance.core import scheduler
 from remembrance.storage import db
 from remembrance.models.tables import MemoryItem
 from remembrance.ingestion.coalesce import get_coalesce_buffer
@@ -79,4 +80,5 @@ def stats():
         "by_status": status_dist,
         "by_tier": tier_dist,
         "coalesce_buffer": buffer,
+        "workers": scheduler.WORKER_LAST_RUN,
     }

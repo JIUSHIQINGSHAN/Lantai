@@ -7,12 +7,13 @@ from remembrance.gate.decision import decide
 from remembrance.evolution.proposer import propose_from_candidate
 from remembrance.evolution.promoter import apply_proposal
 from remembrance.core.settings import settings
+from remembrance.core import scheduler as scheduler_mod
 
 
 def run_evolve_once():
     with db.get_session() as s:
         cands = s.exec(select(MemoryCandidate)
-                       .where(MemoryCandidate.status == "new")).all()
+                       .where(MemoryCandidate.status.in_(["new", "fastpath"]))).all()
 
     for cand in cands:
         result = decide(cand.id)
@@ -29,6 +30,7 @@ def run_evolve_once():
             apply_proposal(prop.id)
         else:
             logger.info("proposal %s pending human review", prop.id)
+    scheduler_mod.record_run("evolve")
 
 
 def run_pending_proposals():

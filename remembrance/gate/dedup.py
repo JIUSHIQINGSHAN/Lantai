@@ -1,55 +1,33 @@
 """余弦相似度去重——在 candidate 创建时、gate 之前执行
 
-用余弦相似度（不用 Jaccard，对中文分词不敏感）
+三态判定：merge / update / insert
 阈值：>merge → merge/update，>update → update
 """
-from sqlmodel import select
-
-from remembrance.llm.client import embed
 from remembrance.models.tables import MemoryItem
-from remembrance.storage import db
 from remembrance.core.settings import settings
 
 
-def find_similar(content: str, lane: str | None = None, top_k: int = 5) -> dict | None:
-    """查找与 content 余弦相似度最高的已有记忆。
+def find_similar(session, query_results: list[dict]) -> tuple[str, MemoryItem | None, float]:
+    """对候选与现有 active 记忆做三态判定。
 
-    返回 None 表示无相似记忆。
-    返回 dict 包含 memory_id、similarity、action（merge/update）。
+    返回 (action, target_memory_or_None, best_sim)。
+    action: "merge" | "update" | "insert"
     """
-    qv = embed([content])[0] if content else []
-    if not qv:
-        return None
-
-    from remembrance.storage.vector_store import get_vector_store
-    store = get_vector_store()
-    results = store.search(qv, top_k=top_k)
-
-    if not results:
-        return None
-
-    # 取最相似的
-    best = results[0]
-    similarity = 1.0 - best["distance"]  # cosine space: sim = 1 - dist
-
-    merge_threshold = settings.DEDUP_MERGE_THRESHOLD
-    update_threshold = settings.DEDUP_UPDATE_THRESHOLD
-
-    if similarity >= merge_threshold:
-        action = "merge"
-    elif similarity >= update_threshold:
-        action = "update"
-    else:
-        return None
-
-    with db.get_session() as s:
-        mem = s.get(MemoryItem, best["id"])
+    best_sim = 0.0
+    best_mem = None
+    for r in query_results:
+        mem = session.get(MemoryItem, r["id"])
         if not mem or mem.status != "active":
-            return None
+            continue
+        sim = 1.0 - r["distance"]  # cosine 距离 → 相似度
+        if sim > best_sim:
+            best_sim = sim
+            best_mem = mem
 
-        return {
-            "memory_id": mem.id,
-            "similarity": similarity,
-            "action": action,
-            "existing_content": mem.content,
-        }
+    if best_mem is None:
+        return "insert", None, 0.0
+    if best_sim >= settings.DEDUP_MERGE_THRESHOLD:
+        return "merge", best_mem, best_sim
+    if best_sim >= settings.DEDUP_UPDATE_THRESHOLD:
+        return "update", best_mem, best_sim
+    return "insert", None, best_sim

@@ -7,6 +7,7 @@ from remembrance.parsing.extractor import extract_candidate
 from remembrance.models.tables import (Source, IngestJob, RawDocument,
                                        MemoryCandidate)
 from remembrance.storage import db
+from remembrance.core import scheduler as scheduler_mod
 
 
 def run_ingest_once():
@@ -57,3 +58,4 @@ def run_ingest_once():
                 job.status = "failed"; job.error = str(e)
                 job.finished_at = utcnow()
                 s.add(job); s.commit()
+    scheduler_mod.record_run("ingest")
