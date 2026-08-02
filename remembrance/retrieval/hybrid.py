@@ -10,6 +10,22 @@ from remembrance.core.settings import settings
 from remembrance.retrieval.intent import classify_intent
 from remembrance.retrieval.reranker import rerank
 from remembrance.storage.vector_store import get_vector_store
+from remembrance.storage.fts import search_fts
+
+
+# BM25 语料缓存（M4）：key = items 的 (id, content) 有序元组，命中即复用
+_BM25_CACHE: dict = {"key": None, "bm25": None}
+
+
+def _get_bm25(items: list) -> "BM25Okapi":
+    key = tuple((m.id, m.content) for m in items)
+    if _BM25_CACHE.get("key") == key:
+        return _BM25_CACHE["bm25"]
+    corpus = [jieba.lcut(m.content) for m in items]
+    bm25 = BM25Okapi(corpus)
+    _BM25_CACHE["key"] = key
+    _BM25_CACHE["bm25"] = bm25
+    return bm25
 
 
 def hybrid_search(query: str, top_k: int = 5,
@@ -101,10 +117,19 @@ def hybrid_search(query: str, top_k: int = 5,
             return [], trace_steps
         return []
 
-    # Step 3: BM25 + 向量距离 + 衰减 混合打分
+    # Step 3: FTS5 子串召回（ADR-0008）
+    fts_hits: set[str] = set()
+    try:
+        with db.get_session() as s:
+            fts_hits = set(search_fts(
+                s.connection().connection.driver_connection,
+                query, top_k=settings.FTS_RECALL_TOP_K))
+    except Exception:
+        fts_hits = set()  # FTS 不可用不影响主检索
+
+    # Step 4: BM25（带缓存，M4）+ 向量距离 + FTS 命中 + 衰减 融合打分
     distances = {r["id"]: r["distance"] for r in vector_results}
-    corpus = [jieba.lcut(m.content) for m in items]
-    bm25 = BM25Okapi(corpus)
+    bm25 = _get_bm25(items)
     bm_scores = bm25.get_scores(jieba.lcut(query))
     # 不用 ndarray.ptp()（numpy>=2 已移除），min/max 兼容各版本
     bm_range = bm_scores.max() - bm_scores.min()
@@ -115,13 +140,29 @@ def hybrid_search(query: str, top_k: int = 5,
         vs = 1.0 - distances.get(m.id, 1.0)
         lane = getattr(m, "lane", "general") or "general"
         lane_boost = settings.LANE_RETRIEVAL_BOOST.get(lane, 1.0)
-        score = (0.6 * vs + 0.3 * float(bm_norm[i]) + 0.1 * m.decay_score) * lane_boost
+        fts_hit = 1.0 if m.id in fts_hits else 0.0
+        score = (settings.RETRIEVAL_W_VECTOR * vs
+                 + settings.RETRIEVAL_W_BM25 * float(bm_norm[i])
+                 + settings.RETRIEVAL_W_FTS * fts_hit
+                 + settings.RETRIEVAL_W_DECAY * m.decay_score) * lane_boost
         scored_items.append((score, m))
+
+    # 追加召回：FTS 命中但未进向量候选的 active 记忆（并列召回，ADR-0008 决策 1）
+    ranked_ids = {m.id for _, m in scored_items}
+    extra_ids = fts_hits - ranked_ids
+    if extra_ids:
+        with db.get_session() as s:
+            extra = s.exec(select(MemoryItem)
+                           .where(MemoryItem.id.in_(extra_ids),
+                                  MemoryItem.status == "active")).all()
+        for m in extra:
+            scored_items.append(
+                (settings.RETRIEVAL_W_FTS + settings.RETRIEVAL_W_DECAY * m.decay_score, m))
 
     scored_items.sort(key=lambda x: -x[0])
     candidates = scored_items[:fetch_n]
 
-    # Step 4: Reranker（可选）
+    # Step 5: Reranker（可选）
     if use_rerank and settings.RERANKER_ENABLED and candidates:
         docs = [m.content for _, m in candidates]
         reranked = rerank(query, docs, top_k)
