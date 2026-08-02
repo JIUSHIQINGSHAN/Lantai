@@ -1,15 +1,11 @@
+"""检查点 API——薄 handler，逻辑下沉 evolution_service（F13 补齐）"""
 from fastapi import APIRouter
-from sqlmodel import select
-from remembrance.models.tables import MemoryCheckpoint
-from remembrance.storage import db
+
+from remembrance.services.evolution_service import list_checkpoints
 
 router = APIRouter()
 
+
 @router.get("/checkpoint")
-def list_checkpoints(memory_id: str, limit: int = 20):
-    with db.get_session() as s:
-        rows = s.exec(select(MemoryCheckpoint)
-                      .where(MemoryCheckpoint.memory_id == memory_id)
-                      .order_by(MemoryCheckpoint.version.desc())
-                      .limit(limit)).all()
-        return {"checkpoints": [r.model_dump(mode="json") for r in rows]}
+def list_checkpoints_route(memory_id: str, limit: int = 20):
+    return list_checkpoints(memory_id, limit)
