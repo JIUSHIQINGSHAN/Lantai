@@ -106,6 +106,9 @@ class Settings(BaseSettings):
     SSRF_MAX_BYTES: int = 5 * 1024 * 1024  # 5MB
     RSS_TIMEOUT: int = 30
 
+    # 备份恢复
+    BACKUP_MANIFEST_VERSION: str = "0.3.3"
+
     def model_post_init(self, __context):
         """DATABASE_URL / CHROMADB_PATH 未显式设置时从 REMEMBRANCE_HOME 推导。"""
         home = Path(self.REMEMBRANCE_HOME) if self.REMEMBRANCE_HOME else _REPO_ROOT

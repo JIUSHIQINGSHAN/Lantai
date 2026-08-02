@@ -1,7 +1,11 @@
-"""恢复脚本——停服 → 覆盖文件 → 重启"""
+"""恢复脚本——停服确认(fail-closed) → 路径限定 → manifest 校验 → 原子换入"""
 import argparse
+import hashlib
+import json
+import os
 import shutil
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -20,26 +24,78 @@ def find_latest_backup() -> Path:
     return dirs[0]
 
 
-def restore(src: str) -> str:
-    """从指定目录恢复。"""
-    src_dir = Path(src)
-    if not src_dir.exists():
+def validate_backup_path(src: Path, home: Path) -> None:
+    """备份目录必须位于 home/backups 下，且全路径无 symlink。"""
+    backups_root = (home / "backups").resolve()
+    try:
+        resolved = src.resolve(strict=True)
+    except FileNotFoundError:
         raise FileNotFoundError(f"backup not found: {src}")
+    if backups_root not in resolved.parents:
+        raise ValueError(f"backup must be under {backups_root}: {resolved}")
+    for part in list(resolved.parents) + [resolved]:
+        if part.is_symlink():
+            raise ValueError(f"symlink not allowed in backup path: {part}")
 
+
+def verify_manifest(src_dir: Path) -> None:
+    """校验 manifest.json 存在且所有文件 hash 一致。"""
+    manifest_path = src_dir / "manifest.json"
+    if not manifest_path.exists():
+        raise ValueError("manifest.json missing (backup created by v0.3.3+)")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for rel, digest in manifest["files"].items():
+        p = src_dir / rel
+        if not p.exists():
+            raise ValueError(f"file missing: {rel}")
+        if hashlib.sha256(p.read_bytes()).hexdigest() != digest:
+            raise ValueError(f"hash mismatch: {rel}")
+
+
+def service_online(port: int) -> bool:
+    """fail-closed 停服探测：只有明确连接被拒才视为停服；超时/异常视为在线。"""
+    try:
+        with urllib.request.urlopen(f"http://localhost:{port}/health", timeout=1) as r:
+            return r.status == 200
+    except urllib.error.URLError as e:
+        if isinstance(e.reason, ConnectionRefusedError):
+            return False
+        return True
+    except Exception:
+        return True
+
+
+def restore(src: str) -> str:
+    """从指定目录恢复（路径限定 + manifest 校验 + 原子换入）。"""
+    src_dir = Path(src)
     home = Path(settings.REMEMBRANCE_HOME) if settings.REMEMBRANCE_HOME else Path(".")
 
-    # 恢复 SQLite
+    validate_backup_path(src_dir, home)
+    verify_manifest(src_dir)
+
+    # SQLite：临时文件 + os.replace 原子换入
     db_backup = src_dir / "remembrance.db"
     if db_backup.exists():
-        shutil.copy2(db_backup, home / "remembrance.db")
+        tmp = home / ".restore-tmp.db"
+        shutil.copy2(db_backup, tmp)
+        os.replace(tmp, home / "remembrance.db")
 
-    # 恢复 ChromaDB
+    # ChromaDB：整体目录原子换入（旧目录先移走，失败可回滚）
     chroma_backup = src_dir / ".chromadb"
     if chroma_backup.exists():
-        chroma_dest = home / ".chromadb"
-        if chroma_dest.exists():
-            shutil.rmtree(chroma_dest)
-        shutil.copytree(chroma_backup, chroma_dest)
+        old = home / ".chromadb"
+        old_tmp = home / ".chromadb.old-tmp"
+        new_tmp = home / ".chromadb.new-tmp"
+        if old_tmp.exists():
+            shutil.rmtree(old_tmp)
+        if new_tmp.exists():
+            shutil.rmtree(new_tmp)
+        if old.exists():
+            os.replace(old, old_tmp)
+        shutil.copytree(chroma_backup, new_tmp)
+        os.replace(new_tmp, old)
+        if old_tmp.exists():
+            shutil.rmtree(old_tmp)
 
     print(f"Restore completed from: {src_dir}")
     return str(home)
@@ -51,18 +107,17 @@ def main():
     parser.add_argument("--force", action="store_true", help="服务运行中也强制恢复")
     args = parser.parse_args()
 
-    # 停服保护：服务在线时拒绝热恢复（SQLite/Chroma 写入竞争）
-    try:
-        with urllib.request.urlopen(
-                f"http://localhost:{settings.PORT}/health", timeout=1) as r:
-            if r.status == 200 and not args.force:
-                print("[restore] 服务正在运行，请先停止服务再恢复（或加 --force）")
-                return 1
-    except Exception:
-        pass  # 服务未运行，安全
+    # 停服保护：fail-closed——探测失败/超时一律视为服务可能在线，拒绝热恢复
+    if service_online(settings.PORT) and not args.force:
+        print("[restore] 服务可能正在运行（含探测失败情况）。请先停止服务，或加 --force")
+        return 1
 
     backup_dir = Path(args.backup_dir) if args.backup_dir else find_latest_backup()
-    restore(str(backup_dir))
+    try:
+        restore(str(backup_dir))
+    except (ValueError, FileNotFoundError) as e:
+        print(f"[restore] 拒绝恢复: {e}")
+        return 1
     return 0
 
 
