@@ -1,0 +1,17 @@
+# Docker build context 排除项（审计 M6）：防止运行数据/虚拟环境/测试进入镜像上下文
+.env
+*.db
+.chromadb/
+.venv*/
+.audit*/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+.git
+.github
+tests/
+docs/
+remembrance_system.egg-info/
+build/
+dist/
+*.log

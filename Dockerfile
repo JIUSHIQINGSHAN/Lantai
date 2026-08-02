@@ -35,6 +35,10 @@ ENV PORT=8767
 # 容器需对外可达故绑 0.0.0.0——必须同时注入 API_KEY，否则 assert_secure_binding 拒绝启动
 ENV HOST=0.0.0.0
 
+# 非 root 运行（审计 M6）：最小权限
+RUN useradd -m -u 1001 appuser && mkdir -p /data && chown -R appuser:appuser /data
+USER appuser
+
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8767/health')" || exit 1
