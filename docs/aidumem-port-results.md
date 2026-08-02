@@ -21,7 +21,7 @@
 | ADR 产出 | 7 份（0001-0007） |
 | 新增/修改 Python 模块 | 44 个（git diff 2966b3d..HEAD 非测试 .py 实测） |
 | 新增测试 | 39 个（14+5+15+3+2），全绿 |
-| 全量测试通过率 | 95/97（2 个预存 bug 非本次引入） |
+| 全量测试通过率 | 110/112（2 个预存 bug 非本次引入） |
 | 零回归 | ✅ |
 
 ---
@@ -138,7 +138,10 @@ scripts/
 | `test_prefilter.py` | 16 | 14✅ 2❌ (预存 bug) |
 | `test_p0.py` | 7 | ✅ 全绿（v0.3.2 重写为 fts/hybrid 层单元测试） |
 | `test_reranker.py` | 8 | ✅ 全绿 |
-| **总计** | **97** | **95✅ 2❌** |
+| `test_ssrf.py` | 4 | ✅ 全绿（v0.3.3 新增，SSRF 防护） |
+| `test_ops.py` | 5 | ✅ 全绿（v0.3.3 新增，备份/恢复加固） |
+| `test_mcp.py` | 6 | ✅ 全绿（v0.3.3 新增，MCP 协议校验） |
+| **总计** | **112** | **110✅ 2❌** |
 
 2 个预存 bug（非 v0.3.2 引入），经基线 d579d35 复现确认：
 - `test_prefilter.py`: 短查询/随机查询行为变化（v0.2.0 遗留，另立项）
@@ -216,3 +219,15 @@ scripts/
 | 3 | (见 git log) | test_p0 重写为单元测试；修复 FTS schema、Chronos 时区、BM25 ptp 三个潜在 bug |
 
 附带记录：FTS5 当前零生产调用方（仅 init，未接入写入/检索链路），另立项决策接入或移除。执行方案见 `docs/plans/v0.3.2-p0-remediation-plan.md`。
+
+## v0.3.3 P1 修复
+
+基于 `v0.3.1-audit-report.md` P1 项：
+
+| Wave | Commit | 范围 |
+|------|--------|------|
+| 1 | `ed90b24` | SSRF 防护：RSS 抓取协议白名单 + 私网/回环阻断 + 限长 |
+| 2 | `fa98572` | 备份 manifest + online backup；恢复路径限定 + hash 校验 + 原子换入 + fail-closed |
+| 3 | `701c903` | MCP 输入校验 + JSON-RPC 错误隔离；SearchReq 限界；/stats SQL 聚合；/health/deep 空 key 跳过 |
+
+新增测试：test_ssrf 4 / test_ops 5 / test_mcp 6，全部通过。执行方案见 `docs/plans/v0.3.3-p1-remediation-plan.md`。
