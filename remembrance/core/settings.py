@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     # 数据根目录——为空时通过 __file__ 自解析仓库根
     REMEMBRANCE_HOME: str = ""
 
+    HOST: str = "127.0.0.1"  # 默认只监听回环；非回环部署必须同时设置 API_KEY
     PORT: int = 8767
     DATABASE_URL: str = ""  # 为空时从 REMEMBRANCE_HOME 自动推导
 

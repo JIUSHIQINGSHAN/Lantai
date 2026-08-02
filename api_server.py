@@ -4,7 +4,7 @@ from fastapi import FastAPI, Depends
 from remembrance.core.settings import settings
 from remembrance.core.logger import logger
 from remembrance.core.scheduler import start_scheduler, stop_scheduler
-from remembrance.core.auth import verify_api_key
+from remembrance.core.auth import verify_api_key, assert_secure_binding
 from remembrance.storage.db import init_db
 
 from remembrance.api import (
@@ -22,10 +22,11 @@ from remembrance.api import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    assert_secure_binding()
     settings.validate_config()
     init_db()
     start_scheduler()
-    logger.info("Remembrance-System started on port %s", settings.PORT)
+    logger.info("Remembrance-System started on %s:%s", settings.HOST, settings.PORT)
     yield
     stop_scheduler()
 
@@ -52,4 +53,4 @@ for router in protected_routers:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=settings.PORT)
+    uvicorn.run(app, host=settings.HOST, port=settings.PORT)

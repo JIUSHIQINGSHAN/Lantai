@@ -32,6 +32,8 @@ VOLUME ["/data"]
 # 环境变量
 ENV REMEMBRANCE_HOME=/data
 ENV PORT=8767
+# 容器需对外可达故绑 0.0.0.0——必须同时注入 API_KEY，否则 assert_secure_binding 拒绝启动
+ENV HOST=0.0.0.0
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
