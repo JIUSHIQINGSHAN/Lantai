@@ -19,9 +19,9 @@
 | 决策票据（Phase 2） | 16/16 resolved |
 | 实施票据（Phase 4-5） | 14/14 resolved |
 | ADR 产出 | 7 份（0001-0007） |
-| 新增/修改 Python 模块 | 22 个 |
-| 新增测试 | 32 个（14+5+13），全绿 |
-| 全量测试通过率 | 68/74（6 个预存 bug 非本次引入） |
+| 新增/修改 Python 模块 | 44 个（git diff 2966b3d..HEAD 非测试 .py 实测） |
+| 新增测试 | 39 个（14+5+15+3+2），全绿 |
+| 全量测试通过率 | 88/94（6 个预存 bug 非本次引入） |
 | 零回归 | ✅ |
 
 ---
@@ -130,14 +130,17 @@ scripts/
 |----------|--------|------|
 | `test_settings.py` | 14 | ✅ 全绿 |
 | `test_infra.py` | 5 | ✅ 全绿 |
-| `test_features.py` | 13 | ✅ 全绿 |
+| `test_features.py` | 15 | ✅ 全绿 |
+| `test_dedup.py` | 3 | ✅ 全绿 |
+| `test_shell_hook.py` | 2 | ✅ 全绿 |
 | `test_e2e.py` | 18 | ✅ 全绿 |
 | `test_auth.py` | 6 | ✅ 全绿 |
-| `test_prefilter.py` | 8 | 6✅ 2❌ (预存 bug) |
-| `test_p0.py` | 10 | 4✅ 6❌ (预存 bug) |
-| **总计** | **74** | **68✅ 6❌** |
+| `test_prefilter.py` | 16 | 14✅ 2❌ (预存 bug) |
+| `test_p0.py` | 7 | 3✅ 4❌ (预存 bug) |
+| `test_reranker.py` | 8 | ✅ 全绿 |
+| **总计** | **94** | **88✅ 6❌** |
 
-6 个预存 bug（非本次引入）：
+6 个预存 bug（非本次引入），经基线 d579d35 复现确认：
 - `test_p0.py`: `resp.json["results"]` 缺括号（TypeError）+ FTS5 未 mock
 - `test_prefilter.py`: 短查询/随机查询行为变化
 
@@ -185,3 +188,20 @@ scripts/
 3. **去重阈值标定**——用 bge-m3 对中文样本跑余弦，实测 0.80/0.65 是否合适
 4. **arm64 Docker 镜像**——当前仅 amd64，后续加 arm64
 5. **Fog 出票**——salience / autodream / checkpoint 三项后续决策
+
+---
+
+## v0.3.1 审计修复
+
+基于 `docs/aidumem-port-results.md` 独立审计报告（⚠️ 有条件通过），执行 7 Wave 修复：
+
+| Wave | Commit | 范围 |
+|------|--------|------|
+| 1 | `f9f428c` | pyproject deps+version, validate_config API_KEY warn, backup timestamp dir, Dockerfile real wheel |
+| 2 | `40f330d` | fastpath chain via evolve_worker in_, wire dedup three-state, coalesce idle job, /stats worker times |
+| 3 | `e8fab1f` | shell_hook 2s hard timeout, standard MCP protocol, upgrade_check.py, restore stop-guard |
+| 4 | `a31bf87` | sink checkpoint/edges logic to service layer |
+| 5 | `951e238` | dedup/forgetting/shell_hook tests, fix hollow trace test |
+| 6 | (this commit) | correct results doc numbers, resolve tickets 04-14, update glossary |
+
+修复后全量测试：88 passed / 6 failed（6 个预存 bug 不变）。
