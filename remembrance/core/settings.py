@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     LLM_MODEL: str = "gpt-4o-mini"
-    EMBED_MODEL: str = "text-embedding-3-small"
+    EMBED_MODEL: str = "BAAI/bge-m3"
 
     INGEST_CRON_MINUTES: int = 60
     EVOLVE_CRON_MINUTES: int = 30

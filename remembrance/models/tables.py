@@ -54,7 +54,6 @@ class MemoryItem(SQLModel, table=True):
     content: str
     structure: dict = Field(default_factory=dict, sa_column=Column(JSON))
     tags: list = Field(default_factory=list, sa_column=Column(JSON))
-    embedding: list = Field(default_factory=list, sa_column=Column(JSON))
     confidence: float = 0.5
     importance: float = 0.5
     tier: str = "working"

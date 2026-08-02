@@ -48,7 +48,7 @@ def apply_proposal(proposal_id: str) -> dict:
             mem = MemoryItem(
                 id=new_id("mem"),
                 memory_type=mem_type, key=key or content[:60], content=content,
-                embedding=emb, tier=tier, source_ids=source_ids,
+                tier=tier, source_ids=source_ids,
                 confidence=prop.confidence, importance=0.5,
                 lane=lane,
             )
@@ -61,7 +61,6 @@ def apply_proposal(proposal_id: str) -> dict:
         else:
             before = existing.model_dump(mode="json")
             existing.content = content
-            existing.embedding = emb
             existing.version += 1
             existing.updated_at = utcnow()
             existing.source_ids = list(set(existing.source_ids + prop.evidence_ids))

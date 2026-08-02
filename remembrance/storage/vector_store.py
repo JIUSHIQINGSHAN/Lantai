@@ -31,6 +31,7 @@ class ChromaVectorStore(VectorStore):
         )
         self._collection = self._client.get_or_create_collection(
             name="remembrance_vectors",
+            metadata={"hnsw:space": "cosine"},
         )
 
     def add(self, ids: list[str], embeddings: list[list[float]], metadatas: list[dict]):

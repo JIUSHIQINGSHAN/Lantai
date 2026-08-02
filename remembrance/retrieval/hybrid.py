@@ -1,5 +1,5 @@
+import jieba
 from rank_bm25 import BM25Okapi
-import numpy as np
 from sqlmodel import select
 
 from remembrance.llm.client import embed
@@ -9,13 +9,6 @@ from remembrance.core.settings import settings
 from remembrance.retrieval.intent import classify_intent
 from remembrance.retrieval.reranker import rerank
 from remembrance.storage.vector_store import get_vector_store
-
-
-def _cos(a, b):
-    a, b = np.array(a), np.array(b)
-    if not a.any() or not b.any():
-        return 0.0
-    return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8))
 
 
 def hybrid_search(query: str, top_k: int = 5,
@@ -62,15 +55,17 @@ def hybrid_search(query: str, top_k: int = 5,
     if not items:
         return []
 
-    # Step 3: BM25 + 向量 + 衰减 混合打分
-    corpus = [m.content.split() for m in items]
+    # Step 3: BM25 + 向量距离 + 衰减 混合打分
+    # 向量距离来自 ChromaDB（cosine space），similarity = 1 - distance
+    distances = {r["id"]: r["distance"] for r in vector_results}
+    corpus = [jieba.lcut(m.content) for m in items]
     bm25 = BM25Okapi(corpus)
-    bm_scores = bm25.get_scores(query.split())
+    bm_scores = bm25.get_scores(jieba.lcut(query))
     bm_norm = (bm_scores - bm_scores.min()) / (bm_scores.ptp() + 1e-8)
 
     scored_items = []
     for i, m in enumerate(items):
-        vs = _cos(qv, m.embedding) if m.embedding else 0.0
+        vs = 1.0 - distances.get(m.id, 1.0)
         lane = getattr(m, "lane", "general") or "general"
         lane_boost = settings.LANE_RETRIEVAL_BOOST.get(lane, 1.0)
         score = (0.6 * vs + 0.3 * float(bm_norm[i]) + 0.1 * m.decay_score) * lane_boost

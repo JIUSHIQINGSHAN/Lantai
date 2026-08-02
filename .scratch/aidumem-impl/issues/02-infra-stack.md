@@ -4,10 +4,10 @@
 
 **Blocked by:** 01 — P0 修复 + 零硬编码
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `MemoryItem.embedding` JSON 列删除，向量只存 ChromaDB
-- [ ] cosine 用 ChromaDB 返回的 distance，不在 Python 里算
-- [ ] `hybrid_search` 中 BM25 分词用 `jieba.lcut()`，不用 `content.split()`
-- [ ] `settings.EMBED_MODEL` 默认值为 `BAAI/bge-m3`
-- [ ] 所有现有测试通过
+- [x] `MemoryItem.embedding` JSON 列删除，向量只存 ChromaDB
+- [x] cosine 用 ChromaDB 返回的 distance（cosine space），不在 Python 里算
+- [x] `hybrid_search` 中 BM25 分词用 `jieba.lcut()`，不用 `content.split()`
+- [x] `settings.EMBED_MODEL` 默认值为 `BAAI/bge-m3`
+- [x] 5 个新测试全绿，68/74 全量测试通过（6 个预存 bug 非 T02 引入）
