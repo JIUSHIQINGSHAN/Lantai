@@ -15,10 +15,16 @@ build/
 dist/
 *.egg
 
-# 虚拟环境
-.venv/
+# 虚拟环境（含审计/验证环境）
+.venv*/
 venv/
 env/
+
+# 运行时向量库数据
+.chromadb/
+
+# 审计基线快照
+.audit*/
 
 # IDE
 .vscode/
