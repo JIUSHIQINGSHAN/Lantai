@@ -3,7 +3,7 @@ T04-T11: 功能测试——coalesce / fastpath / search_trace / health / dedup
 """
 import json
 import warnings
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -31,6 +31,9 @@ def client():
                return_value={"intent": "fact_lookup", "reason": "test"}), \
          patch("remembrance.retrieval.reranker.rerank", return_value=[]), \
          patch("remembrance.storage.vector_store.ChromaVectorStore"), \
+         patch("remembrance.retrieval.hybrid.embed", return_value=[[0.1]*8]), \
+         patch("remembrance.retrieval.hybrid.get_vector_store",
+               return_value=Mock(search=Mock(return_value=[]))), \
          patch("remembrance.parsing.extractor.chat_json",
                return_value={"summary": "test", "claims": [], "methods": [],
                              "constraints": [], "actions": [], "topic": [],
@@ -133,9 +136,48 @@ class TestSearchTrace:
         assert "trace" not in resp.json()
 
     def test_search_with_trace(self, client):
-        resp = client.post("/search?trace=true", json={"query": "test query here"})
+        resp = client.post("/search?trace=true", json={"query": "记得向量检索的方案"})
         assert resp.status_code == 200
         data = resp.json()
-        # trace 可能为空数组（如果 search 被预过滤拦截），但字段应存在
-        # 或者 results 为空时 trace 也应存在
-        # 只要不报错就 OK
+        assert "trace" in data
+        steps = {s["step"] for s in data["trace"]}
+        assert "intent" in steps
+
+
+class TestForgettingArchived:
+    """T16: forgetting archived 测试"""
+
+    def test_decay_below_threshold_auto_archived(self, client):
+        from datetime import timedelta
+        from remembrance.memory.forgetting import apply_forgetting
+        from remembrance.models.tables import MemoryItem
+        from remembrance.core.time import utcnow
+        from remembrance.core.ids import new_id
+        from sqlmodel import select
+        from remembrance.storage import db as db_mod
+
+        with db_mod.get_session() as s:
+            old = MemoryItem(
+                id=new_id("mem"),
+                memory_type="general", key="old_working",
+                content="临时事项已完成", lane="working",
+                status="active", importance=0.1, use_count=0,
+                decay_score=0.2,
+                last_used_at=utcnow() - timedelta(days=100),
+                created_at=utcnow() - timedelta(days=100))
+            s.add(old)
+            s.commit()
+            s.refresh(old)
+            mid = old.id
+
+        apply_forgetting()
+
+        with db_mod.get_session() as s:
+            mem = s.get(MemoryItem, mid)
+            assert mem.status == "archived"
+
+    def test_search_excludes_archived(self, client):
+        import inspect
+        from remembrance.retrieval import hybrid
+        src = inspect.getsource(hybrid)
+        assert '.where(MemoryItem.status == "active")' in src

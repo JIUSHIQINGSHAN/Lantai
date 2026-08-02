@@ -1,5 +1,5 @@
 import math
-from datetime import timedelta
+from datetime import timedelta, timezone
 from sqlmodel import select
 from remembrance.core.time import utcnow
 from remembrance.core.settings import settings
@@ -27,6 +27,8 @@ def apply_forgetting():
     with db.get_session() as s:
         for m in s.exec(select(MemoryItem).where(MemoryItem.status == "active")).all():
             last = m.last_used_at or m.created_at
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
             days = max(0.0, (now - last).total_seconds() / 86400.0)
             strength = _lane_strength(m.importance, m.use_count, m.lane)
             m.decay_score = math.exp(-days / strength)

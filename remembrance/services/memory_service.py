@@ -31,12 +31,13 @@ def _apply_dedup(s, title: str, content: str, lane: str) -> dict | None:
     if action == "insert" or target is None:
         return None
     if action == "merge":
-        target.last_accessed = utcnow()
+        target.last_used_at = utcnow()
         target.importance = min(1.0, target.importance + 0.1)
         s.add(target)
         s.commit()
         return {"dedup_action": "merge", "target_memory_id": target.id, "similarity": round(sim, 4)}
     prop = MemoryProposal(
+        id=new_id("prop"),
         target_memory_id=target.id,
         proposal_type="update",
         proposed_patch={"title": title, "content": content, "lane": lane},
