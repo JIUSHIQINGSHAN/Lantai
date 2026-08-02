@@ -26,6 +26,18 @@ def start_scheduler():
     _scheduler.add_job(run_forgetting_once, "interval",
                        hours=settings.FORGET_CRON_HOURS, id="forget")
 
+    # 参数建议（论文驱动优化·辅助模式）
+    if settings.PARAM_ADVICE_ENABLED:
+        from remembrance.workers.param_advice_worker import run_param_advice_once
+        from remembrance.parameters.runtime import refresh_runtime_params
+        _scheduler.add_job(run_param_advice_once, "interval",
+                           minutes=settings.PARAM_ADVICE_CRON_MINUTES,
+                           id="param_advice", replace_existing=True)
+        # 跨进程参数热更新（DB 为事实源，进程内轮询）
+        _scheduler.add_job(refresh_runtime_params, "interval",
+                           seconds=settings.PARAM_OVERRIDE_REFRESH_SECONDS,
+                           id="param_refresh", replace_existing=True)
+
     # F7: coalesce idle flush（每 2 秒检查一次空闲缓冲）
     if settings.COALESCE_ENABLED:
         from remembrance.ingestion.coalesce import get_coalesce_buffer

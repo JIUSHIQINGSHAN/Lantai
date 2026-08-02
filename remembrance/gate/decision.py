@@ -36,8 +36,12 @@ def decide(candidate_id: str) -> dict:
                     "conflicts": conflicts, "novelty": nv}
 
         if nv < 0.15:
-            return {"decision": GateDecision.REJECT,
-                    "reason": f"redundant, novelty={nv:.2f}"}
+            # 语义高度重叠 ≠ 丢弃：可能有增量信息（如新配置项）。
+            # 降级到 WORKING_ONLY，由提案系统走 update/merge 并入现有记忆，
+            # 而不是静默 reject 丢数据（落地实战发现：显卡 RTX3050 增量被误杀）。
+            return {"decision": GateDecision.WORKING_ONLY,
+                    "reason": f"low novelty {nv:.2f}, fallback to merge path",
+                    "novelty": nv, "conflicts": conflicts}
 
         if cand.actions:
             return {"decision": GateDecision.PROMOTE_PROCEDURAL,

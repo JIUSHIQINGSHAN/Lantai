@@ -121,6 +121,48 @@ class Settings(BaseSettings):
     # reranker 独立最小权限密钥；为空时回退 OPENAI_API_KEY（并记录警告）
     RERANKER_API_KEY: str = ""
 
+    # 参数建议系统（论文驱动优化·辅助模式）——自身不可被论文建议修改
+    PARAM_ADVICE_ENABLED: bool = True
+    PARAM_ADVICE_CRON_MINUTES: int = 30          # advice worker 兜底调度间隔
+    PARAM_ADVICE_MIN_PAPERS: int = 5             # 批量窗口：未处理论文数阈值
+    PARAM_ADVICE_MAX_WAIT_DAYS: int = 7          # 批量窗口：最老论文最大等待天数
+    PARAM_ADVICE_MAX_BATCH_SIZE: int = 10        # 单批最多论文数
+    PARAM_ADVICE_MIN_CONFIDENCE: float = 0.85    # 建议置信度阈值
+    PARAM_ADVICE_MAX_CHANGES: int = 6            # 单条建议最大变更数
+    PARAM_ADVICE_MAX_RETRIES: int = 3            # 网络失败重试上限（论文级）
+    PARAM_ADVICE_PROCESSING_STALE_MINUTES: int = 120  # 卡死 claim 恢复阈值
+    PARAM_OVERRIDE_REFRESH_SECONDS: float = 5.0  # 跨进程参数刷新轮询间隔
+
+    # 论文质量信号（可信度体系 L0，方向一）
+    PAPER_SIGNAL_ENABLED: bool = True
+    PAPER_SEASONED_DAYS: int = 60                # v1 预印本存活过初筛的天数阈值
+    TIER_WEIGHT: dict = {"A": 1.00, "B": 0.97, "C": 0.93, "D": 0.00}
+    QUORUM_BY_TIER: dict = {"A": 1, "B": 1, "C": 2}
+    DELTA_BUDGET_FACTOR: dict = {"A": 1.0, "B": 0.7, "C": 0.5}
+    OBSERVATION_DAYS_BY_TIER: dict = {"A": 3, "B": 5, "C": 7}
+    # 论文时效（方向三）
+    PAPER_STALE_WARN_MONTHS: int = 18
+    PAPER_STALE_BLOCK_MONTHS: int = 36
+    SUGGESTION_PENDING_TTL_DAYS: int = 30
+    PARAM_OVERRIDE_REVIEW_DAYS: int = 90
+    # 验证闭环（方向二）
+    EVAL_QUERYSET_SIZE: int = 200
+    EVAL_QUERYSET_WINDOW_DAYS: int = 90
+    EVAL_QUERYSET_TTL_DAYS: int = 180
+    EVAL_MIN_SAMPLES: int = 200
+    EVAL_MIN_FEEDBACK_SAMPLES: int = 30
+    EVAL_TOPK: int = 10
+    OBSERVATION_MAX_DAYS: int = 21
+    SHADOW_AUTO_ROLLBACK_ENABLED: bool = True
+    MAX_ACTIVE_SHADOW_WINDOWS: int = 1
+    # 矛盾显式化（方向四）
+    CONTRADICTION_QUORUM_BUMP: int = 1
+    # 验证回流（方向五）
+    PENALTY_FAIL_STREAK: int = 2
+    PENALTY_FAIL_RATE: float = 0.5
+    PENALTY_MIN_SAMPLES: int = 3
+    PENALTY_TTL_DAYS: int = 180
+
     def model_post_init(self, __context):
         """DATABASE_URL / CHROMADB_PATH 未显式设置时从 REMEMBRANCE_HOME 推导。"""
         home = Path(self.REMEMBRANCE_HOME) if self.REMEMBRANCE_HOME else _REPO_ROOT

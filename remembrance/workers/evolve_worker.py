@@ -17,12 +17,16 @@ def run_evolve_once():
 
     for cand in cands:
         result = decide(cand.id)
-        if result["decision"] in ("reject", "archive_conflict"):
+        if result["decision"] == "reject":
             with db.get_session() as s:
                 c = s.get(MemoryCandidate, cand.id)
                 c.status = "rejected"; s.add(c); s.commit()
             continue
 
+        # archive_conflict（硬矛盾）不再丢弃新信息：走提案路径，
+        # 由 proposer 生成 deprecate/update 纠正现有记忆。
+        # 落地实战教训：旧记忆是错误提取（1116GB），新信息正确（16GB）——
+        # 系统必须能"以新纠旧"，而不是把正确的纠正当矛盾丢掉。
         prop = propose_from_candidate(cand.id, result)
 
         # 自动应用规则：置信度足够高且无强冲突 → 自动 apply

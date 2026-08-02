@@ -17,6 +17,7 @@ from remembrance.api import (
     routes_health_router,
     routes_health_protected_router,
     routes_edges_router,
+    routes_param_advice_router,
 )
 
 
@@ -25,6 +26,12 @@ async def lifespan(app: FastAPI):
     assert_secure_binding()
     settings.validate_config()
     init_db()
+    # 启动时加载 DB 参数 override（论文驱动优化的当前生效配置）
+    from remembrance.parameters.runtime import load_runtime_params_at_startup
+    try:
+        load_runtime_params_at_startup()
+    except Exception:
+        logger.exception("load runtime params at startup failed (keep defaults)")
     start_scheduler()
     logger.info("Remembrance-System started on %s:%s", settings.HOST, settings.PORT)
     yield
@@ -46,6 +53,7 @@ protected_routers = [
     routes_evolution_router,
     routes_edges_router,
     routes_health_protected_router,
+    routes_param_advice_router,
 ]
 for router in protected_routers:
     app.include_router(router, dependencies=[Depends(verify_api_key)])

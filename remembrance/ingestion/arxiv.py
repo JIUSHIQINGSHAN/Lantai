@@ -4,8 +4,10 @@ import feedparser
 from datetime import datetime, timezone
 
 from remembrance.core.ids import new_id
+from remembrance.core.time import utcnow
 from remembrance.models.tables import RawDocument
 from remembrance.ingestion.base import SourceAdapter
+from remembrance.parameters.paper_signals import extract_quality_signals
 
 
 class ArxivAdapter(SourceAdapter):
@@ -20,9 +22,16 @@ class ArxivAdapter(SourceAdapter):
         r = httpx.get(url, timeout=30)
         feed = feedparser.parse(r.text)
         out: list[RawDocument] = []
+        fetched_at = utcnow()
         for e in feed.entries:
             content = (e.get("summary") or "").strip()
             h = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            # 质量信号草稿借道 meta 传递（自由字段，最终落独立表 paper_quality_signal）
+            try:
+                draft = extract_quality_signals(e, fetched_at=fetched_at)
+                signal_payload = draft.model_dump(mode="json")
+            except Exception:
+                signal_payload = None  # 解析失败 → ingest_worker 落保底 tier D
             out.append(RawDocument(
                 id=new_id("doc"),
                 source_type="paper",
@@ -35,6 +44,7 @@ class ArxivAdapter(SourceAdapter):
                 lang="en",
                 content_hash=h,
                 content=content,
-                meta={"raw": {"arxiv_id": e.get("id")}},
+                meta={"raw": {"arxiv_id": e.get("id")},
+                      "quality_signal": signal_payload},
             ))
         return out

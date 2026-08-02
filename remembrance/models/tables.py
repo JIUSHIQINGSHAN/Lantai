@@ -146,3 +146,91 @@ class IngestJob(SQLModel, table=True):
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     error: str = ""
+
+
+# ---------------------------------------------------------------- 参数建议（论文驱动优化）
+
+class ParamAdviceRun(SQLModel, table=True):
+    """一次 LLM 建议生成运行。"""
+    __tablename__ = "param_advice_run"
+
+    id: str = Field(primary_key=True)
+    status: str = "processing"  # processing|suggested|abstained|failed
+    source_document_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    base_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    base_snapshot_hash: str = ""
+    registry_version: str = ""
+    llm_output: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    error_code: Optional[str] = None
+    created_at: datetime = Field(default_factory=utcnow)
+    finished_at: Optional[datetime] = None
+
+
+class ParamAdvicePaper(SQLModel, table=True):
+    """论文入队状态机：new|processing|retry|consumed|dead。"""
+    __tablename__ = "param_advice_paper"
+
+    id: str = Field(primary_key=True)
+    raw_document_id: str = Field(
+        index=True, unique=True, foreign_key="rawdocument.id")
+    state: str = Field(default="new", index=True)
+    attempt_count: int = 0
+    run_id: Optional[str] = Field(default=None, index=True)
+    available_at: datetime = Field(default_factory=utcnow)
+    claimed_at: Optional[datetime] = None
+    consumed_at: Optional[datetime] = None
+    last_error_code: Optional[str] = None
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ParamSuggestion(SQLModel, table=True):
+    """参数调整建议（pending → accepted/rejected，禁止反向）。"""
+    __tablename__ = "param_suggestion"
+
+    id: str = Field(primary_key=True)
+    run_id: str = Field(index=True, foreign_key="param_advice_run.id")
+    status: str = Field(default="pending", index=True)
+    confidence: float = 0.0
+    title: str = ""
+    summary: str = ""
+    rationale: str = ""
+    expected_benefit: str = ""
+    risk_notes: str = ""
+    validation_plan: str = ""
+    source_document_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    evidence: list = Field(default_factory=list, sa_column=Column(JSON))
+    changes: list = Field(default_factory=list, sa_column=Column(JSON))
+    before_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    after_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    base_snapshot_hash: str = Field(index=True)
+    registry_version: str = ""
+    fingerprint: str = Field(unique=True, index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    decided_at: Optional[datetime] = None
+    decided_by: Optional[str] = None
+    decision_note: Optional[str] = None
+    override_id: Optional[str] = Field(
+        default=None, foreign_key="param_override.id")
+
+
+class ParamOverride(SQLModel, table=True):
+    """不可变追加式变更事件：apply / rollback。当前有效配置 = max(revision).after_snapshot。"""
+    __tablename__ = "param_override"
+
+    id: str = Field(primary_key=True)
+    revision: int = Field(unique=True, index=True)
+    operation: str = Field(index=True)  # apply | rollback
+    suggestion_id: Optional[str] = Field(
+        default=None, foreign_key="param_suggestion.id")
+    rollback_of_override_id: Optional[str] = Field(
+        default=None, foreign_key="param_override.id")
+    before_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    after_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    before_snapshot_hash: str = ""
+    after_snapshot_hash: str = Field(index=True)
+    changes: list = Field(default_factory=list, sa_column=Column(JSON))
+    registry_version: str = ""
+    actor: str = ""
+    note: Optional[str] = None
+    created_at: datetime = Field(default_factory=utcnow)
