@@ -9,7 +9,7 @@
 让 AI 在对的时间，找到对的回忆。
 ```
 
-[![Version](https://img.shields.io/badge/version-0.3.6-blue.svg)](https://github.com/JIUSHIQINGSHAN/Remembrance-System)
+[![Version](https://img.shields.io/badge/version-0.3.7-blue.svg)](https://github.com/JIUSHIQINGSHAN/Remembrance-System)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-yellow.svg)](https://www.python.org/)
 [![Tests](https://img.shields.io/badge/tests-120%2F120-green.svg)](docs/aidumem-port-results.md)
 [![改编自](https://img.shields.io/badge/based%20on-aiduMEM-orange.svg)](https://github.com/monkey2jack/aiduMEM)
