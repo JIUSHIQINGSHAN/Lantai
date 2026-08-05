@@ -1,0 +1,2 @@
+[permissions]
+allow = ["Bash=$py = '.venv-verify\\Scripts\\python.exe'; if (Test-Path $py) { & $py -m pytest tests/ -q --co -q 2>&1 | Select-Object -Last 4 } else { Write-Output 'no .venv-verify python'; Get-ChildItem -Directory .venv* | Select-Object Name }"]
