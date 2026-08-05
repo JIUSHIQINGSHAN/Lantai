@@ -1,13 +1,17 @@
 from fastapi import APIRouter, HTTPException
 
 from remembrance.models.schemas import AddMemoryReq
-from remembrance.services.memory_service import add_memory, get_core_memory, put_core_memory
+from remembrance.services.memory_service import (
+    add_memory, add_memory_async, get_core_memory, put_core_memory,
+)
 
 router = APIRouter()
 
 
 @router.post("/add")
-def add_memory_route(req: AddMemoryReq):
+def add_memory_route(req: AddMemoryReq, async_mode: bool = False):
+    if async_mode:
+        return add_memory_async(req)
     return add_memory(req)
 
 

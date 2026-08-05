@@ -8,6 +8,7 @@ from remembrance.models.enums import ProposalStatus, MemoryTier
 from remembrance.models.tables import (MemoryProposal, MemoryItem, MemoryCheckpoint, MemoryEdge)
 from remembrance.storage.fts import sync_fts
 from remembrance.storage import db
+from remembrance.memory.decay_class import infer_decay_class
 
 
 def _make_checkpoint(session, mem: MemoryItem, before: dict,
@@ -52,6 +53,8 @@ def apply_proposal(proposal_id: str) -> dict:
                 tier=tier, source_ids=source_ids,
                 confidence=prop.confidence, importance=0.5,
                 lane=lane,
+                decay_class=infer_decay_class(key or "", content,
+                                              patch.get("metadata")),
             )
             s.add(mem); s.flush()
             _make_checkpoint(s, mem, {}, prop.id, trigger="gate")

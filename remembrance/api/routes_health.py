@@ -15,7 +15,7 @@ protected_router = APIRouter()
 
 @router.get("/health")
 def health():
-    """简单存活探针——Docker HEALTHCHECK 用，公开"""
+    """简单存活探针——Docker HEALTHCHECK 用，公开；不暴露内部状态"""
     return {"ok": True}
 
 
@@ -82,4 +82,27 @@ def stats():
         "by_tier": {k: v for k, v in tier_rows},
         "coalesce_buffer": buffer,
         "workers": scheduler.WORKER_LAST_RUN,
+    }
+
+
+@protected_router.get("/usage")
+def usage():
+    """最近 7 天每日新增记忆数——单条 GROUP BY，不整表加载；缺日补零。"""
+    from datetime import timedelta
+    from sqlmodel import func
+    from remembrance.core.time import utcnow
+    base = utcnow().date() - timedelta(days=6)
+    since = utcnow() - timedelta(days=6)  # 与报告窗口一致（today-6 .. today）
+    with db.get_session() as s:
+        rows = s.exec(
+            select(func.date(MemoryItem.created_at), func.count())
+            .where(MemoryItem.created_at >= since)
+            .group_by(func.date(MemoryItem.created_at))
+        ).all()
+    daily = {str(d): c for d, c in rows}
+    return {
+        "daily_new": {
+            str(base + timedelta(days=i)): daily.get(str(base + timedelta(days=i)), 0)
+            for i in range(7)
+        }
     }

@@ -6,7 +6,7 @@ from remembrance.gate.prefilter import relevance_check
 router = APIRouter()
 
 @router.post("/search")
-def search(req: SearchReq, trace: bool = False):
+def search(req: SearchReq, trace: bool = False, explain: bool = False):
     # Step 1: 启发式闸门预过滤
     gate = relevance_check(req.query)
     if not gate["needs_memory"]:
@@ -18,7 +18,8 @@ def search(req: SearchReq, trace: bool = False):
     import time
     t0 = time.perf_counter()
     result = hybrid_search(req.query, req.top_k, req.memory_types,
-                           req.lanes, req.use_rerank, trace=trace)
+                           req.lanes, req.use_rerank, trace=trace,
+                           explain=explain)
     latency_ms = int((time.perf_counter() - t0) * 1000)
     if trace and isinstance(result, tuple):
         results, trace_steps = result

@@ -12,6 +12,8 @@ from remembrance.parsing.extractor import extract_candidate
 from remembrance.parsing.fastpath import fastpath_check
 from remembrance.ingestion.coalesce import get_coalesce_buffer
 from remembrance.gate.dedup import find_similar
+from remembrance.memory.decay_class import DECAY_CLASS_HALFLIFE
+from remembrance.evolution.promoter import _make_checkpoint
 from remembrance.storage import db
 from remembrance.storage.vector_store import get_vector_store
 
@@ -93,6 +95,7 @@ def _create_candidate_direct(req: AddMemoryReq, fp_data: dict) -> dict:
             id=new_id("doc"), source_type=req.source_type,
             source_id=req.url or h[:12], url=req.url,
             title=req.title, content=req.content, content_hash=h,
+            meta=req.metadata,
         )
         s.add(doc); s.commit(); s.refresh(doc)
 
@@ -126,6 +129,7 @@ def _create_candidate_with_extraction(req: AddMemoryReq) -> dict:
                 id=new_id("doc"), source_type=req.source_type,
                 source_id=req.url or h[:12], url=req.url,
                 title=req.title, content=req.content, content_hash=h,
+                meta=req.metadata,
             )
             s.add(doc); s.commit(); s.refresh(doc)
 
@@ -141,6 +145,48 @@ def _create_candidate_with_extraction(req: AddMemoryReq) -> dict:
         )
         s.add(cand); s.commit(); s.refresh(cand)
         return {"document_id": doc.id, "candidate_id": cand.id}
+
+
+def add_memory_async(req: AddMemoryReq) -> dict:
+    """异步批量写入（幂等）：COALESCE_ENABLED=false 时降级同步，不丢数据。
+
+    COALESCE_ENABLED=true 时入队；若入队即触发冲刷，在此处持久化
+    combined_content（缓冲数据绝不静默丢弃），失败则清除指纹允许重试。
+    """
+    buffer = get_coalesce_buffer()
+    if not settings.COALESCE_ENABLED:
+        result = add_memory(req)
+        return {"status": "synced", "job_id": buffer.job_id("default", req.lane, req.content),
+                **result}
+    result = buffer.add_async("default", req.lane, req.content, req.title)
+    if result.get("status") == "flushed":
+        detail = result.get("detail") or {}
+        req_copy = req.model_copy()
+        req_copy.content = detail.get("combined_content", req.content)
+        try:
+            persisted = _create_candidate_with_extraction(req_copy)
+        except Exception:
+            buffer.forget_fingerprint(result["job_id"])
+            raise
+        return {"status": "flushed", "job_id": result["job_id"], **persisted}
+    return result
+
+
+def set_decay_class(memory_id: str, decay_class: str) -> dict:
+    """手动调整记忆衰减类；写 MemoryCheckpoint 以便回滚。"""
+    if decay_class not in DECAY_CLASS_HALFLIFE:
+        raise ValueError(f"invalid decay_class: {decay_class}")
+    with db.get_session() as s:
+        mem = s.get(MemoryItem, memory_id)
+        if not mem:
+            return {"ok": False, "reason": "memory missing"}
+        before = {"decay_class": mem.decay_class}
+        mem.decay_class = decay_class
+        mem.updated_at = utcnow()
+        _make_checkpoint(s, mem, before, "", trigger="decay_class")
+        s.add(mem)
+        s.commit()
+        return {"ok": True, "memory_id": memory_id, "decay_class": decay_class}
 
 
 def get_core_memory(namespace: str = "default") -> dict:

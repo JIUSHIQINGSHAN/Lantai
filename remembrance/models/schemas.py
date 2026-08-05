@@ -10,6 +10,7 @@ class AddMemoryReq(BaseModel):
     authors: list[str] = []
     tags: list[str] = []
     lane: str = Field(default="general")  # fact/rule/experience/preference/chat/general
+    metadata: dict = {}  # 附加元数据，落 RawDocument.meta（如 source=pre_compress）
 
 
 class SearchReq(BaseModel):

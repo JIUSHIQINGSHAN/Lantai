@@ -65,6 +65,7 @@ class MemoryItem(SQLModel, table=True):
     use_count: int = 0
     helpful_count: int = 0
     decay_score: float = 1.0
+    decay_class: str = "episodic"  # procedural(永不衰减)/semantic(慢)/episodic(快)；与 tier 正交
     valid_from: Optional[datetime] = None
     valid_to: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)

@@ -26,6 +26,12 @@ def apply_forgetting():
     now = utcnow()
     with db.get_session() as s:
         for m in s.exec(select(MemoryItem).where(MemoryItem.status == "active")).all():
+            # procedural 永不衰减：跳过衰减与归档判定，铁律天然浮顶
+            if m.decay_class == "procedural":
+                if m.decay_score != 1.0:
+                    m.decay_score = 1.0
+                    s.add(m)
+                continue
             last = m.last_used_at or m.created_at
             if last.tzinfo is None:
                 last = last.replace(tzinfo=timezone.utc)

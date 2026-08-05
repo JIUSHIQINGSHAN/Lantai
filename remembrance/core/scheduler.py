@@ -38,11 +38,11 @@ def start_scheduler():
                            seconds=settings.PARAM_OVERRIDE_REFRESH_SECONDS,
                            id="param_refresh", replace_existing=True)
 
-    # F7: coalesce idle flush（每 2 秒检查一次空闲缓冲）
+    # F7: coalesce idle flush（每 2 秒检查一次空闲缓冲；冲刷结果持久化，不静默丢弃）
     if settings.COALESCE_ENABLED:
         from remembrance.ingestion.coalesce import get_coalesce_buffer
-        coalesce_buffer = get_coalesce_buffer()
-        _scheduler.add_job(coalesce_buffer.check_idle, "interval",
+        from remembrance.workers.ingest_worker import run_coalesce_idle
+        _scheduler.add_job(run_coalesce_idle, "interval",
                            seconds=2, id="coalesce_idle", replace_existing=True)
 
     _scheduler.start()

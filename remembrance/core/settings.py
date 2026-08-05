@@ -1,4 +1,5 @@
 import logging
+import os
 import warnings
 from pathlib import Path
 
@@ -181,6 +182,12 @@ class Settings(BaseSettings):
             )
         if not self.API_KEY:
             logger.warning("API_KEY 为空：API 将以无鉴权模式运行（仅建议本机开发）")
+        if not (os.environ.get("REMEMBRANCE_ENTITY_KEYWORDS")
+                or os.environ.get("ENTITY_KEYWORDS")):
+            logger.warning(
+                "REMEMBRANCE_ENTITY_KEYWORDS 未配置：闸门仅识别通用自指模式，"
+                "专有名词查询可能零召回"
+            )
 
 
 settings = Settings()

@@ -32,10 +32,13 @@ def hybrid_search(query: str, top_k: int = 5,
                   memory_types: list[str] | None = None,
                   lanes: list[str] | None = None,
                   use_rerank: bool = True,
-                  trace: bool = False) -> list[dict] | tuple[list[dict], list[dict]]:
+                  trace: bool = False,
+                  explain: bool = False) -> list[dict] | tuple[list[dict], list[dict]]:
     """混合检索：向量 + BM25 + 衰减。
 
     trace=True 时返回 (results, trace_steps)。
+    explain=True 时每条结果附带分项 {vector, bm25, fts, decay, lane_boost,
+    final, decay_class, decay_multiplier}（reranker 开启时也保留原始分项）。
     """
     trace_steps = []
     t0 = time.perf_counter()
@@ -66,9 +69,11 @@ def hybrid_search(query: str, top_k: int = 5,
         })
 
     if not vector_results:
-        if trace:
-            return [], trace_steps
-        return []
+        # 向量检索失败（embedding 超时/未配置/空库）→ FTS5 + BM25 兜底，降级可用而非零召回
+        return _keyword_fallback(
+            query, top_k, fetch_n, memory_types, lanes,
+            trace, trace_steps, t0, explain,
+        )
 
     # 从 SQLite 加载完整记忆项——仅 active
     ids = [r["id"] for r in vector_results]
@@ -87,23 +92,7 @@ def hybrid_search(query: str, top_k: int = 5,
         items = [m for m in items if m.lane in lanes]
 
     # Step 2.5: Chronos 双时间过滤（DB 读出的 datetime 为 naive，需先归一时区）
-    from datetime import timezone
-    from remembrance.core.time import utcnow
-    now = utcnow()
-    temporally_valid = []
-    for m in items:
-        vf = m.valid_from
-        if vf and vf.tzinfo is None:
-            vf = vf.replace(tzinfo=timezone.utc)
-        vt = m.valid_to
-        if vt and vt.tzinfo is None:
-            vt = vt.replace(tzinfo=timezone.utc)
-        if vf and vf > now:
-            continue
-        if vt and vt < now:
-            m.decay_score *= 0.3
-        temporally_valid.append(m)
-    items = temporally_valid
+    items = _chronos_filter(items)
 
     if trace:
         t3 = time.perf_counter()
@@ -136,16 +125,32 @@ def hybrid_search(query: str, top_k: int = 5,
     bm_norm = (bm_scores - bm_scores.min()) / (bm_range + 1e-8)
 
     scored_items = []
+    breakdowns: dict[str, dict] = {}
     for i, m in enumerate(items):
         vs = 1.0 - distances.get(m.id, 1.0)
         lane = getattr(m, "lane", "general") or "general"
         lane_boost = settings.LANE_RETRIEVAL_BOOST.get(lane, 1.0)
         fts_hit = 1.0 if m.id in fts_hits else 0.0
+        bm_val = float(bm_norm[i])
         score = (settings.RETRIEVAL_W_VECTOR * vs
-                 + settings.RETRIEVAL_W_BM25 * float(bm_norm[i])
+                 + settings.RETRIEVAL_W_BM25 * bm_val
                  + settings.RETRIEVAL_W_FTS * fts_hit
                  + settings.RETRIEVAL_W_DECAY * m.decay_score) * lane_boost
         scored_items.append((score, m))
+        if explain:
+            breakdowns[m.id] = {
+                "vector": round(settings.RETRIEVAL_W_VECTOR * vs, 4),
+                "bm25": round(settings.RETRIEVAL_W_BM25 * bm_val, 4),
+                "fts": round(settings.RETRIEVAL_W_FTS * fts_hit, 4),
+                "decay": round(settings.RETRIEVAL_W_DECAY * m.decay_score, 4),
+                "lane_boost": lane_boost,
+                "final": round(score, 4),
+                "decay_class": m.decay_class,
+                # decay_multiplier 是 decay_class 理论半衰期参考（0.5^(age/hl)）；
+                # 实际打分中的 decay 分项用的是 forgetting 的 lane-strength 指数衰减
+                # （m.decay_score），两者不同源，decay_multiplier 仅供观测。
+                "decay_multiplier": round(_age_multiplier(m), 4),
+            }
 
     # 追加召回：FTS 命中但未进向量候选的 active 记忆（并列召回，ADR-0008 决策 1）
     ranked_ids = {m.id for _, m in scored_items}
@@ -167,7 +172,14 @@ def hybrid_search(query: str, top_k: int = 5,
         docs = [m.content for _, m in candidates]
         reranked = rerank(query, docs, top_k)
         if reranked:
-            results = [{"score": r["score"], "document": r["document"]} for r in reranked]
+            doc_to_m = {m.content: m for _, m in candidates}
+            results = []
+            for r in reranked:
+                item = {"score": r["score"], "document": r["document"]}
+                if explain:
+                    m = doc_to_m.get(r["document"])
+                    item["explain"] = breakdowns.get(m.id) if m is not None else None
+                results.append(item)
             if trace:
                 t4 = time.perf_counter()
                 rr_scores = [r["score"] for r in reranked]
@@ -184,8 +196,12 @@ def hybrid_search(query: str, top_k: int = 5,
                 return results, trace_steps
             return results
 
-    results = [{"score": s, "memory": m.model_dump(mode="json")}
-               for s, m in candidates[:top_k]]
+    results = []
+    for s, m in candidates[:top_k]:
+        item = {"score": s, "memory": m.model_dump(mode="json")}
+        if explain:
+            item["explain"] = breakdowns.get(m.id)
+        results.append(item)
     if trace:
         t4 = time.perf_counter()
         final_scores = [s for s, _ in candidates[:top_k]]
@@ -210,3 +226,140 @@ def index_memory_item(memory_id: str, embedding: list[float], metadata: dict):
 def delete_memory_item(memory_id: str):
     """从向量存储删除记忆项"""
     get_vector_store().delete([memory_id])
+
+
+def _chronos_filter(items: list) -> list:
+    """Chronos 双时间过滤：未到 valid_from 的剔除，已过 valid_to 的衰减到 0.3 倍。"""
+    from datetime import timezone
+    from remembrance.core.time import utcnow
+    now = utcnow()
+    temporally_valid = []
+    for m in items:
+        vf = m.valid_from
+        if vf and vf.tzinfo is None:
+            vf = vf.replace(tzinfo=timezone.utc)
+        vt = m.valid_to
+        if vt and vt.tzinfo is None:
+            vt = vt.replace(tzinfo=timezone.utc)
+        if vf and vf > now:
+            continue
+        if vt and vt < now:
+            m.decay_score *= 0.3
+        temporally_valid.append(m)
+    return temporally_valid
+
+
+def _age_multiplier(m) -> float:
+    """按衰减类计算 decay_multiplier（调试字段；procedural 恒 1.0）。"""
+    from datetime import timezone as _tz
+    from remembrance.core.time import utcnow as _utcnow
+    from remembrance.memory.decay_class import decay_multiplier as _dm
+    last = m.last_used_at or m.created_at
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=_tz.utc)
+    days = max(0.0, (_utcnow() - last).total_seconds() / 86400.0)
+    return _dm(getattr(m, "decay_class", "episodic"), days)
+
+
+def _keyword_fallback(
+    query: str,
+    top_k: int,
+    fetch_n: int,
+    memory_types: list[str] | None,
+    lanes: list[str] | None,
+    trace: bool,
+    trace_steps: list,
+    t0: float,
+    explain: bool = False,
+) -> list[dict] | tuple[list[dict], list[dict]]:
+    """向量检索降级路径：FTS5 召回作候选集，BM25 + decay 打分（无向量分）。
+
+    权重归一化到 1：只使用 (W_BM25 + W_FTS + W_DECAY)。
+    不触发 reranker——embedding 已不可用，rerank 大概率同样失败，保持降级可用。
+    """
+    # FTS5 子串召回作候选集（含追加语义：FTS 命中即候选）
+    candidate_ids: set[str] = set()
+    try:
+        with db.get_session() as s:
+            candidate_ids = set(search_fts(
+                s.connection().connection.driver_connection,
+                query, top_k=max(fetch_n, settings.FTS_RECALL_TOP_K)))
+    except Exception:
+        candidate_ids = set()
+
+    if not candidate_ids:
+        if trace:
+            return [], trace_steps
+        return []
+
+    with db.get_session() as s:
+        items = s.exec(select(MemoryItem)
+                       .where(MemoryItem.id.in_(candidate_ids),
+                              MemoryItem.status == "active")).all()
+
+    if memory_types:
+        items = [m for m in items if m.memory_type in memory_types]
+    if lanes:
+        items = [m for m in items if m.lane in lanes]
+    items = _chronos_filter(items)
+
+    if not items:
+        if trace:
+            return [], trace_steps
+        return []
+
+    # BM25 + decay 融合（FTS 命中恒 1.0：候选集全部来自 FTS）
+    bm25 = _get_bm25(items)
+    bm_scores = bm25.get_scores(jieba.lcut(query))
+    bm_range = bm_scores.max() - bm_scores.min()
+    bm_norm = (bm_scores - bm_scores.min()) / (bm_range + 1e-8)
+    total_w = (settings.RETRIEVAL_W_BM25
+               + settings.RETRIEVAL_W_FTS
+               + settings.RETRIEVAL_W_DECAY)
+
+    scored = []
+    breakdowns: dict[str, dict] = {}
+    for i, m in enumerate(items):
+        lane = getattr(m, "lane", "general") or "general"
+        lane_boost = settings.LANE_RETRIEVAL_BOOST.get(lane, 1.0)
+        bm_val = float(bm_norm[i])
+        score = (
+            (settings.RETRIEVAL_W_BM25 * bm_val
+             + settings.RETRIEVAL_W_FTS * 1.0
+             + settings.RETRIEVAL_W_DECAY * m.decay_score)
+            / total_w
+        ) * lane_boost
+        scored.append((score, m))
+        if explain:
+            breakdowns[m.id] = {
+                "vector": 0.0,  # 降级路径无向量分
+                "bm25": round(settings.RETRIEVAL_W_BM25 * bm_val / total_w, 4),
+                "fts": round(settings.RETRIEVAL_W_FTS / total_w, 4),
+                "decay": round(settings.RETRIEVAL_W_DECAY * m.decay_score / total_w, 4),
+                "lane_boost": lane_boost,
+                "final": round(score, 4),
+                "decay_class": m.decay_class,
+                # decay_multiplier 是 decay_class 理论半衰期参考（0.5^(age/hl)）；
+                # 实际打分中的 decay 分项用的是 forgetting 的 lane-strength 指数衰减
+                # （m.decay_score），两者不同源，decay_multiplier 仅供观测。
+                "decay_multiplier": round(_age_multiplier(m), 4),
+            }
+
+    scored.sort(key=lambda x: -x[0])
+    results = []
+    for s, m in scored[:top_k]:
+        item = {"score": s, "memory": m.model_dump(mode="json")}
+        if explain:
+            item["explain"] = breakdowns.get(m.id)
+        results.append(item)
+
+    if trace:
+        t4 = time.perf_counter()
+        final_scores = [s for s, _ in scored[:top_k]]
+        trace_steps.append({
+            "step": "fallback_fts", "elapsed_ms": round((t4 - t0) * 1000, 1),
+            "candidate_count": len(results),
+            "score_range": [round(min(final_scores), 3), round(max(final_scores), 3)] if final_scores else None,
+        })
+        return results, trace_steps
+    return results

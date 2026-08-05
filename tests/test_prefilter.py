@@ -131,3 +131,82 @@ class TestGateHotCache:
         res = relevance_check("一个超过十二个字符的追问内容")
         # 长查询不沿用热缓存，走完整判定
         assert res["reason"] != "session_followup_hot"
+
+
+class TestEntityKeywordsLazy:
+    """实体词表惰性编译：import 后设置环境变量也生效（修静默零召回 bug）"""
+
+    @pytest.fixture(autouse=True)
+    def _reset_pattern_state(self, monkeypatch):
+        import remembrance.gate.prefilter as pf
+        monkeypatch.setattr(pf, "_PATTERN_CACHE", {"key": None, "pattern": None})
+        monkeypatch.setattr(pf, "_KEYWORD_WARNED", False)
+
+    def test_new_env_name_works_after_import(self, monkeypatch):
+        monkeypatch.setenv("REMEMBRANCE_ENTITY_KEYWORDS", "阿猫|阿狗")
+        res = relevance_check("阿猫最近怎么样")
+        assert res["needs_memory"] is True
+        assert res["reason"] == "self_reference"
+
+    def test_old_env_name_fallback(self, monkeypatch):
+        monkeypatch.setenv("ENTITY_KEYWORDS", "莉莉")
+        res = relevance_check("莉莉上次说的计划")
+        assert res["needs_memory"] is True
+
+    def test_new_name_overrides_old(self, monkeypatch):
+        monkeypatch.setenv("ENTITY_KEYWORDS", "旧实体")
+        monkeypatch.setenv("REMEMBRANCE_ENTITY_KEYWORDS", "新实体")
+        res_old = relevance_check("旧实体在哪")
+        res_new = relevance_check("新实体在哪")
+        assert res_old["needs_memory"] is False  # 新名优先，旧词表不参与
+        assert res_new["needs_memory"] is True
+
+    def test_recompile_when_env_changes(self, monkeypatch):
+        import remembrance.gate.prefilter as pf
+        relevance_check("你好世界")  # 无实体词表，编译 base 模式
+        p_before = pf._self_reference_pattern()
+        monkeypatch.setenv("REMEMBRANCE_ENTITY_KEYWORDS", "旺财")
+        relevance_check("随便问问")  # 触发缓存键不匹配 → 重编译
+        p_after = pf._self_reference_pattern()
+        assert p_before is not p_after
+        res = relevance_check("旺财今天去哪了")
+        assert res["needs_memory"] is True
+
+    def test_cached_pattern_reused(self):
+        import remembrance.gate.prefilter as pf
+        p1 = pf._self_reference_pattern()
+        p2 = pf._self_reference_pattern()
+        assert p1 is p2  # 缓存命中，零重编译
+
+    def test_missing_keywords_warns_once(self, monkeypatch, capsys, caplog):
+        import logging
+        import remembrance.gate.prefilter as pf
+        with caplog.at_level(logging.WARNING, logger="remembrance.gate"):
+            relevance_check("你好世界")
+            relevance_check("你好世界")
+        warn_msgs = [r.getMessage() for r in caplog.records
+                     if "REMEMBRANCE_ENTITY_KEYWORDS" in r.getMessage()]
+        assert len(warn_msgs) == 1  # 只告警一次，不重复刷屏
+        err = capsys.readouterr().err
+        assert "REMEMBRANCE_ENTITY_KEYWORDS" in err  # 不静默
+
+
+class TestGateCacheInjectable:
+    """cache/now 可注入 → pure function，并发/时序用例互不干扰"""
+
+    def test_independent_caches(self):
+        ca = {"time": 0.0, "query": "", "needs_memory": False}
+        cb = {"time": 0.0, "query": "", "needs_memory": False}
+        relevance_check("上次我们聊的项目", cache=ca, now=1000.0)  # ca 热
+        res_a = relevance_check("然后呢", cache=ca, now=1001.0)
+        res_b = relevance_check("然后呢", cache=cb, now=1001.0)  # cb 冷
+        assert res_a["reason"] == "session_followup_hot"
+        assert res_b["reason"] != "session_followup_hot"
+        assert res_b["needs_memory"] is False
+
+    def test_now_controls_ttl_expiry(self):
+        import remembrance.core.settings as s
+        c = {"time": 0.0, "query": "", "needs_memory": False}
+        relevance_check("上次我们聊的项目", cache=c, now=0.0)
+        res = relevance_check("然后呢", cache=c, now=s.settings.GATE_CACHE_TTL + 1.0)
+        assert res["reason"] != "session_followup_hot"

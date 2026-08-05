@@ -99,3 +99,31 @@ def run_ingest_once():
     except Exception:
         logger.exception("param advice trigger failed")
     scheduler_mod.record_run("ingest")
+
+
+def run_coalesce_idle():
+    """coalesce 空闲冲刷消费：冲刷出的批量内容持久化，不静默丢弃。"""
+    from remembrance.ingestion.coalesce import get_coalesce_buffer
+    from remembrance.models.schemas import AddMemoryReq
+    from remembrance.services import memory_service as ms
+
+    buffer = get_coalesce_buffer()
+    for result in buffer.check_idle():
+        if not result.get("flushed"):
+            continue
+        combined = result.get("combined_content", "")
+        key = result.get("key", "default:general")
+        user_id, lane = key.split(":", 1)
+        try:
+            req = AddMemoryReq(title="coalesced", content=combined, lane=lane)
+            ms._create_candidate_with_extraction(req)
+        except Exception:
+            logger.exception("coalesce flush persist failed for key=%s", key)
+            # 持久化失败：把该批消息重新入队，避免数据静默丢失（下轮再试）
+            for item in result.get("items", []):
+                try:
+                    buffer.add(user_id, lane,
+                               item.get("content", ""), item.get("title", ""))
+                except Exception:
+                    logger.exception("coalesce requeue failed for key=%s", key)
+    scheduler_mod.record_run("coalesce")
