@@ -94,6 +94,21 @@ class CoalesceBuffer:
         with self._lock:
             self._seen.pop(job_id, None)
 
+    def requeue(self, key: str, items: list[dict]) -> None:
+        """锁内把已弹出但未持久化的消息恢复回缓冲（不触发冲刷判定）。
+
+        与逐条 add() 不同：add 在缓冲满时立即 flush，会把刚恢复的消息
+        再次弹出造成静默丢失；requeue 只恢复缓冲并重置 idle 计时，交给
+        下轮 check_idle 重试。
+        """
+        now = time.time()
+        with self._lock:
+            existing = self._buffers.setdefault(key, [])
+            self._buffers[key] = items + existing  # 恢复在队列头部
+            if key not in self._first_msg:
+                self._first_msg[key] = now
+            self._timestamps[key] = now
+
     def check_idle(self) -> list[dict]:
         """检查空闲超时的缓冲并冲刷。由 worker 定期调用。"""
         flushed = []

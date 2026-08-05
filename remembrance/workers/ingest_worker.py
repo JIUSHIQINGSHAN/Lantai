@@ -113,17 +113,12 @@ def run_coalesce_idle():
             continue
         combined = result.get("combined_content", "")
         key = result.get("key", "default:general")
-        user_id, lane = key.split(":", 1)
+        lane = key.split(":", 1)[-1]
         try:
             req = AddMemoryReq(title="coalesced", content=combined, lane=lane)
             ms._create_candidate_with_extraction(req)
         except Exception:
             logger.exception("coalesce flush persist failed for key=%s", key)
-            # 持久化失败：把该批消息重新入队，避免数据静默丢失（下轮再试）
-            for item in result.get("items", []):
-                try:
-                    buffer.add(user_id, lane,
-                               item.get("content", ""), item.get("title", ""))
-                except Exception:
-                    logger.exception("coalesce requeue failed for key=%s", key)
+            # 持久化失败：锁内恢复该批消息（不触发二次冲刷），下轮再试
+            buffer.requeue(key, result.get("items", []))
     scheduler_mod.record_run("coalesce")

@@ -184,12 +184,14 @@ class TestIdleConsumer:
         assert buf.water_level()["total_messages"] == 0  # 已冲刷且持久化
 
     def test_run_coalesce_idle_requeues_on_failure(self):
-        """持久化失败 → 该批消息重新入队，不静默丢失"""
+        """持久化失败 → 该批消息锁内恢复，不静默丢失也不二次冲刷"""
         from remembrance.workers.ingest_worker import run_coalesce_idle
         from remembrance.services import memory_service as ms
 
         buf = CoalesceBuffer()
-        buf.add("u", "general", "第一条足够长的异步内容")
+        # 多消息（接近 max_parts）验证恢复路径不触发二次冲刷
+        for i in range(7):
+            buf.add("u", "general", f"消息{i}足够长的异步内容")
         with buf._lock:
             buf._timestamps["u:general"] = 0.0
 
@@ -197,5 +199,15 @@ class TestIdleConsumer:
                    return_value=buf), \
              patch.object(ms, "_create_candidate_with_extraction",
                           side_effect=RuntimeError("llm down")):
-            run_coalesce_idle()  # 不抛——异常被吞并重入队
-        assert buf.water_level()["total_messages"] == 1  # 重新入队成功
+            run_coalesce_idle()  # 不抛——异常被吞并恢复
+        assert buf.water_level()["total_messages"] == 7  # 全部恢复在缓冲
+        assert buf.water_level()["active_keys"] == 1
+
+    def test_requeue_does_not_retrigger_flush(self):
+        """requeue 只恢复缓冲，不触发 max_parts 立即冲刷"""
+        buf = CoalesceBuffer()
+        items = [{"content": f"内容{i}足够长", "title": "", "ts": 0.0}
+                 for i in range(8)]
+        buf.requeue("u:general", items)  # 8 条 = max_parts，也不应冲刷
+        assert buf.water_level()["total_messages"] == 8
+        assert buf.water_level()["active_keys"] == 1
