@@ -51,6 +51,7 @@ def param_env():
     teardown 恢复 settings 白名单参数（审批测试会原位修改单例）。
     """
     import remembrance.models.tables  # noqa: F401  注册全部表
+    import remembrance.parameters.trust_models  # noqa: F401  注册信号/矛盾表
     import remembrance.storage.db as db_module
     from remembrance.core.settings import settings
     from remembrance.parameters.registry import get_adjustable_names

@@ -64,6 +64,41 @@ ParamAdviceResult = Annotated[
 ]
 
 
+# ---------------------------------------------------------------- V2 批量结构（方向四：矛盾显式化）
+
+class ContradictionSide(BaseModel):
+    """矛盾一侧的证据引用（quote 必须通过真实性校验）。"""
+    model_config = ConfigDict(extra="forbid")
+
+    source_document_id: str
+    quote: str
+
+
+class ContradictionItem(BaseModel):
+    """两个不同 source 在同一 param_key 上的矛盾证据。"""
+    model_config = ConfigDict(extra="forbid")
+
+    param_key: str
+    nature: Literal["direction", "value", "scope"] = "direction"
+    side_a: ContradictionSide
+    side_b: ContradictionSide
+    scope_note: str = ""
+    resolution: Literal["report_to_human"] = "report_to_human"
+
+
+class BatchParamAdvice(BaseModel):
+    """
+    V2 批量输出：一次 LLM 调用对一批论文产出多条建议 + 弃权 + 矛盾。
+    批量结构使"矛盾按 param_key 分区裁决"成为可能。
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    batch_id: str = ""
+    suggestions: list[SuggestPayload] = Field(default_factory=list)
+    abstentions: list[AbstainPayload] = Field(default_factory=list)
+    contradictions: list[ContradictionItem] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------- API DTO
 
 class SuggestionListItem(BaseModel):

@@ -75,3 +75,20 @@ class QualitySignalRow(BaseModel):
 
     view: QualitySignalView
     gating: GatingPolicy
+
+
+class ParamContradictionReport(SQLModel, table=True):
+    """矛盾报告（方向四）：矛盾参数只能 acknowledge/close，接口层禁止 apply。"""
+    __tablename__ = "param_contradiction_report"
+
+    id: str = Field(primary_key=True)
+    run_id: str = Field(index=True, foreign_key="param_advice_run.id")
+    param_key: str = Field(index=True)
+    nature: str = "direction"
+    side_a: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    side_b: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    scope_note: str = ""
+    status: str = Field(default="open", index=True)  # open | acknowledged | closed
+    acknowledged_by: Optional[str] = None
+    acknowledged_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utcnow)

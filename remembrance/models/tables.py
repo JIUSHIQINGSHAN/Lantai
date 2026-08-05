@@ -234,3 +234,22 @@ class ParamOverride(SQLModel, table=True):
     actor: str = ""
     note: Optional[str] = None
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class RetrievalEvent(SQLModel, table=True):
+    """检索事件日志（方向二弱标注源）：哪条记忆被召回、当时生效参数、延迟。"""
+    __tablename__ = "retrieval_event"
+
+    id: str = Field(primary_key=True)
+    trace_id: str = Field(index=True)
+    query_text: str = ""
+    query_norm_hash: str = Field(index=True)
+    lane: str = ""
+    intent_bucket: Optional[str] = Field(default=None, index=True)
+    param_snapshot_hash: str = Field(index=True)  # 当时生效参数快照 hash
+    result_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    result_scores: list = Field(default_factory=list, sa_column=Column(JSON))
+    used_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    latency_ms: int = 0
+    zero_result: bool = Field(default=False, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)

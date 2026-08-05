@@ -21,11 +21,14 @@ def build_context(query: str) -> dict:
     if not query or len(query.strip()) <= settings.SHELL_HOOK_MIN_CHARS:
         return {}
 
+    import time
     try:
+        t0 = time.perf_counter()
         qv = embed([query])[0]
         store = get_vector_store()
         results = store.search(qv, top_k=settings.SHELL_HOOK_TOP_K)
         if not results:
+            _try_log(query, [], int((time.perf_counter() - t0) * 1000))
             return {}
 
         ids = [r["id"] for r in results]
@@ -43,9 +46,22 @@ def build_context(query: str) -> dict:
                     score = round(1.0 - r["distance"], 2)
                     lines.append(f"- [{score}] {m.content[:200]}")
                     break
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        _try_log(query, [{"score": 1.0 - r["distance"], "memory": {"id": r["id"]}}
+                         for r in results], latency_ms)
         return {"context": "\n".join(lines)} if lines else {}
     except Exception:
         return {}
+
+
+def _try_log(query: str, results: list, latency_ms: int) -> None:
+    """Shell Hook 检索埋点（独立向量路径，方向二弱标注源）：失败零侵入。"""
+    try:
+        from remembrance.observability.retrieval_log import log_retrieval
+        log_retrieval(query, results, latency_ms=latency_ms,
+                      trace_id="shell_hook")
+    except Exception:
+        pass
 
 
 def main():

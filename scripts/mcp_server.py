@@ -4,7 +4,11 @@
 标准 MCP JSON-RPC 2.0 协议
 """
 import json
+import os
 import sys
+
+# 使子进程无论 cwd 在哪都能 import remembrance（Hermes 拉 MCP 时 cwd 不可控）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pydantic import ValidationError
 
@@ -26,9 +30,23 @@ def handle_search(params: dict) -> dict:
         raise ValueError("top_k must be an int in [1, 100]")
     gate = relevance_check(query)
     if not gate["needs_memory"]:
+        _try_log(query, [], 0, gate)
         return {"results": [], "gate": gate}
+    import time
+    t0 = time.perf_counter()
     results = hybrid_search(query, top_k=top_k)
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+    _try_log(query, results, latency_ms, gate)
     return {"results": results, "gate": gate}
+
+
+def _try_log(query: str, results: list, latency_ms: int, gate: dict) -> None:
+    """检索事件埋点（方向二）：失败零侵入。"""
+    try:
+        from remembrance.observability.retrieval_log import log_retrieval
+        log_retrieval(query, results, latency_ms=latency_ms, gate=gate)
+    except Exception:
+        pass
 
 
 def handle_add(params: dict) -> dict:

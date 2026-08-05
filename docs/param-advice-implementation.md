@@ -132,9 +132,24 @@ curl http://127.0.0.1:8767/runtime-params
 - `core/settings.py` — 方向一阈值（TIER_WEIGHT / QUORUM_BY_TIER / DELTA_BUDGET_FACTOR / 时效参数）
 - 测试：`tests/test_param_signals.py` 23 个（含真实 arXiv Atom 固件）——全绿
 
-## Step 2-8 待办
+## Step 2-3 已交付（219 测试全绿）
 
-- Step 2 信号进建议链路（PARAM_ADVICE_SYS_V2 批量结构 + 污染检测 + quorum + 预算缩放）
-- Step 3-5 检索埋点 + dry-run 评估（hybrid_search 加 param_overrides）
-- Step 6-7 时效复查 + 影子观察期（DEDUP shadow-only）
-- Step 8 回流（只降权）+ 全量回归
+**Step 2（信号进链路 + 矛盾显式化）**
+- `PARAM_ADVICE_SYS_V2` — 批量结构（suggestions[]/abstentions[]/contradictions[]）+ 规则 19-22
+- `parameters/validation.py` 追加 5 校验器：污染检测 / 主证据资格 / quorum / 权重只降 / 预算缩放
+- `parameters/schemas.py` — BatchParamAdvice / ContradictionItem
+- `parameters/trust_models.py` — `ParamContradictionReport` 表（矛盾参数禁止 apply）
+- worker 批量入库：逐条建议 fingerprint 去重 + 矛盾报告落库
+- 测试：`tests/test_param_v2.py` 18 个
+
+**Step 3（检索埋点）**
+- `models/tables.py` — `RetrievalEvent` 表（弱标注源）
+- `observability/retrieval_log.py` — log_retrieval / backfill_used_ids（失败零侵入）
+- `api/routes_search.py` — /search 出口埋点（gate 拦截也记录 zero_result）
+- 测试：`tests/test_retrieval_log.py` 3 个
+
+## Step 3 后半-8 待办
+
+- 查询集构建（EvalQuerySet/Item）+ dry-run 评估（eval_metrics/eval_runner）
+- 时效复查（override_review_worker）+ 影子观察期（ShadowWindow + DEDUP shadow-only + 护栏回滚）
+- 验证回流（SignalReliabilityStat 只降权）+ 全量回归

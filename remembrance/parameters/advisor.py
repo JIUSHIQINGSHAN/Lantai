@@ -7,21 +7,16 @@ LLM 建议生成器——只提出候选，不直接写 settings / .env / overri
 from remembrance.core.logger import logger
 from remembrance.core.settings import settings
 from remembrance.llm.client import chat_json
-from remembrance.llm.prompts import PARAM_ADVICE_SYS
+from remembrance.llm.prompts import PARAM_ADVICE_SYS_V2
 from remembrance.parameters.registry import (
     GROUP_CONSTRAINTS,
     PHYSICALLY_EXCLUDED,
     canonical_json,
     get_param_registry,
 )
-from remembrance.parameters.schemas import (
-    AbstainPayload,
-    ParamAdviceResult,
-    SuggestPayload,
-)
 from remembrance.parameters.validation import (
     ParamValidationError,
-    validate_param_advice,
+    validate_batch_advice,
 )
 
 
@@ -50,9 +45,42 @@ def _group_constraints_for_llm() -> dict:
             for g, c in GROUP_CONSTRAINTS.items()}
 
 
+def render_signal_block(views: dict) -> str:
+    """
+    每篇论文的信号块（只读、只描述、不给结论）。
+    LLM 被禁止引用/复述/输出该块的任何字段（PARAM_ADVICE_SYS_V2 规则 21）。
+    """
+    if not views:
+        return ""
+    lines = []
+    for sid, v in sorted(views.items()):
+        lines.append(
+            f"[PAPER src_id={sid}] venue_class={v.venue_class} "
+            f"evidence_tier={v.evidence_tier} published={v.published_at} "
+            f"version=v{v.version} "
+            f"primary_evidence_eligible={str(v.primary_evidence_eligible).lower()}")
+    return "\n".join(lines) + "\n"
+
+
 def build_param_advice_user_prompt(papers: list[dict],
-                                   current_snapshot: dict) -> str:
-    """拼接 user context（canonical JSON，键序稳定）。"""
+                                   current_snapshot: dict,
+                                   views: dict | None = None,
+                                   prompt_version: str = "v2") -> str:
+    """拼接 user context（canonical JSON，键序稳定；V2 附信号块）。"""
+    views = views or {}
+    papers_block = [
+        {"source_document_id": p["source_document_id"],
+         "title": p["title"], "source_url": p["source_url"],
+         "content": p["content"]}
+        for p in papers
+    ]
+
+    prefix = ("Return strict JSON matching the schema in the system prompt.\n"
+              "Only output JSON.\n\n")
+    signal_lines = render_signal_block(views)
+    if prompt_version == "v2" and signal_lines:
+        prefix += ("SIGNAL BLOCKS (authoritative system metadata, "
+                   "never quote it):\n" + signal_lines + "\n")
     context = {
         "SYSTEM_CONTEXT": {
             "system": "Remembrance-System",
@@ -67,28 +95,22 @@ def build_param_advice_user_prompt(papers: list[dict],
         "PARAMETER_REGISTRY": _registry_for_llm(),
         "GROUP_CONSTRAINTS": _group_constraints_for_llm(),
         "NON_ADJUSTABLE_NAMES": list(PHYSICALLY_EXCLUDED),
-        "PAPERS": [
-            {"source_document_id": p["source_document_id"],
-             "title": p["title"], "source_url": p["source_url"],
-             "content": p["content"]}
-            for p in papers
-        ],
+        "PAPERS": papers_block,
     }
-    return ("Return strict JSON matching the schema in the system prompt.\n"
-            "Only output JSON.\n\n"
-            + canonical_json(context))
+    return prefix + canonical_json(context)
 
 
 def generate_param_advice(papers: list[dict],
                           current_snapshot: dict,
+                          views: dict | None = None,
                           min_confidence: float | None = None,
                           max_changes: int | None = None) -> dict:
     """
-    调用 LLM 并严格校验。
+    调用 LLM（V2 批量）并严格校验。
     返回：
-      {"ok": True,  "payload": SuggestPayload | AbstainPayload}
+      {"ok": True, "payload": BatchParamAdvice}   # suggestions 已通过信号三道锁
       {"ok": False, "error_code": "llm_error" | "validation_error" | "disabled"}
-    绝不抛异常（worker 依赖此契约）。
+    绝不抛异常（worker 依赖此契约）。V1 单条结构不再使用。
     """
     if not settings.PARAM_ADVICE_ENABLED:
         return {"ok": False, "error_code": "disabled"}
@@ -98,16 +120,18 @@ def generate_param_advice(papers: list[dict],
     max_changes = max_changes if max_changes is not None \
         else settings.PARAM_ADVICE_MAX_CHANGES
 
-    user = build_param_advice_user_prompt(papers, current_snapshot)
+    user = build_param_advice_user_prompt(papers, current_snapshot,
+                                          views=views, prompt_version="v2")
     try:
-        raw = chat_json(PARAM_ADVICE_SYS, user)
+        raw = chat_json(PARAM_ADVICE_SYS_V2, user)
     except Exception as e:  # chat_json 内部已重试 3 次
         logger.warning("param advice LLM call failed: %s", e)
         return {"ok": False, "error_code": "llm_error"}
 
     try:
-        payload = validate_param_advice(raw, current_snapshot, papers,
-                                        min_confidence, max_changes)
+        result = validate_batch_advice(raw, current_snapshot, papers,
+                                       views or {},
+                                       min_confidence, max_changes)
     except (ParamValidationError, Exception) as e:
         if isinstance(e, ParamValidationError):
             logger.info("param advice rejected: %s", e)
@@ -115,4 +139,4 @@ def generate_param_advice(papers: list[dict],
             logger.info("param advice schema invalid: %s", str(e)[:200])
         return {"ok": False, "error_code": "validation_error"}
 
-    return {"ok": True, "payload": payload}
+    return {"ok": True, "payload": result}

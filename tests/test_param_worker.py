@@ -32,6 +32,8 @@ def _seed_batch(param_env, n=5, content="BM25 weight of 0.30 improves recall"):
     session_factory, _ = param_env
     from remembrance.core.ids import new_id
     from remembrance.models.tables import RawDocument
+    from remembrance.parameters.paper_signals import QualitySignalDraft
+    from remembrance.parameters.signal_service import upsert_from_draft
     from remembrance.parameters.validation import snapshot_hash
     doc_ids = []
     for i in range(n):
@@ -45,17 +47,33 @@ def _seed_batch(param_env, n=5, content="BM25 weight of 0.30 improves recall"):
             s.commit()
             doc_ids.append(doc.id)
         queue.enqueue_paper_for_param_advice(doc.id)
+        # 写质量信号（tier A），否则证据全 ineligible 整批丢弃
+        upsert_from_draft(doc.id, QualitySignalDraft(
+            arxiv_id=f"2501.{i}", journal_ref="Proc. SIGIR 2025", version=2))
     return doc_ids
 
 
 def _legal_suggest(doc_id: str) -> dict:
-    """构造一条引用真实 doc_id 的合法建议。"""
-    payload = {**LEGAL_SUGGEST}
-    payload["evidence"] = [
-        {"source_document_id": doc_id,
-         "quote": "BM25 weight of 0.30 improves recall",
-         "finding": "f", "applicability": "a"}]
-    return payload
+    """构造 V2 批量结构，含一条引用真实 doc_id 的合法建议。"""
+    return {
+        "batch_id": "b1",
+        "suggestions": [{
+            "decision": "suggest", "confidence": 0.9,
+            "title": "调整 BM25 权重", "summary": "s", "rationale": "r",
+            "expected_benefit": "b", "risk_notes": "n", "validation_plan": "p",
+            "evidence": [{"source_document_id": doc_id,
+                          "quote": "BM25 weight of 0.30 improves recall",
+                          "finding": "f", "applicability": "a"}],
+            "changes": [
+                {"name": "RETRIEVAL_W_VECTOR", "before": 0.6, "after": 0.55,
+                 "reason": "r"},
+                {"name": "RETRIEVAL_W_BM25", "before": 0.25, "after": 0.30,
+                 "reason": "r"},
+            ],
+        }],
+        "abstentions": [],
+        "contradictions": [],
+    }
 
 
 class TestWorker:
@@ -77,7 +95,10 @@ class TestWorker:
         session_factory, _ = param_env
         _seed_batch(param_env)
         with patch("remembrance.parameters.advisor.chat_json",
-                   return_value=ABSTAIN):
+                   return_value={"batch_id": "b1", "suggestions": [],
+                                 "abstentions": [{"decision": "abstain",
+                                                  "reason": "证据不足"}],
+                                 "contradictions": []}):
             run_param_advice_once()
         with session_factory() as s:
             assert s.exec(select(ParamSuggestion)).first() is None
@@ -101,9 +122,15 @@ class TestWorker:
         session_factory, _ = param_env
         _seed_batch(param_env)
         with patch("remembrance.parameters.advisor.chat_json",
-                   return_value={"decision": "suggest", "confidence": 0.99,
-                                 "changes": [{"name": "FAKE", "before": 1,
-                                              "after": 2, "reason": "x"}]}):
+                   return_value={"batch_id": "b1",
+                                 "suggestions": [{"decision": "suggest",
+                                                  "confidence": 0.99,
+                                                  "changes": [
+                                                      {"name": "FAKE",
+                                                       "before": 1,
+                                                       "after": 2,
+                                                       "reason": "x"}]}],
+                                 "abstentions": [], "contradictions": []}):
             run_param_advice_once()
         with session_factory() as s:
             assert s.exec(select(ParamSuggestion)).first() is None

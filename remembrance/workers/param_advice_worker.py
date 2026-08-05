@@ -24,7 +24,7 @@ from remembrance.parameters.queue import (
     recover_stale_claims,
 )
 from remembrance.parameters.registry import canonical_json, get_registry_version
-from remembrance.parameters.schemas import AbstainPayload, SuggestPayload
+from remembrance.parameters.schemas import SuggestPayload
 from remembrance.parameters.validation import apply_validated_changes, snapshot_hash
 from remembrance.storage import db
 
@@ -36,6 +36,23 @@ def _fingerprint(source_ids: list[str], base_hash: str,
         + base_hash.encode("utf-8") + after_hash.encode("utf-8")
     ).hexdigest()
     return f"sha256:{digest}"
+
+
+def _create_contradiction_report(run_id: str, item) -> None:
+    """矛盾条目落库（方向四）：只可 acknowledge/close，禁止 apply。"""
+    from remembrance.parameters.trust_models import ParamContradictionReport
+    with db.get_session() as s:
+        s.add(ParamContradictionReport(
+            id=new_id("pcr"),
+            run_id=run_id,
+            param_key=item.param_key,
+            nature=item.nature,
+            side_a=item.side_a.model_dump(),
+            side_b=item.side_b.model_dump(),
+            scope_note=item.scope_note,
+            status="open",
+        ))
+        s.commit()
 
 
 def create_suggestion_record(run_id: str, payload: SuggestPayload,
@@ -93,7 +110,13 @@ def run_param_advice_once() -> None:
     papers = batch["papers"]
     base_snapshot = batch["base_snapshot"]
 
-    result = generate_param_advice(papers, base_snapshot)
+    # 加载质量信号（方向一）：缺失论文按无信号处理（校验时按 ineligible）
+    from remembrance.parameters.signal_service import load_signal_views
+    source_ids = [p["source_document_id"] for p in papers]
+    signal_views = load_signal_views(source_ids)
+
+    result = generate_param_advice(papers, base_snapshot,
+                                   views=signal_views)
     if not result["ok"]:
         code = result["error_code"]
         if code == "llm_error":
@@ -108,19 +131,29 @@ def run_param_advice_once() -> None:
         scheduler_mod.record_run("param_advice")
         return
 
-    payload = result["payload"]
-    if isinstance(payload, AbstainPayload):
-        mark_papers_consumed(paper_ids, run_id)
-        finish_run_abstained(run_id)
-        logger.info("param advice abstained: %s", payload.reason[:80])
-        scheduler_mod.record_run("param_advice")
-        return
+    payload = result["payload"]  # {suggestions: [...], contradictions: [...]}
 
-    created = create_suggestion_record(run_id, payload, base_snapshot,
-                                       [p["source_document_id"]
-                                        for p in papers])
+    # 矛盾报告落库（方向四）：矛盾参数只可 acknowledge/close，接口层禁止 apply
+    for c in payload.get("contradictions", []):
+        _create_contradiction_report(run_id, c)
+
+    # 逐条建议入库（fingerprint 去重）
+    created = 0
+    for item in payload.get("suggestions", []):
+        try:
+            if create_suggestion_record(run_id, item["suggestion"],
+                                        base_snapshot,
+                                        [p["source_document_id"]
+                                         for p in papers]):
+                created += 1
+        except Exception:
+            logger.exception("create suggestion record failed, skip")
+
     mark_papers_consumed(paper_ids, run_id)
-    finish_run_suggested(run_id)
-    logger.info("param advice suggested: %s (created=%s)",
-                payload.title, created)
+    if created > 0:
+        finish_run_suggested(run_id)
+    else:
+        finish_run_abstained(run_id)
+    logger.info("param advice batch done: suggestions=%d contradictions=%d",
+                created, len(payload.get("contradictions", [])))
     scheduler_mod.record_run("param_advice")
