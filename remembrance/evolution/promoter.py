@@ -53,8 +53,9 @@ def apply_proposal(proposal_id: str) -> dict:
                 tier=tier, source_ids=source_ids,
                 confidence=prop.confidence, importance=0.5,
                 lane=lane,
-                decay_class=infer_decay_class(key or "", content,
-                                              patch.get("metadata")),
+                # 不信任 proposal 携带的 metadata 覆盖 decay_class（不可信来源）；
+                # 仅按内容关键词推断，显式调级走 service 层 set_decay_class（带 checkpoint）
+                decay_class=infer_decay_class(key or "", content),
             )
             s.add(mem); s.flush()
             _make_checkpoint(s, mem, {}, prop.id, trigger="gate")

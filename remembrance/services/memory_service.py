@@ -167,6 +167,9 @@ def add_memory_async(req: AddMemoryReq) -> dict:
             persisted = _create_candidate_with_extraction(req_copy)
         except Exception:
             buffer.forget_fingerprint(result["job_id"])
+            # 该批其他消息已被 _flush 弹出：锁内恢复，避免静默丢失
+            if detail.get("key"):
+                buffer.requeue(detail["key"], detail.get("items", []))
             raise
         return {"status": "flushed", "job_id": result["job_id"], **persisted}
     return result

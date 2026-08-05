@@ -7,6 +7,36 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine, select
 
 from remembrance.integrations.pre_compress import _render, flush_before_compress
+from remembrance.models.schemas import AddMemoryReq
+
+
+class TestMetadataBounds:
+    """AddMemoryReq.metadata 有界校验（security review 修复）"""
+
+    def test_flat_scalar_ok(self):
+        req = AddMemoryReq(title="t", content="这是一段足够长的内容",
+                           metadata={"source": "pre_compress"})
+        assert req.metadata == {"source": "pre_compress"}
+
+    def test_too_many_keys_rejected(self):
+        with pytest.raises(Exception):
+            AddMemoryReq(title="t", content="这是一段足够长的内容",
+                         metadata={f"k{i}": i for i in range(11)})
+
+    def test_nested_value_rejected(self):
+        with pytest.raises(Exception):
+            AddMemoryReq(title="t", content="这是一段足够长的内容",
+                         metadata={"a": {"b": 1}})
+
+    def test_long_string_value_rejected(self):
+        with pytest.raises(Exception):
+            AddMemoryReq(title="t", content="这是一段足够长的内容",
+                         metadata={"a": "x" * 501})
+
+    def test_long_key_rejected(self):
+        with pytest.raises(Exception):
+            AddMemoryReq(title="t", content="这是一段足够长的内容",
+                         metadata={"k" * 65: 1})
 
 
 def _msg(role: str, content: str) -> dict:

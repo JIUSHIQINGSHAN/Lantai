@@ -83,8 +83,16 @@ class CoalesceBuffer:
             prev = self._seen.get(jid)
             if prev is not None and (now - prev) < self.IDEMPOTENT_TTL:
                 return {"status": "queued", "job_id": jid, "duplicate": True}
+        try:
+            result = self.add(user_id, lane, content, title)
+        except Exception:
+            # 入队失败不留假指纹：否则 TTL 内重试会误判 duplicate 且消息丢失
+            with self._lock:
+                self._seen.pop(jid, None)
+            raise
+        # 入队成功才记录指纹（幂等窗口从此刻起算）
+        with self._lock:
             self._seen[jid] = now
-        result = self.add(user_id, lane, content, title)
         if result.get("buffered"):
             return {"status": "queued", "job_id": jid}
         return {"status": "flushed", "job_id": jid, "detail": result}

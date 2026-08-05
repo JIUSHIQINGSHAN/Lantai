@@ -20,6 +20,13 @@ class TestAddAsync:
         # 不同内容 → 不同 job_id
         assert j1 != buf.job_id("u", "chat", "其他内容")
 
+    def test_add_failure_leaves_no_fingerprint(self, buf):
+        """add() 抛异常 → 不留假指纹，重试不会被误判 duplicate"""
+        with patch.object(buf, "add", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError):
+                buf.add_async("u", "chat", "内容甲")
+        assert buf.water_level()["seen_fingerprints"] == 0
+
     def test_idempotent_within_ttl(self, buf):
         r1 = buf.add_async("u", "chat", "内容甲")
         r2 = buf.add_async("u", "chat", "内容甲")
@@ -143,7 +150,7 @@ class TestServiceFallback:
         assert "这是第0条" in combined and "这是第7条" in combined
 
     def test_add_memory_async_flush_failure_forgets_fingerprint(self):
-        """持久化失败 → 清除指纹，允许重试（不丢数据）"""
+        """持久化失败 → 清除指纹 + 该批消息锁内恢复，允许重试（不丢数据）"""
         from remembrance.services import memory_service as ms
         from remembrance.models.schemas import AddMemoryReq
 
@@ -159,6 +166,8 @@ class TestServiceFallback:
         # 指纹已清除 → 同内容可重新提交
         jid = buf.job_id("default", "general", "这是第7条足够长的异步内容")
         assert jid not in buf._seen
+        # 该批消息全部锁内恢复，不静默丢失
+        assert buf.water_level()["total_messages"] == 8
 
 
 class TestIdleConsumer:
