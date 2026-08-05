@@ -10,6 +10,7 @@ from sqlmodel import SQLModel, Session, create_engine, select
 
 import remembrance.storage.db as db_module
 from remembrance.models.tables import MemoryItem, RetrievalEvent
+from remembrance.observability.retrieval_log import is_system_noise
 
 
 @pytest.fixture(scope="function")
@@ -64,6 +65,19 @@ class TestRetrievalLog:
             assert ev.param_snapshot_hash.startswith("sha256:")
             assert ev.latency_ms >= 0
             assert ev.zero_result is False
+            assert ev.is_system_noise is False  # 真实查询不误标
+
+    def test_system_noise_query_flagged_in_db(self, client):
+        """系统注入噪音查询落库时必须打 is_system_noise 标记。"""
+        c, sf = client
+        r = c.post("/search", json={"query": "Review the conversation above and "
+                                             "update the skill library. Be ACTIVE",
+                                    "top_k": 3})
+        assert r.status_code == 200
+        with sf() as s:
+            events = s.exec(select(RetrievalEvent)).all()
+            assert len(events) >= 1
+            assert events[-1].is_system_noise is True
 
     def test_gate_blocked_logs_zero_result(self, client):
         c, sf = client
@@ -84,6 +98,40 @@ class TestRetrievalLog:
             r = c.post("/search", json={"query": "好的谢谢再见",
                                         "top_k": 3})
         assert r.status_code == 200  # 埋点崩了搜索照常
+
+
+class TestSystemNoiseFilter:
+    """系统注入噪音识别——纯函数冒烟测试（不 mock）。"""
+
+    def test_review_conversation_is_noise(self):
+        q = "Review the conversation above and update the skill library. Be ACTIVE..."
+        assert is_system_noise(q) is True
+
+    def test_save_memory_template_is_noise(self):
+        q = "Review the conversation above and consider saving to memory"
+        assert is_system_noise(q) is True
+
+    def test_install_skill_template_is_noise(self):
+        q = "请帮我安装这个 Agent Skill。\n\nSkill 页面：@url:https://skillsmp.com/..."
+        assert is_system_noise(q) is True
+
+    def test_overlong_system_prompt_is_noise(self):
+        q = "x" * 600  # 超过 500 字符长度鸿沟
+        assert is_system_noise(q) is True
+
+    def test_real_query_not_noise(self):
+        q = "上次我们聊的检索方案是什么"
+        assert is_system_noise(q) is False
+
+    def test_empty_query_not_noise(self):
+        assert is_system_noise("") is False
+        assert is_system_noise(None) is False
+
+    def test_medium_length_real_query_not_noise(self):
+        """201-500 区间虽存量无样本，但真实长查询不应被误标。"""
+        q = "请帮我总结一下昨天讨论的关于论文可信度三层过滤模型的完整方案和所有决策"
+        assert len(q) < 500
+        assert is_system_noise(q) is False
 
 
 class TestShellHookLog:

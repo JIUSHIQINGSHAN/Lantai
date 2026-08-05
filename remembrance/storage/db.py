@@ -29,6 +29,19 @@ def init_db():
     finally:
         if conn is not None:
             conn.close()
+    # 幂等列迁移：retrieval_event.is_system_noise（老库无此列，create_all 不会加列）
+    conn = None
+    try:
+        conn = engine.raw_connection()
+        conn.execute(
+            "ALTER TABLE retrieval_event ADD COLUMN is_system_noise BOOLEAN DEFAULT 0")
+        conn.commit()
+    except Exception as e:
+        if "duplicate column" not in str(e).lower():
+            logger.warning("is_system_noise migration skipped: %s", e)
+    finally:
+        if conn is not None:
+            conn.close()
     # 初始化 FTS5
     conn = engine.raw_connection()
     init_fts(conn)

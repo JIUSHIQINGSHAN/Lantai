@@ -6,6 +6,15 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
+# ── 强制 UTF-8 I/O ──────────────────────────────────────────────
+# Windows 默认 GBK 解码 stdin；Hermes 按 UTF-8 写 JSON，按 GBK 读则中文乱码
+# （「你好」→「浣犲ソ」）→ query 检索零命中、注入静默失效。必须在读 stdin 前执行。
+try:
+    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")
+except (AttributeError, ValueError):
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from remembrance.core.settings import settings
@@ -64,28 +73,41 @@ def _try_log(query: str, results: list, latency_ms: int) -> None:
         pass
 
 
-def main():
-    raw = sys.stdin.read().strip()
+def _handle_one(raw: str) -> dict:
+    """处理单条请求（单发模式与 serve 模式共用）。"""
+    raw = (raw or "").strip()
     if not raw:
-        print("{}")
-        return
-
+        return {}
     try:
         data = json.loads(raw)
         query = data.get("query", "") or data.get("message", "") or data.get("prompt", "")
     except json.JSONDecodeError:
-        print("{}")
-        return
-
+        return {}
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(build_context, query)
         try:
-            result = future.result(timeout=settings.SHELL_HOOK_TIMEOUT)
+            return future.result(timeout=settings.SHELL_HOOK_TIMEOUT)
         except FuturesTimeout:
-            print("{}")
-            os._exit(0)  # 硬退出：不等滞留线程，保证宿主不被拖慢
+            return {}
         except Exception:
-            result = {}
+            return {}
+
+
+def main():
+    if "--serve" in sys.argv:
+        # 守护模式：NDJSON 循环，每行一个请求 → 每行一个响应。
+        # 常驻进程消除冷启动开销（chromadb/jieba 只加载一次），
+        # 供插件通道热调用（serve/桌面模式 Hermes 不跑 shell hooks）。
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            result = _handle_one(line)
+            sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
+        return
+
+    result = _handle_one(sys.stdin.read())
     print(json.dumps(result, ensure_ascii=False))
 
 

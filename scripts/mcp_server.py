@@ -10,6 +10,16 @@ import sys
 # 使子进程无论 cwd 在哪都能 import remembrance（Hermes 拉 MCP 时 cwd 不可控）
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# ── 强制 UTF-8 I/O ──────────────────────────────────────────────
+# Windows 默认用 GBK 解码 stdin/stdout；Hermes 按 UTF-8 写 JSON（含中文 query），
+# 若按 GBK 读则中文全变乱码（如「你好」→「浣犲ソ」）→ 检索零命中、注入全失效。
+# 必须在任何 stdin/stdout 读写前执行。Python 3.7+ reconfigure；旧版靠环境变量兜底。
+try:
+    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")
+except (AttributeError, ValueError):
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
 from pydantic import ValidationError
 
 from remembrance.models.schemas import AddMemoryReq, SearchReq, FeedbackReq

@@ -21,6 +21,33 @@ def _norm_hash(query: str) -> str:
     return digest.hexdigest()
 
 
+# 系统注入噪音的确定性前缀（Hermes 技能库维护 / 记忆保存 / Skill 安装模板）。
+# 这类查询不是用户的真实记忆回忆，混入评估集会稀释 dry-run 指标。
+_SYSTEM_NOISE_PREFIXES = (
+    "review the conversation above",
+    "consider saving to memory",
+    "请帮我安装这个 agent skill",
+)
+# 长度阈值：实测存量数据 201-500 字符区间为 0 条——真实回忆查询几乎都 ≤200，
+# >500 的基本是超长系统注入指令（技能库维护 prompt 达 5-7k 字符）。天然鸿沟，可安全判定。
+_SYSTEM_NOISE_MAX_LEN = 500
+
+
+def is_system_noise(query: str) -> bool:
+    """判定一次检索查询是否为系统注入噪音（非用户真实记忆回忆）。
+
+    纯函数、无副作用；宁 miss 不误标——只认确定性前缀 + 长度鸿沟，
+    不依赖关键词匹配，避免把用户的真实长查询误判为噪音。
+    """
+    q = (query or "").strip()
+    if not q:
+        return False
+    lower = q.lower()
+    if any(lower.startswith(p) for p in _SYSTEM_NOISE_PREFIXES):
+        return True
+    return len(q) > _SYSTEM_NOISE_MAX_LEN
+
+
 def log_retrieval(query: str, results: list[dict], *, latency_ms: int,
                   gate: dict | None = None, trace_id: str | None = None,
                   lanes: list[str] | None = None) -> str | None:
@@ -49,6 +76,7 @@ def log_retrieval(query: str, results: list[dict], *, latency_ms: int,
                 used_ids=[],
                 latency_ms=int(latency_ms),
                 zero_result=not result_ids,
+                is_system_noise=is_system_noise(query),
             ))
             s.commit()
         return event_id

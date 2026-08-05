@@ -253,4 +253,5 @@ class RetrievalEvent(SQLModel, table=True):
     used_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     latency_ms: int = 0
     zero_result: bool = Field(default=False, index=True)
+    is_system_noise: bool = Field(default=False, index=True)  # 系统注入噪音（技能库维护等），评估统计时排除
     created_at: datetime = Field(default_factory=utcnow, index=True)

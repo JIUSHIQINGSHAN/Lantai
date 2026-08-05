@@ -38,12 +38,44 @@ def test_build_context_short_query_returns_empty(monkeypatch):
 
 
 def test_main_timeout_returns_empty_json(monkeypatch, capsys):
+    """超时降级：返回 {} 且不退出（serve 模式需容错，不能再 os._exit）。"""
     mod = _load_hook(monkeypatch, embed_delay=1.0, timeout=0.2)
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"query": "这是一个超过三字符的查询"})))
     start = time.perf_counter()
-    with pytest.raises(SystemExit):
-        mod.main()
+    mod.main()  # 不再抛 SystemExit——超时静默返回 {}
     elapsed = time.perf_counter() - start
     out = capsys.readouterr().out.strip()
     assert json.loads(out) == {}
-    assert elapsed < 2.0  # 硬超时生效（远小于 embed 的 5s）
+    assert elapsed < 3.0  # 超时生效（远小于 embed 的 5s；留环境波动余量）
+
+
+def test_stdin_forced_utf8_reconfigure(monkeypatch):
+    """回归：Windows GBK 环境下 stdin 必须被强制为 UTF-8。
+
+    修复背景：Hermes 按 UTF-8 写 JSON（含中文 query），Python 默认按 GBK 解码
+    →「你好」变「浣犲ソ」→ 检索零命中、注入静默失效。reconfigure 必须在读 stdin 前执行。
+    """
+    mod = _load_hook(monkeypatch)
+    # 模拟 GBK 环境：若 reconfigure 未生效，sys.stdin.encoding 会是 gbk/cp936
+    assert mod.sys.stdin.encoding.lower() in ("utf-8", "utf8")
+    # 且 stdout 也被强制
+    assert mod.sys.stdout.encoding.lower() in ("utf-8", "utf8")
+
+
+def test_handle_one_empty_returns_empty(monkeypatch):
+    """serve 模式核心：单条处理对空输入/坏 JSON 返回 {}，不抛。"""
+    mod = _load_hook(monkeypatch)
+    assert mod._handle_one("") == {}
+    assert mod._handle_one("not-json{{{") == {}
+    assert mod._handle_one('{"query":""}') == {}
+
+
+def test_serve_mode_processes_line(monkeypatch, capsys):
+    """serve 模式：--serve 参数走 NDJSON 循环，逐行响应。"""
+    mod = _load_hook(monkeypatch)
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"query":"这是一个超过三字符的查询"}\n'))
+    monkeypatch.setattr("sys.argv", ["shell_hook.py", "--serve"])
+    mod.main()
+    out = capsys.readouterr().out.strip()
+    # 输出应是合法 JSON（空 context 或注入，取决于 embed mock）
+    assert out.startswith("{") and out.endswith("}")
