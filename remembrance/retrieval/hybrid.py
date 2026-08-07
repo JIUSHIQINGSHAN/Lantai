@@ -33,13 +33,55 @@ def hybrid_search(query: str, top_k: int = 5,
                   lanes: list[str] | None = None,
                   use_rerank: bool = True,
                   trace: bool = False,
-                  explain: bool = False) -> list[dict] | tuple[list[dict], list[dict]]:
+                  explain: bool = False,
+                  param_overrides: dict | None = None) -> list[dict] | tuple[list[dict], list[dict]]:
     """混合检索：向量 + BM25 + 衰减。
 
     trace=True 时返回 (results, trace_steps)。
     explain=True 时每条结果附带分项 {vector, bm25, fts, decay, lane_boost,
     final, decay_class, decay_multiplier}（reranker 开启时也保留原始分项）。
+
+    param_overrides: 临时覆盖 settings 检索参数（如 {"RETRIEVAL_W_VECTOR": 0.7}）。
+    仅本调用生效，结束后恢复；None 时行为与旧版本完全一致。
     """
+    with _param_override(param_overrides):
+        return _hybrid_search_impl(
+            query, top_k, memory_types, lanes, use_rerank, trace, explain)
+
+
+def _param_override(overrides: dict | None):
+    """上下文管理器：临时覆盖 settings 属性，退出恢复。"""
+    import contextlib
+    @contextlib.contextmanager
+    def _ctx():
+        if not overrides:
+            yield
+            return
+        saved = {}
+        for key, val in overrides.items():
+            if hasattr(settings, key):
+                saved[key] = getattr(settings, key)
+                try:
+                    setattr(settings, key, val)
+                except Exception:
+                    pass
+        try:
+            yield
+        finally:
+            for key, val in saved.items():
+                try:
+                    setattr(settings, key, val)
+                except Exception:
+                    pass
+    return _ctx()
+
+
+def _hybrid_search_impl(query: str, top_k: int = 5,
+                        memory_types: list[str] | None = None,
+                        lanes: list[str] | None = None,
+                        use_rerank: bool = True,
+                        trace: bool = False,
+                        explain: bool = False) -> list[dict] | tuple[list[dict], list[dict]]:
     trace_steps = []
     t0 = time.perf_counter()
 
