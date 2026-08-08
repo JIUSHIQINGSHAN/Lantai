@@ -10,6 +10,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 from sqlmodel import SQLModel, Column, JSON, Field
 
+from remembrance.core.ids import new_id
 from remembrance.core.time import utcnow
 
 
@@ -91,4 +92,28 @@ class ParamContradictionReport(SQLModel, table=True):
     status: str = Field(default="open", index=True)  # open | acknowledged | closed
     acknowledged_by: Optional[str] = None
     acknowledged_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class ShadowWindow(SQLModel, table=True):
+    """Step 7 影子观察窗：参数建议批准后先影子观察，达标才交人工闸门。
+
+    DEDUP shadow-only：观察期内影子参数不写 ParamOverride（不参与实时去重/应用），
+    只在本表记录；promote 只标记状态，实际应用走 ParamSuggestion 人工闸门。
+    """
+    __tablename__ = "shadow_window"
+
+    id: str = Field(primary_key=True)  # new_id("sw")
+    override_id: str = Field(index=True)  # 关联 ParamOverride.revision（发起者）
+    base_revision: int = 0  # 观察起点 revision
+    param_overrides: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    base_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    status: str = Field(default="observing", index=True)  # observing / promoted / rolled_back / cancelled
+    started_at: datetime = Field(default_factory=utcnow)
+    finished_at: Optional[datetime] = None
+    check_deadline: datetime = Field(default_factory=utcnow)  # started_at + SHADOW_OBSERVE_DAYS
+    metrics_base: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    metrics_shadow: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    rollback_reason: Optional[str] = None
+    verdict_reason: Optional[str] = None  # promote/rollback 的判定理由（可审计）
     created_at: datetime = Field(default_factory=utcnow)

@@ -156,6 +156,8 @@ class Settings(BaseSettings):
     OBSERVATION_MAX_DAYS: int = 21
     SHADOW_AUTO_ROLLBACK_ENABLED: bool = True
     MAX_ACTIVE_SHADOW_WINDOWS: int = 1
+    SHADOW_OBSERVE_DAYS: int = 7  # 影子观察期（天）
+    SHADOW_CHECK_INTERVAL_SECONDS: int = 3600  # 到期轮询间隔
     # 矛盾显式化（方向四）
     CONTRADICTION_QUORUM_BUMP: int = 1
     # 验证回流（方向五）
