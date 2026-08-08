@@ -117,3 +117,20 @@ class ShadowWindow(SQLModel, table=True):
     rollback_reason: Optional[str] = None
     verdict_reason: Optional[str] = None  # promote/rollback 的判定理由（可审计）
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class SignalReliabilityStat(SQLModel, table=True):
+    """Step 8 验证回流：按信号类别（venue_class）统计人工验证结果。
+
+    只降不升：reliability_score 起始 1.0，验证失败递减，永不回升。
+    某类论文反复验证失败 → 该类信号降权（penalty 叠加进 resolve_gating）。
+    """
+    __tablename__ = "signal_reliability_stat"
+
+    id: str = Field(primary_key=True)  # new_id("srs")
+    venue_class: str = Field(index=True)  # journal|top_conf|other_peer|workshop|preprint|unknown
+    pass_count: int = 0
+    fail_count: int = 0
+    fail_streak: int = 0  # 连续失败次数（触发 PENALTY_FAIL_STREAK）
+    last_verified_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utcnow)

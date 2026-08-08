@@ -153,12 +153,19 @@ def load_signal_views(raw_document_ids: list[str], *, now=None) -> dict[str, Qua
 
 
 def resolve_gating(tier: str, *, staleness_level: str = "fresh",
-                   observation_override: int | None = None) -> GatingPolicy:
-    """tier → 门控策略（权重/互证数/步长预算/观察期）。penalty 在方向五接入时叠加。"""
+                   observation_override: int | None = None,
+                   venue_class: str | None = None) -> GatingPolicy:
+    """tier → 门控策略（权重/互证数/步长预算/观察期）。
+
+    venue_class 提供时叠加方向五可靠性降权（只降不升）；缺省不动（旧调用兼容）。
+    """
     weight = settings.TIER_WEIGHT.get(tier, 0.0)
     quorum = settings.QUORUM_BY_TIER.get(tier, 2)
     factor = settings.DELTA_BUDGET_FACTOR.get(tier, 0.5)
     days = observation_override or settings.OBSERVATION_DAYS_BY_TIER.get(tier, 5)
+    if venue_class:
+        from remembrance.parameters.reliability import apply_penalty_to_weight
+        weight = apply_penalty_to_weight(weight, venue_class)
     return GatingPolicy(tier=tier, tier_weight=weight,
                         quorum_required=quorum,
                         delta_budget_factor=factor,
