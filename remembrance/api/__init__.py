@@ -10,6 +10,8 @@ from .routes_sources import router as routes_sources_router
 from .routes_evolution import router as routes_evolution_router
 from .routes_edges import router as routes_edges_router
 from .routes_param_advice import router as routes_param_advice_router
+from .routes_retrieval import router as routes_retrieval_router
+from .routes_verification import router as routes_verification_router
 
 __all__ = [
     "routes_health_router",
@@ -22,4 +24,7 @@ __all__ = [
     "routes_evolution_router",
     "routes_edges_router",
     "routes_param_advice_router",
+    "routes_retrieval_router",
+    "routes_verification_router",
 ]
+

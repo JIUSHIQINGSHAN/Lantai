@@ -4,7 +4,6 @@
 # SQLite 数据库
 remembrance.db
 *.db
-
 # Python
 __pycache__/
 *.py[cod]
@@ -14,37 +13,30 @@ __pycache__/
 build/
 dist/
 *.egg
-
 # 虚拟环境（含审计/验证环境）
 .venv*/
 venv/
 env/
-
 # 运行时向量库数据
 .chromadb/
-
 # 审计基线快照
 .audit*/
-
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-
 # 系统
 .DS_Store
 Thumbs.db
-
 # 测试
 .pytest_cache/
 .coverage
 htmlcov/
 .tox/
-
 # 日志
 *.log
 logs/
-
 # 会话工作区元数据（不入库）
 .workbuddy/
+.reasonix/

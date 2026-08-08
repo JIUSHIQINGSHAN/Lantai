@@ -48,11 +48,14 @@ remembrance/
 └── storage/                  # db/vector_store/fts
 scripts/
 ├── run_dry_run.py            # CLI：--query-set/--override/--baseline/--intent/--limit
+├── verify_backfill.py       # used_ids 回填通道自检（8 项）
+├── run_param_matrix.py      # 调参矩阵（多组权重 + 位置敏感指标）
 ├── mark_retrieval_noise.py   # 噪音回填
 ├── shell_hook.py             # --serve 常驻模式（Hermes 插件通道）
 └── mcp_server.py             # MCP 服务
 docs/
 ├── dry-run-report-v1.md      # 第一份评估报告（179 样本，zero=0%）
+├── param-matrix-report.md   # 调参矩阵 v0：权重敏感度实证（Jaccard 盲区修正）
 ├── dry-run-eval-task-split.md  # 评估管道三模块契约
 ├── step7-shadow-task-split.md  # Step 7 双模型任务书
 ├── param-advice-implementation.md  # 参数建议实施文档
@@ -72,17 +75,19 @@ python scripts/run_dry_run.py --query-set dry-run-v1 --intent rule --no-rerank \
 ```
 观察 jaccard 分化（当前库量级小，权重不敏感；数据涨上来后才有区分度）。
 
-### 2. used_ids 回填通道（弱标注缺口）
-- `RetrievalEvent.used_ids` 目前全空 → `weak_hit_rate` 无法计算（诚实标 None）
-- 需 Hermes 生成侧接入：回答时记录用了哪些记忆 → 回填 `backfill_used_ids`
+### 2. used_ids 回填通道（弱标注缺口）—— ✅ 已实现 2026-08-08
+- `RetrievalEvent.used_ids` 回填通道已通：REST `POST /retrieval/backfill` + MCP `backfill` 工具 + 三检索入口透出 `event_id`
+- `run_dry_run` 现按 event_id 加载 `used_ids_map`，有回填时 `weak_hit_rate` 出实值
+- **遗留**：Hermes 生成侧需在回答后调 `backfill`（用哪些记忆回填）——MCP search 响应含 `event_id`，回答完调 `backfill {event_id, used_ids}`
+- **验证**：`python scripts/verify_backfill.py` 一键自检通道（8 项）；指南 docs/used-ids-backfill-guide.md
 
 ### 3. 生产 dry-run 定期跑 + 报告 v2
 - embed 已恢复，179 条全量可跑（rule 模式 33s）
 - 数据继续涨（当前 ~382 事件），可重建查询集 `build_query_set("dry-run-v2")`
 
-### 4. Step 8 人工验证入口（可选）
-- `record_verification_result` 已实现，但缺 API 路由/CLI 入口让大哥回填验证结果
-- 可加 `POST /verification` 或脚本
+### 4. Step 8 人工验证入口 —— ✅ 已实现 2026-08-08
+- `POST /verification` REST 路由（venue_class + passed + note）+ `GET /verification/stats`（各类别统计与降权系数）
+- 用法：`curl -X POST http://127.0.0.1:8767/verification -H "Content-Type: application/json" -d "{\"venue_class\": \"preprint\", \"passed\": false}"`
 
 ## 五、踩坑经验（血泪，别重踩）
 

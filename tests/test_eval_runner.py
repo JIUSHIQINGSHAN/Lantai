@@ -119,6 +119,24 @@ class TestRunDryRun:
         assert len(runs) >= 1
         assert runs[0].id == run.id
 
+    def test_weak_hit_rate_none_without_backfill(self, db_session):
+        """无 used_ids 回填时 weak_hit_rate 诚实标 None。"""
+        qs = _seed(db_session)
+        run = run_dry_run(qs, top_k=3)
+        assert run.metrics["weak_hit_rate"] is None
+
+    def test_weak_hit_rate_with_backfill(self, db_session):
+        """回填 used_ids 后 weak_hit_rate 出实值（命中=1.0）。"""
+        qs = _seed(db_session)
+        # 给事件的 used_ids 回填 mem_1（dry-run 会命中 mem_1）
+        with db_session() as s:
+            ev = s.get(RetrievalEvent, "ev_1")
+            ev.used_ids = ["mem_1"]
+            s.add(ev)
+            s.commit()
+        run = run_dry_run(qs, top_k=3)
+        assert run.metrics["weak_hit_rate"] == 1.0
+
 
 class TestParamOverrideContext:
     def test_override_restores_settings(self):

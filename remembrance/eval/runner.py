@@ -12,9 +12,30 @@ from remembrance.core.time import utcnow
 from remembrance.eval.models import EvalQuerySet, EvalRun
 from remembrance.eval.metrics import compute_metrics
 from remembrance.eval.query_set import load_query_set
+from remembrance.models.tables import RetrievalEvent
 from remembrance.parameters.registry import default_snapshot
 from remembrance.retrieval.hybrid import hybrid_search
 from remembrance.storage import db
+
+
+def _load_used_ids_map(per_query: list[dict]) -> dict[str, list[str]]:
+    """按 event_id 批量拉 retrieval_event.used_ids，构造 {event_id: [used_id, ...]}。
+
+    无任何回填时返回空 dict → weak_hit_rate 诚实标 None。
+    只查 per_query 里出现的 event_id，避免全表扫描。
+    """
+    event_ids = [q.get("event_id") or "" for q in per_query]
+    event_ids = [e for e in event_ids if e]
+    if not event_ids:
+        return {}
+    used_map: dict[str, list[str]] = {}
+    with db.get_session() as s:
+        rows = s.exec(select(RetrievalEvent).where(RetrievalEvent.id.in_(event_ids))).all()
+    for ev in rows:
+        used = ev.used_ids or []
+        if used:
+            used_map[ev.id] = [str(u) for u in used]
+    return used_map
 
 
 def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
@@ -54,7 +75,8 @@ def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
         query_text = (q or {}).get("query", "")
         if not query_text:
             errors += 1
-            per_query.append({"query": "", "result_ids": [], "top_scores": [],
+            per_query.append({"query": "", "event_id": (q or {}).get("event_id", ""),
+                              "result_ids": [], "top_scores": [],
                               "zero_result": True, "latency_ms": 0, "error": "empty_query"})
             continue
         t0 = time.perf_counter()
@@ -84,6 +106,7 @@ def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
                         scores.append(round(float(r["score"]), 4))
             per_query.append({
                 "query": query_text,
+                "event_id": (q or {}).get("event_id", ""),
                 "result_ids": ids,
                 "top_scores": scores,
                 "zero_result": not ids,
@@ -109,7 +132,11 @@ def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
     if _intent_patcher is not None:
         _intent_patcher.stop()
 
-    metrics = compute_metrics(per_query, baseline_per_query=baseline_per_query)
+    # used_ids 弱标注回填（方向二）：按 event_id 从 retrieval_event 拉 used_ids，
+    # 无回填时 used_ids_map 为空 → weak_hit_rate 诚实标 None（不编造 0）。
+    used_ids_map = _load_used_ids_map(per_query)
+    metrics = compute_metrics(per_query, baseline_per_query=baseline_per_query,
+                              used_ids_map=used_ids_map)
     if errors:
         metrics["errors"] = errors
 

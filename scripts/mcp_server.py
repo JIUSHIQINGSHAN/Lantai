@@ -40,23 +40,36 @@ def handle_search(params: dict) -> dict:
         raise ValueError("top_k must be an int in [1, 100]")
     gate = relevance_check(query)
     if not gate["needs_memory"]:
-        _try_log(query, [], 0, gate)
-        return {"results": [], "gate": gate}
+        event_id = _try_log(query, [], 0, gate)
+        return {"results": [], "gate": gate, "event_id": event_id}
     import time
     t0 = time.perf_counter()
     results = hybrid_search(query, top_k=top_k)
     latency_ms = int((time.perf_counter() - t0) * 1000)
-    _try_log(query, results, latency_ms, gate)
-    return {"results": results, "gate": gate}
+    event_id = _try_log(query, results, latency_ms, gate)
+    return {"results": results, "gate": gate, "event_id": event_id}
 
 
-def _try_log(query: str, results: list, latency_ms: int, gate: dict) -> None:
-    """检索事件埋点（方向二）：失败零侵入。"""
+def _try_log(query: str, results: list, latency_ms: int, gate: dict) -> str | None:
+    """检索事件埋点（方向二）：失败零侵入。返回 event_id 供生成侧回填 used_ids。"""
     try:
         from remembrance.observability.retrieval_log import log_retrieval
-        log_retrieval(query, results, latency_ms=latency_ms, gate=gate)
+        return log_retrieval(query, results, latency_ms=latency_ms, gate=gate)
     except Exception:
-        pass
+        return None
+
+
+def handle_backfill(params: dict) -> dict:
+    """生成侧回填：Hermes 回答时实际用到的记忆 id 写回检索事件（弱标注）。"""
+    event_id = params.get("event_id", "")
+    used_ids = params.get("used_ids", [])
+    if not isinstance(event_id, str) or not event_id:
+        raise ValueError("event_id must be a non-empty string")
+    if not isinstance(used_ids, list) or not all(isinstance(x, str) for x in used_ids):
+        raise ValueError("used_ids must be a list of strings")
+    from remembrance.observability.retrieval_log import backfill_used_ids as _bf
+    _bf(event_id, used_ids)
+    return {"ok": True, "event_id": event_id, "used_count": len(used_ids)}
 
 
 def handle_add(params: dict) -> dict:
@@ -97,12 +110,19 @@ TOOLS = {
             "helped": {"type": "boolean"},
             "user_accepted": {"type": "boolean"},
         }, "required": ["memory_id"]}},
+    "backfill": {"description": "回填弱标注：回答时实际用到的记忆 id 写回检索事件", "inputSchema": {
+        "type": "object", "properties": {
+            "event_id": {"type": "string", "description": "search 返回的检索事件 id"},
+            "used_ids": {"type": "array", "items": {"type": "string"},
+                         "description": "实际用进回答的记忆 id 列表"},
+        }, "required": ["event_id", "used_ids"]}},
 }
 
 TOOL_HANDLERS = {
     "search": handle_search,
     "add": handle_add,
     "feedback": handle_feedback,
+    "backfill": handle_backfill,
 }
 
 

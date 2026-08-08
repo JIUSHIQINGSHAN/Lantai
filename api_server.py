@@ -18,6 +18,8 @@ from remembrance.api import (
     routes_health_protected_router,
     routes_edges_router,
     routes_param_advice_router,
+    routes_retrieval_router,
+    routes_verification_router,
 )
 
 
@@ -54,6 +56,8 @@ protected_routers = [
     routes_edges_router,
     routes_health_protected_router,
     routes_param_advice_router,
+    routes_retrieval_router,
+    routes_verification_router,
 ]
 for router in protected_routers:
     app.include_router(router, dependencies=[Depends(verify_api_key)])
@@ -62,3 +66,4 @@ for router in protected_routers:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=settings.HOST, port=settings.PORT)
+

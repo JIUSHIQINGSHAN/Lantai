@@ -26,7 +26,11 @@ from sqlmodel import select
 
 
 def build_context(query: str) -> dict:
-    """查询相关记忆，构建注入上下文。"""
+    """查询相关记忆，构建注入上下文。
+
+    返回 {"context": ..., "event_id": ...}——event_id 供生成侧回填 used_ids
+    （Hermes 若用 shell_hook 通道，回答后按注入的记忆 id 调 backfill）。
+    """
     if not query or len(query.strip()) <= settings.SHELL_HOOK_MIN_CHARS:
         return {}
 
@@ -56,21 +60,26 @@ def build_context(query: str) -> dict:
                     lines.append(f"- [{score}] {m.content[:200]}")
                     break
         latency_ms = int((time.perf_counter() - t0) * 1000)
-        _try_log(query, [{"score": 1.0 - r["distance"], "memory": {"id": r["id"]}}
-                         for r in results], latency_ms)
-        return {"context": "\n".join(lines)} if lines else {}
+        event_id = _try_log(query, [{"score": 1.0 - r["distance"], "memory": {"id": r["id"]}}
+                                    for r in results], latency_ms)
+        out = {}
+        if lines:
+            out["context"] = "\n".join(lines)
+        if event_id:
+            out["event_id"] = event_id
+        return out
     except Exception:
         return {}
 
 
-def _try_log(query: str, results: list, latency_ms: int) -> None:
-    """Shell Hook 检索埋点（独立向量路径，方向二弱标注源）：失败零侵入。"""
+def _try_log(query: str, results: list, latency_ms: int) -> str | None:
+    """Shell Hook 检索埋点（独立向量路径，方向二弱标注源）：失败零侵入。返回 event_id。"""
     try:
         from remembrance.observability.retrieval_log import log_retrieval
-        log_retrieval(query, results, latency_ms=latency_ms,
-                      trace_id="shell_hook")
+        return log_retrieval(query, results, latency_ms=latency_ms,
+                             trace_id="shell_hook")
     except Exception:
-        pass
+        return None
 
 
 def _handle_one(raw: str) -> dict:

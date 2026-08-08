@@ -1,5 +1,6 @@
 """MCP 协议测试：标准错误码 + 输入校验 + 异常隔离"""
 import importlib.util
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,7 +26,7 @@ def test_initialize():
 def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-    assert len(resp["result"]["tools"]) == 3
+    assert len(resp["result"]["tools"]) == 4  # search/add/feedback/backfill
 
 
 def test_unknown_tool():
@@ -58,3 +59,31 @@ def test_non_object_args():
     resp = mod.handle({"jsonrpc": "2.0", "id": 6, "method": "tools/call",
                        "params": {"name": "search", "arguments": "not-a-dict"}})
     assert resp["error"]["code"] == -32602
+
+
+def test_backfill_ok():
+    """backfill 工具：合法输入 → 调用 backfill_used_ids + 返回 ok。"""
+    mod = _load_mcp()
+    with patch("remembrance.observability.retrieval_log.backfill_used_ids") as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+                           "params": {"name": "backfill",
+                                      "arguments": {"event_id": "ev_1",
+                                                    "used_ids": ["mem_1", "mem_2"]}}})
+    assert "error" not in resp
+    text = resp["result"]["content"][0]["text"]
+    payload = json.loads(text)
+    assert payload["ok"] is True
+    assert payload["event_id"] == "ev_1"
+    assert payload["used_count"] == 2
+    m.assert_called_once_with("ev_1", ["mem_1", "mem_2"])
+
+
+def test_backfill_validation():
+    """backfill 工具：非法输入 → -32602，不调底层。"""
+    mod = _load_mcp()
+    with patch("remembrance.observability.retrieval_log.backfill_used_ids") as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 8, "method": "tools/call",
+                           "params": {"name": "backfill",
+                                      "arguments": {"event_id": "", "used_ids": []}}})
+    assert resp["error"]["code"] == -32602
+    m.assert_not_called()
