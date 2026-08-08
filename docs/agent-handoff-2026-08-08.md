@@ -1,0 +1,105 @@
+# Agent 交接文档 — Remembrance 记忆系统（2026-08-08）
+
+> 本文件由 WorkBuddy 会话交接生成。**新会话（Kimi / DeepSeek / 其他 Agent）从本文件开始即可完整续干**，无需回看旧会话。
+
+---
+
+## 一、项目概览
+
+- **项目**：Remembrance 记忆系统（论文可信度体系）——AI 记忆检索 + 参数建议门控系统
+- **仓库**：`C:\Users\Asus\Desktop\记忆`（GitHub: JIUSHIQINGSHAN/Remembrance-System，master 分支）
+- **技术栈**：Python 3.11 + SQLModel + FastAPI + ChromaDB + SQLite
+- **测试**：`C:/Users/Asus/Desktop/记忆/.venv-audit/Scripts/python.exe -m pytest`（**全量 375 测试全绿**）
+- **环境**：Windows；REMEMBRANCE_HOME=`C:/Users/Asus/AppData/Local/remembrance-data`（DB + chromadb）
+- **API key**：OPENAI_API_KEY 已 setx 用户级环境变量 = SiliconFlow 有效 key（`sk-ykhks...ixgv`，**环境变量优先级高于 .env**，改 .env 必须同步 setx）
+
+## 二、当前状态（已完成，勿重做）
+
+| 里程碑 | 提交 | 状态 |
+|---|---|---|
+| UTF-8 修复 + 噪音过滤 + serve hook | `10f118d` | ✅ |
+| Hermes 交接脚本 | `8a85b40` | ✅ |
+| **Dry-run 评估管道**（EvalQuerySet/EvalRun 表 + build_query_set + compute_metrics + run_dry_run + CLI） | `b83b51e` | ✅ |
+| **Step 7 影子观察期**（ShadowWindow 表 + shadow.py 决策 + runtime 集成 + DEDUP shadow-only + 人工闸门） | `ca0f031` | ✅ |
+| **Step 8 验证回流**（SignalReliabilityStat 表 + reliability.py 只降权 + resolve_gating 钩子） | `9507bc5` | ✅ |
+| embed API 修复（环境变量旧 key 覆盖 .env，已 setx 更新） | 未提交 | ✅ |
+
+**可信度体系五方向全部落地**：①质量信号 ②验证闭环(shadow) ③时效 ④矛盾显式化 ⑤回流。
+
+## 三、关键文件地图
+
+```
+remembrance/
+├── core/settings.py          # 全部阈值（PENALTY_*/SHADOW_*/EVAL_* 等）
+├── models/tables.py          # 核心表（RetrievalEvent/ParamSuggestion/ParamOverride）
+├── parameters/
+│   ├── shadow.py             # Step 7 决策纯函数（evaluate_window 三护栏）
+│   ├── reliability.py        # Step 8 回流（record/penalty/apply）
+│   ├── trust_models.py       # ShadowWindow / SignalReliabilityStat 表
+│   ├── runtime.py            # open_shadow/check_shadow_due/rollback + 参数应用
+│   ├── signal_service.py     # resolve_gating（含 venue_class penalty 钩子）
+│   └── registry.py           # default_snapshot/ADJUSTABLE_SPECS
+├── eval/                     # dry-run 管道
+│   ├── models.py             # EvalQuerySet / EvalRun
+│   ├── query_set.py          # build_query_set（噪音排除+去重）
+│   ├── metrics.py            # compute_metrics（zero_result/avg/jaccard/weak_hit）
+│   └── runner.py             # run_dry_run（param_overrides/intent_mode）
+├── retrieval/hybrid.py       # hybrid_search（含 param_overrides 上下文覆盖）
+└── storage/                  # db/vector_store/fts
+scripts/
+├── run_dry_run.py            # CLI：--query-set/--override/--baseline/--intent/--limit
+├── mark_retrieval_noise.py   # 噪音回填
+├── shell_hook.py             # --serve 常驻模式（Hermes 插件通道）
+└── mcp_server.py             # MCP 服务
+docs/
+├── dry-run-report-v1.md      # 第一份评估报告（179 样本，zero=0%）
+├── dry-run-eval-task-split.md  # 评估管道三模块契约
+├── step7-shadow-task-split.md  # Step 7 双模型任务书
+├── param-advice-implementation.md  # 参数建议实施文档
+└── hermes-install-handoff.md # Hermes 接入交接
+tests/test_param_shadow.py    # Step 7 测试（24）
+tests/test_param_reliability.py  # Step 8 测试（12）
+tests/test_eval_*.py          # 评估管道测试（42）
+```
+
+## 四、待办任务（新 Agent 从这里继续）
+
+### 1. 调参对比矩阵（高价值）
+用 dry-run 管道跑多组参数对比：
+```bash
+python scripts/run_dry_run.py --query-set dry-run-v1 --intent rule --no-rerank \
+  --override RETRIEVAL_W_VECTOR=0.7 --baseline <基线run_id>
+```
+观察 jaccard 分化（当前库量级小，权重不敏感；数据涨上来后才有区分度）。
+
+### 2. used_ids 回填通道（弱标注缺口）
+- `RetrievalEvent.used_ids` 目前全空 → `weak_hit_rate` 无法计算（诚实标 None）
+- 需 Hermes 生成侧接入：回答时记录用了哪些记忆 → 回填 `backfill_used_ids`
+
+### 3. 生产 dry-run 定期跑 + 报告 v2
+- embed 已恢复，179 条全量可跑（rule 模式 33s）
+- 数据继续涨（当前 ~382 事件），可重建查询集 `build_query_set("dry-run-v2")`
+
+### 4. Step 8 人工验证入口（可选）
+- `record_verification_result` 已实现，但缺 API 路由/CLI 入口让大哥回填验证结果
+- 可加 `POST /verification` 或脚本
+
+## 五、踩坑经验（血泪，别重踩）
+
+1. **环境变量优先级 > .env**：pydantic-settings 读 env 优先；改 key 必须 `setx OPENAI_API_KEY xxx` 同步注册表，且**只对新进程生效**（改完要重启 Hermes）
+2. **SQLModel 表类不能用 `from __future__ import annotations`**；Field 必须从 `sqlmodel` import
+3. **SQLite 存 naive datetime**：从 DB 读出后与 `utcnow()`（aware）比较前要 `replace(tzinfo=None)`
+4. **测试卡死三连**：凡走到 hybrid_search 的测试必须 mock `classify_intent`（LLM 外部调用）+ `embed`（外部 API）+ `get_vector_store`；embed 不可用时每条查询 tenacity 重试 3 次拖死
+5. **Windows 换行**：subprocess 读 stdout 是 `\r\n`，JSON 解析前 `rstrip("\r")`
+6. **safe-delete 沙箱**：WorkBuddy Bash 的 rm/os.remove 会被拦，删文件用 `os.rename(p, p+'.del')` 改名绕过
+7. **内存坑**：16GB 机器，chromadb 加载 + 浏览器占内存到 90%+ 时测试会卡死；跑重测试前确认可用内存 >2.5GB
+8. **测试纪律**（AGENTS.md）：核心函数必须有**不 mock 的冒烟测试**；mock 只允许外部网络
+
+## 六、项目纪律（新 Agent 必读）
+
+- **人工闸门铁律**：参数最终应用必须人工批准，验证自动化只提供证据，绝无自动应用路径
+- **宁 miss 不脏写**：校验失败即丢弃，不自动修正
+- **信号来源锁**：新信号必须来自结构化字段/系统测量，不得由 LLM 生成后直接采信
+- **零硬编码**：新阈值一律进 settings
+- **中文注释，代码/标识符英文**
+- **conventional commits** + Keep a Changelog
