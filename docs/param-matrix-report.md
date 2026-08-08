@@ -1,80 +1,50 @@
-# 调参对比矩阵报告 v0 — 权重敏感度实证分析
+# 调参对比矩阵报告 v2
 
-> 日期：2026-08-08 | 数据：生产库 `remembrance-data` 已有 5 组 eval_run（dry-run-v1，179 样本）
-> 方法：位置敏感指标分析（Jaccard 集合指标的盲区补充）
-> 说明：本报告基于**已跑过的历史 run** 做静态分析，不新增 API 调用；扩展矩阵见 `scripts/run_param_matrix.py`
+> 日期：2026-08-08 18:47 | 查询集：dry-run-v2（214 样本，420 事件/248 干净去重）
+> 本轮含 FTS5 特殊字符语法修复，矩阵期间 1284 次检索 FTS5 警告 0 次
+> 命令：`python scripts/run_param_matrix.py --query-set dry-run-v2 --intent rule --no-rerank --top-k 5`
 
-## 一、为什么补位置敏感指标
+## 一、矩阵结果
 
-dry-run 报告 v1 用 `jaccard_vs_baseline=1.0` 得出"权重不敏感，无区分度"结论。
+| 标签 | overrides | zero_rate | avg_count | jaccard | 耗时 |
+|---|---|---|---|---|---|
+| base | `default` | 0.0 | 4.0 | None | 30.4s |
+| vec+ | `{'RETRIEVAL_W_VECTOR': 0.75, 'RETRIEVAL_W_BM25': 0.15}` | 0.0 | 4.0 | 1.0 | 27.5s |
+| vec++ | `{'RETRIEVAL_W_VECTOR': 0.85, 'RETRIEVAL_W_BM25': 0.05}` | 0.0 | 4.0 | 1.0 | 26.3s |
+| bm25+ | `{'RETRIEVAL_W_BM25': 0.45, 'RETRIEVAL_W_VECTOR': 0.4}` | 0.0 | 4.0 | 1.0 | 24.3s |
+| decay+ | `{'RETRIEVAL_W_DECAY': 0.25, 'RETRIEVAL_W_VECTOR': 0.45, 'RETRIEVAL_W_BM25': 0.2}` | 0.0 | 4.0 | 1.0 | 29.0s |
+| fts+ | `{'RETRIEVAL_W_FTS': 0.15, 'RETRIEVAL_W_VECTOR': 0.5, 'RETRIEVAL_W_BM25': 0.25}` | 0.0 | 4.0 | 1.0 | 24.2s |
 
-**该结论不精确**：`jaccard_overlap()` 用 `set()` 比较，**忽略排序变化**。同一组记忆只要集合不变，即使顺序全换，jaccard 仍是 1.0。调参改变的是排序优先级，恰恰在 jaccard 的盲区里。
+## 二、位置敏感对比（vs 基线轮，Jaccard 盲区补充）
 
-实证：默认权重 vs `W_VECTOR=0.75/W_BM25=0.15` 两组 run（同为 179 样本，no-rerank）：
+| 标签 | top1一致率 | top3集合一致率 | 平均位置漂移 | 分数相关 |
+|---|---|---|---|---|
+| vec+ | 0.9206 | 0.8972 | 0.1168 | 0.9691 |
+| vec++ | 0.8411 | 0.5888 | 0.3879 | 0.8657 |
+| bm25+ | 0.7991 | 0.9533 | 0.1285 | 0.969 |
+| decay+ | 0.8364 | 0.6075 | 0.3388 | 0.936 |
+| fts+ | 0.9626 | 0.9813 | 0.0327 | 0.9983 |
 
-| 指标 | 数值 |
-|---|---|
-| per_query 结果集合不同的条数 | **31 / 179**（17.3%） |
-| top1（首位）不同 | **14 / 179**（7.8%） |
-| top3 集合不同 | 17 / 179（9.5%） |
-| 位置变化总数 | 73 处 |
-| 平均位置漂移（共同元素） | 0.11 位 |
-| top_scores 相关系数 | 0.9699 |
-| **jaccard_vs_baseline（旧指标）** | **1.0（盲区）** |
+## 三、解读（v2 实证）
 
-权重改变后，17% 的查询召回集合就不同了，且 top1 换了 7.8%。**敏感度真实存在**，只是被 jaccard 掩盖。
+1. **集合无区分度是量级效应**：记忆库仅 4 条 active（fact 1 / preference 2 / working 1），
+   top_k=5 恒返回全部记忆 → jaccard 恒 1.0。与 v1 结论一致，是数据问题而非权重问题。
+2. **位置敏感指标首次出现实质分化**：vec++（W_VECTOR=0.85）与 decay+ 把 top3 集合
+   一致性打到 **58.9% / 60.8%**——约四成查询的 top3 集合与基线不同；fts+ 影响最小
+   （top1 96.3% / top3set 98.1% / drift 0.033）。实证"集合不变 ≠ 排序不变"。
+3. **当前权重组合偏稳健**：214 条查询 zero_result=0%、avg=4.0/5，无召回缺口；
+   向量主导排序（vec+ 仅 7.9% 查询改变 top1）。
+4. **FTS5 特殊字符修复**：修复前矩阵日志大量 `fts5: syntax error near "@"/"="`，
+   FTS 通道在含符号查询上整体降级；修复后 1284 次检索警告 0。因 FTS 权重 0.05
+   且库量级小，指标未变——修复价值在通道可用性，待库量级上来后复测。
+5. **不建议现在调权**：4 条记忆下任何权重调整都缺乏统计意义；先攒数据
+   （目标 >100 条 active），再按此矩阵重跑，届时 jaccard 与位置指标都会分化。
 
-## 二、敏感度的量级判断
+## 附：run_id
+- base: `erun_01KZGFKBRHC2B4JA71K8M7QZGY`
+- vec+: `erun_01KZGFM9ENGBQDMBQRD6Y4PKYN`
+- vec++: `erun_01KZGFN499P347T6SENMSW2ADA`
+- bm25+: `erun_01KZGFNXYHA5W4C9B8HVFP0NE4`
+- decay+: `erun_01KZGFPNP9HYDAK9W8V5140HQA`
+- fts+: `erun_01KZGFQJ0Z8BB5027R3DJP650R`
 
-当前敏感度温和，原因不是"权重无效"，而是：
-
-1. **记忆库极小**：生产库仅 4 条 memoryitem。所有查询都在 4 条里选，top-k=5 几乎必然全召回。
-2. 权重变化只影响**排序**，集合层面变化有限（31/179 是因为 FTS 追加召回 + 候选截断）。
-3. 库量级涨上来后（>100 条记忆），候选集变大，权重对 top-k 集合的塑造力会显著增强。
-
-**结论**：交接文档"当前库量级小，权重不敏感"应修正为"**库量级小导致集合指标不敏感，但排序指标已现分化；调参矩阵必须用位置敏感指标评估**"。
-
-## 三、可用命令（Windows 本机，.venv-audit）
-
-扩展矩阵（6 组参数 × 179 样本）：
-```bash
-python scripts/run_param_matrix.py --query-set dry-run-v1 --intent rule --no-rerank
-```
-
-快速试跑（前 30 条）：
-```bash
-python scripts/run_param_matrix.py --limit 30
-```
-
-指定基线 run：
-```bash
-python scripts/run_param_matrix.py --baseline erun_01KZFJNKA0BVHGND9...
-```
-
-脚本产出：每组参数落一个 eval_run + 终端矩阵表 + 写 `docs/param-matrix-report.md`（覆盖本文件）。
-
-## 四、参数空间建议
-
-当前 settings 默认：`W_VECTOR=0.6 W_BM25=0.25 W_FTS=0.05 W_DECAY=0.1`。
-
-矩阵覆盖方向：
-
-| 标签 | 变化 | 验证点 |
-|---|---|---|
-| base | 默认 | 基线 |
-| vec+ | W_VECTOR 0.75 / W_BM25 0.15 | 向量主导（已实证敏感） |
-| vec++ | W_VECTOR 0.85 / W_BM25 0.05 | 极端向量化 |
-| bm25+ | W_BM25 0.45 / W_VECTOR 0.40 | 关键词主导 |
-| decay+ | W_DECAY 0.25（其余摊薄） | 时效主导 |
-| fts+ | W_FTS 0.15（其余摊薄） | FTS 命中主导 |
-
-## 五、下一步
-
-1. 本机跑 `run_param_matrix.py` 出完整矩阵（6 组 × 179 = ~3 分钟，rule 模式无 LLM 调用）
-2. 记忆库量级是敏感度上限的决定因素——持续 ingest，库 >100 条后重跑矩阵
-3. used_ids 回填后 weak_hit_rate 可用，可进一步按"实际被使用的记忆"评估排序质量
-
-## 附：分析基于的 run
-
-- 基线（默认）`erun_01KZFJNKA0BVHGND9...`（2026-08-08 02:19）
-- 对比（W_VECTOR=0.75）`erun_01KZE6WKGBA5JKRH7...`（2026-08-07 13:34）

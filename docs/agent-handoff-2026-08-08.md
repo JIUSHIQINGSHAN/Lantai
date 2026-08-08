@@ -67,13 +67,12 @@ tests/test_eval_*.py          # 评估管道测试（42）
 
 ## 四、待办任务（新 Agent 从这里继续）
 
-### 1. 调参对比矩阵（高价值）
-用 dry-run 管道跑多组参数对比：
-```bash
-python scripts/run_dry_run.py --query-set dry-run-v1 --intent rule --no-rerank \
-  --override RETRIEVAL_W_VECTOR=0.7 --baseline <基线run_id>
-```
-观察 jaccard 分化（当前库量级小，权重不敏感；数据涨上来后才有区分度）。
+### 1. 调参对比矩阵 —— ✅ 已跑 dry-run-v2（2026-08-08）
+- 查询集：dry-run-v2（214 样本，420 事件/248 干净去重），基线 + 5 组权重全量跑完
+- 结论：4 条 active 记忆下 jaccard 恒 1.0（量级效应）；位置敏感指标首现分化
+  （vec++/decay+ top3 集合一致性 58.9%/60.8%）；**不建议现在调权**，先攒数据 >100 条
+- 顺带修复：FTS5 MATCH 特殊字符语法错误（search_fts 引号包裹，1284 次检索警告 0）
+- 报告：docs/param-matrix-report.md（v2）
 
 ### 2. used_ids 回填通道（弱标注缺口）—— ✅ 已实现 2026-08-08
 - `RetrievalEvent.used_ids` 回填通道已通：REST `POST /retrieval/backfill` + MCP `backfill` 工具 + 三检索入口透出 `event_id`

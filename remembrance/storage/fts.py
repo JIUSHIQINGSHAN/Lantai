@@ -64,7 +64,12 @@ def search_fts(conn: sqlite3.Connection, query: str, top_k: int = 5) -> list[str
         keywords = [w.strip() for w in query.split() if w.strip()]
         if not keywords:
             return []
-        match_query = " AND ".join(keywords)
+        # 逐词引号包裹：FTS5 MATCH 语法里 = @ . ? / 等字符会触发 syntax error，
+        # 使整条 FTS 通道降级（实测真实查询大量触发）；引号把词转义为字面量，
+        # trigram 分词器下仍按子串匹配（ADR-0008 容错语义不变）。
+        # 词内双引号按 FTS5 规则用 "" 转义。
+        match_query = " AND ".join(
+            '"' + k.replace('"', '""') + '"' for k in keywords)
         cursor = conn.execute(
             "SELECT memory_id FROM memory_fts WHERE content MATCH ? ORDER BY rank LIMIT ?",
             (match_query, top_k)
@@ -73,3 +78,4 @@ def search_fts(conn: sqlite3.Connection, query: str, top_k: int = 5) -> list[str
     except Exception as e:
         logger.warning("FTS5 search failed: %s", e)
         return []
+

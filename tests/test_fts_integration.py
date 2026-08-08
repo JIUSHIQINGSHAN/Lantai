@@ -59,6 +59,39 @@ def test_sync_fts_update(engine):
         assert mid not in search_fts(c, "旧内容")
 
 
+def test_special_chars_no_syntax_error(engine):
+    """FTS5 MATCH 特殊字符（= @ . ? /）不再触发 syntax error（引号转义）"""
+    mid = _add_mem(engine, "E=MC2 是质能方程，物理常用")
+    with Session(engine) as s:
+        sync_fts(s, mid, "E=MC2 是质能方程，物理常用")
+        s.commit()
+    with engine.connect() as conn:
+        c = conn.connection.driver_connection
+        # 含特殊字符的查询：修复前 FTS5 syntax error → 通道降级；修复后正常召回
+        assert mid in search_fts(c, "E=MC2 质能方程")  # trigram 最小 3 字符
+        # 碎片符号查询：不抛异常（返回列表，内容不含则不命中）
+        assert isinstance(search_fts(c, "物理 @ 常用 . 查询 ? 测试"), list)
+
+
+def test_query_symbols_only_does_not_crash(engine):
+    """纯符号/碎片查询不抛异常，返回空列表而非降级日志刷屏"""
+    _add_mem(engine, "普通内容记忆")
+    with engine.connect() as conn:
+        c = conn.connection.driver_connection
+        assert search_fts(c, "@ . = ? /") == []
+        assert search_fts(c, "???") == []
+
+
+def test_query_embedded_quotes_escaped(engine):
+    """查询内含双引号不破坏 MATCH 语法（FTS5 用 "" 转义）"""
+    mid = _add_mem(engine, '用户说"明天见"后离开')
+    with Session(engine) as s:
+        sync_fts(s, mid, '用户说"明天见"后离开')
+        s.commit()
+    with engine.connect() as conn:
+        c = conn.connection.driver_connection
+        assert mid in search_fts(c, '"明天见"')
+
 def test_sync_fts_delete(engine):
     """content=None 删除索引"""
     mid = _add_mem(engine, "要删除的记忆")
@@ -253,3 +286,6 @@ def test_hybrid_vector_empty_no_candidates_returns_empty(engine):
         results = hybrid.hybrid_search("完全不存在的记忆关键词xyz", top_k=5,
                                        use_rerank=False)
     assert results == []
+
+
+
