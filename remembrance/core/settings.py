@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     PROCEDURAL_ROLLBACK_HOURS: int = 24
     WORKING_MEMORY_TTL_DAYS: int = 60
 
+    # 候选可见队列（Ticket 02）：reject 进待审队列，超龄自动归档
+    CANDIDATE_TTL_DAYS: int = 7
+    CANDIDATE_TTL_CRON_HOURS: int = 24
+
     # Lane 分轨衰减：每类记忆的基础保留强度与重要性放大系数
     # base_s = 记忆半衰期（天），importance_boost = 重要性加权分数
     LANE_DECAY_PROFILES: dict = {

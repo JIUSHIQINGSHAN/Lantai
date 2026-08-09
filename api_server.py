@@ -20,6 +20,7 @@ from remembrance.api import (
     routes_param_advice_router,
     routes_retrieval_router,
     routes_verification_router,
+    routes_candidates_router,
 )
 
 
@@ -58,6 +59,7 @@ protected_routers = [
     routes_param_advice_router,
     routes_retrieval_router,
     routes_verification_router,
+    routes_candidates_router,
 ]
 for router in protected_routers:
     app.include_router(router, dependencies=[Depends(verify_api_key)])

@@ -81,6 +81,28 @@ def handle_add(params: dict) -> dict:
     return add_memory(req)
 
 
+def handle_candidates_pending(params: dict) -> dict:
+    """待审候选列表（Ticket 02）——被闸门拒绝的候选进此队列等人工裁决。"""
+    limit = params.get("limit", 50)
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
+        raise ValueError("limit must be an int in [1, 500]")
+    from remembrance.services.candidate_service import list_pending_candidates
+    return list_pending_candidates(limit)
+
+
+def handle_candidate_review(params: dict) -> dict:
+    """审核候选：approve → 进提案链并应用；reject → 归档。"""
+    candidate_id = params.get("candidate_id", "")
+    approve = params.get("approve", False)
+    reason = params.get("reason", "")
+    if not isinstance(candidate_id, str) or not candidate_id:
+        raise ValueError("candidate_id must be a non-empty string")
+    if not isinstance(approve, bool):
+        raise ValueError("approve must be a boolean")
+    from remembrance.services.candidate_service import review_candidate
+    return review_candidate(candidate_id, approve=approve, reason=reason)
+
+
 def handle_feedback(params: dict) -> dict:
     req = FeedbackReq(
         memory_id=params.get("memory_id", ""),
@@ -116,6 +138,16 @@ TOOLS = {
             "used_ids": {"type": "array", "items": {"type": "string"},
                          "description": "实际用进回答的记忆 id 列表"},
         }, "required": ["event_id", "used_ids"]}},
+    "candidates_pending": {"description": "列出待审候选（被闸门拒绝、等人工裁决）", "inputSchema": {
+        "type": "object", "properties": {
+            "limit": {"type": "integer", "default": 50},
+        }}},
+    "candidate_review": {"description": "审核候选：approve 进提案链并应用，reject 归档", "inputSchema": {
+        "type": "object", "properties": {
+            "candidate_id": {"type": "string"},
+            "approve": {"type": "boolean"},
+            "reason": {"type": "string", "default": ""},
+        }, "required": ["candidate_id", "approve"]}},
 }
 
 TOOL_HANDLERS = {
@@ -123,6 +155,8 @@ TOOL_HANDLERS = {
     "add": handle_add,
     "feedback": handle_feedback,
     "backfill": handle_backfill,
+    "candidates_pending": handle_candidates_pending,
+    "candidate_review": handle_candidate_review,
 }
 
 

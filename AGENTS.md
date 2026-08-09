@@ -21,4 +21,5 @@ Issues 以本地 markdown 文件形式存放在 `.scratch/<feature>/` 目录下�
 - 背景：v0.3.2 修复中暴露的 FTS schema、Chronos 时区、BM25 `ptp()` 三个真实 bug，全部因为既有测试 mock 了外部依赖、产品代码从未被真实执行到。
 - 判定"核心函数"：任何被 API 路由、worker、service 层调用的存储/检索/决策函数（如 `hybrid_search`、`apply_forgetting`、`search_fts`、`apply_proposal`）。
 - mock 允许用于：外部网络（LLM/embedding/rerank）、文件系统副作用；**不允许用于**：让被测函数"跳过"其内部计算逻辑。
+- 「宁 miss 不脏写」补充（v0.5 Ticket 02）：校验失败（如低置信度提取）**不静默丢弃、不自动修正**——候选进待审队列（pending_review）交用户裁决，超龄（CANDIDATE_TTL_DAYS）自动归档为 rejected；裁决入口见 `GET /candidates/pending`。
 - 新增或修改核心逻辑时，若该函数没有不 mock 的冒烟测试，测试必须补上，否则不得提交。

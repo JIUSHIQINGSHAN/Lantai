@@ -42,6 +42,19 @@ def init_db():
     finally:
         if conn is not None:
             conn.close()
+    # 幂等列迁移：memorycandidate.review_due_at（Ticket 02，老库无此列）
+    conn = None
+    try:
+        conn = engine.raw_connection()
+        conn.execute(
+            "ALTER TABLE memorycandidate ADD COLUMN review_due_at DATETIME")
+        conn.commit()
+    except Exception as e:
+        if "duplicate column" not in str(e).lower():
+            logger.warning("review_due_at migration skipped: %s", e)
+    finally:
+        if conn is not None:
+            conn.close()
     # 初始化 FTS5
     conn = engine.raw_connection()
     init_fts(conn)

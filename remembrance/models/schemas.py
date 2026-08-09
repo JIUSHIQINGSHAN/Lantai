@@ -56,6 +56,11 @@ class FeedbackReq(BaseModel):
     hallucination_risk: float = 0.0
 
 
+class CandidateReviewReq(BaseModel):
+    approve: bool
+    reason: str = ""
+
+
 class SourceReq(BaseModel):
     kind: str
     config: dict

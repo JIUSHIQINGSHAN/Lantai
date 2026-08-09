@@ -4,6 +4,7 @@ from remembrance.models.tables import MemoryCandidate, MemoryProposal
 from remembrance.models.enums import ProposalStatus
 from remembrance.storage import db
 from remembrance.gate.decision import decide
+from remembrance.services.candidate_service import enqueue_rejected
 from remembrance.evolution.proposer import propose_from_candidate
 from remembrance.evolution.promoter import apply_proposal
 from remembrance.core.settings import settings
@@ -18,9 +19,8 @@ def run_evolve_once():
     for cand in cands:
         result = decide(cand.id)
         if result["decision"] == "reject":
-            with db.get_session() as s:
-                c = s.get(MemoryCandidate, cand.id)
-                c.status = "rejected"; s.add(c); s.commit()
+            # 校验失败（如低置信度）不再静默丢弃：进待审队列交用户裁决（Ticket 02）
+            enqueue_rejected(cand.id)
             continue
 
         # archive_conflict（硬矛盾）不再丢弃新信息：走提案路径，

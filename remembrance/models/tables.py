@@ -43,6 +43,7 @@ class MemoryCandidate(SQLModel, table=True):
     extractor_confidence: float = 0.0
     lane: str = Field(default="general")  # 分轨：从 AddMemoryReq 传入
     status: str = "new"
+    review_due_at: Optional[datetime] = None  # 待审队列 TTL 截止（Ticket 02）
     created_at: datetime = Field(default_factory=utcnow)
 
 

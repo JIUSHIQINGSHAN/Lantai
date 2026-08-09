@@ -26,7 +26,10 @@ def test_initialize():
 def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-    assert len(resp["result"]["tools"]) == 4  # search/add/feedback/backfill
+    names = [t["name"] for t in resp["result"]["tools"]]
+    assert len(resp["result"]["tools"]) == 6  # search/add/feedback/backfill/candidates_pending/candidate_review
+    assert "candidates_pending" in names
+    assert "candidate_review" in names
 
 
 def test_unknown_tool():
@@ -85,5 +88,44 @@ def test_backfill_validation():
         resp = mod.handle({"jsonrpc": "2.0", "id": 8, "method": "tools/call",
                            "params": {"name": "backfill",
                                       "arguments": {"event_id": "", "used_ids": []}}})
+    assert resp["error"]["code"] == -32602
+    m.assert_not_called()
+
+
+def test_candidates_pending_ok():
+    """candidates_pending 工具：合法输入 → 调用 service + 返回列表。"""
+    mod = _load_mcp()
+    with patch("remembrance.services.candidate_service.list_pending_candidates",
+               return_value={"candidates": []}) as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                           "params": {"name": "candidates_pending",
+                                      "arguments": {"limit": 10}}})
+    assert "error" not in resp
+    text = resp["result"]["content"][0]["text"]
+    assert json.loads(text) == {"candidates": []}
+    m.assert_called_once_with(10)
+
+
+def test_candidate_review_ok():
+    """candidate_review 工具：approve=false → 归档。"""
+    mod = _load_mcp()
+    with patch("remembrance.services.candidate_service.review_candidate",
+               return_value={"ok": True, "candidate_status": "rejected"}) as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
+                           "params": {"name": "candidate_review",
+                                      "arguments": {"candidate_id": "cand_1",
+                                                    "approve": False,
+                                                    "reason": "不相关"}}})
+    assert "error" not in resp
+    m.assert_called_once_with("cand_1", approve=False, reason="不相关")
+
+
+def test_candidate_review_validation():
+    """candidate_review 工具：非法输入 → -32602，不调底层。"""
+    mod = _load_mcp()
+    with patch("remembrance.services.candidate_service.review_candidate") as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 11, "method": "tools/call",
+                           "params": {"name": "candidate_review",
+                                      "arguments": {"candidate_id": "", "approve": "yes"}}})
     assert resp["error"]["code"] == -32602
     m.assert_not_called()

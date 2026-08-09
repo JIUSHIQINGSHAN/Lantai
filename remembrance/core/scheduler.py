@@ -25,6 +25,11 @@ def start_scheduler():
                        minutes=settings.EVOLVE_CRON_MINUTES, id="evolve")
     _scheduler.add_job(run_forgetting_once, "interval",
                        hours=settings.FORGET_CRON_HOURS, id="forget")
+    # Ticket 02: 候选待审队列 TTL 归档
+    from remembrance.workers.digest_worker import run_candidate_ttl
+    _scheduler.add_job(run_candidate_ttl, "interval",
+                       hours=settings.CANDIDATE_TTL_CRON_HOURS,
+                       id="candidate_ttl", replace_existing=True)
 
     # 参数建议（论文驱动优化·辅助模式）
     if settings.PARAM_ADVICE_ENABLED:

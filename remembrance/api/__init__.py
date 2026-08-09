@@ -12,6 +12,7 @@ from .routes_edges import router as routes_edges_router
 from .routes_param_advice import router as routes_param_advice_router
 from .routes_retrieval import router as routes_retrieval_router
 from .routes_verification import router as routes_verification_router
+from .routes_candidates import router as routes_candidates_router
 
 __all__ = [
     "routes_health_router",
@@ -26,5 +27,6 @@ __all__ = [
     "routes_param_advice_router",
     "routes_retrieval_router",
     "routes_verification_router",
+    "routes_candidates_router",
 ]
 

@@ -107,3 +107,16 @@ tests/test_eval_*.py          # 评估管道测试（42）
 - **零硬编码**：新阈值一律进 settings
 - **中文注释，代码/标识符英文**
 - **conventional commits** + Keep a Changelog
+
+---
+
+## 2026-08-09 增量（v0.5 对话闭环）
+
+- **Ticket 02 候选可见队列已完成**（commit 见下）：`memorycandidate.review_due_at` +
+  `pending_review` 状态；gate REJECT 不再静默丢弃，进待审队列交用户裁决；
+  REST `GET /candidates/pending` + `POST /candidates/{id}/review`；
+  MCP `candidates_pending` / `candidate_review`；每日 TTL 自动归档
+  （`CANDIDATE_TTL_DAYS=7`，scheduler 任务 `candidate_ttl`）。
+- 测试全量 409 全绿（新增 tests/test_candidate_queue.py 13 例 + test_mcp.py 3 例）。
+- 接下来按序：Ticket 01 Dialogue Ingest → 04 Search Transparency → 05 Hermes 会话钩子验证。
+- 详细方案见 `docs/plans/v0.5-dialogue-loop.md`；tickets 在 `.scratch/dialogue-loop/issues/`。
