@@ -53,11 +53,15 @@ def build_context(query: str) -> dict:
             ).all()
 
         lines = []
+        evidence = []
         for r in results:
             for m in items:
                 if m.id == r["id"]:
                     score = round(1.0 - r["distance"], 2)
                     lines.append(f"- [{score}] {m.content[:200]}")
+                    # Ticket 04: 依据段——记忆 id + 内容摘要（可感知、可回填）
+                    evidence.append({"id": m.id, "content": m.content[:200],
+                                     "score": score})
                     break
         latency_ms = int((time.perf_counter() - t0) * 1000)
         event_id = _try_log(query, [{"score": 1.0 - r["distance"], "memory": {"id": r["id"]}}
@@ -65,6 +69,12 @@ def build_context(query: str) -> dict:
         out = {}
         if lines:
             out["context"] = "\n".join(lines)
+        if evidence:
+            out["context"] = ("【本次依据】\n" +
+                              "\n".join(f"- ({e['id']}, score {e['score']}) {e['content']}"
+                                         for e in evidence) +
+                              "\n\n【相关记忆】\n" + out["context"])
+            out["evidence"] = evidence
         if event_id:
             out["event_id"] = event_id
         return out

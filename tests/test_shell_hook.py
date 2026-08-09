@@ -79,3 +79,47 @@ def test_serve_mode_processes_line(monkeypatch, capsys):
     out = capsys.readouterr().out.strip()
     # 输出应是合法 JSON（空 context 或注入，取决于 embed mock）
     assert out.startswith("{") and out.endswith("}")
+
+
+def test_build_context_has_evidence(monkeypatch):
+    """有命中时：context 含"依据"段（记忆 id + 摘要），并返回结构化 evidence。"""
+    mod = _load_hook(monkeypatch)
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import SQLModel, Session, create_engine
+    engine = create_engine("sqlite:///:memory:",
+                           connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as s:
+        from remembrance.models.tables import MemoryItem
+        s.add(MemoryItem(id="mem_1", memory_type="semantic", key="k",
+                         content="用户喜欢 Python 和 Rust"))
+        s.commit()
+
+    class _FakeStore:
+        def search(self, qv, top_k=5):
+            return [{"id": "mem_1", "distance": 0.1}]
+
+    import remembrance.storage.db as db_module
+    monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
+    monkeypatch.setattr(mod, "get_vector_store", lambda: _FakeStore())
+
+    out = mod.build_context("这是一个超过三字符的查询")
+    assert "依据" in out["context"]
+    assert "mem_1" in out["context"]
+    assert out["evidence"][0]["id"] == "mem_1"
+    assert "用户喜欢" in out["evidence"][0]["content"]
+    assert out["event_id"] is not None  # 回填通道不受影响
+
+
+def test_build_context_no_hits_no_evidence(monkeypatch):
+    """无命中：零侵入降级，context 不带依据段。"""
+    mod = _load_hook(monkeypatch)
+
+    class _EmptyStore:
+        def search(self, qv, top_k=5):
+            return []
+
+    monkeypatch.setattr(mod, "get_vector_store", lambda: _EmptyStore())
+    out = mod.build_context("这是一个超过三字符的查询")
+    assert out == {}

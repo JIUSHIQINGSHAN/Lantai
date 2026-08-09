@@ -157,3 +157,25 @@ def test_add_dialogue_validation():
                                       "arguments": {"text": "   "}}})
     assert resp["error"]["code"] == -32602
     m.assert_not_called()
+
+
+def test_search_response_has_evidence():
+    """search 响应含来源说明（evidence），event_id 透出不受影响。"""
+    mod = _load_mcp()
+    # hybrid_search / relevance_check 在 mcp_server 模块顶部已绑定，patch 模块属性
+    with patch.object(mod, "hybrid_search",
+                      return_value=[{"score": 0.9,
+                                     "memory": {"id": "mem_1",
+                                                "content": "Python 资料"}}]), \
+         patch.object(mod, "relevance_check",
+                      return_value={"needs_memory": True, "reason": "t",
+                                    "scope": "t"}), \
+         patch("remembrance.observability.retrieval_log.log_retrieval",
+               return_value="ev_1"):
+        resp = mod.handle({"jsonrpc": "2.0", "id": 14, "method": "tools/call",
+                           "params": {"name": "search",
+                                      "arguments": {"query": "python", "top_k": 5}}})
+    assert "error" not in resp
+    payload = json.loads(resp["result"]["content"][0]["text"])
+    assert payload["evidence"][0]["id"] == "mem_1"
+    assert payload["event_id"] == "ev_1"

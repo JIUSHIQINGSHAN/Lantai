@@ -126,3 +126,9 @@ tests/test_eval_*.py          # 评估管道测试（42）
   REST `POST /dialogue` + MCP `add_dialogue`；settings 新增 `DIALOGUE_*` 三阈值。
 - 测试全量 422 全绿（新增 tests/test_dialogue_ingest.py 11 例 + test_mcp.py 2 例）。
 - 接下来按序：04 Search Transparency → 05 Hermes 会话钩子验证。
+
+- **Ticket 04 检索透明已完成**（commit 见下）：`build_evidence`（来源说明 id+摘要+分数，
+  rerank 反查 id）；shell_hook 注入附「本次依据」段；MCP search 与 REST /search 补
+  `evidence` 字段；无命中/异常零侵入降级。
+- 测试全量 430 全绿（新增 tests/test_evidence.py 5 例 + shell_hook 2 例 + mcp 1 例）。
+- 下一步：05 Hermes 会话钩子验证（research，验证会话结束事件；备选 state.db 只读扫描）。

@@ -26,10 +26,13 @@ def search(req: SearchReq, trace: bool = False, explain: bool = False):
     else:
         results = result
     event_id = _try_log(req, results, latency_ms, gate)
+    from remembrance.retrieval.evidence import build_evidence
+    evidence = build_evidence(results)
     if trace and isinstance(result, tuple):
         return {"results": results, "gate": gate, "trace": trace_steps,
-                "event_id": event_id}
-    return {"results": results, "gate": gate, "event_id": event_id}
+                "event_id": event_id, "evidence": evidence}
+    return {"results": results, "gate": gate, "event_id": event_id,
+            "evidence": evidence}
 
 
 def _try_log(req, results: list, latency_ms: int, gate: dict) -> str | None:

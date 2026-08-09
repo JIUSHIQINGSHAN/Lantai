@@ -47,7 +47,10 @@ def handle_search(params: dict) -> dict:
     results = hybrid_search(query, top_k=top_k)
     latency_ms = int((time.perf_counter() - t0) * 1000)
     event_id = _try_log(query, results, latency_ms, gate)
-    return {"results": results, "gate": gate, "event_id": event_id}
+    # Ticket 04: 检索透明——命中来源说明（id + 摘要 + 分数）
+    from remembrance.retrieval.evidence import build_evidence
+    return {"results": results, "gate": gate, "event_id": event_id,
+            "evidence": build_evidence(results)}
 
 
 def _try_log(query: str, results: list, latency_ms: int, gate: dict) -> str | None:
