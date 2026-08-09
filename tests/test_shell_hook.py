@@ -123,3 +123,37 @@ def test_build_context_no_hits_no_evidence(monkeypatch):
     monkeypatch.setattr(mod, "get_vector_store", lambda: _EmptyStore())
     out = mod.build_context("这是一个超过三字符的查询")
     assert out == {}
+
+
+def test_handle_dialogue_channel(monkeypatch):
+    """serve 协议扩展（v0.5）：{"type":"dialogue"} 走对话写入通道。"""
+    mod = _load_hook(monkeypatch)
+    from unittest.mock import patch
+    with patch("remembrance.ingestion.dialogue.ingest_dialogue",
+               return_value={"ingested": True, "candidate_id": "cand_1",
+                             "fastpath": True, "lane": "general",
+                             "status": "fastpath"}) as m:
+        out = mod._handle_one('{"type":"dialogue","text":"记住：明天下午3点开会"}')
+    assert out["ok"] is True
+    assert out["candidate_id"] == "cand_1"
+    m.assert_called_once_with("记住：明天下午3点开会")
+
+
+def test_handle_dialogue_empty_text(monkeypatch):
+    """dialogue 通道空文本 → {}，不调 ingest。"""
+    mod = _load_hook(monkeypatch)
+    from unittest.mock import patch
+    with patch("remembrance.ingestion.dialogue.ingest_dialogue") as m:
+        out = mod._handle_one('{"type":"dialogue","text":"   "}')
+    assert out == {}
+    m.assert_not_called()
+
+
+def test_handle_dialogue_failure_silent(monkeypatch):
+    """dialogue 通道异常 → {} 零侵入。"""
+    mod = _load_hook(monkeypatch)
+    from unittest.mock import patch
+    with patch("remembrance.ingestion.dialogue.ingest_dialogue",
+               side_effect=RuntimeError("boom")):
+        out = mod._handle_one('{"type":"dialogue","text":"记住：明天开会"}')
+    assert out == {}

@@ -140,3 +140,9 @@ tests/test_eval_*.py          # 评估管道测试（42）
 - **v0.5 对话闭环五组件全部完成**：① Dialogue Ingest ② Candidate Review Queue
   ③ Daily Digest（未实现，backlog）④ Search Transparency ⑤ Hermes 钩子验证。
   全量 430 测试全绿。下一步：Daily Digest（ticket 03）或 插件 on_session_end 落地。
+
+- **插件对话自动写入已落地**（commit 见下）：插件源码进仓库 `hermes-plugin/remembrance-hook/`
+  （pre_llm_call 缓冲 + on_session_end flush）；shell_hook --serve 新增 dialogue 通道；
+  `scripts/install_hermes_plugin.py` 部署（旧版已备份 .bak-20260810，已部署新插件，
+  待重启 Hermes 生效）。全量 441 测试全绿。
+- 使用文档：`docs/remembrance-hermes-plugin.md`。

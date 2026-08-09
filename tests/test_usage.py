@@ -42,11 +42,11 @@ def test_usage_returns_seven_days_with_zero_fill(engine):
 
 
 def test_usage_counts_today(engine):
-    from datetime import date
-    _add(engine)  # 今天
+    from remembrance.core.time import utcnow
+    _add(engine)  # 今天（usage 按 UTC 日期聚合，断言必须与实现一致防时区 flaky）
     with patch.object(db_module, "get_session", lambda: Session(engine)):
         res = usage()
-    today = str(date.today())
+    today = str(utcnow().date())
     assert today in res["daily_new"]
     assert res["daily_new"][today] >= 1
 

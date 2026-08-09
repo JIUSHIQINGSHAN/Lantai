@@ -92,6 +92,15 @@ def _try_log(query: str, results: list, latency_ms: int) -> str | None:
         return None
 
 
+def _handle_dialogue(text: str) -> dict:
+    """对话写入通道（v0.5）：复用常驻进程调 ingest_dialogue，异常零侵入。"""
+    try:
+        from remembrance.ingestion.dialogue import ingest_dialogue
+        return {"ok": True, **ingest_dialogue(text)}
+    except Exception:
+        return {}
+
+
 def _handle_one(raw: str) -> dict:
     """处理单条请求（单发模式与 serve 模式共用）。"""
     raw = (raw or "").strip()
@@ -99,9 +108,25 @@ def _handle_one(raw: str) -> dict:
         return {}
     try:
         data = json.loads(raw)
-        query = data.get("query", "") or data.get("message", "") or data.get("prompt", "")
     except json.JSONDecodeError:
         return {}
+
+    # 对话写入通道（v0.5）：{"type": "dialogue", "text": ...}
+    # 由 Hermes 插件 on_session_end flush 调用；LLM 提取需要更长超时。
+    if data.get("type") == "dialogue":
+        text = data.get("text", "")
+        if not isinstance(text, str) or not text.strip():
+            return {}
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_handle_dialogue, text)
+            try:
+                return future.result(timeout=settings.SHELL_HOOK_DIALOGUE_TIMEOUT)
+            except FuturesTimeout:
+                return {}
+            except Exception:
+                return {}
+
+    query = data.get("query", "") or data.get("message", "") or data.get("prompt", "")
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(build_context, query)
         try:

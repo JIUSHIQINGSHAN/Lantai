@@ -108,6 +108,7 @@ class Settings(BaseSettings):
 
     # Shell Hook 配置
     SHELL_HOOK_TIMEOUT: int = 2  # 秒
+    SHELL_HOOK_DIALOGUE_TIMEOUT: float = 30.0  # 对话写入通道超时（秒，含 LLM 提取）
     SHELL_HOOK_TOP_K: int = 5
     SHELL_HOOK_MIN_CHARS: int = 3
 
