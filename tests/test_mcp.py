@@ -27,9 +27,10 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert len(resp["result"]["tools"]) == 6  # search/add/feedback/backfill/candidates_pending/candidate_review
+    assert len(resp["result"]["tools"]) == 7  # .../candidates_pending/candidate_review/add_dialogue
     assert "candidates_pending" in names
     assert "candidate_review" in names
+    assert "add_dialogue" in names
 
 
 def test_unknown_tool():
@@ -127,5 +128,32 @@ def test_candidate_review_validation():
         resp = mod.handle({"jsonrpc": "2.0", "id": 11, "method": "tools/call",
                            "params": {"name": "candidate_review",
                                       "arguments": {"candidate_id": "", "approve": "yes"}}})
+    assert resp["error"]["code"] == -32602
+    m.assert_not_called()
+
+
+def test_add_dialogue_ok():
+    """add_dialogue 工具：合法输入 → 调用 ingest_dialogue + 返回结果。"""
+    mod = _load_mcp()
+    with patch("remembrance.ingestion.dialogue.ingest_dialogue",
+               return_value={"ingested": True, "candidate_id": "cand_1",
+                             "fastpath": True, "lane": "general",
+                             "status": "fastpath"}) as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 12, "method": "tools/call",
+                           "params": {"name": "add_dialogue",
+                                      "arguments": {"text": "记住：明天开会"}}})
+    assert "error" not in resp
+    text = resp["result"]["content"][0]["text"]
+    assert json.loads(text)["ingested"] is True
+    m.assert_called_once_with("记住：明天开会", user_id="default", source="dialogue")
+
+
+def test_add_dialogue_validation():
+    """add_dialogue 工具：空文本 → -32602，不调底层。"""
+    mod = _load_mcp()
+    with patch("remembrance.ingestion.dialogue.ingest_dialogue") as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 13, "method": "tools/call",
+                           "params": {"name": "add_dialogue",
+                                      "arguments": {"text": "   "}}})
     assert resp["error"]["code"] == -32602
     m.assert_not_called()

@@ -37,6 +37,12 @@ class Settings(BaseSettings):
 
     # 候选可见队列（Ticket 02）：reject 进待审队列，超龄自动归档
     CANDIDATE_TTL_DAYS: int = 7
+
+    # 对话写通道（Ticket 01）：分 lane 自动提取 vs 闲聊入队
+    DIALOGUE_ENABLED: bool = True
+    DIALOGUE_MIN_CHARS: int = 8
+    # 对话通道专用提取置信度门槛：低于此值（含提取失败兜底 0.3）进待审队列
+    DIALOGUE_MIN_EXTRACTOR_CONF: float = 0.55
     CANDIDATE_TTL_CRON_HOURS: int = 24
 
     # Lane 分轨衰减：每类记忆的基础保留强度与重要性放大系数

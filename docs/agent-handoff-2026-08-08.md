@@ -120,3 +120,9 @@ tests/test_eval_*.py          # 评估管道测试（42）
 - 测试全量 409 全绿（新增 tests/test_candidate_queue.py 13 例 + test_mcp.py 3 例）。
 - 接下来按序：Ticket 01 Dialogue Ingest → 04 Search Transparency → 05 Hermes 会话钩子验证。
 - 详细方案见 `docs/plans/v0.5-dialogue-loop.md`；tickets 在 `.scratch/dialogue-loop/issues/`。
+
+- **Ticket 01 对话写通道已完成**（commit 见下）：`ingest_dialogue` 对话文本 →
+  fastpath 直通 / 闲聊进待审队列 / LLM 提取建候选（低置信度与提取失败兜底入队）；
+  REST `POST /dialogue` + MCP `add_dialogue`；settings 新增 `DIALOGUE_*` 三阈值。
+- 测试全量 422 全绿（新增 tests/test_dialogue_ingest.py 11 例 + test_mcp.py 2 例）。
+- 接下来按序：04 Search Transparency → 05 Hermes 会话钩子验证。

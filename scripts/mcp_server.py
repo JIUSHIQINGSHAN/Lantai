@@ -81,6 +81,17 @@ def handle_add(params: dict) -> dict:
     return add_memory(req)
 
 
+def handle_add_dialogue(params: dict) -> dict:
+    """对话写通道：对话文本 → 提取链（fastpath 直通 / 候选 / 闲聊入队）。"""
+    text = params.get("text", "")
+    user_id = params.get("user_id", "default")
+    source = params.get("source", "dialogue")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("text must be a non-empty string")
+    from remembrance.ingestion.dialogue import ingest_dialogue
+    return ingest_dialogue(text, user_id=user_id, source=source)
+
+
 def handle_candidates_pending(params: dict) -> dict:
     """待审候选列表（Ticket 02）——被闸门拒绝的候选进此队列等人工裁决。"""
     limit = params.get("limit", 50)
@@ -138,6 +149,12 @@ TOOLS = {
             "used_ids": {"type": "array", "items": {"type": "string"},
                          "description": "实际用进回答的记忆 id 列表"},
         }, "required": ["event_id", "used_ids"]}},
+    "add_dialogue": {"description": "对话写通道：提交对话文本，自动提炼候选记忆（记住直通/闲聊入队）", "inputSchema": {
+        "type": "object", "properties": {
+            "text": {"type": "string", "description": "对话文本"},
+            "user_id": {"type": "string", "default": "default"},
+            "source": {"type": "string", "default": "dialogue"},
+        }, "required": ["text"]}},
     "candidates_pending": {"description": "列出待审候选（被闸门拒绝、等人工裁决）", "inputSchema": {
         "type": "object", "properties": {
             "limit": {"type": "integer", "default": 50},
@@ -157,6 +174,7 @@ TOOL_HANDLERS = {
     "backfill": handle_backfill,
     "candidates_pending": handle_candidates_pending,
     "candidate_review": handle_candidate_review,
+    "add_dialogue": handle_add_dialogue,
 }
 
 
