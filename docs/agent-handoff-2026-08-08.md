@@ -132,3 +132,11 @@ tests/test_eval_*.py          # 评估管道测试（42）
   `evidence` 字段；无命中/异常零侵入降级。
 - 测试全量 430 全绿（新增 tests/test_evidence.py 5 例 + shell_hook 2 例 + mcp 1 例）。
 - 下一步：05 Hermes 会话钩子验证（research，验证会话结束事件；备选 state.db 只读扫描）。
+
+- **Ticket 05 Hermes 会话钩子验证已完成（research）**：插件 API 存在 `on_session_end`
+  （每轮结束触发，桌面版/CLI 通用）；payload 无消息文本 → 推荐插件缓冲
+  pre_llm_call 的 user_message + on_session_end flush；备选 state.db 只读扫描
+  schema 已探明（sessions/messages，WAL 安全）。结论回写 spec。
+- **v0.5 对话闭环五组件全部完成**：① Dialogue Ingest ② Candidate Review Queue
+  ③ Daily Digest（未实现，backlog）④ Search Transparency ⑤ Hermes 钩子验证。
+  全量 430 测试全绿。下一步：Daily Digest（ticket 03）或 插件 on_session_end 落地。

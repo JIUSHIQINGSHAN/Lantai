@@ -57,5 +57,10 @@ MCP 新增工具：
 
 ## 风险
 
-- Hermes 插件会话结束事件是否存在（ticket 05 验证，备选 state.db 扫描）
+- ~~Hermes 插件会话结束事件是否存在~~（ticket 05 已验证：**存在**——`on_session_end`
+  每轮对话结束触发，桌面版与 CLI 通用；payload 无消息文本，需插件自缓冲
+  pre_llm_call 的 user_message，on_session_end 时 flush 给 ingest_dialogue；
+  备选 state.db 只读扫描 schema 已探明（sessions/messages 表 + WAL 安全））
+- 触发源实现顺序：① 插件 on_session_end 缓冲 flush（实时首选）→ ② cron 每日
+  state.db 只读扫描（兜底，隔日感知）
 - 对话提炼 LLM 成本（分 lane + Fastpath 控制，降级兜底不丢）
