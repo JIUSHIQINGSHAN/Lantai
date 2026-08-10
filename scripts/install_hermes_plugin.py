@@ -1,14 +1,14 @@
-"""同步仓库版 remembrance-hook 插件到 Hermes home（备份旧版，不删除）。
+"""同步仓库版 lantai-hook 插件到 Hermes home（备份旧版，不删除）。
 
 用法：
   python scripts/install_hermes_plugin.py [--hermes-home <path>]
   默认 Hermes home = C:/Users/Asus/AppData/Local/hermes
 
 行为：
-  1. 备份现有插件目录到 plugins-backup/remembrance-hook-YYYYMMDD（插件扫描目录之外），
+  1. 备份现有插件目录到 plugins-backup/lantai-hook-YYYYMMDD（插件扫描目录之外），
      且备份内 plugin.yaml 改名为 plugin.yaml.disabled —— 防止被 Hermes 插件加载器当作
      同名候选扫描到（v1.0.0 曾因备份留在 plugins/ 内且同名，旧版覆盖新版被加载）
-  2. 复制 hermes-plugin/remembrance-hook/（__init__.py + plugin.yaml）到目标
+  2. 复制 hermes-plugin/lantai-hook/（__init__.py + plugin.yaml）到目标
   3. 自检：plugins/ 下声明同名插件的候选唯一且为目标目录
   4. 提示重启 Hermes 生效
 """
@@ -20,8 +20,8 @@ import sys
 from pathlib import Path
 
 DEFAULT_HERMES_HOME = Path(r"C:/Users/Asus/AppData/Local/hermes")
-PLUGIN_SRC = Path(__file__).resolve().parent.parent / "hermes-plugin" / "remembrance-hook"
-PLUGIN_NAME = "remembrance-hook"
+PLUGIN_SRC = Path(__file__).resolve().parent.parent / "hermes-plugin" / "lantai-hook"
+PLUGIN_NAME = "lantai-hook"
 
 
 def _manifest_name(plugin_dir: Path) -> str | None:
@@ -105,8 +105,8 @@ def main() -> int:
     print("下一步：重启 Hermes 桌面版使插件重新加载；验证：")
     print("  1. Hermes 日志出现 'on_session_end 对话写入已注册'")
     print("  2. 一轮对话结束后，记忆库出现候选（GET /candidates/pending）")
-    print("回滚：删除 plugins/remembrance-hook，把 plugins-backup/remembrance-hook-YYYYMMDD")
-    print("      移回 plugins/remembrance-hook，并把其 plugin.yaml.disabled 改回 plugin.yaml 后重启")
+    print("回滚：删除 plugins/lantai-hook，把 plugins-backup/lantai-hook-YYYYMMDD")
+    print("      移回 plugins/lantai-hook，并把其 plugin.yaml.disabled 改回 plugin.yaml 后重启")
     return 0
 
 

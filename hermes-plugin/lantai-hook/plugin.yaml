@@ -1,4 +1,4 @@
-name: remembrance-hook
+name: lantai-hook
 version: 1.1.0
 description: "Remembrance 记忆注入 + 对话自动写入：pre_llm_call 检索相关记忆注入 user message 并记录检索事件；on_session_end 把会话缓冲的 user_message flush 给对话写通道（ingest_dialogue，fastpath 直通/提取建候选/闲聊入待审队列）。serve/桌面模式专用（等效 CLI 模式 shell hook，走 Python 插件通道）。"
 author: "Remembrance System"

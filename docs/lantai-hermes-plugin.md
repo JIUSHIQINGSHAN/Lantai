@@ -1,7 +1,7 @@
 # Hermes 插件：记忆注入 + 对话自动写入
 
-插件源码维护在仓库 `hermes-plugin/remembrance-hook/`（版本化、可测试），
-部署到 Hermes home 的 `plugins/remembrance-hook/`。
+插件源码维护在仓库 `hermes-plugin/lantai-hook/`（版本化、可测试），
+部署到 Hermes home 的 `plugins/lantai-hook/`。
 
 ## 功能（v1.1.0）
 
@@ -29,7 +29,7 @@ python scripts/install_hermes_plugin.py
 python scripts/install_hermes_plugin.py --hermes-home <path>
 ```
 
-脚本行为：备份现有插件到扫描目录外的 `plugins-backup/remembrance-hook-YYYYMMDD`（不删除，
+脚本行为：备份现有插件到扫描目录外的 `plugins-backup/lantai-hook-YYYYMMDD`（不删除，
 备份内 `plugin.yaml` 改名为 `plugin.yaml.disabled`，避免被插件加载器当作同名候选扫描）→
 复制新文件 → 自检无同名冲突 → 提示重启 Hermes。
 
@@ -39,8 +39,8 @@ python scripts/install_hermes_plugin.py --hermes-home <path>
 2. 与 Hermes 聊一轮（说几句有价值的话），结束后：
    - `GET /candidates/pending` 应出现候选（或已直通进记忆库）
    - `GET /usage` 每日新增数增长
-3. 回滚：删除 `plugins/remembrance-hook`，把 `plugins-backup/remembrance-hook-YYYYMMDD`
-   移回 `plugins/remembrance-hook`，并把备份内 `plugin.yaml.disabled` 改回 `plugin.yaml`，然后重启
+3. 回滚：删除 `plugins/lantai-hook`，把 `plugins-backup/lantai-hook-YYYYMMDD`
+   移回 `plugins/lantai-hook`，并把备份内 `plugin.yaml.disabled` 改回 `plugin.yaml`，然后重启
 
 ## 开发
 

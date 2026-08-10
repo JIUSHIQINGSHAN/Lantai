@@ -68,10 +68,10 @@ def _ensure_proc() -> subprocess.Popen | None:
                 text=False,
             )
             _proc_ready = False
-            logger.info("remembrance-hook: shell_hook --serve 子进程已启动 (pid=%s)", _proc.pid)
+            logger.info("lantai-hook: shell_hook --serve 子进程已启动 (pid=%s)", _proc.pid)
             return _proc
         except OSError as exc:
-            logger.warning("remembrance-hook: spawn failed: %s", exc)
+            logger.warning("lantai-hook: spawn failed: %s", exc)
             _proc = None
             return None
 
@@ -107,7 +107,7 @@ def _wait_ready(timeout: float = 15.0) -> bool:
             try:
                 json.loads(buf.decode("utf-8", errors="replace").strip().rstrip("\r"))
                 _proc_ready = True
-                logger.info("remembrance-hook: 子进程就绪 (pid=%s)", proc.pid)
+                logger.info("lantai-hook: 子进程就绪 (pid=%s)", proc.pid)
                 return True
             except json.JSONDecodeError:
                 __import__("time").sleep(0.5)
@@ -122,7 +122,7 @@ def _call_hook(query: str) -> str | None:
     if proc is None:
         return None
     if not _wait_ready():
-        logger.warning("remembrance-hook: 子进程未就绪，跳过注入")
+        logger.warning("lantai-hook: 子进程未就绪，跳过注入")
         return None
     try:
         with _lock:
@@ -144,7 +144,7 @@ def _call_hook(query: str) -> str | None:
         ctx = data.get("context", "") if isinstance(data, dict) else ""
         return str(ctx) if ctx else None
     except (json.JSONDecodeError, OSError, ValueError, AssertionError) as exc:
-        logger.warning("remembrance-hook: call failed: %r", exc)
+        logger.warning("lantai-hook: call failed: %r", exc)
         # 子进程可能已死，标记让下次自动重启
         global _proc, _proc_ready
         _proc = None
@@ -173,7 +173,7 @@ def _call_dialogue(text: str) -> None:
                     break
                 buf += ch
     except (OSError, ValueError, AssertionError) as exc:
-        logger.warning("remembrance-hook: dialogue call failed: %r", exc)
+        logger.warning("lantai-hook: dialogue call failed: %r", exc)
         global _proc, _proc_ready
         _proc = None
         _proc_ready = False
@@ -242,11 +242,11 @@ def _warmup() -> None:
         _ensure_proc()
         _wait_ready(timeout=40)
     except Exception:
-        logger.debug("remembrance-hook: warmup failed (non-fatal)", exc_info=True)
+        logger.debug("lantai-hook: warmup failed (non-fatal)", exc_info=True)
 
 
 def register(ctx) -> None:
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
     ctx.register_hook("on_session_end", _on_session_end)
-    threading.Thread(target=_warmup, daemon=True, name="remembrance-hook-warmup").start()
-    logger.info("remembrance-hook: pre_llm_call 注入 + on_session_end 对话写入已注册（预热中）")
+    threading.Thread(target=_warmup, daemon=True, name="lantai-hook-warmup").start()
+    logger.info("lantai-hook: pre_llm_call 注入 + on_session_end 对话写入已注册（预热中）")

@@ -1,6 +1,6 @@
-"""Hermes remembrance-hook 插件测试（v0.5 对话自动写入）。
+"""Hermes lantai-hook 插件测试（v0.5 对话自动写入）。
 
-插件源码在仓库 hermes-plugin/remembrance-hook/（部署脚本同步到 Hermes home）。
+插件源码在仓库 hermes-plugin/lantai-hook/（部署脚本同步到 Hermes home）。
 测试不依赖 Hermes 进程——register(ctx) 用假 ctx；serve 子进程交互全部 mock。
 """
 import importlib.util
@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-PLUGIN_PATH = Path(__file__).parent.parent / "hermes-plugin" / "remembrance-hook" / "__init__.py"
+PLUGIN_PATH = Path(__file__).parent.parent / "hermes-plugin" / "lantai-hook" / "__init__.py"
 
 
 @pytest.fixture()
@@ -93,7 +93,7 @@ class TestCallbacks:
 class TestInstallScriptBackup:
     """安装脚本：备份必须落在插件扫描目录之外，避免被 Hermes 加载器当作同名插件扫描到。
 
-    回归背景：v1.0.0 备份留在 plugins/remembrance-hook.bak-YYYYMMDD 且 plugin.yaml 同名，
+    回归背景：v1.0.0 备份留在 plugins/lantai-hook.bak-YYYYMMDD 且 plugin.yaml 同名，
     加载器按 key=name 去重、后扫描者覆盖，导致重启后旧版遮蔽新版被加载。
     """
 
@@ -111,16 +111,16 @@ class TestInstallScriptBackup:
         inst = self._load_script()
         plugins = tmp_path / "hermes" / "plugins"
         plugins.mkdir(parents=True)
-        old = plugins / "remembrance-hook"
+        old = plugins / "lantai-hook"
         old.mkdir()
         (old / "plugin.yaml").write_text(
-            "name: remembrance-hook\nversion: 1.0.0\n", encoding="utf-8")
+            "name: lantai-hook\nversion: 1.0.0\n", encoding="utf-8")
         (old / "__init__.py").write_text("# old\n", encoding="utf-8")
 
         src = tmp_path / "src"
         src.mkdir()
         (src / "plugin.yaml").write_text(
-            "name: remembrance-hook\nversion: 1.1.0\n", encoding="utf-8")
+            "name: lantai-hook\nversion: 1.1.0\n", encoding="utf-8")
         (src / "__init__.py").write_text("# new\n", encoding="utf-8")
 
         inst.deploy(src, plugins, tmp_path / "hermes" / "plugins-backup")
@@ -128,15 +128,15 @@ class TestInstallScriptBackup:
         backups = list((tmp_path / "hermes" / "plugins-backup").iterdir())
         assert len(backups) == 1
         backup = backups[0]
-        assert backup.name.startswith("remembrance-hook-")
+        assert backup.name.startswith("lantai-hook-")
         # 备份内 manifest 失效化，内容保留
         assert not (backup / "plugin.yaml").exists()
         assert (backup / "plugin.yaml.disabled").read_text(encoding="utf-8") == (
-            "name: remembrance-hook\nversion: 1.0.0\n")
+            "name: lantai-hook\nversion: 1.0.0\n")
         assert (backup / "__init__.py").read_text(encoding="utf-8") == "# old\n"
         # 目标目录是新版
-        assert (plugins / "remembrance-hook" / "plugin.yaml").read_text(
-            encoding="utf-8") == "name: remembrance-hook\nversion: 1.1.0\n"
+        assert (plugins / "lantai-hook" / "plugin.yaml").read_text(
+            encoding="utf-8") == "name: lantai-hook\nversion: 1.1.0\n"
         # 自检通过：plugins/ 下同名候选唯一
         assert inst.validate_no_duplicate(plugins)
 
@@ -149,7 +149,7 @@ class TestInstallScriptBackup:
         src = tmp_path / "src"
         src.mkdir()
         (src / "plugin.yaml").write_text(
-            "name: remembrance-hook\nversion: 1.1.0\n", encoding="utf-8")
+            "name: lantai-hook\nversion: 1.1.0\n", encoding="utf-8")
         (src / "__init__.py").write_text("# new\n", encoding="utf-8")
 
         inst.deploy(src, plugins, tmp_path / "plugins-backup")
@@ -163,17 +163,17 @@ class TestInstallScriptBackup:
                 name = re.search(
                     r"(?m)^name\s*:\s*(\S+)", mf.read_text(encoding="utf-8")).group(1)
                 winners[name] = child
-        assert winners["remembrance-hook"] == plugins / "remembrance-hook"
+        assert winners["lantai-hook"] == plugins / "lantai-hook"
 
     def test_backup_inside_scan_dir_shadows_new(self, tmp_path):
         """回归：旧方案的备份留在 plugins/ 内且同名 → 自检必须拦截。"""
         inst = self._load_script()
         plugins = tmp_path / "plugins"
         plugins.mkdir()
-        (plugins / "remembrance-hook").mkdir()
-        (plugins / "remembrance-hook" / "plugin.yaml").write_text(
-            "name: remembrance-hook\nversion: 1.1.0\n", encoding="utf-8")
-        (plugins / "remembrance-hook.bak-20260810").mkdir()
-        (plugins / "remembrance-hook.bak-20260810" / "plugin.yaml").write_text(
-            "name: remembrance-hook\nversion: 1.0.0\n", encoding="utf-8")
+        (plugins / "lantai-hook").mkdir()
+        (plugins / "lantai-hook" / "plugin.yaml").write_text(
+            "name: lantai-hook\nversion: 1.1.0\n", encoding="utf-8")
+        (plugins / "lantai-hook.bak-20260810").mkdir()
+        (plugins / "lantai-hook.bak-20260810" / "plugin.yaml").write_text(
+            "name: lantai-hook\nversion: 1.0.0\n", encoding="utf-8")
         assert not inst.validate_no_duplicate(plugins)
