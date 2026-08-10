@@ -1,5 +1,5 @@
 """
-Remembrance-System 端到端测试
+兰台记忆（Lantai）端到端测试
 """
 import pytest
 from fastapi.testclient import TestClient

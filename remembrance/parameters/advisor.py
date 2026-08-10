@@ -83,7 +83,7 @@ def build_param_advice_user_prompt(papers: list[dict],
                    "never quote it):\n" + signal_lines + "\n")
     context = {
         "SYSTEM_CONTEXT": {
-            "system": "Remembrance-System",
+            "system": "兰台记忆（Lantai）",
             "retrieval": "weighted vector + BM25 + FTS5 + decay fusion",
             "evidence_scope": "abstract or supplied excerpt only",
         },

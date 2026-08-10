@@ -37,12 +37,12 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("load runtime params at startup failed (keep defaults)")
     start_scheduler()
-    logger.info("Remembrance-System started on %s:%s", settings.HOST, settings.PORT)
+    logger.info("兰台记忆（Lantai） started on %s:%s", settings.HOST, settings.PORT)
     yield
     stop_scheduler()
 
 
-app = FastAPI(title="Remembrance-System", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="兰台记忆（Lantai）", version="0.3.0", lifespan=lifespan)
 
 # 公共端点（不需要鉴权）
 app.include_router(routes_health_router)
