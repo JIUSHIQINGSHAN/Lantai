@@ -1,4 +1,4 @@
-# Remembrance-System 上下文
+# 兰台记忆（Lantai）— 上下文
 
 ## 项目定位
 
@@ -8,6 +8,8 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 
 | 术语 | 定义 |
 |------|------|
+| **兰台（Lantai）** | 项目中文名。取自汉代皇家档案馆「兰台」——为 AI 保存、检索、演化、遗忘长期记忆的档案库。英文代号 Lantai |
+| **锦囊（Jinnang）** | `pending_review` 待审候选队列的别名，取自「锦囊妙计」——待拆的锦囊交用户裁决 |
 | **lane**（分轨） | 记忆类型分轨：fact / rule / experience / preference / chat / general。每轨有独立的衰减参数和检索权重 |
 | **tier**（层级） | 记忆层级：working（工作记忆） / long_term（长期记忆）。working 超过 TTL 且无帮助时归档 |
 | **gate**（闸门） | 记忆准入控制：置信度阈值 + 新颖度评分 + 矛盾检测 → 五档决策（reject / working_only / promote_semantic / promote_procedural / archive_conflict） |

@@ -1,6 +1,6 @@
-# Contributing to Remembrance-System
+# 为兰台记忆（Lantai）贡献
 
-感谢您对 Remembrance-System 的兴趣！以下是贡献指南。
+感谢您对兰台记忆（Lantai）的兴趣！以下是贡献指南。
 
 ## 开发环境搭建
 
