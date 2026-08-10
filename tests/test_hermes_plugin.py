@@ -88,3 +88,92 @@ class TestCallbacks:
         text = yaml_path.read_text(encoding="utf-8")
         assert "pre_llm_call" in text
         assert "on_session_end" in text
+
+
+class TestInstallScriptBackup:
+    """安装脚本：备份必须落在插件扫描目录之外，避免被 Hermes 加载器当作同名插件扫描到。
+
+    回归背景：v1.0.0 备份留在 plugins/remembrance-hook.bak-YYYYMMDD 且 plugin.yaml 同名，
+    加载器按 key=name 去重、后扫描者覆盖，导致重启后旧版遮蔽新版被加载。
+    """
+
+    @staticmethod
+    def _load_script():
+        spec = importlib.util.spec_from_file_location(
+            "install_hermes_plugin",
+            Path(__file__).parent.parent / "scripts" / "install_hermes_plugin.py",
+        )
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+
+    def test_deploy_backs_up_outside_scan_dir(self, tmp_path):
+        inst = self._load_script()
+        plugins = tmp_path / "hermes" / "plugins"
+        plugins.mkdir(parents=True)
+        old = plugins / "remembrance-hook"
+        old.mkdir()
+        (old / "plugin.yaml").write_text(
+            "name: remembrance-hook\nversion: 1.0.0\n", encoding="utf-8")
+        (old / "__init__.py").write_text("# old\n", encoding="utf-8")
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "plugin.yaml").write_text(
+            "name: remembrance-hook\nversion: 1.1.0\n", encoding="utf-8")
+        (src / "__init__.py").write_text("# new\n", encoding="utf-8")
+
+        inst.deploy(src, plugins, tmp_path / "hermes" / "plugins-backup")
+
+        backups = list((tmp_path / "hermes" / "plugins-backup").iterdir())
+        assert len(backups) == 1
+        backup = backups[0]
+        assert backup.name.startswith("remembrance-hook-")
+        # 备份内 manifest 失效化，内容保留
+        assert not (backup / "plugin.yaml").exists()
+        assert (backup / "plugin.yaml.disabled").read_text(encoding="utf-8") == (
+            "name: remembrance-hook\nversion: 1.0.0\n")
+        assert (backup / "__init__.py").read_text(encoding="utf-8") == "# old\n"
+        # 目标目录是新版
+        assert (plugins / "remembrance-hook" / "plugin.yaml").read_text(
+            encoding="utf-8") == "name: remembrance-hook\nversion: 1.1.0\n"
+        # 自检通过：plugins/ 下同名候选唯一
+        assert inst.validate_no_duplicate(plugins)
+
+    def test_loader_winner_is_deployed_dir(self, tmp_path):
+        """模拟加载器 winners 去重（top-level key=name、sorted 后扫描者覆盖）：胜者为新版。"""
+        import re
+        inst = self._load_script()
+        plugins = tmp_path / "plugins"
+        plugins.mkdir()
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "plugin.yaml").write_text(
+            "name: remembrance-hook\nversion: 1.1.0\n", encoding="utf-8")
+        (src / "__init__.py").write_text("# new\n", encoding="utf-8")
+
+        inst.deploy(src, plugins, tmp_path / "plugins-backup")
+
+        winners = {}
+        for child in sorted(plugins.iterdir()):
+            if not child.is_dir():
+                continue
+            mf = child / "plugin.yaml"
+            if mf.exists():
+                name = re.search(
+                    r"(?m)^name\s*:\s*(\S+)", mf.read_text(encoding="utf-8")).group(1)
+                winners[name] = child
+        assert winners["remembrance-hook"] == plugins / "remembrance-hook"
+
+    def test_backup_inside_scan_dir_shadows_new(self, tmp_path):
+        """回归：旧方案的备份留在 plugins/ 内且同名 → 自检必须拦截。"""
+        inst = self._load_script()
+        plugins = tmp_path / "plugins"
+        plugins.mkdir()
+        (plugins / "remembrance-hook").mkdir()
+        (plugins / "remembrance-hook" / "plugin.yaml").write_text(
+            "name: remembrance-hook\nversion: 1.1.0\n", encoding="utf-8")
+        (plugins / "remembrance-hook.bak-20260810").mkdir()
+        (plugins / "remembrance-hook.bak-20260810" / "plugin.yaml").write_text(
+            "name: remembrance-hook\nversion: 1.0.0\n", encoding="utf-8")
+        assert not inst.validate_no_duplicate(plugins)

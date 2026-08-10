@@ -29,8 +29,9 @@ python scripts/install_hermes_plugin.py
 python scripts/install_hermes_plugin.py --hermes-home <path>
 ```
 
-脚本行为：备份现有插件为 `plugins/remembrance-hook.bak-YYYYMMDD`（不删除）→
-复制新文件 → 提示重启 Hermes。
+脚本行为：备份现有插件到扫描目录外的 `plugins-backup/remembrance-hook-YYYYMMDD`（不删除，
+备份内 `plugin.yaml` 改名为 `plugin.yaml.disabled`，避免被插件加载器当作同名候选扫描）→
+复制新文件 → 自检无同名冲突 → 提示重启 Hermes。
 
 ## 验证
 
@@ -38,7 +39,8 @@ python scripts/install_hermes_plugin.py --hermes-home <path>
 2. 与 Hermes 聊一轮（说几句有价值的话），结束后：
    - `GET /candidates/pending` 应出现候选（或已直通进记忆库）
    - `GET /usage` 每日新增数增长
-3. 回滚：把 `remembrance-hook.bak-YYYYMMDD` 改回 `remembrance-hook` 并重启
+3. 回滚：删除 `plugins/remembrance-hook`，把 `plugins-backup/remembrance-hook-YYYYMMDD`
+   移回 `plugins/remembrance-hook`，并把备份内 `plugin.yaml.disabled` 改回 `plugin.yaml`，然后重启
 
 ## 开发
 
