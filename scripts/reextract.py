@@ -5,10 +5,10 @@
 import sys
 from sqlmodel import select
 
-from remembrance.models.tables import RawDocument, MemoryCandidate
-from remembrance.storage import db
-from remembrance.parsing.extractor import extract_candidate
-from remembrance.core.ids import new_id
+from lantai.models.tables import RawDocument, MemoryCandidate
+from lantai.storage import db
+from lantai.parsing.extractor import extract_candidate
+from lantai.core.ids import new_id
 
 
 def reextract(apply: bool = False) -> dict:

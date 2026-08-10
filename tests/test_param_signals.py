@@ -7,21 +7,21 @@ import feedparser
 import pytest
 from sqlmodel import select
 
-from remembrance.core.ids import new_id
-from remembrance.core.time import utcnow
-from remembrance.models.tables import RawDocument
-from remembrance.parameters.paper_signals import (
+from lantai.core.ids import new_id
+from lantai.core.time import utcnow
+from lantai.models.tables import RawDocument
+from lantai.parameters.paper_signals import (
     QualitySignalDraft,
     classify_tier,
     classify_venue,
     compute_staleness,
     extract_quality_signals,
 )
-from remembrance.parameters.signal_service import (
+from lantai.parameters.signal_service import (
     load_signal_views,
     upsert_from_draft,
 )
-from remembrance.parameters.trust_models import PaperQualitySignal
+from lantai.parameters.trust_models import PaperQualitySignal
 
 NOW = datetime(2026, 8, 1, tzinfo=timezone.utc)
 

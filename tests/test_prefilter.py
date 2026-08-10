@@ -2,7 +2,7 @@
 测试启发式相关性闸门
 """
 import pytest
-from remembrance.gate.prefilter import relevance_check
+from lantai.gate.prefilter import relevance_check
 
 
 @pytest.fixture(autouse=True)
@@ -11,7 +11,7 @@ def _reset_gate_cache(monkeypatch):
 
     注意：prefilter._update_cache 用 global 重新赋值 dict，必须 patch 模块属性本身。
     """
-    import remembrance.gate.prefilter as pf
+    import lantai.gate.prefilter as pf
     monkeypatch.setattr(pf, "_LAST_GATE_DECISION",
                         {"time": 0.0, "query": "", "needs_memory": False})
     yield
@@ -138,7 +138,7 @@ class TestEntityKeywordsLazy:
 
     @pytest.fixture(autouse=True)
     def _reset_pattern_state(self, monkeypatch):
-        import remembrance.gate.prefilter as pf
+        import lantai.gate.prefilter as pf
         monkeypatch.setattr(pf, "_PATTERN_CACHE", {"key": None, "pattern": None})
         monkeypatch.setattr(pf, "_KEYWORD_WARNED", False)
 
@@ -162,7 +162,7 @@ class TestEntityKeywordsLazy:
         assert res_new["needs_memory"] is True
 
     def test_recompile_when_env_changes(self, monkeypatch):
-        import remembrance.gate.prefilter as pf
+        import lantai.gate.prefilter as pf
         relevance_check("你好世界")  # 无实体词表，编译 base 模式
         p_before = pf._self_reference_pattern()
         monkeypatch.setenv("REMEMBRANCE_ENTITY_KEYWORDS", "旺财")
@@ -173,15 +173,15 @@ class TestEntityKeywordsLazy:
         assert res["needs_memory"] is True
 
     def test_cached_pattern_reused(self):
-        import remembrance.gate.prefilter as pf
+        import lantai.gate.prefilter as pf
         p1 = pf._self_reference_pattern()
         p2 = pf._self_reference_pattern()
         assert p1 is p2  # 缓存命中，零重编译
 
     def test_missing_keywords_warns_once(self, monkeypatch, capsys, caplog):
         import logging
-        import remembrance.gate.prefilter as pf
-        with caplog.at_level(logging.WARNING, logger="remembrance.gate"):
+        import lantai.gate.prefilter as pf
+        with caplog.at_level(logging.WARNING, logger="lantai.gate"):
             relevance_check("你好世界")
             relevance_check("你好世界")
         warn_msgs = [r.getMessage() for r in caplog.records
@@ -205,7 +205,7 @@ class TestGateCacheInjectable:
         assert res_b["needs_memory"] is False
 
     def test_now_controls_ttl_expiry(self):
-        import remembrance.core.settings as s
+        import lantai.core.settings as s
         c = {"time": 0.0, "query": "", "needs_memory": False}
         relevance_check("上次我们聊的项目", cache=c, now=0.0)
         res = relevance_check("然后呢", cache=c, now=s.settings.GATE_CACHE_TTL + 1.0)

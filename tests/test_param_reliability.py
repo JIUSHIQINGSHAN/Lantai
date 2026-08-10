@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine
 
-import remembrance.storage.db as db_module
-from remembrance.parameters.reliability import (
+import lantai.storage.db as db_module
+from lantai.parameters.reliability import (
     apply_penalty_to_weight,
     record_verification_result,
     reliability_penalty,
@@ -18,8 +18,8 @@ from remembrance.parameters.reliability import (
 
 @pytest.fixture(scope="function")
 def rel_db():
-    import remembrance.models.tables  # noqa: F401
-    import remembrance.parameters.trust_models  # noqa: F401
+    import lantai.models.tables  # noqa: F401
+    import lantai.parameters.trust_models  # noqa: F401
     test_engine = create_engine(
         "sqlite://", echo=False,
         connect_args={"check_same_thread": False},
@@ -101,13 +101,13 @@ class TestReliabilityPenalty:
         """TTL 过期后恢复 1.0（降权不永久）。"""
         from datetime import timedelta
         from unittest.mock import patch
-        from remembrance.core.time import utcnow
+        from lantai.core.time import utcnow
         # 制造 3 连败
         for _ in range(3):
             record_verification_result("workshop", passed=False)
         assert reliability_penalty("workshop") < 1.0
         # 把 last_verified_at 拨回 200 天前（> TTL 180）
-        from remembrance.parameters.trust_models import SignalReliabilityStat
+        from lantai.parameters.trust_models import SignalReliabilityStat
         from sqlmodel import select
         sf = rel_db
         with sf() as s:

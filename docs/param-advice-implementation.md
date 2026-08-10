@@ -24,16 +24,16 @@
 ## 三、文件清单
 
 ### 新增（11）
-- `remembrance/parameters/__init__.py` — 门面导出
-- `remembrance/parameters/registry.py` — 参数白名单（6 可调 + 物理排除 + 分组约束 + canonical hash）
-- `remembrance/parameters/schemas.py` — LLM 输出判别联合 + API DTO（全 `extra="forbid"`）
-- `remembrance/parameters/validation.py` — 快照/变更/LLM 输出三层校验（Decimal 精度、quote 子串）
-- `remembrance/parameters/advisor.py` — user prompt 拼接 + LLM 调用（无 fallback）
-- `remembrance/parameters/queue.py` — 论文入队/批量领取/卡死恢复
-- `remembrance/parameters/runtime.py` — DB head 读取、settings 原位刷新（id 不变）
-- `remembrance/parameters/service.py` — 审阅/回滚 CAS 事务
-- `remembrance/workers/param_advice_worker.py` — 批量窗口触发生成
-- `remembrance/api/routes_param_advice.py` — 6 个薄路由
+- `lantai/parameters/__init__.py` — 门面导出
+- `lantai/parameters/registry.py` — 参数白名单（6 可调 + 物理排除 + 分组约束 + canonical hash）
+- `lantai/parameters/schemas.py` — LLM 输出判别联合 + API DTO（全 `extra="forbid"`）
+- `lantai/parameters/validation.py` — 快照/变更/LLM 输出三层校验（Decimal 精度、quote 子串）
+- `lantai/parameters/advisor.py` — user prompt 拼接 + LLM 调用（无 fallback）
+- `lantai/parameters/queue.py` — 论文入队/批量领取/卡死恢复
+- `lantai/parameters/runtime.py` — DB head 读取、settings 原位刷新（id 不变）
+- `lantai/parameters/service.py` — 审阅/回滚 CAS 事务
+- `lantai/workers/param_advice_worker.py` — 批量窗口触发生成
+- `lantai/api/routes_param_advice.py` — 6 个薄路由
 - `tests/conftest.py` + 5 个 `tests/test_param_*.py` — 55 个测试
 
 ### 修改（8）

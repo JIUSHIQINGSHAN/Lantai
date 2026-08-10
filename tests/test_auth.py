@@ -6,8 +6,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine
 
-import remembrance.storage.db as db_module
-from remembrance.core.settings import settings
+import lantai.storage.db as db_module
+from lantai.core.settings import settings
 
 
 @pytest.fixture(scope="function")
@@ -83,20 +83,20 @@ class TestSecureBinding:
     """P0-2: 非回环绑定必须配置 API_KEY"""
 
     def test_non_loopback_without_key_rejected(self, monkeypatch):
-        from remembrance.core.auth import assert_secure_binding
+        from lantai.core.auth import assert_secure_binding
         monkeypatch.setattr(settings, "HOST", "0.0.0.0")
         monkeypatch.setattr(settings, "API_KEY", "")
         with pytest.raises(RuntimeError):
             assert_secure_binding()
 
     def test_non_loopback_with_key_allowed(self, monkeypatch):
-        from remembrance.core.auth import assert_secure_binding
+        from lantai.core.auth import assert_secure_binding
         monkeypatch.setattr(settings, "HOST", "0.0.0.0")
         monkeypatch.setattr(settings, "API_KEY", "k" * 16)
         assert_secure_binding()  # 不抛异常
 
     def test_loopback_without_key_allowed(self, monkeypatch):
-        from remembrance.core.auth import assert_secure_binding
+        from lantai.core.auth import assert_secure_binding
         monkeypatch.setattr(settings, "HOST", "127.0.0.1")
         monkeypatch.setattr(settings, "API_KEY", "")
         assert_secure_binding()

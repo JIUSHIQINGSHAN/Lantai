@@ -5,11 +5,11 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine
 
-import remembrance.storage.db as db_module
-from remembrance.core.ids import new_id
-from remembrance.core.time import utcnow
-from remembrance.models.tables import MemoryItem
-from remembrance.storage.fts import init_fts, search_fts, sync_fts
+import lantai.storage.db as db_module
+from lantai.core.ids import new_id
+from lantai.core.time import utcnow
+from lantai.models.tables import MemoryItem
+from lantai.storage.fts import init_fts, search_fts, sync_fts
 
 
 @pytest.fixture
@@ -104,7 +104,7 @@ def test_sync_fts_delete(engine):
 
 def test_hybrid_fts_extra_recall(engine):
     """FTS 命中但向量未命中的记忆被追加召回"""
-    from remembrance.retrieval import hybrid
+    from lantai.retrieval import hybrid
 
     vec_hit_id = _add_mem(engine, "向量命中的记忆")
     fts_only_id = _add_mem(engine, "咖啡因摄入记录")
@@ -122,10 +122,10 @@ def test_hybrid_fts_extra_recall(engine):
             {"id": i, "distance": 0.3, "metadata": {}} for i in ids]))
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.retrieval.intent.chat_json",
+         patch("lantai.retrieval.intent.chat_json",
                return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("remembrance.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("remembrance.retrieval.hybrid.get_vector_store",
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.get_vector_store",
                return_value=fake_store([vec_hit_id])):
         results = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=False)
     ids = {r["memory"]["id"] for r in results}
@@ -135,7 +135,7 @@ def test_hybrid_fts_extra_recall(engine):
 
 def test_hybrid_vector_empty_falls_back_to_fts(engine):
     """向量检索为空（空库/embedding 降级）→ FTS5+BM25 兜底，而非零召回"""
-    from remembrance.retrieval import hybrid
+    from lantai.retrieval import hybrid
 
     fts_id = _add_mem(engine, "咖啡因摄入记录")
     with Session(engine) as s:
@@ -146,10 +146,10 @@ def test_hybrid_vector_empty_falls_back_to_fts(engine):
         return Session(engine)
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.retrieval.intent.chat_json",
+         patch("lantai.retrieval.intent.chat_json",
                return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("remembrance.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("remembrance.retrieval.hybrid.get_vector_store",
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.get_vector_store",
                return_value=Mock(search=Mock(return_value=[]))):  # 向量空
         results = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=False)
     assert results, "向量为空时不应零召回"
@@ -159,7 +159,7 @@ def test_hybrid_vector_empty_falls_back_to_fts(engine):
 
 def test_hybrid_vector_empty_trace_marks_fallback(engine):
     """trace=True 时兜底路径记录 fallback_fts 步骤"""
-    from remembrance.retrieval import hybrid
+    from lantai.retrieval import hybrid
 
     fts_id = _add_mem(engine, "咖啡因摄入记录")
     with Session(engine) as s:
@@ -170,10 +170,10 @@ def test_hybrid_vector_empty_trace_marks_fallback(engine):
         return Session(engine)
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.retrieval.intent.chat_json",
+         patch("lantai.retrieval.intent.chat_json",
                return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("remembrance.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("remembrance.retrieval.hybrid.get_vector_store",
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.get_vector_store",
                return_value=Mock(search=Mock(return_value=[]))):
         results, trace_steps = hybrid.hybrid_search("咖啡因", top_k=5,
                                                     use_rerank=False, trace=True)
@@ -183,7 +183,7 @@ def test_hybrid_vector_empty_trace_marks_fallback(engine):
 
 def test_hybrid_explain_breakdown(engine):
     """explain=True → 每条结果附带完整分项（向量路径）"""
-    from remembrance.retrieval import hybrid
+    from lantai.retrieval import hybrid
 
     vec_hit_id = _add_mem(engine, "咖啡因摄入记录")
     with Session(engine) as s:
@@ -194,10 +194,10 @@ def test_hybrid_explain_breakdown(engine):
         return Session(engine)
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.retrieval.intent.chat_json",
+         patch("lantai.retrieval.intent.chat_json",
                return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("remembrance.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("remembrance.retrieval.hybrid.get_vector_store",
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.get_vector_store",
                return_value=Mock(search=Mock(return_value=[
                    {"id": vec_hit_id, "distance": 0.3, "metadata": {}}]))):
         results = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=False,
@@ -213,7 +213,7 @@ def test_hybrid_explain_breakdown(engine):
 
 def test_hybrid_explain_rerank_keeps_breakdown(engine):
     """reranker 开启时 explain 仍保留原始分项（重排前后可对比）"""
-    from remembrance.retrieval import hybrid
+    from lantai.retrieval import hybrid
 
     vec_hit_id = _add_mem(engine, "咖啡因摄入记录")
     with Session(engine) as s:
@@ -226,14 +226,14 @@ def test_hybrid_explain_rerank_keeps_breakdown(engine):
     fake_rerank = Mock(return_value=[
         {"score": 0.9, "document": "咖啡因摄入记录"}])
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.retrieval.intent.chat_json",
+         patch("lantai.retrieval.intent.chat_json",
                return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("remembrance.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("remembrance.retrieval.hybrid.get_vector_store",
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.get_vector_store",
                return_value=Mock(search=Mock(return_value=[
                    {"id": vec_hit_id, "distance": 0.3, "metadata": {}}]))), \
          patch.object(hybrid.settings, "RERANKER_ENABLED", True), \
-         patch("remembrance.retrieval.hybrid.rerank", fake_rerank):
+         patch("lantai.retrieval.hybrid.rerank", fake_rerank):
         results = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=True,
                                        explain=True)
     assert results
@@ -245,7 +245,7 @@ def test_hybrid_explain_rerank_keeps_breakdown(engine):
 
 def test_hybrid_explain_fallback(engine):
     """向量空降级路径 + explain → vector 分项为 0.0，其余齐全"""
-    from remembrance.retrieval import hybrid
+    from lantai.retrieval import hybrid
 
     fts_id = _add_mem(engine, "咖啡因摄入记录")
     with Session(engine) as s:
@@ -256,10 +256,10 @@ def test_hybrid_explain_fallback(engine):
         return Session(engine)
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.retrieval.intent.chat_json",
+         patch("lantai.retrieval.intent.chat_json",
                return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("remembrance.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("remembrance.retrieval.hybrid.get_vector_store",
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.get_vector_store",
                return_value=Mock(search=Mock(return_value=[]))):
         results = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=False,
                                        explain=True)
@@ -272,16 +272,16 @@ def test_hybrid_explain_fallback(engine):
 
 def test_hybrid_vector_empty_no_candidates_returns_empty(engine):
     """兜底路径也无 FTS 候选 → 返回空（不炸）"""
-    from remembrance.retrieval import hybrid
+    from lantai.retrieval import hybrid
 
     def get_test_session():
         return Session(engine)
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.retrieval.intent.chat_json",
+         patch("lantai.retrieval.intent.chat_json",
                return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("remembrance.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("remembrance.retrieval.hybrid.get_vector_store",
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.get_vector_store",
                return_value=Mock(search=Mock(return_value=[]))):
         results = hybrid.hybrid_search("完全不存在的记忆关键词xyz", top_k=5,
                                        use_rerank=False)

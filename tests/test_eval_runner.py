@@ -9,18 +9,18 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine
 
-import remembrance.storage.db as db_module
-from remembrance.models.tables import MemoryItem, RetrievalEvent
-from remembrance.eval.models import EvalQuerySet, EvalRun
-from remembrance.eval.query_set import build_query_set
-from remembrance.eval.runner import list_runs, load_run, run_dry_run
+import lantai.storage.db as db_module
+from lantai.models.tables import MemoryItem, RetrievalEvent
+from lantai.eval.models import EvalQuerySet, EvalRun
+from lantai.eval.query_set import build_query_set
+from lantai.eval.runner import list_runs, load_run, run_dry_run
 
 
 @pytest.fixture(scope="function")
 def db_session():
     """内存 SQLite + patch db.get_session + 外部网络 mock。"""
-    import remembrance.models.tables  # noqa: F401
-    import remembrance.eval.models  # noqa: F401
+    import lantai.models.tables  # noqa: F401
+    import lantai.eval.models  # noqa: F401
     test_engine = create_engine(
         "sqlite://", echo=False,
         connect_args={"check_same_thread": False},
@@ -32,11 +32,11 @@ def db_session():
         return Session(test_engine)
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.retrieval.hybrid.get_vector_store") as vs, \
-         patch("remembrance.retrieval.hybrid.embed",
+         patch("lantai.retrieval.hybrid.get_vector_store") as vs, \
+         patch("lantai.retrieval.hybrid.embed",
                return_value=[[0.1] * 8]), \
-         patch("remembrance.retrieval.reranker.rerank", return_value=[]), \
-         patch("remembrance.retrieval.hybrid.classify_intent",
+         patch("lantai.retrieval.reranker.rerank", return_value=[]), \
+         patch("lantai.retrieval.hybrid.classify_intent",
                return_value={"intent": "exploratory", "candidate_n": 10}):
         vs.return_value.search.return_value = [{"id": "mem_1", "distance": 0.1}]
         yield get_test_session
@@ -45,7 +45,7 @@ def db_session():
 def _seed(db_session, events=2):
     """造几条检索事件 + 一条记忆，返回查询集。"""
     import datetime
-    from remembrance.core.time import utcnow
+    from lantai.core.time import utcnow
     with db_session() as s:
         base = utcnow() - datetime.timedelta(minutes=events)
         for i in range(events):
@@ -97,7 +97,7 @@ class TestRunDryRun:
     def test_single_query_failure_not_fatal(self, db_session):
         """单条查询抛错不中断，metrics.errors 计数。"""
         qs = _seed(db_session)
-        with patch("remembrance.eval.runner.hybrid_search",
+        with patch("lantai.eval.runner.hybrid_search",
                    side_effect=[RuntimeError("embed timeout"), []]):
             run = run_dry_run(qs, top_k=3)
         assert run.status == "done"
@@ -141,14 +141,14 @@ class TestRunDryRun:
 class TestParamOverrideContext:
     def test_override_restores_settings(self):
         """param_overrides 调用后 settings 恢复原值（不污染全局）。"""
-        from remembrance.core.settings import settings
-        from remembrance.retrieval.hybrid import _param_override
+        from lantai.core.settings import settings
+        from lantai.retrieval.hybrid import _param_override
         original = settings.RETRIEVAL_W_VECTOR
         with _param_override({"RETRIEVAL_W_VECTOR": 0.99}):
             assert settings.RETRIEVAL_W_VECTOR == 0.99
         assert settings.RETRIEVAL_W_VECTOR == original
 
     def test_none_override_noop(self):
-        from remembrance.retrieval.hybrid import _param_override
+        from lantai.retrieval.hybrid import _param_override
         with _param_override(None):
             pass  # 不抛即通过

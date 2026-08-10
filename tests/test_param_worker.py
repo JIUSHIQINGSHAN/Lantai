@@ -5,10 +5,10 @@ from unittest.mock import patch
 
 from sqlmodel import select
 
-from remembrance.models.tables import ParamAdvicePaper, ParamSuggestion
-from remembrance.parameters import queue
-from remembrance.parameters.registry import default_snapshot
-from remembrance.workers.param_advice_worker import run_param_advice_once
+from lantai.models.tables import ParamAdvicePaper, ParamSuggestion
+from lantai.parameters import queue
+from lantai.parameters.registry import default_snapshot
+from lantai.workers.param_advice_worker import run_param_advice_once
 
 LEGAL_SUGGEST = {
     "decision": "suggest", "confidence": 0.9,
@@ -30,11 +30,11 @@ ABSTAIN = {"decision": "abstain", "reason": "证据不足"}
 
 def _seed_batch(param_env, n=5, content="BM25 weight of 0.30 improves recall"):
     session_factory, _ = param_env
-    from remembrance.core.ids import new_id
-    from remembrance.models.tables import RawDocument
-    from remembrance.parameters.paper_signals import QualitySignalDraft
-    from remembrance.parameters.signal_service import upsert_from_draft
-    from remembrance.parameters.validation import snapshot_hash
+    from lantai.core.ids import new_id
+    from lantai.models.tables import RawDocument
+    from lantai.parameters.paper_signals import QualitySignalDraft
+    from lantai.parameters.signal_service import upsert_from_draft
+    from lantai.parameters.validation import snapshot_hash
     doc_ids = []
     for i in range(n):
         body = content if i == 0 else f"{content} variant {i}"
@@ -80,7 +80,7 @@ class TestWorker:
     def test_worker_produces_suggestion(self, param_env):
         session_factory, _ = param_env
         doc_ids = _seed_batch(param_env)
-        with patch("remembrance.parameters.advisor.chat_json",
+        with patch("lantai.parameters.advisor.chat_json",
                    return_value=_legal_suggest(doc_ids[0])):
             run_param_advice_once()
         with session_factory() as s:
@@ -94,7 +94,7 @@ class TestWorker:
     def test_worker_abstain_no_suggestion(self, param_env):
         session_factory, _ = param_env
         _seed_batch(param_env)
-        with patch("remembrance.parameters.advisor.chat_json",
+        with patch("lantai.parameters.advisor.chat_json",
                    return_value={"batch_id": "b1", "suggestions": [],
                                  "abstentions": [{"decision": "abstain",
                                                   "reason": "证据不足"}],
@@ -108,7 +108,7 @@ class TestWorker:
     def test_worker_llm_error_retries(self, param_env):
         session_factory, _ = param_env
         _seed_batch(param_env)
-        with patch("remembrance.parameters.advisor.chat_json",
+        with patch("lantai.parameters.advisor.chat_json",
                    side_effect=RuntimeError("network down")):
             run_param_advice_once()
         with session_factory() as s:
@@ -121,7 +121,7 @@ class TestWorker:
     def test_worker_invalid_output_consumed(self, param_env):
         session_factory, _ = param_env
         _seed_batch(param_env)
-        with patch("remembrance.parameters.advisor.chat_json",
+        with patch("lantai.parameters.advisor.chat_json",
                    return_value={"batch_id": "b1",
                                  "suggestions": [{"decision": "suggest",
                                                   "confidence": 0.99,
@@ -138,7 +138,7 @@ class TestWorker:
             assert all(r.state == "consumed" for r in rows)  # 非法输出不重试
 
     def test_worker_disabled(self, param_env):
-        from remembrance.core.settings import settings
+        from lantai.core.settings import settings
         session_factory, _ = param_env
         _seed_batch(param_env, n=1)
         with patch.object(settings, "PARAM_ADVICE_ENABLED", False):

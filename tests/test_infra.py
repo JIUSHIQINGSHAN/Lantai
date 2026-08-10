@@ -8,8 +8,8 @@ T02: 基础设施栈测试
 - ChromaDB 使用 cosine 距离
 """
 import pytest
-from remembrance.core.settings import Settings
-from remembrance.models.tables import MemoryItem
+from lantai.core.settings import Settings
+from lantai.models.tables import MemoryItem
 
 
 class TestEmbedModel:
@@ -34,7 +34,7 @@ class TestJiebaBM25:
 
     def test_jieba_imported(self):
         """jieba 模块在 hybrid 模块中可用"""
-        from remembrance.retrieval import hybrid
+        from lantai.retrieval import hybrid
         assert hasattr(hybrid, "jieba")
 
     def test_chinese_tokenization(self):
@@ -51,7 +51,7 @@ class TestCosineMetric:
 
     def test_cosine_space_in_collection(self):
         """ChromaVectorStore 创建 collection 时使用 cosine 距离"""
-        from remembrance.storage.vector_store import ChromaVectorStore
+        from lantai.storage.vector_store import ChromaVectorStore
         import inspect
         source = inspect.getsource(ChromaVectorStore.__init__)
         assert "cosine" in source

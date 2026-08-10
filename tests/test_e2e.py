@@ -7,10 +7,10 @@ from sqlmodel import SQLModel, Session, create_engine, select
 from unittest.mock import patch
 
 from api_server import app
-import remembrance.storage.db as db_module
-from remembrance.storage.db import get_session, init_db
-from remembrance.core.settings import settings
-from remembrance.models.tables import (
+import lantai.storage.db as db_module
+from lantai.storage.db import get_session, init_db
+from lantai.core.settings import settings
+from lantai.models.tables import (
     MemoryItem, MemoryCandidate, RawDocument, Source,
     MemoryProposal, CoreMemoryBlock, MemoryCheckpoint
 )
@@ -33,20 +33,20 @@ def client():
         return Session(test_engine)
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.retrieval.intent.chat_json",
+         patch("lantai.retrieval.intent.chat_json",
                return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("remembrance.parsing.extractor.chat_json",
+         patch("lantai.parsing.extractor.chat_json",
                return_value={"summary": "test", "claims": [], "methods": [],
                              "constraints": [], "actions": [], "topic": [],
                              "extractor_confidence": 0.8}), \
-         patch("remembrance.retrieval.reranker.rerank", return_value=[]), \
-         patch("remembrance.gate.scorer.embed",
+         patch("lantai.retrieval.reranker.rerank", return_value=[]), \
+         patch("lantai.gate.scorer.embed",
                return_value=[[0.1] * 8]), \
-         patch("remembrance.evolution.promoter.embed",
+         patch("lantai.evolution.promoter.embed",
                return_value=[[0.1] * 8]), \
-         patch("remembrance.retrieval.hybrid.embed",
+         patch("lantai.retrieval.hybrid.embed",
                return_value=[[0.1] * 8]), \
-         patch("remembrance.storage.vector_store.ChromaVectorStore"):
+         patch("lantai.storage.vector_store.ChromaVectorStore"):
         with TestClient(app) as c:
             yield c
 
@@ -165,13 +165,13 @@ class TestGate:
         """低置信度候选应被 Gate 拒绝"""
         # 显式固定阈值，避免被宿主 .env 的 GATE_MIN_EXTRACTOR_CONF 污染
         from unittest.mock import patch as _patch
-        from remembrance.core.settings import settings
+        from lantai.core.settings import settings
         monkeypatch.setattr(settings, "GATE_MIN_EXTRACTOR_CONF", 0.55)
         # 该用例专门测低置信度路径：提取器 mock 返回兜底 0.3（< 0.55）
         low_conf = {"summary": "x", "claims": [], "methods": [],
                     "constraints": [], "actions": [], "topic": [],
                     "extractor_confidence": 0.3}
-        with _patch("remembrance.parsing.extractor.chat_json",
+        with _patch("lantai.parsing.extractor.chat_json",
                     return_value=low_conf):
             resp = client.post("/add", json={
                 "title": "minimal content",

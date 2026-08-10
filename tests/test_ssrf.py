@@ -1,7 +1,7 @@
 """SSRF 防护测试：URL 校验规则"""
 import pytest
 
-from remembrance.ingestion.safety import validate_api_url, validate_fetch_url
+from lantai.ingestion.safety import validate_api_url, validate_fetch_url
 
 
 def test_scheme_whitelist():

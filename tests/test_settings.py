@@ -4,14 +4,14 @@ T01: P0 修复 + 零硬编码 测试
 验证项:
 - DEFAULT_LANE 存在（修 P0: promoter.py AttributeError）
 - VECTOR_DIMENSION 已删除（ChromaDB 自推断）
-- REMEMBRANCE_HOME 环境变量 + __file__ 自解析
+- LANTAI_HOME 环境变量 + __file__ 自解析
 - validate_config() 只 warn 不 crash
 """
 import warnings
 from pathlib import Path
 
 import pytest
-from remembrance.core.settings import Settings, settings
+from lantai.core.settings import Settings, settings
 
 
 class TestDefaultLane:
@@ -38,12 +38,12 @@ class TestVectorDimensionDeleted:
         assert "VECTOR_DIMENSION" not in Settings.model_fields
 
 
-class TestRemembranceHome:
-    """REMEMBRANCE_HOME 环境变量 + __file__ 自解析"""
+class TestLantaiHome:
+    """LANTAI_HOME 环境变量 + __file__ 自解析"""
 
     def test_field_exists(self):
-        """REMEMBRANCE_HOME 字段存在"""
-        assert hasattr(settings, "REMEMBRANCE_HOME")
+        """LANTAI_HOME 字段存在"""
+        assert hasattr(settings, "LANTAI_HOME")
 
     def test_database_url_not_relative(self):
         """DATABASE_URL 不以 ./ 开头（非 CWD 相对路径）"""
@@ -62,20 +62,27 @@ class TestRemembranceHome:
         assert ".chromadb" in settings.CHROMADB_PATH
 
     def test_env_override(self, monkeypatch):
-        """环境变量 REMEMBRANCE_HOME 覆盖默认路径"""
-        monkeypatch.setenv("REMEMBRANCE_HOME", "/tmp/test_rem_home")
+        """环境变量 LANTAI_HOME 覆盖默认路径"""
+        monkeypatch.setenv("LANTAI_HOME", "/tmp/test_rem_home")
         s = Settings()
         assert "test_rem_home" in s.DATABASE_URL
         assert "test_rem_home" in s.CHROMADB_PATH
 
     def test_auto_resolve_from_file(self):
         """无环境变量时，从 __file__ 自解析为绝对路径"""
-        s = Settings(REMEMBRANCE_HOME="")
+        s = Settings(LANTAI_HOME="")
         # DATABASE_URL 应该是绝对路径，包含 remembrance.db
         assert "remembrance.db" in s.DATABASE_URL
         assert not s.DATABASE_URL.startswith("sqlite:///./")
         # CHROMADB_PATH 应该是绝对路径
         assert Path(s.CHROMADB_PATH).is_absolute()
+
+    def test_legacy_env_fallback(self, monkeypatch):
+        """旧环境变量 REMEMBRANCE_HOME 在 LANTAI_HOME 未设置时仍生效"""
+        monkeypatch.delenv("LANTAI_HOME", raising=False)
+        monkeypatch.setenv("REMEMBRANCE_HOME", "/tmp/test_legacy_home")
+        s = Settings(_env_file=None)
+        assert "test_legacy_home" in s.DATABASE_URL
 
 
 class TestValidateConfig:

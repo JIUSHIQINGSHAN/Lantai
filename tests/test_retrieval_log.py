@@ -8,14 +8,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine, select
 
-import remembrance.storage.db as db_module
-from remembrance.models.tables import MemoryItem, RetrievalEvent
-from remembrance.observability.retrieval_log import is_system_noise
+import lantai.storage.db as db_module
+from lantai.models.tables import MemoryItem, RetrievalEvent
+from lantai.observability.retrieval_log import is_system_noise
 
 
 @pytest.fixture(scope="function")
 def client():
-    import remembrance.models.tables  # noqa: F401
+    import lantai.models.tables  # noqa: F401
     test_engine = create_engine(
         "sqlite://", echo=False,
         connect_args={"check_same_thread": False},
@@ -27,13 +27,13 @@ def client():
         return Session(test_engine)
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.storage.vector_store.ChromaVectorStore"), \
-         patch("remembrance.retrieval.hybrid.get_vector_store",
+         patch("lantai.storage.vector_store.ChromaVectorStore"), \
+         patch("lantai.retrieval.hybrid.get_vector_store",
                return_value=__import__("unittest.mock", fromlist=["Mock"])
                .Mock(search=__import__("unittest.mock", fromlist=["Mock"])
                      .Mock(return_value=[]))), \
-         patch("remembrance.retrieval.reranker.rerank", return_value=[]), \
-         patch("remembrance.retrieval.hybrid.embed",
+         patch("lantai.retrieval.reranker.rerank", return_value=[]), \
+         patch("lantai.retrieval.hybrid.embed",
                return_value=[[0.1] * 8]):
         from api_server import app
         with TestClient(app) as c:
@@ -50,7 +50,7 @@ class TestRetrievalLog:
                 content="上次讨论的检索方案是混合三路召回",
                 lane="fact", status="active"))
             s.commit()
-        with patch("remembrance.retrieval.hybrid.get_vector_store") as vs:
+        with patch("lantai.retrieval.hybrid.get_vector_store") as vs:
             vs.return_value.search.return_value = [{"id": "mem_1",
                                                     "distance": 0.1}]
             r = c.post("/search", json={"query": "上次我们聊的检索方案",
@@ -93,7 +93,7 @@ class TestRetrievalLog:
     def test_log_failure_non_fatal(self, client):
         """埋点失败绝不影响主链路。"""
         c, sf = client
-        with patch("remembrance.observability.retrieval_log.db.get_session",
+        with patch("lantai.observability.retrieval_log.db.get_session",
                    side_effect=RuntimeError("db down")):
             r = c.post("/search", json={"query": "好的谢谢再见",
                                         "top_k": 3})

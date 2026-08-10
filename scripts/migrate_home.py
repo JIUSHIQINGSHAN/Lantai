@@ -1,11 +1,11 @@
 """
-REMEMBRANCE_HOME 数据迁移脚本（安全版）。
+LANTAI_HOME 数据迁移脚本（安全版）。
 
 设计原则（个人数据安全红线）：
 1. 备份优先：先对 SQLite 做一致性备份（online backup），向量库整目录复制。
 2. 不删旧：迁移完成后旧目录【原样保留】，由用户确认新 home 工作正常后再手动清理。
 3. 验证兜底：新目录写入测试标记文件并读回；DB 打开校验；全部通过才更新配置。
-4. 配置写入：目标 REMEMBRANCE_HOME 写入【用户级环境变量】（setx），
+4. 配置写入：目标 LANTAI_HOME 写入【用户级环境变量】（setx），
    使 MCP/Hook 子进程无论 cwd 在哪都能生效（pydantic-settings 优先读环境变量）。
 
 用法：python scripts/migrate_home.py --target <新目录>
@@ -55,7 +55,7 @@ def _copy_chroma(src: Path, target_dir: Path) -> Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="REMEMBRANCE_HOME 安全迁移")
+    parser = argparse.ArgumentParser(description="LANTAI_HOME 安全迁移")
     parser.add_argument("--target", required=True, help="新数据目录绝对路径")
     parser.add_argument("--dry-run", action="store_true", help="只预览，不执行")
     args = parser.parse_args()
@@ -94,8 +94,8 @@ def main() -> int:
     probe.unlink()
 
     # 4) 配置用户级环境变量（setx；Windows）
-    env_cmd = f'setx REMEMBRANCE_HOME "{target}"'
-    print(f"[4/5] 写入用户环境变量: REMEMBRANCE_HOME={target}")
+    env_cmd = f'setx LANTAI_HOME "{target}"'
+    print(f"[4/5] 写入用户环境变量: LANTAI_HOME={target}")
     try:
         subprocess.run(env_cmd, shell=True, check=True, capture_output=True)
     except subprocess.CalledProcessError as e:
@@ -106,10 +106,10 @@ def main() -> int:
     lines = []
     if env_path.exists():
         lines = [l for l in env_path.read_text(encoding="utf-8").splitlines()
-                 if l.strip() and not l.startswith("REMEMBRANCE_HOME=")]
-    lines.append(f"REMEMBRANCE_HOME={target}")
+                 if l.strip() and not l.startswith("LANTAI_HOME=")]
+    lines.append(f"LANTAI_HOME={target}")
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[5/5] 已写入 {env_path}: REMEMBRANCE_HOME={target}")
+    print(f"[5/5] 已写入 {env_path}: LANTAI_HOME={target}")
 
     print()
     print("=" * 60)
@@ -117,7 +117,7 @@ def main() -> int:
     print("旧目录【未删除】: 请确认新 home 工作正常后手动清理。")
     print("新目录说明:")
     print(f"  - {new_db.name}（备份自源库，integrity 通过）")
-    print("验证方法: 重启 Hermes 后跑 scripts/verify_remembrance.py")
+    print("验证方法: 重启 Hermes 后跑 scripts/verify_lantai.py")
     print("=" * 60)
     return 0
 

@@ -7,22 +7,22 @@ from unittest.mock import patch
 import pytest
 from sqlmodel import select
 
-from remembrance.core.ids import new_id
-from remembrance.core.time import utcnow
-from remembrance.models.tables import RawDocument
-from remembrance.parameters.advisor import render_signal_block
-from remembrance.parameters.trust_models import (
+from lantai.core.ids import new_id
+from lantai.core.time import utcnow
+from lantai.models.tables import RawDocument
+from lantai.parameters.advisor import render_signal_block
+from lantai.parameters.trust_models import (
     ParamContradictionReport,
     QualitySignalView,
 )
-from remembrance.parameters.validation import (
+from lantai.parameters.validation import (
     ParamValidationError,
     apply_tier_weight,
     detect_signal_contamination,
     scale_delta_budget,
     validate_batch_advice,
 )
-from remembrance.workers.param_advice_worker import run_param_advice_once
+from lantai.workers.param_advice_worker import run_param_advice_once
 
 NOW = utcnow()
 
@@ -215,9 +215,9 @@ class TestRenderSignalBlock:
 class TestWorkerBatch:
     def _seed(self, param_env, n=5):
         session_factory, _ = param_env
-        from remembrance.parameters.paper_signals import QualitySignalDraft
-        from remembrance.parameters.queue import enqueue_paper_for_param_advice
-        from remembrance.parameters.signal_service import upsert_from_draft
+        from lantai.parameters.paper_signals import QualitySignalDraft
+        from lantai.parameters.queue import enqueue_paper_for_param_advice
+        from lantai.parameters.signal_service import upsert_from_draft
         doc_ids = []
         for i in range(n):
             body = ("vector weight 0.55 with BM25 0.30 improves recall "
@@ -266,11 +266,11 @@ class TestWorkerBatch:
         doc_ids = self._seed(param_env)
         payload = self._batch_payload(doc_ids[0])
         payload["contradictions"] = []  # 干净矛盾避免整批丢弃
-        with patch("remembrance.parameters.advisor.chat_json",
+        with patch("lantai.parameters.advisor.chat_json",
                    return_value=payload):
             run_param_advice_once()
         with session_factory() as s:
-            from remembrance.models.tables import ParamSuggestion
+            from lantai.models.tables import ParamSuggestion
             sugs = s.exec(select(ParamSuggestion)).all()
             assert len(sugs) == 1
             assert sugs[0].status == "pending"
@@ -288,7 +288,7 @@ class TestWorkerBatch:
              "side_b": {"source_document_id": doc_ids[1],
                         "quote": "vector weight 0.55 with BM25 0.30 improves"},
              "scope_note": "", "resolution": "report_to_human"}]
-        with patch("remembrance.parameters.advisor.chat_json",
+        with patch("lantai.parameters.advisor.chat_json",
                    return_value=payload):
             run_param_advice_once()
         with session_factory() as s:

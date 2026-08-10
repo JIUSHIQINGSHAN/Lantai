@@ -8,18 +8,18 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine
 
-import remembrance.storage.db as db_module
-from remembrance.core.ids import new_id
-from remembrance.core.settings import settings
-from remembrance.models.tables import ParamSuggestion
-from remembrance.parameters.registry import default_snapshot
-from remembrance.parameters.validation import snapshot_hash
+import lantai.storage.db as db_module
+from lantai.core.ids import new_id
+from lantai.core.settings import settings
+from lantai.models.tables import ParamSuggestion
+from lantai.parameters.registry import default_snapshot
+from lantai.parameters.validation import snapshot_hash
 
 
 @pytest.fixture(scope="function")
 def client():
-    import remembrance.models.tables  # noqa: F401
-    from remembrance.parameters.registry import get_adjustable_names
+    import lantai.models.tables  # noqa: F401
+    from lantai.parameters.registry import get_adjustable_names
     names = get_adjustable_names()
     saved = {n: getattr(settings, n) for n in names}
 
@@ -34,10 +34,10 @@ def client():
         return Session(test_engine)
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.storage.vector_store.ChromaVectorStore"), \
-         patch("remembrance.retrieval.hybrid.get_vector_store",
+         patch("lantai.storage.vector_store.ChromaVectorStore"), \
+         patch("lantai.retrieval.hybrid.get_vector_store",
                return_value=Mock(search=Mock(return_value=[]))), \
-         patch("remembrance.retrieval.hybrid.embed",
+         patch("lantai.retrieval.hybrid.embed",
                return_value=[[0.1] * 8]):
         from api_server import app
         with TestClient(app) as c:

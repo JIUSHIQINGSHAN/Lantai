@@ -6,13 +6,13 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine, select
 
-import remembrance.storage.db as db_module
-from remembrance.core.ids import new_id
-from remembrance.core.time import utcnow
-from remembrance.memory.decay_class import (
+import lantai.storage.db as db_module
+from lantai.core.ids import new_id
+from lantai.core.time import utcnow
+from lantai.memory.decay_class import (
     DECAY_CLASS_HALFLIFE, decay_multiplier, infer_decay_class,
 )
-from remembrance.models.tables import MemoryCheckpoint, MemoryItem
+from lantai.models.tables import MemoryCheckpoint, MemoryItem
 
 
 class TestInfer:
@@ -81,7 +81,7 @@ class TestApplyForgetting:
         """procedural 记忆老化后仍保持 decay_score=1.0 且 active（冒烟直调）"""
         _add_mem(engine, decay_class="procedural", last_used_days_ago=9999.0)
         with patch.object(db_module, "get_session", lambda: Session(engine)):
-            from remembrance.memory import forgetting
+            from lantai.memory import forgetting
             forgetting.apply_forgetting()
         with Session(engine) as s:
             m = s.exec(select(MemoryItem)).first()
@@ -92,7 +92,7 @@ class TestApplyForgetting:
         """对照：episodic 老化 9999 天 → 衰减 + 归档"""
         _add_mem(engine, decay_class="episodic", last_used_days_ago=9999.0)
         with patch.object(db_module, "get_session", lambda: Session(engine)):
-            from remembrance.memory import forgetting
+            from lantai.memory import forgetting
             forgetting.apply_forgetting()
         with Session(engine) as s:
             m = s.exec(select(MemoryItem)).first()
@@ -102,7 +102,7 @@ class TestApplyForgetting:
 
 class TestSetDecayClass:
     def test_set_and_checkpoint(self, engine):
-        from remembrance.services import memory_service as ms
+        from lantai.services import memory_service as ms
         m = _add_mem(engine)
         with patch.object(db_module, "get_session", lambda: Session(engine)):
             res = ms.set_decay_class(m.id, "procedural")
@@ -116,14 +116,14 @@ class TestSetDecayClass:
             assert ckpt.trigger == "decay_class"
 
     def test_invalid_class_rejected(self, engine):
-        from remembrance.services import memory_service as ms
+        from lantai.services import memory_service as ms
         m = _add_mem(engine)
         with pytest.raises(ValueError):
             with patch.object(db_module, "get_session", lambda: Session(engine)):
                 ms.set_decay_class(m.id, "bogus")
 
     def test_missing_memory(self, engine):
-        from remembrance.services import memory_service as ms
+        from lantai.services import memory_service as ms
         with patch.object(db_module, "get_session", lambda: Session(engine)):
             res = ms.set_decay_class("no-such-id", "procedural")
         assert res["ok"] is False

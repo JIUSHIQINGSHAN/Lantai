@@ -17,11 +17,11 @@ except (AttributeError, ValueError):
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from remembrance.core.settings import settings
-from remembrance.llm.client import embed
-from remembrance.storage.vector_store import get_vector_store
-from remembrance.storage import db
-from remembrance.models.tables import MemoryItem
+from lantai.core.settings import settings
+from lantai.llm.client import embed
+from lantai.storage.vector_store import get_vector_store
+from lantai.storage import db
+from lantai.models.tables import MemoryItem
 from sqlmodel import select
 
 
@@ -85,7 +85,7 @@ def build_context(query: str) -> dict:
 def _try_log(query: str, results: list, latency_ms: int) -> str | None:
     """Shell Hook 检索埋点（独立向量路径，方向二弱标注源）：失败零侵入。返回 event_id。"""
     try:
-        from remembrance.observability.retrieval_log import log_retrieval
+        from lantai.observability.retrieval_log import log_retrieval
         return log_retrieval(query, results, latency_ms=latency_ms,
                              trace_id="shell_hook")
     except Exception:
@@ -95,7 +95,7 @@ def _try_log(query: str, results: list, latency_ms: int) -> str | None:
 def _handle_dialogue(text: str) -> dict:
     """对话写入通道（v0.5）：复用常驻进程调 ingest_dialogue，异常零侵入。"""
     try:
-        from remembrance.ingestion.dialogue import ingest_dialogue
+        from lantai.ingestion.dialogue import ingest_dialogue
         return {"ok": True, **ingest_dialogue(text)}
     except Exception:
         return {}

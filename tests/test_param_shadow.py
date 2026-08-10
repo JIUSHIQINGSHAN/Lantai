@@ -13,10 +13,10 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine, select
 
-import remembrance.storage.db as db_module
-from remembrance.core.time import utcnow
-from remembrance.models.tables import ParamOverride
-from remembrance.parameters.shadow import (
+import lantai.storage.db as db_module
+from lantai.core.time import utcnow
+from lantai.models.tables import ParamOverride
+from lantai.parameters.shadow import (
     decide_promote_target,
     evaluate_window,
     shadow_is_due,
@@ -143,9 +143,9 @@ class TestDecidePromoteTarget:
 @pytest.fixture(scope="function")
 def shadow_db():
     """内存 SQLite + patch db.get_session + mock dry-run 外部网络。"""
-    import remembrance.models.tables  # noqa: F401
-    import remembrance.eval.models  # noqa: F401
-    import remembrance.parameters.trust_models  # noqa: F401
+    import lantai.models.tables  # noqa: F401
+    import lantai.eval.models  # noqa: F401
+    import lantai.parameters.trust_models  # noqa: F401
     test_engine = create_engine(
         "sqlite://", echo=False,
         connect_args={"check_same_thread": False},
@@ -157,11 +157,11 @@ def shadow_db():
         return Session(test_engine)
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.retrieval.hybrid.get_vector_store") as vs, \
-         patch("remembrance.retrieval.hybrid.embed",
+         patch("lantai.retrieval.hybrid.get_vector_store") as vs, \
+         patch("lantai.retrieval.hybrid.embed",
                return_value=[[0.1] * 8]), \
-         patch("remembrance.retrieval.reranker.rerank", return_value=[]), \
-         patch("remembrance.retrieval.hybrid.classify_intent",
+         patch("lantai.retrieval.reranker.rerank", return_value=[]), \
+         patch("lantai.retrieval.hybrid.classify_intent",
                return_value={"intent": "exploratory", "candidate_n": 10}):
         vs.return_value.search.return_value = [{"id": "mem_1", "distance": 0.1}]
         yield get_test_session
@@ -170,8 +170,8 @@ def shadow_db():
 class TestShadowIntegration:
     def _seed_query_set(self, sf):
         """造查询集（build_query_set 需要 retrieval_event 源）。"""
-        from remembrance.eval.query_set import build_query_set
-        from remembrance.models.tables import MemoryItem, RetrievalEvent
+        from lantai.eval.query_set import build_query_set
+        from lantai.models.tables import MemoryItem, RetrievalEvent
         with sf() as s:
             for i in range(2):
                 s.add(RetrievalEvent(
@@ -188,7 +188,7 @@ class TestShadowIntegration:
         build_query_set("dry-run-v1")
 
     def test_table_created(self, shadow_db):
-        from remembrance.parameters.trust_models import ShadowWindow
+        from lantai.parameters.trust_models import ShadowWindow
         sf = shadow_db
         with sf() as s:
             w = ShadowWindow(id="sw_t1", override_id="rev_1",
@@ -200,8 +200,8 @@ class TestShadowIntegration:
             assert s.get(ShadowWindow, "sw_t1").status == "observing"
 
     def test_open_shadow_persists(self, shadow_db):
-        from remembrance.parameters.runtime import open_shadow
-        from remembrance.parameters.trust_models import ShadowWindow
+        from lantai.parameters.runtime import open_shadow
+        from lantai.parameters.trust_models import ShadowWindow
         sf = shadow_db
         self._seed_query_set(sf)
         w = open_shadow("rev_42", {"RETRIEVAL_W_VECTOR": 0.75}, observe_days=1)
@@ -219,9 +219,9 @@ class TestShadowIntegration:
 
     def test_open_shadow_respects_max_windows(self, shadow_db):
         """MAX_ACTIVE_SHADOW_WINDOWS=1：新窗取消最旧 observing。"""
-        from remembrance.core.settings import settings as _s
-        from remembrance.parameters.runtime import open_shadow
-        from remembrance.parameters.trust_models import ShadowWindow
+        from lantai.core.settings import settings as _s
+        from lantai.parameters.runtime import open_shadow
+        from lantai.parameters.trust_models import ShadowWindow
         sf = shadow_db
         self._seed_query_set(sf)
         w1 = open_shadow("rev_1", {"RETRIEVAL_W_VECTOR": 0.7}, observe_days=1)
@@ -236,8 +236,8 @@ class TestShadowIntegration:
 
     def test_check_shadow_due_promotes(self, shadow_db):
         """到期窗跑 dry-run 后 promote（mock 向量全命中 → 指标健康）。"""
-        from remembrance.parameters.runtime import open_shadow
-        from remembrance.parameters.trust_models import ShadowWindow
+        from lantai.parameters.runtime import open_shadow
+        from lantai.parameters.trust_models import ShadowWindow
         sf = shadow_db
         self._seed_query_set(sf)
         w = open_shadow("rev_7", {"RETRIEVAL_W_VECTOR": 0.7}, observe_days=1)
@@ -247,7 +247,7 @@ class TestShadowIntegration:
             got.check_deadline = utcnow().replace(tzinfo=None) - timedelta(days=1)
             s.add(got)
             s.commit()
-        from remembrance.parameters.runtime import check_shadow_due
+        from lantai.parameters.runtime import check_shadow_due
         results = check_shadow_due()
         assert len(results) == 1
         assert results[0]["window_id"] == w.id
@@ -262,8 +262,8 @@ class TestShadowIntegration:
 
     def test_rollback_writes_override(self, shadow_db):
         """rollback 时写 ParamOverride(operation=rollback) 恢复基线。"""
-        from remembrance.parameters.runtime import open_shadow, _rollback_snapshot
-        from remembrance.parameters.trust_models import ShadowWindow
+        from lantai.parameters.runtime import open_shadow, _rollback_snapshot
+        from lantai.parameters.trust_models import ShadowWindow
         sf = shadow_db
         self._seed_query_set(sf)
         w = open_shadow("rev_9", {"RETRIEVAL_W_VECTOR": 0.7}, observe_days=1)

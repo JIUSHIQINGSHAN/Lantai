@@ -6,8 +6,8 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine, select
 
-from remembrance.integrations.pre_compress import _render, flush_before_compress
-from remembrance.models.schemas import AddMemoryReq
+from lantai.integrations.pre_compress import _render, flush_before_compress
+from lantai.models.schemas import AddMemoryReq
 
 
 class TestMetadataBounds:
@@ -97,7 +97,7 @@ class TestFlush:
 
     def test_flush_passes_correct_params(self):
         """冒烟：mock add_memory（内部依赖 LLM 提取），验证参数与 metadata 传递。"""
-        with patch("remembrance.integrations.pre_compress.add_memory",
+        with patch("lantai.integrations.pre_compress.add_memory",
                    return_value={"document_id": "doc1", "candidate_id": "c1"}) as m:
             res = flush_before_compress([_msg("user", "这是一段足够长的对话内容")])
         assert res["flushed"] is True
@@ -110,7 +110,7 @@ class TestFlush:
 
     def test_flush_worker_failure_swallowed(self):
         """add_memory 抛异常 → flush_before_compress 仍返回 flushed，线程内吞掉。"""
-        with patch("remembrance.integrations.pre_compress.add_memory",
+        with patch("lantai.integrations.pre_compress.add_memory",
                    side_effect=RuntimeError("llm down")):
             res = flush_before_compress([_msg("user", "足够长的内容避免 too_short")])
         assert res["flushed"] is True  # 返回值不受线程内异常影响
@@ -123,14 +123,14 @@ def test_metadata_persisted_to_raw_document():
                            poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)
 
-    import remembrance.storage.db as db_module
-    import remembrance.services.memory_service as ms
-    from remembrance.models.tables import RawDocument
+    import lantai.storage.db as db_module
+    import lantai.services.memory_service as ms
+    from lantai.models.tables import RawDocument
 
     def get_test_session():
         return Session(engine)
 
-    req = __import__("remembrance.models.schemas", fromlist=["AddMemoryReq"]).AddMemoryReq(
+    req = __import__("lantai.models.schemas", fromlist=["AddMemoryReq"]).AddMemoryReq(
         title="快照", content="这是一段足够长用于测试的对话快照内容", lane="chat",
         metadata={"source": "pre_compress"})
     with patch.object(db_module, "get_session", get_test_session), \
@@ -138,7 +138,7 @@ def test_metadata_persisted_to_raw_document():
              "topic": [], "summary": "s", "claims": [], "methods": [],
              "constraints": [], "actions": [], "extractor_confidence": 0.9}), \
          patch.object(ms, "vector_store", Mock()), \
-         patch("remembrance.services.memory_service.fastpath_check", return_value=None):
+         patch("lantai.services.memory_service.fastpath_check", return_value=None):
         ms.add_memory(req)
     with Session(engine) as s:
         doc = s.exec(select(RawDocument)).first()

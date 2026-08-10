@@ -91,7 +91,7 @@ def test_build_context_has_evidence(monkeypatch):
                            poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)
     with Session(engine) as s:
-        from remembrance.models.tables import MemoryItem
+        from lantai.models.tables import MemoryItem
         s.add(MemoryItem(id="mem_1", memory_type="semantic", key="k",
                          content="用户喜欢 Python 和 Rust"))
         s.commit()
@@ -100,7 +100,7 @@ def test_build_context_has_evidence(monkeypatch):
         def search(self, qv, top_k=5):
             return [{"id": "mem_1", "distance": 0.1}]
 
-    import remembrance.storage.db as db_module
+    import lantai.storage.db as db_module
     monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
     monkeypatch.setattr(mod, "get_vector_store", lambda: _FakeStore())
 
@@ -129,7 +129,7 @@ def test_handle_dialogue_channel(monkeypatch):
     """serve 协议扩展（v0.5）：{"type":"dialogue"} 走对话写入通道。"""
     mod = _load_hook(monkeypatch)
     from unittest.mock import patch
-    with patch("remembrance.ingestion.dialogue.ingest_dialogue",
+    with patch("lantai.ingestion.dialogue.ingest_dialogue",
                return_value={"ingested": True, "candidate_id": "cand_1",
                              "fastpath": True, "lane": "general",
                              "status": "fastpath"}) as m:
@@ -143,7 +143,7 @@ def test_handle_dialogue_empty_text(monkeypatch):
     """dialogue 通道空文本 → {}，不调 ingest。"""
     mod = _load_hook(monkeypatch)
     from unittest.mock import patch
-    with patch("remembrance.ingestion.dialogue.ingest_dialogue") as m:
+    with patch("lantai.ingestion.dialogue.ingest_dialogue") as m:
         out = mod._handle_one('{"type":"dialogue","text":"   "}')
     assert out == {}
     m.assert_not_called()
@@ -153,7 +153,7 @@ def test_handle_dialogue_failure_silent(monkeypatch):
     """dialogue 通道异常 → {} 零侵入。"""
     mod = _load_hook(monkeypatch)
     from unittest.mock import patch
-    with patch("remembrance.ingestion.dialogue.ingest_dialogue",
+    with patch("lantai.ingestion.dialogue.ingest_dialogue",
                side_effect=RuntimeError("boom")):
         out = mod._handle_one('{"type":"dialogue","text":"记住：明天开会"}')
     assert out == {}

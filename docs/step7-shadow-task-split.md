@@ -17,9 +17,9 @@
 ### 新文件
 
 ```
-remembrance/parameters/shadow.py    # [Kimi] 决策逻辑纯函数（高智力）
-remembrance/parameters/trust_models.py  # [DeepSeek] 追加 ShadowWindow 表（按 Kimi 设计）
-remembrance/parameters/runtime.py   # [DeepSeek] 集成：注册 shadow / 检查观察期
+lantai/parameters/shadow.py    # [Kimi] 决策逻辑纯函数（高智力）
+lantai/parameters/trust_models.py  # [DeepSeek] 追加 ShadowWindow 表（按 Kimi 设计）
+lantai/parameters/runtime.py   # [DeepSeek] 集成：注册 shadow / 检查观察期
 tests/test_param_shadow.py          # [DeepSeek] 测试（核心函数不 mock 冒烟）
 ```
 
@@ -97,7 +97,7 @@ def rollback_shadow(window_id: str, reason: str) -> None:
 
 ## 🎯 任务一 — Kimi K3（高智力：设计 + 决策逻辑）
 
-**干**：`remembrance/parameters/shadow.py`（evaluate_window / shadow_is_due / decide_promote_target）+ 设计说明
+**干**：`lantai/parameters/shadow.py`（evaluate_window / shadow_is_due / decide_promote_target）+ 设计说明
 
 **要点**：
 - `evaluate_window` 是纯函数，零 DB，输入 compute_metrics 输出即可测
@@ -133,4 +133,4 @@ def rollback_shadow(window_id: str, reason: str) -> None:
 
 ## ⚠️ 切换模型时的背景话术（大哥直接粘贴）
 
-> 你在给 Remembrance 记忆系统（C:\Users\Asus\Desktop\记忆）实现 Step 7 影子观察期的 <决策逻辑/落地集成>。项目 Python 3.11 + SQLModel + FastAPI。测试用 `C:/Users/Asus/Desktop/记忆/.venv-audit/Scripts/python.exe -m pytest`。项目纪律：核心函数必须有**不 mock 的冒烟测试**（mock 只允许外部网络）；SQLModel 表类不能用 `from __future__ import annotations`；Field 必须从 sqlmodel import。接口契约见任务书，**禁止改签名**。参考：`remembrance/parameters/runtime.py`（参数应用）、`remembrance/parameters/trust_models.py`（表风格）、`remembrance/eval/runner.py`（dry-run 复用）。完成后跑自己模块测试全绿并汇报。
+> 你在给 兰台记忆系统（C:\Users\Asus\Desktop\记忆）实现 Step 7 影子观察期的 <决策逻辑/落地集成>。项目 Python 3.11 + SQLModel + FastAPI。测试用 `C:/Users/Asus/Desktop/记忆/.venv-audit/Scripts/python.exe -m pytest`。项目纪律：核心函数必须有**不 mock 的冒烟测试**（mock 只允许外部网络）；SQLModel 表类不能用 `from __future__ import annotations`；Field 必须从 sqlmodel import。接口契约见任务书，**禁止改签名**。参考：`lantai/parameters/runtime.py`（参数应用）、`lantai/parameters/trust_models.py`（表风格）、`lantai/eval/runner.py`（dry-run 复用）。完成后跑自己模块测试全绿并汇报。

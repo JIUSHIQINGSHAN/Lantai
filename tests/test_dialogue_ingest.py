@@ -16,8 +16,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine, select
 
-import remembrance.storage.db as db_module
-from remembrance.models.tables import MemoryCandidate, RawDocument
+import lantai.storage.db as db_module
+from lantai.models.tables import MemoryCandidate, RawDocument
 
 
 class TestDialogueIngest:
@@ -26,8 +26,8 @@ class TestDialogueIngest:
     def test_fastpath_explicit_instruction_direct(self, param_env):
         """'记住：X' → fastpath 直通（绕过 LLM 提取）"""
         session_factory, _ = param_env
-        from remembrance.ingestion.dialogue import ingest_dialogue
-        with patch("remembrance.parsing.extractor.chat_json",
+        from lantai.ingestion.dialogue import ingest_dialogue
+        with patch("lantai.parsing.extractor.chat_json",
                    side_effect=AssertionError("fastpath 不应触发 LLM 提取")):
             result = ingest_dialogue("记住：明天下午3点开会")
         assert result["ingested"] is True
@@ -41,8 +41,8 @@ class TestDialogueIngest:
     def test_fastpath_self_declaration_lane(self, param_env):
         """'我是后端工程师' → fastpath，lane=fact"""
         session_factory, _ = param_env
-        from remembrance.ingestion.dialogue import ingest_dialogue
-        with patch("remembrance.parsing.extractor.chat_json",
+        from lantai.ingestion.dialogue import ingest_dialogue
+        with patch("lantai.parsing.extractor.chat_json",
                    side_effect=AssertionError("fastpath 不应触发 LLM 提取")):
             result = ingest_dialogue("我是后端工程师")
         assert result["fastpath"] is True
@@ -54,8 +54,8 @@ class TestDialogueIngest:
     def test_preference_text_lane(self, param_env):
         """含偏好表达的长文本 → LLM 提取，lane=preference"""
         session_factory, _ = param_env
-        from remembrance.ingestion.dialogue import ingest_dialogue
-        with patch("remembrance.parsing.extractor.chat_json",
+        from lantai.ingestion.dialogue import ingest_dialogue
+        with patch("lantai.parsing.extractor.chat_json",
                    return_value={"summary": "用户偏好 Rust", "claims": [],
                                  "methods": [], "constraints": [],
                                  "actions": [], "topic": ["rust"],
@@ -71,8 +71,8 @@ class TestDialogueIngest:
     def test_chitchat_enters_pending_review(self, param_env):
         """闲聊（短文本/社交结束语）→ 候选进 pending_review，不落库为记忆"""
         session_factory, _ = param_env
-        from remembrance.ingestion.dialogue import ingest_dialogue
-        with patch("remembrance.parsing.extractor.chat_json",
+        from lantai.ingestion.dialogue import ingest_dialogue
+        with patch("lantai.parsing.extractor.chat_json",
                    side_effect=AssertionError("闲聊不应触发 LLM 提取")):
             result = ingest_dialogue("哈哈，好的")
         assert result["ingested"] is True
@@ -86,8 +86,8 @@ class TestDialogueIngest:
     def test_extraction_failure_falls_back_to_queue(self, param_env):
         """LLM 提取抛异常 → 兜底候选进 pending_review，不抛错"""
         session_factory, _ = param_env
-        from remembrance.ingestion.dialogue import ingest_dialogue
-        with patch("remembrance.parsing.extractor.chat_json",
+        from lantai.ingestion.dialogue import ingest_dialogue
+        with patch("lantai.parsing.extractor.chat_json",
                    side_effect=RuntimeError("upstream 502")):
             result = ingest_dialogue("我在研究知识图谱的记忆架构，感觉很有意思")
         assert result["ingested"] is True
@@ -99,8 +99,8 @@ class TestDialogueIngest:
     def test_low_confidence_enters_pending_review(self, param_env):
         """提取置信度过低 → 待审队列（不静默丢弃）"""
         session_factory, _ = param_env
-        from remembrance.ingestion.dialogue import ingest_dialogue
-        with patch("remembrance.parsing.extractor.chat_json",
+        from lantai.ingestion.dialogue import ingest_dialogue
+        with patch("lantai.parsing.extractor.chat_json",
                    return_value={"summary": "杂音", "claims": [],
                                  "methods": [], "constraints": [],
                                  "actions": [], "topic": [],
@@ -114,8 +114,8 @@ class TestDialogueIngest:
     def test_user_id_and_source_recorded(self, param_env):
         """对话来源与用户 id 落 RawDocument.meta / source_type"""
         session_factory, _ = param_env
-        from remembrance.ingestion.dialogue import ingest_dialogue
-        with patch("remembrance.parsing.extractor.chat_json",
+        from lantai.ingestion.dialogue import ingest_dialogue
+        with patch("lantai.parsing.extractor.chat_json",
                    return_value={"summary": "s", "claims": [], "methods": [],
                                  "constraints": [], "actions": [], "topic": [],
                                  "extractor_confidence": 0.8}):
@@ -129,7 +129,7 @@ class TestDialogueIngest:
             assert doc.meta.get("source") == "hermes"
 
     def test_empty_text_rejected(self, param_env):
-        from remembrance.ingestion.dialogue import ingest_dialogue
+        from lantai.ingestion.dialogue import ingest_dialogue
         with pytest.raises(ValueError):
             ingest_dialogue("   ")
 
@@ -149,17 +149,17 @@ def client():
         return Session(test_engine)
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.retrieval.intent.chat_json",
+         patch("lantai.retrieval.intent.chat_json",
                return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("remembrance.parsing.extractor.chat_json",
+         patch("lantai.parsing.extractor.chat_json",
                return_value={"summary": "test", "claims": [], "methods": [],
                              "constraints": [], "actions": [], "topic": [],
                              "extractor_confidence": 0.8}), \
-         patch("remembrance.retrieval.reranker.rerank", return_value=[]), \
-         patch("remembrance.gate.scorer.embed", return_value=[[0.1] * 8]), \
-         patch("remembrance.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("remembrance.retrieval.hybrid.get_vector_store"), \
-         patch("remembrance.storage.vector_store.ChromaVectorStore"):
+         patch("lantai.retrieval.reranker.rerank", return_value=[]), \
+         patch("lantai.gate.scorer.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.get_vector_store"), \
+         patch("lantai.storage.vector_store.ChromaVectorStore"):
         from api_server import app
         with TestClient(app) as c:
             yield c

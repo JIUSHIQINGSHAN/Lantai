@@ -159,7 +159,7 @@ pytest tests/ -q
 pytest tests/test_gate.py -q
 
 # 带覆盖率
-pytest tests/ --cov=remembrance --cov-report=html
+pytest tests/ --cov=lantai --cov-report=html
 ```
 
 ### 测试要求

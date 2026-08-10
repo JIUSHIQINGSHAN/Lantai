@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine
 
-import remembrance.storage.db as db_module
-from remembrance.core.settings import settings
+import lantai.storage.db as db_module
+from lantai.core.settings import settings
 
 
 @pytest.fixture(scope="function")
@@ -27,14 +27,14 @@ def client():
         return Session(test_engine)
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.retrieval.intent.chat_json",
+         patch("lantai.retrieval.intent.chat_json",
                return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("remembrance.retrieval.reranker.rerank", return_value=[]), \
-         patch("remembrance.storage.vector_store.ChromaVectorStore"), \
-         patch("remembrance.retrieval.hybrid.embed", return_value=[[0.1]*8]), \
-         patch("remembrance.retrieval.hybrid.get_vector_store",
+         patch("lantai.retrieval.reranker.rerank", return_value=[]), \
+         patch("lantai.storage.vector_store.ChromaVectorStore"), \
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1]*8]), \
+         patch("lantai.retrieval.hybrid.get_vector_store",
                return_value=Mock(search=Mock(return_value=[]))), \
-         patch("remembrance.parsing.extractor.chat_json",
+         patch("lantai.parsing.extractor.chat_json",
                return_value={"summary": "test", "claims": [], "methods": [],
                              "constraints": [], "actions": [], "topic": [],
                              "extractor_confidence": 0.5}):
@@ -47,31 +47,31 @@ class TestFastpath:
     """T05: fastpath 白名单直写"""
 
     def test_self_declaration(self):
-        from remembrance.parsing.fastpath import fastpath_check
+        from lantai.parsing.fastpath import fastpath_check
         result = fastpath_check("我叫张三")
         assert result is not None
         assert result["lane"] == "fact"
         assert "张三" in result["summary"]
 
     def test_preference(self):
-        from remembrance.parsing.fastpath import fastpath_check
+        from lantai.parsing.fastpath import fastpath_check
         result = fastpath_check("我喜欢Python")
         assert result is not None
         assert result["lane"] == "preference"
 
     def test_explicit_instruction(self):
-        from remembrance.parsing.fastpath import fastpath_check
+        from lantai.parsing.fastpath import fastpath_check
         result = fastpath_check("记住：明天开会")
         assert result is not None
         assert result["lane"] == "general"
 
     def test_no_match(self):
-        from remembrance.parsing.fastpath import fastpath_check
+        from lantai.parsing.fastpath import fastpath_check
         result = fastpath_check("今天天气怎么样")
         assert result is None
 
     def test_too_short(self):
-        from remembrance.parsing.fastpath import fastpath_check
+        from lantai.parsing.fastpath import fastpath_check
         result = fastpath_check("好")
         assert result is None
 
@@ -80,13 +80,13 @@ class TestCoalesceBuffer:
     """T04: coalesce 缓冲"""
 
     def test_buffer_add(self):
-        from remembrance.ingestion.coalesce import CoalesceBuffer
+        from lantai.ingestion.coalesce import CoalesceBuffer
         buf = CoalesceBuffer()
         result = buf.add("user1", "general", "hello world")
         assert result.get("buffered") is True
 
     def test_buffer_flush_on_max_parts(self):
-        from remembrance.ingestion.coalesce import CoalesceBuffer
+        from lantai.ingestion.coalesce import CoalesceBuffer
         buf = CoalesceBuffer()
         # max_parts=8 by default
         for i in range(8):
@@ -96,7 +96,7 @@ class TestCoalesceBuffer:
         assert result.get("count") == 8
 
     def test_water_level(self):
-        from remembrance.ingestion.coalesce import CoalesceBuffer
+        from lantai.ingestion.coalesce import CoalesceBuffer
         buf = CoalesceBuffer()
         buf.add("user1", "general", "hello")
         level = buf.water_level()
@@ -149,12 +149,12 @@ class TestForgettingArchived:
 
     def test_decay_below_threshold_auto_archived(self, client):
         from datetime import timedelta
-        from remembrance.memory.forgetting import apply_forgetting
-        from remembrance.models.tables import MemoryItem
-        from remembrance.core.time import utcnow
-        from remembrance.core.ids import new_id
+        from lantai.memory.forgetting import apply_forgetting
+        from lantai.models.tables import MemoryItem
+        from lantai.core.time import utcnow
+        from lantai.core.ids import new_id
         from sqlmodel import select
-        from remembrance.storage import db as db_mod
+        from lantai.storage import db as db_mod
 
         with db_mod.get_session() as s:
             old = MemoryItem(
@@ -178,6 +178,6 @@ class TestForgettingArchived:
 
     def test_search_excludes_archived(self, client):
         import inspect
-        from remembrance.retrieval import hybrid
+        from lantai.retrieval import hybrid
         src = inspect.getsource(hybrid)
         assert '.where(MemoryItem.status == "active")' in src

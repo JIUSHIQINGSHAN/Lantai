@@ -1,13 +1,13 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends
 
-from remembrance.core.settings import settings
-from remembrance.core.logger import logger
-from remembrance.core.scheduler import start_scheduler, stop_scheduler
-from remembrance.core.auth import verify_api_key, assert_secure_binding
-from remembrance.storage.db import init_db
+from lantai.core.settings import settings
+from lantai.core.logger import logger
+from lantai.core.scheduler import start_scheduler, stop_scheduler
+from lantai.core.auth import verify_api_key, assert_secure_binding
+from lantai.storage.db import init_db
 
-from remembrance.api import (
+from lantai.api import (
     routes_memory_router,
     routes_search_router,
     routes_gate_router,
@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
     settings.validate_config()
     init_db()
     # 启动时加载 DB 参数 override（论文驱动优化的当前生效配置）
-    from remembrance.parameters.runtime import load_runtime_params_at_startup
+    from lantai.parameters.runtime import load_runtime_params_at_startup
     try:
         load_runtime_params_at_startup()
     except Exception:

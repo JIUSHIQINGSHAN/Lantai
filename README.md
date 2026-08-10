@@ -90,12 +90,12 @@ python api_server.py
 ### 方式二：Docker 容器运行
 
 ```bash
-docker build -t remembrance:0.3.6 .
+docker build -t lantai:0.3.6 .
 docker run -d -p 8767:8767 \
   -e API_KEY=your-admin-key \
   -e OPENAI_API_KEY=sk-xxx \
   -v /your/data:/data \
-  remembrance:0.3.6
+  lantai:0.3.6
 ```
 
 > 容器默认 `HOST=0.0.0.0` 对外暴露，**必须注入 `API_KEY`**——启动守卫（`assert_secure_binding`）会在非回环地址且无密钥时拒绝运行。
@@ -188,7 +188,7 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 
 ## 环境变量
 
-所有配置通过环境变量 / `.env` 注入，**全部可选**——不设置就走安全默认值。完整清单见 `remembrance/core/settings.py`。
+所有配置通过环境变量 / `.env` 注入，**全部可选**——不设置就走安全默认值。完整清单见 `lantai/core/settings.py`。
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|

@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from remembrance.api.routes_retrieval import router
+from lantai.api.routes_retrieval import router
 
 
 @pytest.fixture
@@ -16,7 +16,7 @@ def client():
 
 
 def test_backfill_ok(client):
-    with patch("remembrance.api.routes_retrieval.backfill_used_ids") as m:
+    with patch("lantai.api.routes_retrieval.backfill_used_ids") as m:
         r = client.post("/retrieval/backfill",
                         json={"event_id": "ev_1", "used_ids": ["mem_1"]})
     assert r.status_code == 200
@@ -27,7 +27,7 @@ def test_backfill_ok(client):
 
 def test_backfill_empty_used_ids(client):
     """used_ids 可空（生成侧没用到记忆也算标注）。"""
-    with patch("remembrance.api.routes_retrieval.backfill_used_ids") as m:
+    with patch("lantai.api.routes_retrieval.backfill_used_ids") as m:
         r = client.post("/retrieval/backfill",
                         json={"event_id": "ev_1", "used_ids": []})
     assert r.status_code == 200

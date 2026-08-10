@@ -19,7 +19,7 @@ def _load_mcp():
 def test_initialize():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
-    assert resp["result"]["serverInfo"]["name"] == "remembrance"
+    assert resp["result"]["serverInfo"]["name"] == "lantai"
     assert resp["result"]["protocolVersion"] == mod.PROTOCOL_VERSION
 
 
@@ -68,7 +68,7 @@ def test_non_object_args():
 def test_backfill_ok():
     """backfill 工具：合法输入 → 调用 backfill_used_ids + 返回 ok。"""
     mod = _load_mcp()
-    with patch("remembrance.observability.retrieval_log.backfill_used_ids") as m:
+    with patch("lantai.observability.retrieval_log.backfill_used_ids") as m:
         resp = mod.handle({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
                            "params": {"name": "backfill",
                                       "arguments": {"event_id": "ev_1",
@@ -85,7 +85,7 @@ def test_backfill_ok():
 def test_backfill_validation():
     """backfill 工具：非法输入 → -32602，不调底层。"""
     mod = _load_mcp()
-    with patch("remembrance.observability.retrieval_log.backfill_used_ids") as m:
+    with patch("lantai.observability.retrieval_log.backfill_used_ids") as m:
         resp = mod.handle({"jsonrpc": "2.0", "id": 8, "method": "tools/call",
                            "params": {"name": "backfill",
                                       "arguments": {"event_id": "", "used_ids": []}}})
@@ -96,7 +96,7 @@ def test_backfill_validation():
 def test_candidates_pending_ok():
     """candidates_pending 工具：合法输入 → 调用 service + 返回列表。"""
     mod = _load_mcp()
-    with patch("remembrance.services.candidate_service.list_pending_candidates",
+    with patch("lantai.services.candidate_service.list_pending_candidates",
                return_value={"candidates": []}) as m:
         resp = mod.handle({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
                            "params": {"name": "candidates_pending",
@@ -110,7 +110,7 @@ def test_candidates_pending_ok():
 def test_candidate_review_ok():
     """candidate_review 工具：approve=false → 归档。"""
     mod = _load_mcp()
-    with patch("remembrance.services.candidate_service.review_candidate",
+    with patch("lantai.services.candidate_service.review_candidate",
                return_value={"ok": True, "candidate_status": "rejected"}) as m:
         resp = mod.handle({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
                            "params": {"name": "candidate_review",
@@ -124,7 +124,7 @@ def test_candidate_review_ok():
 def test_candidate_review_validation():
     """candidate_review 工具：非法输入 → -32602，不调底层。"""
     mod = _load_mcp()
-    with patch("remembrance.services.candidate_service.review_candidate") as m:
+    with patch("lantai.services.candidate_service.review_candidate") as m:
         resp = mod.handle({"jsonrpc": "2.0", "id": 11, "method": "tools/call",
                            "params": {"name": "candidate_review",
                                       "arguments": {"candidate_id": "", "approve": "yes"}}})
@@ -135,7 +135,7 @@ def test_candidate_review_validation():
 def test_add_dialogue_ok():
     """add_dialogue 工具：合法输入 → 调用 ingest_dialogue + 返回结果。"""
     mod = _load_mcp()
-    with patch("remembrance.ingestion.dialogue.ingest_dialogue",
+    with patch("lantai.ingestion.dialogue.ingest_dialogue",
                return_value={"ingested": True, "candidate_id": "cand_1",
                              "fastpath": True, "lane": "general",
                              "status": "fastpath"}) as m:
@@ -151,7 +151,7 @@ def test_add_dialogue_ok():
 def test_add_dialogue_validation():
     """add_dialogue 工具：空文本 → -32602，不调底层。"""
     mod = _load_mcp()
-    with patch("remembrance.ingestion.dialogue.ingest_dialogue") as m:
+    with patch("lantai.ingestion.dialogue.ingest_dialogue") as m:
         resp = mod.handle({"jsonrpc": "2.0", "id": 13, "method": "tools/call",
                            "params": {"name": "add_dialogue",
                                       "arguments": {"text": "   "}}})
@@ -170,7 +170,7 @@ def test_search_response_has_evidence():
          patch.object(mod, "relevance_check",
                       return_value={"needs_memory": True, "reason": "t",
                                     "scope": "t"}), \
-         patch("remembrance.observability.retrieval_log.log_retrieval",
+         patch("lantai.observability.retrieval_log.log_retrieval",
                return_value="ev_1"):
         resp = mod.handle({"jsonrpc": "2.0", "id": 14, "method": "tools/call",
                            "params": {"name": "search",

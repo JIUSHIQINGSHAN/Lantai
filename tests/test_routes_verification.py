@@ -9,10 +9,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine
 
-import remembrance.models.tables  # noqa: F401
-import remembrance.parameters.trust_models  # noqa: F401
-import remembrance.storage.db as db_module
-from remembrance.api.routes_verification import router
+import lantai.models.tables  # noqa: F401
+import lantai.parameters.trust_models  # noqa: F401
+import lantai.storage.db as db_module
+from lantai.api.routes_verification import router
 
 
 @pytest.fixture(scope="function")

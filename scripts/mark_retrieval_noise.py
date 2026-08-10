@@ -15,10 +15,10 @@ sys.path.insert(0, ".")  # 兼容任意 cwd 运行
 
 from sqlmodel import select  # noqa: E402
 
-from remembrance.core.logger import logger  # noqa: E402
-from remembrance.models.tables import RetrievalEvent  # noqa: E402
-from remembrance.observability.retrieval_log import is_system_noise  # noqa: E402
-from remembrance.storage import db  # noqa: E402
+from lantai.core.logger import logger  # noqa: E402
+from lantai.models.tables import RetrievalEvent  # noqa: E402
+from lantai.observability.retrieval_log import is_system_noise  # noqa: E402
+from lantai.storage import db  # noqa: E402
 
 
 def main(dry_run: bool = False) -> int:

@@ -1,4 +1,4 @@
-# Dockerfile — Remembrance-System
+# Dockerfile — 兰台记忆（Lantai）
 # python:3.11-slim 多阶段构建
 
 # ---- builder ----
@@ -8,9 +8,9 @@ WORKDIR /build
 
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# 编译依赖 + 源码（必须 COPY remembrance/ 否则 wheel 为空）
+# 编译依赖 + 源码（必须 COPY lantai/ 否则 wheel 为空）
 COPY pyproject.toml ./
-COPY remembrance/ ./remembrance/
+COPY lantai/ ./lantai/
 RUN pip install --upgrade pip build && python -m build --wheel --outdir /wheels
 
 # ---- runtime ----
@@ -18,7 +18,7 @@ FROM python:3.11-slim AS runtime
 
 WORKDIR /app
 
-# 安装运行时依赖（wheel 内含 remembrance 包，无需 COPY 源码）
+# 安装运行时依赖（wheel 内含 lantai 包，无需 COPY 源码）
 COPY --from=builder /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
 
@@ -30,7 +30,7 @@ COPY scripts/ ./scripts/
 VOLUME ["/data"]
 
 # 环境变量
-ENV REMEMBRANCE_HOME=/data
+ENV LANTAI_HOME=/data
 ENV PORT=8767
 # 容器需对外可达故绑 0.0.0.0——必须同时注入 API_KEY，否则 assert_secure_binding 拒绝启动
 ENV HOST=0.0.0.0

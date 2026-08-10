@@ -1,10 +1,10 @@
-"""Remembrance 注入 + 对话自动写入插件（serve/桌面模式专用）。
+"""兰台记忆注入 + 对话自动写入插件（serve/桌面模式专用）。
 
 背景：Hermes 桌面版走 ``serve`` 命令，不在 _AGENT_COMMANDS 集合
 （{None, chat, acp, rl}）里，因此 shell hooks（pre_llm_call）不会被注册。
 本插件通过 Python 插件通道注册 pre_llm_call / on_session_end 回调，等效实现：
 
-  - pre_llm_call：每轮对话前检索 Remembrance 记忆 → 注入 user message
+  - pre_llm_call：每轮对话前检索兰台记忆 → 注入 user message
     → 记录检索事件；同时把 user_message 累积到会话缓冲（v0.5 对话写通道原料）
   - on_session_end：每轮对话结束触发 → 缓冲 flush 给 shell_hook 对话通道
     → ingest_dialogue（fastpath 直通 / 提取建候选 / 闲聊入待审队列）

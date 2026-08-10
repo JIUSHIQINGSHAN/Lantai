@@ -12,10 +12,10 @@
 
 ## 📐 接口契约（三个任务共同遵守，禁止自行改签名）
 
-### 新包 `remembrance/eval/`
+### 新包 `lantai/eval/`
 
 ```
-remembrance/eval/
+lantai/eval/
 ├── __init__.py        # 空
 ├── models.py          # [GLM5.2] EvalQuerySet / EvalRun 表
 ├── query_set.py       # [GLM5.2] build_query_set()
@@ -83,7 +83,7 @@ def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
 
 ## 🎯 任务 A — GLM5.2：数据层（表 + 查询集）
 
-**干**：`remembrance/eval/models.py` + `remembrance/eval/query_set.py` + `tests/test_eval_query_set.py`
+**干**：`lantai/eval/models.py` + `lantai/eval/query_set.py` + `tests/test_eval_query_set.py`
 
 **要点**：
 - 照现有表风格（参考 `retrieval_event`：str 主键、JSON 列用 `sa_column=Column(JSON)`）
@@ -97,7 +97,7 @@ def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
 
 ## 🎯 任务 B — Kimi-K3：指标层（纯函数）
 
-**干**：`remembrance/eval/metrics.py` + `tests/test_eval_metrics.py`
+**干**：`lantai/eval/metrics.py` + `tests/test_eval_metrics.py`
 
 **要点**：
 - 全部纯函数，零 DB 依赖，输入输出可测
@@ -112,7 +112,7 @@ def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
 
 ## 🎯 任务 C — DeepSeek-V4-Flash：执行层（runner + CLI）
 
-**干**：`remembrance/eval/runner.py` + `scripts/run_dry_run.py` + `tests/test_eval_runner.py`
+**干**：`lantai/eval/runner.py` + `scripts/run_dry_run.py` + `tests/test_eval_runner.py`
 
 **前置**：`hybrid_search` 需要加可选 `param_overrides: dict | None = None`（在函数体内合并进参数快照，**不改默认行为**，旧调用不受影响）。这是已裁定方案。
 
@@ -136,4 +136,4 @@ def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
 
 每个任务开头附这段（按模型名替换）：
 
-> 你在给 Remembrance 记忆系统（C:\Users\Asus\Desktop\记忆）写 dry-run 评估管道的 <数据层/指标层/执行层>。项目是 Python 3.11 + SQLModel + FastAPI。测试用 `C:/Users/Asus/Desktop/记忆/.venv-audit/Scripts/python.exe -m pytest`。项目纪律：每个核心函数必须有**不 mock 的冒烟测试**；mock 只允许外部网络（embed/rerank）。接口契约见本任务书，**禁止改签名**。参考文件：`remembrance/models/tables.py`（表风格）、`remembrance/observability/retrieval_log.py`（JSON 列/埋点风格）、`remembrance/retrieval/hybrid.py`（hybrid_search）。完成后跑自己模块的测试全绿并汇报。
+> 你在给 兰台记忆系统（C:\Users\Asus\Desktop\记忆）写 dry-run 评估管道的 <数据层/指标层/执行层>。项目是 Python 3.11 + SQLModel + FastAPI。测试用 `C:/Users/Asus/Desktop/记忆/.venv-audit/Scripts/python.exe -m pytest`。项目纪律：每个核心函数必须有**不 mock 的冒烟测试**；mock 只允许外部网络（embed/rerank）。接口契约见本任务书，**禁止改签名**。参考文件：`lantai/models/tables.py`（表风格）、`lantai/observability/retrieval_log.py`（JSON 列/埋点风格）、`lantai/retrieval/hybrid.py`（hybrid_search）。完成后跑自己模块的测试全绿并汇报。

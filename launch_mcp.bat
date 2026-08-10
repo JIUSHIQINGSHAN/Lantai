@@ -1,5 +1,5 @@
 @echo off
-REM Isolated launcher for Remembrance MCP server
+REM Isolated launcher for 兰台记忆 MCP server
 setlocal
 
 REM Clear Hermes venv pollution

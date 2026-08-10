@@ -50,11 +50,11 @@ def param_env():
     返回 (session_factory, engine)；测试用 session_factory() 开新会话。
     teardown 恢复 settings 白名单参数（审批测试会原位修改单例）。
     """
-    import remembrance.models.tables  # noqa: F401  注册全部表
-    import remembrance.parameters.trust_models  # noqa: F401  注册信号/矛盾表
-    import remembrance.storage.db as db_module
-    from remembrance.core.settings import settings
-    from remembrance.parameters.registry import get_adjustable_names
+    import lantai.models.tables  # noqa: F401  注册全部表
+    import lantai.parameters.trust_models  # noqa: F401  注册信号/矛盾表
+    import lantai.storage.db as db_module
+    from lantai.core.settings import settings
+    from lantai.parameters.registry import get_adjustable_names
 
     names = get_adjustable_names()
     saved = {n: getattr(settings, n) for n in names}

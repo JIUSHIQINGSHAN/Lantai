@@ -4,9 +4,9 @@ from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, create_engine, Session
 from sqlmodel.pool import StaticPool
 
-from remembrance.storage import db
-from remembrance.models.tables import MemoryItem
-from remembrance.core.ids import new_id
+from lantai.storage import db
+from lantai.models.tables import MemoryItem
+from lantai.core.ids import new_id
 
 
 @pytest.fixture(name="client")
@@ -19,8 +19,8 @@ def client_fixture(monkeypatch):
     def mock_search(content_or_vec, top_k=8, where=None):
         return getattr(mock_search, "results", [])
 
-    monkeypatch.setattr("remembrance.services.memory_service.vector_store.search", mock_search)
-    monkeypatch.setattr("remembrance.parsing.extractor.chat_json",
+    monkeypatch.setattr("lantai.services.memory_service.vector_store.search", mock_search)
+    monkeypatch.setattr("lantai.parsing.extractor.chat_json",
                         lambda *a, **kw: {"summary": "t", "claims": [], "methods": [],
                                           "constraints": [], "actions": [], "topic": [],
                                           "extractor_confidence": 0.5})

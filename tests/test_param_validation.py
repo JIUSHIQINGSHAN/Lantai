@@ -4,9 +4,9 @@ LLM 输出校验冒烟测试（不 mock 网络，真实直调 validate_param_adv
 import pytest
 from pydantic import ValidationError
 
-from remembrance.parameters.registry import default_snapshot
-from remembrance.parameters.schemas import AbstainPayload, SuggestPayload
-from remembrance.parameters.validation import (
+from lantai.parameters.registry import default_snapshot
+from lantai.parameters.schemas import AbstainPayload, SuggestPayload
+from lantai.parameters.validation import (
     ParamValidationError,
     validate_param_advice,
 )

@@ -5,11 +5,11 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine
 
-import remembrance.storage.db as db_module
-from remembrance.api.routes_health import usage
-from remembrance.core.ids import new_id
-from remembrance.core.time import utcnow
-from remembrance.models.tables import MemoryItem
+import lantai.storage.db as db_module
+from lantai.api.routes_health import usage
+from lantai.core.ids import new_id
+from lantai.core.time import utcnow
+from lantai.models.tables import MemoryItem
 
 
 @pytest.fixture
@@ -42,7 +42,7 @@ def test_usage_returns_seven_days_with_zero_fill(engine):
 
 
 def test_usage_counts_today(engine):
-    from remembrance.core.time import utcnow
+    from lantai.core.time import utcnow
     _add(engine)  # 今天（usage 按 UTC 日期聚合，断言必须与实现一致防时区 flaky）
     with patch.object(db_module, "get_session", lambda: Session(engine)):
         res = usage()

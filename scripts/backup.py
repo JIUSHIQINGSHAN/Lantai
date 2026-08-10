@@ -8,12 +8,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from remembrance.core.settings import settings
+from lantai.core.settings import settings
 
 
 def backup(dest: str = "", dry_run: bool = False) -> str:
     """备份到指定目录。dry_run=True 时只打印目标路径，不执行。"""
-    home = Path(settings.REMEMBRANCE_HOME) if settings.REMEMBRANCE_HOME else Path(".")
+    home = Path(settings.LANTAI_HOME) if settings.LANTAI_HOME else Path(".")
     dest_dir = Path(dest) if dest else home / "backups" / f"backup_{datetime.now():%Y%m%d_%H%M%S}"
     if dry_run:
         print(f"[dry-run] would backup to: {dest_dir}")

@@ -9,12 +9,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from remembrance.core.settings import settings
+from lantai.core.settings import settings
 
 
 def find_latest_backup() -> Path:
     """查找最新的备份目录。"""
-    home = Path(settings.REMEMBRANCE_HOME) if settings.REMEMBRANCE_HOME else Path(".")
+    home = Path(settings.LANTAI_HOME) if settings.LANTAI_HOME else Path(".")
     backups_dir = home / "backups"
     if not backups_dir.exists():
         raise FileNotFoundError("no backups directory")
@@ -68,7 +68,7 @@ def service_online(port: int) -> bool:
 def restore(src: str) -> str:
     """从指定目录恢复（路径限定 + manifest 校验 + 原子换入）。"""
     src_dir = Path(src)
-    home = Path(settings.REMEMBRANCE_HOME) if settings.REMEMBRANCE_HOME else Path(".")
+    home = Path(settings.LANTAI_HOME) if settings.LANTAI_HOME else Path(".")
 
     validate_backup_path(src_dir, home)
     verify_manifest(src_dir)

@@ -6,17 +6,17 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine, select
 
-import remembrance.storage.db as db_module
-from remembrance.models.tables import RetrievalEvent
-from remembrance.eval.models import EvalQuerySet, EvalRun
-from remembrance.eval.query_set import build_query_set, load_query_set
+import lantai.storage.db as db_module
+from lantai.models.tables import RetrievalEvent
+from lantai.eval.models import EvalQuerySet, EvalRun
+from lantai.eval.query_set import build_query_set, load_query_set
 
 
 @pytest.fixture(scope="function")
 def db_session():
     """内存 SQLite + patch db.get_session。"""
-    import remembrance.models.tables  # noqa: F401
-    import remembrance.eval.models  # noqa: F401
+    import lantai.models.tables  # noqa: F401
+    import lantai.eval.models  # noqa: F401
     test_engine = create_engine(
         "sqlite://", echo=False,
         connect_args={"check_same_thread": False},

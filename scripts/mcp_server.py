@@ -7,7 +7,7 @@ import json
 import os
 import sys
 
-# 使子进程无论 cwd 在哪都能 import remembrance（Hermes 拉 MCP 时 cwd 不可控）
+# 使子进程无论 cwd 在哪都能 import lantai（Hermes 拉 MCP 时 cwd 不可控）
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ── 强制 UTF-8 I/O ──────────────────────────────────────────────
@@ -22,11 +22,11 @@ except (AttributeError, ValueError):
 
 from pydantic import ValidationError
 
-from remembrance.models.schemas import AddMemoryReq, SearchReq, FeedbackReq
-from remembrance.services.memory_service import add_memory
-from remembrance.services.evolution_service import record_feedback_entry
-from remembrance.retrieval.hybrid import hybrid_search
-from remembrance.gate.prefilter import relevance_check
+from lantai.models.schemas import AddMemoryReq, SearchReq, FeedbackReq
+from lantai.services.memory_service import add_memory
+from lantai.services.evolution_service import record_feedback_entry
+from lantai.retrieval.hybrid import hybrid_search
+from lantai.gate.prefilter import relevance_check
 
 PROTOCOL_VERSION = "2024-11-05"
 
@@ -48,7 +48,7 @@ def handle_search(params: dict) -> dict:
     latency_ms = int((time.perf_counter() - t0) * 1000)
     event_id = _try_log(query, results, latency_ms, gate)
     # Ticket 04: 检索透明——命中来源说明（id + 摘要 + 分数）
-    from remembrance.retrieval.evidence import build_evidence
+    from lantai.retrieval.evidence import build_evidence
     return {"results": results, "gate": gate, "event_id": event_id,
             "evidence": build_evidence(results)}
 
@@ -56,7 +56,7 @@ def handle_search(params: dict) -> dict:
 def _try_log(query: str, results: list, latency_ms: int, gate: dict) -> str | None:
     """检索事件埋点（方向二）：失败零侵入。返回 event_id 供生成侧回填 used_ids。"""
     try:
-        from remembrance.observability.retrieval_log import log_retrieval
+        from lantai.observability.retrieval_log import log_retrieval
         return log_retrieval(query, results, latency_ms=latency_ms, gate=gate)
     except Exception:
         return None
@@ -70,7 +70,7 @@ def handle_backfill(params: dict) -> dict:
         raise ValueError("event_id must be a non-empty string")
     if not isinstance(used_ids, list) or not all(isinstance(x, str) for x in used_ids):
         raise ValueError("used_ids must be a list of strings")
-    from remembrance.observability.retrieval_log import backfill_used_ids as _bf
+    from lantai.observability.retrieval_log import backfill_used_ids as _bf
     _bf(event_id, used_ids)
     return {"ok": True, "event_id": event_id, "used_count": len(used_ids)}
 
@@ -91,7 +91,7 @@ def handle_add_dialogue(params: dict) -> dict:
     source = params.get("source", "dialogue")
     if not isinstance(text, str) or not text.strip():
         raise ValueError("text must be a non-empty string")
-    from remembrance.ingestion.dialogue import ingest_dialogue
+    from lantai.ingestion.dialogue import ingest_dialogue
     return ingest_dialogue(text, user_id=user_id, source=source)
 
 
@@ -100,7 +100,7 @@ def handle_candidates_pending(params: dict) -> dict:
     limit = params.get("limit", 50)
     if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
         raise ValueError("limit must be an int in [1, 500]")
-    from remembrance.services.candidate_service import list_pending_candidates
+    from lantai.services.candidate_service import list_pending_candidates
     return list_pending_candidates(limit)
 
 
@@ -113,7 +113,7 @@ def handle_candidate_review(params: dict) -> dict:
         raise ValueError("candidate_id must be a non-empty string")
     if not isinstance(approve, bool):
         raise ValueError("approve must be a boolean")
-    from remembrance.services.candidate_service import review_candidate
+    from lantai.services.candidate_service import review_candidate
     return review_candidate(candidate_id, approve=approve, reason=reason)
 
 
@@ -188,7 +188,7 @@ def handle(msg: dict) -> dict | None:
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "remembrance", "version": "0.3.1"}}}
+            "serverInfo": {"name": "lantai", "version": "0.3.1"}}}
     if method == "notifications/initialized":
         return None  # 通知无响应
     if method == "ping":

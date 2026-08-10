@@ -11,8 +11,8 @@ import sys
 
 sys.path.insert(0, ".")
 
-from remembrance.eval.query_set import load_query_set  # noqa: E402
-from remembrance.eval.runner import run_dry_run  # noqa: E402
+from lantai.eval.query_set import load_query_set  # noqa: E402
+from lantai.eval.runner import run_dry_run  # noqa: E402
 
 
 def parse_overrides(items: list[str]) -> dict:
@@ -27,7 +27,7 @@ def parse_overrides(items: list[str]) -> dict:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Remembrance dry-run 评估")
+    ap = argparse.ArgumentParser(description="兰台记忆 dry-run 评估")
     ap.add_argument("--query-set", required=True, help="查询集名（build_query_set 创建）")
     ap.add_argument("--override", nargs="*", default=None,
                     help="参数覆盖 key=value（可多个）")

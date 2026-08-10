@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from remembrance.ingestion.coalesce import CoalesceBuffer, get_coalesce_buffer
+from lantai.ingestion.coalesce import CoalesceBuffer, get_coalesce_buffer
 
 
 @pytest.fixture
@@ -100,8 +100,8 @@ class TestConcurrency:
 class TestServiceFallback:
     def test_add_memory_async_syncs_when_coalesce_disabled(self):
         """COALESCE_ENABLED=false（默认）→ 降级同步，返回 synced + job_id"""
-        from remembrance.services import memory_service as ms
-        from remembrance.models.schemas import AddMemoryReq
+        from lantai.services import memory_service as ms
+        from lantai.models.schemas import AddMemoryReq
 
         req = AddMemoryReq(title="t", content="这是一段足够长的内容")
         fake = {"document_id": "doc1", "candidate_id": "c1"}
@@ -114,8 +114,8 @@ class TestServiceFallback:
         assert len(res["job_id"]) == 16
 
     def test_add_memory_async_queues_when_enabled(self):
-        from remembrance.services import memory_service as ms
-        from remembrance.models.schemas import AddMemoryReq
+        from lantai.services import memory_service as ms
+        from lantai.models.schemas import AddMemoryReq
 
         buf = CoalesceBuffer()
         req = AddMemoryReq(title="t", content="这是一段足够长的内容")
@@ -129,8 +129,8 @@ class TestServiceFallback:
 
     def test_add_memory_async_persists_on_flush(self):
         """入队即触发冲刷（缓冲满）→ combined_content 持久化，不静默丢弃"""
-        from remembrance.services import memory_service as ms
-        from remembrance.models.schemas import AddMemoryReq
+        from lantai.services import memory_service as ms
+        from lantai.models.schemas import AddMemoryReq
 
         buf = CoalesceBuffer()
         with patch.object(ms.settings, "COALESCE_ENABLED", True), \
@@ -151,8 +151,8 @@ class TestServiceFallback:
 
     def test_add_memory_async_flush_failure_forgets_fingerprint(self):
         """持久化失败 → 清除指纹 + 该批消息锁内恢复，允许重试（不丢数据）"""
-        from remembrance.services import memory_service as ms
-        from remembrance.models.schemas import AddMemoryReq
+        from lantai.services import memory_service as ms
+        from lantai.models.schemas import AddMemoryReq
 
         buf = CoalesceBuffer()
         with patch.object(ms.settings, "COALESCE_ENABLED", True), \
@@ -173,8 +173,8 @@ class TestServiceFallback:
 class TestIdleConsumer:
     def test_run_coalesce_idle_persists(self):
         """空闲冲刷 → run_coalesce_idle 持久化 combined_content"""
-        from remembrance.workers.ingest_worker import run_coalesce_idle
-        from remembrance.services import memory_service as ms
+        from lantai.workers.ingest_worker import run_coalesce_idle
+        from lantai.services import memory_service as ms
 
         buf = CoalesceBuffer()
         buf.add("u", "general", "第一条足够长的异步内容")
@@ -182,7 +182,7 @@ class TestIdleConsumer:
         with buf._lock:
             buf._timestamps["u:general"] = 0.0  # 空闲超时已到
 
-        with patch("remembrance.ingestion.coalesce.get_coalesce_buffer",
+        with patch("lantai.ingestion.coalesce.get_coalesce_buffer",
                    return_value=buf), \
              patch.object(ms, "_create_candidate_with_extraction",
                           return_value={"document_id": "doc1"}) as m:
@@ -194,8 +194,8 @@ class TestIdleConsumer:
 
     def test_run_coalesce_idle_requeues_on_failure(self):
         """持久化失败 → 该批消息锁内恢复，不静默丢失也不二次冲刷"""
-        from remembrance.workers.ingest_worker import run_coalesce_idle
-        from remembrance.services import memory_service as ms
+        from lantai.workers.ingest_worker import run_coalesce_idle
+        from lantai.services import memory_service as ms
 
         buf = CoalesceBuffer()
         # 多消息（接近 max_parts）验证恢复路径不触发二次冲刷
@@ -204,7 +204,7 @@ class TestIdleConsumer:
         with buf._lock:
             buf._timestamps["u:general"] = 0.0
 
-        with patch("remembrance.ingestion.coalesce.get_coalesce_buffer",
+        with patch("lantai.ingestion.coalesce.get_coalesce_buffer",
                    return_value=buf), \
              patch.object(ms, "_create_candidate_with_extraction",
                           side_effect=RuntimeError("llm down")):

@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from remembrance.core.settings import settings
+from lantai.core.settings import settings
 
 REQUIRED_TABLES = [
     "rawdocument", "memorycandidate", "memoryitem", "memoryedge",
@@ -18,10 +18,10 @@ REQUIRED_TABLES = [
 def main() -> int:
     issues: list[str] = []
 
-    home = Path(settings.REMEMBRANCE_HOME) if settings.REMEMBRANCE_HOME else Path(".")
-    print(f"[upgrade-check] REMEMBRANCE_HOME = {home}")
+    home = Path(settings.LANTAI_HOME) if settings.LANTAI_HOME else Path(".")
+    print(f"[upgrade-check] LANTAI_HOME = {home}")
     if not home.exists():
-        issues.append("REMEMBRANCE_HOME 不存在")
+        issues.append("LANTAI_HOME 不存在")
 
     db_url = settings.DATABASE_URL  # sqlite:///C:/...
     db_path = db_url.replace("sqlite:///", "")

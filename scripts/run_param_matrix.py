@@ -23,10 +23,10 @@ from pathlib import Path
 
 sys.path.insert(0, ".")
 
-from remembrance.core.settings import settings  # noqa: E402
-from remembrance.eval.metrics import compute_metrics  # noqa: E402
-from remembrance.eval.query_set import load_query_set  # noqa: E402
-from remembrance.eval.runner import run_dry_run  # noqa: E402
+from lantai.core.settings import settings  # noqa: E402
+from lantai.eval.metrics import compute_metrics  # noqa: E402
+from lantai.eval.query_set import load_query_set  # noqa: E402
+from lantai.eval.runner import run_dry_run  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -101,7 +101,7 @@ def _pearson(x: list[float], y: list[float]) -> float:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Remembrance 调参对比矩阵")
+    ap = argparse.ArgumentParser(description="兰台记忆 调参对比矩阵")
     ap.add_argument("--query-set", default="dry-run-v1")
     ap.add_argument("--intent", choices=["llm", "rule"], default="rule")
     ap.add_argument("--no-rerank", action="store_true")
@@ -152,8 +152,8 @@ def main() -> int:
               f"({results[-1]['elapsed_s']}s)")
 
     # —— 位置敏感对比：base vs 每组 ——
-    from remembrance.eval.models import EvalRun
-    from remembrance.storage import db
+    from lantai.eval.models import EvalRun
+    from lantai.storage import db
     base_pq = None
     with db.get_session() as s:
         base_row = s.get(EvalRun, results[0]["run_id"])

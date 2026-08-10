@@ -7,19 +7,19 @@ import pytest
 from fastapi import HTTPException
 from sqlmodel import select
 
-from remembrance.core.ids import new_id
-from remembrance.core.settings import settings
-from remembrance.core.time import utcnow
-from remembrance.models.tables import (
+from lantai.core.ids import new_id
+from lantai.core.settings import settings
+from lantai.core.time import utcnow
+from lantai.models.tables import (
     ParamAdvicePaper,
     ParamOverride,
     ParamSuggestion,
     RawDocument,
 )
-from remembrance.parameters.registry import default_snapshot
-from remembrance.parameters.schemas import DecisionRequest, RollbackRequest
-from remembrance.parameters.validation import snapshot_hash
-from remembrance.parameters import queue, runtime, service
+from lantai.parameters.registry import default_snapshot
+from lantai.parameters.schemas import DecisionRequest, RollbackRequest
+from lantai.parameters.validation import snapshot_hash
+from lantai.parameters import queue, runtime, service
 
 
 def _add_paper(session_factory, n=1, days_ago=0):

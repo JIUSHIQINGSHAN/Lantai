@@ -7,7 +7,7 @@
 > 1. 除 Step 0 明确允许的 pip 操作外，**禁止安装/升级/删除任何 Python 包**。
 > 2. **禁止删除任何旧数据目录或旧文件**——迁移只复制，不删除。
 > 3. 每步执行后必须核对预期输出；**任何不确定立刻停下，不要猜**，把疑问原样回传给人。
-> 4. 禁止修改 Remembrance 的源代码（scripts/ 与 remembrance/ 下的 .py 都不许动）。
+> 4. 禁止修改兰台记忆的源代码（scripts/ 与 lantai/ 下的 .py 都不许动）。
 
 ---
 
@@ -101,7 +101,7 @@ hooks_auto_accept: true
 
 ```bash
 cd C:/Users/Asus/Desktop/记忆
-C:/Users/Asus/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe scripts/verify_remembrance.py
+C:/Users/Asus/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe scripts/verify_lantai.py
 ```
 
 **预期**：8 项检查全 PASS（REMEMBRANCE_HOME 已设置、DB 可读、MCP/Hook 可导入、Hook 契约、/health）。
@@ -132,8 +132,8 @@ C:/Users/Asus/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe scripts/
 | `scripts/mcp_server.py` | MCP 服务（已补 sys.path） |
 | `scripts/shell_hook.py` | Shell Hook 注入（协议兼容） |
 | `scripts/migrate_home.py` | 数据迁移（备份优先、不删旧） |
-| `scripts/verify_remembrance.py` | 接入自检（8 项） |
-| `remembrance/` 全套 | 记忆引擎（勿动） |
+| `scripts/verify_lantai.py` | 接入自检（8 项） |
+| `lantai/` 全套 | 记忆引擎（勿动） |
 
 ## 完成标准
 
@@ -141,7 +141,7 @@ C:/Users/Asus/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe scripts/
 2. `REMEMBRANCE_HOME` 指向新目录且 DB 可读
 3. Hermes MCP 工具列表含 `search / add / feedback`
 4. pre_llm_call 注入返回 `{"context": ...}`（可为空串，但不能是错误）
-5. verify_remembrance.py 全 PASS
+5. verify_lantai.py 全 PASS
 6. 回传完整结果
 
 ---

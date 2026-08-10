@@ -55,12 +55,12 @@ def main() -> int:
         from unittest.mock import patch
         with patch.object(mcp, "relevance_check",
                           return_value={"needs_memory": False}), \
-             patch("remembrance.observability.retrieval_log.log_retrieval",
+             patch("lantai.observability.retrieval_log.log_retrieval",
                    return_value="rev_selfcheck_mock"):
             resp = mcp.handle_search({"query": "自检查询", "top_k": 3})
         check("search 响应带 event_id", resp.get("event_id") == "rev_selfcheck_mock",
               f"event_id={resp.get('event_id')}")
-        with patch("remembrance.observability.retrieval_log.backfill_used_ids") as bf:
+        with patch("lantai.observability.retrieval_log.backfill_used_ids") as bf:
             out = mcp.handle_backfill({"event_id": "rev_selfcheck_mock",
                                        "used_ids": ["mem_x"]})
             called = bf.called
@@ -70,7 +70,7 @@ def main() -> int:
         check("MCP 层", False, f"{type(e).__name__}: {e}")
 
     # 2) 数据层：表 + 字段（raw connection，避免 SQLModel exec raw SQL 差异）
-    from remembrance.storage import db
+    from lantai.storage import db
     try:
         conn = db.engine.raw_connection()
         try:
@@ -88,8 +88,8 @@ def main() -> int:
     #    backfill_used_ids 是 UPDATE-only（查不到即跳过，不 INSERT）。
     #    必须先用 log_retrieval 真实落一条事件，再回填验证——用假 id 测必然 FAIL。
     try:
-        from remembrance.observability.retrieval_log import log_retrieval, backfill_used_ids
-        from remembrance.models.tables import RetrievalEvent
+        from lantai.observability.retrieval_log import log_retrieval, backfill_used_ids
+        from lantai.models.tables import RetrievalEvent
         test_eid = log_retrieval("verify_backfill selfcheck", [],
                                  latency_ms=1, trace_id="verify_backfill")
         if not test_eid:
@@ -107,7 +107,7 @@ def main() -> int:
     # 4) 评估层：_load_used_ids_map 加载回填（复用第 3 步真实事件）
     if test_eid:
         try:
-            from remembrance.eval.runner import _load_used_ids_map
+            from lantai.eval.runner import _load_used_ids_map
             per_query = [{"event_id": test_eid, "result_ids": ["mem_a"]}]
             m = _load_used_ids_map(per_query)
             check("_load_used_ids_map 加载回填",
@@ -121,7 +121,7 @@ def main() -> int:
     # 清理测试事件（第 3/4 项都验完再擦；改名绕过 safe-delete，留一条 .del 无妨）
     if test_eid:
         try:
-            from remembrance.models.tables import RetrievalEvent
+            from lantai.models.tables import RetrievalEvent
             with db.get_session() as s:
                 ev = s.get(RetrievalEvent, test_eid)
                 if ev is not None:

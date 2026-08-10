@@ -5,9 +5,9 @@ import math
 
 import pytest
 
-from remembrance.parameters.registry import default_snapshot, get_param_registry
-from remembrance.parameters.schemas import ParamChange
-from remembrance.parameters.validation import (
+from lantai.parameters.registry import default_snapshot, get_param_registry
+from lantai.parameters.schemas import ParamChange
+from lantai.parameters.validation import (
     ParamValidationError,
     apply_validated_changes,
     validate_snapshot,

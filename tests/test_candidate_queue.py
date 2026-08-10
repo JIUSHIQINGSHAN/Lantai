@@ -16,9 +16,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine, select
 
-import remembrance.storage.db as db_module
-from remembrance.core.settings import settings
-from remembrance.models.tables import MemoryCandidate, MemoryProposal
+import lantai.storage.db as db_module
+from lantai.core.settings import settings
+from lantai.models.tables import MemoryCandidate, MemoryProposal
 
 
 def _make_cand(s, cand_id: str, **kw):
@@ -45,7 +45,7 @@ class TestEnqueueRejected:
         with session_factory() as s:
             _make_cand(s, "cand_1", status="new")
 
-        from remembrance.services.candidate_service import enqueue_rejected
+        from lantai.services.candidate_service import enqueue_rejected
         enqueue_rejected("cand_1")
 
         with session_factory() as s:
@@ -61,7 +61,7 @@ class TestEnqueueRejected:
 
     def test_enqueue_missing_is_noop(self, param_env):
         session_factory, _ = param_env
-        from remembrance.services.candidate_service import enqueue_rejected
+        from lantai.services.candidate_service import enqueue_rejected
         enqueue_rejected("cand_missing")  # 不抛异常
         with session_factory() as s:
             assert s.get(MemoryCandidate, "cand_missing") is None
@@ -79,7 +79,7 @@ class TestListPending:
             _make_cand(s, "cand_rej", status="rejected")
             _make_cand(s, "cand_new", status="new")
 
-        from remembrance.services.candidate_service import list_pending_candidates
+        from lantai.services.candidate_service import list_pending_candidates
         result = list_pending_candidates()
         ids = [c["id"] for c in result["candidates"]]
         assert ids == ["cand_p"]
@@ -93,7 +93,7 @@ class TestListPending:
             _make_cand(s, "cand_urgent", status="pending_review",
                        review_due_at=now + timedelta(days=1))
 
-        from remembrance.services.candidate_service import list_pending_candidates
+        from lantai.services.candidate_service import list_pending_candidates
         result = list_pending_candidates()
         ids = [c["id"] for c in result["candidates"]]
         assert ids == ["cand_urgent", "cand_late"]
@@ -104,22 +104,22 @@ class TestReview:
 
     def test_approve_enters_proposal_chain(self, param_env):
         session_factory, engine = param_env
-        from remembrance.storage.fts import init_fts
+        from lantai.storage.fts import init_fts
         init_fts(engine.raw_connection())
         with session_factory() as s:
             _make_cand(s, "cand_1", status="pending_review",
                        extractor_confidence=0.9,
                        review_due_at=datetime.now(timezone.utc) + timedelta(days=1))
 
-        with patch("remembrance.evolution.proposer.chat_json", return_value={
+        with patch("lantai.evolution.proposer.chat_json", return_value={
                 "proposal_type": "add", "target_key": "k1",
                 "new_content": "user approved content",
                 "memory_type": "semantic", "reason": "user approved",
                 "confidence": 0.9}), \
-             patch("remembrance.evolution.promoter.embed",
+             patch("lantai.evolution.promoter.embed",
                    return_value=[[0.1] * 8]), \
-             patch("remembrance.retrieval.hybrid.get_vector_store"):
-            from remembrance.services.candidate_service import review_candidate
+             patch("lantai.retrieval.hybrid.get_vector_store"):
+            from lantai.services.candidate_service import review_candidate
             result = review_candidate("cand_1", approve=True)
 
         assert result["ok"] is True
@@ -138,7 +138,7 @@ class TestReview:
             _make_cand(s, "cand_1", status="pending_review",
                        review_due_at=datetime.now(timezone.utc) + timedelta(days=1))
 
-        from remembrance.services.candidate_service import review_candidate
+        from lantai.services.candidate_service import review_candidate
         result = review_candidate("cand_1", approve=False)
 
         assert result["ok"] is True
@@ -150,7 +150,7 @@ class TestReview:
 
     def test_review_missing_raises(self, param_env):
         session_factory, _ = param_env
-        from remembrance.services.candidate_service import review_candidate
+        from lantai.services.candidate_service import review_candidate
         with pytest.raises(ValueError):
             review_candidate("cand_missing", approve=True)
 
@@ -167,7 +167,7 @@ class TestTTL:
             _make_cand(s, "cand_future", status="pending_review",
                        review_due_at=now + timedelta(days=1))
 
-        from remembrance.services.candidate_service import run_candidate_ttl_once
+        from lantai.services.candidate_service import run_candidate_ttl_once
         result = run_candidate_ttl_once()
 
         assert result["archived"] == 1
@@ -184,7 +184,7 @@ class TestEvolveWorkerIntegration:
         with session_factory() as s:
             _make_cand(s, "cand_low", status="new", extractor_confidence=0.1)
 
-        from remembrance.workers.evolve_worker import run_evolve_once
+        from lantai.workers.evolve_worker import run_evolve_once
         run_evolve_once()
 
         with session_factory() as s:
@@ -203,30 +203,30 @@ def client():
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(test_engine)
-    from remembrance.storage.fts import init_fts
+    from lantai.storage.fts import init_fts
     init_fts(test_engine.raw_connection())
 
     def get_test_session():
         return Session(test_engine)
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.retrieval.intent.chat_json",
+         patch("lantai.retrieval.intent.chat_json",
                return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("remembrance.parsing.extractor.chat_json",
+         patch("lantai.parsing.extractor.chat_json",
                return_value={"summary": "test", "claims": [], "methods": [],
                              "constraints": [], "actions": [], "topic": [],
                              "extractor_confidence": 0.8}), \
-         patch("remembrance.evolution.proposer.chat_json",
+         patch("lantai.evolution.proposer.chat_json",
                return_value={"proposal_type": "add", "target_key": "k1",
                              "new_content": "approved", "memory_type": "semantic",
                              "reason": "route test", "confidence": 0.9}), \
-         patch("remembrance.retrieval.reranker.rerank", return_value=[]), \
-         patch("remembrance.gate.scorer.embed", return_value=[[0.1] * 8]), \
-         patch("remembrance.evolution.promoter.embed",
+         patch("lantai.retrieval.reranker.rerank", return_value=[]), \
+         patch("lantai.gate.scorer.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.evolution.promoter.embed",
                return_value=[[0.1] * 8]), \
-         patch("remembrance.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("remembrance.retrieval.hybrid.get_vector_store"), \
-         patch("remembrance.storage.vector_store.ChromaVectorStore"):
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.get_vector_store"), \
+         patch("lantai.storage.vector_store.ChromaVectorStore"):
         from api_server import app
         with TestClient(app) as c:
             yield c

@@ -14,11 +14,11 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine
 
-import remembrance.storage.db as db_module
-from remembrance.core.ids import new_id
-from remembrance.core.time import utcnow
-from remembrance.models.tables import MemoryItem
-from remembrance.storage.fts import index_fts, init_fts, search_fts
+import lantai.storage.db as db_module
+from lantai.core.ids import new_id
+from lantai.core.time import utcnow
+from lantai.models.tables import MemoryItem
+from lantai.storage.fts import index_fts, init_fts, search_fts
 
 
 @pytest.fixture
@@ -67,9 +67,9 @@ def search_env():
         return Session(engine)
 
     with patch.object(db_module, "get_session", get_test_session), \
-         patch("remembrance.retrieval.intent.chat_json",
+         patch("lantai.retrieval.intent.chat_json",
                return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("remembrance.retrieval.hybrid.embed", return_value=[[0.1] * 8]):
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]):
         yield engine
 
 
@@ -95,12 +95,12 @@ class TestChronos:
 
     def test_valid_from_future_filtered(self, search_env):
         """未生效记忆应被过滤"""
-        from remembrance.retrieval import hybrid
+        from lantai.retrieval import hybrid
         now = utcnow()
         ok_id = _seed(search_env, "当前生效的记忆内容")
         future_id = _seed(search_env, "三十天后才生效的记忆",
                           valid_from=now + timedelta(days=30))
-        with patch("remembrance.retrieval.hybrid.get_vector_store",
+        with patch("lantai.retrieval.hybrid.get_vector_store",
                    return_value=_mock_store([ok_id, future_id])):
             results = hybrid.hybrid_search("记忆", top_k=5, use_rerank=False)
         ids = [r["memory"]["id"] for r in results]
@@ -109,12 +109,12 @@ class TestChronos:
 
     def test_expired_memory_downweighted(self, search_env):
         """过期记忆降权但保留"""
-        from remembrance.retrieval import hybrid
+        from lantai.retrieval import hybrid
         now = utcnow()
         fresh_id = _seed(search_env, "未过期记忆")
         expired_id = _seed(search_env, "已过期记忆",
                            valid_to=now - timedelta(days=1))
-        with patch("remembrance.retrieval.hybrid.get_vector_store",
+        with patch("lantai.retrieval.hybrid.get_vector_store",
                    return_value=_mock_store([fresh_id, expired_id])):
             results = hybrid.hybrid_search("记忆", top_k=5, use_rerank=False)
         ids = [r["memory"]["id"] for r in results]
@@ -122,9 +122,9 @@ class TestChronos:
 
     def test_integration_seed_and_search(self, search_env):
         """写入 → 检索 全链路（mock 向量层）"""
-        from remembrance.retrieval import hybrid
+        from lantai.retrieval import hybrid
         mid = _seed(search_env, "Full pipeline with FTS5 and Chronos")
-        with patch("remembrance.retrieval.hybrid.get_vector_store",
+        with patch("lantai.retrieval.hybrid.get_vector_store",
                    return_value=_mock_store([mid])):
             results = hybrid.hybrid_search("pipeline", top_k=5, use_rerank=False)
         assert any(r["memory"]["id"] == mid for r in results)
