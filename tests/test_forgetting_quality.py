@@ -143,3 +143,29 @@ def test_evaluate_end_to_end(fq_env):
         for e in edges:
             assert e.source_memory_id in existing_ids, f"orphan edge {e.id}"
             assert e.target_memory_id in existing_ids, f"orphan edge {e.id}"
+
+def test_offline_eval_gates_pass():
+    """离线门禁：临时库 + 仅外部依赖 mock，六维指标确定性达标（CI/发布用）。"""
+    from lantai.eval.offline import check_gates, run_offline_eval
+
+    result = run_offline_eval()
+    ok, actual = check_gates(result)
+    assert ok, f"门禁未过: {actual}"
+    assert result["metrics"]["sample_count"] == 13
+    # superseded 残留是诚实测量（降权不删旧值），只报告不设门槛
+    assert result["metrics"]["superseded_residual_rate"] == 1.0
+
+
+def test_check_gates_detects_regression():
+    """门禁纯函数：任一指标跌破门槛必须 FAIL（回归会拦在 CI 而非线上）。"""
+    from lantai.eval.offline import GATES, check_gates
+
+    good = {"metrics": {k: v for k, v in GATES.items()}}
+    ok, _ = check_gates(good)
+    assert ok
+
+    bad = {"metrics": dict(GATES)}
+    bad["metrics"]["typo_recall_rate"] = 0.5
+    ok2, actual = check_gates(bad)
+    assert not ok2
+    assert actual["typo_recall_rate"] == 0.5

@@ -4,6 +4,7 @@
     python scripts/run_forgetting_quality.py              # 真实检索（LLM 意图 + embedding）
     python scripts/run_forgetting_quality.py --intent rule  # 跳过 LLM 意图分类（快速）
     python scripts/run_forgetting_quality.py --top-k 10
+    python scripts/run_forgetting_quality.py --check      # 门禁：离线临时库 + 断言指标门槛（CI/发布用）
 """
 import argparse
 import json
@@ -78,9 +79,24 @@ def main() -> int:
     ap.add_argument("--top-k", type=int, default=5)
     ap.add_argument("--out", default=None, help="报告输出目录（默认 docs/memory-quality）")
     ap.add_argument("--json", action="store_true", help="只输出 JSON 指标")
+    ap.add_argument("--check", action="store_true",
+                    help="门禁模式：离线临时库跑评测并断言指标门槛（FAIL 退出码 1）")
     args = ap.parse_args()
 
     dataset = build_chinese_dataset()
+
+    if args.check:
+        from lantai.eval.offline import GATES, check_gates, run_offline_eval
+        result = run_offline_eval(dataset, top_k=args.top_k)
+        ok, actual = check_gates(result)
+        print(render_report(result))
+        print("\n## 门禁判定（FTS 兜底最严格基准）")
+        for k, v in actual.items():
+            mark = "PASS" if v == GATES[k] else "FAIL"
+            print(f"- [{mark}] {k} = {v}（门槛 {GATES[k]}）")
+        print("\n门禁结果: " + ("PASS" if ok else "FAIL"))
+        return 0 if ok else 1
+
     search = _make_search(args.intent, args.top_k)
     result = evaluate_forgetting_quality(dataset, search=search, top_k=args.top_k)
 
