@@ -283,3 +283,39 @@ def test_conflict_resolve_validation():
                                                     "decision": "maybe"}}})
     assert resp["error"]["code"] == -32602
     m.assert_not_called()
+
+
+def test_tools_metadata_standards():
+    """MCP 工具元数据合规：多客户端（Claude Code/Cursor/Gemini CLI）要求
+    每个工具都有 name + description + inputSchema，且 required 是 properties 子集。"""
+    mod = _load_mcp()
+    resp = mod.handle({"jsonrpc": "2.0", "id": 10, "method": "tools/list"})
+    tools = resp["result"]["tools"]
+    assert len(tools) >= 12
+    for t in tools:
+        assert t["name"].strip(), f"tool 缺 name: {t}"
+        assert t["description"].strip(), f"tool {t['name']} 缺 description"
+        schema = t["inputSchema"]
+        assert isinstance(schema, dict) and schema.get("type") == "object",             f"tool {t['name']} inputSchema 必须是 object"
+        props = schema.get("properties", {})
+        assert isinstance(props, dict), f"tool {t['name']} properties 必须是 dict"
+        for req in schema.get("required", []):
+            assert req in props, f"tool {t['name']} required {req} 不在 properties"
+
+
+def test_ping_and_initialized_notification():
+    """MCP 协议基础：ping 有响应；initialized 通知无响应（多客户端握手兼容）。"""
+    mod = _load_mcp()
+    assert mod.handle({"jsonrpc": "2.0", "id": 11, "method": "ping"})["result"] == {}
+    assert mod.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
+
+
+def test_tools_call_missing_arguments_rejected():
+    """tools/call 缺参（params 非 object / arguments 非 object）→ -32602 标准错误。"""
+    mod = _load_mcp()
+    r1 = mod.handle({"jsonrpc": "2.0", "id": 12, "method": "tools/call",
+                     "params": {"name": "search"}})
+    assert r1["error"]["code"] == -32602
+    r2 = mod.handle({"jsonrpc": "2.0", "id": 13, "method": "tools/call",
+                     "params": {"name": "search", "arguments": "not-a-dict"}})
+    assert r2["error"]["code"] == -32602

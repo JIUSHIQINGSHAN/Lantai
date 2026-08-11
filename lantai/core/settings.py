@@ -151,6 +151,11 @@ class Settings(BaseSettings):
     # supersedes 边感知排序（一年内档评测回归）：被取代旧值在新值同候选集时降权到新值之下
     SUPERSEDES_ORDERING_ENABLED: bool = True
     SUPERSEDES_DEMOTE_EPSILON: float = 1e-6  # 旧值压到新值之下的最小分差
+    # autodream 蒸馏（一年内档提前）：后台记忆合成 → 待审提案（宁 miss 不脏写）
+    AUTODREAM_ENABLED: bool = True
+    AUTODREAM_MIN_CLUSTER: int = 2
+    AUTODREAM_MAX_DAILY: int = 10
+    AUTODREAM_MIN_CONFIDENCE: float = 0.5
     FTS_RECALL_TOP_K: int = 20  # FTS 子串召回上限
 
     # API 端点 allowlist（审计 M7）：LLM/reranker 客户端只允许访问这些 host

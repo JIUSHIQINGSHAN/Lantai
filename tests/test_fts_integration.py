@@ -178,6 +178,33 @@ def test_hybrid_fts_extra_recall(engine):
     assert fts_only_id in ids  # 追加召回生效
 
 
+def test_supersedes_explain_marks_demotion(engine):
+    """检索透明：supersedes 降权在 explain 里标注 superseded_by + demoted（可审计）。"""
+    from lantai.core.ids import new_id
+    old = _add_mem(engine, "API 密钥存储在 config.py")
+    new = _add_mem(engine, "API 密钥改为环境变量注入")
+    with Session(engine) as s:
+        sync_fts(s, old, "API 密钥存储在 config.py")
+        sync_fts(s, new, "API 密钥改为环境变量注入")
+        s.add(MemoryEdge(id=new_id("edge"), source_memory_id=new,
+                         target_memory_id=old, relation="supersedes", confidence=1.0))
+        s.commit()
+
+    def get_test_session():
+        return Session(engine)
+
+    with patch.object(db_module, "get_session", get_test_session),          patch("lantai.retrieval.intent.chat_json",
+               return_value={"intent": "fact_lookup", "reason": "test"}),          patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),          patch("lantai.retrieval.hybrid.get_vector_store",
+               return_value=Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())):
+        from lantai.retrieval import hybrid
+        results = hybrid.hybrid_search("API 密钥", top_k=5, use_rerank=False, explain=True)
+    by_id = {r["memory"]["id"]: r for r in results}
+    assert by_id[old]["explain"].get("demoted") is True
+    assert new in by_id[old]["explain"].get("superseded_by", [])
+    # 新值本身未被降权
+    assert by_id[new]["explain"].get("demoted") is not True
+
+
 def test_hybrid_vector_empty_falls_back_to_fts(engine):
     """向量检索为空（空库/embedding 降级）→ FTS5+BM25 兜底，而非零召回"""
     from lantai.retrieval import hybrid

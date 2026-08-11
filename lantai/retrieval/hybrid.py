@@ -28,7 +28,7 @@ def _get_bm25(items: list) -> "BM25Okapi":
     return bm25
 
 
-def _apply_supersedes_order(scored: list) -> list:
+def _apply_supersedes_order(scored: list, breakdowns: dict | None = None) -> list:
     """supersedes 边感知降权：被取代旧值若其新值同在候选集，压到新值之下。
 
     宁 miss 不脏写：不删除旧值（残留如实留在结果中），仅保证新值在前；
@@ -55,10 +55,14 @@ def _apply_supersedes_order(scored: list) -> list:
     id_to_score = {m.id: sc for sc, m in scored}
     out = []
     for sc, m in scored:
-        superseders = [id_to_score[n] for n in superseded_by.get(m.id, [])
-                       if n in id_to_score]
-        if superseders:
-            sc = min(sc, max(superseders) - settings.SUPERSEDES_DEMOTE_EPSILON)
+        superseder_ids = [n for n in superseded_by.get(m.id, []) if n in id_to_score]
+        if superseder_ids:
+            sc = min(sc, max(id_to_score[n] for n in superseder_ids)
+                      - settings.SUPERSEDES_DEMOTE_EPSILON)
+            # 检索透明：explain 里标注被哪条新值降权（可审计，ADR-0008 溯源精神）
+            if breakdowns is not None and m.id in breakdowns:
+                breakdowns[m.id]["superseded_by"] = superseder_ids
+                breakdowns[m.id]["demoted"] = True
         out.append((sc, m))
     out.sort(key=lambda x: -x[0])
     return out
@@ -241,7 +245,7 @@ def _hybrid_search_impl(query: str, top_k: int = 5,
             scored_items.append(
                 (settings.RETRIEVAL_W_FTS + settings.RETRIEVAL_W_DECAY * m.decay_score, m))
 
-    scored_items = _apply_supersedes_order(scored_items)
+    scored_items = _apply_supersedes_order(scored_items, breakdowns)
     candidates = scored_items[:fetch_n]
 
     # Step 5: Reranker（可选）
@@ -254,7 +258,7 @@ def _hybrid_search_impl(query: str, top_k: int = 5,
                 (r["score"], doc_to_m[r["document"]])
                 for r in reranked if r["document"] in doc_to_m
             ]
-            reranked_scored = _apply_supersedes_order(reranked_scored)
+            reranked_scored = _apply_supersedes_order(reranked_scored, breakdowns)
             results = []
             for s, m in reranked_scored:
                 item = {"score": s, "document": m.content}
@@ -426,7 +430,7 @@ def _keyword_fallback(
                 "decay_multiplier": round(_age_multiplier(m), 4),
             }
 
-    scored = _apply_supersedes_order(scored)
+    scored = _apply_supersedes_order(scored, breakdowns)
     results = []
     for s, m in scored[:top_k]:
         item = {"score": s, "memory": m.model_dump(mode="json")}
