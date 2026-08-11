@@ -13,6 +13,7 @@ PROVENANCE_PROMPT_EXTRACT = "extract-v1"                # lantai/llm/prompts.py 
 PROVENANCE_PROMPT_FASTPATH_DIRECT = "fastpath-direct"   # memory_service fastpath（规则直通，零 LLM）
 PROVENANCE_PROMPT_DIALOGUE_FASTPATH = "dialogue-fastpath"  # dialogue 白名单直通（零 LLM）
 PROVENANCE_PROMPT_DIALOGUE_CHITCHAT = "dialogue-chitchat"  # dialogue 闲聊兜底（零 LLM）
+PROVENANCE_PROMPT_DIALOGUE_IMPORT = "dialogue-session-import"  # 冷启动导入历史会话（保留原始时间戳）
 
 
 def make_provenance(prompt: str) -> dict:

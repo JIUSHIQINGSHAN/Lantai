@@ -20,7 +20,8 @@ from lantai.core.time import utcnow
 from lantai.gate.prefilter import NO_MEMORY_PATTERNS
 from lantai.core.provenance import (
     PROVENANCE_PROMPT_DIALOGUE_CHITCHAT, PROVENANCE_PROMPT_DIALOGUE_FASTPATH,
-    PROVENANCE_PROMPT_EXTRACT, make_provenance)
+    PROVENANCE_PROMPT_DIALOGUE_IMPORT, PROVENANCE_PROMPT_EXTRACT,
+    make_provenance)
 from lantai.models.tables import RawDocument, MemoryCandidate
 from lantai.parsing.extractor import extract_candidate
 from lantai.parsing.fastpath import fastpath_check
@@ -52,8 +53,13 @@ def _is_chitchat(text: str) -> bool:
 
 
 def ingest_dialogue(text: str, *, user_id: str = "default",
-                    source: str = "dialogue") -> dict:
+                    source: str = "dialogue",
+                    created_at=None) -> dict:
     """对话文本 → 现有提取链。
+
+    created_at：冷启动导入时传原始消息时间戳（naive UTC）——RawDocument/
+    MemoryCandidate 用该时间，provenance.prompt=dialogue-session-import，
+    随演化链继承到 MemoryItem（时间线不压平）。
 
     返回 {"ingested", "candidate_id", "fastpath", "lane", "status"}
     status：fastpath（直通）/ new（待 evolve gate 分层）/
@@ -70,19 +76,20 @@ def ingest_dialogue(text: str, *, user_id: str = "default",
     if fp:
         return _create_candidate(text, lane=fp["lane"], fp_data=fp,
                                  status="fastpath", user_id=user_id,
-                                 source=source)
+                                 source=source, created_at=created_at)
 
     # 2) 闲聊 → 兜底候选进待审队列（不静默丢弃、不落库为记忆）
     if _is_chitchat(text):
         return _create_candidate(text, lane="general", fp_data=None,
                                  status="pending_review", user_id=user_id,
-                                 source=source)
+                                 source=source, created_at=created_at)
 
     # 3) LLM 提取（extract_candidate 自带降级 fallback）→ 走现有 gate 分层
     data = extract_candidate(text[:40], text)
     lane = _guess_lane(text)
     result = _create_candidate(text, lane=lane, fp_data=data, status="new",
-                               user_id=user_id, source=source)
+                               user_id=user_id, source=source,
+                               created_at=created_at)
     if data["extractor_confidence"] < settings.DIALOGUE_MIN_EXTRACTOR_CONF:
         # 低置信度 / 提取失败兜底 → 待审队列（不丢数据，交用户裁决）
         enqueue_rejected(result["candidate_id"])
@@ -91,21 +98,35 @@ def ingest_dialogue(text: str, *, user_id: str = "default",
 
 
 def _create_candidate(text: str, *, lane: str, fp_data: dict | None,
-                      status: str, user_id: str, source: str) -> dict:
-    """建 rawdocument（content_hash 去重复用）→ memorycandidate。"""
+                      status: str, user_id: str, source: str,
+                      created_at=None) -> dict:
+    """建 rawdocument（content_hash 去重复用）→ memorycandidate。
+
+    created_at 非空（冷启动导入）：doc.fetched_at / cand.created_at 用原始
+    时间戳，provenance.prompt = dialogue-session-import（演化链据此继承）。
+    """
     h = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    provenance_prompt = {
+        "fastpath": PROVENANCE_PROMPT_DIALOGUE_FASTPATH,
+        "pending_review": PROVENANCE_PROMPT_DIALOGUE_CHITCHAT,
+    }.get(status, PROVENANCE_PROMPT_EXTRACT)
+    if created_at is not None:
+        provenance_prompt = PROVENANCE_PROMPT_DIALOGUE_IMPORT
     with db.get_session() as s:
         doc = s.exec(select(RawDocument)
                      .where(RawDocument.content_hash == h)).first()
         if not doc:
-            doc = RawDocument(
+            doc_kwargs = dict(
                 id=new_id("doc"), source_type="dialogue", source_id=source,
                 url="", title=text[:40], content=text, content_hash=h,
                 meta={"user_id": user_id, "source": source},
             )
+            if created_at is not None:
+                doc_kwargs["fetched_at"] = created_at
+            doc = RawDocument(**doc_kwargs)
             s.add(doc); s.commit(); s.refresh(doc)
 
-        cand = MemoryCandidate(
+        cand_kwargs = dict(
             id=new_id("cand"), document_id=doc.id,
             topic=fp_data.get("topic") if fp_data else [],
             summary=(fp_data.get("summary") if fp_data else None) or text[:400],
@@ -115,12 +136,12 @@ def _create_candidate(text: str, *, lane: str, fp_data: dict | None,
             actions=fp_data.get("actions", []) if fp_data else [],
             extractor_confidence=(fp_data.get("extractor_confidence", 0.0)
                                   if fp_data else 0.0),
-            provenance=make_provenance({
-                "fastpath": PROVENANCE_PROMPT_DIALOGUE_FASTPATH,
-                "pending_review": PROVENANCE_PROMPT_DIALOGUE_CHITCHAT,
-            }.get(status, PROVENANCE_PROMPT_EXTRACT)),
+            provenance=make_provenance(provenance_prompt),
             lane=lane, status=status,
         )
+        if created_at is not None:
+            cand_kwargs["created_at"] = created_at
+        cand = MemoryCandidate(**cand_kwargs)
         if status == "pending_review":
             cand.review_due_at = utcnow() + timedelta(
                 days=settings.CANDIDATE_TTL_DAYS)

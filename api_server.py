@@ -5,6 +5,7 @@ from lantai.core.settings import settings
 from lantai.core.logger import logger
 from lantai.core.scheduler import start_scheduler, stop_scheduler
 from lantai.core.auth import verify_api_key, assert_secure_binding
+from lantai.core.acl import verify_agent
 from lantai.storage.db import init_db
 
 from lantai.api import (
@@ -25,6 +26,7 @@ from lantai.api import (
     routes_digest_router,
     routes_conflicts_router,
     routes_obsidian_router,
+    routes_import_router,
     routes_ui_router,
 )
 
@@ -70,9 +72,10 @@ protected_routers = [
     routes_digest_router,
     routes_conflicts_router,
     routes_obsidian_router,
+    routes_import_router,
 ]
 for router in protected_routers:
-    app.include_router(router, dependencies=[Depends(verify_api_key)])
+    app.include_router(router, dependencies=[Depends(verify_api_key), Depends(verify_agent)])
 
 
 if __name__ == "__main__":

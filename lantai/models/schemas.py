@@ -66,6 +66,12 @@ class CandidateReviewReq(BaseModel):
     reason: str = ""
 
 
+class ImportJsonlReq(BaseModel):
+    """冷启动导入请求：JSONL 文本（每行一个 JSON 对象）。"""
+
+    text: str = Field(min_length=1, max_length=50_000_000)
+
+
 class SourceReq(BaseModel):
     kind: str
     config: dict

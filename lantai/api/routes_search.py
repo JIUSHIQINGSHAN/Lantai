@@ -1,4 +1,5 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from lantai.core.acl import allowed_lanes, filter_results_by_lanes, verify_agent
 from lantai.models.schemas import SearchReq
 from lantai.retrieval.hybrid import hybrid_search
 from lantai.gate.prefilter import relevance_check
@@ -6,7 +7,8 @@ from lantai.gate.prefilter import relevance_check
 router = APIRouter()
 
 @router.post("/search")
-def search(req: SearchReq, trace: bool = False, explain: bool = False):
+def search(req: SearchReq, trace: bool = False, explain: bool = False,
+          agent_id: str = Depends(verify_agent)):
     # Step 1: 启发式闸门预过滤
     gate = relevance_check(req.query)
     if not gate["needs_memory"]:
@@ -25,6 +27,8 @@ def search(req: SearchReq, trace: bool = False, explain: bool = False):
         results, trace_steps = result
     else:
         results = result
+    # ACL：检索结果按绑定 lane 集收窄（宁 miss 不放行未绑定 lane）
+    results = filter_results_by_lanes(results, allowed_lanes(agent_id))
     event_id = _try_log(req, results, latency_ms, gate)
     from lantai.retrieval.evidence import build_evidence
     evidence = build_evidence(results)

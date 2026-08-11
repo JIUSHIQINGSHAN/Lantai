@@ -5,7 +5,8 @@ from lantai.core.settings import settings
 from lantai.llm.client import embed
 from lantai.retrieval.hybrid import index_memory_item, delete_memory_item
 from lantai.models.enums import ProposalStatus, MemoryTier
-from lantai.models.tables import (MemoryProposal, MemoryItem, MemoryCheckpoint, MemoryEdge)
+from lantai.core.provenance import PROVENANCE_PROMPT_DIALOGUE_IMPORT
+from lantai.models.tables import (MemoryProposal, MemoryItem, MemoryCheckpoint, MemoryEdge, MemoryCandidate)
 from lantai.storage.fts import sync_fts
 from lantai.storage import db
 from lantai.memory.decay_class import infer_decay_class
@@ -110,7 +111,7 @@ def apply_proposal(proposal_id: str) -> dict:
                     if len(source_ids) >= settings.PROMOTE_SEMANTIC_MIN_SOURCES
                     else MemoryTier.WORKING)
             structure = patch.get("structure") or {}
-            mem = MemoryItem(
+            mem_kwargs = dict(
                 id=new_id("mem"),
                 memory_type=mem_type, key=key or content[:60], content=content,
                 tier=tier, source_ids=source_ids,
@@ -122,6 +123,13 @@ def apply_proposal(proposal_id: str) -> dict:
                 # 仅按内容关键词推断，显式调级走 service 层 set_decay_class（带 checkpoint）
                 decay_class=infer_decay_class(key or "", content),
             )
+            # 冷启动导入（dialogue-session-import）：候选原始时间戳继承到
+            # MemoryItem.created_at——历史会话时间线不压平到导入时刻
+            if prop.provenance.get("prompt") == PROVENANCE_PROMPT_DIALOGUE_IMPORT:
+                src_cand = s.get(MemoryCandidate, prop.candidate_id)
+                if src_cand and src_cand.created_at:
+                    mem_kwargs["created_at"] = src_cand.created_at
+            mem = MemoryItem(**mem_kwargs)
             # Skill 资产化：提案携带步骤结构 → 视为技能（procedural 永不衰减）
             if structure.get("steps"):
                 mem.decay_class = "procedural"

@@ -147,7 +147,12 @@ class Settings(BaseSettings):
     WIKI_OVERVIEW_LLM: bool = True     # overview 优先 LLM 综述；失败/关闭 → 确定性综述
     WIKI_PAGE_MAX_MEMBERS: int = 50    # 场景页最多列出的成员数
     WIKI_MEMBER_CHARS: int = 120       # 成员摘要截断字符数
-    WIKI_RELATED_TOP: int = 3          # 场景页"相关场景"数量（按质心余弦）
+    WIKI_RELATED_TOP: int = 3
+# lane 级 ACL（借鉴 TencentDB Memory Hub Fixed Binding 窄版）：agent_id → lane 白名单；空 = 不启用
+    AGENT_LANE_BINDINGS: dict[str, list[str]] = {}          # 场景页"相关场景"数量（按质心余弦）
+
+    # 冷启动导入（借鉴腾讯 L0 会话记录 + v2.0.1 时间戳修正）：历史会话 JSONL 批量喂摄取链
+    IMPORT_MAX_LINES: int = 5000  # 单次导入最大行数（防误喂超大文件）
 
     # scene 聚合层（ADR-0012，借鉴 TencentDB Agent Memory L2 场景层）
     SCENE_LAYER_ENABLED: bool = False      # 默认关：rebuild 后开启
