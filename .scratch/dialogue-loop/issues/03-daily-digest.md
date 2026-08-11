@@ -1,6 +1,6 @@
 # 03 - Daily Digest 每日盘点报告
 
-Status: ready-for-agent
+Status: resolved
 Type: task
 Blocked by: 02
 

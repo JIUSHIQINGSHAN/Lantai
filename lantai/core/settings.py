@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     DIALOGUE_MIN_EXTRACTOR_CONF: float = 0.55
     CANDIDATE_TTL_CRON_HOURS: int = 24
 
+    # Daily Digest（Ticket 03）：每日盘点报告 docs/memory-digest/YYYY-MM-DD.md
+    DIGEST_ENABLED: bool = True
+    DIGEST_CRON_HOUR: int = 22  # UTC 22:00 = 本地(Asia/Shanghai) 06:00 早晨
+    DIGEST_OUTPUT_DIR: str = ""  # 为空时 = 仓库根 docs/memory-digest
+
     # Lane 分轨衰减：每类记忆的基础保留强度与重要性放大系数
     # base_s = 记忆半衰期（天），importance_boost = 重要性加权分数
     LANE_DECAY_PROFILES: dict = {
@@ -64,6 +69,16 @@ class Settings(BaseSettings):
     }
     # 默认 lane（修 P0: promoter.py AttributeError）
     DEFAULT_LANE: str = "general"
+    # Raw Drawer 原文直存（P0-1）：verbatim 记忆默认 lane（零 LLM、直接写 MemoryItem）
+    RAW_MEMORY_DEFAULT_LANE: str = "general"
+
+    # 冲突消解确定性层（P0-2）：互斥规则集——pair 内两项互斥，规则命中即确定性冲突
+    CONFLICT_RULES_ENABLED: bool = True
+    CONFLICT_MUTEX_RULES: list = [
+        {"name": "status_switch", "pair": ["启用", "禁用"]},
+        {"name": "toggle", "pair": ["已开启", "已关闭"]},
+        {"name": "version_change", "pair": ["版本 1", "版本 2"]},
+    ]
 
     # 安全
     API_KEY: str = ""

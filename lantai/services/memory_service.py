@@ -7,7 +7,11 @@ from lantai.core.ids import new_id
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import RawDocument, MemoryCandidate, CoreMemoryBlock, MemoryItem, MemoryProposal
-from lantai.models.schemas import AddMemoryReq
+from lantai.models.enums import MemoryTier
+from lantai.models.schemas import AddMemoryReq, RawMemoryReq
+from lantai.llm.client import embed
+from lantai.retrieval.hybrid import index_memory_item
+from lantai.storage.fts import sync_fts
 from lantai.parsing.extractor import extract_candidate
 from lantai.parsing.fastpath import fastpath_check
 from lantai.ingestion.coalesce import get_coalesce_buffer
@@ -215,3 +219,37 @@ def put_core_memory(block: str, content: str, namespace: str = "default") -> dic
                                   namespace=namespace, content=content)
         s.add(row); s.commit(); s.refresh(row)
         return row.model_dump(mode="json")
+
+def add_raw_memory(req: RawMemoryReq) -> dict:
+    """原文直存（verbatim 记忆）：零 LLM、不走提取/闸门/演化，直接写 MemoryItem。
+
+    幂等：内容 sha256 作 key，重复内容返回已有记忆（不重复索引）。
+    """
+    h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
+    lane = req.lane or settings.RAW_MEMORY_DEFAULT_LANE
+    with db.get_session() as s:
+        existing = s.exec(select(MemoryItem)
+                          .where(MemoryItem.memory_type == "verbatim",
+                                 MemoryItem.key == h,
+                                 MemoryItem.status == "active")).first()
+        if existing:
+            return {"memory_id": existing.id, "dedup": True, "verbatim": True}
+        emb = embed([req.content])[0]
+        mem = MemoryItem(
+            id=new_id("mem"),
+            memory_type="verbatim",
+            key=h,
+            content=req.content,
+            lane=lane,
+            tier=MemoryTier.LONG_TERM,
+            confidence=1.0,
+            importance=0.5,
+            tags=req.tags,
+            decay_class="semantic",  # 原文直存衰减慢；procedural 永不衰减过强
+        )
+        s.add(mem)
+        s.flush()
+        index_memory_item(mem.id, emb, {"key": mem.key, "memory_type": mem.memory_type})
+        sync_fts(s, mem.id, mem.content)
+        s.commit()
+        return {"memory_id": mem.id, "dedup": False, "verbatim": True}

@@ -31,6 +31,13 @@ def start_scheduler():
                        hours=settings.CANDIDATE_TTL_CRON_HOURS,
                        id="candidate_ttl", replace_existing=True)
 
+    # Ticket 03: Daily Digest 每日盘点报告（本地早晨；DIGEST_CRON_HOUR 为 UTC 小时）
+    if settings.DIGEST_ENABLED:
+        from lantai.workers.digest_worker import run_digest_once
+        _scheduler.add_job(run_digest_once, "cron",
+                           hour=settings.DIGEST_CRON_HOUR,
+                           id="digest", replace_existing=True)
+
     # 参数建议（论文驱动优化·辅助模式）
     if settings.PARAM_ADVICE_ENABLED:
         from lantai.workers.param_advice_worker import run_param_advice_once

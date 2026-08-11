@@ -1,10 +1,12 @@
 from sqlmodel import select
 from lantai.core.settings import settings
+from lantai.core.ids import new_id
 from lantai.models.enums import GateDecision
-from lantai.models.tables import MemoryCandidate, MemoryItem
+from lantai.models.tables import MemoryCandidate, MemoryItem, ConflictEvent
 from lantai.storage import db
 from lantai.gate.scorer import novelty_score
 from lantai.gate.contradiction import check_contradiction
+from lantai.gate.conflict_rules import check_rules
 
 
 def decide(candidate_id: str) -> dict:
@@ -24,13 +26,37 @@ def decide(candidate_id: str) -> dict:
         nv = novelty_score(summary_text, related_texts) if related_texts else 1.0
 
         conflicts = []
+        # P0-2：确定性规则层优先（零 LLM、可复现）；命中写账本 ConflictEvent
         for m in related[:10]:
-            c = check_contradiction(summary_text, m.content)
-            if c.get("contradicts"):
-                conflicts.append({"memory_id": m.id, "severity": c.get("severity", "low"),
-                                  "reason": c.get("reason", "")})
+            hits = check_rules(summary_text, m.content)
+            for hit in hits:
+                conflicts.append({
+                    "memory_id": m.id,
+                    "severity": "high",
+                    "reason": (f"deterministic rule '{hit['rule_name']}' "
+                               f"(new '{hit['new_matched']}' vs old '{hit['old_matched']}')"),
+                    "rule_name": hit["rule_name"],
+                })
+                s.add(ConflictEvent(
+                    id=new_id("cfev"),
+                    memory_id=m.id,
+                    incoming_ref=summary_text[:200],
+                    rule_name=hit["rule_name"],
+                    kind="mutex",
+                    detail={"new_matched": hit["new_matched"],
+                            "old_matched": hit["old_matched"]},
+                    status="open",
+                ))
+        # 规则未命中 → 回落 LLM 矛盾检测（降级不阻断）
+        if not conflicts:
+            for m in related[:10]:
+                c = check_contradiction(summary_text, m.content)
+                if c.get("contradicts"):
+                    conflicts.append({"memory_id": m.id, "severity": c.get("severity", "low"),
+                                      "reason": c.get("reason", "")})
 
         if conflicts and any(c["severity"] == "high" for c in conflicts):
+            s.commit()  # 账本落库
             return {"decision": GateDecision.ARCHIVE_CONFLICT,
                     "reason": "hard contradiction with existing memory",
                     "conflicts": conflicts, "novelty": nv}

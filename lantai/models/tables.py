@@ -107,6 +107,20 @@ class MemoryProposal(SQLModel, table=True):
     applied_at: Optional[datetime] = None
 
 
+
+class ConflictEvent(SQLModel, table=True):
+    """冲突消解确定性层账本（P0-2）：规则命中即落账，可溯源、可裁决。"""
+
+    id: str = Field(primary_key=True)
+    memory_id: str = Field(index=True)  # 被判定冲突的既有记忆
+    incoming_ref: str = ""             # 触发源：候选 summary / 待写入文本摘要
+    rule_name: str = ""
+    kind: str = "mutex"                # mutex（互斥规则） / override（属性覆盖，预留）
+    detail: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    status: str = "open"               # open / resolved / dismissed
+    resolved_by: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    resolved_at: Optional[datetime] = None
 class MemoryCheckpoint(SQLModel, table=True):
     id: str = Field(primary_key=True)
     memory_id: str = Field(index=True)

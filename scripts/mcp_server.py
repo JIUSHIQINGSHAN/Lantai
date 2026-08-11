@@ -117,6 +117,13 @@ def handle_candidate_review(params: dict) -> dict:
     return review_candidate(candidate_id, approve=approve, reason=reason)
 
 
+def handle_get_digest(params: dict) -> dict:
+    """当日记忆盘点报告（Ticket 03）。"""
+    from lantai.workers.digest_worker import load_today_digest
+    return load_today_digest()
+
+
+
 def handle_feedback(params: dict) -> dict:
     req = FeedbackReq(
         memory_id=params.get("memory_id", ""),
@@ -126,6 +133,58 @@ def handle_feedback(params: dict) -> dict:
     )
     return record_feedback_entry(req)
 
+
+
+def handle_raw_add(params: dict) -> dict:
+    """原文直存（verbatim）：内容直入 FTS5+向量，零 LLM，不走提取/闸门/演化。"""
+    from lantai.models.schemas import RawMemoryReq
+    from lantai.services.memory_service import add_raw_memory
+    content = params.get("content", "")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("content must be a non-empty string")
+    req = RawMemoryReq(
+        title=params.get("title", "") or "",
+        content=content,
+        lane=params.get("lane", "general"),
+        tags=params.get("tags", []) or [],
+    )
+    return add_raw_memory(req)
+
+
+def handle_rollback(params: dict) -> dict:
+    """回滚记忆到上一版本（Checkpoint 快照）。"""
+    memory_id = params.get("memory_id", "")
+    if not isinstance(memory_id, str) or not memory_id:
+        raise ValueError("memory_id must be a non-empty string")
+    from lantai.evolution.promoter import rollback as _rollback
+    return _rollback(memory_id)
+
+
+def handle_conflicts_list(params: dict) -> dict:
+    """列出冲突账本事件（默认 open，等待人工裁决）。"""
+    limit = params.get("limit", 50)
+    status = params.get("status", "open")
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
+        raise ValueError("limit must be an int in [1, 500]")
+    if not isinstance(status, str) or status not in ("open", "resolved", "dismissed", "all"):
+        raise ValueError("status must be open/resolved/dismissed/all")
+    from lantai.services.conflict_service import list_conflict_events
+    return list_conflict_events(limit, status)
+
+
+def handle_conflict_resolve(params: dict) -> dict:
+    """裁决冲突事件：resolved（确认冲突成立）/ dismissed（误报）。"""
+    event_id = params.get("event_id", "")
+    decision = params.get("decision", "")
+    note = params.get("note", "")
+    if not isinstance(event_id, str) or not event_id:
+        raise ValueError("event_id must be a non-empty string")
+    if decision not in ("resolved", "dismissed"):
+        raise ValueError("decision must be 'resolved' or 'dismissed'")
+    if not isinstance(note, str):
+        raise ValueError("note must be a string")
+    from lantai.services.conflict_service import resolve_conflict_event
+    return resolve_conflict_event(event_id, decision, note)
 
 TOOLS = {
     "search":   {"description": "搜索记忆", "inputSchema": {
@@ -168,6 +227,30 @@ TOOLS = {
             "approve": {"type": "boolean"},
             "reason": {"type": "string", "default": ""},
         }, "required": ["candidate_id", "approve"]}},
+    "raw_add": {"description": "原文直存（verbatim）：内容直入 FTS5+向量，零 LLM", "inputSchema": {
+        "type": "object", "properties": {
+            "content": {"type": "string", "description": "原文内容（代码/日志/配置等）"},
+            "title": {"type": "string", "default": ""},
+            "lane": {"type": "string", "default": "general"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+        }, "required": ["content"]}},
+    "rollback": {"description": "回滚记忆到上一版本（Checkpoint 快照）", "inputSchema": {
+        "type": "object", "properties": {
+            "memory_id": {"type": "string"},
+        }, "required": ["memory_id"]}},
+    "conflicts_list": {"description": "列出冲突账本事件（确定性规则命中记录）", "inputSchema": {
+        "type": "object", "properties": {
+            "limit": {"type": "integer", "default": 50},
+            "status": {"type": "string", "default": "open"},
+        }}},
+    "conflict_resolve": {"description": "裁决冲突事件：resolved / dismissed", "inputSchema": {
+        "type": "object", "properties": {
+            "event_id": {"type": "string"},
+            "decision": {"type": "string", "description": "resolved | dismissed"},
+            "note": {"type": "string", "default": ""},
+        }, "required": ["event_id", "decision"]}},
+    "get_digest": {"description": "获取今日记忆盘点报告（摘要 + 五项统计）", "inputSchema": {
+        "type": "object", "properties": {}}},
 }
 
 TOOL_HANDLERS = {
@@ -177,6 +260,11 @@ TOOL_HANDLERS = {
     "backfill": handle_backfill,
     "candidates_pending": handle_candidates_pending,
     "candidate_review": handle_candidate_review,
+    "get_digest": handle_get_digest,
+    "raw_add": handle_raw_add,
+    "rollback": handle_rollback,
+    "conflicts_list": handle_conflicts_list,
+    "conflict_resolve": handle_conflict_resolve,
     "add_dialogue": handle_add_dialogue,
 }
 

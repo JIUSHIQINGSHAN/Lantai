@@ -14,6 +14,8 @@ from .routes_retrieval import router as routes_retrieval_router
 from .routes_verification import router as routes_verification_router
 from .routes_candidates import router as routes_candidates_router
 from .routes_dialogue import router as routes_dialogue_router
+from .routes_digest import router as routes_digest_router
+from .routes_conflicts import router as routes_conflicts_router
 
 __all__ = [
     "routes_health_router",
@@ -30,5 +32,7 @@ __all__ = [
     "routes_verification_router",
     "routes_candidates_router",
     "routes_dialogue_router",
+    "routes_digest_router",
+    "routes_conflicts_router",
 ]
 

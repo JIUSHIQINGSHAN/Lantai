@@ -2,6 +2,23 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
 
+def _validate_metadata_dict(v):
+    """有界校验：扁平、小键、值仅标量，防认证客户端耗尽 DB/磁盘（Add/Raw 共用）。"""
+    if not isinstance(v, dict):
+        raise ValueError("metadata must be a dict")
+    if len(v) > 10:
+        raise ValueError("metadata too many keys (max 10)")
+    for k, val in v.items():
+        if not isinstance(k, str) or not k or len(k) > 64:
+            raise ValueError("metadata key must be a short non-empty str")
+        if isinstance(val, str):
+            if len(val) > 500:
+                raise ValueError("metadata string value too long (max 500)")
+        elif val is not None and not isinstance(val, (int, float, bool)):
+            raise ValueError("metadata value must be scalar (str/int/float/bool/None)")
+    return v
+
+
 class AddMemoryReq(BaseModel):
     source_type: str = "manual"
     title: str = Field(min_length=1, max_length=500)
@@ -16,19 +33,7 @@ class AddMemoryReq(BaseModel):
     @classmethod
     def _check_metadata(cls, v):
         """有界校验：扁平、小键、值仅标量，防认证客户端耗尽 DB/磁盘。"""
-        if not isinstance(v, dict):
-            raise ValueError("metadata must be a dict")
-        if len(v) > 10:
-            raise ValueError("metadata too many keys (max 10)")
-        for k, val in v.items():
-            if not isinstance(k, str) or not k or len(k) > 64:
-                raise ValueError("metadata key must be a short non-empty str")
-            if isinstance(val, str):
-                if len(val) > 500:
-                    raise ValueError("metadata string value too long (max 500)")
-            elif val is not None and not isinstance(val, (int, float, bool)):
-                raise ValueError("metadata value must be scalar (str/int/float/bool/None)")
-        return v
+        return _validate_metadata_dict(v)
 
 
 class SearchReq(BaseModel):
@@ -65,3 +70,19 @@ class SourceReq(BaseModel):
     kind: str
     config: dict
     enabled: bool = True
+
+
+
+class RawMemoryReq(BaseModel):
+    """原文直存请求（verbatim 记忆）：内容直入 FTS5+向量，零 LLM，不走提取/闸门/演化。"""
+
+    title: str = ""
+    content: str = Field(min_length=1, max_length=200_000)
+    lane: str = Field(default="general")  # 默认取 settings.RAW_MEMORY_DEFAULT_LANE
+    tags: list[str] = []
+    metadata: dict = {}
+
+    @field_validator("metadata")
+    @classmethod
+    def _check_metadata(cls, v):
+        return _validate_metadata_dict(v)

@@ -25,3 +25,5 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **Shell Hook** | 零依赖 CLI 注入路径：stdin 收 JSON，stdout 返回 Markdown 上下文。2s 超时返回空。见 [ADR-0006](docs/adr/0006-shell-hook-contract.md) |
 | **search_trace** | `/search?trace=true` 返回的每步诊断数组：`{step, elapsed_ms, candidate_count, score_range}`。overhead < 1ms |
 | **water_level**（水位） | coalesce 缓冲水位指标（active_keys + total_messages），由 `/stats` 暴露，用于监控写入节流状态 |
+| **verbatim**（原文直存） | `memory_type="verbatim"` 的记忆：内容零 LLM 直入 FTS5+向量（`POST /add/raw`），内容 sha256 作 key 幂等去重，不走提取/闸门/演化。见 [ADR-0009](docs/adr/0009-raw-drawer-verbatim.md) |
+| **conflict_event**（冲突账本） | 冲突消解确定性层（规则命中）的审计账本：memory_id / rule_name / detail / status（open→resolved/dismissed），人工裁决不改记忆状态。见 [ADR-0010](docs/adr/0010-conflict-resolution-layer.md) |

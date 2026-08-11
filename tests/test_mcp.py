@@ -27,10 +27,15 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert len(resp["result"]["tools"]) == 7  # .../candidates_pending/candidate_review/add_dialogue
+    assert len(resp["result"]["tools"]) == 12  # + raw_add/rollback/conflicts_list/conflict_resolve
     assert "candidates_pending" in names
     assert "candidate_review" in names
     assert "add_dialogue" in names
+    assert "get_digest" in names
+    assert "raw_add" in names
+    assert "rollback" in names
+    assert "conflicts_list" in names
+    assert "conflict_resolve" in names
 
 
 def test_unknown_tool():
@@ -179,3 +184,102 @@ def test_search_response_has_evidence():
     payload = json.loads(resp["result"]["content"][0]["text"])
     assert payload["evidence"][0]["id"] == "mem_1"
     assert payload["event_id"] == "ev_1"
+
+
+def test_raw_add_ok():
+    """raw_add 工具：合法输入 → 调用 add_raw_memory + 返回结果。"""
+    mod = _load_mcp()
+    with patch("lantai.services.memory_service.add_raw_memory",
+               return_value={"memory_id": "mem_1", "dedup": False,
+                             "verbatim": True}) as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 20, "method": "tools/call",
+                           "params": {"name": "raw_add",
+                                      "arguments": {"content": "docker run -p 8080:80",
+                                                    "lane": "fact"}}})
+    assert "error" not in resp
+    payload = json.loads(resp["result"]["content"][0]["text"])
+    assert payload["memory_id"] == "mem_1"
+    m.assert_called_once()
+
+
+def test_raw_add_validation():
+    """raw_add 工具：空内容 → -32602，不调底层。"""
+    mod = _load_mcp()
+    with patch("lantai.services.memory_service.add_raw_memory") as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 21, "method": "tools/call",
+                           "params": {"name": "raw_add",
+                                      "arguments": {"content": "  "}}})
+    assert resp["error"]["code"] == -32602
+    m.assert_not_called()
+
+
+def test_rollback_ok():
+    """rollback 工具：合法输入 → 调用 promoter.rollback。"""
+    mod = _load_mcp()
+    with patch("lantai.evolution.promoter.rollback",
+               return_value={"ok": True}) as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 22, "method": "tools/call",
+                           "params": {"name": "rollback",
+                                      "arguments": {"memory_id": "mem_1"}}})
+    assert "error" not in resp
+    m.assert_called_once_with("mem_1")
+
+
+def test_rollback_validation():
+    """rollback 工具：空 id → -32602。"""
+    mod = _load_mcp()
+    with patch("lantai.evolution.promoter.rollback") as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 23, "method": "tools/call",
+                           "params": {"name": "rollback",
+                                      "arguments": {"memory_id": ""}}})
+    assert resp["error"]["code"] == -32602
+    m.assert_not_called()
+
+
+def test_conflicts_list_ok():
+    """conflicts_list 工具：合法输入 → 调用 service + 返回列表。"""
+    mod = _load_mcp()
+    with patch("lantai.services.conflict_service.list_conflict_events",
+               return_value={"events": []}) as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 24, "method": "tools/call",
+                           "params": {"name": "conflicts_list",
+                                      "arguments": {"limit": 10, "status": "open"}}})
+    assert "error" not in resp
+    m.assert_called_once_with(10, "open")
+
+
+def test_conflicts_list_validation():
+    """conflicts_list 工具：非法 status → -32602。"""
+    mod = _load_mcp()
+    with patch("lantai.services.conflict_service.list_conflict_events") as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 25, "method": "tools/call",
+                           "params": {"name": "conflicts_list",
+                                      "arguments": {"status": "nope"}}})
+    assert resp["error"]["code"] == -32602
+    m.assert_not_called()
+
+
+def test_conflict_resolve_ok():
+    """conflict_resolve 工具：合法输入 → 调用 service。"""
+    mod = _load_mcp()
+    with patch("lantai.services.conflict_service.resolve_conflict_event",
+               return_value={"ok": True, "event_id": "cfev_1",
+                             "status": "resolved"}) as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 26, "method": "tools/call",
+                           "params": {"name": "conflict_resolve",
+                                      "arguments": {"event_id": "cfev_1",
+                                                    "decision": "resolved"}}})
+    assert "error" not in resp
+    m.assert_called_once_with("cfev_1", "resolved", "")
+
+
+def test_conflict_resolve_validation():
+    """conflict_resolve 工具：非法 decision → -32602。"""
+    mod = _load_mcp()
+    with patch("lantai.services.conflict_service.resolve_conflict_event") as m:
+        resp = mod.handle({"jsonrpc": "2.0", "id": 27, "method": "tools/call",
+                           "params": {"name": "conflict_resolve",
+                                      "arguments": {"event_id": "cfev_1",
+                                                    "decision": "maybe"}}})
+    assert resp["error"]["code"] == -32602
+    m.assert_not_called()

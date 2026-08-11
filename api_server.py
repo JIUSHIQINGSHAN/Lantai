@@ -22,6 +22,9 @@ from lantai.api import (
     routes_verification_router,
     routes_candidates_router,
     routes_dialogue_router,
+    routes_digest_router,
+    routes_conflicts_router,
+    routes_conflicts_router,
 )
 
 
@@ -62,6 +65,9 @@ protected_routers = [
     routes_verification_router,
     routes_candidates_router,
     routes_dialogue_router,
+    routes_digest_router,
+    routes_conflicts_router,
+    routes_conflicts_router,
 ]
 for router in protected_routers:
     app.include_router(router, dependencies=[Depends(verify_api_key)])
