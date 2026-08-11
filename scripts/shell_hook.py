@@ -24,6 +24,63 @@ from lantai.storage import db
 from lantai.models.tables import MemoryItem
 from sqlmodel import select
 
+# ── 召回预算与工具指南（借鉴 TencentDB Agent Memory auto-recall）─────────────
+# 单条记忆上限 + 总字符预算双控；按码点截断（不会切开 emoji 代理对）；
+# 超预算截断/丢弃时在注入末尾附记忆使用指南（何时深挖、最多几次、如何回写）。
+_RECALL_TRUNCATION_SUFFIX = "…（已截断；可用记忆工具查看详情）"
+_RECALL_TOOLS_GUIDE_TRUNCATED = (
+    "部分记忆片段已截断——若不足以回答，可主动触发记忆检索"
+    "（例如说「查一下……」，或调用记忆 MCP 工具 search 获取更多详情）。"
+)
+_RECALL_TOOLS_GUIDE_RULES = (
+    "每轮对话中主动检索建议不超过 3 次；3 次仍无结果说明该信息不在记忆中，"
+    "请直接根据已有信息回答。"
+)
+_RECALL_TOOLS_GUIDE_WRITE = "对话中确认的新事实，可调用记忆 MCP 工具 add 保存为长期记忆。"
+
+
+def _truncate_codepoints(text: str, max_chars: int, suffix: str) -> str:
+    """按码点截断文本：不会切开多字节字符/emoji 代理对；超长附后缀提示。"""
+    cps = list(text)
+    if len(cps) <= max_chars:
+        return text
+    if max_chars <= len(suffix):
+        return "".join(cps[:max_chars])
+    return "".join(cps[:max_chars - len(suffix)]).rstrip() + suffix
+
+
+def _apply_recall_budget(lines: list[str], max_total_chars: int) -> tuple[list[str], int]:
+    """总字符预算分配：按序装入各行（含行间换行），超预算丢弃剩余。
+
+    返回 (budgeted_lines, dropped_count)。
+    """
+    used = 0
+    budgeted: list[str] = []
+    for line in lines:
+        sep = 1 if budgeted else 0  # 行间分隔换行符
+        if used + sep + len(line) > max_total_chars:
+            break
+        budgeted.append(line)
+        used += sep + len(line)
+    return budgeted, len(lines) - len(budgeted)
+
+
+def _build_tools_guide(truncated: bool) -> str:
+    """记忆使用指南：告诉 Agent 何时深挖、最多几次、如何回写。"""
+    parts = ["【记忆使用指南】"]
+    if truncated:
+        parts.append("- " + _RECALL_TOOLS_GUIDE_TRUNCATED)
+    parts.append("- " + _RECALL_TOOLS_GUIDE_RULES)
+    parts.append("- " + _RECALL_TOOLS_GUIDE_WRITE)
+    return "\n".join(parts)
+
+
+def _format_memory_entry(content: str, score: float,
+                         max_chars: int, suffix: str) -> tuple[str, str]:
+    """格式化单条记忆行 + 截断后内容（evidence 与注入行保持一致）。"""
+    truncated = _truncate_codepoints(content, max_chars, suffix)
+    return f"- [{score}] {truncated}", truncated
+
 
 def build_context(query: str) -> dict:
     """查询相关记忆，构建注入上下文。
@@ -52,29 +109,40 @@ def build_context(query: str) -> dict:
                 .where(MemoryItem.status == "active")
             ).all()
 
-        lines = []
-        evidence = []
+        per_memory = settings.SHELL_HOOK_MAX_CHARS_PER_MEMORY
+        entries = []  # (注入行, evidence 内容, score, id)——顺序与 results 一致
         for r in results:
             for m in items:
                 if m.id == r["id"]:
                     score = round(1.0 - r["distance"], 2)
-                    lines.append(f"- [{score}] {m.content[:200]}")
-                    # Ticket 04: 依据段——记忆 id + 内容摘要（可感知、可回填）
-                    evidence.append({"id": m.id, "content": m.content[:200],
-                                     "score": score})
+                    line, content = _format_memory_entry(
+                        m.content, score, per_memory, _RECALL_TRUNCATION_SUFFIX)
+                    entries.append((line, content, score, m.id))
                     break
+        lines = [e[0] for e in entries]
+        lines, _dropped = _apply_recall_budget(
+            lines, settings.SHELL_HOOK_MAX_TOTAL_CHARS)
+        keep_n = len(lines)
+        evidence = [{"id": e[3], "content": e[1], "score": e[2]}
+                    for e in entries[:keep_n]]
         latency_ms = int((time.perf_counter() - t0) * 1000)
         event_id = _try_log(query, [{"score": 1.0 - r["distance"], "memory": {"id": r["id"]}}
                                     for r in results], latency_ms)
         out = {}
         if lines:
-            out["context"] = "\n".join(lines)
-        if evidence:
-            out["context"] = ("【本次依据】\n" +
-                              "\n".join(f"- ({e['id']}, score {e['score']}) {e['content']}"
-                                         for e in evidence) +
-                              "\n\n【相关记忆】\n" + out["context"])
+            memory_block = "\n".join(lines)
+            out["context"] = memory_block
+            if evidence:
+                out["context"] = ("【本次依据】\n" +
+                                  "\n".join(f"- ({e['id']}, score {e['score']}) {e['content']}"
+                                             for e in evidence) +
+                                  "\n\n【相关记忆】\n" + memory_block)
             out["evidence"] = evidence
+            if settings.SHELL_HOOK_TOOLS_GUIDE:
+                truncated = (_dropped > 0
+                             or any(e["content"].endswith(_RECALL_TRUNCATION_SUFFIX)
+                                    for e in evidence))
+                out["context"] += "\n\n" + _build_tools_guide(truncated)
         if event_id:
             out["event_id"] = event_id
         return out

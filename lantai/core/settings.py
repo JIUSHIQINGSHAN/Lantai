@@ -128,6 +128,11 @@ class Settings(BaseSettings):
     SHELL_HOOK_DIALOGUE_TIMEOUT: float = 30.0  # 对话写入通道超时（秒，含 LLM 提取）
     SHELL_HOOK_TOP_K: int = 5
     SHELL_HOOK_MIN_CHARS: int = 3
+    # 召回预算（借鉴 TencentDB Agent Memory auto-recall）：单条记忆注入上限 +
+    # 总字符预算，超预算截断并附工具指南；防大记忆撑爆上下文
+    SHELL_HOOK_MAX_CHARS_PER_MEMORY: int = 200
+    SHELL_HOOK_MAX_TOTAL_CHARS: int = 1500
+    SHELL_HOOK_TOOLS_GUIDE: bool = True
 
     # SSRF 防护
     SSRF_ALLOWED_SCHEMES: tuple = ("http", "https")

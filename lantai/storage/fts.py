@@ -62,6 +62,10 @@ def search_fts(conn: sqlite3.Connection, query: str, top_k: int = 5) -> list[str
     """FTS5 全文搜索，返回匹配的记忆 ID 列表。"""
     try:
         keywords = [w.strip() for w in query.split() if w.strip()]
+        # trigram 最小 3 字符：短词（如 2 字中文「密钥」/ 1 字符号）在索引侧
+        # 永远无法成词，AND 链中掺入只会毒化整条查询（实测 "API 密钥" 类查询
+        # 因「密钥」零命中而整体失效）——直接剔除，保住长词命中。
+        keywords = [k for k in keywords if len(k) >= 3]
         if not keywords:
             return []
         # 逐词引号包裹：FTS5 MATCH 语法里 = @ . ? / 等字符会触发 syntax error，

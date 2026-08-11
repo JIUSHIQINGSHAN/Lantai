@@ -73,6 +73,20 @@ def test_special_chars_no_syntax_error(engine):
         assert isinstance(search_fts(c, "物理 @ 常用 . 查询 ? 测试"), list)
 
 
+def test_short_token_does_not_poison_and(engine):
+    """2 字词（trigram 最小 3 字符）不得毒化 AND 链：「API 密钥」类查询仍命中。
+
+    修复前 `"API" AND "密钥"`：密钥 2 字符在 trigram 索引侧无法成词，
+    整条 MATCH 返回空 → 中文+ASCII 混合查询整体失效（评测集 superseded 用例暴露）。
+    """
+    mid = _add_mem(engine, "API 密钥存储在 config.py")
+    with Session(engine) as s:
+        sync_fts(s, mid, "API 密钥存储在 config.py")
+        s.commit()
+    with engine.connect() as conn:
+        c = conn.connection.driver_connection
+        assert mid in search_fts(c, "API 密钥")
+
 def test_query_symbols_only_does_not_crash(engine):
     """纯符号/碎片查询不抛异常，返回空列表而非降级日志刷屏"""
     _add_mem(engine, "普通内容记忆")
