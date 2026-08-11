@@ -14,6 +14,10 @@ Issues 以本地 markdown 文件形式存放在 `.scratch/<feature>/` 目录下�
 
 单上下文布局：一个根目录 `CONTEXT.md` + `docs/adr/`。参见 `docs/agents/domain.md`。
 
+### Naming discipline（命名纪律）
+
+新功能/新概念的正式中文名遵循 `docs/adr/0013-naming-system.md`：2–4 字、出自传统意象（官职/典籍/器物）、名实相副；**必须先登记 `CONTEXT.md` 词汇表再使用**，未登记不命名。既有术语不强制追溯；改名必须走安全迁移（宁 miss 不脏写）。
+
 ### Testing discipline（测试纪律）
 
 **每个核心函数必须至少有一个不 mock 的冒烟测试**（真实构造最小输入直调该函数，验证主路径不炸）。
