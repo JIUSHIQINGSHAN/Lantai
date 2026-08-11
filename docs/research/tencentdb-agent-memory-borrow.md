@@ -22,7 +22,7 @@
 | 资产绑定 + ACL | Memory Hub Fixed Binding + ACL 四级收窄 | 多 Agent 接入时按 agent_id 绑定 lane 集 |
 | mem: 会话指令 | `MemoryProxy/src/mem-command/`：mem:sync / mem:create-skill / mem:help | **已落地（本票）**：MCP `mem_help` / `mem_sync`（scene 补跑 + digest 重算）/ `mem_create_skill`，见 `.scratch/mem-command/issues/01` |
 | provenance | v2.0.1：自定义 prompt + provenance（哪套 prompt/模型/时间产出） | **已落地（本票）**：candidate/proposal/MemoryItem 记 provenance（prompt+model+时间），overview 按 prompt 分布，见 `.scratch/provenance/issues/01` |
-| LLM-Wiki | `MemoryKnowledge/.../ingest-v2/`：增量维护 + overview.md 综述 + wikilink 下钻 | digest 升级为持续维护的 Wiki |
+| LLM-Wiki | `MemoryKnowledge/.../ingest-v2/`：增量维护 + overview.md 综述 + wikilink 下钻 | **已落地（本票）**：digest 并存升级——场景/技能 → `docs/memory-wiki/` 页面 + index + overview（LLM 综述失败确定性兜底），`mem_sync` 三件套刷新 + MCP `wiki_read` 下钻，见 `.scratch/wiki/issues/01` |
 | 冷启动导入 | 导入仓库/文档/历史 Session，保留原始时间戳 | 批量导入历史会话 JSONL |
 
 ## 兰台已有、不必照搬
@@ -39,3 +39,4 @@
 4. mem: 会话指令（已完成，见 `.scratch/mem-command/issues/01`）
 5. provenance（已完成，见 `.scratch/provenance/issues/01`）
 6. 上下文卸载（已完成，见 `.scratch/offload/issues/01`）
+7. LLM-Wiki（已完成，见 `.scratch/wiki/issues/01`）
