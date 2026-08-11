@@ -11,7 +11,8 @@ from sqlmodel import func, select
 
 from lantai.core.scheduler import record_run
 from lantai.core.settings import settings
-from lantai.models.tables import MemoryCandidate, MemoryItem, RetrievalEvent
+from lantai.models.tables import (MemoryCandidate, MemoryItem,
+                                    MemoryProposal, RetrievalEvent)
 from lantai.services.candidate_service import run_candidate_ttl_once
 from lantai.storage import db
 
@@ -86,6 +87,21 @@ def collect_digest_stats(day: date | None = None) -> dict:
         retr_avg_latency = s.exec(select(func.avg(RetrievalEvent.latency_ms))
                                   .where(RetrievalEvent.created_at >= start,
                                          RetrievalEvent.created_at < end)).one()
+        # 反思/蒸馏统计：反思提案 = candidate_id IS NULL 的提案（零迁移标识）
+        refl_created = s.exec(select(func.count()).select_from(MemoryProposal)
+                              .where(MemoryProposal.candidate_id.is_(None),
+                                     MemoryProposal.created_at >= start,
+                                     MemoryProposal.created_at < end)).one()
+        refl_applied = s.exec(select(func.count()).select_from(MemoryProposal)
+                              .where(MemoryProposal.candidate_id.is_(None),
+                                     MemoryProposal.status == "applied",
+                                     MemoryProposal.applied_at >= start,
+                                     MemoryProposal.applied_at < end)).one()
+        refl_pending = s.exec(select(func.count()).select_from(MemoryProposal)
+                              .where(MemoryProposal.candidate_id.is_(None),
+                                     MemoryProposal.status == "pending",
+                                     MemoryProposal.created_at >= start,
+                                     MemoryProposal.created_at < end)).one()
     return {
         "day": day or datetime.now().astimezone().date(),
         "memories": {
@@ -107,6 +123,11 @@ def collect_digest_stats(day: date | None = None) -> dict:
             "noise": int(retr_noise),
             "avg_latency_ms": round(float(retr_avg_latency), 1) if retr_avg_latency else 0,
         },
+        "reflection": {
+            "created": int(refl_created),
+            "applied": int(refl_applied),
+            "pending": int(refl_pending),
+        },
     }
 
 
@@ -114,6 +135,7 @@ def render_digest_markdown(stats: dict) -> str:
     """报告正文：当日摘要 + 待审候选提醒。"""
     day = stats["day"]
     m, p, a, r = stats["memories"], stats["pending"], stats["archived"], stats["retrieval"]
+    rf = stats.get("reflection") or {"created": 0, "applied": 0, "pending": 0}
     now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
     lines = [
         f"# 记忆日报 {day}",
@@ -131,6 +153,7 @@ def render_digest_markdown(stats: dict) -> str:
         f"| 今日归档 | 自动 TTL {a['ttl']} + 当日创建即归档 {a['created_today']} |",
         f"| 今日检索 | {r['total']} 次（零结果 {r['zero_result']}，"
         f"系统噪音 {r['noise']}，平均 {r['avg_latency_ms']}ms） |",
+        f"| 反思提案 | 今日 {rf['created']}（自动应用 {rf['applied']}，待审 {rf['pending']}） |",
         "",
     ]
     if p["total"]:

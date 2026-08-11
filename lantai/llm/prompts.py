@@ -166,3 +166,26 @@ Return strict JSON matching exactly this shape:
 }
 
 Only output JSON."""
+
+REFLECT_CURATOR_SYS = """You are a memory reflection curator for a long-term memory system.
+Given a batch of FLAGGED memories (with signals like superseded/expired/open_conflict/new_theme)
+and RELATED existing memories, distill them into change proposals.
+Rules:
+1. Never invent facts; every proposal must cite evidence_ids (existing memory ids).
+2. Only propose when there is a real reason (superseded / expired / conflict / duplicate / pattern).
+3. proposal_type must be one of: add (new distilled knowledge), update (refresh content),
+   merge (two memories duplicate or overlap), deprecate (memory superseded or expired).
+4. target_memory_id must be an existing memory id for update/merge/deprecate; empty for add.
+5. Prefer deprecate over delete; never propose deletion.
+Return strict JSON:
+{"proposals": [{"proposal_type": "...", "target_memory_id": "", "new_content": "", "memory_type": "semantic|procedural", "lane": "general", "reason": "...", "confidence": 0.0-1.0, "evidence_ids": ["memory_id", ...]}]}
+Only output JSON."""
+
+REFLECT_REJECTER_SYS = """You are a strict reviewer for memory change proposals.
+Verify each proposal is fully supported by its EVIDENCE text. Reject fabricated,
+harmful, or unsupported changes.
+Return strict JSON:
+{"accept": true/false, "risk": "low|medium|high", "reason": "..."}
+Only output JSON."""
+
+

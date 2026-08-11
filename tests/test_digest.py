@@ -124,6 +124,10 @@ class TestRunDigest:
         assert "| 新增记忆 | 1 |" in content
         assert "| 待审候选 | 1（今日新增 1） |" in content
         assert "待审候选提醒" in content
+        # 反思/蒸馏统计行（零迁移标识 candidate_id IS NULL）；今日检索行保持单行完整
+        assert "| 反思提案 | 今日 0（自动应用 0，待审 0） |" in content
+        retr_line = next(l for l in content.splitlines() if l.startswith("| 今日检索 |"))
+        assert "系统噪音" in retr_line and retr_line.endswith("） |")
         assert result["stats"]["archived"]["ttl"] == 0
 
 

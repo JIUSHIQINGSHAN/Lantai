@@ -50,6 +50,13 @@ def start_scheduler():
                            seconds=settings.PARAM_OVERRIDE_REFRESH_SECONDS,
                            id="param_refresh", replace_existing=True)
 
+    # Reflection 反思/蒸馏（spec: docs/plans/reflection-module-spec.md）
+    if settings.REFLECT_ENABLED:
+        from lantai.workers.reflect_worker import run_reflect_once
+        _scheduler.add_job(run_reflect_once, "cron",
+                           hour=settings.REFLECT_CRON_HOUR, minute=1,
+                           id="reflect", replace_existing=True)
+
     # F7: coalesce idle flush（每 2 秒检查一次空闲缓冲；冲刷结果持久化，不静默丢弃）
     if settings.COALESCE_ENABLED:
         from lantai.ingestion.coalesce import get_coalesce_buffer
@@ -63,3 +70,4 @@ def start_scheduler():
 def stop_scheduler():
     if _scheduler:
         _scheduler.shutdown(wait=False)
+

@@ -35,14 +35,76 @@ def apply_proposal(proposal_id: str) -> dict:
         lane = patch.get("lane", settings.DEFAULT_LANE)
 
         existing = None
-        if key:
+        if prop.target_memory_id:
+            existing = s.get(MemoryItem, prop.target_memory_id)
+            if existing and existing.status != "active":
+                existing = None
+        if existing is None and key:
             existing = s.exec(select(MemoryItem)
                               .where(MemoryItem.key == key,
                                      MemoryItem.status == "active")).first()
 
         emb = embed([content])[0] if content else []
 
-        if prop.proposal_type == "add" or not existing:
+        # 反思模块（spec: docs/plans/reflection-module-spec.md）：deprecate / merge 分支。
+        # add/update 语义保持不动（门面铁律）；deprecate/merge 都走 checkpoint + supersedes 边。
+        if prop.proposal_type == "deprecate" and existing:
+            before = existing.model_dump(mode="json")
+            existing.valid_to = utcnow()
+            existing.status = "archived"
+            existing.version += 1
+            existing.updated_at = utcnow()
+            s.add(existing); s.flush()
+            _make_checkpoint(s, existing, before, prop.id, trigger="reflect")
+            if prop.evidence_ids:
+                dup = s.exec(select(MemoryEdge).where(
+                    MemoryEdge.relation == "supersedes",
+                    MemoryEdge.source_memory_id == prop.evidence_ids[0],
+                    MemoryEdge.target_memory_id == existing.id)).first()
+                if dup is None:
+                    s.add(MemoryEdge(
+                        id=new_id("edge"),
+                        source_memory_id=prop.evidence_ids[0],
+                        target_memory_id=existing.id,
+                        relation="supersedes",
+                        confidence=prop.confidence,
+                    ))
+            sync_fts(s, existing.id, None)
+            delete_memory_item(existing.id)
+        elif prop.proposal_type == "merge" and existing:
+            before = existing.model_dump(mode="json")
+            existing.content = content or existing.content
+            existing.version += 1
+            existing.updated_at = utcnow()
+            existing.source_ids = list(set(existing.source_ids + prop.evidence_ids))
+            s.add(existing); s.flush()
+            _make_checkpoint(s, existing, before, prop.id, trigger="reflect")
+            emb2 = embed([existing.content])[0]
+            index_memory_item(existing.id, emb2,
+                              {"key": existing.key, "memory_type": existing.memory_type})
+            sync_fts(s, existing.id, existing.content)
+            for eid in prop.evidence_ids:
+                if eid == existing.id:
+                    continue
+                src = s.get(MemoryItem, eid)
+                if not src or src.status != "active":
+                    continue
+                s.add(MemoryEdge(
+                    id=new_id("edge"),
+                    source_memory_id=existing.id,
+                    target_memory_id=src.id,
+                    relation="supersedes",
+                    confidence=prop.confidence,
+                ))
+                src_before = src.model_dump(mode="json")
+                src.status = "archived"
+                src.version += 1
+                src.updated_at = utcnow()
+                s.add(src)
+                _make_checkpoint(s, src, src_before, prop.id, trigger="reflect")
+                sync_fts(s, src.id, None)
+                delete_memory_item(src.id)
+        elif prop.proposal_type == "add" or not existing:
             source_ids = list(set(prop.evidence_ids))
             tier = (MemoryTier.LONG_TERM
                     if len(source_ids) >= settings.PROMOTE_SEMANTIC_MIN_SOURCES

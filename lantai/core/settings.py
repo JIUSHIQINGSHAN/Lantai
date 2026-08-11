@@ -202,6 +202,20 @@ class Settings(BaseSettings):
     PENALTY_MIN_SAMPLES: int = 3
     PENALTY_TTL_DAYS: int = 180
 
+    # ── Reflection 反思/蒸馏（spec: docs/plans/reflection-module-spec.md）──
+    REFLECT_ENABLED: bool = False            # 默认关，显式开启
+    REFLECT_CRON_HOUR: int = 22              # UTC；与 digest 同小时错 1 分钟
+    REFLECT_MAX_BATCH: int = 20              # 单次蒸馏候选上限（LLM 成本防护）
+    REFLECT_IMPORTANCE_POOL: float = 5.0     # 水位触发阈值（dry-run 校准 2026-08-11，见 docs/memory-quality/reflect-calibration-2026-08-11.md）
+    REFLECT_IMPORTANCE_WINDOW_DAYS: int = 7  # 水位窗口（近似「自上次反思以来」，零新表）
+    REFLECT_AUTO_APPLY_CONF: float = 0.7     # 与 evolve 自动应用阈值一致
+    REFLECT_MIN_CONFIDENCE: float = 0.5      # 低于此置信的提案不落库
+    REFLECT_MIN_USE_COUNT: int = 3           # R4 低帮助率规则
+    REFLECT_LOW_HELPFUL_RATIO: float = 0.3   # R4 低帮助率规则
+    REFLECT_STALE_AGE_DAYS: int = 30         # R5 低价值陈旧规则
+    REFLECT_STALE_IMPORTANCE: float = 0.4    # R5 低价值陈旧规则
+    REFLECT_STALE_SCAN_ENABLED: bool = False # R4/R5 默认关（误报风险，保守起步）
+
     def model_post_init(self, __context):
         """DATABASE_URL / CHROMADB_PATH 未显式设置时从 LANTAI_HOME 推导（兼容旧 REMEMBRANCE_HOME）。"""
         if not self.LANTAI_HOME and self.REMEMBRANCE_HOME:
