@@ -277,6 +277,7 @@ def run_reflect_once() -> dict:
             with db.get_session() as s:
                 p = s.get(MemoryProposal, prop.id)
                 p.status = ProposalStatus.REJECTED
+                p.decision_reason = str(verdict.get("reason", ""))
                 s.add(p)
                 s.commit()
             discarded += 1

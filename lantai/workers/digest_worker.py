@@ -20,6 +20,11 @@ from lantai.storage import db
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_DIGEST_DIR = _REPO_ROOT / "docs" / "memory-digest"
 
+# 反思提案置信桶（回填校准报告区间，见 docs/memory-quality/reflect-calibration-2026-08-11.md）
+_CONF_BUCKETS = (("0.5-0.6", 0.5, 0.6), ("0.6-0.7", 0.6, 0.7),
+                 ("0.7-0.8", 0.7, 0.8), ("0.8-0.9", 0.8, 0.9),
+                 ("0.9-1.0", 0.9, 1.0))
+
 
 def run_candidate_ttl() -> dict:
     """每日 TTL 归档入口（scheduler job）。"""
@@ -102,6 +107,32 @@ def collect_digest_stats(day: date | None = None) -> dict:
                                      MemoryProposal.status == "pending",
                                      MemoryProposal.created_at >= start,
                                      MemoryProposal.created_at < end)).one()
+        refl_rejected = s.exec(select(func.count()).select_from(MemoryProposal)
+                               .where(MemoryProposal.candidate_id.is_(None),
+                                      MemoryProposal.status == "rejected",
+                                      MemoryProposal.created_at >= start,
+                                      MemoryProposal.created_at < end)).one()
+        # 今日新增反思提案的 类型×状态 分布（反馈回路/回填校准输入）
+        refl_rows = s.exec(select(MemoryProposal.proposal_type,
+                                  MemoryProposal.status, func.count())
+                           .where(MemoryProposal.candidate_id.is_(None),
+                                  MemoryProposal.created_at >= start,
+                                  MemoryProposal.created_at < end)
+                           .group_by(MemoryProposal.proposal_type,
+                                     MemoryProposal.status)).all()
+        refl_conf_values = s.exec(select(MemoryProposal.confidence)
+                         .where(MemoryProposal.candidate_id.is_(None),
+                                MemoryProposal.created_at >= start,
+                                MemoryProposal.created_at < end)).all()
+    by_type: dict[str, dict[str, int]] = {}
+    for ptype, status, cnt in refl_rows:
+        by_type.setdefault(ptype, {})[status] = int(cnt)
+    conf_buckets = {label: 0 for label, _, _ in _CONF_BUCKETS}
+    for conf in refl_conf_values:
+        for label, lo, hi in _CONF_BUCKETS:
+            if lo <= conf < hi or (label == "0.9-1.0" and conf == 1.0):
+                conf_buckets[label] += 1
+                break
     return {
         "day": day or datetime.now().astimezone().date(),
         "memories": {
@@ -127,6 +158,9 @@ def collect_digest_stats(day: date | None = None) -> dict:
             "created": int(refl_created),
             "applied": int(refl_applied),
             "pending": int(refl_pending),
+            "rejected": int(refl_rejected),
+            "by_type": by_type,
+            "conf_buckets": conf_buckets,
         },
     }
 
@@ -135,7 +169,8 @@ def render_digest_markdown(stats: dict) -> str:
     """报告正文：当日摘要 + 待审候选提醒。"""
     day = stats["day"]
     m, p, a, r = stats["memories"], stats["pending"], stats["archived"], stats["retrieval"]
-    rf = stats.get("reflection") or {"created": 0, "applied": 0, "pending": 0}
+    rf = stats.get("reflection") or {"created": 0, "applied": 0, "pending": 0,
+                                     "rejected": 0, "by_type": {}, "conf_buckets": {}}
     now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
     lines = [
         f"# 记忆日报 {day}",
@@ -153,9 +188,26 @@ def render_digest_markdown(stats: dict) -> str:
         f"| 今日归档 | 自动 TTL {a['ttl']} + 当日创建即归档 {a['created_today']} |",
         f"| 今日检索 | {r['total']} 次（零结果 {r['zero_result']}，"
         f"系统噪音 {r['noise']}，平均 {r['avg_latency_ms']}ms） |",
-        f"| 反思提案 | 今日 {rf['created']}（自动应用 {rf['applied']}，待审 {rf['pending']}） |",
+        f"| 反思提案 | 今日 {rf['created']}（自动应用 {rf['applied']}，待审 {rf['pending']}，拒绝 {rf['rejected']}） |",
         "",
     ]
+    if rf["created"]:
+        lines += ["", "## 反思提案分布（今日新增）", "",
+                  "| 类型 | 自动应用 | 待审 | 拒绝 |", "|---|---|---|---|"]
+        status_cols = ("applied", "pending", "rejected")
+        totals = {k: 0 for k in status_cols}
+        for ptype in ("add", "update", "merge", "deprecate"):
+            row = rf.get("by_type", {}).get(ptype, {})
+            cells = [str(row.get(k, 0)) for k in status_cols]
+            for k in status_cols:
+                totals[k] += row.get(k, 0)
+            lines.append(f"| {ptype} | {' | '.join(cells)} |")
+        lines.append(f"| 合计 | {' | '.join(str(totals[k]) for k in status_cols)} |")
+        buckets = rf.get("conf_buckets", {})
+        if buckets:
+            lines += ["", "置信桶（今日新增）：" +
+                      " ".join(f"[{label}]×{buckets.get(label, 0)}"
+                               for label, _, _ in _CONF_BUCKETS)]
     if p["total"]:
         lines += [
             "## 待审候选提醒",

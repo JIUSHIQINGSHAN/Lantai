@@ -15,7 +15,8 @@ from sqlmodel import SQLModel, Session, create_engine
 
 import lantai.storage.db as db_module
 from lantai.core.settings import settings
-from lantai.models.tables import MemoryCandidate, MemoryItem, RetrievalEvent
+from lantai.models.tables import (MemoryCandidate, MemoryItem,
+                                    MemoryProposal, RetrievalEvent)
 
 
 def _utc_naive(dt: datetime) -> datetime:
@@ -46,6 +47,57 @@ def _seed(session_factory, rows):
         for row in rows:
             s.add(row)
         s.commit()
+
+
+
+class TestReflectionDistribution:
+    """反思提案可测量：拒绝数 + 类型×状态 + 置信桶（回填校准输入）。"""
+
+    def test_reflection_distribution(self, digest_env):
+        session_factory = digest_env
+        now = _utc_naive(datetime.now(timezone.utc))
+        _seed(session_factory, [
+            MemoryProposal(id="p1", proposal_type="add", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "a"},
+                           confidence=0.9, status="applied", created_at=now,
+                           applied_at=now),
+            MemoryProposal(id="p2", proposal_type="merge", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "b"},
+                           confidence=0.75, status="pending", created_at=now),
+            MemoryProposal(id="p3", proposal_type="merge", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "c"},
+                           confidence=0.65, status="rejected", created_at=now),
+            MemoryProposal(id="p4", proposal_type="deprecate", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "d"},
+                           confidence=0.85, status="rejected", created_at=now),
+        ])
+
+        from lantai.workers.digest_worker import (collect_digest_stats,
+                                                  render_digest_markdown)
+        stats = collect_digest_stats()
+        rf = stats["reflection"]
+        assert rf["created"] == 4
+        assert rf["applied"] == 1
+        assert rf["pending"] == 1
+        assert rf["rejected"] == 2
+        assert rf["by_type"] == {
+            "add": {"applied": 1},
+            "merge": {"pending": 1, "rejected": 1},
+            "deprecate": {"rejected": 1},
+        }
+        assert rf["conf_buckets"] == {
+            "0.5-0.6": 0, "0.6-0.7": 1, "0.7-0.8": 1,
+            "0.8-0.9": 1, "0.9-1.0": 1,
+        }
+
+        md = render_digest_markdown(stats)
+        assert "| 反思提案 | 今日 4（自动应用 1，待审 1，拒绝 2） |" in md
+        assert "## 反思提案分布（今日新增）" in md
+        assert "| add | 1 | 0 | 0 |" in md
+        assert "| merge | 0 | 1 | 1 |" in md
+        assert "| deprecate | 0 | 0 | 1 |" in md
+        assert "| 合计 | 1 | 1 | 2 |" in md
+        assert "置信桶（今日新增）" in md
 
 
 class TestCollectStats:
@@ -125,7 +177,7 @@ class TestRunDigest:
         assert "| 待审候选 | 1（今日新增 1） |" in content
         assert "待审候选提醒" in content
         # 反思/蒸馏统计行（零迁移标识 candidate_id IS NULL）；今日检索行保持单行完整
-        assert "| 反思提案 | 今日 0（自动应用 0，待审 0） |" in content
+        assert "| 反思提案 | 今日 0（自动应用 0，待审 0，拒绝 0） |" in content
         retr_line = next(l for l in content.splitlines() if l.startswith("| 今日检索 |"))
         assert "系统噪音" in retr_line and retr_line.endswith("） |")
         assert result["stats"]["archived"]["ttl"] == 0

@@ -124,6 +124,7 @@ class MemoryProposal(SQLModel, table=True):
     conflict_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     status: str = "pending"
     decided_by: str = "auto"
+    decision_reason: str = ""  # 裁决原因（用户/自动拒绝理由，反馈回路与回填校准输入）
     provenance: dict = Field(default_factory=dict, sa_column=Column(JSON))  # 继承候选提取来源（可溯源）
     created_at: datetime = Field(default_factory=utcnow)
     applied_at: Optional[datetime] = None
