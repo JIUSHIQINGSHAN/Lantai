@@ -126,8 +126,9 @@ def test_evaluate_end_to_end(fq_env):
     assert metrics["fresh_recall_rate"] == 1.0
     # 时效：未生效过滤 / 过期降权后新值在前
     assert metrics["temporal_order_accuracy"] == 1.0
-    # 取代维度诚实测量（新值必须可召回；旧值残留如实报告）
-    assert metrics["superseded_order_accuracy"] >= 0.0
+    # 取代维度：supersedes 边降权后新值必须在前（确定性回归）
+    assert metrics["superseded_order_accuracy"] == 1.0
+    # 残留诚实测量：降权不删旧值，旧值仍如实出现在 top-k
     assert metrics["superseded_residual_rate"] >= 0.0
     per_cat = {q["category"] for q in result["per_query"]}
     assert per_cat == {"typo", "fresh", "stale", "temporal", "superseded"}

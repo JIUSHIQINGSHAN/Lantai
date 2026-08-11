@@ -4,7 +4,7 @@ from rank_bm25 import BM25Okapi
 from sqlmodel import select
 
 from lantai.llm.client import embed
-from lantai.models.tables import MemoryItem
+from lantai.models.tables import MemoryEdge, MemoryItem
 from lantai.storage import db
 from lantai.core.settings import settings
 from lantai.retrieval.intent import classify_intent
@@ -27,6 +27,41 @@ def _get_bm25(items: list) -> "BM25Okapi":
     _BM25_CACHE["bm25"] = bm25
     return bm25
 
+
+def _apply_supersedes_order(scored: list) -> list:
+    """supersedes 边感知降权：被取代旧值若其新值同在候选集，压到新值之下。
+
+    宁 miss 不脏写：不删除旧值（残留如实留在结果中），仅保证新值在前；
+    新值不在候选集时不动旧值（有旧值可用总比空手好）。仅按候选 id 做一次
+    边查找，异常/缺边静默降级为原排序。
+    """
+    if not settings.SUPERSEDES_ORDERING_ENABLED or not scored:
+        return scored
+    ids = [m.id for _, m in scored]
+    superseded_by: dict[str, list[str]] = {}
+    try:
+        with db.get_session() as s:
+            edges = s.exec(select(MemoryEdge).where(
+                MemoryEdge.relation == "supersedes",
+                MemoryEdge.source_memory_id.in_(ids),
+                MemoryEdge.target_memory_id.in_(ids),
+            )).all()
+    except Exception:
+        return scored
+    for e in edges:
+        superseded_by.setdefault(e.target_memory_id, []).append(e.source_memory_id)
+    if not superseded_by:
+        return scored
+    id_to_score = {m.id: sc for sc, m in scored}
+    out = []
+    for sc, m in scored:
+        superseders = [id_to_score[n] for n in superseded_by.get(m.id, [])
+                       if n in id_to_score]
+        if superseders:
+            sc = min(sc, max(superseders) - settings.SUPERSEDES_DEMOTE_EPSILON)
+        out.append((sc, m))
+    out.sort(key=lambda x: -x[0])
+    return out
 
 def hybrid_search(query: str, top_k: int = 5,
                   memory_types: list[str] | None = None,
@@ -206,7 +241,7 @@ def _hybrid_search_impl(query: str, top_k: int = 5,
             scored_items.append(
                 (settings.RETRIEVAL_W_FTS + settings.RETRIEVAL_W_DECAY * m.decay_score, m))
 
-    scored_items.sort(key=lambda x: -x[0])
+    scored_items = _apply_supersedes_order(scored_items)
     candidates = scored_items[:fetch_n]
 
     # Step 5: Reranker（可选）
@@ -215,12 +250,16 @@ def _hybrid_search_impl(query: str, top_k: int = 5,
         reranked = rerank(query, docs, top_k)
         if reranked:
             doc_to_m = {m.content: m for _, m in candidates}
+            reranked_scored = [
+                (r["score"], doc_to_m[r["document"]])
+                for r in reranked if r["document"] in doc_to_m
+            ]
+            reranked_scored = _apply_supersedes_order(reranked_scored)
             results = []
-            for r in reranked:
-                item = {"score": r["score"], "document": r["document"]}
+            for s, m in reranked_scored:
+                item = {"score": s, "document": m.content}
                 if explain:
-                    m = doc_to_m.get(r["document"])
-                    item["explain"] = breakdowns.get(m.id) if m is not None else None
+                    item["explain"] = breakdowns.get(m.id)
                 results.append(item)
             if trace:
                 t4 = time.perf_counter()
@@ -387,7 +426,7 @@ def _keyword_fallback(
                 "decay_multiplier": round(_age_multiplier(m), 4),
             }
 
-    scored.sort(key=lambda x: -x[0])
+    scored = _apply_supersedes_order(scored)
     results = []
     for s, m in scored[:top_k]:
         item = {"score": s, "memory": m.model_dump(mode="json")}

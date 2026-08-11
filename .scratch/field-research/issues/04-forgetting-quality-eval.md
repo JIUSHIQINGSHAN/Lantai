@@ -32,10 +32,19 @@ Source: docs/research/direction-research-report.md「一年内」档
 - 附带修复：`search_fts` 剔除 <3 字符 token——2 字词（「密钥」）在 trigram 索引侧
   无法成词却毒化整条 AND 查询（修复前「API 密钥」查询整体失效）
 
-## 下一步（另开 issue）
+## 落地（已实现）
 
-- hybrid 打分后加 supersedes 边降权/置顶，评测集回归断言该指标
-- 向量路径启用后复跑：embedding 相似度应能区分新旧值，预期 superseded 指标改善
+- **supersedes 边感知降权**：lantai/retrieval/hybrid.py::_apply_supersedes_order——被取代
+  旧值若其新值同在候选集，压到新值之下；新值不在候选集时不动旧值（宁 miss 不脏写：
+  不删旧值，残留如实测量）。settings 新增 SUPERSEDES_ORDERING_ENABLED / SUPERSEDES_DEMOTE_EPSILON，
+  向量主路径 / rerank 分支 / FTS 兜底路径三处统一接入。
+- 评测集回归：superseded_order_accuracy 3 轮实测确定性 = 1.0（修复前 0.5），
+  superseded_residual_rate 保持 1.0 诚实报告；端到端测试断言升级为 == 1.0。
+- 附带验证：FTS 兜底路径（最严格基准）typo/fresh/temporal/stale 全绿。
+
+## 下一步
+
+- 向量路径启用后复跑：embedding 相似度应能区分新旧值，预期 superseded 指标进一步改善（残留率下降）
 
 ## 相关文件
 

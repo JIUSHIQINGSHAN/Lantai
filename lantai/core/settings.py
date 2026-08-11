@@ -148,6 +148,9 @@ class Settings(BaseSettings):
     RETRIEVAL_W_BM25: float = 0.25
     RETRIEVAL_W_FTS: float = 0.05
     RETRIEVAL_W_DECAY: float = 0.1
+    # supersedes 边感知排序（一年内档评测回归）：被取代旧值在新值同候选集时降权到新值之下
+    SUPERSEDES_ORDERING_ENABLED: bool = True
+    SUPERSEDES_DEMOTE_EPSILON: float = 1e-6  # 旧值压到新值之下的最小分差
     FTS_RECALL_TOP_K: int = 20  # FTS 子串召回上限
 
     # API 端点 allowlist（审计 M7）：LLM/reranker 客户端只允许访问这些 host

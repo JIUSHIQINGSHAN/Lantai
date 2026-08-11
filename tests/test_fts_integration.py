@@ -8,7 +8,7 @@ from sqlmodel import SQLModel, Session, create_engine
 import lantai.storage.db as db_module
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
-from lantai.models.tables import MemoryItem
+from lantai.models.tables import MemoryEdge, MemoryItem
 from lantai.storage.fts import init_fts, search_fts, sync_fts
 
 
@@ -86,6 +86,37 @@ def test_short_token_does_not_poison_and(engine):
     with engine.connect() as conn:
         c = conn.connection.driver_connection
         assert mid in search_fts(c, "API 密钥")
+
+def test_supersedes_demotes_old_below_new(engine):
+    """supersedes 边降权：被取代旧值在新值同在候选集时排到新值之后。
+
+    API 密钥 场景：修复前 BM25 空格 token 计数让旧值（config.py）确定性排前；
+    降权后必须新值（环境变量注入）在前——宁 miss 不脏写：旧值不删、仍在结果中。
+    """
+    from lantai.core.ids import new_id
+    old = _add_mem(engine, "API 密钥存储在 config.py")
+    new = _add_mem(engine, "API 密钥改为环境变量注入")
+    with Session(engine) as s:
+        sync_fts(s, old, "API 密钥存储在 config.py")
+        sync_fts(s, new, "API 密钥改为环境变量注入")
+        s.add(MemoryEdge(id=new_id("edge"), source_memory_id=new,
+                         target_memory_id=old, relation="supersedes", confidence=1.0))
+        s.commit()
+
+    def get_test_session():
+        return Session(engine)
+
+    with patch.object(db_module, "get_session", get_test_session), \
+         patch("lantai.retrieval.intent.chat_json",
+               return_value={"intent": "fact_lookup", "reason": "test"}), \
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.get_vector_store",
+               return_value=Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())):
+        from lantai.retrieval import hybrid
+        results = hybrid.hybrid_search("API 密钥", top_k=5, use_rerank=False)
+    ids = [r["memory"]["id"] for r in results]
+    assert old in ids and new in ids          # 不删旧值（宁 miss 不脏写）
+    assert ids.index(new) < ids.index(old)    # 新值必须在前
 
 def test_query_symbols_only_does_not_crash(engine):
     """纯符号/碎片查询不抛异常，返回空列表而非降级日志刷屏"""
