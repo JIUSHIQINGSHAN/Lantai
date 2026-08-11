@@ -295,3 +295,10 @@ class RetrievalEvent(SQLModel, table=True):
     estimated_tokens: int = 0  # 查询 + 注入结果 token 粗估（成本观测）
     is_system_noise: bool = Field(default=False, index=True)  # 系统注入噪音（技能库维护等），评估统计时排除
     created_at: datetime = Field(default_factory=utcnow, index=True)
+
+class SchedulerRun(SQLModel, table=True):
+    """worker 上次运行时间（观察期保底：/stats 持久化 + 每日任务启动补跑判定）。"""
+    __tablename__ = "scheduler_run"
+
+    name: str = Field(primary_key=True)
+    last_run_utc: str = ""

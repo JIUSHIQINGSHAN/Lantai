@@ -26,6 +26,61 @@ _CONF_BUCKETS = (("0.5-0.6", 0.5, 0.6), ("0.6-0.7", 0.6, 0.7),
                  ("0.9-1.0", 0.9, 1.0))
 
 
+def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
+    """反思提案窗口聚合：created/applied/pending/rejected + 类型×状态 + 置信桶。
+
+    反思提案 = candidate_id IS NULL 的提案（零迁移标识）；
+    start/end 为 naive UTC（库内时间约定）。
+    """
+    created = s.exec(select(func.count()).select_from(MemoryProposal)
+                     .where(MemoryProposal.candidate_id.is_(None),
+                            MemoryProposal.created_at >= start,
+                            MemoryProposal.created_at < end)).one()
+    applied = s.exec(select(func.count()).select_from(MemoryProposal)
+                     .where(MemoryProposal.candidate_id.is_(None),
+                            MemoryProposal.status == "applied",
+                            MemoryProposal.applied_at >= start,
+                            MemoryProposal.applied_at < end)).one()
+    pending = s.exec(select(func.count()).select_from(MemoryProposal)
+                     .where(MemoryProposal.candidate_id.is_(None),
+                            MemoryProposal.status == "pending",
+                            MemoryProposal.created_at >= start,
+                            MemoryProposal.created_at < end)).one()
+    rejected = s.exec(select(func.count()).select_from(MemoryProposal)
+                      .where(MemoryProposal.candidate_id.is_(None),
+                             MemoryProposal.status == "rejected",
+                             MemoryProposal.created_at >= start,
+                             MemoryProposal.created_at < end)).one()
+    rows = s.exec(select(MemoryProposal.proposal_type,
+                         MemoryProposal.status, func.count())
+                  .where(MemoryProposal.candidate_id.is_(None),
+                         MemoryProposal.created_at >= start,
+                         MemoryProposal.created_at < end)
+                  .group_by(MemoryProposal.proposal_type,
+                            MemoryProposal.status)).all()
+    conf_values = s.exec(select(MemoryProposal.confidence)
+                         .where(MemoryProposal.candidate_id.is_(None),
+                                MemoryProposal.created_at >= start,
+                                MemoryProposal.created_at < end)).all()
+    by_type: dict[str, dict[str, int]] = {}
+    for ptype, status, cnt in rows:
+        by_type.setdefault(ptype, {})[status] = int(cnt)
+    conf_buckets = {label: 0 for label, _, _ in _CONF_BUCKETS}
+    for conf in conf_values:
+        for label, lo, hi in _CONF_BUCKETS:
+            if lo <= conf < hi or (label == "0.9-1.0" and conf == 1.0):
+                conf_buckets[label] += 1
+                break
+    return {
+        "created": int(created),
+        "applied": int(applied),
+        "pending": int(pending),
+        "rejected": int(rejected),
+        "by_type": by_type,
+        "conf_buckets": conf_buckets,
+    }
+
+
 def run_candidate_ttl() -> dict:
     """每日 TTL 归档入口（scheduler job）。"""
     result = run_candidate_ttl_once()
@@ -92,47 +147,7 @@ def collect_digest_stats(day: date | None = None) -> dict:
         retr_avg_latency = s.exec(select(func.avg(RetrievalEvent.latency_ms))
                                   .where(RetrievalEvent.created_at >= start,
                                          RetrievalEvent.created_at < end)).one()
-        # 反思/蒸馏统计：反思提案 = candidate_id IS NULL 的提案（零迁移标识）
-        refl_created = s.exec(select(func.count()).select_from(MemoryProposal)
-                              .where(MemoryProposal.candidate_id.is_(None),
-                                     MemoryProposal.created_at >= start,
-                                     MemoryProposal.created_at < end)).one()
-        refl_applied = s.exec(select(func.count()).select_from(MemoryProposal)
-                              .where(MemoryProposal.candidate_id.is_(None),
-                                     MemoryProposal.status == "applied",
-                                     MemoryProposal.applied_at >= start,
-                                     MemoryProposal.applied_at < end)).one()
-        refl_pending = s.exec(select(func.count()).select_from(MemoryProposal)
-                              .where(MemoryProposal.candidate_id.is_(None),
-                                     MemoryProposal.status == "pending",
-                                     MemoryProposal.created_at >= start,
-                                     MemoryProposal.created_at < end)).one()
-        refl_rejected = s.exec(select(func.count()).select_from(MemoryProposal)
-                               .where(MemoryProposal.candidate_id.is_(None),
-                                      MemoryProposal.status == "rejected",
-                                      MemoryProposal.created_at >= start,
-                                      MemoryProposal.created_at < end)).one()
-        # 今日新增反思提案的 类型×状态 分布（反馈回路/回填校准输入）
-        refl_rows = s.exec(select(MemoryProposal.proposal_type,
-                                  MemoryProposal.status, func.count())
-                           .where(MemoryProposal.candidate_id.is_(None),
-                                  MemoryProposal.created_at >= start,
-                                  MemoryProposal.created_at < end)
-                           .group_by(MemoryProposal.proposal_type,
-                                     MemoryProposal.status)).all()
-        refl_conf_values = s.exec(select(MemoryProposal.confidence)
-                         .where(MemoryProposal.candidate_id.is_(None),
-                                MemoryProposal.created_at >= start,
-                                MemoryProposal.created_at < end)).all()
-    by_type: dict[str, dict[str, int]] = {}
-    for ptype, status, cnt in refl_rows:
-        by_type.setdefault(ptype, {})[status] = int(cnt)
-    conf_buckets = {label: 0 for label, _, _ in _CONF_BUCKETS}
-    for conf in refl_conf_values:
-        for label, lo, hi in _CONF_BUCKETS:
-            if lo <= conf < hi or (label == "0.9-1.0" and conf == 1.0):
-                conf_buckets[label] += 1
-                break
+        refl = _aggregate_reflection(s, start, end)
     return {
         "day": day or datetime.now().astimezone().date(),
         "memories": {
@@ -154,14 +169,7 @@ def collect_digest_stats(day: date | None = None) -> dict:
             "noise": int(retr_noise),
             "avg_latency_ms": round(float(retr_avg_latency), 1) if retr_avg_latency else 0,
         },
-        "reflection": {
-            "created": int(refl_created),
-            "applied": int(refl_applied),
-            "pending": int(refl_pending),
-            "rejected": int(refl_rejected),
-            "by_type": by_type,
-            "conf_buckets": conf_buckets,
-        },
+        "reflection": refl,
     }
 
 
@@ -218,6 +226,74 @@ def render_digest_markdown(stats: dict) -> str:
             "",
         ]
     return "\n".join(lines)
+
+
+def collect_calibration_stats(days: int = 7) -> dict:
+    """观察期回填输入：窗口内反思提案分布 + 裁决原因 + 水位。
+
+    对标 dry-run 校准报告（docs/memory-quality/reflect-calibration-2026-08-11.md），
+    8/18 观察期结束后生成真实分布回填表。窗口按 naive UTC 计算（库内约定）。
+    """
+    end = datetime.now(timezone.utc).replace(tzinfo=None)
+    start = end - timedelta(days=days)
+    with db.get_session() as s:
+        refl = _aggregate_reflection(s, start, end)
+        water = s.exec(select(func.coalesce(func.sum(MemoryItem.importance), 0.0))
+                       .where(MemoryItem.created_at >= start)).one()
+        reason_rows = s.exec(select(MemoryProposal.decision_reason, func.count())
+                             .where(MemoryProposal.candidate_id.is_(None),
+                                    MemoryProposal.status == "rejected",
+                                    MemoryProposal.decision_reason != "",
+                                    MemoryProposal.created_at >= start,
+                                    MemoryProposal.created_at < end)
+                             .group_by(MemoryProposal.decision_reason)
+                             .order_by(func.count().desc())
+                             .limit(10)).all()
+    return {
+        "window_days": days,
+        "reflection": refl,
+        "water_level": round(float(water), 2),
+        "reason_top": [(r, int(c)) for r, c in reason_rows],
+    }
+
+
+def render_calibration_markdown(stats: dict) -> str:
+    """回填校准报告正文（markdown；真实观察数据 → 阈值二次校准）。"""
+    refl = stats["reflection"]
+    lines = [
+        "# 反思阈值回填校准（真实观察数据）",
+        "",
+        f"> 观察窗口：最近 {stats['window_days']} 天 | "
+        f"水位（窗口内 importance 累加）：{stats['water_level']}",
+        "",
+        "## 反思提案分布（窗口新增）",
+        "",
+        "| 类型 | 自动应用 | 待审 | 拒绝 |",
+        "|---|---|---|---|",
+    ]
+    status_cols = ("applied", "pending", "rejected")
+    totals = {k: 0 for k in status_cols}
+    for ptype in ("add", "update", "merge", "deprecate"):
+        row = refl.get("by_type", {}).get(ptype, {})
+        cells = [str(row.get(k, 0)) for k in status_cols]
+        for k in status_cols:
+            totals[k] += row.get(k, 0)
+        lines.append(f"| {ptype} | {' | '.join(cells)} |")
+    lines.append(f"| 合计 | {' | '.join(str(totals[k]) for k in status_cols)} |")
+    buckets = refl.get("conf_buckets", {})
+    if buckets:
+        lines += ["", "## 置信桶（窗口新增）", "", "| 桶 | 数量 |", "|---|---|"]
+        for label, _, _ in _CONF_BUCKETS:
+            lines.append(f"| {label} | {buckets.get(label, 0)} |")
+    if stats.get("reason_top"):
+        lines += ["", "## 拒绝原因 Top（决策反馈回路）", "", "| 原因 | 次数 |", "|---|---|"]
+        for reason, cnt in stats["reason_top"]:
+            lines.append(f"| {reason} | {cnt} |")
+    lines += ["", "## 待回填结论（对标 dry-run 推荐）", "",
+              "- A 水位触发：REFLECT_IMPORTANCE_POOL 是否保持 5.0",
+              "- B 自动应用分流：REFLECT_AUTO_APPLY_CONF 是否保持 0.7",
+              "- C 落库底线：REFLECT_MIN_CONFIDENCE 是否保持 0.5"]
+    return "\n".join(lines) + "\n"
 
 
 def write_digest_report(stats: dict) -> Path:

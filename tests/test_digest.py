@@ -100,6 +100,93 @@ class TestReflectionDistribution:
         assert "置信桶（今日新增）" in md
 
 
+class TestCalibrationStats:
+    """回填校准输入：窗口聚合（类型×状态 + 置信桶 + 裁决原因 + 水位）。"""
+
+    def test_collect_calibration_stats_window(self, digest_env):
+        session_factory = digest_env
+        now = _utc_naive(datetime.now(timezone.utc))
+        _seed(session_factory, [
+            MemoryProposal(id="p1", proposal_type="add", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "a"},
+                           confidence=0.9, status="applied", created_at=now,
+                           applied_at=now),
+            MemoryProposal(id="p2", proposal_type="merge", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "b"},
+                           confidence=0.75, status="pending", created_at=now),
+            MemoryProposal(id="p3", proposal_type="merge", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "c"},
+                           confidence=0.65, status="rejected", created_at=now,
+                           decision_reason="证据不足，宁 miss"),
+            MemoryProposal(id="p4", proposal_type="deprecate", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "d"},
+                           confidence=0.85, status="rejected", created_at=now,
+                           decision_reason="与新记忆冲突，需人工复核"),
+            # 窗口外（旧提案）应排除
+            MemoryProposal(id="p5", proposal_type="add", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "e"},
+                           confidence=0.8, status="rejected",
+                           created_at=now - timedelta(days=10)),
+        ])
+        _seed(session_factory, [
+            MemoryItem(id="m1", memory_type="semantic", key="k1", content="a",
+                       importance=1.2, created_at=now),
+            MemoryItem(id="m2", memory_type="semantic", key="k2", content="b",
+                       importance=2.8, created_at=now),
+            MemoryItem(id="m3", memory_type="semantic", key="k3", content="c",
+                       importance=9.0, created_at=now - timedelta(days=10)),
+        ])
+
+        from lantai.workers.digest_worker import collect_calibration_stats
+        stats = collect_calibration_stats(days=7)
+        assert stats["reflection"]["created"] == 4
+        assert stats["reflection"]["applied"] == 1
+        assert stats["reflection"]["pending"] == 1
+        assert stats["reflection"]["rejected"] == 2
+        assert stats["reflection"]["by_type"] == {
+            "add": {"applied": 1},
+            "merge": {"pending": 1, "rejected": 1},
+            "deprecate": {"rejected": 1},
+        }
+        assert stats["reflection"]["conf_buckets"] == {
+            "0.5-0.6": 0, "0.6-0.7": 1, "0.7-0.8": 1,
+            "0.8-0.9": 1, "0.9-1.0": 1,
+        }
+        assert stats["water_level"] == 4.0  # 仅窗口内两条（1.2+2.8）
+        assert stats["reason_top"] == [
+            ("证据不足，宁 miss", 1),
+            ("与新记忆冲突，需人工复核", 1),
+        ]
+
+    def test_render_calibration_markdown(self, digest_env):
+        session_factory = digest_env
+        now = _utc_naive(datetime.now(timezone.utc))
+        _seed(session_factory, [
+            MemoryProposal(id="p1", proposal_type="add", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "a"},
+                           confidence=0.9, status="applied", created_at=now,
+                           applied_at=now),
+            MemoryProposal(id="p2", proposal_type="merge", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "b"},
+                           confidence=0.65, status="rejected", created_at=now,
+                           decision_reason="证据不足"),
+        ])
+        _seed(session_factory, [
+            MemoryItem(id="m1", memory_type="semantic", key="k1", content="a",
+                       importance=5.5, created_at=now),
+        ])
+        from lantai.workers.digest_worker import (
+            collect_calibration_stats, render_calibration_markdown)
+        stats = collect_calibration_stats(days=7)
+        md = render_calibration_markdown(stats)
+        assert "反思阈值回填校准（真实观察数据）" in md
+        assert "| add | 1 | 0 | 0 |" in md
+        assert "| merge | 0 | 0 | 1 |" in md
+        assert "| 合计 | 1 | 0 | 1 |" in md
+        assert "水位（窗口内 importance 累加）" in md and "5.5" in md
+        assert "证据不足" in md
+
+
 class TestCollectStats:
     """五项统计数字正确（真实 DB 查询）。"""
 

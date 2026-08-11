@@ -1,16 +1,103 @@
+from datetime import datetime, timedelta, timezone
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from lantai.core.settings import settings
 from lantai.core.logger import logger
 
 _scheduler: BackgroundScheduler | None = None
 
-# F8: worker 上次运行时间记录（供 /stats 暴露）
+# F8: worker 上次运行时间记录（供 /stats 暴露；观察期保底 v8 起同时落库持久化）
 WORKER_LAST_RUN: dict[str, str] = {}
 
 
+def _last_run_from_db(name: str) -> str | None:
+    """读 DB 持久化的上次运行时间；异常降级返回 None（不影响运行）。"""
+    try:
+        from sqlalchemy import text
+        from lantai.storage.db import get_session
+        with get_session() as s:
+            row = s.exec(
+                text("SELECT last_run_utc FROM scheduler_run WHERE name=:n"),
+                params={"n": name}).first()
+            return row[0] if row else None
+    except Exception:
+        return None
+
+
 def record_run(name: str) -> None:
+    """记录 worker 本次运行完成时间：内存（/stats 即时）+ DB（重启不丢）。"""
     from lantai.core.time import utcnow
-    WORKER_LAST_RUN[name] = utcnow().isoformat()
+    stamp = utcnow().isoformat()
+    WORKER_LAST_RUN[name] = stamp
+    try:
+        from sqlalchemy import text
+        from lantai.storage.db import get_session
+        with get_session() as s:
+            s.exec(
+                text("INSERT INTO scheduler_run(name, last_run_utc) "
+                     "VALUES(:n, :t) ON CONFLICT(name) "
+                     "DO UPDATE SET last_run_utc=:t"),
+                params={"n": name, "t": stamp})
+            s.commit()
+    except Exception:
+        pass  # 落库失败不阻断（/stats 仍有内存态）
+
+
+def get_last_run(name: str) -> str | None:
+    """上次运行时间：DB 为准，内存兜底（首次重启前 DB 尚未写入时）。"""
+    return _last_run_from_db(name) or WORKER_LAST_RUN.get(name)
+
+
+def _parse_utc_iso(value: str) -> datetime | None:
+    try:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def should_catch_up(name: str, cron_hour: int, cron_minute: int = 0,
+                    now: datetime | None = None,
+                    last_run: str | None = None) -> bool:
+    """每日 cron 任务漏跑判定（观察期保底）：上次运行早于最近一次已到点的
+    调度时间 → 需补跑。未记录/无法解析按未跑处理（宁补跑不静默缺样本）。"""
+    if last_run is None:
+        last_run = get_last_run(name)
+    now = now or datetime.now(timezone.utc)
+    today_fire = now.replace(hour=cron_hour, minute=cron_minute,
+                             second=0, microsecond=0)
+    most_recent_fire = (today_fire if now >= today_fire
+                        else today_fire - timedelta(days=1))
+    if last_run is None:
+        return True
+    last_dt = _parse_utc_iso(last_run)
+    if last_dt is None:
+        return True
+    return last_dt < most_recent_fire
+
+
+def _catch_up_daily_jobs() -> None:
+    """启动补跑：每日 cron 任务错过调度点（进程当时未运行）时补跑一次，
+    观察期样本不因重启/关机断档。"""
+    if _scheduler is None:
+        return
+    jobs = []
+    if settings.DIGEST_ENABLED:
+        from lantai.workers.digest_worker import run_digest_once
+        jobs.append(("digest", run_digest_once, settings.DIGEST_CRON_HOUR, 0))
+    if settings.REFLECT_ENABLED:
+        from lantai.workers.reflect_worker import run_reflect_once
+        jobs.append(("reflect", run_reflect_once,
+                     settings.REFLECT_CRON_HOUR, 1))
+    for name, fn, hour, minute in jobs:
+        if should_catch_up(name, hour, minute):
+            run_at = datetime.now(timezone.utc) + timedelta(seconds=2)
+            _scheduler.add_job(fn, "date", run_date=run_at,
+                               id=f"{name}_catchup", replace_existing=True)
+            logger.info("启动补跑：%s 错过调度点，立即补跑一次", name)
+
 
 def start_scheduler():
     global _scheduler
@@ -66,6 +153,7 @@ def start_scheduler():
 
     _scheduler.start()
     logger.info("Scheduler started with ingest/evolve/forget jobs")
+    _catch_up_daily_jobs()
 
 def stop_scheduler():
     if _scheduler:
