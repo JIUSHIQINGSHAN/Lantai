@@ -55,7 +55,7 @@ Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户
 经 `scripts/install_hermes_plugin.py` 部署 lantai-hook 插件；MCP 由插件内嵌配置指向
 同一 server。
 
-## 工具清单（21）
+## 工具清单（28）
 
 | 工具 | 用途 |
 |---|---|
@@ -73,11 +73,16 @@ Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户
 | obsidian_sync | Obsidian 笔记同步（原文直存 + [[双链]] 实体/边沉淀） |
 | offload_read | 读取卸载全文（长记忆经上下文卸载后，按 memory_id 取回完整原文） |
 | wiki_read | 记忆 Wiki 下钻（先看 index/overview，再按 slug 取页面正文） |
+| mem_recent | 最近记忆（只读，按更新时间倒序） |
+| mem_stats | 记忆概览（总数/分布/待审候选/检查点/待审提案，只读聚合） |
+| mem_health | 深度健康检查（SQLite + 向量存储，不触发外部 LLM） |
+| autodream_report / autodream_trigger | 蒸馏预演（dry-run 不写库）/ 执行一轮蒸馏（落待审提案，人工裁决才应用） |
+| proposals_list / proposal_decide | 待审提案查看 / 裁决（approve 先落 Checkpoint 可回滚，reject 记 reason） |
 
 ## 验证清单（接入后逐条过）
 
 1. `initialize` 返回 `serverInfo.name == "lantai"`、`protocolVersion == "2024-11-05"`
-2. `tools/list` 返回 ≥14 个工具（当前 21），每个都有 description + inputSchema
+2. `tools/list` 返回 28 个工具，每个都有 description + inputSchema
 3. `ping` 有响应；`notifications/initialized` 无响应（不报错）
 4. `tools/call search` 传中文 query 返回结果（验证 UTF-8 无乱码）
 5. 用 `raw_add` 写一条原文 → `search` 能召回（验证写读闭环）

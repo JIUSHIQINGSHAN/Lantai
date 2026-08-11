@@ -14,6 +14,7 @@ SQLite+FTS5+ChromaDB 自研；所有核心函数必须有不 mock 冒烟测试�
 - 06-vault-panel：档案与锦囊控制台（VAULT 面板）
 - 07-import-jsonl：冷启动导入（历史会话 JSONL 批量原文直存，保留原始时间戳）
 - 08-acl：资产绑定 + lane 级 ACL（按 agent_id 绑定 lane 集）
+- 09-mcp-tools-wave2：MCP 工具扩容第二波（21→28，反查已有服务补齐暴露）
 
 ## 明确不吸收
 

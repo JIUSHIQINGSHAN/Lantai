@@ -275,6 +275,89 @@ def handle_wiki_read(params: dict) -> dict:
     return read_wiki_page(slug)
 
 
+def handle_mem_recent(params: dict) -> dict:
+    """最近记忆（只读）：按更新时间倒序列出 active 记忆。"""
+    limit = params.get("limit", 20)
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 200):
+        raise ValueError("limit must be an int in [1, 200]")
+    from lantai.services.memory_service import list_memories
+    return list_memories(status="active", limit=limit)
+
+
+def handle_mem_stats(params: dict) -> dict:
+    """记忆概览（只读聚合）：总数/分布/待审候选/检查点/待审提案。"""
+    from lantai.ops.overview import get_overview
+    return get_overview()
+
+
+def handle_mem_health(params: dict) -> dict:
+    """深度健康检查：SQLite 可读 + 向量存储可用（不触发外部 LLM 调用）。"""
+    checks: dict = {}
+    try:
+        from sqlmodel import func, select
+        from lantai.models.tables import MemoryItem
+        from lantai.storage import db
+        with db.get_session() as s:
+            checks["sqlite"] = "ok"
+            checks["memory_count"] = int(
+                s.exec(select(func.count()).select_from(MemoryItem)).one())
+    except Exception as e:
+        checks["sqlite"] = f"fail: {type(e).__name__}"
+    try:
+        from lantai.storage.vector_store import get_vector_store
+        get_vector_store()
+        checks["chromadb"] = "ok"
+    except Exception as e:
+        checks["chromadb"] = f"fail: {type(e).__name__}"
+    checks["ok"] = checks.get("sqlite") == "ok" and checks.get("chromadb") == "ok"
+    return checks
+
+
+def handle_autodream_report(params: dict) -> dict:
+    """蒸馏预演（dry-run 不写库）：聚类 → 规划，返回将产出的提案计划与跳过清单。"""
+    limit = params.get("limit")
+    if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool)
+                              or not (1 <= limit <= 5000)):
+        raise ValueError("limit must be an int in [1, 5000]")
+    from lantai.evolution.autodream import run_autodream_once
+    return run_autodream_once(dry_run=True, limit=limit)
+
+
+def handle_autodream_trigger(params: dict) -> dict:
+    """执行一轮蒸馏：聚类 → 规划 → 落 pending 提案（宁 miss 不脏写：低置信度进 skipped，人工裁决后才应用）。"""
+    from lantai.evolution.autodream import run_autodream_once
+    return run_autodream_once(dry_run=False)
+
+
+def handle_proposals_list(params: dict) -> dict:
+    """待审提案列表（蒸馏/反射产出，等人工裁决）。"""
+    status = params.get("status", "pending")
+    limit = params.get("limit", 50)
+    if not isinstance(status, str) or status not in (
+            "pending", "approved", "rejected", "applied", "rolled_back"):
+        raise ValueError("status must be one of: pending/approved/rejected/applied/rolled_back")
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
+        raise ValueError("limit must be an int in [1, 500]")
+    from lantai.services.evolution_service import list_proposals
+    return list_proposals(status, limit)
+
+
+def handle_proposal_decide(params: dict) -> dict:
+    """裁决提案：approve 应用（先落 Checkpoint 可回滚），reject 归档并记 reason。"""
+    proposal_id = params.get("proposal_id", "")
+    approve = params.get("approve", False)
+    reason = params.get("reason", "")
+    if not isinstance(proposal_id, str) or not proposal_id.strip():
+        raise ValueError("proposal_id must be a non-empty string")
+    if not isinstance(approve, bool):
+        raise ValueError("approve must be a boolean")
+    if not isinstance(reason, str):
+        raise ValueError("reason must be a string")
+    from lantai.models.schemas import ProposalDecisionReq
+    from lantai.services.evolution_service import decide_proposal
+    return decide_proposal(proposal_id, ProposalDecisionReq(approve=approve, reason=reason))
+
+
 TOOLS = {
     "search":   {"description": "搜索记忆", "inputSchema": {
         "type": "object", "properties": {
@@ -379,6 +462,32 @@ TOOLS = {
         "type": "object", "properties": {
             "slug": {"type": "string", "description": "页面 slug（index.md 链接或 overview [[wikilink]] 中可见）"},
         }, "required": ["slug"]}},
+    "mem_recent": {"description": "最近记忆（只读）：按更新时间倒序列出 active 记忆", "inputSchema": {
+        "type": "object", "properties": {
+            "limit": {"type": "integer", "default": 20, "description": "返回条数 [1,200]"},
+        }}},
+    "mem_stats": {"description": "记忆概览（只读聚合）：总数/按 lane/decay_class/待审候选积压/检查点/待审提案", "inputSchema": {
+        "type": "object", "properties": {}}},
+    "mem_health": {"description": "深度健康检查：SQLite 可读 + 向量存储可用（不触发外部 LLM 调用）", "inputSchema": {
+        "type": "object", "properties": {}}},
+    "autodream_report": {"description": "蒸馏预演（dry-run 不写库）：聚类 → 规划，返回将产出的提案计划与跳过清单", "inputSchema": {
+        "type": "object", "properties": {
+            "limit": {"type": "integer", "description": "参与聚类的记忆上限（可选）"},
+        }}},
+    "autodream_trigger": {"description": "执行一轮蒸馏：聚类 → 规划 → 落 pending 提案（低置信度进 skipped，人工裁决后才应用）", "inputSchema": {
+        "type": "object", "properties": {}}},
+    "proposals_list": {"description": "待审提案列表（蒸馏/反射产出，等人工裁决）", "inputSchema": {
+        "type": "object", "properties": {
+            "status": {"type": "string", "default": "pending",
+                       "description": "pending|approved|rejected|applied|rolled_back"},
+            "limit": {"type": "integer", "default": 50},
+        }}},
+    "proposal_decide": {"description": "裁决提案：approve 应用（先落 Checkpoint 可回滚），reject 归档并记 reason", "inputSchema": {
+        "type": "object", "properties": {
+            "proposal_id": {"type": "string", "description": "提案 id（proposals_list 中可见）"},
+            "approve": {"type": "boolean", "description": "true=应用；false=拒绝归档"},
+            "reason": {"type": "string", "default": "", "description": "裁决理由（落库可审计）"},
+        }, "required": ["proposal_id", "approve"]}},
 }
 
 TOOL_HANDLERS = {
@@ -403,6 +512,13 @@ TOOL_HANDLERS = {
     "mem_create_skill": handle_mem_create_skill,
     "offload_read": handle_offload_read,
     "wiki_read": handle_wiki_read,
+    "mem_recent": handle_mem_recent,
+    "mem_stats": handle_mem_stats,
+    "mem_health": handle_mem_health,
+    "autodream_report": handle_autodream_report,
+    "autodream_trigger": handle_autodream_trigger,
+    "proposals_list": handle_proposals_list,
+    "proposal_decide": handle_proposal_decide,
 }
 
 

@@ -1,10 +1,13 @@
 """MCP 协议测试：标准错误码 + 输入校验 + 异常隔离"""
 import importlib.util
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
+from sqlalchemy.pool import StaticPool
+from sqlmodel import SQLModel, Session, create_engine, select
 
 MCP_PATH = Path(__file__).parent.parent / "scripts" / "mcp_server.py"
 
@@ -27,7 +30,7 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert len(resp["result"]["tools"]) == 21  # + wiki_read（记忆 Wiki 下钻）
+    assert len(resp["result"]["tools"]) == 28  # + 第二波：mem_recent/mem_stats/mem_health/autodream_*/proposals_*/proposal_decide
     assert "candidates_pending" in names
     assert "candidate_review" in names
     assert "add_dialogue" in names
@@ -43,6 +46,13 @@ def test_tools_list():
     assert "offload_read" in names
     assert "wiki_read" in names
     assert "obsidian_sync" in names
+    assert "mem_recent" in names
+    assert "mem_stats" in names
+    assert "mem_health" in names
+    assert "autodream_report" in names
+    assert "autodream_trigger" in names
+    assert "proposals_list" in names
+    assert "proposal_decide" in names
 
 
 def test_unknown_tool():
@@ -349,3 +359,146 @@ def test_mem_create_skill_validation_error():
                        "params": {"name": "mem_create_skill",
                                   "arguments": {"name": "", "steps": ["a"]}}})
     assert resp["error"]["code"] == -32602
+
+
+# ── 第二波工具扩容（借鉴 aiduMEI 工具面，反查兰台已有服务）────────────────
+
+@pytest.fixture()
+def mcp_env():
+    """内存 SQLite 真实建表 + FTS；仅 mock 外部依赖（embedding/向量存储）。"""
+    import lantai.models.tables  # noqa: F401
+    import lantai.storage.db as db_module
+    from lantai.storage.fts import init_fts
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    init_fts(engine.raw_connection())
+
+    def session_factory() -> Session:
+        return Session(engine)
+
+    vector_store_mock = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
+    with patch.object(db_module, "get_session", session_factory), \
+         patch("lantai.llm.client.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock), \
+         patch("lantai.storage.vector_store.get_vector_store", return_value=vector_store_mock):
+        yield session_factory, engine
+
+
+def _seed_memory(s, mid, content, lane="fact", status="active"):
+    from lantai.models.tables import MemoryItem
+    now = datetime.now(timezone.utc)
+    s.add(MemoryItem(
+        id=mid, memory_type="semantic", key=f"k-{mid}", content=content,
+        lane=lane, status=status, importance=0.5, decay_score=1.0,
+        decay_class="episodic", use_count=0,
+        created_at=now - timedelta(days=3), updated_at=now - timedelta(hours=1),
+    ))
+
+
+def _call_tool(mod, name, args):
+    resp = mod.handle({"jsonrpc": "2.0", "id": 99, "method": "tools/call",
+                       "params": {"name": name, "arguments": args}})
+    assert "error" not in resp, resp.get("error")
+    return json.loads(resp["result"]["content"][0]["text"])
+
+
+def test_mem_recent_active_only(mcp_env):
+    session_factory, _ = mcp_env
+    with session_factory() as s:
+        _seed_memory(s, "m1", "发布会安排下周")
+        _seed_memory(s, "m2", "已归档旧事", status="archived")
+        s.commit()
+    out = _call_tool(_load_mcp(), "mem_recent", {"limit": 10})
+    assert [m["id"] for m in out["memories"]] == ["m1"]
+
+
+def test_mem_stats_overview(mcp_env):
+    session_factory, _ = mcp_env
+    with session_factory() as s:
+        _seed_memory(s, "m1", "发布会安排下周")
+        _seed_memory(s, "m2", "规则：发布前先跑回滚演练", lane="rule")
+        s.commit()
+    out = _call_tool(_load_mcp(), "mem_stats", {})
+    assert out["memories"]["total"] == 2
+    assert out["memories"]["active"] == 2
+    assert out["memories"]["by_lane"]["fact"] == 1
+    assert out["memories"]["by_lane"]["rule"] == 1
+
+
+def test_mem_health_ok(mcp_env):
+    out = _call_tool(_load_mcp(), "mem_health", {})
+    assert out["ok"] is True
+    assert out["sqlite"] == "ok"
+    assert "chromadb" in out
+
+
+def test_autodream_report_dry_run_no_write(mcp_env):
+    session_factory, _ = mcp_env
+    with session_factory() as s:
+        _seed_memory(s, "m1", "产品发布会定在周五下午两点")
+        _seed_memory(s, "m2", "发布会需要提前一天彩排")
+        _seed_memory(s, "m3", "无关记忆：今天天气不错", lane="rule")
+        s.commit()
+    out = _call_tool(_load_mcp(), "autodream_report", {})
+    assert out["clusters"] >= 1
+    assert out["created"] == 0  # dry-run 不写库
+
+
+def test_autodream_trigger_then_proposals_list(mcp_env):
+    session_factory, _ = mcp_env
+    with session_factory() as s:
+        _seed_memory(s, "m1", "产品发布会定在周五下午两点")
+        _seed_memory(s, "m2", "发布会需要提前一天彩排")
+        s.commit()
+    out = _call_tool(_load_mcp(), "autodream_trigger", {})
+    assert out["clusters"] >= 1
+    assert out["created"] >= 1
+    plist = _call_tool(_load_mcp(), "proposals_list", {"status": "pending", "limit": 10})
+    assert len(plist["proposals"]) >= 1
+    assert plist["proposals"][0]["decided_by"] == "autodream"
+
+
+def test_proposal_decide_reject_records_reason(mcp_env):
+    session_factory, _ = mcp_env
+    from lantai.models.enums import ProposalStatus
+    from lantai.models.tables import MemoryProposal
+    with session_factory() as s:
+        s.add(MemoryProposal(id="prop1", proposal_type="add", evidence_ids=["m1"],
+                             reason="测试提案", proposed_patch={"content": "x"},
+                             confidence=0.6, status=ProposalStatus.PENDING,
+                             decided_by="autodream"))
+        s.commit()
+    out = _call_tool(_load_mcp(), "proposal_decide",
+                     {"proposal_id": "prop1", "approve": False, "reason": "不想要"})
+    assert out["ok"] is True
+    with session_factory() as s:
+        p = s.get(MemoryProposal, "prop1")
+        assert p.status == ProposalStatus.REJECTED
+        assert p.decision_reason == "不想要"
+
+
+def test_proposal_decide_approve_applies(mcp_env):
+    session_factory, _ = mcp_env
+    from lantai.models.enums import ProposalStatus
+    from lantai.models.tables import MemoryItem, MemoryProposal
+    with session_factory() as s:
+        _seed_memory(s, "m1", "发布会定在周五")
+        s.add(MemoryProposal(
+            id="prop2", proposal_type="add", evidence_ids=["m1"],
+            reason="蒸馏", proposed_patch={
+                "memory_type": "semantic", "key": "发布会议程",
+                "content": "- 发布会定在周五\n- 提前一天彩排",
+                "lane": "fact", "structure": {}},
+            confidence=0.8, status=ProposalStatus.PENDING, decided_by="autodream"))
+        s.commit()
+    out = _call_tool(_load_mcp(), "proposal_decide", {"proposal_id": "prop2", "approve": True})
+    assert out["ok"] is True
+    with session_factory() as s:
+        p = s.get(MemoryProposal, "prop2")
+        assert p.status == ProposalStatus.APPLIED
+        rows = s.exec(select(MemoryItem)).all()
+        assert len(rows) == 2  # 原记忆 + 应用出的新记忆
+
