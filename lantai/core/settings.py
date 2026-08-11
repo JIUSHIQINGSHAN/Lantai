@@ -208,7 +208,7 @@ class Settings(BaseSettings):
     PENALTY_TTL_DAYS: int = 180
 
     # ── Reflection 反思/蒸馏（spec: docs/plans/reflection-module-spec.md）──
-    REFLECT_ENABLED: bool = False            # 默认关，显式开启
+    REFLECT_ENABLED: bool = True             # 观察期开启（2026-08-11 起，一周后按 digest 反思统计回填校准）
     REFLECT_CRON_HOUR: int = 22              # UTC；与 digest 同小时错 1 分钟
     REFLECT_MAX_BATCH: int = 20              # 单次蒸馏候选上限（LLM 成本防护）
     REFLECT_IMPORTANCE_POOL: float = 5.0     # 水位触发阈值（dry-run 校准 2026-08-11，见 docs/memory-quality/reflect-calibration-2026-08-11.md）
