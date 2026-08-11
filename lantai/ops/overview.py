@@ -47,6 +47,14 @@ def build_overview(session) -> dict:
         select(func.count()).select_from(MemoryProposal)
         .where(MemoryProposal.status == "pending")).one()
 
+    # 提取来源（provenance）分布：按 prompt 分组计数，让"记忆质量变差"可溯源
+    provenance_rows = session.exec(select(MemoryItem.provenance)).all()
+    by_prompt: dict[str, int] = {}
+    for prov in provenance_rows:
+        if not prov or not isinstance(prov, dict):
+            continue
+        prompt = prov.get("prompt") or "unknown"
+        by_prompt[prompt] = by_prompt.get(prompt, 0) + 1
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "memories": {
@@ -59,6 +67,7 @@ def build_overview(session) -> dict:
         "candidates_pending_review": int(candidates_pending),
         "checkpoints": int(checkpoints),
         "proposals_pending": int(proposals_pending),
+        "provenance_by_prompt": {k: int(v) for k, v in by_prompt.items()},
     }
 
 

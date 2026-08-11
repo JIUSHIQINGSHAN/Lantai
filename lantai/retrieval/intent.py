@@ -12,6 +12,10 @@ INTENT_SYS = """你是一个搜索意图分类器。给定用户 query，判断�
 
 def classify_intent(query: str) -> dict:
     """分类 query 返回意图类型和候选集大小"""
+    import os as _os
+    if _os.environ.get("LANTAI_INTENT_OFF") == "1":
+        return {"intent": settings.DEFAULT_INTENT,
+                "candidate_n": settings.INTENT_CANDIDATE_SIZES.get(settings.DEFAULT_INTENT, 10)}
     try:
         data = chat_json(INTENT_SYS, query)
         intent = data.get("intent", settings.DEFAULT_INTENT)

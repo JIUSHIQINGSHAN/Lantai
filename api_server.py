@@ -24,7 +24,8 @@ from lantai.api import (
     routes_dialogue_router,
     routes_digest_router,
     routes_conflicts_router,
-    routes_conflicts_router,
+    routes_obsidian_router,
+    routes_ui_router,
 )
 
 
@@ -49,6 +50,7 @@ app = FastAPI(title="兰台记忆（Lantai）", version="0.3.0", lifespan=lifesp
 
 # 公共端点（不需要鉴权）
 app.include_router(routes_health_router)
+app.include_router(routes_ui_router)
 
 # 业务端点（需要 API Key 鉴权）
 protected_routers = [
@@ -67,7 +69,7 @@ protected_routers = [
     routes_dialogue_router,
     routes_digest_router,
     routes_conflicts_router,
-    routes_conflicts_router,
+    routes_obsidian_router,
 ]
 for router in protected_routers:
     app.include_router(router, dependencies=[Depends(verify_api_key)])

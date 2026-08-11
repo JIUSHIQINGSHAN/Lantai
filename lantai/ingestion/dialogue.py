@@ -18,6 +18,9 @@ from lantai.core.ids import new_id
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.gate.prefilter import NO_MEMORY_PATTERNS
+from lantai.core.provenance import (
+    PROVENANCE_PROMPT_DIALOGUE_CHITCHAT, PROVENANCE_PROMPT_DIALOGUE_FASTPATH,
+    PROVENANCE_PROMPT_EXTRACT, make_provenance)
 from lantai.models.tables import RawDocument, MemoryCandidate
 from lantai.parsing.extractor import extract_candidate
 from lantai.parsing.fastpath import fastpath_check
@@ -112,6 +115,10 @@ def _create_candidate(text: str, *, lane: str, fp_data: dict | None,
             actions=fp_data.get("actions", []) if fp_data else [],
             extractor_confidence=(fp_data.get("extractor_confidence", 0.0)
                                   if fp_data else 0.0),
+            provenance=make_provenance({
+                "fastpath": PROVENANCE_PROMPT_DIALOGUE_FASTPATH,
+                "pending_review": PROVENANCE_PROMPT_DIALOGUE_CHITCHAT,
+            }.get(status, PROVENANCE_PROMPT_EXTRACT)),
             lane=lane, status=status,
         )
         if status == "pending_review":

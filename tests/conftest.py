@@ -76,3 +76,16 @@ def param_env():
     # 恢复 settings 白名单参数
     for n, v in saved.items():
         setattr(settings, n, v)
+
+@pytest.fixture(autouse=True)
+def _no_background_scheduler(monkeypatch):
+    """全量顺序污染防护：测试进程内关闭真实后台调度器。
+
+    api_server 的 lifespan 会 start_scheduler() 启动 BackgroundScheduler，
+    其 evolve/ingest/forget 等 worker 会对真实库做真实 LLM 调用（拖慢全量、
+    写脏真实库），且 stop_scheduler(wait=False) 不等待在跑任务，会留下僵尸
+    线程干扰后续测试——全量顺序偶发失败的主要污染源。测试只验证 HTTP/业务
+    行为，不依赖调度器，因此统一置空 start_scheduler。
+    """
+    import api_server
+    monkeypatch.setattr(api_server, "start_scheduler", lambda: None)

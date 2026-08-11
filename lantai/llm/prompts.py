@@ -189,3 +189,8 @@ Return strict JSON:
 Only output JSON."""
 
 
+SCENE_NAMING_SYS = """You are organizing an agent long-term memory into named scenes.
+Given one line per memory cluster (member keys), return strict JSON:
+  scenes: list of {"name": short scene title, "summary": one-sentence summary}
+Exactly one entry per cluster, in the same order. Names must be concise nouns/phrases
+in the same language as the keys. Only output JSON."""

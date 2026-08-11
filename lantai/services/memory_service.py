@@ -10,6 +10,8 @@ from lantai.models.tables import RawDocument, MemoryCandidate, CoreMemoryBlock, 
 from lantai.models.enums import MemoryTier
 from lantai.models.schemas import AddMemoryReq, RawMemoryReq
 from lantai.llm.client import embed
+from lantai.core.provenance import (
+    PROVENANCE_PROMPT_EXTRACT, PROVENANCE_PROMPT_FASTPATH_DIRECT, make_provenance)
 from lantai.retrieval.hybrid import index_memory_item
 from lantai.storage.fts import sync_fts
 from lantai.parsing.extractor import extract_candidate
@@ -110,6 +112,7 @@ def _create_candidate_direct(req: AddMemoryReq, fp_data: dict) -> dict:
             claims=fp_data["claims"], methods=fp_data["methods"],
             constraints=fp_data["constraints"], actions=fp_data["actions"],
             extractor_confidence=fp_data["extractor_confidence"],
+            provenance=make_provenance(PROVENANCE_PROMPT_FASTPATH_DIRECT),
             lane=fp_data.get("lane", req.lane),
             status="fastpath",
         )
@@ -145,6 +148,7 @@ def _create_candidate_with_extraction(req: AddMemoryReq) -> dict:
             claims=data["claims"], methods=data["methods"],
             constraints=data["constraints"], actions=data["actions"],
             extractor_confidence=data["extractor_confidence"],
+            provenance=make_provenance(PROVENANCE_PROMPT_EXTRACT),
             lane=req.lane,
         )
         s.add(cand); s.commit(); s.refresh(cand)
@@ -253,3 +257,93 @@ def add_raw_memory(req: RawMemoryReq) -> dict:
         sync_fts(s, mem.id, mem.content)
         s.commit()
         return {"memory_id": mem.id, "dedup": False, "verbatim": True}
+
+def build_memories_page(
+    session,
+    lane: str = "",
+    status: str = "",
+    decay_class: str = "",
+    memory_type: str = "",
+    limit: int = 50,
+    offset: int = 0,
+    content_max: int = 160,
+) -> dict:
+    """档案浏览（VAULT，Ticket 06）：只读分页 + 过滤，updated_at 新→旧。
+
+    纯函数：给定 session 直查，不打开会话（测试可直接传真实临时 session）。
+    content 按 content_max 截断（超出加省略号），避免列表页拖全文。
+    """
+    if not 1 <= limit <= 100:
+        raise ValueError("limit must be in [1,100]")
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+    if content_max < 0:
+        raise ValueError("content_max must be >= 0")
+
+    from sqlmodel import func
+
+    conds = []
+    if lane:
+        conds.append(MemoryItem.lane == lane)
+    if status:
+        conds.append(MemoryItem.status == status)
+    if decay_class:
+        conds.append(MemoryItem.decay_class == decay_class)
+    if memory_type:
+        conds.append(MemoryItem.memory_type == memory_type)
+
+    total = session.exec(
+        select(func.count()).select_from(MemoryItem).where(*conds)
+    ).one()
+    rows = session.exec(
+        select(MemoryItem)
+        .where(*conds)
+        .order_by(MemoryItem.updated_at.desc(), MemoryItem.id.asc())
+        .offset(offset)
+        .limit(limit)
+    ).all()
+
+    def _row(m: MemoryItem) -> dict:
+        content = m.content
+        truncated = False
+        if len(content) > content_max:
+            content, truncated = content[:content_max], True
+        return {
+            "id": m.id,
+            "memory_type": m.memory_type,
+            "lane": m.lane,
+            "status": m.status,
+            "tier": m.tier,
+            "decay_class": m.decay_class,
+            "decay_score": m.decay_score,
+            "use_count": m.use_count,
+            "scene_id": m.scene_id,
+            "created_at": m.created_at.isoformat(timespec="seconds") if m.created_at else None,
+            "updated_at": m.updated_at.isoformat(timespec="seconds") if m.updated_at else None,
+            "content": content + ("…" if truncated else ""),
+        }
+
+    return {
+        "total": int(total),
+        "limit": limit,
+        "offset": offset,
+        "memories": [_row(m) for m in rows],
+    }
+
+
+def list_memories(
+    lane: str = "",
+    status: str = "",
+    decay_class: str = "",
+    memory_type: str = "",
+    limit: int = 50,
+    offset: int = 0,
+    content_max: int = 160,
+) -> dict:
+    """打开默认会话执行档案浏览（只读）。"""
+    with db.get_session() as s:
+        return build_memories_page(
+            s, lane=lane, status=status, decay_class=decay_class,
+            memory_type=memory_type, limit=limit, offset=offset,
+            content_max=content_max,
+        )

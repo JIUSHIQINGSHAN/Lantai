@@ -5,6 +5,7 @@ from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.ingestion.registry import ADAPTERS
 from lantai.parsing.extractor import extract_candidate
+from lantai.core.provenance import PROVENANCE_PROMPT_EXTRACT, make_provenance
 from lantai.models.tables import (Source, IngestJob, RawDocument,
                                        MemoryCandidate)
 from lantai.storage import db
@@ -45,6 +46,7 @@ def run_ingest_once():
                         claims=data["claims"], methods=data["methods"],
                         constraints=data["constraints"], actions=data["actions"],
                         extractor_confidence=data["extractor_confidence"],
+                        provenance=make_provenance(PROVENANCE_PROMPT_EXTRACT),
                     )
                     s.add(cand); new_cands += 1
                 s.commit()

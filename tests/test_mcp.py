@@ -27,7 +27,7 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert len(resp["result"]["tools"]) == 12  # + raw_add/rollback/conflicts_list/conflict_resolve
+    assert len(resp["result"]["tools"]) == 21  # + wiki_read（记忆 Wiki 下钻）
     assert "candidates_pending" in names
     assert "candidate_review" in names
     assert "add_dialogue" in names
@@ -36,6 +36,13 @@ def test_tools_list():
     assert "rollback" in names
     assert "conflicts_list" in names
     assert "conflict_resolve" in names
+    assert "obsidian_sync" in names
+    assert "mem_help" in names
+    assert "mem_sync" in names
+    assert "mem_create_skill" in names
+    assert "offload_read" in names
+    assert "wiki_read" in names
+    assert "obsidian_sync" in names
 
 
 def test_unknown_tool():
@@ -319,3 +326,26 @@ def test_tools_call_missing_arguments_rejected():
     r2 = mod.handle({"jsonrpc": "2.0", "id": 13, "method": "tools/call",
                      "params": {"name": "search", "arguments": "not-a-dict"}})
     assert r2["error"]["code"] == -32602
+
+def test_mem_help_tool_call():
+    """mem:help 命令式工具：tools/call 返回命令表。"""
+    mod = _load_mcp()
+    resp = mod.handle({"jsonrpc": "2.0", "id": 40, "method": "tools/call",
+                       "params": {"name": "mem_help", "arguments": {}}})
+    assert "result" in resp
+    text = json.loads(resp["result"]["content"][0]["text"])
+    assert text["command"] == "mem:help"
+    assert "mem_create_skill" in text["text"]
+
+
+def test_mem_create_skill_validation_error():
+    """mem:create-skill 参数校验：缺 name/steps → -32602。"""
+    mod = _load_mcp()
+    resp = mod.handle({"jsonrpc": "2.0", "id": 41, "method": "tools/call",
+                       "params": {"name": "mem_create_skill",
+                                  "arguments": {"name": "x", "steps": []}}})
+    assert resp["error"]["code"] == -32602
+    resp = mod.handle({"jsonrpc": "2.0", "id": 42, "method": "tools/call",
+                       "params": {"name": "mem_create_skill",
+                                  "arguments": {"name": "", "steps": ["a"]}}})
+    assert resp["error"]["code"] == -32602

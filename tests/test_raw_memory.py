@@ -105,6 +105,7 @@ def test_add_raw_searchable_via_fts_fallback(raw_env):
     content = "系统部署手册：备份命令 mysqldump -u root db > backup.sql"
     add_raw_memory(RawMemoryReq(content=content))
 
-    results = hybrid_search("mysqldump 备份命令", top_k=5, use_rerank=False)
+    results = hybrid_search("mysqldump 备份命令", top_k=5, use_rerank=False,
+                            memory_types=["verbatim"])
     texts = [r.get("memory", {}).get("content", "") for r in results]
     assert any(content in t for t in texts)

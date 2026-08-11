@@ -151,6 +151,21 @@ def handle_raw_add(params: dict) -> dict:
     return add_raw_memory(req)
 
 
+def handle_obsidian_sync(params: dict) -> dict:
+    """Obsidian 笔记同步：原文直存 + [[双链]] 实体/边沉淀（幂等）。"""
+    from lantai.models.schemas import ObsidianSyncReq
+    from lantai.services.obsidian_service import sync_obsidian_note
+    content = params.get("content", "")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("content must be a non-empty string")
+    return sync_obsidian_note(ObsidianSyncReq(
+        title=params.get("title", "") or "",
+        content=content,
+        lane=params.get("lane", "general"),
+        tags=params.get("tags", []) or [],
+    ))
+
+
 def handle_rollback(params: dict) -> dict:
     """回滚记忆到上一版本（Checkpoint 快照）。"""
     memory_id = params.get("memory_id", "")
@@ -185,6 +200,80 @@ def handle_conflict_resolve(params: dict) -> dict:
         raise ValueError("note must be a string")
     from lantai.services.conflict_service import resolve_conflict_event
     return resolve_conflict_event(event_id, decision, note)
+
+
+
+def handle_scene_get(params: dict) -> dict:
+    """下钻场景：场景元数据 + 全部成员详情（渐进式披露第二步）。"""
+    scene_id = params.get("scene_id", "")
+    if not isinstance(scene_id, str) or not scene_id:
+        raise ValueError("scene_id must be a non-empty string")
+    from lantai.services.scene_service import get_scene
+    return get_scene(scene_id)
+
+
+def handle_scenes_list(params: dict) -> dict:
+    """场景列表（heat 降序），供 Agent 浏览可用场景。"""
+    limit = params.get("limit", 50)
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
+        raise ValueError("limit must be an int in [1, 500]")
+    from lantai.services.scene_service import list_scenes
+    return list_scenes(limit)
+
+
+def handle_recall_report(params: dict) -> dict:
+    """零召回率监控报告：最近 N 天检索聚合（零召回率/按 lane/场景命中/token 估算）。"""
+    days = params.get("days", None)
+    if days is not None and (not isinstance(days, int) or isinstance(days, bool)
+                             or not (1 <= days <= 365)):
+        raise ValueError("days must be an int in [1, 365]")
+    from lantai.observability.recall_report import recall_report
+    return recall_report(days)
+def handle_mem_help(params: dict) -> dict:
+    """mem:help——返回支持的命令表与示例（纯函数）。"""
+    from lantai.services.mem_command import mem_help
+    return mem_help()
+
+
+def handle_mem_sync(params: dict) -> dict:
+    """mem:sync——刷新注入资产：scene 增量聚类补跑 + 今日 digest 重算。"""
+    from lantai.services.mem_command import mem_sync
+    return mem_sync()
+
+
+def handle_mem_create_skill(params: dict) -> dict:
+    """mem:create-skill——把会话主题沉淀为 Skill 资产（procedural 永不衰减）。"""
+    from lantai.services.mem_command import create_skill
+    name = params.get("name", "")
+    description = params.get("description", "") or ""
+    steps = params.get("steps", []) or []
+    tags = params.get("tags", []) or []
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("name must be a non-empty string")
+    if not isinstance(steps, list) or not steps:
+        raise ValueError("steps must be a non-empty list")
+    if not all(isinstance(x, str) and x.strip() for x in steps):
+        raise ValueError("steps must be a list of non-empty strings")
+    return create_skill(name=name, description=description, steps=steps, tags=tags)
+
+
+def handle_offload_read(params: dict) -> dict:
+    """读取卸载全文：上下文只注入摘要 + 路径时，按 memory_id 取完整原文。"""
+    memory_id = params.get("memory_id", "")
+    if not isinstance(memory_id, str) or not memory_id.strip():
+        raise ValueError("memory_id must be a non-empty string")
+    from lantai.services.offload_service import read_offload_file
+    return read_offload_file(memory_id)
+
+
+def handle_wiki_read(params: dict) -> dict:
+    """读取记忆 Wiki 页：先看 index/overview，再按 slug 下钻取页面正文。"""
+    slug = params.get("slug", "")
+    if not isinstance(slug, str) or not slug.strip():
+        raise ValueError("slug must be a non-empty string")
+    from lantai.services.wiki_service import read_wiki_page
+    return read_wiki_page(slug)
+
 
 TOOLS = {
     "search":   {"description": "搜索记忆", "inputSchema": {
@@ -234,6 +323,13 @@ TOOLS = {
             "lane": {"type": "string", "default": "general"},
             "tags": {"type": "array", "items": {"type": "string"}},
         }, "required": ["content"]}},
+    "obsidian_sync": {"description": "Obsidian 笔记同步：原文直存 + [[双链]] 实体/边沉淀（幂等）", "inputSchema": {
+        "type": "object", "properties": {
+            "title": {"type": "string", "default": ""},
+            "content": {"type": "string", "description": "笔记正文"},
+            "lane": {"type": "string", "default": "general"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+        }, "required": ["content"]}},
     "rollback": {"description": "回滚记忆到上一版本（Checkpoint 快照）", "inputSchema": {
         "type": "object", "properties": {
             "memory_id": {"type": "string"},
@@ -249,8 +345,40 @@ TOOLS = {
             "decision": {"type": "string", "description": "resolved | dismissed"},
             "note": {"type": "string", "default": ""},
         }, "required": ["event_id", "decision"]}},
+    "recall_report": {"description": "零召回率监控报告：最近 N 天检索聚合（零召回率/按 lane/场景命中/token 成本）", "inputSchema": {
+        "type": "object", "properties": {
+            "days": {"type": "integer", "default": 7},
+        }}},
+    "scene_get": {"description": "下钻场景：返回场景元数据与全部成员详情（渐进式披露）", "inputSchema": {
+        "type": "object", "properties": {
+            "scene_id": {"type": "string", "description": "场景 id（导航块或 scenes_list 中可见）"},
+        }, "required": ["scene_id"]}},
+    "scenes_list": {"description": "列出场景（按热度排序），供浏览可用场景", "inputSchema": {
+        "type": "object", "properties": {
+            "limit": {"type": "integer", "default": 50},
+        }}},
     "get_digest": {"description": "获取今日记忆盘点报告（摘要 + 五项统计）", "inputSchema": {
         "type": "object", "properties": {}}},
+    "mem_help": {"description": "mem:help——返回支持的 mem: 命令表与示例（命令式维护入口）", "inputSchema": {
+        "type": "object", "properties": {}}},
+    "mem_sync": {"description": "mem:sync——刷新注入资产：场景增量聚类补跑 + 今日 digest 重算", "inputSchema": {
+        "type": "object", "properties": {}}},
+    "mem_create_skill": {"description": "mem:create-skill——沉淀 Skill 资产（名称 + 描述 + 步骤，procedural 永不衰减）", "inputSchema": {
+        "type": "object", "properties": {
+            "name": {"type": "string", "description": "Skill 名称（必填）"},
+            "description": {"type": "string", "default": ""},
+            "steps": {"type": "array", "items": {"type": "string"},
+                      "description": "执行步骤列表（必填，非空）"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+        }, "required": ["name", "steps"]}},
+    "offload_read": {"description": "读取卸载全文：长记忆经上下文卸载（摘要+路径注入）后，按 memory_id 取完整原文", "inputSchema": {
+        "type": "object", "properties": {
+            "memory_id": {"type": "string", "description": "记忆 id（卸载注入行或 evidence 中可见）"},
+        }, "required": ["memory_id"]}},
+    "wiki_read": {"description": "读取记忆 Wiki 页：index/overview 列出的页面按 slug 下钻取正文（wikilink 下钻）", "inputSchema": {
+        "type": "object", "properties": {
+            "slug": {"type": "string", "description": "页面 slug（index.md 链接或 overview [[wikilink]] 中可见）"},
+        }, "required": ["slug"]}},
 }
 
 TOOL_HANDLERS = {
@@ -262,10 +390,19 @@ TOOL_HANDLERS = {
     "candidate_review": handle_candidate_review,
     "get_digest": handle_get_digest,
     "raw_add": handle_raw_add,
+    "obsidian_sync": handle_obsidian_sync,
     "rollback": handle_rollback,
     "conflicts_list": handle_conflicts_list,
     "conflict_resolve": handle_conflict_resolve,
     "add_dialogue": handle_add_dialogue,
+    "scene_get": handle_scene_get,
+    "scenes_list": handle_scenes_list,
+    "recall_report": handle_recall_report,
+    "mem_help": handle_mem_help,
+    "mem_sync": handle_mem_sync,
+    "mem_create_skill": handle_mem_create_skill,
+    "offload_read": handle_offload_read,
+    "wiki_read": handle_wiki_read,
 }
 
 

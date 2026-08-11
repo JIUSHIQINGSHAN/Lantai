@@ -109,16 +109,22 @@ def apply_proposal(proposal_id: str) -> dict:
             tier = (MemoryTier.LONG_TERM
                     if len(source_ids) >= settings.PROMOTE_SEMANTIC_MIN_SOURCES
                     else MemoryTier.WORKING)
+            structure = patch.get("structure") or {}
             mem = MemoryItem(
                 id=new_id("mem"),
                 memory_type=mem_type, key=key or content[:60], content=content,
                 tier=tier, source_ids=source_ids,
                 confidence=prop.confidence, importance=0.5,
                 lane=lane,
+                structure=structure,
+                provenance=prop.provenance or {},
                 # 不信任 proposal 携带的 metadata 覆盖 decay_class（不可信来源）；
                 # 仅按内容关键词推断，显式调级走 service 层 set_decay_class（带 checkpoint）
                 decay_class=infer_decay_class(key or "", content),
             )
+            # Skill 资产化：提案携带步骤结构 → 视为技能（procedural 永不衰减）
+            if structure.get("steps"):
+                mem.decay_class = "procedural"
             s.add(mem); s.flush()
             _make_checkpoint(s, mem, {}, prop.id, trigger="gate")
             index_memory_item(mem.id, emb, {"key": mem.key, "memory_type": mem.memory_type})
@@ -184,3 +190,4 @@ def delete_memory(memory_id: str) -> dict:
             s.commit()
     delete_memory_item(memory_id)
     return {"ok": True}
+

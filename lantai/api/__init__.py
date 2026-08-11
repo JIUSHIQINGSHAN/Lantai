@@ -16,6 +16,9 @@ from .routes_candidates import router as routes_candidates_router
 from .routes_dialogue import router as routes_dialogue_router
 from .routes_digest import router as routes_digest_router
 from .routes_conflicts import router as routes_conflicts_router
+from .routes_scenes import router as routes_scenes_router
+from .routes_obsidian import router as routes_obsidian_router
+from .routes_ui import router as routes_ui_router
 
 __all__ = [
     "routes_health_router",
@@ -34,5 +37,8 @@ __all__ = [
     "routes_dialogue_router",
     "routes_digest_router",
     "routes_conflicts_router",
+    "routes_scenes_router",
+    "routes_obsidian_router",
+    "routes_ui_router",
 ]
 

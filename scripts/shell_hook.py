@@ -23,46 +23,26 @@ from lantai.storage.vector_store import get_vector_store
 from lantai.storage import db
 from lantai.models.tables import MemoryItem
 from sqlmodel import select
+from lantai.core.text import apply_recall_budget as _apply_recall_budget
+from lantai.core.text import truncate_codepoints as _truncate_codepoints
+from lantai.services.offload_service import build_offload_inject
+from lantai.services.offload_service import write_offload_file
 
 # ── 召回预算与工具指南（借鉴 TencentDB Agent Memory auto-recall）─────────────
 # 单条记忆上限 + 总字符预算双控；按码点截断（不会切开 emoji 代理对）；
 # 超预算截断/丢弃时在注入末尾附记忆使用指南（何时深挖、最多几次、如何回写）。
 _RECALL_TRUNCATION_SUFFIX = "…（已截断；可用记忆工具查看详情）"
+_OFFLOAD_SUFFIX = "…（已卸载全文；可调用 offload_read 工具查看）"
 _RECALL_TOOLS_GUIDE_TRUNCATED = (
     "部分记忆片段已截断——若不足以回答，可主动触发记忆检索"
-    "（例如说「查一下……」，或调用记忆 MCP 工具 search 获取更多详情）。"
+    "（例如说「查一下……」，或调用记忆 MCP 工具 search 获取更多详情；"
+    "已卸载全文可调用 offload_read 查看）。"
 )
 _RECALL_TOOLS_GUIDE_RULES = (
     "每轮对话中主动检索建议不超过 3 次；3 次仍无结果说明该信息不在记忆中，"
     "请直接根据已有信息回答。"
 )
 _RECALL_TOOLS_GUIDE_WRITE = "对话中确认的新事实，可调用记忆 MCP 工具 add 保存为长期记忆。"
-
-
-def _truncate_codepoints(text: str, max_chars: int, suffix: str) -> str:
-    """按码点截断文本：不会切开多字节字符/emoji 代理对；超长附后缀提示。"""
-    cps = list(text)
-    if len(cps) <= max_chars:
-        return text
-    if max_chars <= len(suffix):
-        return "".join(cps[:max_chars])
-    return "".join(cps[:max_chars - len(suffix)]).rstrip() + suffix
-
-
-def _apply_recall_budget(lines: list[str], max_total_chars: int) -> tuple[list[str], int]:
-    """总字符预算分配：按序装入各行（含行间换行），超预算丢弃剩余。
-
-    返回 (budgeted_lines, dropped_count)。
-    """
-    used = 0
-    budgeted: list[str] = []
-    for line in lines:
-        sep = 1 if budgeted else 0  # 行间分隔换行符
-        if used + sep + len(line) > max_total_chars:
-            break
-        budgeted.append(line)
-        used += sep + len(line)
-    return budgeted, len(lines) - len(budgeted)
 
 
 def _build_tools_guide(truncated: bool) -> str:
@@ -81,6 +61,55 @@ def _format_memory_entry(content: str, score: float,
     truncated = _truncate_codepoints(content, max_chars, suffix)
     return f"- [{score}] {truncated}", truncated
 
+
+def _format_offload_entry(item, score: float, max_chars: int) -> tuple[str, str]:
+    """超长记忆 → 卸载注入（文件副作用；失败降级为截断注入）。
+
+    对应腾讯 offload_server/compact 的窄版落点：上下文只注入摘要 + 全文路径，
+    需要时经 MCP offload_read 取完整原文。
+    """
+    try:
+        path = write_offload_file(item.id, item.content)
+        return build_offload_inject(item.content, score, max_chars,
+                                    _OFFLOAD_SUFFIX, path)
+    except Exception:
+        return _format_memory_entry(item.content, score, max_chars,
+                                    _RECALL_TRUNCATION_SUFFIX)
+
+
+def _is_skill_item(item) -> bool:
+    """是否为可注入的 Skill 资产：procedural 衰减类 + 结构化步骤（Skill 资产化）。"""
+    structure = item.structure or {}
+    return item.decay_class == "procedural" and bool(structure.get("steps"))
+
+
+def _format_skill_entry(item, score: float,
+                        max_chars: int, suffix: str) -> tuple[str, str]:
+    """Skill 资产注入块（纯函数）：名称 + 描述 + 编号步骤，非平铺文本。
+
+    对应腾讯 Skill 资产的注入形态（名称/触发边界/步骤），兰台最小版：
+    structure = {"name", "description", "steps"}。
+    """
+    structure = item.structure or {}
+    steps = [s for s in (structure.get("steps") or [])
+             if isinstance(s, str) and s.strip()]
+    name = structure.get("name") or item.key or "技能"
+    description = (structure.get("description") or item.content or "").strip()
+    block = [f"## Skill: {name} (score {score})"]
+    if description:
+        block.append(f"- 描述: {description}")
+    if steps:
+        block.append("- 步骤:")
+        block.extend(f"  {i}. {s.strip()}" for i, s in enumerate(steps, 1))
+    text = "\n".join(block)
+    truncated = _truncate_codepoints(text, max_chars, suffix)
+    return truncated, truncated
+
+def _build_scene_lines(items, per_scene_chars: int) -> list[str]:
+    """命中记忆按场景分组 → 导航块（渐进式披露；异常零侵入降级为空）。"""
+    from lantai.services.scene_service import build_scene_navigation_lines
+    return build_scene_navigation_lines(
+        items, per_scene_chars, _RECALL_TRUNCATION_SUFFIX)
 
 def build_context(query: str) -> dict:
     """查询相关记忆，构建注入上下文。
@@ -115,16 +144,31 @@ def build_context(query: str) -> dict:
             for m in items:
                 if m.id == r["id"]:
                     score = round(1.0 - r["distance"], 2)
-                    line, content = _format_memory_entry(
-                        m.content, score, per_memory, _RECALL_TRUNCATION_SUFFIX)
+                    if _is_skill_item(m):
+                        line, content = _format_skill_entry(
+                            m, score, per_memory, _RECALL_TRUNCATION_SUFFIX)
+                    elif len(m.content) > settings.SHELL_HOOK_OFFLOAD_CHARS:
+                        # 上下文卸载（借鉴腾讯 offload）：全文落文件，注入摘要 + 路径
+                        line, content = _format_offload_entry(m, score, per_memory)
+                    else:
+                        line, content = _format_memory_entry(
+                            m.content, score, per_memory, _RECALL_TRUNCATION_SUFFIX)
                     entries.append((line, content, score, m.id))
                     break
-        lines = [e[0] for e in entries]
+        # scene 聚合层（ADR-0012）：命中记忆按场景分组，导航块优先注入（渐进式披露）
+        scene_lines = []
+        if settings.SCENE_LAYER_ENABLED:
+            try:
+                scene_lines = _build_scene_lines(
+                    items, settings.SHELL_HOOK_MAX_CHARS_PER_SCENE)
+            except Exception:
+                scene_lines = []
+        all_lines = scene_lines + [e[0] for e in entries]
         lines, _dropped = _apply_recall_budget(
-            lines, settings.SHELL_HOOK_MAX_TOTAL_CHARS)
-        keep_n = len(lines)
+            all_lines, settings.SHELL_HOOK_MAX_TOTAL_CHARS)
+        detail_kept = max(0, len(lines) - len(scene_lines))
         evidence = [{"id": e[3], "content": e[1], "score": e[2]}
-                    for e in entries[:keep_n]]
+                    for e in entries[:detail_kept]]
         latency_ms = int((time.perf_counter() - t0) * 1000)
         event_id = _try_log(query, [{"score": 1.0 - r["distance"], "memory": {"id": r["id"]}}
                                     for r in results], latency_ms)
@@ -141,6 +185,7 @@ def build_context(query: str) -> dict:
             if settings.SHELL_HOOK_TOOLS_GUIDE:
                 truncated = (_dropped > 0
                              or any(e["content"].endswith(_RECALL_TRUNCATION_SUFFIX)
+                                    or e["content"].endswith(_OFFLOAD_SUFFIX)
                                     for e in evidence))
                 out["context"] += "\n\n" + _build_tools_guide(truncated)
         if event_id:

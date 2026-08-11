@@ -41,6 +41,7 @@ class MemoryCandidate(SQLModel, table=True):
     actions: list = Field(default_factory=list, sa_column=Column(JSON))
     contradictions: list = Field(default_factory=list, sa_column=Column(JSON))
     extractor_confidence: float = 0.0
+    provenance: dict = Field(default_factory=dict, sa_column=Column(JSON))  # 提取来源（prompt/model/时间，借鉴腾讯 provenance）
     lane: str = Field(default="general")  # 分轨：从 AddMemoryReq 传入
     status: str = "new"
     review_due_at: Optional[datetime] = None  # 待审队列 TTL 截止（Ticket 02）
@@ -54,7 +55,9 @@ class MemoryItem(SQLModel, table=True):
     key: str = Field(index=True)
     content: str
     structure: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    provenance: dict = Field(default_factory=dict, sa_column=Column(JSON))  # 提取来源（prompt/model/时间，可溯源）
     tags: list = Field(default_factory=list, sa_column=Column(JSON))
+    scene_id: Optional[str] = Field(default=None, index=True)  # 场景聚合归属（ADR-0012）
     confidence: float = 0.5
     importance: float = 0.5
     tier: str = "working"
@@ -73,6 +76,24 @@ class MemoryItem(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+
+
+class MemoryScene(SQLModel, table=True):
+    """场景聚合（ADR-0012，借鉴 TencentDB Agent Memory L2 场景层）。
+
+    一组相关记忆的导航实体：name/summary 供导航注入，heat = 成员 use_count 求和
+    （零写放大，重建时重算），渐进式披露时先给导航、需要详情再下钻。
+    """
+
+    id: str = Field(primary_key=True)
+    name: str = Field(index=True)
+    summary: str = ""
+    heat: int = 0
+    member_count: int = 0
+    centroid: list = Field(default_factory=list, sa_column=Column(JSON))  # 场景质心（增量聚类：rebuild/assign 落库）
+
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 class MemoryEdge(SQLModel, table=True):
     id: str = Field(primary_key=True)
     source_memory_id: str = Field(index=True)
@@ -103,6 +124,7 @@ class MemoryProposal(SQLModel, table=True):
     conflict_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     status: str = "pending"
     decided_by: str = "auto"
+    provenance: dict = Field(default_factory=dict, sa_column=Column(JSON))  # 继承候选提取来源（可溯源）
     created_at: datetime = Field(default_factory=utcnow)
     applied_at: Optional[datetime] = None
 
@@ -268,5 +290,7 @@ class RetrievalEvent(SQLModel, table=True):
     used_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     latency_ms: int = 0
     zero_result: bool = Field(default=False, index=True)
+    scene_ids: list = Field(default_factory=list, sa_column=Column(JSON))  # 命中记忆所属场景（可观测性）
+    estimated_tokens: int = 0  # 查询 + 注入结果 token 粗估（成本观测）
     is_system_noise: bool = Field(default=False, index=True)  # 系统注入噪音（技能库维护等），评估统计时排除
     created_at: datetime = Field(default_factory=utcnow, index=True)

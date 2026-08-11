@@ -34,6 +34,11 @@ def run_evolve_once():
             apply_proposal(prop.id)
         else:
             logger.info("proposal %s pending human review", prop.id)
+    # scene 增量聚类（ADR-0012 后续项）：消化期自动聚合无归属 active 记忆，
+    # 替代"只靠手动 /scenes/rebuild"；SCENE_LAYER_ENABLED 门控，异常不影响演化
+    if settings.SCENE_LAYER_ENABLED:
+        from lantai.services.scene_service import assign_unassigned
+        assign_unassigned()
     scheduler_mod.record_run("evolve")
 
 

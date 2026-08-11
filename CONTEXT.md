@@ -27,4 +27,11 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **water_level**（水位） | coalesce 缓冲水位指标（active_keys + total_messages），由 `/stats` 暴露，用于监控写入节流状态 |
 | **verbatim**（原文直存） | `memory_type="verbatim"` 的记忆：内容零 LLM 直入 FTS5+向量（`POST /add/raw`），内容 sha256 作 key 幂等去重，不走提取/闸门/演化。见 [ADR-0009](docs/adr/0009-raw-drawer-verbatim.md) |
 | **conflict_event**（冲突账本） | 冲突消解确定性层（规则命中）的审计账本：memory_id / rule_name / detail / status（open→resolved/dismissed），人工裁决不改记忆状态。见 [ADR-0010](docs/adr/0010-conflict-resolution-layer.md) |
+| **Skill 资产**（可注入技能） | `structure.steps` 非空的 procedural 记忆：以 `## Skill: 名称` + 描述 + 编号步骤注入上下文，Agent 可照步骤执行。沉淀链路 proposer → promoter（提案落库带 structure），见 [ADR-0011](docs/adr/0011-skill-asset.md) |
+| **scene**（场景聚合） | 一组相关记忆的导航实体（`MemoryScene` 表）：embedding 聚类构建，检索命中时导航块优先注入（`## Scene: 名称` + 摘要 + 成员 key），详情用 `scene_get` 下钻——渐进式披露。heat = 成员 `use_count` 求和。见 [ADR-0012](docs/adr/0012-scene-layer.md) |
+| **provenance**（提取来源） | 记忆的出生证明：`{prompt, model, extracted_at}`，从候选（提取时）经提案（继承）到 MemoryItem（落库）全程同源，回答"这套记忆是谁产出的"；prompt 名即版本（extract-v1 / fastpath-direct / dialogue-fastpath / dialogue-chitchat）。见 [ADR-0015](docs/adr/0015-provenance.md) |
+| **vault**（档案） | 记忆档案只读浏览：`GET /memories` 分页 + lane/status/decay_class 过滤，`/ui/vault` 控制台同时展示锦囊待审队列与衰减概览——「存了什么、待裁什么」一眼可见。见 [ADR-0013](docs/adr/0013-naming-system.md) 命名登记 |
+| **offload**（上下文卸载） | 超长记忆全文落 `docs/memory-offload/{memory_id}.md`，Shell Hook 上下文只注入摘要 + 路径，需要时经 MCP `offload_read` 取回全文——上下文不随单条记忆长度增长。见 [ADR-0016](docs/adr/0016-offload.md) |
+| **mem: 命令**（命令式维护） | MCP 命令式维护工具：`mem_help`（帮助）/ `mem_sync`（scene 增量聚类补跑 + 今日 digest 重算）/ `mem_create_skill`（结构化沉淀 Skill 资产，procedural 永不衰减）。Agent 显式触发，不依赖自动流程时机。见 [ADR-0014](docs/adr/0014-mem-command.md) |
+| **digest**（每日盘点） | 每日清晨生成 `docs/memory-digest/YYYY-MM-DD.md`：新增/修改/总量/待审/归档/检索五项统计，Hermes 经 MCP `get_digest` 或 `GET /digest/today` 读取。见 [docs/daily-digest.md](docs/daily-digest.md) |
 | **命名体系** | 中文命名的方向与规则：按对象层级（项目/子系统/机制/数据/版本代号）从传统意象取材，2–4 字、有出处、先登记后使用；见 [ADR-0013](docs/adr/0013-naming-system.md) |

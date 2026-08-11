@@ -62,6 +62,8 @@ def log_retrieval(query: str, results: list[dict], *, latency_ms: int,
         result_scores = [r["score"] for r in results
                          if isinstance(r, dict) and "score" in r]
         intent = (gate or {}).get("intent") if isinstance(gate, dict) else None
+        from lantai.observability.recall_report import (
+            _scenes_from_results, _tokens_from_results, estimate_tokens)
         with db.get_session() as s:
             s.add(RetrievalEvent(
                 id=event_id,
@@ -77,6 +79,8 @@ def log_retrieval(query: str, results: list[dict], *, latency_ms: int,
                 latency_ms=int(latency_ms),
                 zero_result=not result_ids,
                 is_system_noise=is_system_noise(query),
+                scene_ids=_scenes_from_results(results),
+                estimated_tokens=(estimate_tokens(query) + _tokens_from_results(results)),
             ))
             s.commit()
         return event_id

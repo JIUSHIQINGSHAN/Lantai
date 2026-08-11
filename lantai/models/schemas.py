@@ -86,3 +86,17 @@ class RawMemoryReq(BaseModel):
     @classmethod
     def _check_metadata(cls, v):
         return _validate_metadata_dict(v)
+
+class ObsidianSyncReq(BaseModel):
+    """Obsidian 笔记同步请求（Ticket 02）：原文直存 + [[双链]] 实体/边沉淀。"""
+
+    title: str = ""
+    content: str = Field(min_length=1, max_length=500_000)
+    lane: str = Field(default="general")
+    tags: list[str] = []
+    metadata: dict = {}
+
+    @field_validator("metadata")
+    @classmethod
+    def _check_metadata(cls, v):
+        return _validate_metadata_dict(v)

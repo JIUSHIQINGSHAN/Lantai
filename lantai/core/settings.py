@@ -71,6 +71,8 @@ class Settings(BaseSettings):
     DEFAULT_LANE: str = "general"
     # Raw Drawer 原文直存（P0-1）：verbatim 记忆默认 lane（零 LLM、直接写 MemoryItem）
     RAW_MEMORY_DEFAULT_LANE: str = "general"
+    # Obsidian 双链 + 原文直存（Ticket 02）：verbatim 是否参与混合召回（默认否，专用通道可查）
+    VERBATIM_IN_RECALL: bool = False
 
     # 冲突消解确定性层（P0-2）：互斥规则集——pair 内两项互斥，规则命中即确定性冲突
     CONFLICT_RULES_ENABLED: bool = True
@@ -133,6 +135,27 @@ class Settings(BaseSettings):
     SHELL_HOOK_MAX_CHARS_PER_MEMORY: int = 200
     SHELL_HOOK_MAX_TOTAL_CHARS: int = 1500
     SHELL_HOOK_TOOLS_GUIDE: bool = True
+    # 上下文卸载（借鉴 TencentDB Agent Memory offload_server/compact 窄版）：
+    # 超长记忆全文落文件，上下文只注入摘要 + 路径；需要时经 MCP offload_read 取全文
+    SHELL_HOOK_OFFLOAD_CHARS: int = 2000  # 记忆内容超过此长度 → 落文件 + 摘要注入
+    OFFLOAD_OUTPUT_DIR: str = ""  # 为空时 = 仓库根 docs/memory-offload
+
+    # 记忆 Wiki（借鉴 TencentDB Agent Memory LLM-Wiki）：场景/技能 → 持续维护的页面
+    # docs/memory-wiki/{index.md, overview.md, pages/}；overview 综述 + [[wikilink]] 下钻
+    WIKI_ENABLED: bool = True
+    WIKI_OUTPUT_DIR: str = ""          # 为空时 = 仓库根 docs/memory-wiki
+    WIKI_OVERVIEW_LLM: bool = True     # overview 优先 LLM 综述；失败/关闭 → 确定性综述
+    WIKI_PAGE_MAX_MEMBERS: int = 50    # 场景页最多列出的成员数
+    WIKI_MEMBER_CHARS: int = 120       # 成员摘要截断字符数
+    WIKI_RELATED_TOP: int = 3          # 场景页"相关场景"数量（按质心余弦）
+
+    # scene 聚合层（ADR-0012，借鉴 TencentDB Agent Memory L2 场景层）
+    SCENE_LAYER_ENABLED: bool = False      # 默认关：rebuild 后开启
+    SCENE_CLUSTER_THRESHOLD: float = 0.78  # embedding 余弦相似度聚类阈值（越高簇越细）
+    SCENE_REBUILD_LLM_NAMING: bool = True  # rebuild 时 LLM 批量命名/摘要；失败降级代表 key
+    SHELL_HOOK_MAX_CHARS_PER_SCENE: int = 400  # 单个场景导航块预算
+    SCENE_MAX_MEMBERS_SHOWN: int = 8       # 导航块最多列出的成员 key 数
+    RECALL_MONITOR_WINDOW_DAYS: int = 7     # 零召回率监控默认窗口（天）
 
     # SSRF 防护
     SSRF_ALLOWED_SCHEMES: tuple = ("http", "https")
@@ -220,7 +243,6 @@ class Settings(BaseSettings):
     REFLECT_STALE_AGE_DAYS: int = 30         # R5 低价值陈旧规则
     REFLECT_STALE_IMPORTANCE: float = 0.4    # R5 低价值陈旧规则
     REFLECT_STALE_SCAN_ENABLED: bool = False # R4/R5 默认关（误报风险，保守起步）
-
     def model_post_init(self, __context):
         """DATABASE_URL / CHROMADB_PATH 未显式设置时从 LANTAI_HOME 推导（兼容旧 REMEMBRANCE_HOME）。"""
         if not self.LANTAI_HOME and self.REMEMBRANCE_HOME:
@@ -250,3 +272,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+

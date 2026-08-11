@@ -169,6 +169,9 @@ def _hybrid_search_impl(query: str, top_k: int = 5,
     # 过滤 memory_types / lanes
     if memory_types:
         items = [m for m in items if m.memory_type in memory_types]
+    elif not settings.VERBATIM_IN_RECALL:
+        # 原文直存默认不进混合召回（Ticket 02）：GET /verbatim/search 专用通道可查
+        items = [m for m in items if m.memory_type != "verbatim"]
     if lanes:
         items = [m for m in items if m.lane in lanes]
 
@@ -384,6 +387,9 @@ def _keyword_fallback(
 
     if memory_types:
         items = [m for m in items if m.memory_type in memory_types]
+    elif not settings.VERBATIM_IN_RECALL:
+        # 原文直存默认不进混合召回（Ticket 02）：GET /verbatim/search 专用通道可查
+        items = [m for m in items if m.memory_type != "verbatim"]
     if lanes:
         items = [m for m in items if m.lane in lanes]
     items = _chronos_filter(items)

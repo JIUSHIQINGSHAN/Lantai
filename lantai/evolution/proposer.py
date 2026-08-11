@@ -25,6 +25,15 @@ def propose_from_candidate(candidate_id: str, gate_result: dict) -> MemoryPropos
                     "new_content": cand.summary, "memory_type": "semantic",
                     "reason": "fallback add", "confidence": 0.4}
 
+        # Skill 资产化：提取的 actions（步骤）沉淀为 structure，随提案落库
+        # （proposer → promoter 全链路保留，否则步骤在提案应用后丢失）
+        structure = {}
+        if cand.actions:
+            structure = {
+                "name": (data.get("target_key") or cand.summary[:40]),
+                "description": (cand.summary or "")[:200],
+                "steps": cand.actions,
+            }
         prop = MemoryProposal(
             id=new_id("prop"),
             proposal_type=data.get("proposal_type", "add"),
@@ -36,10 +45,12 @@ def propose_from_candidate(candidate_id: str, gate_result: dict) -> MemoryPropos
                 "key": data.get("target_key") or cand.summary[:60],
                 "content": data.get("new_content", cand.summary),
                 "lane": cand.lane,
+                "structure": structure,
             },
             confidence=float(data.get("confidence", 0.5)),
             conflict_ids=[c["memory_id"] for c in gate_result.get("conflicts", [])],
             status=ProposalStatus.PENDING,
+            provenance=cand.provenance or {},
         )
         s.add(prop)
         cand.status = "gated"

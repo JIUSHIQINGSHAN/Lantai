@@ -55,7 +55,7 @@ Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户
 经 `scripts/install_hermes_plugin.py` 部署 lantai-hook 插件；MCP 由插件内嵌配置指向
 同一 server。
 
-## 工具清单（15）
+## 工具清单（20）
 
 | 工具 | 用途 |
 |---|---|
@@ -69,11 +69,14 @@ Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户
 | scene_get / scenes_list | 场景层（ADR-0012）查询 |
 | recall_report | 零召回率监控报告（最近 N 天聚合） |
 | get_digest | 今日记忆盘点（摘要 + 五项统计） |
+| mem_help / mem_sync / mem_create_skill | mem: 命令式维护（帮助 / 资产刷新 / 沉淀 Skill） |
+| obsidian_sync | Obsidian 笔记同步（原文直存 + [[双链]] 实体/边沉淀） |
+| offload_read | 读取卸载全文（长记忆经上下文卸载后，按 memory_id 取回完整原文） |
 
 ## 验证清单（接入后逐条过）
 
 1. `initialize` 返回 `serverInfo.name == "lantai"`、`protocolVersion == "2024-11-05"`
-2. `tools/list` 返回 ≥14 个工具（当前 15），每个都有 description + inputSchema
+2. `tools/list` 返回 ≥14 个工具（当前 20），每个都有 description + inputSchema
 3. `ping` 有响应；`notifications/initialized` 无响应（不报错）
 4. `tools/call search` 传中文 query 返回结果（验证 UTF-8 无乱码）
 5. 用 `raw_add` 写一条原文 → `search` 能召回（验证写读闭环）
