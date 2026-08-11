@@ -30,6 +30,8 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **Skill 资产**（可注入技能） | `structure.steps` 非空的 procedural 记忆：以 `## Skill: 名称` + 描述 + 编号步骤注入上下文，Agent 可照步骤执行。沉淀链路 proposer → promoter（提案落库带 structure），见 [ADR-0011](docs/adr/0011-skill-asset.md) |
 | **scene**（场景聚合） | 一组相关记忆的导航实体（`MemoryScene` 表）：embedding 聚类构建，检索命中时导航块优先注入（`## Scene: 名称` + 摘要 + 成员 key），详情用 `scene_get` 下钻——渐进式披露。heat = 成员 `use_count` 求和。见 [ADR-0012](docs/adr/0012-scene-layer.md) |
 | **provenance**（提取来源） | 记忆的出生证明：`{prompt, model, extracted_at}`，从候选（提取时）经提案（继承）到 MemoryItem（落库）全程同源，回答"这套记忆是谁产出的"；prompt 名即版本（extract-v1 / fastpath-direct / dialogue-fastpath / dialogue-chitchat）。见 [ADR-0015](docs/adr/0015-provenance.md) |
+| **ACL**（访问收窄） | 按 agent_id 绑定 lane 集：`AGENT_LANE_BINDINGS` 配置后，绑定 agent 只能检索/写入自己 lane 集内的记忆（`X-Agent-Id` header，缺失/未绑定 403，检索结果宁 miss 不放行）；空配置 = 不启用。见 [ADR-0013](docs/adr/0013-naming-system.md) 命名登记 |
+| **冷启动导入**（冷启动导入） | 历史数据一次性导入双通道：① verbatim 直存——JSONL 逐行原文零 LLM 落库，created_at/updated_at 保留原始时间戳，内容 sha256 幂等去重，`POST /import/jsonl` + `scripts/import_jsonl.py`；② 对话链导入——L0 会话 JSONL（{role, content, timestamp}）喂既有摄取链，时间戳经 provenance 继承到记忆，`scripts/run_import.py --dry-run` 预览。非法行记报告不静默修正（宁 miss 不脏写） |
 | **vault**（档案） | 记忆档案只读浏览：`GET /memories` 分页 + lane/status/decay_class 过滤，`/ui/vault` 控制台同时展示锦囊待审队列与衰减概览——「存了什么、待裁什么」一眼可见。见 [ADR-0013](docs/adr/0013-naming-system.md) 命名登记 |
 | **offload**（上下文卸载） | 超长记忆全文落 `docs/memory-offload/{memory_id}.md`，Shell Hook 上下文只注入摘要 + 路径，需要时经 MCP `offload_read` 取回全文——上下文不随单条记忆长度增长。见 [ADR-0016](docs/adr/0016-offload.md) |
 | **记忆 Wiki**（持续维护知识库） | 场景/技能 → `docs/memory-wiki/` 页面 + `index.md`（先看目录）+ `overview.md` 综述（LLM 优先，失败确定性兜底），`[[wikilink]]` 下钻经 MCP `wiki_read`；`mem_sync` 三件套（scene+digest+wiki）刷新。见 [ADR-0017](docs/adr/0017-wiki.md) |

@@ -19,11 +19,11 @@
 | 工具指南 | 注入末尾附 memory_search/conversation_search 指南 + 每轮 ≤3 次搜索上限 | **已落地（本票）**：shell_hook 指南 |
 | 上下文卸载 | `offload_server/compact/`：tiktoken 精确计数 + mild/aggressive/emergency 三级压缩 + tool 头尾保留 | **已落地（本票）**：超长记忆全文落 `docs/memory-offload/`，上下文注入摘要+路径，MCP `offload_read` 取全文，见 `.scratch/offload/issues/01` |
 | 可观测性 | `core/report/metric-tracking-recall`、quota/cost-guard | **已落地（本票）**：`GET /retrieval/recall-report` 零召回率窗口监控（排除噪音）+ token 粗估 + scene 命中率 |
-| 资产绑定 + ACL | Memory Hub Fixed Binding + ACL 四级收窄 | 多 Agent 接入时按 agent_id 绑定 lane 集 |
+| 资产绑定 + ACL | Memory Hub Fixed Binding + ACL 四级收窄 | **已落地（窄版）**：`AGENT_LANE_BINDINGS` 按 agent_id 绑定 lane 集，search 结果收窄 + 写入越界 403（默认关闭），见 `.scratch/v0.6-aidumei-absorb/issues/08` |
 | mem: 会话指令 | `MemoryProxy/src/mem-command/`：mem:sync / mem:create-skill / mem:help | **已落地（本票）**：MCP `mem_help` / `mem_sync`（scene 补跑 + digest 重算）/ `mem_create_skill`，见 `.scratch/mem-command/issues/01` |
 | provenance | v2.0.1：自定义 prompt + provenance（哪套 prompt/模型/时间产出） | **已落地（本票）**：candidate/proposal/MemoryItem 记 provenance（prompt+model+时间），overview 按 prompt 分布，见 `.scratch/provenance/issues/01` |
 | LLM-Wiki | `MemoryKnowledge/.../ingest-v2/`：增量维护 + overview.md 综述 + wikilink 下钻 | **已落地（本票）**：digest 并存升级——场景/技能 → `docs/memory-wiki/` 页面 + index + overview（LLM 综述失败确定性兜底），`mem_sync` 三件套刷新 + MCP `wiki_read` 下钻，见 `.scratch/wiki/issues/01` |
-| 冷启动导入 | 导入仓库/文档/历史 Session，保留原始时间戳 | 批量导入历史会话 JSONL |
+| 冷启动导入 | 导入仓库/文档/历史 Session，保留原始时间戳 | **已落地（本票）**：双通道——verbatim 直存 `POST /import/jsonl`（零 LLM、sha256 幂等、保留原始时间戳，见 `.scratch/v0.6-aidumei-absorb/issues/07`）+ 对话链导入 `scripts/run_import.py`（L0 会话 JSONL → 既有摄取链，provenance 时间戳继承，见 `.scratch/import/issues/01`） |
 
 ## 兰台已有、不必照搬
 
@@ -40,3 +40,5 @@
 5. provenance（已完成，见 `.scratch/provenance/issues/01`）
 6. 上下文卸载（已完成，见 `.scratch/offload/issues/01`）
 7. LLM-Wiki（已完成，见 `.scratch/wiki/issues/01`）
+8. 冷启动导入（已完成：verbatim 直存见 `.scratch/v0.6-aidumei-absorb/issues/07`；对话链导入见 `.scratch/import/issues/01`）
+9. 资产绑定 + lane 级 ACL（已完成，见 `.scratch/v0.6-aidumei-absorb/issues/08`）

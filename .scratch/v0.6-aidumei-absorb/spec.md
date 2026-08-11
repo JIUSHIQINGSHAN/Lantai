@@ -12,6 +12,8 @@ SQLite+FTS5+ChromaDB 自研；所有核心函数必须有不 mock 冒烟测试�
 - 04-recall-panel：追忆漏斗控制台（RECALL 面板）
 - 05-evolve-panel：检索质量看板（EVOLVE 面板）
 - 06-vault-panel：档案与锦囊控制台（VAULT 面板）
+- 07-import-jsonl：冷启动导入（历史会话 JSONL 批量原文直存，保留原始时间戳）
+- 08-acl：资产绑定 + lane 级 ACL（按 agent_id 绑定 lane 集）
 
 ## 明确不吸收
 
