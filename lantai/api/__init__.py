@@ -19,6 +19,8 @@ from .routes_conflicts import router as routes_conflicts_router
 from .routes_scenes import router as routes_scenes_router
 from .routes_obsidian import router as routes_obsidian_router
 from .routes_import import router as routes_import_router
+from .routes_tree import router as routes_tree_router
+from .routes_crystals import router as routes_crystals_router
 from .routes_ui import router as routes_ui_router
 
 __all__ = [
@@ -41,6 +43,8 @@ __all__ = [
     "routes_scenes_router",
     "routes_obsidian_router",
     "routes_import_router",
+    "routes_tree_router",
+    "routes_crystals_router",
     "routes_ui_router",
 ]
 

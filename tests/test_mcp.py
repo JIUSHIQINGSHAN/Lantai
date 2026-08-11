@@ -30,7 +30,7 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert len(resp["result"]["tools"]) == 28  # + 第二波：mem_recent/mem_stats/mem_health/autodream_*/proposals_*/proposal_decide
+    assert len(resp["result"]["tools"]) == 34  # + 第三波：tree_* / crystals_* / crystal_decide
     assert "candidates_pending" in names
     assert "candidate_review" in names
     assert "add_dialogue" in names
@@ -53,6 +53,12 @@ def test_tools_list():
     assert "autodream_trigger" in names
     assert "proposals_list" in names
     assert "proposal_decide" in names
+    assert "tree_view" in names
+    assert "tree_add" in names
+    assert "tree_assign" in names
+    assert "crystals_list" in names
+    assert "crystals_detect" in names
+    assert "crystal_decide" in names
 
 
 def test_unknown_tool():
@@ -501,4 +507,32 @@ def test_proposal_decide_approve_applies(mcp_env):
         assert p.status == ProposalStatus.APPLIED
         rows = s.exec(select(MemoryItem)).all()
         assert len(rows) == 2  # 原记忆 + 应用出的新记忆
+
+
+# ── 第三波：树状图谱 + 技能结晶（v0.7）────────────────────
+
+def test_tree_view_smoke(mcp_env):
+    session_factory, _ = mcp_env
+    from lantai.services.tree_service import add_node
+    with session_factory() as s:
+        add_node(s, "projects")
+        _seed_memory(s, "m1", "发布会安排下周")
+        s.commit()
+        from lantai.services.tree_service import assign_memory
+        assign_memory(s, "m1", "/projects")
+    out = _call_tool(_load_mcp(), "tree_view", {})
+    assert out["nodes"][0]["node_path"] == "/projects"
+    assert out["nodes"][0]["attachments"]["direct"] == 1
+
+
+def test_crystals_detect_dry_run_smoke(mcp_env):
+    session_factory, _ = mcp_env
+    with session_factory() as s:
+        _seed_memory(s, "m1", "发布会在周五下午两点开始")
+        _seed_memory(s, "m2", "发布会需要提前一天彩排")
+        _seed_memory(s, "m3", "发布会结束后写复盘")
+        s.commit()
+    out = _call_tool(_load_mcp(), "crystals_detect", {"dry_run": True})
+    assert out["clusters"] >= 1
+    assert out["created"] == 0
 

@@ -35,6 +35,8 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **vault**（档案） | 记忆档案只读浏览：`GET /memories` 分页 + lane/status/decay_class 过滤，`/ui/vault` 控制台同时展示锦囊待审队列与衰减概览——「存了什么、待裁什么」一眼可见。见 [ADR-0013](docs/adr/0013-naming-system.md) 命名登记 |
 | **offload**（上下文卸载） | 超长记忆全文落 `docs/memory-offload/{memory_id}.md`，Shell Hook 上下文只注入摘要 + 路径，需要时经 MCP `offload_read` 取回全文——上下文不随单条记忆长度增长。见 [ADR-0016](docs/adr/0016-offload.md) |
 | **记忆 Wiki**（持续维护知识库） | 场景/技能 → `docs/memory-wiki/` 页面 + `index.md`（先看目录）+ `overview.md` 综述（LLM 优先，失败确定性兜底），`[[wikilink]]` 下钻经 MCP `wiki_read`；`mem_sync` 三件套（scene+digest+wiki）刷新。见 [ADR-0017](docs/adr/0017-wiki.md) |
+| **tree**（记忆分类树） | 显式父子层级（`MemoryNode` 表）+ `node_path` 唯一路径（/projects/release）+ depth 前缀查询；记忆经 `memoryitem.tree_path` 显式挂载（assign），统计区分 direct（直接挂载）与 subtree（含子树）——「按主题组织记忆全景」。见 v0.7 票据 01 |
+| **crystal**（技能结晶） | 高频重复记忆自动聚类 → `SkillCrystal` candidate 候选项（Mímir 铁律：规则只能建议不能 commit）；人工裁决 approve 必须带非空 steps 才落成 Skill 资产，reject 归档记 reason。见 v0.7 票据 02 |
 | **mem: 命令**（命令式维护） | MCP 命令式维护工具：`mem_help`（帮助）/ `mem_sync`（scene 增量聚类补跑 + 今日 digest 重算）/ `mem_create_skill`（结构化沉淀 Skill 资产，procedural 永不衰减）。Agent 显式触发，不依赖自动流程时机。见 [ADR-0014](docs/adr/0014-mem-command.md) |
 | **digest**（每日盘点） | 每日清晨生成 `docs/memory-digest/YYYY-MM-DD.md`：新增/修改/总量/待审/归档/检索五项统计，Hermes 经 MCP `get_digest` 或 `GET /digest/today` 读取。见 [docs/daily-digest.md](docs/daily-digest.md) |
 | **命名体系** | 中文命名的方向与规则：按对象层级（项目/子系统/机制/数据/版本代号）从传统意象取材，2–4 字、有出处、先登记后使用；见 [ADR-0013](docs/adr/0013-naming-system.md) |

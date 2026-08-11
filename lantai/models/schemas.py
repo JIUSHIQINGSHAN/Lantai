@@ -106,3 +106,29 @@ class ObsidianSyncReq(BaseModel):
     @classmethod
     def _check_metadata(cls, v):
         return _validate_metadata_dict(v)
+
+
+class TreeAddNodeReq(BaseModel):
+    """新增分类树节点（v0.7）。"""
+    name: str
+    parent_path: str = "/"
+    description: str = ""
+
+
+class TreeAssignReq(BaseModel):
+    """把记忆挂到分类树节点。"""
+    memory_id: str
+    node_path: str
+
+
+class TreeUnassignReq(BaseModel):
+    """解除记忆挂载。"""
+    memory_id: str
+
+
+class CrystalDecideReq(BaseModel):
+    """技能结晶候选裁决：approve 必须带非空 steps（宁 miss 不脏写）。"""
+    approve: bool
+    steps: list[str] = []
+    reason: str = ""
+

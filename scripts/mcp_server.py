@@ -358,6 +358,72 @@ def handle_proposal_decide(params: dict) -> dict:
     return decide_proposal(proposal_id, ProposalDecisionReq(approve=approve, reason=reason))
 
 
+def handle_tree_view(params: dict) -> dict:
+    """分类树视图（只读）：节点 + 每节点挂载计数（v0.7 TreeMemory 窄版）。"""
+    from lantai.services.tree_service import view_tree
+    return view_tree()
+
+
+def handle_tree_add(params: dict) -> dict:
+    """新增分类树节点（父缺失/重名/非法名 -> 校验失败，宁 miss 不脏写）。"""
+    name = params.get("name", "")
+    parent_path = params.get("parent_path", "/")
+    description = params.get("description", "") or ""
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("name must be a non-empty string")
+    from lantai.services.tree_service import add_tree_node
+    return add_tree_node(name, parent_path, description)
+
+
+def handle_tree_assign(params: dict) -> dict:
+    """把记忆挂到分类树节点（节点/记忆必须存在）。"""
+    memory_id = params.get("memory_id", "")
+    node_path = params.get("node_path", "")
+    if not isinstance(memory_id, str) or not memory_id.strip():
+        raise ValueError("memory_id must be a non-empty string")
+    if not isinstance(node_path, str) or not node_path.strip():
+        raise ValueError("node_path must be a non-empty string")
+    from lantai.services.tree_service import assign_memory_to_node
+    return assign_memory_to_node(memory_id, node_path)
+
+
+def handle_crystals_list(params: dict) -> dict:
+    """结晶候选项列表（默认 candidate 待审）。"""
+    status = params.get("status", "candidate")
+    limit = params.get("limit", 50)
+    if not isinstance(status, str) or status not in ("candidate", "approved", "archived"):
+        raise ValueError("status must be one of: candidate/approved/archived")
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
+        raise ValueError("limit must be an int in [1, 500]")
+    from lantai.services.crystal_service import list_crystals
+    return list_crystals(status, limit)
+
+
+def handle_crystals_detect(params: dict) -> dict:
+    """执行一轮结晶检测：聚类 -> 候选（dry_run=true 不写库；噪声 lane 排除）。"""
+    dry_run = params.get("dry_run", False)
+    if not isinstance(dry_run, bool):
+        raise ValueError("dry_run must be a boolean")
+    from lantai.services.crystal_service import run_crystal_detect_once
+    return run_crystal_detect_once(dry_run=dry_run)
+
+
+def handle_crystal_decide(params: dict) -> dict:
+    """裁决结晶候选：approve 必须带非空 steps -> 落成 Skill 资产；reject -> archived。"""
+    crystal_id = params.get("crystal_id", "")
+    approve = params.get("approve", False)
+    steps = params.get("steps", []) or []
+    reason = params.get("reason", "") or ""
+    if not isinstance(crystal_id, str) or not crystal_id.strip():
+        raise ValueError("crystal_id must be a non-empty string")
+    if not isinstance(approve, bool):
+        raise ValueError("approve must be a boolean")
+    if not isinstance(steps, list) or not all(isinstance(x, str) for x in steps):
+        raise ValueError("steps must be a list of strings")
+    from lantai.services.crystal_service import decide_crystal
+    return decide_crystal(crystal_id, approve, steps, reason)
+
+
 TOOLS = {
     "search":   {"description": "搜索记忆", "inputSchema": {
         "type": "object", "properties": {
@@ -488,6 +554,35 @@ TOOLS = {
             "approve": {"type": "boolean", "description": "true=应用；false=拒绝归档"},
             "reason": {"type": "string", "default": "", "description": "裁决理由（落库可审计）"},
         }, "required": ["proposal_id", "approve"]}},
+    "tree_view": {"description": "分类树视图（只读）：节点 + 每节点挂载计数", "inputSchema": {
+        "type": "object", "properties": {}}},
+    "tree_add": {"description": "新增分类树节点（父缺失/重名/非法名 -> 校验失败，宁 miss 不脏写）", "inputSchema": {
+        "type": "object", "properties": {
+            "name": {"type": "string", "description": "节点名（不含路径分隔符）"},
+            "parent_path": {"type": "string", "default": "/", "description": "父节点路径，如 /projects"},
+            "description": {"type": "string", "default": ""},
+        }, "required": ["name"]}},
+    "tree_assign": {"description": "把记忆挂到分类树节点（节点/记忆必须存在）", "inputSchema": {
+        "type": "object", "properties": {
+            "memory_id": {"type": "string", "description": "记忆 id"},
+            "node_path": {"type": "string", "description": "目标节点路径，如 /projects/release"},
+        }, "required": ["memory_id", "node_path"]}},
+    "crystals_list": {"description": "结晶候选项列表（默认 candidate 待审）", "inputSchema": {
+        "type": "object", "properties": {
+            "status": {"type": "string", "default": "candidate", "description": "candidate|approved|archived"},
+            "limit": {"type": "integer", "default": 50},
+        }}},
+    "crystals_detect": {"description": "执行一轮结晶检测：聚类 -> 候选（dry_run=true 不写库；噪声 lane 排除）", "inputSchema": {
+        "type": "object", "properties": {
+            "dry_run": {"type": "boolean", "default": False, "description": "true=预演不写库"},
+        }}},
+    "crystal_decide": {"description": "裁决结晶候选：approve 必须带非空 steps -> 落成 Skill 资产；reject -> archived", "inputSchema": {
+        "type": "object", "properties": {
+            "crystal_id": {"type": "string", "description": "候选 id（crystals_list 中可见）"},
+            "approve": {"type": "boolean", "description": "true=批准（需 steps）；false=拒绝归档"},
+            "steps": {"type": "array", "items": {"type": "string"}, "description": "批准时必填：Skill 执行步骤"},
+            "reason": {"type": "string", "default": ""},
+        }, "required": ["crystal_id", "approve"]}},
 }
 
 TOOL_HANDLERS = {
@@ -519,6 +614,12 @@ TOOL_HANDLERS = {
     "autodream_trigger": handle_autodream_trigger,
     "proposals_list": handle_proposals_list,
     "proposal_decide": handle_proposal_decide,
+    "tree_view": handle_tree_view,
+    "tree_add": handle_tree_add,
+    "tree_assign": handle_tree_assign,
+    "crystals_list": handle_crystals_list,
+    "crystals_detect": handle_crystals_detect,
+    "crystal_decide": handle_crystal_decide,
 }
 
 

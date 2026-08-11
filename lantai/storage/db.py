@@ -16,7 +16,7 @@ engine = create_engine(settings.DATABASE_URL, echo=False,
 # PRAGMA user_version 记录数据库结构版本；未版本化库（全新库或 v0.5 及以前
 # 老库）自动基线为 v1，增量补丁按版本号依次执行。ALTER TABLE ADD COLUMN 为
 # 毫秒级操作，代码更新与数据重构解耦，异常只记日志不阻断启动（降级而非崩溃）。
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 
 def _ensure_column(conn, table: str, column: str, ddl: str) -> None:
@@ -105,7 +105,32 @@ def apply_migrations(conn) -> None:
             conn.execute("PRAGMA user_version = 8")
             conn.commit()
             logger.info("数据库增量迁移 v8 完成（worker 运行记录持久化）")
-        # 未来版本在此追加：if user_version < 9: ...
+        # v8 -> v9（v0.7 树状图谱 + 技能结晶）：memoryitem.tree_path + memorynode/skillcrystal 表
+        if user_version < 9:
+            _ensure_column(conn, "memoryitem", "tree_path", "TEXT")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS memorynode ("
+                "id TEXT PRIMARY KEY, parent_id TEXT, name TEXT, "
+                "node_path TEXT UNIQUE, depth INTEGER DEFAULT 0, "
+                "description TEXT DEFAULT '', namespace TEXT DEFAULT 'default', "
+                "created_at DATETIME)")
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                            "AND name='memoryitem'").fetchone():
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_memoryitem_tree_path "
+                    "ON memoryitem (tree_path)")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS skillcrystal ("
+                "id TEXT PRIMARY KEY, skill_name TEXT UNIQUE, trigger_rule TEXT, "
+                "procedure TEXT, source_lanes TEXT, sample_keys TEXT, "
+                "hit_count INTEGER DEFAULT 1, candidate_count INTEGER DEFAULT 0, "
+                "status TEXT DEFAULT 'candidate', decision_reason TEXT DEFAULT '', "
+                "created_at DATETIME, updated_at DATETIME)")
+            conn.execute("PRAGMA user_version = 9")
+            conn.commit()
+            logger.info("数据库增量迁移 v9 完成（树状图谱 + 技能结晶）")
+        # 未来版本在此追加：if user_version < 10: ...
+
     except Exception as exc:
         logger.error("数据库增量迁移异常（服务继续启动）: %s", exc)
 

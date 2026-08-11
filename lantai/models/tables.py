@@ -58,6 +58,7 @@ class MemoryItem(SQLModel, table=True):
     provenance: dict = Field(default_factory=dict, sa_column=Column(JSON))  # 提取来源（prompt/model/时间，可溯源）
     tags: list = Field(default_factory=list, sa_column=Column(JSON))
     scene_id: Optional[str] = Field(default=None, index=True)  # 场景聚合归属（ADR-0012）
+    tree_path: Optional[str] = Field(default=None, index=True)  # 分类树挂载路径（v0.7，借鉴 TreeMemory）
     confidence: float = 0.5
     importance: float = 0.5
     tier: str = "working"
@@ -102,6 +103,44 @@ class MemoryEdge(SQLModel, table=True):
     confidence: float = 0.5
     created_at: datetime = Field(default_factory=utcnow)
 
+
+
+class MemoryNode(SQLModel, table=True):
+    """记忆分类树节点（v0.7，借鉴 aiduMEI TreeMemory 窄版）。
+
+    显式父子层级 + node_path 唯一路径（/projects/release），depth 前缀查询；
+    记忆经 memoryitem.tree_path 挂载（显式 assign，不靠名字匹配）。
+    """
+
+    id: str = Field(primary_key=True)
+    parent_id: Optional[str] = Field(default=None, index=True)
+    name: str = Field(index=True)
+    node_path: str = Field(index=True, unique=True)
+    depth: int = 0
+    description: str = ""
+    namespace: str = Field(index=True, default="default")
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class SkillCrystal(SQLModel, table=True):
+    """技能结晶候选项（v0.7，借鉴 aiduMEI SkillCrystallizer 窄版）。
+
+    Mímir 铁律：LLM 只能建议不能直接 commit——检测只产 candidate，人工审核
+    （decide approve 必须带 steps）后才落成 Skill 资产；宁 miss 不脏写。
+    """
+
+    id: str = Field(primary_key=True)
+    skill_name: str = Field(index=True, unique=True)
+    trigger_rule: str = ""
+    procedure: str = ""
+    source_lanes: list = Field(default_factory=list, sa_column=Column(JSON))
+    sample_keys: list = Field(default_factory=list, sa_column=Column(JSON))
+    hit_count: int = 1
+    candidate_count: int = 0
+    status: str = "candidate"  # candidate | approved | archived
+    decision_reason: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 
 class CoreMemoryBlock(SQLModel, table=True):
     id: str = Field(primary_key=True)

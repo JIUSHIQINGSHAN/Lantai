@@ -147,9 +147,10 @@ class Settings(BaseSettings):
     WIKI_OVERVIEW_LLM: bool = True     # overview 优先 LLM 综述；失败/关闭 → 确定性综述
     WIKI_PAGE_MAX_MEMBERS: int = 50    # 场景页最多列出的成员数
     WIKI_MEMBER_CHARS: int = 120       # 成员摘要截断字符数
-    WIKI_RELATED_TOP: int = 3
-# lane 级 ACL（借鉴 TencentDB Memory Hub Fixed Binding 窄版）：agent_id → lane 白名单；空 = 不启用
-    AGENT_LANE_BINDINGS: dict[str, list[str]] = {}          # 场景页"相关场景"数量（按质心余弦）
+    WIKI_RELATED_TOP: int = 3        # 场景页"相关场景"数量（按质心余弦）
+
+    # lane 级 ACL（借鉴 TencentDB Memory Hub Fixed Binding 窄版）：agent_id → lane 白名单；空 = 不启用
+    AGENT_LANE_BINDINGS: dict[str, list[str]] = {}
 
     # 冷启动导入（借鉴腾讯 L0 会话记录 + v2.0.1 时间戳修正）：历史会话 JSONL 批量喂摄取链
     IMPORT_MAX_LINES: int = 5000  # 单次导入最大行数（防误喂超大文件）
@@ -184,6 +185,10 @@ class Settings(BaseSettings):
     AUTODREAM_MIN_CLUSTER: int = 2
     AUTODREAM_MAX_DAILY: int = 10
     AUTODREAM_MIN_CONFIDENCE: float = 0.5
+    # 技能结晶（v0.7，借鉴 aiduMEI SkillCrystallizer 窄版）
+    CRYSTAL_ENABLED: bool = True
+    CRYSTAL_MIN_CLUSTER: int = 3
+    CRYSTAL_MAX_DAILY: int = 10
     FTS_RECALL_TOP_K: int = 20  # FTS 子串召回上限
 
     # API 端点 allowlist（审计 M7）：LLM/reranker 客户端只允许访问这些 host
