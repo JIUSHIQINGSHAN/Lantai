@@ -32,11 +32,8 @@ def validate_graph_limit(limit) -> int:
 
 
 def _label(item: MemoryItem) -> str:
-    """节点短标签：内容首行截断，空则回退 key。"""
-    content = (item.content or "").strip().replace("\n", " ")
-    if len(content) > LABEL_MAX:
-        return content[:LABEL_MAX] + "…"
-    return content or item.key
+    """节点短标签：内容首行截断（与 _label_from_text 同形），空则回退 key。"""
+    return _label_from_text(item.content or "") or item.key
 
 
 def build_graph(session: Session, limit: int = 150) -> dict:
@@ -66,12 +63,14 @@ def build_graph(session: Session, limit: int = 150) -> dict:
         ))
     ).all()
 
-    # 允许端点 = 池内记忆 ∪ 这些边涉及的 RawDocument（来源节点）
+    # 来源节点候选：池内边的另一端（非记忆端点，如 doc_* RawDocument）。
+    # 只收「另一端在池内」的端点——archived/池外记忆端点不会成为来源节点。
     doc_ids = set()
     for e in edges:
-        for end in (e.source_memory_id, e.target_memory_id):
-            if end not in mem_ids:
-                doc_ids.add(end)
+        if e.source_memory_id in mem_ids and e.target_memory_id not in mem_ids:
+            doc_ids.add(e.target_memory_id)
+        elif e.target_memory_id in mem_ids and e.source_memory_id not in mem_ids:
+            doc_ids.add(e.source_memory_id)
     docs = session.exec(
         select(RawDocument).where(RawDocument.id.in_(doc_ids))
     ).all()

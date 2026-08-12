@@ -463,8 +463,9 @@ def handle_verbatim_search(params: dict) -> dict:
 def handle_graph_view(params: dict) -> dict:
     """记忆关系星图（只读）：节点 + MemoryEdge 链接（supports/refines/contradicts/supersedes）+ 统计。"""
     from lantai.ops.graph import get_graph, validate_graph_limit
-    validate_graph_limit(params.get("limit", 150))
-    return get_graph(params.get("limit", 150))
+    limit = params.get("limit", 150)
+    validate_graph_limit(limit)
+    return get_graph(limit)
 
 
 TOOLS = {
