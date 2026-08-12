@@ -467,6 +467,18 @@ def handle_graph_view(params: dict) -> dict:
     validate_graph_limit(limit)
     return get_graph(limit)
 
+def handle_recall_chain(params: dict) -> dict:
+    """记忆广播链（只读）：seed 记忆逐层触发关联记忆（烽燧相传）。"""
+    from lantai.ops.recall_chain import build_recall_chain, validate_chain_params
+    q = params.get("q", "")
+    max_depth = params.get("max_depth", 3)
+    branch = params.get("branch", 3)
+    min_score = params.get("min_score", 0.3)
+    total_max = params.get("total_max", 20)
+    validate_chain_params(max_depth, branch, min_score, total_max)
+    return build_recall_chain(q, max_depth, branch, min_score, total_max)
+
+
 
 TOOLS = {
     "search":   {"description": "搜索记忆", "inputSchema": {
@@ -647,6 +659,14 @@ TOOLS = {
         "type": "object", "properties": {
             "limit": {"type": "integer", "default": 150, "description": "节点上限 [1,500]"},
         }}},
+    "recall_chain": {"description": "记忆广播链（烽燧，只读）：seed 记忆逐层触发关联记忆", "inputSchema": {
+        "type": "object", "properties": {
+            "q": {"type": "string", "description": "起点记忆/查询文本"},
+            "max_depth": {"type": "integer", "default": 3, "description": "链深度 [1,5]"},
+            "branch": {"type": "integer", "default": 3, "description": "每层分支数 [1,10]"},
+            "min_score": {"type": "number", "default": 0.3, "description": "入选最低分数 [0,1]"},
+            "total_max": {"type": "integer", "default": 20, "description": "链总记忆上限 [1,50]"},
+        }, "required": ["q"]}},
 }
 
 TOOL_HANDLERS = {

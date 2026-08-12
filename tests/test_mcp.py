@@ -30,7 +30,7 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert len(resp["result"]["tools"]) == 39  # + 第四波：reflect_run / mem_usage / core_memory_get / verbatim_search；第五波：graph_view
+    assert len(resp["result"]["tools"]) == 40  # 第六波：recall_chain（烽燧）
     assert "candidates_pending" in names
     assert "candidate_review" in names
     assert "add_dialogue" in names
