@@ -460,6 +460,15 @@ def handle_verbatim_search(params: dict) -> dict:
     return hybrid_search(query, top_k=top_k, memory_types=["verbatim"], use_rerank=False)
 
 
+def handle_graph_view(params: dict) -> dict:
+    """记忆关系星图（只读）：节点 + MemoryEdge 链接（supports/refines/contradicts/supersedes）+ 统计。"""
+    limit = params.get("limit", 150)
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
+        raise ValueError("limit must be an int in [1, 500]")
+    from lantai.ops.graph import get_graph
+    return get_graph(limit)
+
+
 TOOLS = {
     "search":   {"description": "搜索记忆", "inputSchema": {
         "type": "object", "properties": {
@@ -634,6 +643,10 @@ TOOLS = {
             "query": {"type": "string", "description": "搜索查询"},
             "top_k": {"type": "integer", "default": 5},
         }, "required": ["query"]}},
+    "graph_view": {"description": "记忆关系星图（只读）：节点 + MemoryEdge 链接（supports/refines/contradicts/supersedes）+ lane/relation 统计", "inputSchema": {
+        "type": "object", "properties": {
+            "limit": {"type": "integer", "default": 150, "description": "节点上限 [1,500]"},
+        }}},
 }
 
 TOOL_HANDLERS = {
@@ -675,6 +688,7 @@ TOOL_HANDLERS = {
     "mem_usage": handle_mem_usage,
     "core_memory_get": handle_core_memory_get,
     "verbatim_search": handle_verbatim_search,
+    "graph_view": handle_graph_view,
 }
 
 

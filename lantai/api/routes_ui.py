@@ -333,6 +333,7 @@ _INDEX_HTML = """<!DOCTYPE html>
   <a class="card" href="/ui/evolve"><b>检索质量看板</b><span>最近 7 天零召回率、按 lane/意图分布、场景命中、token 成本、事件流。</span></a>
   <a class="card" href="/ui/pulse"><b>脉搏</b><span>服务状态与存储分层：记忆存量、分布、写入水位、近 7 天新增、worker 运行时间。</span></a>
   <a class="card" href="/ui/vault"><b>档案与锦囊</b><span>记忆档案浏览与过滤、锦囊待审裁决、衰减概览——存了什么、待裁什么。</span></a>
+  <a class="card" href="/ui/map"><b>记忆星图</b><span>谁和谁有关系——MemoryEdge 关系图：supports / refines / contradicts / supersedes，按 lane 分区的零依赖 SVG 放射布局。</span></a>
 </main>
 </body>
 </html>
@@ -773,3 +774,286 @@ load();
 </body>
 </html>
 """
+
+
+_MAP_HTML = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>兰台 · 记忆星图</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2430; --muted:#6b7686;
+          --accent:#2563eb; --line:#e3e7ee; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
+  header { padding:18px 24px; background:var(--card); border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:18px; }
+  header p { margin:4px 0 0; color:var(--muted); font-size:12px; }
+  main { max-width:1100px; margin:20px auto; padding:0 16px 48px; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:10px;
+           padding:16px; margin-bottom:16px; }
+  .stats { display:flex; gap:24px; flex-wrap:wrap; color:var(--muted); font-size:13px; }
+  .stats b { color:var(--ink); }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; font-size:12px; color:var(--muted); margin-top:8px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; }
+  .legend .edge i { width:18px; height:3px; border-radius:2px; vertical-align:middle; }
+  svg { width:100%; height:auto; background:#fbfcfe; border:1px solid var(--line); border-radius:10px; }
+  .node { cursor:pointer; }
+  .node circle { stroke:#fff; stroke-width:1.5; }
+  .node text { font-size:10px; fill:#3d4757; pointer-events:none; }
+  .node.hot circle { stroke:var(--accent); stroke-width:2.5; }
+  #info { min-height:20px; color:var(--muted); font-size:13px; }
+  #err { color:#b91c1c; }
+</style>
+</head>
+<body>
+<header>
+  <h1>兰台 · 记忆星图</h1>
+  <p>谁和谁有关系：MemoryEdge（supports 绿 / refines 蓝 / contradicts 橙 / supersedes 红），节点按 lane 分区、同场景聚簇。悬停看详情，点击跳档案。零外部依赖 SVG。</p>
+</header>
+<main>
+  <div class="panel">
+    <div class="stats" id="stats"></div>
+    <div class="legend" id="laneLegend"></div>
+    <div class="legend" id="edgeLegend"></div>
+  </div>
+  <div class="panel"><svg id="svg" viewBox="0 0 1000 700"></svg></div>
+  <div class="panel"><div id="info">（悬停节点/连线查看详情）</div></div>
+  <div id="err"></div>
+</main>
+<script>
+var LANES = ['fact','rule','experience','preference','chat','general'];
+var LANE_COLOR = {fact:'#2563eb', rule:'#7c3aed', experience:'#0891b2',
+                  preference:'#db2777', chat:'#9ca3af', general:'#16a34a'};
+var EDGE_COLOR = {supports:'#16a34a', refines:'#2563eb', contradicts:'#d97706', supersedes:'#b91c1c'};
+var EDGE_LABEL = {supports:'支持', refines:'细化', contradicts:'矛盾', supersedes:'取代'};
+var W = 1000, H = 700, CX = 500, CY = 350, R = 300;
+var pos = {}, nodes = [], links = [], scenes = {};
+
+function api(path) {
+  var headers = {};
+  var key = localStorage.getItem('lantai_api_key') || '';
+  if (key) headers['X-API-Key'] = key;
+  return fetch(path, {headers: headers});
+}
+function el(tag, cls, text) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function polar(deg, r) {
+  var a = deg * Math.PI / 180;
+  return {x: CX + r * Math.cos(a), y: CY + r * Math.sin(a)};
+}
+function laneAngle(lane) {
+  var i = LANES.indexOf(lane);
+  return -90 + (i < 0 ? 5 : i) * 60;
+}
+function layout() {
+  pos = {};
+  var byScene = {}, solos = [];
+  nodes.forEach(function (n) {
+    if (n.node_type === 'source') return;  // 来源节点第二阶段外环布局
+    if (n.scene_id) { (byScene[n.scene_id] = byScene[n.scene_id] || []).push(n); }
+    else solos.push(n);
+  });
+  var laneGroups = {};
+  function push(lane, g) { (laneGroups[lane] = laneGroups[lane] || []).push(g); }
+  Object.keys(byScene).forEach(function (sid) {
+    var arr = byScene[sid];
+    push(arr[0].lane || 'general', {kind: 'scene', sid: sid, nodes: arr});
+  });
+  solos.forEach(function (n) { push(n.lane || 'general', {kind: 'solo', nodes: [n]}); });
+  Object.keys(laneGroups).forEach(function (lane) {
+    var groups = laneGroups[lane], center = laneAngle(lane), half = 26;
+    var nGroups = groups.length;
+    groups.forEach(function (g, gi) {
+      var gAngle = center - half + (gi + 0.5) * (2 * half) / nGroups;
+      if (g.kind === 'solo') {
+        var r = 100 + (gi % 3) * 55;
+        var p = polar(gAngle, r);
+        pos[g.nodes[0].id] = p;
+      } else {
+        var m = g.nodes.length;
+        var spread = m > 1 ? Math.min(13, 11) : 0;
+        g.nodes.forEach(function (n, idx) {
+          var a = m === 1 ? gAngle : gAngle + (idx - (m - 1) / 2) * (2 * spread) / Math.max(1, m - 1);
+          var rr = 175 - (idx % 2) * 30;
+          var p = polar(a, Math.max(100, rr));
+          pos[n.id] = p;
+        });
+      }
+    });
+  });
+  // 第二阶段：来源文档节点放外环，角度取邻接记忆的均值（贴着自己支撑的记忆）
+  var adj = {};
+  links.forEach(function (l) {
+    (adj[l.source] = adj[l.source] || []).push(l.target);
+    (adj[l.target] = adj[l.target] || []).push(l.source);
+  });
+  nodes.forEach(function (n) {
+    if (n.node_type !== 'source') return;
+    var neigh = (adj[n.id] || []).map(function (id) { return pos[id]; }).filter(Boolean);
+    var angle;
+    if (neigh.length) {
+      var sumSin = 0, sumCos = 0;
+      neigh.forEach(function (p) {
+        var a = Math.atan2(p.y - CY, p.x - CX);
+        sumSin += Math.sin(a); sumCos += Math.cos(a);
+      });
+      angle = Math.atan2(sumSin, sumCos) * 180 / Math.PI;
+    } else { angle = -90; }
+    pos[n.id] = polar(angle, 262);
+  });
+}
+function draw() {
+  layout();
+  var svg = document.getElementById('svg');
+  svg.textContent = '';
+  var NS = 'http://www.w3.org/2000/svg';
+  function nodeById(id) {
+    for (var i = 0; i < nodes.length; i++) if (nodes[i].id === id) return nodes[i];
+    return null;
+  }
+  // 边
+  links.forEach(function (l) {
+    var s = nodeById(l.source), t = nodeById(l.target);
+    if (!s || !t || !pos[s.id] || !pos[t.id]) return;
+    var line = document.createElementNS(NS, 'line');
+    line.setAttribute('x1', pos[s.id].x); line.setAttribute('y1', pos[s.id].y);
+    line.setAttribute('x2', pos[t.id].x); line.setAttribute('y2', pos[t.id].y);
+    line.setAttribute('stroke', EDGE_COLOR[l.relation] || '#9ca3af');
+    line.setAttribute('stroke-opacity', 0.55);
+    line.setAttribute('stroke-width', (1.5 + (l.confidence || 0.5) * 2.2).toFixed(2));
+    line.style.cursor = 'pointer';
+    line.addEventListener('mouseenter', function () {
+      info.textContent = s.label + ' —' + (EDGE_LABEL[l.relation] || l.relation) + '→ ' + t.label +
+        '（置信 ' + (l.confidence || 0.5) + '）';
+    });
+    line.addEventListener('mouseleave', function () { info.textContent = ''; });
+    svg.appendChild(line);
+  });
+  // 节点
+  nodes.forEach(function (n) {
+    var p = pos[n.id];
+    if (!p) return;
+    var g = document.createElementNS(NS, 'g');
+    g.setAttribute('class', 'node');
+    g.setAttribute('transform', 'translate(' + p.x + ',' + p.y + ')');
+    var ring = null;
+    if (n.scene_id) {
+      ring = document.createElementNS(NS, 'circle');
+      ring.setAttribute('r', 15);
+      ring.setAttribute('fill', 'none');
+      ring.setAttribute('stroke', '#f59e0b');
+      ring.setAttribute('stroke-width', '1');
+      ring.setAttribute('stroke-dasharray', '3 2');
+      g.appendChild(ring);
+    }
+    if (n.node_type === 'source') {
+      var rect = document.createElementNS(NS, 'rect');
+      rect.setAttribute('x', -6); rect.setAttribute('y', -6);
+      rect.setAttribute('width', 12); rect.setAttribute('height', 12);
+      rect.setAttribute('rx', 2);
+      rect.setAttribute('fill', '#f3f4f6');
+      rect.setAttribute('stroke', '#6b7280');
+      rect.setAttribute('stroke-width', '1.2');
+      g.appendChild(rect);
+    } else {
+      var c = document.createElementNS(NS, 'circle');
+      c.setAttribute('r', 7);
+      c.setAttribute('fill', LANE_COLOR[n.lane] || '#16a34a');
+      g.appendChild(c);
+    }
+    var t = document.createElementNS(NS, 'text');
+    t.setAttribute('x', 11);
+    t.setAttribute('y', 3);
+    var label = n.label.length > 14 ? n.label.slice(0, 14) + '…' : n.label;
+    t.textContent = label;
+    g.appendChild(t);
+    var sceneNote = n.scene_id && scenes[n.scene_id] ? '　场景：' + scenes[n.scene_id] : '';
+    if (n.node_type === 'source') {
+      g.addEventListener('mouseenter', function () {
+        info.textContent = '来源文档：' + n.label + (n.url ? '（' + n.url + '）' : '');
+        g.classList.add('hot');
+      });
+      g.addEventListener('mouseleave', function () { info.textContent = ''; g.classList.remove('hot'); });
+      g.addEventListener('click', function () {
+        if (n.url) window.open(n.url, '_blank'); else window.location.href = '/ui/vault';
+      });
+    } else {
+      g.addEventListener('mouseenter', function () {
+        info.textContent = n.label + '（' + n.lane + ' / ' + n.decay_class + '）' + sceneNote;
+        g.classList.add('hot');
+      });
+      g.addEventListener('mouseleave', function () { info.textContent = ''; g.classList.remove('hot'); });
+      g.addEventListener('click', function () { window.location.href = '/ui/vault'; });
+    }
+    svg.appendChild(g);
+  });
+}
+function renderStats(data) {
+  var box = document.getElementById('stats');
+  box.textContent = '';
+  var ntc = (data.stats && data.stats.node_type_counts) || {};
+  var memN = ntc.memory || 0, srcN = ntc.source || 0;
+  box.appendChild(el('span', null, '记忆 <b>' + memN + '</b> · 来源 <b>' + srcN + '</b> · 关系 <b>' + data.links.length + '</b>'));
+  var st = data.stats || {};
+  var lc = st.lane_counts || {}, ec = st.edge_counts || {};
+  box.appendChild(el('span', null, '按 lane：' + Object.keys(lc).map(function (k) { return k + ' ' + lc[k]; }).join(' / ') || '—'));
+  box.appendChild(el('span', null, '按关系：' + Object.keys(ec).map(function (k) { return (EDGE_LABEL[k] || k) + ' ' + ec[k]; }).join(' / ') || '—'));
+  var ll = document.getElementById('laneLegend');
+  ll.textContent = '';
+  ll.appendChild(el('span', null, 'lane：'));
+  LANES.forEach(function (lane) {
+    var s = el('span', null, lane);
+    var dot = document.createElement('i');
+    dot.style.background = LANE_COLOR[lane];
+    s.prepend(dot);
+    ll.appendChild(s);
+  });
+  var srcNote = el('span', 'edge', '来源文档');
+  var srcDot = document.createElement('i');
+  srcDot.style.background = '#6b7280';
+  srcNote.prepend(srcDot);
+  ll.appendChild(srcNote);
+  var elBox = document.getElementById('edgeLegend');
+  elBox.textContent = '';
+  elBox.appendChild(el('span', 'edge', '关系：'));
+  Object.keys(EDGE_COLOR).forEach(function (rel) {
+    var s = el('span', 'edge', EDGE_LABEL[rel]);
+    var dot = document.createElement('i');
+    dot.style.background = EDGE_COLOR[rel];
+    s.prepend(dot);
+    elBox.appendChild(s);
+  });
+}
+function load() {
+  api('/graph?limit=150').then(function (r) {
+    if (!r.ok) { document.getElementById('err').textContent = '星图请求失败 HTTP ' + r.status + '（回环部署可先访问 /ui/recall 填写 API Key）'; return null; }
+    return r.json();
+  }).then(function (data) {
+    if (!data) return;
+    nodes = data.nodes || [];
+    links = data.links || [];
+    scenes = data.scenes || {};
+    renderStats(data);
+    draw();
+  }).catch(function (e) {
+    document.getElementById('err').textContent = '星图加载失败: ' + e;
+  });
+}
+load();
+</script>
+</body>
+</html>
+"""
+
+
+@router.get("/ui/map", response_class=HTMLResponse)
+def ui_map() -> str:
+    """记忆星图（MAP，借鉴 aiduMEI v18.3.0 MAP 面板窄版）：零依赖 SVG 只读页面。"""
+    return _MAP_HTML

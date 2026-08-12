@@ -30,7 +30,7 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert len(resp["result"]["tools"]) == 38  # + 第四波：reflect_run / mem_usage / core_memory_get / verbatim_search
+    assert len(resp["result"]["tools"]) == 39  # + 第四波：reflect_run / mem_usage / core_memory_get / verbatim_search；第五波：graph_view
     assert "candidates_pending" in names
     assert "candidate_review" in names
     assert "add_dialogue" in names
@@ -63,6 +63,7 @@ def test_tools_list():
     assert "mem_usage" in names
     assert "core_memory_get" in names
     assert "verbatim_search" in names
+    assert "graph_view" in names
 
 
 def test_unknown_tool():
@@ -575,3 +576,18 @@ def test_reflect_run_idle(mcp_env):
     assert out["ok"] is True
     assert out.get("skipped") == "idle"
 
+
+def test_graph_view_roundtrip(mcp_env):
+    """graph_view 只读：真实 SQLite 下返回节点/链接/统计形状（空库不炸）。"""
+    session_factory, _ = mcp_env
+    out = _call_tool(_load_mcp(), "graph_view", {})
+    assert "nodes" in out and "links" in out and "stats" in out
+    assert out["stats"] == {"lane_counts": {}, "node_type_counts": {}, "edge_counts": {}}
+
+
+def test_graph_view_limit_invalid(mcp_env):
+    """limit 越界 -> ValueError（宁 miss 不脏写式校验，不落任何状态）。"""
+    mod = _load_mcp()
+    resp = mod.handle({"jsonrpc": "2.0", "id": 99, "method": "tools/call",
+                       "params": {"name": "graph_view", "arguments": {"limit": 9999}}})
+    assert "error" in resp
