@@ -152,7 +152,7 @@ def _curate(candidates: list[dict], related_texts: str) -> dict:
     try:
         return chat_json(REFLECT_CURATOR_SYS, user)
     except Exception:
-        return {"proposals": []}
+        return {"proposals": [], "curate_failed": True}
 
 
 def _reject(prop: MemoryProposal, evidence_texts: str) -> dict:
@@ -226,7 +226,28 @@ def propose_from_reflection(session, candidates: list[dict],
     return props
 
 
+def _record_reflect_run(run_at=None, **fields) -> None:
+    """反思运行结论落库（reflect_run 表；失败不阻断运行，宁 miss 不静默）。"""
+    try:
+        from lantai.models.tables import ReflectRun
+        with db.get_session() as s:
+            s.add(ReflectRun(id=new_id("run"),
+                             run_at=run_at or utcnow(), **fields))
+            s.commit()
+    except Exception:
+        pass
+
+
 def run_reflect_once() -> dict:
+    """反思主入口（异常留痕后原样抛出，供调度器日志/下轮重试）。"""
+    try:
+        return _run_reflect_once()
+    except Exception as exc:
+        _record_reflect_run(error=str(exc))
+        raise
+
+
+def _run_reflect_once() -> dict:
     """反思主入口：健康扫描 →（水位触发新记忆蒸馏）→ curator → 提案 → 裁决。
 
     自动应用：confidence >= REFLECT_AUTO_APPLY_CONF 且 rejecter risk=low；
@@ -245,6 +266,7 @@ def run_reflect_once() -> dict:
     theme_triggered = waterline >= settings.REFLECT_IMPORTANCE_POOL
     if not candidates and not theme_triggered:
         record_run("reflect")
+        _record_reflect_run(waterline=round(waterline, 2), skipped="idle")
         return {"ok": True, "skipped": "idle",
                 "health": scan["snapshot"], "waterline": round(waterline, 2)}
 
@@ -305,6 +327,13 @@ def run_reflect_once() -> dict:
         scan_after = health_scan(s)
 
     record_run("reflect")
+    _record_reflect_run(
+        waterline=round(waterline, 2),
+        health_before=scan["snapshot"],
+        health_after=scan_after["snapshot"],
+        proposals_created=len(props), auto_applied=auto_applied,
+        pending=pending, discarded=discarded,
+        curate_failed=bool(curated.get("curate_failed")))
     return {
         "ok": True, "skipped": False,
         "health_before": scan["snapshot"], "health_after": scan_after["snapshot"],

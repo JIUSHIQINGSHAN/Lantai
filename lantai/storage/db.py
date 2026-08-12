@@ -16,7 +16,7 @@ engine = create_engine(settings.DATABASE_URL, echo=False,
 # PRAGMA user_version 记录数据库结构版本；未版本化库（全新库或 v0.5 及以前
 # 老库）自动基线为 v1，增量补丁按版本号依次执行。ALTER TABLE ADD COLUMN 为
 # 毫秒级操作，代码更新与数据重构解耦，异常只记日志不阻断启动（降级而非崩溃）。
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 
 def _ensure_column(conn, table: str, column: str, ddl: str) -> None:
@@ -129,7 +129,21 @@ def apply_migrations(conn) -> None:
             conn.execute("PRAGMA user_version = 9")
             conn.commit()
             logger.info("数据库增量迁移 v9 完成（树状图谱 + 技能结晶）")
-        # 未来版本在此追加：if user_version < 10: ...
+        # v9 -> v10（反思运行可审计）：reflect_run 记录每次运行的水位/跳过/产出/LLM 失败
+        if user_version < 10:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS reflect_run ("
+                "id TEXT PRIMARY KEY, run_at DATETIME, "
+                "waterline REAL DEFAULT 0, skipped TEXT DEFAULT '', "
+                "curate_failed INTEGER DEFAULT 0, "
+                "health_before TEXT, health_after TEXT, "
+                "proposals_created INTEGER DEFAULT 0, "
+                "auto_applied INTEGER DEFAULT 0, pending INTEGER DEFAULT 0, "
+                "discarded INTEGER DEFAULT 0, error TEXT DEFAULT '')")
+            conn.execute("PRAGMA user_version = 10")
+            conn.commit()
+            logger.info("数据库增量迁移 v10 完成（反思运行记录）")
+        # 未来版本在此追加：if user_version < 11: ...
 
     except Exception as exc:
         logger.error("数据库增量迁移异常（服务继续启动）: %s", exc)

@@ -12,7 +12,8 @@ from sqlmodel import func, select
 from lantai.core.scheduler import record_run
 from lantai.core.settings import settings
 from lantai.models.tables import (MemoryCandidate, MemoryItem,
-                                    MemoryProposal, RetrievalEvent)
+                                    MemoryProposal, ReflectRun,
+                                    RetrievalEvent)
 from lantai.services.candidate_service import run_candidate_ttl_once
 from lantai.storage import db
 
@@ -259,11 +260,26 @@ def collect_calibration_stats(days: int = 7) -> dict:
                              .group_by(MemoryProposal.decision_reason)
                              .order_by(func.count().desc())
                              .limit(10)).all()
+        # 反思运行记录：区分 空闲/正常/异常/LLM 失败（观察期去噪）
+        run_rows = s.exec(select(ReflectRun.skipped, ReflectRun.error,
+                                 ReflectRun.curate_failed,
+                                 ReflectRun.proposals_created)
+                          .where(ReflectRun.run_at >= start,
+                                 ReflectRun.run_at < end)).all()
+    runs = {
+        "total": len(run_rows),
+        "idle": sum(1 for r in run_rows if r[0] == "idle"),
+        "errored": sum(1 for r in run_rows if r[1]),
+        "llm_failed": sum(1 for r in run_rows if r[2]),
+        "productive": sum(1 for r in run_rows
+                          if r[0] != "idle" and not r[1] and r[3] > 0),
+    }
     return {
         "window_days": days,
         "reflection": refl,
         "water_level": round(float(water), 2),
         "reason_top": [(r, int(c)) for r, c in reason_rows],
+        "runs": runs,
     }
 
 
@@ -299,6 +315,14 @@ def render_calibration_markdown(stats: dict) -> str:
         lines += ["", "## 拒绝原因 Top（决策反馈回路）", "", "| 原因 | 次数 |", "|---|---|"]
         for reason, cnt in stats["reason_top"]:
             lines.append(f"| {reason} | {cnt} |")
+    runs = stats.get("runs") or {"total": 0, "idle": 0, "errored": 0,
+                                 "llm_failed": 0, "productive": 0}
+    lines += ["", "## 反思运行记录（窗口内）", "", "| 指标 | 值 |", "|---|---|",
+              f"| 运行次数 | {runs['total']} |",
+              f"| 空闲（无候选且水位不足） | {runs['idle']} |",
+              f"| 异常中断 | {runs['errored']} |",
+              f"| LLM 失败（宁 miss 空降级） | {runs['llm_failed']} |",
+              f"| 产出提案的运行 | {runs['productive']} |"]
     lines += ["", "## 待回填结论（对标 dry-run 推荐）", "",
               "- A 水位触发：REFLECT_IMPORTANCE_POOL 是否保持 5.0",
               "- B 自动应用分流：REFLECT_AUTO_APPLY_CONF 是否保持 0.7",

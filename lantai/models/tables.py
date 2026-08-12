@@ -341,3 +341,25 @@ class SchedulerRun(SQLModel, table=True):
 
     name: str = Field(primary_key=True)
     last_run_utc: str = ""
+
+
+class ReflectRun(SQLModel, table=True):
+    """反思运行记录（观察期可审计）：每次运行的水位/跳过/产出/LLM 失败/异常。
+
+    与 scheduler_run（时间戳）互补：scheduler_run 回答「跑没跑」，
+    reflect_run 回答「跑得怎么样」（空闲/产出/失败，回填校准去噪输入）。
+    """
+    __tablename__ = "reflect_run"
+
+    id: str = Field(primary_key=True)
+    run_at: datetime = Field(index=True)
+    waterline: float = 0.0
+    skipped: str = ""            # "" = 正常执行（含空产出）；"idle" = 空闲跳过
+    curate_failed: bool = False  # curator LLM 调用失败（宁 miss 空降级，但不静默）
+    health_before: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    health_after: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    proposals_created: int = 0
+    auto_applied: int = 0
+    pending: int = 0
+    discarded: int = 0
+    error: str = ""              # 未捕获异常时记录（调度器重试前留痕）

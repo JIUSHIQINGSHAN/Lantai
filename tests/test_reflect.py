@@ -16,7 +16,7 @@ import lantai.storage.db as db_module
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
 from lantai.models.tables import (ConflictEvent, MemoryCheckpoint, MemoryEdge,
-                                  MemoryItem, MemoryProposal)
+                                  MemoryItem, MemoryProposal, ReflectRun)
 from lantai.storage.fts import init_fts, search_fts, sync_fts
 
 
@@ -328,6 +328,81 @@ class TestRunReflectOnce:
 
         assert result["skipped"] == "idle"
         mock_chat.assert_not_called()
+
+
+# ── 运行结果落库（观察期可审计）──────────────────────
+
+class TestRunOutcome:
+    """反思每次运行的结论落库：水位/跳过/产出/LLM 失败（不静默）。"""
+
+    def test_idle_run_records_outcome(self, reflect_env):
+        session_factory, _ = reflect_env
+        from lantai.evolution.reflector import run_reflect_once
+        with patch("lantai.evolution.reflector.chat_json") as mock_chat:
+            result = run_reflect_once()
+        assert result["skipped"] == "idle"
+        with session_factory() as s:
+            runs = s.exec(select(ReflectRun)).all()
+            assert len(runs) == 1
+            r = runs[0]
+            assert r.skipped == "idle"
+            assert r.proposals_created == 0
+            assert r.error == ""
+            assert r.waterline == 0.0
+
+    def test_full_run_records_outcome(self, reflect_env):
+        session_factory, _ = reflect_env
+        _seed(session_factory, [
+            _mem(id="mem_old", content="旧域名 example.com"),
+            _mem(id="mem_new", content="新域名 example.org"),
+            MemoryEdge(id="edge_1", source_memory_id="mem_new",
+                       target_memory_id="mem_old",
+                       relation="supersedes", confidence=0.9),
+        ])
+        curate = {"proposals": [
+            {"proposal_type": "deprecate", "target_memory_id": "mem_old",
+             "new_content": "", "memory_type": "semantic",
+             "reason": "superseded by mem_new", "confidence": 0.9,
+             "evidence_ids": ["mem_new"]},
+        ]}
+        reject = {"accept": True, "risk": "low", "reason": "supported"}
+        from lantai.evolution.reflector import run_reflect_once
+        with patch("lantai.evolution.reflector.chat_json",
+                   side_effect=[curate, reject]), \
+             _embed_mock(), _vector_mocks():
+            result = run_reflect_once()
+        assert result["auto_applied"] == 1
+        with session_factory() as s:
+            runs = s.exec(select(ReflectRun)).all()
+            assert len(runs) == 1
+            r = runs[0]
+            assert r.skipped == ""
+            assert r.proposals_created == 1
+            assert r.auto_applied == 1
+            assert r.curate_failed is False
+            assert r.health_before.get("superseded_active") == 1
+            assert r.health_after.get("superseded_active") == 0
+
+    def test_curate_failure_records_flag(self, reflect_env):
+        """LLM 失败 → 宁 miss 空降级，但运行记录标记 curate_failed（不静默）。"""
+        session_factory, _ = reflect_env
+        _seed(session_factory, [
+            _mem(id="mem_s", content="旧内容 example.com"),
+            _mem(id="mem_new", content="新内容 example.org"),
+            MemoryEdge(id="edge_s", source_memory_id="mem_new",
+                       target_memory_id="mem_s",
+                       relation="supersedes", confidence=0.9),
+        ])
+        from lantai.evolution.reflector import run_reflect_once
+        with patch("lantai.evolution.reflector.chat_json",
+                   side_effect=RuntimeError("llm down")), \
+             _embed_mock(), _vector_mocks():
+            result = run_reflect_once()
+        assert result["proposals_created"] == 0
+        with session_factory() as s:
+            r = s.exec(select(ReflectRun)).one()
+            assert r.curate_failed is True
+            assert r.error == ""
 
 
 # ── apply_proposal 扩展（deprecate / merge / 回归）────────────

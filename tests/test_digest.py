@@ -16,7 +16,7 @@ from sqlmodel import SQLModel, Session, create_engine
 import lantai.storage.db as db_module
 from lantai.core.settings import settings
 from lantai.models.tables import (MemoryCandidate, MemoryItem,
-                                    MemoryProposal, RetrievalEvent)
+                                    MemoryProposal, ReflectRun, RetrievalEvent)
 
 
 def _utc_naive(dt: datetime) -> datetime:
@@ -163,6 +163,11 @@ class TestCalibrationStats:
             MemoryItem(id="m3", memory_type="semantic", key="k3", content="c",
                        importance=9.0, created_at=now - timedelta(days=10)),
         ])
+        _seed(session_factory, [
+            ReflectRun(id="run1", run_at=now, waterline=4.0, skipped="idle"),
+            ReflectRun(id="run2", run_at=now, waterline=6.5, skipped="",
+                       proposals_created=1, auto_applied=1),
+        ])
 
         from lantai.workers.digest_worker import collect_calibration_stats
         stats = collect_calibration_stats(days=7)
@@ -185,6 +190,10 @@ class TestCalibrationStats:
             ("证据不足，宁 miss", 1),
             ("与新记忆冲突，需人工复核", 1),
         ]
+        assert stats["runs"]["total"] == 2
+        assert stats["runs"]["idle"] == 1
+        assert stats["runs"]["errored"] == 0
+        assert stats["runs"]["productive"] == 1
 
     def test_render_calibration_markdown(self, digest_env):
         session_factory = digest_env
@@ -202,6 +211,8 @@ class TestCalibrationStats:
         _seed(session_factory, [
             MemoryItem(id="m1", memory_type="semantic", key="k1", content="a",
                        importance=5.5, created_at=now),
+            ReflectRun(id="run1", run_at=now, waterline=5.5, skipped="",
+                       proposals_created=1),
         ])
         from lantai.workers.digest_worker import (
             collect_calibration_stats, render_calibration_markdown)
@@ -213,6 +224,8 @@ class TestCalibrationStats:
         assert "| 合计 | 1 | 0 | 1 | 0 |" in md
         assert "水位（窗口内 importance 累加）" in md and "5.5" in md
         assert "证据不足" in md
+        assert "## 反思运行记录（窗口内）" in md
+        assert "| 运行次数 | 1 |" in md
 
 
 class TestCollectStats:

@@ -50,7 +50,8 @@ class TestShouldCatchUp:
 
     NOW = datetime(2026, 8, 12, 12, 0, 0, tzinfo=timezone.utc)  # 已过 06:00/06:01
 
-    def test_none_last_run_catches_up(self):
+    def test_none_last_run_catches_up(self, sched_db):
+        # sched_db 隔离存储：last_run=None 回落 get_last_run 时读空表 → None
         assert should_catch_up("digest", 22, 0, now=self.NOW, last_run=None)
 
     def test_run_after_most_recent_fire_skips(self):
@@ -143,10 +144,10 @@ class TestStartSchedulerCatchup:
         assert "reflect_catchup" not in ids
 
 
-class TestMigrationV8:
-    """v7 库 → v8：scheduler_run 表创建 + user_version 记账。"""
+class TestMigrationsV8ToV10:
+    """v7 库 → v10：scheduler_run + reflect_run 表创建 + user_version 记账。"""
 
-    def test_v7_to_v8_creates_scheduler_run(self, tmp_path):
+    def test_v7_to_v10_creates_both_tables(self, tmp_path):
         import sqlite3
         conn = sqlite3.connect(str(tmp_path / "v7.db"))
         conn.execute("PRAGMA user_version = 7")
@@ -156,6 +157,6 @@ class TestMigrationV8:
         tables = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert "scheduler_run" in tables
-        # 迁移链会继续升到当前版本（v9 树状图谱）；此处只断言 v8 记账生效
-        assert conn.execute("PRAGMA user_version").fetchone()[0] >= 8
+        assert "reflect_run" in tables
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 10
         conn.close()
