@@ -47,3 +47,5 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **观察期**（回填校准窗口） | 反思阈值定标前的真实数据收集期（2026-08-11 起 7 天）：`reflect_run`/`scheduler_run` 落库保证每次运行的 空闲/产出/LLM 失败/异常 可审计，期满后（8/18）用真实分布回填校准阈值 |
 | **回填校准**（反思阈值回填校准） | 观察期满后用真实分布对标 dry-run 推荐，二次校准 `REFLECT_IMPORTANCE_POOL`/`REFLECT_AUTO_APPLY_CONF`/`REFLECT_MIN_CONFIDENCE`；入口 `scripts/calibrate_reflection.py` + `collect_calibration_stats` |
 | **置信桶**（置信区间分组） | 提案置信度分桶统计（边界走 `DIGEST_CONF_BUCKETS`，ADR-0002 零硬编码），日报与回填校准报告展示分布；桶外置信计「其他」不静默 |
+| **吉金**（Jijin，UI 主题） | v0.14 全局皮肤（默认）：青铜彝器旧称（《墨子》等古籍「吉金」指铸器铜料），取金石厚重、铭文传久——玄青拓片底 `#1c2430` / 铜绿 `#3e7a6b` / 鎏金 `#b08a3e` / 朱砂 `#a33b2e`，签名元素为云雷纹饰带。见 [ADR-0013](docs/adr/0013-naming-system.md) 命名登记 |
+| **漏窗**（Louchuang，UI 主题） | v0.14 全局皮肤（可切换）：苏州园林漏窗借景，「移步换景、借景成画」——绢黄底 `#e9dfc6` / 黛青 `#2f4f4f` / 石绿 `#4e8d7c` / 竹青 `#6f9e8a`，签名元素为回纹画框 + 月洞门形卡片。见 [ADR-0013](docs/adr/0013-naming-system.md) 命名登记 |

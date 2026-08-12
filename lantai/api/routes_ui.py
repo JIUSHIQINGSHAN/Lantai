@@ -51,13 +51,66 @@ _UI_HTML = """<!DOCTYPE html>
   .result pre { white-space:pre-wrap; margin:6px 0 0; font-size:13px; color:#3d4757; }
   #err { color:var(--bad); }
   .muted { color:var(--muted); font-size:12px; }
+  /* ===== v0.14 双主题：吉金（默认，青铜铭文）/ 漏窗（园林借景） ===== */
+  :root { --bg:#1c2430; --card:#232c38; --card2:#2a3442; --ink:#e6dcc3; --muted:#8f9a9a;
+          --line:#3a4655; --accent:#b08a3e; --ok:#3e7a6b; --warn:#b08a3e; --bad:#a33b2e;
+          --soft:#2a3442; --btn-ink:#14181a;
+          --lane-fact:#e6dcc3; --lane-rule:#7a9aa8; --lane-exp:#3e7a6b; --lane-pref:#a33b2e;
+          --lane-chat:#b08a3e; --lane-gen:#8a7a9a;
+          --e-supports:#3e7a6b; --e-refines:#7a9aa8; --e-contradicts:#a33b2e; --e-supersedes:#b08a3e;
+          --title-font:"STKaiti","KaiTi",serif; --body-font:"Songti SC","STSong","SimSun",serif;
+          --strip-h:22px; --sig-a:#b08a3e; --sig-b:#4e8d7c; }
+  [data-theme="louchuang"] { --bg:#e9dfc6; --card:#f4ecda; --card2:#efe6cf; --ink:#2f4f4f; --muted:#7d8a72;
+          --line:#c9bc96; --accent:#4e8d7c; --ok:#6f9e8a; --warn:#b08a3e; --bad:#a05a4a;
+          --soft:#efe6cf; --btn-ink:#fff;
+          --lane-fact:#2f4f4f; --lane-rule:#4e8d7c; --lane-exp:#6f9e8a; --lane-pref:#a05a4a;
+          --lane-chat:#8a6a3a; --lane-gen:#6a5a7a;
+          --e-supports:#6f9e8a; --e-refines:#4e8d7c; --e-contradicts:#a05a4a; --e-supersedes:#8a6a2a;
+          --title-font:"STXingkai","STKaiti","KaiTi",serif; --body-font:"Songti SC","STSong","SimSun",serif;
+          --strip-h:26px; --sig-a:#4e8d7c; --sig-b:#8a6a3a; }
+  body { font-family:var(--body-font); }
+  main h1, header h1 { font-family:var(--title-font); letter-spacing:4px; }
+  header { border-bottom:2px solid var(--accent); }
+  .bar, .tag, .track, .bar-row .track { background:var(--soft); }
+  .bar i, .track i, .bar-row .track i { background:linear-gradient(90deg,var(--ok),var(--accent)); }
+  .result pre, .row .body { color:var(--ink); }
+  input[type=text], input[type=number], input[type=password], select { background:var(--card); color:var(--ink); border-color:var(--line); }
+  button { color:var(--btn-ink); }
+  button.ghost { background:var(--soft); color:var(--ink); }
+  .card { background:var(--card); }
+  a.card { background:var(--card); border-color:var(--line); color:var(--ink); }
+  a.card b { color:var(--accent); } a.card span { color:var(--muted); } a.card:hover { border-color:var(--accent); }
+  p { color:var(--muted); }
+  svg { background:var(--card); }
+  .node circle { stroke:var(--card); } .node text { fill:var(--ink); }
+  /* 签名元素：吉金=云雷纹饰带；漏窗=回纹画框 */
+  .sig { height:var(--strip-h); margin:10px 24px 0; opacity:.5; }
+  .sig svg { width:100%; height:100%; display:block; background:transparent; border:0; }
+  .sig-jijin { display:block; } .sig-louchuang { display:none; }
+  [data-theme="louchuang"] .sig-jijin { display:none; }
+  [data-theme="louchuang"] .sig-louchuang { display:block; }
+  /* 主题切换钮 */
+  .theme-ctl { float:right; margin-left:18px; }
+  .theme-ctl button { padding:4px 12px; font-size:12px; background:transparent; color:var(--accent);
+                      border:1px solid var(--accent); border-radius:999px; letter-spacing:2px; cursor:pointer; }
+  .theme-ctl button:hover { background:var(--accent); color:var(--bg); }
+  /* 漏窗：月洞门/画框卡片 */
+  [data-theme="louchuang"] .panel, [data-theme="louchuang"] .card, [data-theme="louchuang"] a.card {
+      position:relative; border-radius:16px 16px 6px 6px; }
+  [data-theme="louchuang"] .card::before, [data-theme="louchuang"] a.card::before {
+      content:""; position:absolute; left:50%; top:-9px; transform:translateX(-50%);
+      width:52px; height:18px; border:2px solid var(--line); border-bottom:none;
+      border-radius:26px 26px 0 0; background:var(--card); }
 </style>
 </head>
 <body>
 <header>
   <h1>兰台 · 追忆漏斗</h1>
   <p>它凭什么想起这条？候选池 → 意图 → 向量 → 衰减 → (重排) → 最终，每步耗时与命中数全可见。</p>
+  <span class="theme-ctl"><button type="button" onclick="toggleTheme()" id="themeBtn" title="吉金 / 漏窗 主题切换">式 · 吉金</button></span>
 </header>
+  <div class="sig sig-jijin" aria-hidden="true"><svg viewBox="0 0 1016 22" preserveAspectRatio="none"><defs><pattern id="lw" width="28" height="22" patternUnits="userSpaceOnUse"><path d="M7 2 h14 v18 h-14 z" fill="none" stroke="#b08a3e" stroke-width="1.4"/><path d="M14 6 h4 v10 h-4 z" fill="#b08a3e"/></pattern></defs><rect width="1016" height="22" fill="url(#lw)"/></svg></div>
+  <div class="sig sig-louchuang" aria-hidden="true"><svg viewBox="0 0 1016 26" preserveAspectRatio="none"><g fill="none" stroke="#4e8d7c" stroke-width="1.4"><path d="M0 0 h30 v26 h-30 z M30 0 h1016 v26 h-1016 z"/><path d="M6 6 h18 v14 h-18 z"/><path d="M1010 6 h-18 v14 h18 z"/></g><g fill="#4e8d7c"><circle cx="15" cy="13" r="2.5"/><circle cx="1001" cy="13" r="2.5"/></g></svg></div>
 <main>
   <div class="panel">
     <div class="controls">
@@ -156,6 +209,32 @@ document.getElementById('q').addEventListener('keydown', (e) => { if (e.key === 
 var preQ = new URLSearchParams(window.location.search).get('q');
 if (preQ) { document.getElementById('q').value = preQ; runRecall(); }
 </script>
+  <script>
+  (function () {
+    var KEY = 'lantai-theme';
+    function cur() {
+      return document.documentElement.getAttribute('data-theme') === 'louchuang' ? 'louchuang' : 'jijin';
+    }
+    function paint() {
+      var b = document.getElementById('themeBtn');
+      if (b) b.textContent = '式 · ' + (cur() === 'louchuang' ? '漏窗' : '吉金');
+    }
+    window.toggleTheme = function () {
+      var next = cur() === 'louchuang' ? 'jijin' : 'louchuang';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem(KEY, next); } catch (e) {}
+      paint();
+      if (document.getElementById('svg')) location.reload();  // 星图配色随主题重绘
+    };
+    try {
+      var s = localStorage.getItem(KEY);
+      var m = location.search.match(/[?&]theme=([a-z]+)/);
+      if (m) s = m[1];
+      if (s) document.documentElement.setAttribute('data-theme', s);
+    } catch (e) {}
+    paint();
+  })();
+  </script>
 </body>
 </html>
 """
@@ -220,6 +299,56 @@ _EVOLVE_HTML = """<!DOCTYPE html>
   th { color:var(--muted); font-weight:600; }
   .zero { color:var(--bad); } .noise { color:var(--muted); }
   #err { color:var(--bad); margin:10px 0; }
+  /* ===== v0.14 双主题：吉金（默认，青铜铭文）/ 漏窗（园林借景） ===== */
+  :root { --bg:#1c2430; --card:#232c38; --card2:#2a3442; --ink:#e6dcc3; --muted:#8f9a9a;
+          --line:#3a4655; --accent:#b08a3e; --ok:#3e7a6b; --warn:#b08a3e; --bad:#a33b2e;
+          --soft:#2a3442; --btn-ink:#14181a;
+          --lane-fact:#e6dcc3; --lane-rule:#7a9aa8; --lane-exp:#3e7a6b; --lane-pref:#a33b2e;
+          --lane-chat:#b08a3e; --lane-gen:#8a7a9a;
+          --e-supports:#3e7a6b; --e-refines:#7a9aa8; --e-contradicts:#a33b2e; --e-supersedes:#b08a3e;
+          --title-font:"STKaiti","KaiTi",serif; --body-font:"Songti SC","STSong","SimSun",serif;
+          --strip-h:22px; --sig-a:#b08a3e; --sig-b:#4e8d7c; }
+  [data-theme="louchuang"] { --bg:#e9dfc6; --card:#f4ecda; --card2:#efe6cf; --ink:#2f4f4f; --muted:#7d8a72;
+          --line:#c9bc96; --accent:#4e8d7c; --ok:#6f9e8a; --warn:#b08a3e; --bad:#a05a4a;
+          --soft:#efe6cf; --btn-ink:#fff;
+          --lane-fact:#2f4f4f; --lane-rule:#4e8d7c; --lane-exp:#6f9e8a; --lane-pref:#a05a4a;
+          --lane-chat:#8a6a3a; --lane-gen:#6a5a7a;
+          --e-supports:#6f9e8a; --e-refines:#4e8d7c; --e-contradicts:#a05a4a; --e-supersedes:#8a6a2a;
+          --title-font:"STXingkai","STKaiti","KaiTi",serif; --body-font:"Songti SC","STSong","SimSun",serif;
+          --strip-h:26px; --sig-a:#4e8d7c; --sig-b:#8a6a3a; }
+  body { font-family:var(--body-font); }
+  main h1, header h1 { font-family:var(--title-font); letter-spacing:4px; }
+  header { border-bottom:2px solid var(--accent); }
+  .bar, .tag, .track, .bar-row .track { background:var(--soft); }
+  .bar i, .track i, .bar-row .track i { background:linear-gradient(90deg,var(--ok),var(--accent)); }
+  .result pre, .row .body { color:var(--ink); }
+  input[type=text], input[type=number], input[type=password], select { background:var(--card); color:var(--ink); border-color:var(--line); }
+  button { color:var(--btn-ink); }
+  button.ghost { background:var(--soft); color:var(--ink); }
+  .card { background:var(--card); }
+  a.card { background:var(--card); border-color:var(--line); color:var(--ink); }
+  a.card b { color:var(--accent); } a.card span { color:var(--muted); } a.card:hover { border-color:var(--accent); }
+  p { color:var(--muted); }
+  svg { background:var(--card); }
+  .node circle { stroke:var(--card); } .node text { fill:var(--ink); }
+  /* 签名元素：吉金=云雷纹饰带；漏窗=回纹画框 */
+  .sig { height:var(--strip-h); margin:10px 24px 0; opacity:.5; }
+  .sig svg { width:100%; height:100%; display:block; background:transparent; border:0; }
+  .sig-jijin { display:block; } .sig-louchuang { display:none; }
+  [data-theme="louchuang"] .sig-jijin { display:none; }
+  [data-theme="louchuang"] .sig-louchuang { display:block; }
+  /* 主题切换钮 */
+  .theme-ctl { float:right; margin-left:18px; }
+  .theme-ctl button { padding:4px 12px; font-size:12px; background:transparent; color:var(--accent);
+                      border:1px solid var(--accent); border-radius:999px; letter-spacing:2px; cursor:pointer; }
+  .theme-ctl button:hover { background:var(--accent); color:var(--bg); }
+  /* 漏窗：月洞门/画框卡片 */
+  [data-theme="louchuang"] .panel, [data-theme="louchuang"] .card, [data-theme="louchuang"] a.card {
+      position:relative; border-radius:16px 16px 6px 6px; }
+  [data-theme="louchuang"] .card::before, [data-theme="louchuang"] a.card::before {
+      content:""; position:absolute; left:50%; top:-9px; transform:translateX(-50%);
+      width:52px; height:18px; border:2px solid var(--line); border-bottom:none;
+      border-radius:26px 26px 0 0; background:var(--card); }
 </style>
 </head>
 <body>
@@ -227,7 +356,10 @@ _EVOLVE_HTML = """<!DOCTYPE html>
   <h1>兰台 · 检索质量看板</h1>
   <p>零召回率、按 lane/意图分布、场景命中、token 成本——最近 N 天检索事件聚合。</p>
   <a href="/ui/recall">← 追忆漏斗</a>
+  <span class="theme-ctl"><button type="button" onclick="toggleTheme()" id="themeBtn" title="吉金 / 漏窗 主题切换">式 · 吉金</button></span>
 </header>
+  <div class="sig sig-jijin" aria-hidden="true"><svg viewBox="0 0 1016 22" preserveAspectRatio="none"><defs><pattern id="lw" width="28" height="22" patternUnits="userSpaceOnUse"><path d="M7 2 h14 v18 h-14 z" fill="none" stroke="#b08a3e" stroke-width="1.4"/><path d="M14 6 h4 v10 h-4 z" fill="#b08a3e"/></pattern></defs><rect width="1016" height="22" fill="url(#lw)"/></svg></div>
+  <div class="sig sig-louchuang" aria-hidden="true"><svg viewBox="0 0 1016 26" preserveAspectRatio="none"><g fill="none" stroke="#4e8d7c" stroke-width="1.4"><path d="M0 0 h30 v26 h-30 z M30 0 h1016 v26 h-1016 z"/><path d="M6 6 h18 v14 h-18 z"/><path d="M1010 6 h-18 v14 h18 z"/></g><g fill="#4e8d7c"><circle cx="15" cy="13" r="2.5"/><circle cx="1001" cy="13" r="2.5"/></g></svg></div>
 <main>
   <div class="grid" id="cards"></div>
   <div class="panel"><h2>按 lane 分布</h2><div id="lanes"></div></div>
@@ -315,6 +447,32 @@ function render(rep, events) {
 }
 load();
 </script>
+  <script>
+  (function () {
+    var KEY = 'lantai-theme';
+    function cur() {
+      return document.documentElement.getAttribute('data-theme') === 'louchuang' ? 'louchuang' : 'jijin';
+    }
+    function paint() {
+      var b = document.getElementById('themeBtn');
+      if (b) b.textContent = '式 · ' + (cur() === 'louchuang' ? '漏窗' : '吉金');
+    }
+    window.toggleTheme = function () {
+      var next = cur() === 'louchuang' ? 'jijin' : 'louchuang';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem(KEY, next); } catch (e) {}
+      paint();
+      if (document.getElementById('svg')) location.reload();  // 星图配色随主题重绘
+    };
+    try {
+      var s = localStorage.getItem(KEY);
+      var m = location.search.match(/[?&]theme=([a-z]+)/);
+      if (m) s = m[1];
+      if (s) document.documentElement.setAttribute('data-theme', s);
+    } catch (e) {}
+    paint();
+  })();
+  </script>
 </body>
 </html>
 """
@@ -333,8 +491,59 @@ _INDEX_HTML = """<!DOCTYPE html>
   a.card:hover { border-color:#1ba784; }
   a.card b { font-size:16px; color:#1ba784; }
   a.card span { display:block; color:#867e76; font-size:13px; }
+  /* ===== v0.14 双主题：吉金（默认，青铜铭文）/ 漏窗（园林借景） ===== */
+  :root { --bg:#1c2430; --card:#232c38; --card2:#2a3442; --ink:#e6dcc3; --muted:#8f9a9a;
+          --line:#3a4655; --accent:#b08a3e; --ok:#3e7a6b; --warn:#b08a3e; --bad:#a33b2e;
+          --soft:#2a3442; --btn-ink:#14181a;
+          --lane-fact:#e6dcc3; --lane-rule:#7a9aa8; --lane-exp:#3e7a6b; --lane-pref:#a33b2e;
+          --lane-chat:#b08a3e; --lane-gen:#8a7a9a;
+          --e-supports:#3e7a6b; --e-refines:#7a9aa8; --e-contradicts:#a33b2e; --e-supersedes:#b08a3e;
+          --title-font:"STKaiti","KaiTi",serif; --body-font:"Songti SC","STSong","SimSun",serif;
+          --strip-h:22px; --sig-a:#b08a3e; --sig-b:#4e8d7c; }
+  [data-theme="louchuang"] { --bg:#e9dfc6; --card:#f4ecda; --card2:#efe6cf; --ink:#2f4f4f; --muted:#7d8a72;
+          --line:#c9bc96; --accent:#4e8d7c; --ok:#6f9e8a; --warn:#b08a3e; --bad:#a05a4a;
+          --soft:#efe6cf; --btn-ink:#fff;
+          --lane-fact:#2f4f4f; --lane-rule:#4e8d7c; --lane-exp:#6f9e8a; --lane-pref:#a05a4a;
+          --lane-chat:#8a6a3a; --lane-gen:#6a5a7a;
+          --e-supports:#6f9e8a; --e-refines:#4e8d7c; --e-contradicts:#a05a4a; --e-supersedes:#8a6a2a;
+          --title-font:"STXingkai","STKaiti","KaiTi",serif; --body-font:"Songti SC","STSong","SimSun",serif;
+          --strip-h:26px; --sig-a:#4e8d7c; --sig-b:#8a6a3a; }
+  body { font-family:var(--body-font); }
+  main h1, header h1 { font-family:var(--title-font); letter-spacing:4px; }
+  header { border-bottom:2px solid var(--accent); }
+  .bar, .tag, .track, .bar-row .track { background:var(--soft); }
+  .bar i, .track i, .bar-row .track i { background:linear-gradient(90deg,var(--ok),var(--accent)); }
+  .result pre, .row .body { color:var(--ink); }
+  input[type=text], input[type=number], input[type=password], select { background:var(--card); color:var(--ink); border-color:var(--line); }
+  button { color:var(--btn-ink); }
+  button.ghost { background:var(--soft); color:var(--ink); }
+  .card { background:var(--card); }
+  a.card { background:var(--card); border-color:var(--line); color:var(--ink); }
+  a.card b { color:var(--accent); } a.card span { color:var(--muted); } a.card:hover { border-color:var(--accent); }
+  p { color:var(--muted); }
+  svg { background:var(--card); }
+  .node circle { stroke:var(--card); } .node text { fill:var(--ink); }
+  /* 签名元素：吉金=云雷纹饰带；漏窗=回纹画框 */
+  .sig { height:var(--strip-h); margin:10px 24px 0; opacity:.5; }
+  .sig svg { width:100%; height:100%; display:block; background:transparent; border:0; }
+  .sig-jijin { display:block; } .sig-louchuang { display:none; }
+  [data-theme="louchuang"] .sig-jijin { display:none; }
+  [data-theme="louchuang"] .sig-louchuang { display:block; }
+  /* 主题切换钮 */
+  .theme-ctl { float:right; margin-left:18px; }
+  .theme-ctl button { padding:4px 12px; font-size:12px; background:transparent; color:var(--accent);
+                      border:1px solid var(--accent); border-radius:999px; letter-spacing:2px; cursor:pointer; }
+  .theme-ctl button:hover { background:var(--accent); color:var(--bg); }
+  /* 漏窗：月洞门/画框卡片 */
+  [data-theme="louchuang"] .panel, [data-theme="louchuang"] .card, [data-theme="louchuang"] a.card {
+      position:relative; border-radius:16px 16px 6px 6px; }
+  [data-theme="louchuang"] .card::before, [data-theme="louchuang"] a.card::before {
+      content:""; position:absolute; left:50%; top:-9px; transform:translateX(-50%);
+      width:52px; height:18px; border:2px solid var(--line); border-bottom:none;
+      border-radius:26px 26px 0 0; background:var(--card); }
 </style></head>
 <body>
+  <span class="theme-ctl"><button type="button" onclick="toggleTheme()" id="themeBtn" title="吉金 / 漏窗 主题切换">式 · 吉金</button></span>
 <main>
   <h1>兰台 · 控制台</h1>
   <p>借鉴 aiduMEI v18.2 控制台：记忆如何被想起、检索质量如何——看得见、可追溯。</p>
@@ -344,6 +553,32 @@ _INDEX_HTML = """<!DOCTYPE html>
   <a class="card" href="/ui/vault"><b>档案与锦囊</b><span>记忆档案浏览与过滤、锦囊待审裁决、衰减概览——存了什么、待裁什么。</span></a>
   <a class="card" href="/ui/map"><b>记忆星图</b><span>谁和谁有关系——MemoryEdge 关系图：supports / refines / contradicts / supersedes，按 lane 分区的零依赖 SVG 放射布局。</span></a>
 </main>
+  <script>
+  (function () {
+    var KEY = 'lantai-theme';
+    function cur() {
+      return document.documentElement.getAttribute('data-theme') === 'louchuang' ? 'louchuang' : 'jijin';
+    }
+    function paint() {
+      var b = document.getElementById('themeBtn');
+      if (b) b.textContent = '式 · ' + (cur() === 'louchuang' ? '漏窗' : '吉金');
+    }
+    window.toggleTheme = function () {
+      var next = cur() === 'louchuang' ? 'jijin' : 'louchuang';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem(KEY, next); } catch (e) {}
+      paint();
+      if (document.getElementById('svg')) location.reload();  // 星图配色随主题重绘
+    };
+    try {
+      var s = localStorage.getItem(KEY);
+      var m = location.search.match(/[?&]theme=([a-z]+)/);
+      if (m) s = m[1];
+      if (s) document.documentElement.setAttribute('data-theme', s);
+    } catch (e) {}
+    paint();
+  })();
+  </script>
 </body>
 </html>
 """
@@ -381,6 +616,56 @@ _PULSE_HTML = """<!DOCTYPE html>
   .check b { margin-left:4px; }
   .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
   #err { color:var(--bad); margin:10px 0; }
+  /* ===== v0.14 双主题：吉金（默认，青铜铭文）/ 漏窗（园林借景） ===== */
+  :root { --bg:#1c2430; --card:#232c38; --card2:#2a3442; --ink:#e6dcc3; --muted:#8f9a9a;
+          --line:#3a4655; --accent:#b08a3e; --ok:#3e7a6b; --warn:#b08a3e; --bad:#a33b2e;
+          --soft:#2a3442; --btn-ink:#14181a;
+          --lane-fact:#e6dcc3; --lane-rule:#7a9aa8; --lane-exp:#3e7a6b; --lane-pref:#a33b2e;
+          --lane-chat:#b08a3e; --lane-gen:#8a7a9a;
+          --e-supports:#3e7a6b; --e-refines:#7a9aa8; --e-contradicts:#a33b2e; --e-supersedes:#b08a3e;
+          --title-font:"STKaiti","KaiTi",serif; --body-font:"Songti SC","STSong","SimSun",serif;
+          --strip-h:22px; --sig-a:#b08a3e; --sig-b:#4e8d7c; }
+  [data-theme="louchuang"] { --bg:#e9dfc6; --card:#f4ecda; --card2:#efe6cf; --ink:#2f4f4f; --muted:#7d8a72;
+          --line:#c9bc96; --accent:#4e8d7c; --ok:#6f9e8a; --warn:#b08a3e; --bad:#a05a4a;
+          --soft:#efe6cf; --btn-ink:#fff;
+          --lane-fact:#2f4f4f; --lane-rule:#4e8d7c; --lane-exp:#6f9e8a; --lane-pref:#a05a4a;
+          --lane-chat:#8a6a3a; --lane-gen:#6a5a7a;
+          --e-supports:#6f9e8a; --e-refines:#4e8d7c; --e-contradicts:#a05a4a; --e-supersedes:#8a6a2a;
+          --title-font:"STXingkai","STKaiti","KaiTi",serif; --body-font:"Songti SC","STSong","SimSun",serif;
+          --strip-h:26px; --sig-a:#4e8d7c; --sig-b:#8a6a3a; }
+  body { font-family:var(--body-font); }
+  main h1, header h1 { font-family:var(--title-font); letter-spacing:4px; }
+  header { border-bottom:2px solid var(--accent); }
+  .bar, .tag, .track, .bar-row .track { background:var(--soft); }
+  .bar i, .track i, .bar-row .track i { background:linear-gradient(90deg,var(--ok),var(--accent)); }
+  .result pre, .row .body { color:var(--ink); }
+  input[type=text], input[type=number], input[type=password], select { background:var(--card); color:var(--ink); border-color:var(--line); }
+  button { color:var(--btn-ink); }
+  button.ghost { background:var(--soft); color:var(--ink); }
+  .card { background:var(--card); }
+  a.card { background:var(--card); border-color:var(--line); color:var(--ink); }
+  a.card b { color:var(--accent); } a.card span { color:var(--muted); } a.card:hover { border-color:var(--accent); }
+  p { color:var(--muted); }
+  svg { background:var(--card); }
+  .node circle { stroke:var(--card); } .node text { fill:var(--ink); }
+  /* 签名元素：吉金=云雷纹饰带；漏窗=回纹画框 */
+  .sig { height:var(--strip-h); margin:10px 24px 0; opacity:.5; }
+  .sig svg { width:100%; height:100%; display:block; background:transparent; border:0; }
+  .sig-jijin { display:block; } .sig-louchuang { display:none; }
+  [data-theme="louchuang"] .sig-jijin { display:none; }
+  [data-theme="louchuang"] .sig-louchuang { display:block; }
+  /* 主题切换钮 */
+  .theme-ctl { float:right; margin-left:18px; }
+  .theme-ctl button { padding:4px 12px; font-size:12px; background:transparent; color:var(--accent);
+                      border:1px solid var(--accent); border-radius:999px; letter-spacing:2px; cursor:pointer; }
+  .theme-ctl button:hover { background:var(--accent); color:var(--bg); }
+  /* 漏窗：月洞门/画框卡片 */
+  [data-theme="louchuang"] .panel, [data-theme="louchuang"] .card, [data-theme="louchuang"] a.card {
+      position:relative; border-radius:16px 16px 6px 6px; }
+  [data-theme="louchuang"] .card::before, [data-theme="louchuang"] a.card::before {
+      content:""; position:absolute; left:50%; top:-9px; transform:translateX(-50%);
+      width:52px; height:18px; border:2px solid var(--line); border-bottom:none;
+      border-radius:26px 26px 0 0; background:var(--card); }
 </style>
 </head>
 <body>
@@ -388,7 +673,10 @@ _PULSE_HTML = """<!DOCTYPE html>
   <h1>兰台 · 脉搏</h1>
   <p>服务状态与存储分层：记忆存量、分布、写入水位、近 7 天新增、worker 运行时间。</p>
   <a href="/ui">← 控制台</a>
+  <span class="theme-ctl"><button type="button" onclick="toggleTheme()" id="themeBtn" title="吉金 / 漏窗 主题切换">式 · 吉金</button></span>
 </header>
+  <div class="sig sig-jijin" aria-hidden="true"><svg viewBox="0 0 1016 22" preserveAspectRatio="none"><defs><pattern id="lw" width="28" height="22" patternUnits="userSpaceOnUse"><path d="M7 2 h14 v18 h-14 z" fill="none" stroke="#b08a3e" stroke-width="1.4"/><path d="M14 6 h4 v10 h-4 z" fill="#b08a3e"/></pattern></defs><rect width="1016" height="22" fill="url(#lw)"/></svg></div>
+  <div class="sig sig-louchuang" aria-hidden="true"><svg viewBox="0 0 1016 26" preserveAspectRatio="none"><g fill="none" stroke="#4e8d7c" stroke-width="1.4"><path d="M0 0 h30 v26 h-30 z M30 0 h1016 v26 h-1016 z"/><path d="M6 6 h18 v14 h-18 z"/><path d="M1010 6 h-18 v14 h18 z"/></g><g fill="#4e8d7c"><circle cx="15" cy="13" r="2.5"/><circle cx="1001" cy="13" r="2.5"/></g></svg></div>
 <main>
   <div class="panel"><h2>服务状态</h2><div id="checks"></div></div>
   <div class="grid" id="cards"></div>
@@ -510,6 +798,32 @@ function render(st, us, dp) {
 }
 load();
 </script>
+  <script>
+  (function () {
+    var KEY = 'lantai-theme';
+    function cur() {
+      return document.documentElement.getAttribute('data-theme') === 'louchuang' ? 'louchuang' : 'jijin';
+    }
+    function paint() {
+      var b = document.getElementById('themeBtn');
+      if (b) b.textContent = '式 · ' + (cur() === 'louchuang' ? '漏窗' : '吉金');
+    }
+    window.toggleTheme = function () {
+      var next = cur() === 'louchuang' ? 'jijin' : 'louchuang';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem(KEY, next); } catch (e) {}
+      paint();
+      if (document.getElementById('svg')) location.reload();  // 星图配色随主题重绘
+    };
+    try {
+      var s = localStorage.getItem(KEY);
+      var m = location.search.match(/[?&]theme=([a-z]+)/);
+      if (m) s = m[1];
+      if (s) document.documentElement.setAttribute('data-theme', s);
+    } catch (e) {}
+    paint();
+  })();
+  </script>
 </body>
 </html>
 """
@@ -572,13 +886,66 @@ _VAULT_HTML = """<!DOCTYPE html>
   .track i { display:block; height:100%; background:linear-gradient(90deg,#60a5fa,#2563eb); }
   .bar-row .val { width:44px; font-size:12px; color:var(--muted); text-align:right; }
   #err { color:var(--bad); margin-top:8px; }
+  /* ===== v0.14 双主题：吉金（默认，青铜铭文）/ 漏窗（园林借景） ===== */
+  :root { --bg:#1c2430; --card:#232c38; --card2:#2a3442; --ink:#e6dcc3; --muted:#8f9a9a;
+          --line:#3a4655; --accent:#b08a3e; --ok:#3e7a6b; --warn:#b08a3e; --bad:#a33b2e;
+          --soft:#2a3442; --btn-ink:#14181a;
+          --lane-fact:#e6dcc3; --lane-rule:#7a9aa8; --lane-exp:#3e7a6b; --lane-pref:#a33b2e;
+          --lane-chat:#b08a3e; --lane-gen:#8a7a9a;
+          --e-supports:#3e7a6b; --e-refines:#7a9aa8; --e-contradicts:#a33b2e; --e-supersedes:#b08a3e;
+          --title-font:"STKaiti","KaiTi",serif; --body-font:"Songti SC","STSong","SimSun",serif;
+          --strip-h:22px; --sig-a:#b08a3e; --sig-b:#4e8d7c; }
+  [data-theme="louchuang"] { --bg:#e9dfc6; --card:#f4ecda; --card2:#efe6cf; --ink:#2f4f4f; --muted:#7d8a72;
+          --line:#c9bc96; --accent:#4e8d7c; --ok:#6f9e8a; --warn:#b08a3e; --bad:#a05a4a;
+          --soft:#efe6cf; --btn-ink:#fff;
+          --lane-fact:#2f4f4f; --lane-rule:#4e8d7c; --lane-exp:#6f9e8a; --lane-pref:#a05a4a;
+          --lane-chat:#8a6a3a; --lane-gen:#6a5a7a;
+          --e-supports:#6f9e8a; --e-refines:#4e8d7c; --e-contradicts:#a05a4a; --e-supersedes:#8a6a2a;
+          --title-font:"STXingkai","STKaiti","KaiTi",serif; --body-font:"Songti SC","STSong","SimSun",serif;
+          --strip-h:26px; --sig-a:#4e8d7c; --sig-b:#8a6a3a; }
+  body { font-family:var(--body-font); }
+  main h1, header h1 { font-family:var(--title-font); letter-spacing:4px; }
+  header { border-bottom:2px solid var(--accent); }
+  .bar, .tag, .track, .bar-row .track { background:var(--soft); }
+  .bar i, .track i, .bar-row .track i { background:linear-gradient(90deg,var(--ok),var(--accent)); }
+  .result pre, .row .body { color:var(--ink); }
+  input[type=text], input[type=number], input[type=password], select { background:var(--card); color:var(--ink); border-color:var(--line); }
+  button { color:var(--btn-ink); }
+  button.ghost { background:var(--soft); color:var(--ink); }
+  .card { background:var(--card); }
+  a.card { background:var(--card); border-color:var(--line); color:var(--ink); }
+  a.card b { color:var(--accent); } a.card span { color:var(--muted); } a.card:hover { border-color:var(--accent); }
+  p { color:var(--muted); }
+  svg { background:var(--card); }
+  .node circle { stroke:var(--card); } .node text { fill:var(--ink); }
+  /* 签名元素：吉金=云雷纹饰带；漏窗=回纹画框 */
+  .sig { height:var(--strip-h); margin:10px 24px 0; opacity:.5; }
+  .sig svg { width:100%; height:100%; display:block; background:transparent; border:0; }
+  .sig-jijin { display:block; } .sig-louchuang { display:none; }
+  [data-theme="louchuang"] .sig-jijin { display:none; }
+  [data-theme="louchuang"] .sig-louchuang { display:block; }
+  /* 主题切换钮 */
+  .theme-ctl { float:right; margin-left:18px; }
+  .theme-ctl button { padding:4px 12px; font-size:12px; background:transparent; color:var(--accent);
+                      border:1px solid var(--accent); border-radius:999px; letter-spacing:2px; cursor:pointer; }
+  .theme-ctl button:hover { background:var(--accent); color:var(--bg); }
+  /* 漏窗：月洞门/画框卡片 */
+  [data-theme="louchuang"] .panel, [data-theme="louchuang"] .card, [data-theme="louchuang"] a.card {
+      position:relative; border-radius:16px 16px 6px 6px; }
+  [data-theme="louchuang"] .card::before, [data-theme="louchuang"] a.card::before {
+      content:""; position:absolute; left:50%; top:-9px; transform:translateX(-50%);
+      width:52px; height:18px; border:2px solid var(--line); border-bottom:none;
+      border-radius:26px 26px 0 0; background:var(--card); }
 </style>
 </head>
 <body>
 <header>
   <h1>兰台 · 档案与锦囊</h1>
   <p>记忆档案浏览、锦囊待审裁决、衰减概览——存了什么、待裁什么、如何衰减，一眼可见。</p>
+  <span class="theme-ctl"><button type="button" onclick="toggleTheme()" id="themeBtn" title="吉金 / 漏窗 主题切换">式 · 吉金</button></span>
 </header>
+  <div class="sig sig-jijin" aria-hidden="true"><svg viewBox="0 0 1016 22" preserveAspectRatio="none"><defs><pattern id="lw" width="28" height="22" patternUnits="userSpaceOnUse"><path d="M7 2 h14 v18 h-14 z" fill="none" stroke="#b08a3e" stroke-width="1.4"/><path d="M14 6 h4 v10 h-4 z" fill="#b08a3e"/></pattern></defs><rect width="1016" height="22" fill="url(#lw)"/></svg></div>
+  <div class="sig sig-louchuang" aria-hidden="true"><svg viewBox="0 0 1016 26" preserveAspectRatio="none"><g fill="none" stroke="#4e8d7c" stroke-width="1.4"><path d="M0 0 h30 v26 h-30 z M30 0 h1016 v26 h-1016 z"/><path d="M6 6 h18 v14 h-18 z"/><path d="M1010 6 h-18 v14 h18 z"/></g><g fill="#4e8d7c"><circle cx="15" cy="13" r="2.5"/><circle cx="1001" cy="13" r="2.5"/></g></svg></div>
 <main>
   <div class="panel"><div class="cards" id="cards"></div></div>
   <div class="panel">
@@ -780,6 +1147,32 @@ function load() {
 }
 load();
 </script>
+  <script>
+  (function () {
+    var KEY = 'lantai-theme';
+    function cur() {
+      return document.documentElement.getAttribute('data-theme') === 'louchuang' ? 'louchuang' : 'jijin';
+    }
+    function paint() {
+      var b = document.getElementById('themeBtn');
+      if (b) b.textContent = '式 · ' + (cur() === 'louchuang' ? '漏窗' : '吉金');
+    }
+    window.toggleTheme = function () {
+      var next = cur() === 'louchuang' ? 'jijin' : 'louchuang';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem(KEY, next); } catch (e) {}
+      paint();
+      if (document.getElementById('svg')) location.reload();  // 星图配色随主题重绘
+    };
+    try {
+      var s = localStorage.getItem(KEY);
+      var m = location.search.match(/[?&]theme=([a-z]+)/);
+      if (m) s = m[1];
+      if (s) document.documentElement.setAttribute('data-theme', s);
+    } catch (e) {}
+    paint();
+  })();
+  </script>
 </body>
 </html>
 """
@@ -815,13 +1208,66 @@ _MAP_HTML = """<!DOCTYPE html>
   .node.hot circle { stroke:var(--accent); stroke-width:2.5; }
   #info { min-height:20px; color:var(--muted); font-size:13px; }
   #err { color:var(--bad); }
+  /* ===== v0.14 双主题：吉金（默认，青铜铭文）/ 漏窗（园林借景） ===== */
+  :root { --bg:#1c2430; --card:#232c38; --card2:#2a3442; --ink:#e6dcc3; --muted:#8f9a9a;
+          --line:#3a4655; --accent:#b08a3e; --ok:#3e7a6b; --warn:#b08a3e; --bad:#a33b2e;
+          --soft:#2a3442; --btn-ink:#14181a;
+          --lane-fact:#e6dcc3; --lane-rule:#7a9aa8; --lane-exp:#3e7a6b; --lane-pref:#a33b2e;
+          --lane-chat:#b08a3e; --lane-gen:#8a7a9a;
+          --e-supports:#3e7a6b; --e-refines:#7a9aa8; --e-contradicts:#a33b2e; --e-supersedes:#b08a3e;
+          --title-font:"STKaiti","KaiTi",serif; --body-font:"Songti SC","STSong","SimSun",serif;
+          --strip-h:22px; --sig-a:#b08a3e; --sig-b:#4e8d7c; }
+  [data-theme="louchuang"] { --bg:#e9dfc6; --card:#f4ecda; --card2:#efe6cf; --ink:#2f4f4f; --muted:#7d8a72;
+          --line:#c9bc96; --accent:#4e8d7c; --ok:#6f9e8a; --warn:#b08a3e; --bad:#a05a4a;
+          --soft:#efe6cf; --btn-ink:#fff;
+          --lane-fact:#2f4f4f; --lane-rule:#4e8d7c; --lane-exp:#6f9e8a; --lane-pref:#a05a4a;
+          --lane-chat:#8a6a3a; --lane-gen:#6a5a7a;
+          --e-supports:#6f9e8a; --e-refines:#4e8d7c; --e-contradicts:#a05a4a; --e-supersedes:#8a6a2a;
+          --title-font:"STXingkai","STKaiti","KaiTi",serif; --body-font:"Songti SC","STSong","SimSun",serif;
+          --strip-h:26px; --sig-a:#4e8d7c; --sig-b:#8a6a3a; }
+  body { font-family:var(--body-font); }
+  main h1, header h1 { font-family:var(--title-font); letter-spacing:4px; }
+  header { border-bottom:2px solid var(--accent); }
+  .bar, .tag, .track, .bar-row .track { background:var(--soft); }
+  .bar i, .track i, .bar-row .track i { background:linear-gradient(90deg,var(--ok),var(--accent)); }
+  .result pre, .row .body { color:var(--ink); }
+  input[type=text], input[type=number], input[type=password], select { background:var(--card); color:var(--ink); border-color:var(--line); }
+  button { color:var(--btn-ink); }
+  button.ghost { background:var(--soft); color:var(--ink); }
+  .card { background:var(--card); }
+  a.card { background:var(--card); border-color:var(--line); color:var(--ink); }
+  a.card b { color:var(--accent); } a.card span { color:var(--muted); } a.card:hover { border-color:var(--accent); }
+  p { color:var(--muted); }
+  svg { background:var(--card); }
+  .node circle { stroke:var(--card); } .node text { fill:var(--ink); }
+  /* 签名元素：吉金=云雷纹饰带；漏窗=回纹画框 */
+  .sig { height:var(--strip-h); margin:10px 24px 0; opacity:.5; }
+  .sig svg { width:100%; height:100%; display:block; background:transparent; border:0; }
+  .sig-jijin { display:block; } .sig-louchuang { display:none; }
+  [data-theme="louchuang"] .sig-jijin { display:none; }
+  [data-theme="louchuang"] .sig-louchuang { display:block; }
+  /* 主题切换钮 */
+  .theme-ctl { float:right; margin-left:18px; }
+  .theme-ctl button { padding:4px 12px; font-size:12px; background:transparent; color:var(--accent);
+                      border:1px solid var(--accent); border-radius:999px; letter-spacing:2px; cursor:pointer; }
+  .theme-ctl button:hover { background:var(--accent); color:var(--bg); }
+  /* 漏窗：月洞门/画框卡片 */
+  [data-theme="louchuang"] .panel, [data-theme="louchuang"] .card, [data-theme="louchuang"] a.card {
+      position:relative; border-radius:16px 16px 6px 6px; }
+  [data-theme="louchuang"] .card::before, [data-theme="louchuang"] a.card::before {
+      content:""; position:absolute; left:50%; top:-9px; transform:translateX(-50%);
+      width:52px; height:18px; border:2px solid var(--line); border-bottom:none;
+      border-radius:26px 26px 0 0; background:var(--card); }
 </style>
 </head>
 <body>
 <header>
   <h1>兰台 · 记忆星图</h1>
   <p>谁和谁有关系：MemoryEdge（supports 绿 / refines 蓝 / contradicts 橙 / supersedes 红），节点按 lane 分区、同场景聚簇。悬停看详情，点击跳档案。零外部依赖 SVG。</p>
+  <span class="theme-ctl"><button type="button" onclick="toggleTheme()" id="themeBtn" title="吉金 / 漏窗 主题切换">式 · 吉金</button></span>
 </header>
+  <div class="sig sig-jijin" aria-hidden="true"><svg viewBox="0 0 1016 22" preserveAspectRatio="none"><defs><pattern id="lw" width="28" height="22" patternUnits="userSpaceOnUse"><path d="M7 2 h14 v18 h-14 z" fill="none" stroke="#b08a3e" stroke-width="1.4"/><path d="M14 6 h4 v10 h-4 z" fill="#b08a3e"/></pattern></defs><rect width="1016" height="22" fill="url(#lw)"/></svg></div>
+  <div class="sig sig-louchuang" aria-hidden="true"><svg viewBox="0 0 1016 26" preserveAspectRatio="none"><g fill="none" stroke="#4e8d7c" stroke-width="1.4"><path d="M0 0 h30 v26 h-30 z M30 0 h1016 v26 h-1016 z"/><path d="M6 6 h18 v14 h-18 z"/><path d="M1010 6 h-18 v14 h18 z"/></g><g fill="#4e8d7c"><circle cx="15" cy="13" r="2.5"/><circle cx="1001" cy="13" r="2.5"/></g></svg></div>
 <main>
   <div class="panel">
     <div class="stats" id="stats"></div>
@@ -834,14 +1280,25 @@ _MAP_HTML = """<!DOCTYPE html>
 </main>
 <script>
 var LANES = ['fact','rule','experience','preference','chat','general'];
-var LANE_COLOR = {fact:'#862617', rule:'#1661ab', experience:'#1ba784',
-                  preference:'#eb507e', chat:'#6e8b74', general:'#4b2e2b'};
-var EDGE_COLOR = {supports:'#1ba784', refines:'#1661ab', contradicts:'#feba07', supersedes:'#ed5126'};
+function cssVar(n, fb) {
+  try {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(n);
+    return (v && v.trim()) ? v.trim() : fb;
+  } catch (e) { return fb; }
+}
+var LANE_COLOR = {fact:cssVar('--lane-fact','#e6dcc3'), rule:cssVar('--lane-rule','#7a9aa8'),
+                  experience:cssVar('--lane-exp','#3e7a6b'), preference:cssVar('--lane-pref','#a33b2e'),
+                  chat:cssVar('--lane-chat','#b08a3e'), general:cssVar('--lane-gen','#8a7a9a')};
+var EDGE_COLOR = {supports:cssVar('--e-supports','#3e7a6b'), refines:cssVar('--e-refines','#7a9aa8'),
+                  contradicts:cssVar('--e-contradicts','#a33b2e'), supersedes:cssVar('--e-supersedes','#b08a3e')};
 var EDGE_LABEL = {supports:'支持', refines:'细化', contradicts:'矛盾', supersedes:'取代'};
 var W = 1800, H = 1300, CX = 900, CY = 650, R = 520;
 var pos = {}, nodes = [], links = [], scenes = {};
 var info = document.getElementById('info');
-var SCENE_PALETTE = ['#1ba784','#1661ab','#eb507e','#862617','#0eb0c9','#feba07','#be7e4a','#310f1b'];
+var SCENE_PALETTE = [cssVar('--lane-exp','#3e7a6b'), cssVar('--lane-rule','#7a9aa8'),
+                     cssVar('--lane-pref','#a33b2e'), cssVar('--lane-fact','#e6dcc3'),
+                     cssVar('--lane-gen','#8a7a9a'), cssVar('--e-supersedes','#b08a3e'),
+                     '#be7e4a', '#310f1b'];
 var sceneColor = {};
 function colorForScene(sid) {
   if (!sceneColor[sid]) {
@@ -980,7 +1437,7 @@ function draw() {
       ring = document.createElementNS(NS, 'circle');
       ring.setAttribute('r', 15);
       ring.setAttribute('fill', 'none');
-      ring.setAttribute('stroke', '#1ba784');
+      ring.setAttribute('stroke', cssVar('--accent','#1ba784'));
       ring.setAttribute('stroke-width', '1');
       ring.setAttribute('stroke-dasharray', '3 2');
       g.appendChild(ring);
@@ -990,8 +1447,8 @@ function draw() {
       rect.setAttribute('x', -6); rect.setAttribute('y', -6);
       rect.setAttribute('width', 12); rect.setAttribute('height', 12);
       rect.setAttribute('rx', 2);
-      rect.setAttribute('fill', '#f8f4ed');
-      rect.setAttribute('stroke', '#867e76');
+      rect.setAttribute('fill', cssVar('--bg','#f8f4ed'));
+      rect.setAttribute('stroke', cssVar('--muted','#867e76'));
       rect.setAttribute('stroke-width', '1.2');
       g.appendChild(rect);
     } else {
@@ -1004,7 +1461,7 @@ function draw() {
     t.setAttribute('x', 12);
     t.setAttribute('y', 4);
     t.setAttribute('paint-order', 'stroke');
-    t.setAttribute('stroke', '#fffef8');
+    t.setAttribute('stroke', cssVar('--card','#fffef8'));
     t.setAttribute('stroke-width', '2.5');
     var label = n.label.length > 10 ? n.label.slice(0, 10) + '…' : n.label;
     t.textContent = label;
@@ -1056,12 +1513,12 @@ function renderStats(data) {
   });
   var sceneNote = el('span', null, '场景成员同色');
   var sceneDot = document.createElement('i');
-  sceneDot.style.background = '#1ba784';
+  sceneDot.style.background = cssVar('--accent','#1ba784');
   sceneNote.prepend(sceneDot);
   ll.appendChild(sceneNote);
   var srcNote = el('span', 'edge', '来源文档');
   var srcDot = document.createElement('i');
-  srcDot.style.background = '#6e8b74';
+  srcDot.style.background = cssVar('--lane-chat','#6e8b74');
   srcNote.prepend(srcDot);
   ll.appendChild(srcNote);
   var elBox = document.getElementById('edgeLegend');
@@ -1092,6 +1549,32 @@ function load() {
 }
 load();
 </script>
+  <script>
+  (function () {
+    var KEY = 'lantai-theme';
+    function cur() {
+      return document.documentElement.getAttribute('data-theme') === 'louchuang' ? 'louchuang' : 'jijin';
+    }
+    function paint() {
+      var b = document.getElementById('themeBtn');
+      if (b) b.textContent = '式 · ' + (cur() === 'louchuang' ? '漏窗' : '吉金');
+    }
+    window.toggleTheme = function () {
+      var next = cur() === 'louchuang' ? 'jijin' : 'louchuang';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem(KEY, next); } catch (e) {}
+      paint();
+      if (document.getElementById('svg')) location.reload();  // 星图配色随主题重绘
+    };
+    try {
+      var s = localStorage.getItem(KEY);
+      var m = location.search.match(/[?&]theme=([a-z]+)/);
+      if (m) s = m[1];
+      if (s) document.documentElement.setAttribute('data-theme', s);
+    } catch (e) {}
+    paint();
+  })();
+  </script>
 </body>
 </html>
 """

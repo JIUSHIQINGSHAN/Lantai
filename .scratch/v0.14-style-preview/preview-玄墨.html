@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>兰台 · 玄墨（风格预览）</title>
+<style>
+:root{
+  --bg:#14181a; --panel:#1b2023; --panel2:#20262a; --ink:#e9ece4; --muted:#8a908a;
+  --line:#2c3337; --accent:#b3382b; --ok:#6f9e8a; --warn:#b08a3e; --bad:#b3382b;
+  --lane-fact:#c9c2b8; --lane-rule:#8a9aa8; --lane-exp:#6f9e8a; --lane-pref:#b3382b;
+  --lane-chat:#7a6a52; --lane-gen:#9a8f7a;
+  --e-supports:#4a7a66; --e-refines:#5a6f8a; --e-contradicts:#b3382b; --e-supersedes:#8a7a4a;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:"Songti SC","STSong","SimSun",serif;
+  background-image:radial-gradient(1200px 600px at 70% -10%,rgba(111,158,138,.06),transparent 60%);}
+.wrap{max-width:1080px;margin:0 auto;padding:28px 32px 56px}
+header{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:baseline;gap:12px}
+.brand .seal{width:14px;height:14px;background:var(--accent);display:inline-block;transform:rotate(45deg);align-self:center}
+.brand h1{font-size:26px;font-weight:600;letter-spacing:6px;font-family:"STKaiti","KaiTi",serif}
+.brand span{color:var(--muted);font-size:12px;letter-spacing:2px}
+nav{display:flex;gap:20px;font-size:13px}
+nav a{color:var(--muted);text-decoration:none;letter-spacing:2px}
+nav a.on{color:var(--ink);border-bottom:1px solid var(--accent);padding-bottom:2px}
+.sig{height:34px;margin:18px 0 26px;overflow:visible}
+.sig svg{width:100%;height:34px}
+
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+.stat{background:var(--panel);border:1px solid var(--line);padding:14px 16px}
+.stat .k{font-size:12px;color:var(--muted);letter-spacing:2px;display:flex;justify-content:space-between}
+.stat .v{font-size:26px;margin-top:6px;font-family:"STKaiti","KaiTi",serif;color:var(--ink)}
+.stat .v b{color:var(--accent);font-weight:600}
+.panel{background:var(--panel);border:1px solid var(--line);margin-bottom:22px}
+.panel h2{font-size:14px;color:var(--muted);letter-spacing:3px;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:400}
+.mapbox{padding:14px}
+.mapbox svg{width:100%;height:auto;display:block}
+text{fill:var(--ink);font-size:11px;font-family:"Songti SC","STSong","SimSun",serif}
+text.muted{fill:var(--muted);font-size:10px}
+.edge{stroke-width:1.2;fill:none;opacity:.55}
+.node circle{stroke:var(--panel);stroke-width:2}
+.node text{pointer-events:none}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--lane);padding:14px 16px}
+.card .meta{font-size:11px;color:var(--muted);display:flex;justify-content:space-between;margin-bottom:8px;letter-spacing:1px}
+.card .t{font-size:14px;line-height:1.7}
+.card .tag{display:inline-block;font-size:10px;border:1px solid var(--line);padding:1px 6px;color:var(--muted);letter-spacing:1px;margin-top:10px}
+.foot{margin-top:26px;display:flex;gap:26px;align-items:flex-start;font-size:12px;color:var(--muted);line-height:1.8}
+.swatches{display:flex;gap:8px;align-items:center}
+.sw{width:34px;height:34px;border:1px solid rgba(233,236,228,.2)}
+.foot .note{max-width:520px}
+.foot b{color:var(--ink);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+<div class="brand"><span class="seal"></span><h1>兰台</h1><span>记忆星图 · 玄墨式</span></div>
+<nav><a class="on" href="#">星图</a><a href="#">锦囊</a><a href="#">档案</a><a href="#">演化</a></nav>
+</header>
+<div class="sig"><svg viewBox="0 0 1016 34" preserveAspectRatio="none"><path d="M0 20 C 120 8, 210 26, 320 16 S 520 8, 640 18 S 880 26, 1016 12" fill="none" stroke="#b3382b" stroke-width="2" opacity=".85" stroke-linecap="round"/><path d="M0 22 C 140 12, 260 28, 400 18 S 620 12, 760 20 S 940 24, 1016 15" fill="none" stroke="#6d7370" stroke-width="1" opacity=".5" stroke-linecap="round"/></svg></div>
+
+<section class="stats">
+<div class="stat"><div class="k">记忆总量 <span>记忆</span></div><div class="v">26</div></div>
+<div class="stat"><div class="k">待审候选 <span>锦囊</span></div><div class="v">41</div></div>
+<div class="stat"><div class="k">今日检索 <span>检索</span></div><div class="v">0</div></div>
+<div class="stat"><div class="k">星图节点 <span>图谱</span></div><div class="v"><b>40</b></div></div>
+</section>
+<section class="panel"><h2>记忆星图 · 墨点星罗</h2><div class="mapbox">
+<svg viewBox="0 0 1016 380" xmlns="http://www.w3.org/2000/svg">
+<g class="edges">
+<line class="edge" x1="508" y1="185" x2="613" y2="185" stroke="#4a7a66"/>
+<line class="edge" x1="508" y1="185" x2="560" y2="276" stroke="#4a7a66"/>
+<line class="edge" x1="508" y1="185" x2="456" y2="276" stroke="#4a7a66"/>
+<line class="edge" x1="508" y1="185" x2="403" y2="185" stroke="#4a7a66"/>
+<line class="edge" x1="508" y1="185" x2="456" y2="94" stroke="#4a7a66"/>
+<line class="edge" x1="508" y1="185" x2="560" y2="94" stroke="#4a7a66"/>
+<line class="edge" x1="613" y1="185" x2="670" y2="238" stroke="#5a6f8a"/>
+<line class="edge" x1="403" y1="185" x2="346" y2="238" stroke="#8a7a4a"/>
+<line class="edge" x1="560" y1="276" x2="608" y2="323" stroke="#5a6f8a"/>
+<line class="edge" x1="456" y1="94" x2="408" y2="47" stroke="#5a6f8a"/>
+<line class="edge" x1="456" y1="94" x2="508" y2="15" stroke="#5a6f8a"/>
+<line class="edge" x1="560" y1="94" x2="608" y2="47" stroke="#5a6f8a"/>
+<line class="edge" x1="346" y1="238" x2="346" y2="133" stroke="#b3382b"/>
+<line class="edge" x1="408" y1="323" x2="346" y2="238" stroke="#b3382b"/>
+<line class="edge" x1="508" y1="15" x2="560" y2="94" stroke="#8a7a4a"/>
+<line class="edge" x1="669" y1="133" x2="613" y2="185" stroke="#5a6f8a"/>
+</g>
+<g class="node"><circle cx="508" cy="185" r="16" fill="#c9c2b8"/><text x="508" y="214" text-anchor="middle">记忆核心</text></g>
+<g class="node"><circle cx="613" cy="185" r="9" fill="#6f9e8a"/><text x="613" y="172" text-anchor="middle">目识</text></g>
+<g class="node"><circle cx="560" cy="276" r="9" fill="#7a6a52"/><text x="560" y="300" text-anchor="middle">截屏</text></g>
+<g class="node"><circle cx="456" cy="276" r="9" fill="#8a9aa8"/><text x="456" y="300" text-anchor="middle">星图</text></g>
+<g class="node"><circle cx="403" cy="185" r="9" fill="#b3382b"/><text x="403" y="172" text-anchor="middle">锦囊</text></g>
+<g class="node"><circle cx="456" cy="94" r="9" fill="#9a8f7a"/><text x="456" y="76" text-anchor="middle">烽燧</text></g>
+<g class="node"><circle cx="560" cy="94" r="9" fill="#6f9e8a"/><text x="560" y="76" text-anchor="middle">反思</text></g>
+<g class="node"><circle cx="670" cy="238" r="6" fill="#6d7370"/><text x="670" y="262" text-anchor="middle" class="muted">Vision 闭环</text></g>
+<g class="node"><circle cx="346" cy="238" r="6" fill="#6d7370"/><text x="346" y="262" text-anchor="middle" class="muted">部署手册</text></g>
+<g class="node"><circle cx="608" cy="323" r="6" fill="#6d7370"/><text x="608" y="347" text-anchor="middle" class="muted">截屏入忆</text></g>
+<g class="node"><circle cx="408" cy="47" r="6" fill="#6d7370"/><text x="408" y="30" text-anchor="middle" class="muted">记忆广播</text></g>
+<g class="node"><circle cx="508" cy="15" r="6" fill="#6d7370"/><text x="508" y="0" text-anchor="middle" class="muted">树状图谱</text></g>
+<g class="node"><circle cx="608" cy="47" r="6" fill="#6d7370"/><text x="608" y="30" text-anchor="middle" class="muted">技能结晶</text></g>
+<g class="node"><circle cx="346" cy="133" r="6" fill="#6d7370"/><text x="346" y="118" text-anchor="middle" class="muted">回滚演练</text></g>
+<g class="node"><circle cx="669" cy="133" r="6" fill="#6d7370"/><text x="669" y="118" text-anchor="middle" class="muted">书卷换肤</text></g>
+</svg></div></section>
+
+<section class="cards">
+<div class="card" style="--lane:var(--lane-fact)"><div class="meta"><span>事实 fact</span><span>2026-01-05</span></div><div class="t">与产品确认：v2 里程碑顺延两周，先交付回滚能力。</div><div class="tag">直达 · 检索命中 3</div></div>
+<div class="card" style="--lane:var(--lane-rule)"><div class="meta"><span>规则 rule</span><span>2026-01-05</span></div><div class="t">发布日当天先跑回滚演练，通过后才可上线。</div><div class="tag">规则 · 置信 0.92</div></div>
+<div class="card" style="--lane:var(--lane-exp)"><div class="meta"><span>经验 experience</span><span>2026-08-12</span></div><div class="t">目识 Vision 闭环：截图经 data URI 校验直存，失败不落库。</div><div class="tag">经验 · 待裁决</div></div>
+</section>
+<footer class="foot">
+<div><b>签名元素</b><br>一笔枯笔朱痕横贯画心<br>墨点星罗 · 留白即遗忘</div>
+<div><b>意象出处</b><br>墨分五色 / 夜航星图<br>宣纸玄夜 · 印章为记</div>
+<div><b>色板</b><br><span class="swatches"><span class="sw" style="background:#14181a"></span><span class="sw" style="background:#6d7370"></span><span class="sw" style="background:#c9c2b8"></span><span class="sw" style="background:#b3382b"></span><span class="sw" style="background:#6f9e8a"></span></span></div>
+<div class="note"><b>风格说明</b><br>暗色水墨底，节点如墨点、连线如淡墨晕染；朱砂仅用于印章与关键动作，克制而专注。</div>
+</footer>
+</div>
+</body>
+</html>
+

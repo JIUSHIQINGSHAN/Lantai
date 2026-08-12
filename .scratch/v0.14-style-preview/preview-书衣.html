@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>兰台 · 书衣（风格预览）</title>
+<style>
+:root{
+  --bg:#f2e8d5; --panel:#f7efdf; --panel2:#efe3cd; --ink:#3a3226; --muted:#8a7a62;
+  --line:#c9b896; --accent:#b03a2e; --ok:#5a6f3a; --warn:#b08a3e; --bad:#b03a2e;
+  --lane-fact:#3a3226; --lane-rule:#2e4a7a; --lane-exp:#5a6f3a; --lane-pref:#b03a2e;
+  --lane-chat:#7a5a3a; --lane-gen:#6a5a7a;
+  --e-supports:#5a6f3a; --e-refines:#2e4a7a; --e-contradicts:#b03a2e; --e-supersedes:#8a6a2a;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:"STKaiti","KaiTi","Kai",serif;
+  background-image:radial-gradient(900px 500px at 20% 0%,rgba(255,252,244,.6),transparent 60%);}
+.wrap{max-width:1080px;margin:0 auto;padding:30px 36px 56px}
+header{display:flex;align-items:baseline;justify-content:space-between;padding:14px 18px 12px;
+  border:2px solid var(--ink);border-bottom:none;background:var(--panel)}
+.brand{display:flex;align-items:baseline;gap:14px}
+.brand h1{font-size:26px;font-weight:700;letter-spacing:8px;font-family:"STFangsong","FangSong",serif}
+.brand span{color:var(--muted);font-size:12px;letter-spacing:3px}
+.brand .stamp{display:inline-block;background:var(--accent);color:#f7efdf;font-size:11px;padding:2px 7px;letter-spacing:2px;transform:rotate(-4deg)}
+nav{display:flex;gap:22px;font-size:13px}
+nav a{color:var(--muted);text-decoration:none;letter-spacing:2px}
+nav a.on{color:var(--ink);border-bottom:2px solid var(--accent);padding-bottom:3px}
+.yushou{height:34px;border:2px solid var(--ink);border-top:none;background:var(--panel);position:relative;margin-bottom:28px}
+.yushou::before{content:"";position:absolute;left:50%;top:0;transform:translateX(-50%);
+  border-left:14px solid transparent;border-right:14px solid transparent;border-top:16px solid var(--ink)}
+.yushou::after{content:"";position:absolute;left:18px;right:18px;top:8px;border-top:1px solid var(--line)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:26px}
+.stat{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--accent);padding:16px 18px;position:relative}
+.stat::after{content:"";position:absolute;left:0;right:0;bottom:6px;border-bottom:1px dotted var(--line)}
+.stat .k{font-size:12px;color:var(--muted);letter-spacing:2px}
+.stat .v{font-size:26px;margin-top:6px;font-family:"STFangsong","FangSong",serif;font-weight:700}
+.stat .v b{color:var(--accent)}
+.panel{background:var(--panel);border:1px solid var(--line);margin-bottom:26px}
+.panel h2{font-size:14px;letter-spacing:4px;padding:13px 18px;border-bottom:1px solid var(--line);font-weight:600;display:flex;justify-content:space-between}
+.panel h2 span{color:var(--muted);font-size:11px;font-weight:400}
+.mapbox{padding:16px 18px}
+.mapbox svg{width:100%;height:auto;display:block}
+text{fill:var(--ink);font-size:11px;font-family:"STKaiti","KaiTi",serif}
+text.muted{fill:var(--muted);font-size:10px}
+.edge{stroke-width:1.1;fill:none;opacity:.5}
+.node circle{stroke:var(--panel);stroke-width:2}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);padding:16px 18px;position:relative}
+.card::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;background:var(--lane)}
+.card .meta{font-size:11px;color:var(--muted);display:flex;justify-content:space-between;margin-bottom:8px;letter-spacing:1px}
+.card .t{font-size:14px;line-height:1.8}
+.card .tag{display:inline-block;font-size:10px;border:1px solid var(--line);padding:2px 8px;color:var(--muted);letter-spacing:1px;margin-top:12px}
+.foot{margin-top:28px;display:flex;gap:30px;align-items:flex-start;font-size:12px;color:var(--muted);line-height:1.9}
+.swatches{display:flex;gap:8px;align-items:center}
+.sw{width:32px;height:32px;border:1px solid var(--line)}
+.foot .note{max-width:520px}
+.foot b{color:var(--ink);font-weight:700}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+<div class="brand"><h1>兰台</h1><span>记忆星图 · 书衣式</span><span class="stamp">藏</span></div>
+<nav><a class="on" href="#">星图</a><a href="#">锦囊</a><a href="#">档案</a><a href="#">演化</a></nav>
+</header>
+<div class="yushou"></div>
+
+<section class="stats">
+<div class="stat"><div class="k">记忆总量</div><div class="v">26</div></div>
+<div class="stat"><div class="k">待审候选</div><div class="v">41</div></div>
+<div class="stat"><div class="k">今日检索</div><div class="v">0</div></div>
+<div class="stat"><div class="k">星图节点</div><div class="v"><b>40</b></div></div>
+</section>
+<section class="panel"><h2>卷首 · 记忆星图<span>刻本样式 · 朱丝栏</span></h2><div class="mapbox">
+<svg viewBox="0 0 1016 380" xmlns="http://www.w3.org/2000/svg">
+<g class="edges">
+<line class="edge" x1="508" y1="185" x2="613" y2="185" stroke="#5a6f3a"/>
+<line class="edge" x1="508" y1="185" x2="560" y2="276" stroke="#5a6f3a"/>
+<line class="edge" x1="508" y1="185" x2="456" y2="276" stroke="#5a6f3a"/>
+<line class="edge" x1="508" y1="185" x2="403" y2="185" stroke="#5a6f3a"/>
+<line class="edge" x1="508" y1="185" x2="456" y2="94" stroke="#5a6f3a"/>
+<line class="edge" x1="508" y1="185" x2="560" y2="94" stroke="#5a6f3a"/>
+<line class="edge" x1="613" y1="185" x2="670" y2="238" stroke="#2e4a7a"/>
+<line class="edge" x1="403" y1="185" x2="346" y2="238" stroke="#8a6a2a"/>
+<line class="edge" x1="560" y1="276" x2="608" y2="323" stroke="#2e4a7a"/>
+<line class="edge" x1="456" y1="94" x2="408" y2="47" stroke="#2e4a7a"/>
+<line class="edge" x1="456" y1="94" x2="508" y2="15" stroke="#2e4a7a"/>
+<line class="edge" x1="560" y1="94" x2="608" y2="47" stroke="#2e4a7a"/>
+<line class="edge" x1="346" y1="238" x2="346" y2="133" stroke="#b03a2e"/>
+<line class="edge" x1="408" y1="323" x2="346" y2="238" stroke="#b03a2e"/>
+<line class="edge" x1="508" y1="15" x2="560" y2="94" stroke="#8a6a2a"/>
+<line class="edge" x1="669" y1="133" x2="613" y2="185" stroke="#2e4a7a"/>
+</g>
+<g class="node"><circle cx="508" cy="185" r="16" fill="#3a3226"/><text x="508" y="214" text-anchor="middle">记忆核心</text></g>
+<g class="node"><circle cx="613" cy="185" r="9" fill="#5a6f3a"/><text x="613" y="172" text-anchor="middle">目识</text></g>
+<g class="node"><circle cx="560" cy="276" r="9" fill="#7a5a3a"/><text x="560" y="300" text-anchor="middle">截屏</text></g>
+<g class="node"><circle cx="456" cy="276" r="9" fill="#2e4a7a"/><text x="456" y="300" text-anchor="middle">星图</text></g>
+<g class="node"><circle cx="403" cy="185" r="9" fill="#b03a2e"/><text x="403" y="172" text-anchor="middle">锦囊</text></g>
+<g class="node"><circle cx="456" cy="94" r="9" fill="#6a5a7a"/><text x="456" y="76" text-anchor="middle">烽燧</text></g>
+<g class="node"><circle cx="560" cy="94" r="9" fill="#5a6f3a"/><text x="560" y="76" text-anchor="middle">反思</text></g>
+<g class="node"><circle cx="670" cy="238" r="6" fill="#8a7a62"/><text x="670" y="262" text-anchor="middle" class="muted">Vision 闭环</text></g>
+<g class="node"><circle cx="346" cy="238" r="6" fill="#8a7a62"/><text x="346" y="262" text-anchor="middle" class="muted">部署手册</text></g>
+<g class="node"><circle cx="608" cy="323" r="6" fill="#8a7a62"/><text x="608" y="347" text-anchor="middle" class="muted">截屏入忆</text></g>
+<g class="node"><circle cx="408" cy="47" r="6" fill="#8a7a62"/><text x="408" y="30" text-anchor="middle" class="muted">记忆广播</text></g>
+<g class="node"><circle cx="508" cy="15" r="6" fill="#8a7a62"/><text x="508" y="0" text-anchor="middle" class="muted">树状图谱</text></g>
+<g class="node"><circle cx="608" cy="47" r="6" fill="#8a7a62"/><text x="608" y="30" text-anchor="middle" class="muted">技能结晶</text></g>
+<g class="node"><circle cx="346" cy="133" r="6" fill="#8a7a62"/><text x="346" y="118" text-anchor="middle" class="muted">回滚演练</text></g>
+<g class="node"><circle cx="669" cy="133" r="6" fill="#8a7a62"/><text x="669" y="118" text-anchor="middle" class="muted">书卷换肤</text></g>
+</svg></div></section>
+
+<section class="cards">
+<div class="card" style="--lane:var(--lane-fact)"><div class="meta"><span>事实 fact</span><span>2026-01-05</span></div><div class="t">与产品确认：v2 里程碑顺延两周，先交付回滚能力。</div><div class="tag">直达 · 检索命中 3</div></div>
+<div class="card" style="--lane:var(--lane-rule)"><div class="meta"><span>规则 rule</span><span>2026-01-05</span></div><div class="t">发布日当天先跑回滚演练，通过后才可上线。</div><div class="tag">规则 · 置信 0.92</div></div>
+<div class="card" style="--lane:var(--lane-exp)"><div class="meta"><span>经验 experience</span><span>2026-08-12</span></div><div class="t">目识 Vision 闭环：截图经 data URI 校验直存，失败不落库。</div><div class="tag">经验 · 待裁决</div></div>
+</section>
+<footer class="foot">
+<div><b>签名元素</b><br>鱼尾象鼻书口 · 朱丝栏<br>卷次标题 · 藏书印</div>
+<div><b>意象出处</b><br>宋版书 / 线装书衣<br>天下最贵重的排版</div>
+<div><b>色板</b><br><span class="swatches"><span class="sw" style="background:#f2e8d5"></span><span class="sw" style="background:#3a3226"></span><span class="sw" style="background:#b03a2e"></span><span class="sw" style="background:#2e4a7a"></span><span class="sw" style="background:#8a7a62"></span></span></div>
+<div class="note"><b>风格说明</b><br>把界面当作一册线装书：书口鱼尾、栏线为版心，标题如卷次，卡片如书页；朱砂批注与藏书印点睛。</div>
+</footer>
+</div>
+</body>
+</html>
+

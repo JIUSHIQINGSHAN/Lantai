@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **v0.14 双主题换肤（吉金 + 漏窗，2026-08-12，承接 v0.13 书卷换肤赛道）**: 五式预览（玄墨/天青/书衣/吉金/漏窗，见 `.scratch/v0.14-style-preview/`）用户选定吉金+漏窗，按 ADR-0013 登记命名后落地——`lantai/api/routes_ui.py` 六个面板全局双主题（`[data-theme]` CSS 变量覆盖层，零侵入）：吉金（默认）=玄青拓片底 `#1c2430` / 铜绿 `#3e7a6b` / 鎏金 `#b08a3e` / 朱砂 `#a33b2e` + 云雷纹饰带 + 楷体/宋体；漏窗=绢黄底 `#e9dfc6` / 黛青 `#2f4f4f` / 石绿 `#4e8d7c` / 竹青 `#6f9e8a` + 回纹画框 + 月洞门形卡片 + 行楷/宋体；右上角主题切换钮（localStorage `lantai-theme` 持久化 + `?theme=louchuang` 深链）；记忆星图 SVG 配色改读 CSS 变量（lane/edge/场景/来源/label）随主题重绘；五式名已登记 `CONTEXT.md` 词汇表与 ADR-0013 映射表。UI 面板测试 23 例全绿。票据 01
+
 - **v0.13 书卷·中国色换肤（2026-08-12，借鉴 zhongguose 全谱 526 色）**: 全局 CSS 变量换肤（汉白玉底 `#f8f4ed` / 象牙白卡 / 油绿墨 `#253d24` / 竹绿主色 `#1ba784` / 赭石·靛青·夹竹桃红·瓦松绿·玫瑰灰六 lane 色 / 琥珀黄·朱红 edge 色 / 8 色场景调色板）；**记忆星图防重叠布局重写**（`lantai/api/routes_ui.py::layout`）：画布 1000×700 → 1800×1300，场景组按成员数比例分槽 + 5 层半径（每成员 +26），独立记忆每环 8 个、半径 330 起每环 +40，来源节点最外环角度排序 + 最小 4° 贪心间隔，标签白描边 + 10 字符截断；真实数据 40 节点 0 重叠（minD 36.3px，旧版 34 对重叠 minD 2.7），90 节点压力数据同样 0 重叠 0 出界。票据 01
 - **v0.12.1 修复（2026-08-12）**: 根路径 `/` 由 404 改为 307 跳转 `/ui` 控制台——浏览器直接打开 `http://127.0.0.1:8767/` 即可进站（此前根地址 404 表现为「网站打不开」）。
 - **v0.12 目识·截屏入忆（目识闭环，借鉴 aiduMEI tools/shot.js 显式触发思路）**: `scripts/screenshot_memory.ps1`——剪贴板截图（Win+Shift+S）或 `-FromFile` 图片 → PNG → base64 data URI → 既有 `POST /add media_url` 通道（title/lane/BaseUri/ApiKey 参数化，`-DryRun` 只构造不写库，pwsh7 MTA 自动 STA 重入）；`validate_media_url` 增强 data URI 严格校验（MIME 白名单 png/jpeg/webp/gif、base64 严格解码、解码后 ≤ `MEDIA_DATA_URI_MAX_BYTES`=10MB，宁 miss 不脏写）；`AddMemoryReq.media_url` max_length 2000 → 15_000_000（截屏 data URI 可达 MB 级字符）。测试 `tests/test_vision.py` 10 例（+3：data URI 规则/超限/schema 长 URI）。票据 01
