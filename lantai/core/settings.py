@@ -253,6 +253,13 @@ class Settings(BaseSettings):
     REFLECT_STALE_AGE_DAYS: int = 30         # R5 低价值陈旧规则
     REFLECT_STALE_IMPORTANCE: float = 0.4    # R5 低价值陈旧规则
     REFLECT_STALE_SCAN_ENABLED: bool = False # R4/R5 默认关（误报风险，保守起步）
+
+    # digest 反思置信桶（回填校准报告区间；ADR-0002 零硬编码，见 docs/memory-quality/reflect-calibration-2026-08-11.md）
+    DIGEST_CONF_BUCKETS: list[tuple] = [
+        ("0.5-0.6", 0.5, 0.6), ("0.6-0.7", 0.6, 0.7),
+        ("0.7-0.8", 0.7, 0.8), ("0.8-0.9", 0.8, 0.9),
+        ("0.9-1.0", 0.9, 1.0),
+    ]
     def model_post_init(self, __context):
         """DATABASE_URL / CHROMADB_PATH 未显式设置时从 LANTAI_HOME 推导（兼容旧 REMEMBRANCE_HOME）。"""
         if not self.LANTAI_HOME and self.REMEMBRANCE_HOME:

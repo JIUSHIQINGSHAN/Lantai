@@ -39,7 +39,7 @@ def filter_results_by_lanes(results: list, lanes: list[str] | None) -> list:
 
     lanes=None（未启用）→ 原样返回；结果 item 兼容两种形态：
     {"memory": {..., "lane": ...}} 与 {"document": ...}（FTS 兜底无 lane，
-    视为 "general"，不在绑定集则宁 miss 不放行）。
+    视为默认 lane（RAW_MEMORY_DEFAULT_LANE），不在绑定集则宁 miss 不放行）。
     """
     if lanes is None:
         return results
@@ -47,8 +47,8 @@ def filter_results_by_lanes(results: list, lanes: list[str] | None) -> list:
 
     def _lane(r) -> str:
         if isinstance(r, dict) and isinstance(r.get("memory"), dict):
-            return r["memory"].get("lane") or "general"
-        return "general"
+            return r["memory"].get("lane") or settings.RAW_MEMORY_DEFAULT_LANE
+        return settings.RAW_MEMORY_DEFAULT_LANE
 
     return [r for r in results if _lane(r) in allowed]
 

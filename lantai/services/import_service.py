@@ -11,11 +11,9 @@ from datetime import datetime, timezone
 
 from sqlmodel import select
 
-from lantai.core.ids import new_id
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
-from lantai.models.enums import MemoryTier
 from lantai.models.tables import MemoryItem
+from lantai.services.memory_service import build_verbatim_item
 from lantai.storage import db
 from lantai.storage.fts import sync_fts
 
@@ -109,22 +107,8 @@ def _store_imported_memory(s, content, created_at, updated_at, lane, tags) -> st
                MemoryItem.status == "active")).first()
     if existing:
         return "duplicate"
-    created = created_at or utcnow()
-    updated = updated_at or created
-    mem = MemoryItem(
-        id=new_id("mem"),
-        memory_type="verbatim",
-        key=h,
-        content=content,
-        lane=lane,
-        tier=MemoryTier.LONG_TERM,
-        confidence=1.0,
-        importance=0.5,
-        tags=tags,
-        decay_class="semantic",
-        created_at=created,
-        updated_at=updated,
-    )
+    mem = build_verbatim_item(content, lane, tags,
+                              created_at=created_at, updated_at=updated_at)
     s.add(mem)
     s.flush()
     try:

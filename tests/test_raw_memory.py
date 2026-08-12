@@ -48,6 +48,27 @@ def _count_fts(engine, memory_id: str) -> int:
         conn.close()
 
 
+def test_build_verbatim_item_smoke():
+    """构造纯函数不 mock：sha256 幂等 key + 固定语义字段 + 时间戳显式/缺省。"""
+    from datetime import datetime
+    from lantai.services.memory_service import build_verbatim_item
+
+    item = build_verbatim_item(
+        "配置备份脚本 backup.sh", "fact", ["旧"],
+        created_at=datetime(2026, 1, 2, 3, 4, 5),
+    )
+    assert item.memory_type == "verbatim"
+    assert item.lane == "fact"
+    assert item.tags == ["旧"]
+    assert item.tier == "long_term"
+    assert item.confidence == 1.0
+    assert item.created_at == datetime(2026, 1, 2, 3, 4, 5)
+    assert item.updated_at == item.created_at  # updated_at 缺省取 created_at
+    # 内容 sha256 幂等 key：同内容两次构造 key 一致
+    assert build_verbatim_item("配置备份脚本 backup.sh", "fact").key == item.key
+    # 缺省时间戳路径不炸（utcnow）
+    assert build_verbatim_item("x", "general").created_at is not None
+
 def test_add_raw_writes_verbatim_and_indexes(raw_env):
     """真实 DB 写入：memory_type=verbatim + FTS 索引行存在 + 检索命中。"""
     session_factory, engine, _ = raw_env

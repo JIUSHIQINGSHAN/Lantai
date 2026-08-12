@@ -20,10 +20,8 @@ from lantai.storage import db
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_DIGEST_DIR = _REPO_ROOT / "docs" / "memory-digest"
 
-# 反思提案置信桶（回填校准报告区间，见 docs/memory-quality/reflect-calibration-2026-08-11.md）
-_CONF_BUCKETS = (("0.5-0.6", 0.5, 0.6), ("0.6-0.7", 0.6, 0.7),
-                 ("0.7-0.8", 0.7, 0.8), ("0.8-0.9", 0.8, 0.9),
-                 ("0.9-1.0", 0.9, 1.0))
+# 反思提案置信桶（ADR-0002 零硬编码：边界走 settings，见校准报告）
+_CONF_BUCKETS = tuple(settings.DIGEST_CONF_BUCKETS)
 
 
 def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:

@@ -1,5 +1,6 @@
 """记忆写入与 CoreMemory service 层"""
 import hashlib
+from datetime import datetime
 
 from sqlmodel import select
 
@@ -224,6 +225,33 @@ def put_core_memory(block: str, content: str, namespace: str = "default") -> dic
         s.add(row); s.commit(); s.refresh(row)
         return row.model_dump(mode="json")
 
+def build_verbatim_item(content: str, lane: str, tags: list | None = None, *,
+                        created_at: datetime | None = None,
+                        updated_at: datetime | None = None) -> MemoryItem:
+    """verbatim 直存项构造（纯函数）：sha256 幂等 key + 固定语义字段。
+
+    add_raw_memory 与冷启动导入（services/import_service.py）共用，消除重复
+    构造；created_at/updated_at 缺省取 utcnow，updated_at 缺省取 created_at
+    （导入路径原样保留原始时间戳语义）。
+    """
+    h = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    created = created_at or utcnow()
+    return MemoryItem(
+        id=new_id("mem"),
+        memory_type="verbatim",
+        key=h,
+        content=content,
+        lane=lane,
+        tier=MemoryTier.LONG_TERM,
+        confidence=1.0,
+        importance=0.5,
+        tags=tags or [],
+        decay_class="semantic",  # 原文直存衰减慢；procedural 永不衰减过强
+        created_at=created,
+        updated_at=updated_at or created,
+    )
+
+
 def add_raw_memory(req: RawMemoryReq) -> dict:
     """原文直存（verbatim 记忆）：零 LLM、不走提取/闸门/演化，直接写 MemoryItem。
 
@@ -239,18 +267,7 @@ def add_raw_memory(req: RawMemoryReq) -> dict:
         if existing:
             return {"memory_id": existing.id, "dedup": True, "verbatim": True}
         emb = embed([req.content])[0]
-        mem = MemoryItem(
-            id=new_id("mem"),
-            memory_type="verbatim",
-            key=h,
-            content=req.content,
-            lane=lane,
-            tier=MemoryTier.LONG_TERM,
-            confidence=1.0,
-            importance=0.5,
-            tags=req.tags,
-            decay_class="semantic",  # 原文直存衰减慢；procedural 永不衰减过强
-        )
+        mem = build_verbatim_item(req.content, lane, tags=req.tags)
         s.add(mem)
         s.flush()
         index_memory_item(mem.id, emb, {"key": mem.key, "memory_type": mem.memory_type})
