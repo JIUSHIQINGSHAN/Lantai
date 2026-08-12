@@ -24,7 +24,7 @@ class AddMemoryReq(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     url: str = ""
     content: str = Field(default="", min_length=0, max_length=50000)
-    media_url: str = Field(default="", max_length=2000)  # 目识（vision）：图片地址/data URI（v0.10）
+    media_url: str = Field(default="", max_length=15_000_000)  # 目识（vision）：图片地址/data URI（v0.10，v0.12 截屏放宽至 15MB 字符）
     authors: list[str] = []
     tags: list[str] = []
     lane: str = Field(default="general")  # fact/rule/experience/preference/chat/general

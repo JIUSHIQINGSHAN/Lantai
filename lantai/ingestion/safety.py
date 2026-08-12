@@ -39,7 +39,8 @@ def validate_media_url(url: str) -> str:
     """校验目识（vision）图片地址：协议白名单 http/https/data。
 
     图片由上游 Vision API 取回（兰台不直接 fetch，无 SSRF 面），此处仅
-    防协议绕过与空值；data URI 供本地文件转 base64 后直传。
+    防协议绕过与空值；data URI 供本地文件转 base64 后直传（v0.12 截屏入忆：
+    必须 image/* + 合法 base64 + 解码后不超过 MEDIA_DATA_URI_MAX_BYTES）。
     """
     if not isinstance(url, str) or not url.strip():
         raise ValueError("media_url must be a non-empty string")
@@ -48,7 +49,38 @@ def validate_media_url(url: str) -> str:
         raise ValueError(f"media_url scheme not allowed: {parsed.scheme!r}")
     if parsed.scheme in ("http", "https") and not parsed.hostname:
         raise ValueError("media_url missing host")
+    if parsed.scheme == "data":
+        _validate_data_uri(url)
     return url
+
+
+_DATA_URI_IMAGE_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")
+
+
+def _validate_data_uri(url: str) -> None:
+    """data URI 严格校验（宁 miss 不脏写）：非位图类型/坏 base64/超限一律拒绝。
+
+    只放行 png/jpeg/webp/gif（Vision API 位图输入范围；svg 等矢量/其他一律拒绝）。
+    """
+    import base64 as _b64
+    if not url.startswith("data:image/") or ";base64," not in url:
+        raise ValueError("media_url data URI must be data:image/*;base64,<data>")
+    header, _, payload = url.partition(";base64,")
+    if not payload:
+        raise ValueError("media_url data URI has empty payload")
+    mime = header[len("data:"):]
+    if mime not in _DATA_URI_IMAGE_TYPES:
+        raise ValueError(
+            f"media_url data URI type not allowed: {mime!r} "
+            f"(only {','.join(_DATA_URI_IMAGE_TYPES)})")
+    try:
+        raw = _b64.b64decode(payload, validate=True)
+    except Exception:
+        raise ValueError("media_url data URI payload is not valid base64")
+    if len(raw) > settings.MEDIA_DATA_URI_MAX_BYTES:
+        raise ValueError(
+            f"media_url data URI too large: {len(raw)} bytes > "
+            f"{settings.MEDIA_DATA_URI_MAX_BYTES}")
 
 
 def validate_api_url(url: str) -> str:

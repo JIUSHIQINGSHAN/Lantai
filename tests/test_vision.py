@@ -141,3 +141,38 @@ def test_add_vision_failure_no_write(vision_env):
 def select_count(model):
     from sqlmodel import func, select
     return select(func.count()).select_from(model)
+
+
+# ── v0.12 截屏入忆：data URI 严格校验（不 mock）────────
+
+def test_validate_media_url_data_uri_rules():
+    import base64
+    from lantai.ingestion.safety import validate_media_url
+    tiny = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 30).decode()
+    uri = f"data:image/png;base64,{tiny}"
+    assert validate_media_url(uri) == uri
+    with pytest.raises(ValueError, match="must be data:image"):
+        validate_media_url("data:text/plain;base64,AAAA")
+    with pytest.raises(ValueError, match="type not allowed"):
+        validate_media_url("data:image/svg+xml;base64,AAAA")
+    with pytest.raises(ValueError, match="not valid base64"):
+        validate_media_url("data:image/png;base64,!!!not-base64!!!")
+    with pytest.raises(ValueError, match="empty payload"):
+        validate_media_url("data:image/png;base64,")
+
+
+def test_validate_media_url_data_uri_too_large(monkeypatch):
+    import base64
+    from lantai.core.settings import settings
+    from lantai.ingestion.safety import validate_media_url
+    monkeypatch.setattr(settings, "MEDIA_DATA_URI_MAX_BYTES", 10)
+    big = base64.b64encode(b"x" * 11).decode()
+    with pytest.raises(ValueError, match="too large"):
+        validate_media_url(f"data:image/png;base64,{big}")
+
+
+def test_add_req_media_url_long_data_uri_allowed():
+    """v0.12 截屏：data URI 可达 MB 级，schema 长度上限已放宽（旧 2000 拒绝）。"""
+    long_uri = "data:image/png;base64," + "A" * 3000
+    req = AddMemoryReq(title="截图", content="", media_url=long_uri)
+    assert req.media_url == long_uri
