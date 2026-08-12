@@ -91,21 +91,5 @@ def stats():
 @protected_router.get("/usage")
 def usage():
     """最近 7 天每日新增记忆数——单条 GROUP BY，不整表加载；缺日补零。"""
-    from datetime import timedelta
-    from sqlmodel import func
-    from lantai.core.time import utcnow
-    base = utcnow().date() - timedelta(days=6)
-    since = utcnow() - timedelta(days=6)  # 与报告窗口一致（today-6 .. today）
-    with db.get_session() as s:
-        rows = s.exec(
-            select(func.date(MemoryItem.created_at), func.count())
-            .where(MemoryItem.created_at >= since)
-            .group_by(func.date(MemoryItem.created_at))
-        ).all()
-    daily = {str(d): c for d, c in rows}
-    return {
-        "daily_new": {
-            str(base + timedelta(days=i)): daily.get(str(base + timedelta(days=i)), 0)
-            for i in range(7)
-        }
-    }
+    from lantai.ops.usage import collect_usage
+    return collect_usage(days=7)

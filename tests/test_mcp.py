@@ -30,7 +30,7 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert len(resp["result"]["tools"]) == 34  # + 第三波：tree_* / crystals_* / crystal_decide
+    assert len(resp["result"]["tools"]) == 38  # + 第四波：reflect_run / mem_usage / core_memory_get / verbatim_search
     assert "candidates_pending" in names
     assert "candidate_review" in names
     assert "add_dialogue" in names
@@ -59,6 +59,10 @@ def test_tools_list():
     assert "crystals_list" in names
     assert "crystals_detect" in names
     assert "crystal_decide" in names
+    assert "reflect_run" in names
+    assert "mem_usage" in names
+    assert "core_memory_get" in names
+    assert "verbatim_search" in names
 
 
 def test_unknown_tool():
@@ -535,4 +539,39 @@ def test_crystals_detect_dry_run_smoke(mcp_env):
     out = _call_tool(_load_mcp(), "crystals_detect", {"dry_run": True})
     assert out["clusters"] >= 1
     assert out["created"] == 0
+
+
+# ── 第四波：工具面第三波（v0.8）─────────────────────────
+
+def test_mem_usage_zero_fill(mcp_env):
+    session_factory, _ = mcp_env
+    with session_factory() as s:
+        _seed_memory(s, "m1", "今天的新记忆")
+        s.commit()
+    out = _call_tool(_load_mcp(), "mem_usage", {"days": 7})
+    assert len(out["daily_new"]) == 7
+    assert all(v >= 0 for v in out["daily_new"].values())
+
+
+def test_core_memory_get_readonly(mcp_env):
+    session_factory, _ = mcp_env
+    from lantai.models.tables import CoreMemoryBlock
+    with session_factory() as s:
+        s.add(CoreMemoryBlock(id="core1", block="identity",
+                              content="我是兰台用户", version=1))
+        s.commit()
+    out = _call_tool(_load_mcp(), "core_memory_get", {})
+    assert any(b["block"] == "identity" for b in out["blocks"])
+
+
+def test_verbatim_search_roundtrip(mcp_env):
+    out = _call_tool(_load_mcp(), "verbatim_search", {"query": "发布会"})
+    assert isinstance(out, list) or isinstance(out, dict)
+
+
+def test_reflect_run_idle(mcp_env):
+    """空库无候选 + 水位不足 -> skipped idle（不触发 LLM）。"""
+    out = _call_tool(_load_mcp(), "reflect_run", {})
+    assert out["ok"] is True
+    assert out.get("skipped") == "idle"
 

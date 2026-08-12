@@ -424,6 +424,42 @@ def handle_crystal_decide(params: dict) -> dict:
     return decide_crystal(crystal_id, approve, steps, reason)
 
 
+def handle_reflect_run(params: dict) -> dict:
+    """执行一轮反思：健康扫描 -> 提案 -> 裁决（高置信 auto-apply，中风险落 pending，宁 miss 不脏写）。"""
+    from lantai.evolution.reflector import run_reflect_once
+    return run_reflect_once()
+
+
+def handle_mem_usage(params: dict) -> dict:
+    """用量统计（只读）：最近 N 天每日新增记忆数（缺日补零）。"""
+    days = params.get("days", 7)
+    if not isinstance(days, int) or isinstance(days, bool) or not (1 <= days <= 365):
+        raise ValueError("days must be an int in [1, 365]")
+    from lantai.ops.usage import collect_usage
+    return collect_usage(days=days)
+
+
+def handle_core_memory_get(params: dict) -> dict:
+    """读取核心记忆块（只读）：identity/task/policy 持久块列表。"""
+    namespace = params.get("namespace", "default")
+    if not isinstance(namespace, str) or not namespace:
+        raise ValueError("namespace must be a non-empty string")
+    from lantai.services.memory_service import get_core_memory
+    return get_core_memory(namespace)
+
+
+def handle_verbatim_search(params: dict) -> dict:
+    """原文直存检索（verbatim 专用通道）：原文默认不进混合召回，此通道可查（FTS+向量）。"""
+    query = params.get("query", "")
+    top_k = params.get("top_k", 5)
+    if not isinstance(query, str) or not (1 <= len(query) <= 8000):
+        raise ValueError("query must be a string of 1..8000 chars")
+    if not isinstance(top_k, int) or isinstance(top_k, bool) or not (1 <= top_k <= 100):
+        raise ValueError("top_k must be an int in [1, 100]")
+    from lantai.retrieval.hybrid import hybrid_search
+    return hybrid_search(query, top_k=top_k, memory_types=["verbatim"], use_rerank=False)
+
+
 TOOLS = {
     "search":   {"description": "搜索记忆", "inputSchema": {
         "type": "object", "properties": {
@@ -583,6 +619,21 @@ TOOLS = {
             "steps": {"type": "array", "items": {"type": "string"}, "description": "批准时必填：Skill 执行步骤"},
             "reason": {"type": "string", "default": ""},
         }, "required": ["crystal_id", "approve"]}},
+    "reflect_run": {"description": "执行一轮反思：健康扫描 -> 提案 -> 裁决（高置信 auto-apply，中风险落 pending，宁 miss 不脏写）", "inputSchema": {
+        "type": "object", "properties": {}}},
+    "mem_usage": {"description": "用量统计（只读）：最近 N 天每日新增记忆数（缺日补零）", "inputSchema": {
+        "type": "object", "properties": {
+            "days": {"type": "integer", "default": 7, "description": "统计天数 [1,365]"},
+        }}},
+    "core_memory_get": {"description": "读取核心记忆块（只读）：identity/task/policy 持久块列表", "inputSchema": {
+        "type": "object", "properties": {
+            "namespace": {"type": "string", "default": "default"},
+        }}},
+    "verbatim_search": {"description": "原文直存检索（verbatim 专用通道）：原文默认不进混合召回，此通道可查（FTS+向量）", "inputSchema": {
+        "type": "object", "properties": {
+            "query": {"type": "string", "description": "搜索查询"},
+            "top_k": {"type": "integer", "default": 5},
+        }, "required": ["query"]}},
 }
 
 TOOL_HANDLERS = {
@@ -620,6 +671,10 @@ TOOL_HANDLERS = {
     "crystals_list": handle_crystals_list,
     "crystals_detect": handle_crystals_detect,
     "crystal_decide": handle_crystal_decide,
+    "reflect_run": handle_reflect_run,
+    "mem_usage": handle_mem_usage,
+    "core_memory_get": handle_core_memory_get,
+    "verbatim_search": handle_verbatim_search,
 }
 
 

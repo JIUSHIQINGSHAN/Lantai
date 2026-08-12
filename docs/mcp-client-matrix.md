@@ -55,7 +55,7 @@ Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户
 经 `scripts/install_hermes_plugin.py` 部署 lantai-hook 插件；MCP 由插件内嵌配置指向
 同一 server。
 
-## 工具清单（34）
+## 工具清单（38）
 
 | 工具 | 用途 |
 |---|---|
@@ -80,11 +80,15 @@ Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户
 | proposals_list / proposal_decide | 待审提案查看 / 裁决（approve 先落 Checkpoint 可回滚，reject 记 reason） |
 | tree_view / tree_add / tree_assign | 记忆分类树：视图（含挂载计数）/ 建节点 / 挂载记忆（v0.7） |
 | crystals_list / crystals_detect / crystal_decide | 技能结晶：候选项列表 / 检测（可 dry-run）/ 裁决（approve 需 steps） |
+| reflect_run | 执行一轮反思（健康扫描 → 提案 → 裁决，高置信 auto-apply） |
+| mem_usage | 用量统计（最近 N 天每日新增记忆数，缺日补零） |
+| core_memory_get | 核心记忆块只读（identity/task/policy） |
+| verbatim_search | 原文直存专用检索（FTS+向量，不进混合召回） |
 
 ## 验证清单（接入后逐条过）
 
 1. `initialize` 返回 `serverInfo.name == "lantai"`、`protocolVersion == "2024-11-05"`
-2. `tools/list` 返回 34 个工具，每个都有 description + inputSchema
+2. `tools/list` 返回 38 个工具，每个都有 description + inputSchema
 3. `ping` 有响应；`notifications/initialized` 无响应（不报错）
 4. `tools/call search` 传中文 query 返回结果（验证 UTF-8 无乱码）
 5. 用 `raw_add` 写一条原文 → `search` 能召回（验证写读闭环）
