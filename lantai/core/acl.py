@@ -53,7 +53,7 @@ def filter_results_by_lanes(results: list, lanes: list[str] | None) -> list:
     return [r for r in results if _lane(r) in allowed]
 
 
-def verify_agent(x_agent_id: str = Header(None, alias="X-Agent-Id")) -> str:
+def verify_agent(x_agent_id: str | None = Header(None, alias="X-Agent-Id")) -> str:
     """FastAPI 依赖：ACL 启用时强制 X-Agent-Id 且已绑定，否则 403。"""
     if not active_bindings():
         return "no-acl"

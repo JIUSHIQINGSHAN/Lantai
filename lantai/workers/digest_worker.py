@@ -27,10 +27,13 @@ _CONF_BUCKETS = (("0.5-0.6", 0.5, 0.6), ("0.6-0.7", 0.6, 0.7),
 
 
 def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
-    """反思提案窗口聚合：created/applied/pending/rejected + 类型×状态 + 置信桶。
+    """反思提案窗口聚合：created/applied/pending/rejected/other + 类型×状态 + 置信桶。
 
-    反思提案 = candidate_id IS NULL 的提案（零迁移标识）；
-    start/end 为 naive UTC（库内时间约定）。
+    反思提案 = candidate_id IS NULL 的提案（零迁移标识）；start/end 为 naive UTC
+    （库内时间约定）。全部计数统一用 created_at 窗口（「今日创建」语义，与渲染行
+    一致）；applied 也按创建窗口而非 applied_at，避免跨日应用导致「今日 0（自动
+    应用 1）」自相矛盾。other = 窗口内 created 中非三类状态者（approved/
+    rolled_back 等），保证 applied+pending+rejected+other == created。
     """
     created = s.exec(select(func.count()).select_from(MemoryProposal)
                      .where(MemoryProposal.candidate_id.is_(None),
@@ -39,8 +42,8 @@ def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
     applied = s.exec(select(func.count()).select_from(MemoryProposal)
                      .where(MemoryProposal.candidate_id.is_(None),
                             MemoryProposal.status == "applied",
-                            MemoryProposal.applied_at >= start,
-                            MemoryProposal.applied_at < end)).one()
+                            MemoryProposal.created_at >= start,
+                            MemoryProposal.created_at < end)).one()
     pending = s.exec(select(func.count()).select_from(MemoryProposal)
                      .where(MemoryProposal.candidate_id.is_(None),
                             MemoryProposal.status == "pending",
@@ -51,6 +54,12 @@ def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
                              MemoryProposal.status == "rejected",
                              MemoryProposal.created_at >= start,
                              MemoryProposal.created_at < end)).one()
+    other = s.exec(select(func.count()).select_from(MemoryProposal)
+                   .where(MemoryProposal.candidate_id.is_(None),
+                          MemoryProposal.created_at >= start,
+                          MemoryProposal.created_at < end,
+                          MemoryProposal.status.not_in(
+                              ["applied", "pending", "rejected"]))).one()
     rows = s.exec(select(MemoryProposal.proposal_type,
                          MemoryProposal.status, func.count())
                   .where(MemoryProposal.candidate_id.is_(None),
@@ -76,6 +85,7 @@ def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
         "applied": int(applied),
         "pending": int(pending),
         "rejected": int(rejected),
+        "other": int(other),
         "by_type": by_type,
         "conf_buckets": conf_buckets,
     }
@@ -178,7 +188,8 @@ def render_digest_markdown(stats: dict) -> str:
     day = stats["day"]
     m, p, a, r = stats["memories"], stats["pending"], stats["archived"], stats["retrieval"]
     rf = stats.get("reflection") or {"created": 0, "applied": 0, "pending": 0,
-                                     "rejected": 0, "by_type": {}, "conf_buckets": {}}
+                                     "rejected": 0, "other": 0,
+                                     "by_type": {}, "conf_buckets": {}}
     now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
     lines = [
         f"# 记忆日报 {day}",
@@ -201,8 +212,9 @@ def render_digest_markdown(stats: dict) -> str:
     ]
     if rf["created"]:
         lines += ["", "## 反思提案分布（今日新增）", "",
-                  "| 类型 | 自动应用 | 待审 | 拒绝 |", "|---|---|---|---|"]
-        status_cols = ("applied", "pending", "rejected")
+                  "| 类型 | 自动应用 | 待审 | 拒绝 | 其他 |",
+                  "|---|---|---|---|---|"]
+        status_cols = ("applied", "pending", "rejected", "other")
         totals = {k: 0 for k in status_cols}
         for ptype in ("add", "update", "merge", "deprecate"):
             row = rf.get("by_type", {}).get(ptype, {})
@@ -268,10 +280,10 @@ def render_calibration_markdown(stats: dict) -> str:
         "",
         "## 反思提案分布（窗口新增）",
         "",
-        "| 类型 | 自动应用 | 待审 | 拒绝 |",
-        "|---|---|---|---|",
+        "| 类型 | 自动应用 | 待审 | 拒绝 | 其他 |",
+        "|---|---|---|---|---|",
     ]
-    status_cols = ("applied", "pending", "rejected")
+    status_cols = ("applied", "pending", "rejected", "other")
     totals = {k: 0 for k in status_cols}
     for ptype in ("add", "update", "merge", "deprecate"):
         row = refl.get("by_type", {}).get(ptype, {})

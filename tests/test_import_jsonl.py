@@ -49,7 +49,9 @@ def test_parse_ok():
     assert [v["content"] for v in valid] == ["第一条", "第二条"]
     assert valid[0]["lane"] == "fact"
     assert valid[1]["lane"] == "general"  # 缺省取 RAW_MEMORY_DEFAULT_LANE
-    assert valid[0]["created_at"] == datetime.fromisoformat("2026-01-02T03:04:05+08:00")
+    # +08:00 → naive UTC（与摄取链 normalize_timestamp 同语义）
+    assert valid[0]["created_at"] == datetime(2026, 1, 1, 19, 4, 5)
+    assert valid[0]["created_at"].tzinfo is None
     assert valid[0]["updated_at"] is None
     assert valid[1]["tags"] == ["a", "b"]
 
@@ -113,6 +115,44 @@ def test_import_preserves_timestamps_and_dedups(imp_env):
     assert report2["imported"] == 0 and report2["duplicates"] == 2
     with session_factory() as s:
         assert len(s.exec(select(MemoryItem)).all()) == 2
+
+
+def test_import_normalizes_tz_to_naive_utc(imp_env):
+    """带时区（+08:00）输入落库为 naive UTC，digest 等 naive 区间比较一致。"""
+    session_factory, _ = imp_env
+    text = '{"content": "时区记录", "created_at": "2026-01-02T03:04:05+08:00"}\n'
+    from lantai.services.import_service import run_jsonl_import
+    report = run_jsonl_import(text)
+    assert report["imported"] == 1
+    with session_factory() as s:
+        row = s.exec(select(MemoryItem)).one()
+        assert row.created_at == datetime(2026, 1, 1, 19, 4, 5)
+        assert row.created_at.tzinfo is None
+        assert row.updated_at == row.created_at
+
+
+def test_import_respects_agent_lane_bindings(imp_env, monkeypatch):
+    """ACL 启用：越界 lane 行记 errors 不落库（宁 miss 不脏写）；未启用全量导入。"""
+    from lantai.core.settings import settings
+    session_factory, _ = imp_env
+    monkeypatch.setattr(settings, "AGENT_LANE_BINDINGS", {"agent-a": ["fact"]})
+    text = (
+        '{"content": "绑定lane事实", "lane": "fact"}\n'
+        '{"content": "越界规则", "lane": "rule"}\n'
+    )
+    from lantai.services.import_service import run_jsonl_import
+    report = run_jsonl_import(text, agent_id="agent-a")
+    assert report["imported"] == 1
+    assert len(report["errors"]) == 1
+    assert "ACL" in report["errors"][0]["reason"]
+    with session_factory() as s:
+        rows = s.exec(select(MemoryItem)).all()
+        assert len(rows) == 1
+        assert rows[0].lane == "fact"
+    # ACL 未启用（"no-acl" 哨兵）→ lane_allowed 恒真，全量导入
+    monkeypatch.setattr(settings, "AGENT_LANE_BINDINGS", {})
+    report2 = run_jsonl_import(text, agent_id="no-acl")
+    assert report2["imported"] == 1 and report2["duplicates"] == 1
 
 
 def test_import_invalid_lines_not_imported(imp_env):

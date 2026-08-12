@@ -10,11 +10,16 @@ from lantai.services.memory_service import (
 router = APIRouter()
 
 
+def _guard_lane_allowed(agent_id: str, lane: str | None) -> None:
+    """写入侧 ACL 守卫：未绑定 lane → 403（宁 miss 不脏写）。"""
+    if not lane_allowed(agent_id, lane or "general"):
+        raise HTTPException(403, f"lane '{lane or 'general'}' not bound for agent")
+
+
 @router.post("/add")
 def add_memory_route(req: AddMemoryReq, async_mode: bool = False,
                      agent_id: str = Depends(verify_agent)):
-    if not lane_allowed(agent_id, req.lane or "general"):
-        raise HTTPException(403, f"lane '{req.lane or 'general'}' not bound for agent")
+    _guard_lane_allowed(agent_id, req.lane)
     if async_mode:
         return add_memory_async(req)
     return add_memory(req)
@@ -35,8 +40,7 @@ def put_core_memory_route(block: str, content: str, namespace: str = "default"):
 @router.post("/add/raw")
 def add_raw_memory_route(req: RawMemoryReq, agent_id: str = Depends(verify_agent)):
     """原文直存（verbatim）：内容直入 FTS5+向量，零 LLM，不走提取/闸门/演化。"""
-    if not lane_allowed(agent_id, req.lane or "general"):
-        raise HTTPException(403, f"lane '{req.lane or 'general'}' not bound for agent")
+    _guard_lane_allowed(agent_id, req.lane)
     return add_raw_memory(req)
 
 @router.get("/memories")

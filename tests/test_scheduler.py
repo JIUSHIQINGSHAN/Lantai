@@ -156,5 +156,6 @@ class TestMigrationV8:
         tables = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert "scheduler_run" in tables
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+        # 迁移链会继续升到当前版本（v9 树状图谱）；此处只断言 v8 记账生效
+        assert conn.execute("PRAGMA user_version").fetchone()[0] >= 8
         conn.close()

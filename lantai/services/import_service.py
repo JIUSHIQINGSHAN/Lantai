@@ -7,7 +7,7 @@ parse_import_lines 为纯函数（测试直调不 mock）。
 """
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlmodel import select
 
@@ -21,16 +21,25 @@ from lantai.storage.fts import sync_fts
 
 
 def _parse_dt(value, field: str) -> datetime:
-    """ISO8601 时间戳解析：失败抛 ValueError（调用方记非法行）。"""
+    """ISO8601 时间戳解析 → naive UTC（失败抛 ValueError，调用方记非法行）。
+
+    与摄取链 normalize_timestamp 同语义：Z/±HH:MM 时区输入换算为 UTC 后去掉
+    tzinfo，保证 SQLite 落库与 digest 等 naive UTC 区间比较一致（ADR-0018
+    「时间线不再被压平」；票据 07 验收 2 含时区）。
+    """
     if isinstance(value, datetime):
-        return value
-    if not isinstance(value, str) or not value.strip():
+        dt = value
+    elif isinstance(value, str) and value.strip():
+        text = value.strip()
+        try:
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError(f"{field} 时间戳无法解析: {text!r}")
+    else:
         raise ValueError(f"{field} 时间戳为空")
-    text = value.strip()
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        raise ValueError(f"{field} 时间戳无法解析: {text!r}")
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def parse_import_lines(text: str) -> tuple[list[dict], list[dict]]:
@@ -130,11 +139,22 @@ def _store_imported_memory(s, content, created_at, updated_at, lane, tags) -> st
     return "imported"
 
 
-def import_memory_lines(lines: list[dict]) -> dict:
-    """按文件顺序落库；单行异常记 errors 不中断（宁 miss 不脏写）。"""
+def import_memory_lines(lines: list[dict], agent_id: str | None = None) -> dict:
+    """按文件顺序落库；单行异常记 errors 不中断（宁 miss 不脏写）。
+
+    agent_id 非空时按 ACL 收窄：lane 不在绑定集的行记 errors 不导入（403 语义，
+    宁 miss 不放行）；ACL 未启用时 agent_id 为 "no-acl" 哨兵 → lane_allowed 恒真。
+    """
     report = {"imported": 0, "duplicates": 0, "errors": []}
+    from lantai.core.acl import lane_allowed
     with db.get_session() as s:
         for line in lines:
+            if agent_id is not None and not lane_allowed(agent_id, line["lane"]):
+                report["errors"].append({
+                    "content": line["content"][:60],
+                    "reason": f"lane {line['lane']!r} 不在 agent {agent_id!r} 绑定集（ACL）",
+                })
+                continue
             try:
                 result = _store_imported_memory(
                     s, line["content"], line["created_at"],
@@ -150,10 +170,10 @@ def import_memory_lines(lines: list[dict]) -> dict:
     return report
 
 
-def run_jsonl_import(text: str) -> dict:
-    """解析 + 落库 + 汇总报告。非法行只报告不导入。"""
+def run_jsonl_import(text: str, agent_id: str | None = None) -> dict:
+    """解析 + 落库 + 汇总报告。非法行只报告不导入；agent_id 按 ACL 收窄。"""
     lines, invalid = parse_import_lines(text)
-    report = import_memory_lines(lines)
+    report = import_memory_lines(lines, agent_id=agent_id)
     report["invalid"] = invalid
     report["ok"] = True
     return report

@@ -3,13 +3,18 @@
 allowed_lanes / lane_allowed / filter_results_by_lanes 纯函数不 mock；
 路由用 TestClient + monkeypatch settings.AGENT_LANE_BINDINGS（默认关闭回归）。
 """
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.pool import StaticPool
+from sqlmodel import SQLModel, Session, create_engine, select
 
+import lantai.storage.db as db_module
 from lantai.core.settings import settings
 from lantai.core.acl import allowed_lanes, filter_results_by_lanes, lane_allowed
+from lantai.models.tables import MemoryItem
+from lantai.storage.fts import init_fts, sync_fts
 
 
 # ── 纯函数：三态 ───────────────────────────────────────────────
@@ -84,19 +89,72 @@ def test_acl_write_rejects_out_of_bound_lane(client, monkeypatch):
     assert r.status_code == 403
 
 
-def test_acl_search_filters_results(client, monkeypatch):
-    """检索结果按绑定 lane 收窄（hybrid_search 为外部依赖，mock 接线）。"""
+@pytest.fixture()
+def search_env():
+    """真实 SQLite（含 FTS）+ TestClient；仅 mock embedding/向量存储/_try_log。"""
+    import lantai.models.tables  # noqa: F401
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    init_fts(engine.raw_connection())
+
+    def session_factory() -> Session:
+        return Session(engine)
+
+    vector_store_mock = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
+    with patch.object(db_module, "get_session", session_factory), \
+         patch("lantai.llm.client.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock), \
+         patch("lantai.api.routes_search._try_log", return_value=None):
+        from api_server import app
+        with TestClient(app) as c:
+            yield c, session_factory
+
+
+def test_acl_import_rejects_out_of_bound_lane(search_env, monkeypatch):
+    """REST /import/jsonl：ACL 启用时越界 lane 行记 errors 不落库（403 语义）。"""
     monkeypatch.setattr(settings, "AGENT_LANE_BINDINGS", {"agent-a": ["fact"]})
-    mixed = [
-        {"score": 0.9, "memory": {"id": "m1", "lane": "fact", "content": "事实"}},
-        {"score": 0.8, "memory": {"id": "m2", "lane": "rule", "content": "规则"}},
-    ]
-    with patch("lantai.api.routes_search.hybrid_search", return_value=mixed), \
-         patch("lantai.api.routes_search._try_log", return_value=None), \
-         patch("lantai.api.routes_search.relevance_check",
+    client, session_factory = search_env
+    text = (
+        '{"content": "绑定lane事实", "lane": "fact"}\n'
+        '{"content": "越界规则", "lane": "rule"}\n'
+    )
+    r = client.post("/import/jsonl", headers={"X-Agent-Id": "agent-a"},
+                    json={"text": text})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["imported"] == 1
+    assert len(body["errors"]) == 1
+    assert "ACL" in body["errors"][0]["reason"]
+    with session_factory() as s:
+        rows = s.exec(select(MemoryItem)).all()
+        assert len(rows) == 1
+        assert rows[0].lane == "fact"
+
+
+def test_acl_search_filters_results(search_env, monkeypatch):
+    """真实 SQLite + 真实检索路径（仅 mock 外部依赖）：结果按绑定 lane 收窄。"""
+    monkeypatch.setattr(settings, "AGENT_LANE_BINDINGS", {"agent-a": ["fact"]})
+    client, session_factory = search_env
+    query = "服务部署配置上线迁移回滚演练"
+    with session_factory() as s:
+        for lane, suffix in (("fact", "备忘甲"), ("rule", "备忘乙")):
+            m = MemoryItem(
+                id=f"m-{lane}", key=f"k-{lane}", memory_type="memory",
+                content=query + suffix, lane=lane, status="active",
+            )
+            s.add(m)
+            s.flush()
+            sync_fts(s, m.id, m.content)
+        s.commit()
+    with patch("lantai.api.routes_search.relevance_check",
                return_value={"needs_memory": True, "reason": "test"}):
         r = client.post("/search", headers={"X-Agent-Id": "agent-a"},
-                        json={"query": "服务部署配置上线迁移回滚演练", "top_k": 5})
-        assert r.status_code == 200
-        results = r.json()["results"]
-        assert [x["memory"]["lane"] for x in results] == ["fact"]
+                        json={"query": query, "top_k": 5})
+    assert r.status_code == 200
+    results = r.json()["results"]
+    # 真实检索命中 fact+rule 两条，ACL 收窄后只剩 fact
+    assert len(results) == 1
+    assert results[0]["memory"]["lane"] == "fact"

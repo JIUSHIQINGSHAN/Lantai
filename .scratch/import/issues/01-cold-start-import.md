@@ -41,7 +41,7 @@ lantai/evolution/promoter.py、lantai/core/provenance.py、lantai/core/settings.
 scripts/run_import.py、tests/test_import.py、docs/adr/0018-import.md、
 docs/research/tencentdb-agent-memory-borrow.md
 
-## Answer（2026-08-11 已实现，test_import.py 9/9 + 全量回归绿）
+## Answer（2026-08-11 已实现，test_import.py 8/8 + 全量回归绿）
 
 实现内容：
 - JSONL 格式与腾讯 L0 同款：{"role", "content", "timestamp"(epoch ms/s 或 ISO)},

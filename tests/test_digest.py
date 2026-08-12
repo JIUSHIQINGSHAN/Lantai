@@ -80,6 +80,7 @@ class TestReflectionDistribution:
         assert rf["applied"] == 1
         assert rf["pending"] == 1
         assert rf["rejected"] == 2
+        assert rf["other"] == 0
         assert rf["by_type"] == {
             "add": {"applied": 1},
             "merge": {"pending": 1, "rejected": 1},
@@ -93,11 +94,37 @@ class TestReflectionDistribution:
         md = render_digest_markdown(stats)
         assert "| 反思提案 | 今日 4（自动应用 1，待审 1，拒绝 2） |" in md
         assert "## 反思提案分布（今日新增）" in md
-        assert "| add | 1 | 0 | 0 |" in md
-        assert "| merge | 0 | 1 | 1 |" in md
-        assert "| deprecate | 0 | 0 | 1 |" in md
-        assert "| 合计 | 1 | 1 | 2 |" in md
+        assert "| add | 1 | 0 | 0 | 0 |" in md
+        assert "| merge | 0 | 1 | 1 | 0 |" in md
+        assert "| deprecate | 0 | 0 | 1 | 0 |" in md
+        assert "| 合计 | 1 | 1 | 2 | 0 |" in md
         assert "置信桶（今日新增）" in md
+
+
+    def test_reflection_window_consistency(self, digest_env):
+        """窗口一致性：跨日应用的提案不计入今日；other 兜底使合计 == created。"""
+        session_factory = digest_env
+        now = _utc_naive(datetime.now(timezone.utc))
+        _seed(session_factory, [
+            # 昨日创建、今日应用：created/applied 均不计入今日窗口
+            MemoryProposal(id="p1", proposal_type="add", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "a"},
+                           confidence=0.9, status="applied",
+                           created_at=now - timedelta(days=1), applied_at=now),
+            # 今日创建、approved（非 applied/pending/rejected）→ other 兜底
+            MemoryProposal(id="p2", proposal_type="merge", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "b"},
+                           confidence=0.8, status="approved", created_at=now),
+        ])
+        from lantai.workers.digest_worker import collect_digest_stats
+        rf = collect_digest_stats()["reflection"]
+        assert rf["created"] == 1
+        assert rf["applied"] == 0
+        assert rf["pending"] == 0
+        assert rf["rejected"] == 0
+        assert rf["other"] == 1
+        assert (rf["applied"] + rf["pending"] + rf["rejected"] + rf["other"]
+                == rf["created"])
 
 
 class TestCalibrationStats:
@@ -143,6 +170,7 @@ class TestCalibrationStats:
         assert stats["reflection"]["applied"] == 1
         assert stats["reflection"]["pending"] == 1
         assert stats["reflection"]["rejected"] == 2
+        assert stats["reflection"]["other"] == 0
         assert stats["reflection"]["by_type"] == {
             "add": {"applied": 1},
             "merge": {"pending": 1, "rejected": 1},
@@ -180,9 +208,9 @@ class TestCalibrationStats:
         stats = collect_calibration_stats(days=7)
         md = render_calibration_markdown(stats)
         assert "反思阈值回填校准（真实观察数据）" in md
-        assert "| add | 1 | 0 | 0 |" in md
-        assert "| merge | 0 | 0 | 1 |" in md
-        assert "| 合计 | 1 | 0 | 1 |" in md
+        assert "| add | 1 | 0 | 0 | 0 |" in md
+        assert "| merge | 0 | 0 | 1 | 0 |" in md
+        assert "| 合计 | 1 | 0 | 1 | 0 |" in md
         assert "水位（窗口内 importance 累加）" in md and "5.5" in md
         assert "证据不足" in md
 
