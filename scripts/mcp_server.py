@@ -474,12 +474,13 @@ TOOLS = {
             "query": {"type": "string", "description": "搜索查询"},
             "top_k": {"type": "integer", "default": 5},
         }, "required": ["query"]}},
-    "add":      {"description": "添加记忆", "inputSchema": {
+    "add":      {"description": "添加记忆（media_url 提供时走目识 vision：图片 -> 视觉描述作为正文，与 content 二选一）", "inputSchema": {
         "type": "object", "properties": {
             "title": {"type": "string"},
             "content": {"type": "string"},
+            "media_url": {"type": "string", "description": "目识（vision）：图片地址（http/https）或 data URI；提供时 content 必须为空"},
             "lane": {"type": "string", "default": "general"},
-        }, "required": ["content"]}},
+        }}},
     "feedback": {"description": "反馈记忆有用性", "inputSchema": {
         "type": "object", "properties": {
             "memory_id": {"type": "string"},

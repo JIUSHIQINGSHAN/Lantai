@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional
 
 
@@ -23,7 +23,8 @@ class AddMemoryReq(BaseModel):
     source_type: str = "manual"
     title: str = Field(min_length=1, max_length=500)
     url: str = ""
-    content: str = Field(min_length=10, max_length=50000)
+    content: str = Field(default="", min_length=0, max_length=50000)
+    media_url: str = Field(default="", max_length=2000)  # 目识（vision）：图片地址/data URI（v0.10）
     authors: list[str] = []
     tags: list[str] = []
     lane: str = Field(default="general")  # fact/rule/experience/preference/chat/general
@@ -34,6 +35,21 @@ class AddMemoryReq(BaseModel):
     def _check_metadata(cls, v):
         """有界校验：扁平、小键、值仅标量，防认证客户端耗尽 DB/磁盘。"""
         return _validate_metadata_dict(v)
+
+    @model_validator(mode="after")
+    def _check_content_or_media(self):
+        """目识（vision）二选一：media_url 提供时 content 必须为空（图记忆
+        由视觉描述自动生成）；两者皆空或同时提供都拒绝（宁 miss 不脏写，
+        不静默丢弃 caption 或用户正文）。"""
+        has_media = bool((self.media_url or "").strip())
+        has_content = bool((self.content or "").strip())
+        if not has_media and not has_content:
+            raise ValueError("content required (or media_url for vision memory)")
+        if has_media and has_content:
+            raise ValueError("media_url 与 content 二选一：图记忆由视觉描述自动生成")
+        if has_content and len(self.content.strip()) < 10:
+            raise ValueError("content must be at least 10 characters")
+        return self
 
 
 class SearchReq(BaseModel):

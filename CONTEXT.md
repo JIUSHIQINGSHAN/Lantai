@@ -39,5 +39,6 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **crystal**（技能结晶） | 高频重复记忆自动聚类 → `SkillCrystal` candidate 候选项（Mímir 铁律：规则只能建议不能 commit）；人工裁决 approve 必须带非空 steps 才落成 Skill 资产，reject 归档记 reason。见 v0.7 票据 02 |
 | **mem: 命令**（命令式维护） | MCP 命令式维护工具：`mem_help`（帮助）/ `mem_sync`（scene 增量聚类补跑 + 今日 digest 重算）/ `mem_create_skill`（结构化沉淀 Skill 资产，procedural 永不衰减）。Agent 显式触发，不依赖自动流程时机。见 [ADR-0014](docs/adr/0014-mem-command.md) |
 | **graph**（记忆星图） | 记忆关系只读聚合（`GET /graph` + MCP `graph_view` + `/ui/map` SVG 面板）：记忆节点 = active MemoryItem（仅参与 MemoryEdge 或属 scene 入选），来源节点 = 参与边的 RawDocument（doc_*，外环矩形，点击开原文 URL），链接 = MemoryEdge（supports/refines/contradicts/supersedes 按关系配色），跨池边/指向 archived 端点丢弃——「谁支撑谁、出处可溯」一眼可见。见 v0.9 票据 01 |
+| **目识**（Vision 多模态） | 图片感知写入通道：`/add` 与 MCP `add` 支持 `media_url`（仅 http/https/data，`validate_media_url` 白名单校验；兰台不直接 fetch 图片，零 SSRF 面），复用单一 LLM 网关的 OpenAI 兼容 Vision 调用生成 caption——content 为空时 caption 作正文，非空时存 `metadata.vision`；失败抛 ValueError 不落失败文本（宁 miss 不脏写）。见 v0.10 票据 01 |
 | **digest**（每日盘点） | 每日清晨生成 `docs/memory-digest/YYYY-MM-DD.md`：新增/修改/总量/待审/归档/检索五项统计，Hermes 经 MCP `get_digest` 或 `GET /digest/today` 读取。见 [docs/daily-digest.md](docs/daily-digest.md) |
 | **命名体系** | 中文命名的方向与规则：按对象层级（项目/子系统/机制/数据/版本代号）从传统意象取材，2–4 字、有出处、先登记后使用；见 [ADR-0013](docs/adr/0013-naming-system.md) |

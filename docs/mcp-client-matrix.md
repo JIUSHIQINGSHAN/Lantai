@@ -59,7 +59,7 @@ Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户
 
 | 工具 | 用途 |
 |---|---|
-| search / add / feedback | 检索 / 写入 / 有用性反馈 |
+| search / add / feedback | 检索 / 写入（add 支持 media_url 图片感知，v0.10 目识）/ 有用性反馈 |
 | backfill | 弱标注回填（检索事件 → 实际使用的记忆 id） |
 | add_dialogue | 对话写通道（提炼候选，闲聊入队） |
 | candidates_pending / candidate_review | 待审队列查看 / 裁决 |

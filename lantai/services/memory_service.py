@@ -12,7 +12,8 @@ from lantai.models.enums import MemoryTier
 from lantai.models.schemas import AddMemoryReq, RawMemoryReq
 from lantai.llm.client import embed
 from lantai.core.provenance import (
-    PROVENANCE_PROMPT_EXTRACT, PROVENANCE_PROMPT_FASTPATH_DIRECT, make_provenance)
+    PROVENANCE_PROMPT_EXTRACT, PROVENANCE_PROMPT_FASTPATH_DIRECT,
+    PROVENANCE_PROMPT_VISION, make_provenance)
 from lantai.retrieval.hybrid import index_memory_item
 from lantai.storage.fts import sync_fts
 from lantai.parsing.extractor import extract_candidate
@@ -65,7 +66,18 @@ def add_memory(req: AddMemoryReq) -> dict:
 
     当 COALESCE_ENABLED=true 时走缓冲路径。
     fastpath 命中时直接写入（绕过 LLM 提取）。
+    media_url（目识 vision）时：caption 生成后走提取路径，溯源记
+    vision-caption + media_url；失败在 vision_service 抛 ValueError（422）。
     """
+    if (req.media_url or "").strip():
+        from lantai.services.vision_service import (
+            build_vision_memory, vision_provenance_extra)
+        req = build_vision_memory(req)
+        return _create_candidate_with_extraction(
+            req,
+            provenance_prompt=PROVENANCE_PROMPT_VISION,
+            provenance_extra=vision_provenance_extra(req),
+        )
     # Fastpath 白名单直写——缓冲前判断
     fp = fastpath_check(req.content)
     if fp:
@@ -121,8 +133,11 @@ def _create_candidate_direct(req: AddMemoryReq, fp_data: dict) -> dict:
         return {"document_id": doc.id, "candidate_id": cand.id, "fastpath": True}
 
 
-def _create_candidate_with_extraction(req: AddMemoryReq) -> dict:
-    """LLM 提取路径——原始逻辑"""
+def _create_candidate_with_extraction(
+    req: AddMemoryReq, provenance_prompt: str | None = None,
+    provenance_extra: dict | None = None,
+) -> dict:
+    """LLM 提取路径；provenance_prompt 覆盖默认 extract-v1（如 vision-caption）。"""
     h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
     with db.get_session() as s:
         dedup_result = _apply_dedup(s, req.title, req.content, req.lane)
@@ -149,7 +164,10 @@ def _create_candidate_with_extraction(req: AddMemoryReq) -> dict:
             claims=data["claims"], methods=data["methods"],
             constraints=data["constraints"], actions=data["actions"],
             extractor_confidence=data["extractor_confidence"],
-            provenance=make_provenance(PROVENANCE_PROMPT_EXTRACT),
+            provenance=make_provenance(
+                provenance_prompt or PROVENANCE_PROMPT_EXTRACT,
+                extra=provenance_extra,
+            ),
             lane=req.lane,
         )
         s.add(cand); s.commit(); s.refresh(cand)

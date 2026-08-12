@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     LLM_MODEL: str = "gpt-4o-mini"
+    VISION_MODEL: str = ""  # 目识（vision）多模态模型；空 = 回退 LLM_MODEL
     EMBED_MODEL: str = "BAAI/bge-m3"
 
     INGEST_CRON_MINUTES: int = 60

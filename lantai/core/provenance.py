@@ -14,12 +14,19 @@ PROVENANCE_PROMPT_FASTPATH_DIRECT = "fastpath-direct"   # memory_service fastpat
 PROVENANCE_PROMPT_DIALOGUE_FASTPATH = "dialogue-fastpath"  # dialogue 白名单直通（零 LLM）
 PROVENANCE_PROMPT_DIALOGUE_CHITCHAT = "dialogue-chitchat"  # dialogue 闲聊兜底（零 LLM）
 PROVENANCE_PROMPT_DIALOGUE_IMPORT = "dialogue-session-import"  # 冷启动导入历史会话（保留原始时间戳）
+PROVENANCE_PROMPT_VISION = "vision-caption"  # 目识（vision）多模态：图片 -> 视觉描述（v0.10）
 
 
-def make_provenance(prompt: str) -> dict:
-    """构造提取来源记录：哪套 prompt + 哪个模型 + 何时产出。"""
-    return {
+def make_provenance(prompt: str, extra: dict | None = None) -> dict:
+    """构造提取来源记录：哪套 prompt + 哪个模型 + 何时产出。
+
+    extra 用于溯源附加信息（如 vision 记忆的 media_url），JSON 无标量限制。
+    """
+    prov = {
         "prompt": prompt,
         "model": settings.LLM_MODEL,
         "extracted_at": utcnow().isoformat(),
     }
+    if extra:
+        prov.update(extra)
+    return prov

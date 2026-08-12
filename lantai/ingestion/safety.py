@@ -35,6 +35,22 @@ def validate_fetch_url(url: str) -> str:
     return url
 
 
+def validate_media_url(url: str) -> str:
+    """校验目识（vision）图片地址：协议白名单 http/https/data。
+
+    图片由上游 Vision API 取回（兰台不直接 fetch，无 SSRF 面），此处仅
+    防协议绕过与空值；data URI 供本地文件转 base64 后直传。
+    """
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("media_url must be a non-empty string")
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https", "data"):
+        raise ValueError(f"media_url scheme not allowed: {parsed.scheme!r}")
+    if parsed.scheme in ("http", "https") and not parsed.hostname:
+        raise ValueError("media_url missing host")
+    return url
+
+
 def validate_api_url(url: str) -> str:
     """校验 API 端点 host 在 allowlist（审计 M7）。
 

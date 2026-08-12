@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **v0.10 目识 Vision 多模态（借鉴 aiduMEI v18.3「多模态感知纪元」）**: `/add` 与 MCP `add` 支持 `media_url`（仅 http/https/data，`validate_media_url` 白名单校验，兰台不直接 fetch 图片零 SSRF 面）；`VISION_MODEL` 空时回退 `LLM_MODEL`，`vision_caption` 复用单一 LLM 网关（OpenAI 兼容 chat.completions + image_url，temperature=0.1 / max_tokens=500）；`build_vision_memory`：content 空 → caption 作正文，非空 → 存 `metadata.vision`，失败抛 ValueError 不落失败文本（宁 miss 不脏写）；provenance 记 `vision-caption` + 附加字段（media_url / vision_model）；content/media_url 二选一校验（同给 / 皆空 / <10 字拒绝）。明确不吸收：作者版失败落「图片解析失败」字符串（脏写）。测试 `tests/test_vision.py` 7 例（真实 SQLite+FTS 全链路，仅 mock Vision 外部网络）。票据 01
 - **v0.9 code-review 两轴修复收口（2026-08-12）**: `/ui/map` 补 `info` 变量定义（悬停详情 ReferenceError 硬 bug）、renderStats 拼接优先级修正、死代码 `Math.min(13,11)` 清理；scene 成员同色聚簇（场景调色板，spec 原文语义兑现）；点击记忆节点跳 `/ui/recall?q=label`（recall 页支持 `?q=` 预填自动检索，「点击跳档案检索」落地）；limit 校验提取 `ops/graph.validate_graph_limit` 三处共用（REST/MCP/纯函数，build_graph 非法 limit 抛 ValueError 不静默钳制）；`graph_route`/`build_graph`/`get_graph` 补类型注解。票据 01（code-review 收口）
 - **反思运行可审计（v10）**: `ReflectRun` 表落库每次反思运行（水位/跳过/产出/LLM 失败/异常，idle 与异常不静默），`run_reflect_once` 异常留痕后原样抛出（调度器重试前可查）；校准报告新增运行记录节（运行次数/空闲/异常/LLM 失败/产出提案），DB 增量迁移 v9 → v10。票据 observability 02
 - **重构（收口）**: verbatim 直存共用构造器 `build_verbatim_item`（`add_raw_memory` 与冷启动导入同源去重）；ACL 兜底 lane 改读 `RAW_MEMORY_DEFAULT_LANE`；digest 置信桶边界移入 settings（`DIGEST_CONF_BUCKETS`，ADR-0002 零硬编码）；`import_session_jsonl` 的 `would_import` 统一预览口径（真实模式不随 ingest 错误缩水）
