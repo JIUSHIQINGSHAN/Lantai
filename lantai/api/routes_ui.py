@@ -152,6 +152,9 @@ function render(data) {
 }
 document.getElementById('apikey').value = localStorage.getItem('lantai_api_key') || '';
 document.getElementById('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') runRecall(); });
+// 支持 ?q= 预填（星图点击节点跳转检索）
+var preQ = new URLSearchParams(window.location.search).get('q');
+if (preQ) { document.getElementById('q').value = preQ; runRecall(); }
 </script>
 </body>
 </html>
@@ -831,6 +834,17 @@ var EDGE_COLOR = {supports:'#16a34a', refines:'#2563eb', contradicts:'#d97706', 
 var EDGE_LABEL = {supports:'支持', refines:'细化', contradicts:'矛盾', supersedes:'取代'};
 var W = 1000, H = 700, CX = 500, CY = 350, R = 300;
 var pos = {}, nodes = [], links = [], scenes = {};
+var info = document.getElementById('info');
+var SCENE_PALETTE = ['#f59e0b','#0d9488','#7c3aed','#db2777','#ea580c','#0284c7','#65a30d','#9333ea'];
+var sceneColor = {};
+function colorForScene(sid) {
+  if (!sceneColor[sid]) {
+    var h = 0;
+    for (var i = 0; i < sid.length; i++) h = (h * 31 + sid.charCodeAt(i)) >>> 0;
+    sceneColor[sid] = SCENE_PALETTE[h % SCENE_PALETTE.length];
+  }
+  return sceneColor[sid];
+}
 
 function api(path) {
   var headers = {};
@@ -878,7 +892,7 @@ function layout() {
         pos[g.nodes[0].id] = p;
       } else {
         var m = g.nodes.length;
-        var spread = m > 1 ? Math.min(13, 11) : 0;
+        var spread = m > 1 ? 11 : 0;
         g.nodes.forEach(function (n, idx) {
           var a = m === 1 ? gAngle : gAngle + (idx - (m - 1) / 2) * (2 * spread) / Math.max(1, m - 1);
           var rr = 175 - (idx % 2) * 30;
@@ -965,7 +979,7 @@ function draw() {
     } else {
       var c = document.createElementNS(NS, 'circle');
       c.setAttribute('r', 7);
-      c.setAttribute('fill', LANE_COLOR[n.lane] || '#16a34a');
+      c.setAttribute('fill', n.scene_id ? colorForScene(n.scene_id) : (LANE_COLOR[n.lane] || '#16a34a'));
       g.appendChild(c);
     }
     var t = document.createElementNS(NS, 'text');
@@ -986,11 +1000,13 @@ function draw() {
       });
     } else {
       g.addEventListener('mouseenter', function () {
-        info.textContent = n.label + '（' + n.lane + ' / ' + n.decay_class + '）' + sceneNote;
+        info.textContent = n.label + '（' + n.lane + ' / ' + n.decay_class + '）' + sceneNote + '　点击去追忆漏斗检索';
         g.classList.add('hot');
       });
       g.addEventListener('mouseleave', function () { info.textContent = ''; g.classList.remove('hot'); });
-      g.addEventListener('click', function () { window.location.href = '/ui/vault'; });
+      g.addEventListener('click', function () {
+        window.location.href = '/ui/recall?q=' + encodeURIComponent(n.label);
+      });
     }
     svg.appendChild(g);
   });
@@ -1003,8 +1019,10 @@ function renderStats(data) {
   box.appendChild(el('span', null, '记忆 <b>' + memN + '</b> · 来源 <b>' + srcN + '</b> · 关系 <b>' + data.links.length + '</b>'));
   var st = data.stats || {};
   var lc = st.lane_counts || {}, ec = st.edge_counts || {};
-  box.appendChild(el('span', null, '按 lane：' + Object.keys(lc).map(function (k) { return k + ' ' + lc[k]; }).join(' / ') || '—'));
-  box.appendChild(el('span', null, '按关系：' + Object.keys(ec).map(function (k) { return (EDGE_LABEL[k] || k) + ' ' + ec[k]; }).join(' / ') || '—'));
+  var laneStr = Object.keys(lc).map(function (k) { return k + ' ' + lc[k]; }).join(' / ');
+  var edgeStr = Object.keys(ec).map(function (k) { return (EDGE_LABEL[k] || k) + ' ' + ec[k]; }).join(' / ');
+  box.appendChild(el('span', null, '按 lane：' + (laneStr || '—')));
+  box.appendChild(el('span', null, '按关系：' + (edgeStr || '—')));
   var ll = document.getElementById('laneLegend');
   ll.textContent = '';
   ll.appendChild(el('span', null, 'lane：'));
@@ -1015,6 +1033,11 @@ function renderStats(data) {
     s.prepend(dot);
     ll.appendChild(s);
   });
+  var sceneNote = el('span', null, '场景成员同色');
+  var sceneDot = document.createElement('i');
+  sceneDot.style.background = '#f59e0b';
+  sceneNote.prepend(sceneDot);
+  ll.appendChild(sceneNote);
   var srcNote = el('span', 'edge', '来源文档');
   var srcDot = document.createElement('i');
   srcDot.style.background = '#6b7280';

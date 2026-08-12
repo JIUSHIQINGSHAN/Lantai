@@ -123,6 +123,21 @@ def test_supersedes_chain_kept(graph_env):
     assert out["stats"]["edge_counts"]["supersedes"] == 2
 
 
+def test_build_graph_invalid_limit_raises(graph_env):
+    """非法 limit（越界/bool/非 int）抛 ValueError，不静默钳制（宁 miss 不脏写）。"""
+    session_factory, _ = graph_env
+    from lantai.ops.graph import build_graph, validate_graph_limit
+    with pytest.raises(ValueError):
+        validate_graph_limit(0)
+    with pytest.raises(ValueError):
+        validate_graph_limit(501)
+    with pytest.raises(ValueError):
+        validate_graph_limit(True)  # bool 不是 int
+    with pytest.raises(ValueError):
+        build_graph(session_factory(), limit=9999)
+    assert validate_graph_limit(150) == 150
+
+
 def test_empty_db_returns_empty_graph(graph_env):
     session_factory, _ = graph_env
     from lantai.ops.graph import build_graph

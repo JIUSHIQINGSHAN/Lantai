@@ -13,12 +13,22 @@ get_graph(limit) 打开默认会话执行。
 """
 from collections import Counter
 
-from sqlmodel import or_, select
+from sqlmodel import Session, or_, select
 
 from lantai.models.tables import MemoryEdge, MemoryItem, MemoryScene, RawDocument
 from lantai.storage import db
 
 LABEL_MAX = 48
+
+
+def validate_graph_limit(limit) -> int:
+    """limit 校验（REST/MCP/纯函数共用）：[1,500] 的 int，否则抛 ValueError。
+
+    宁 miss 不脏写：非法值不静默修正，由调用方决定 422/拒绝。
+    """
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
+        raise ValueError("limit must be an int in [1, 500]")
+    return limit
 
 
 def _label(item: MemoryItem) -> str:
@@ -29,7 +39,7 @@ def _label(item: MemoryItem) -> str:
     return content or item.key
 
 
-def build_graph(session, limit: int = 150) -> dict:
+def build_graph(session: Session, limit: int = 150) -> dict:
     """只读聚合：给定 session 构建记忆关系图（节点 + 链接 + 统计）。
 
     - 记忆候选池：active MemoryItem 按 updated_at 降序取 limit 条；
@@ -37,7 +47,7 @@ def build_graph(session, limit: int = 150) -> dict:
     - 节点入选：参与入选边任一端，或携带 scene_id（scene 聚簇）；
     - 链接保留：source/target 均为入选节点（跨池边、archived/池外端点丢弃）。
     """
-    limit = max(1, min(int(limit), 500))
+    validate_graph_limit(limit)
     memories = session.exec(
         select(MemoryItem)
         .where(MemoryItem.status == "active")
@@ -137,6 +147,7 @@ def build_graph(session, limit: int = 150) -> dict:
 
 def get_graph(limit: int = 150) -> dict:
     """打开默认会话执行（只读）。"""
+    validate_graph_limit(limit)
     with db.get_session() as s:
         return build_graph(s, limit)
 

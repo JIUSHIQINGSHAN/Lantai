@@ -5,14 +5,16 @@
 """
 from fastapi import APIRouter, HTTPException
 
-from lantai.ops.graph import get_graph
+from lantai.ops.graph import get_graph, validate_graph_limit
 
 router = APIRouter()
 
 
 @router.get("/graph")
-def graph_route(limit: int = 150):
+def graph_route(limit: int = 150) -> dict:
     """记忆关系星图（只读）：节点 + MemoryEdge 链接 + lane/relation 统计。"""
-    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
-        raise HTTPException(422, "limit must be an int in [1, 500]")
+    try:
+        validate_graph_limit(limit)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     return get_graph(limit)

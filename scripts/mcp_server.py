@@ -462,11 +462,9 @@ def handle_verbatim_search(params: dict) -> dict:
 
 def handle_graph_view(params: dict) -> dict:
     """记忆关系星图（只读）：节点 + MemoryEdge 链接（supports/refines/contradicts/supersedes）+ 统计。"""
-    limit = params.get("limit", 150)
-    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
-        raise ValueError("limit must be an int in [1, 500]")
-    from lantai.ops.graph import get_graph
-    return get_graph(limit)
+    from lantai.ops.graph import get_graph, validate_graph_limit
+    validate_graph_limit(params.get("limit", 150))
+    return get_graph(params.get("limit", 150))
 
 
 TOOLS = {

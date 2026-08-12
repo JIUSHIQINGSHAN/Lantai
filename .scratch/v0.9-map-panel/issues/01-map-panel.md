@@ -38,3 +38,14 @@
   `graph_view` roundtrip + limit 越界 2 例。
 - 明确不吸收：layer1_selfcheck 自动合并（违宁 miss 不脏写）；instinct_graduation
   自动毕业删原文（v0.7 crystal 已覆盖）。
+
+## code-review 收口（2026-08-12）
+
+- scene 成员同色聚簇落地（场景调色板，solo 仍按 lane 色）——spec 原文语义兑现。
+- 点击记忆节点跳 `/ui/recall?q=label`（recall 页新增 `?q=` 预填自动检索）——
+  「点击跳档案检索」语义落地。
+- 修复 `_MAP_HTML` 未定义 `info` 变量（悬停详情 ReferenceError 硬 bug）、
+  renderStats 字符串拼接优先级（兜底永不触发）、死代码 `Math.min(13,11)`。
+- limit 校验提取 `ops/graph.validate_graph_limit`（REST/MCP/纯函数三处共用），
+  build_graph 非法 limit 抛 ValueError 不静默钳制（宁 miss 不脏写）；
+  `test_graph.py` 新增非法 limit 用例（9 例）。
