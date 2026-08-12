@@ -146,7 +146,7 @@ def import_session_jsonl(path: str, *, dry_run: bool = False,
         "skipped_assistant": stats["skipped_assistant"],
         "sessions": stats["sessions"],
         "imported": 0 if dry_run else len(messages) - ingest_errors,
-        "would_import": len(messages) if dry_run else len(messages) - ingest_errors,
+        "would_import": len(messages),  # 预览口径一致：本批 user 消息目标条数（真实模式不随错误缩水）
         "statuses": statuses,
         "took_ms": int((time.monotonic() - started) * 1000),
     }

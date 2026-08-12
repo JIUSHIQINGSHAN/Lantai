@@ -112,6 +112,7 @@ def test_import_session_jsonl_preserves_timestamp(mem_db, tmp_path):
     assert res["errors"] == 1
     assert res["skipped_assistant"] == 1
     assert res["imported"] == 1
+    assert res["would_import"] == 1
     assert res["statuses"]["fastpath"] == 1
     with session_factory() as s:
         cand = s.exec(select(MemoryCandidate)).one()
