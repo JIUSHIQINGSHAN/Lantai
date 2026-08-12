@@ -144,10 +144,10 @@ class TestStartSchedulerCatchup:
         assert "reflect_catchup" not in ids
 
 
-class TestMigrationsV8ToV10:
-    """v7 库 → v10：scheduler_run + reflect_run 表创建 + user_version 记账。"""
+class TestMigrationsV8ToV11:
+    """v7 库 → v11：scheduler_run + reflect_run（含 rejecter_failed）创建 + 版本记账。"""
 
-    def test_v7_to_v10_creates_both_tables(self, tmp_path):
+    def test_v7_to_v11_creates_tables_and_rejecter_col(self, tmp_path):
         import sqlite3
         conn = sqlite3.connect(str(tmp_path / "v7.db"))
         conn.execute("PRAGMA user_version = 7")
@@ -158,5 +158,7 @@ class TestMigrationsV8ToV10:
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert "scheduler_run" in tables
         assert "reflect_run" in tables
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 10
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(reflect_run)")}
+        assert "rejecter_failed" in cols
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 11
         conn.close()

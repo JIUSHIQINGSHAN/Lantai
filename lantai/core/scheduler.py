@@ -9,6 +9,10 @@ _scheduler: BackgroundScheduler | None = None
 # F8: worker 上次运行时间记录（供 /stats 暴露；观察期保底 v8 起同时落库持久化）
 WORKER_LAST_RUN: dict[str, str] = {}
 
+# 每日 cron 任务分钟位（启动补跑与 cron 注册共用一处，改调度点不用同步改两处）
+_DIGEST_CRON_MINUTE = 0
+_REFLECT_CRON_MINUTE = 1
+
 
 def _last_run_from_db(name: str) -> str | None:
     """读 DB 持久化的上次运行时间；异常降级返回 None（不影响运行）。"""
@@ -86,11 +90,12 @@ def _catch_up_daily_jobs() -> None:
     jobs = []
     if settings.DIGEST_ENABLED:
         from lantai.workers.digest_worker import run_digest_once
-        jobs.append(("digest", run_digest_once, settings.DIGEST_CRON_HOUR, 0))
+        jobs.append(("digest", run_digest_once, settings.DIGEST_CRON_HOUR,
+                     _DIGEST_CRON_MINUTE))
     if settings.REFLECT_ENABLED:
         from lantai.workers.reflect_worker import run_reflect_once
         jobs.append(("reflect", run_reflect_once,
-                     settings.REFLECT_CRON_HOUR, 1))
+                     settings.REFLECT_CRON_HOUR, _REFLECT_CRON_MINUTE))
     for name, fn, hour, minute in jobs:
         if should_catch_up(name, hour, minute):
             run_at = datetime.now(timezone.utc) + timedelta(seconds=2)
@@ -141,7 +146,8 @@ def start_scheduler():
     if settings.REFLECT_ENABLED:
         from lantai.workers.reflect_worker import run_reflect_once
         _scheduler.add_job(run_reflect_once, "cron",
-                           hour=settings.REFLECT_CRON_HOUR, minute=1,
+                           hour=settings.REFLECT_CRON_HOUR,
+                           minute=_REFLECT_CRON_MINUTE,
                            id="reflect", replace_existing=True)
 
     # F7: coalesce idle flush（每 2 秒检查一次空闲缓冲；冲刷结果持久化，不静默丢弃）

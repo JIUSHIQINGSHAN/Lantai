@@ -162,11 +162,16 @@ class TestCalibrationStats:
                        importance=2.8, created_at=now),
             MemoryItem(id="m3", memory_type="semantic", key="k3", content="c",
                        importance=9.0, created_at=now - timedelta(days=10)),
+            # 未来时间戳记忆（created_at > now）也应排除（水位窗口有上界）
+            MemoryItem(id="m4", memory_type="semantic", key="k4", content="d",
+                       importance=99.0, created_at=now + timedelta(days=1)),
         ])
         _seed(session_factory, [
             ReflectRun(id="run1", run_at=now, waterline=4.0, skipped="idle"),
             ReflectRun(id="run2", run_at=now, waterline=6.5, skipped="",
                        proposals_created=1, auto_applied=1),
+            ReflectRun(id="run3", run_at=now, waterline=3.0, skipped="",
+                       proposals_created=0),
         ])
 
         from lantai.workers.digest_worker import collect_calibration_stats
@@ -185,15 +190,18 @@ class TestCalibrationStats:
             "0.5-0.6": 0, "0.6-0.7": 1, "0.7-0.8": 1,
             "0.8-0.9": 1, "0.9-1.0": 1,
         }
-        assert stats["water_level"] == 4.0  # 仅窗口内两条（1.2+2.8）
+        assert stats["water_level"] == 4.0  # 仅窗口内两条（1.2+2.8）；窗外与未来均排除
         assert stats["reason_top"] == [
             ("证据不足，宁 miss", 1),
             ("与新记忆冲突，需人工复核", 1),
         ]
-        assert stats["runs"]["total"] == 2
+        assert stats["runs"]["total"] == 3
         assert stats["runs"]["idle"] == 1
         assert stats["runs"]["errored"] == 0
+        assert stats["runs"]["llm_failed"] == 0
         assert stats["runs"]["productive"] == 1
+        assert stats["runs"]["zero_outcome"] == 1
+        assert stats["window_days"] == settings.REFLECT_IMPORTANCE_WINDOW_DAYS
 
     def test_render_calibration_markdown(self, digest_env):
         session_factory = digest_env
@@ -226,6 +234,52 @@ class TestCalibrationStats:
         assert "证据不足" in md
         assert "## 反思运行记录（窗口内）" in md
         assert "| 运行次数 | 1 |" in md
+
+    def test_runs_five_way_classification(self, digest_env):
+        """运行记录五分类互斥：空闲/异常/LLM 失败/产出/零产出。"""
+        session_factory = digest_env
+        now = _utc_naive(datetime.now(timezone.utc))
+        _seed(session_factory, [
+            ReflectRun(id="r_idle", run_at=now, skipped="idle"),
+            ReflectRun(id="r_err", run_at=now, skipped="", error="boom"),
+            ReflectRun(id="r_llm", run_at=now, skipped="",
+                       curate_failed=True),
+            ReflectRun(id="r_llm2", run_at=now, skipped="",
+                       rejecter_failed=2, proposals_created=1),
+            ReflectRun(id="r_prod", run_at=now, skipped="",
+                       proposals_created=2, auto_applied=2),
+            ReflectRun(id="r_zero", run_at=now, skipped="", proposals_created=0),
+        ])
+        from lantai.workers.digest_worker import collect_calibration_stats
+        stats = collect_calibration_stats()  # 不带参数：默认窗口取 settings
+        runs = stats["runs"]
+        assert runs["total"] == 6
+        assert runs["idle"] == 1
+        assert runs["errored"] == 1
+        assert runs["llm_failed"] == 2
+        assert runs["productive"] == 1
+        assert runs["zero_outcome"] == 1
+        assert stats["window_days"] == settings.REFLECT_IMPORTANCE_WINDOW_DAYS
+
+    def test_conf_bucket_outlier_lands_in_other(self, digest_env):
+        """桶外置信（<0.5）计入「其他」兜底桶，不静默丢失。"""
+        session_factory = digest_env
+        now = _utc_naive(datetime.now(timezone.utc))
+        _seed(session_factory, [
+            MemoryProposal(id="p1", proposal_type="add", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "a"},
+                           confidence=0.9, status="applied", created_at=now),
+            MemoryProposal(id="p2", proposal_type="add", candidate_id=None,
+                           evidence_ids=["e1"], proposed_patch={"key": "b"},
+                           confidence=0.3, status="rejected", created_at=now),
+        ])
+        from lantai.workers.digest_worker import (collect_digest_stats,
+                                                  render_digest_markdown)
+        rf = collect_digest_stats()["reflection"]
+        assert rf["conf_buckets"]["其他"] == 1
+        assert rf["conf_buckets"]["0.5-0.6"] == 0
+        md = render_digest_markdown(collect_digest_stats())
+        assert "[其他]×1" in md
 
 
 class TestCollectStats:

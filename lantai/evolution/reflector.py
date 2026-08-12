@@ -32,6 +32,7 @@ from datetime import timedelta, timezone
 
 from sqlmodel import select
 
+from lantai.core.logger import logger
 from lantai.core.scheduler import record_run
 from lantai.core.settings import settings
 from lantai.llm.client import chat_json
@@ -166,7 +167,8 @@ def _reject(prop: MemoryProposal, evidence_texts: str) -> dict:
     try:
         return chat_json(REFLECT_REJECTER_SYS, user)
     except Exception:
-        return {"accept": False, "risk": "high", "reason": "rejecter unavailable"}
+        return {"accept": False, "risk": "high", "reason": "rejecter unavailable",
+                "unavailable": True}
 
 
 def propose_from_reflection(session, candidates: list[dict],
@@ -234,8 +236,18 @@ def _record_reflect_run(run_at=None, **fields) -> None:
             s.add(ReflectRun(id=new_id("run"),
                              run_at=run_at or utcnow(), **fields))
             s.commit()
+    except Exception as exc:
+        logger.warning("reflect_run 落库失败（审计留痕不静默）: %s", exc,
+                       exc_info=True)
+
+
+def _safe_waterline() -> float:
+    """异常路径尽力补水位（读取失败不阻断留痕，宁 miss 不静默）。"""
+    try:
+        with db.get_session() as s:
+            return round(_importance_waterline(s), 2)
     except Exception:
-        pass
+        return 0.0
 
 
 def run_reflect_once() -> dict:
@@ -243,7 +255,7 @@ def run_reflect_once() -> dict:
     try:
         return _run_reflect_once()
     except Exception as exc:
-        _record_reflect_run(error=str(exc))
+        _record_reflect_run(waterline=_safe_waterline(), error=str(exc))
         raise
 
 
@@ -288,13 +300,15 @@ def _run_reflect_once() -> dict:
         props = propose_from_reflection(s, candidates, curated)
 
     cand_by_id = {c["memory_id"]: c for c in candidates}
-    auto_applied = pending = discarded = 0
+    auto_applied = pending = discarded = rejecter_failed = 0
     for prop in props:
         with db.get_session() as s:
             evidence_texts = "\n".join(
                 m.content for eid in prop.evidence_ids
                 if (m := s.get(MemoryItem, eid)) is not None)
         verdict = _reject(prop, evidence_texts)
+        if verdict.get("unavailable"):
+            rejecter_failed += 1
         if not verdict.get("accept") or verdict.get("risk") == "high":
             with db.get_session() as s:
                 p = s.get(MemoryProposal, prop.id)
@@ -333,11 +347,13 @@ def _run_reflect_once() -> dict:
         health_after=scan_after["snapshot"],
         proposals_created=len(props), auto_applied=auto_applied,
         pending=pending, discarded=discarded,
-        curate_failed=bool(curated.get("curate_failed")))
+        curate_failed=bool(curated.get("curate_failed")),
+        rejecter_failed=rejecter_failed)
     return {
         "ok": True, "skipped": False,
         "health_before": scan["snapshot"], "health_after": scan_after["snapshot"],
         "proposals_created": len(props), "auto_applied": auto_applied,
         "pending": pending, "discarded": discarded,
+        "rejecter_failed": rejecter_failed,
         "waterline": round(waterline, 2),
     }

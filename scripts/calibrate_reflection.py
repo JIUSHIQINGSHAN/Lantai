@@ -10,6 +10,7 @@ import sys
 
 sys.path.insert(0, ".")
 
+from lantai.storage.db import init_db  # noqa: E402
 from lantai.workers.digest_worker import (  # noqa: E402
     collect_calibration_stats, render_calibration_markdown)
 
@@ -19,6 +20,7 @@ def main() -> int:
     ap.add_argument("--days", type=int, default=7, help="观察窗口天数（默认 7）")
     args = ap.parse_args()
 
+    init_db()  # 幂等：CLI 直跑时保证增量迁移已应用（老库缺新列不报错）
     stats = collect_calibration_stats(days=args.days)
     sys.stdout.write(render_calibration_markdown(stats))
     return 0

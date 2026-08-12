@@ -23,6 +23,22 @@ _DEFAULT_DIGEST_DIR = _REPO_ROOT / "docs" / "memory-digest"
 
 # 反思提案置信桶（ADR-0002 零硬编码：边界走 settings，见校准报告）
 _CONF_BUCKETS = tuple(settings.DIGEST_CONF_BUCKETS)
+_TYPE_ORDER = ("add", "update", "merge", "deprecate")
+_STATUS_COLS = ("applied", "pending", "rejected", "other")
+
+
+def _type_status_rows(refl: dict) -> list[str]:
+    """类型×状态表行（含合计）——日报与校准报告共用渲染。"""
+    totals = {k: 0 for k in _STATUS_COLS}
+    rows = []
+    for ptype in _TYPE_ORDER:
+        row = refl.get("by_type", {}).get(ptype, {})
+        cells = [str(row.get(k, 0)) for k in _STATUS_COLS]
+        for k in _STATUS_COLS:
+            totals[k] += row.get(k, 0)
+        rows.append(f"| {ptype} | {' | '.join(cells)} |")
+    rows.append("| 合计 | " + " | ".join(str(totals[k]) for k in _STATUS_COLS) + " |")
+    return rows
 
 
 def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
@@ -79,6 +95,8 @@ def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
             if lo <= conf < hi or (label == "0.9-1.0" and conf == 1.0):
                 conf_buckets[label] += 1
                 break
+        else:
+            conf_buckets["其他"] = conf_buckets.get("其他", 0) + 1
     return {
         "created": int(created),
         "applied": int(applied),
@@ -213,20 +231,14 @@ def render_digest_markdown(stats: dict) -> str:
         lines += ["", "## 反思提案分布（今日新增）", "",
                   "| 类型 | 自动应用 | 待审 | 拒绝 | 其他 |",
                   "|---|---|---|---|---|"]
-        status_cols = ("applied", "pending", "rejected", "other")
-        totals = {k: 0 for k in status_cols}
-        for ptype in ("add", "update", "merge", "deprecate"):
-            row = rf.get("by_type", {}).get(ptype, {})
-            cells = [str(row.get(k, 0)) for k in status_cols]
-            for k in status_cols:
-                totals[k] += row.get(k, 0)
-            lines.append(f"| {ptype} | {' | '.join(cells)} |")
-        lines.append(f"| 合计 | {' | '.join(str(totals[k]) for k in status_cols)} |")
+        lines += _type_status_rows(rf)
         buckets = rf.get("conf_buckets", {})
         if buckets:
+            labels = [b[0] for b in _CONF_BUCKETS]
+            labels += [k for k in buckets if k not in labels]
             lines += ["", "置信桶（今日新增）：" +
                       " ".join(f"[{label}]×{buckets.get(label, 0)}"
-                               for label, _, _ in _CONF_BUCKETS)]
+                               for label in labels)]
     if p["total"]:
         lines += [
             "## 待审候选提醒",
@@ -239,18 +251,22 @@ def render_digest_markdown(stats: dict) -> str:
     return "\n".join(lines)
 
 
-def collect_calibration_stats(days: int = 7) -> dict:
+def collect_calibration_stats(days: int | None = None) -> dict:
     """观察期回填输入：窗口内反思提案分布 + 裁决原因 + 水位。
 
     对标 dry-run 校准报告（docs/memory-quality/reflect-calibration-2026-08-11.md），
-    8/18 观察期结束后生成真实分布回填表。窗口按 naive UTC 计算（库内约定）。
+    8/18 观察期结束后生成真实分布回填表。窗口按 naive UTC 计算（库内约定），
+    默认天数取 REFLECT_IMPORTANCE_WINDOW_DAYS（水位/提案同窗口）。
     """
+    if days is None:
+        days = settings.REFLECT_IMPORTANCE_WINDOW_DAYS
     end = datetime.now(timezone.utc).replace(tzinfo=None)
     start = end - timedelta(days=days)
     with db.get_session() as s:
         refl = _aggregate_reflection(s, start, end)
         water = s.exec(select(func.coalesce(func.sum(MemoryItem.importance), 0.0))
-                       .where(MemoryItem.created_at >= start)).one()
+                       .where(MemoryItem.created_at >= start,
+                              MemoryItem.created_at < end)).one()
         reason_rows = s.exec(select(MemoryProposal.decision_reason, func.count())
                              .where(MemoryProposal.candidate_id.is_(None),
                                     MemoryProposal.status == "rejected",
@@ -263,6 +279,7 @@ def collect_calibration_stats(days: int = 7) -> dict:
         # 反思运行记录：区分 空闲/正常/异常/LLM 失败（观察期去噪）
         run_rows = s.exec(select(ReflectRun.skipped, ReflectRun.error,
                                  ReflectRun.curate_failed,
+                                 ReflectRun.rejecter_failed,
                                  ReflectRun.proposals_created)
                           .where(ReflectRun.run_at >= start,
                                  ReflectRun.run_at < end)).all()
@@ -270,9 +287,14 @@ def collect_calibration_stats(days: int = 7) -> dict:
         "total": len(run_rows),
         "idle": sum(1 for r in run_rows if r[0] == "idle"),
         "errored": sum(1 for r in run_rows if r[1]),
-        "llm_failed": sum(1 for r in run_rows if r[2]),
+        "llm_failed": sum(1 for r in run_rows
+                          if not r[1] and (r[2] or (r[3] or 0) > 0)),
         "productive": sum(1 for r in run_rows
-                          if r[0] != "idle" and not r[1] and r[3] > 0),
+                          if r[0] != "idle" and not r[1] and not r[2]
+                          and not (r[3] or 0) and r[4] > 0),
+        "zero_outcome": sum(1 for r in run_rows
+                            if r[0] != "idle" and not r[1] and not r[2]
+                            and not (r[3] or 0) and r[4] == 0),
     }
     return {
         "window_days": days,
@@ -297,32 +319,28 @@ def render_calibration_markdown(stats: dict) -> str:
         "| 类型 | 自动应用 | 待审 | 拒绝 | 其他 |",
         "|---|---|---|---|---|",
     ]
-    status_cols = ("applied", "pending", "rejected", "other")
-    totals = {k: 0 for k in status_cols}
-    for ptype in ("add", "update", "merge", "deprecate"):
-        row = refl.get("by_type", {}).get(ptype, {})
-        cells = [str(row.get(k, 0)) for k in status_cols]
-        for k in status_cols:
-            totals[k] += row.get(k, 0)
-        lines.append(f"| {ptype} | {' | '.join(cells)} |")
-    lines.append(f"| 合计 | {' | '.join(str(totals[k]) for k in status_cols)} |")
+    lines += _type_status_rows(refl)
     buckets = refl.get("conf_buckets", {})
     if buckets:
         lines += ["", "## 置信桶（窗口新增）", "", "| 桶 | 数量 |", "|---|---|"]
-        for label, _, _ in _CONF_BUCKETS:
+        labels = [b[0] for b in _CONF_BUCKETS]
+        labels += [k for k in buckets if k not in labels]
+        for label in labels:
             lines.append(f"| {label} | {buckets.get(label, 0)} |")
     if stats.get("reason_top"):
         lines += ["", "## 拒绝原因 Top（决策反馈回路）", "", "| 原因 | 次数 |", "|---|---|"]
         for reason, cnt in stats["reason_top"]:
             lines.append(f"| {reason} | {cnt} |")
     runs = stats.get("runs") or {"total": 0, "idle": 0, "errored": 0,
-                                 "llm_failed": 0, "productive": 0}
+                                 "llm_failed": 0, "productive": 0,
+                                 "zero_outcome": 0}
     lines += ["", "## 反思运行记录（窗口内）", "", "| 指标 | 值 |", "|---|---|",
               f"| 运行次数 | {runs['total']} |",
               f"| 空闲（无候选且水位不足） | {runs['idle']} |",
               f"| 异常中断 | {runs['errored']} |",
               f"| LLM 失败（宁 miss 空降级） | {runs['llm_failed']} |",
-              f"| 产出提案的运行 | {runs['productive']} |"]
+              f"| 产出提案的运行 | {runs['productive']} |",
+              f"| 正常但零产出 | {runs['zero_outcome']} |"]
     lines += ["", "## 待回填结论（对标 dry-run 推荐）", "",
               "- A 水位触发：REFLECT_IMPORTANCE_POOL 是否保持 5.0",
               "- B 自动应用分流：REFLECT_AUTO_APPLY_CONF 是否保持 0.7",

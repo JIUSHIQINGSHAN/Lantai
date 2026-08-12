@@ -404,6 +404,53 @@ class TestRunOutcome:
             assert r.curate_failed is True
             assert r.error == ""
 
+    def test_rejecter_failure_records_flag(self, reflect_env):
+        """裁决 LLM 失败 → 提案宁 miss 丢弃，但运行记录标记 rejecter_failed（不静默）。"""
+        session_factory, _ = reflect_env
+        _seed(session_factory, [
+            _mem(id="mem_old", content="旧域名 example.com"),
+            _mem(id="mem_new", content="新域名 example.org"),
+            MemoryEdge(id="edge_1", source_memory_id="mem_new",
+                       target_memory_id="mem_old",
+                       relation="supersedes", confidence=0.9),
+        ])
+        curate = {"proposals": [
+            {"proposal_type": "deprecate", "target_memory_id": "mem_old",
+             "new_content": "", "memory_type": "semantic",
+             "reason": "superseded by mem_new", "confidence": 0.9,
+             "evidence_ids": ["mem_new"]},
+        ]}
+        from lantai.evolution.reflector import run_reflect_once
+        with patch("lantai.evolution.reflector.chat_json",
+                   side_effect=[curate, RuntimeError("rejecter down")]), \
+             _embed_mock(), _vector_mocks():
+            result = run_reflect_once()
+        assert result["discarded"] == 1
+        assert result["rejecter_failed"] == 1
+        with session_factory() as s:
+            r = s.exec(select(ReflectRun)).one()
+            assert r.proposals_created == 1
+            assert r.discarded == 1
+            assert r.curate_failed is False
+            assert r.rejecter_failed == 1
+
+    def test_exception_records_waterline_and_error(self, reflect_env):
+        """未捕获异常 → 尽力补水位 + error 留痕后原样抛出（宁 miss 不静默）。"""
+        session_factory, _ = reflect_env
+        _seed(session_factory, [
+            _mem(id="mem_a", content="重要记忆", importance=0.8,
+                 created_at=utcnow()),
+        ])
+        from lantai.evolution.reflector import run_reflect_once
+        with patch("lantai.evolution.reflector.health_scan",
+                   side_effect=RuntimeError("scan boom")):
+            with pytest.raises(RuntimeError):
+                run_reflect_once()
+        with session_factory() as s:
+            r = s.exec(select(ReflectRun)).one()
+            assert r.error != ""
+            assert r.waterline == 0.8
+
 
 # ── apply_proposal 扩展（deprecate / merge / 回归）────────────
 

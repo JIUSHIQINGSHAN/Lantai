@@ -42,3 +42,7 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **目识**（Vision 多模态） | 图片感知写入通道：`/add` 与 MCP `add` 支持 `media_url`（仅 http/https/data，`validate_media_url` 白名单校验；兰台不直接 fetch 图片，零 SSRF 面），复用单一 LLM 网关的 OpenAI 兼容 Vision 调用生成 caption——content 为空时 caption 作正文，非空时存 `metadata.vision`；失败抛 ValueError 不落失败文本（宁 miss 不脏写）。见 v0.10 票据 01 |
 | **digest**（每日盘点） | 每日清晨生成 `docs/memory-digest/YYYY-MM-DD.md`：新增/修改/总量/待审/归档/检索五项统计，Hermes 经 MCP `get_digest` 或 `GET /digest/today` 读取。见 [docs/daily-digest.md](docs/daily-digest.md) |
 | **命名体系** | 中文命名的方向与规则：按对象层级（项目/子系统/机制/数据/版本代号）从传统意象取材，2–4 字、有出处、先登记后使用；见 [ADR-0013](docs/adr/0013-naming-system.md) |
+| **反思**（reflect/蒸馏） | 每日健康扫描 + 水位触发蒸馏 + 提案裁决的自我审视回环（「吾日三省吾身」）：健康候选与水位触发 → curator 提炼 → rejecter 复核 → 自动应用/待审/丢弃（宁 miss）。入口 `run_reflect_once`，spec 见 [docs/plans/reflection-module-spec.md](docs/plans/reflection-module-spec.md) |
+| **观察期**（回填校准窗口） | 反思阈值定标前的真实数据收集期（2026-08-11 起 7 天）：`reflect_run`/`scheduler_run` 落库保证每次运行的 空闲/产出/LLM 失败/异常 可审计，期满后（8/18）用真实分布回填校准阈值 |
+| **回填校准**（反思阈值回填校准） | 观察期满后用真实分布对标 dry-run 推荐，二次校准 `REFLECT_IMPORTANCE_POOL`/`REFLECT_AUTO_APPLY_CONF`/`REFLECT_MIN_CONFIDENCE`；入口 `scripts/calibrate_reflection.py` + `collect_calibration_stats` |
+| **置信桶**（置信区间分组） | 提案置信度分桶统计（边界走 `DIGEST_CONF_BUCKETS`，ADR-0002 零硬编码），日报与回填校准报告展示分布；桶外置信计「其他」不静默 |

@@ -356,6 +356,7 @@ class ReflectRun(SQLModel, table=True):
     waterline: float = 0.0
     skipped: str = ""            # "" = 正常执行（含空产出）；"idle" = 空闲跳过
     curate_failed: bool = False  # curator LLM 调用失败（宁 miss 空降级，但不静默）
+    rejecter_failed: int = 0     # rejecter LLM 调用失败次数（异常按不通过处理，留痕不静默）
     health_before: dict = Field(default_factory=dict, sa_column=Column(JSON))
     health_after: dict = Field(default_factory=dict, sa_column=Column(JSON))
     proposals_created: int = 0
