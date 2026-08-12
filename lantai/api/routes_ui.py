@@ -4,7 +4,7 @@
 渲染 意图→向量→衰减→(重排)→最终 的召回漏斗与结果。只读，不改变任何检索语义。
 """
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 router = APIRouter()
 
@@ -174,6 +174,12 @@ def pulse_console() -> str:
 @router.get("/ui/evolve", response_class=HTMLResponse)
 def evolve_console() -> str:
     return _EVOLVE_HTML
+
+
+@router.get("/", response_class=RedirectResponse)
+def root_to_console():
+    """根路径跳转控制台：浏览器打开 http://127.0.0.1:8767/ 直达 /ui。"""
+    return RedirectResponse("/ui")
 
 
 @router.get("/ui", response_class=HTMLResponse)
