@@ -15,8 +15,8 @@ _UI_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>兰台 · 追忆漏斗</title>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2430; --muted:#6b7686;
-          --accent:#2563eb; --line:#e3e7ee; --ok:#16a34a; --warn:#d97706; }
+  :root { --bg:#f8f4ed; --card:#fffef8; --ink:#253d24; --muted:#867e76;
+          --accent:#1ba784; --line:#e4dfd7; --ok:#41ae3c; --warn:#feba07; --bad:#862617; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
@@ -42,14 +42,14 @@ _UI_HTML = """<!DOCTYPE html>
   .step { display:flex; align-items:center; gap:10px; margin:8px 0; }
   .step .name { width:96px; color:var(--muted); font-size:13px; }
   .bar { flex:1; height:22px; background:#eef1f6; border-radius:6px; overflow:hidden; }
-  .bar i { display:block; height:100%; background:linear-gradient(90deg,#60a5fa,#2563eb); }
+  .bar i { display:block; height:100%; background:linear-gradient(90deg,#7ccfb5,#1ba784); }
   .step .meta { width:240px; font-size:12px; color:var(--muted); text-align:right; }
   .result { border-top:1px solid var(--line); padding:10px 0; }
   .result .head { display:flex; gap:8px; align-items:center; }
   .score { font-weight:700; color:var(--accent); }
   .tag { font-size:11px; color:var(--muted); background:#eef1f6; padding:1px 8px; border-radius:999px; }
   .result pre { white-space:pre-wrap; margin:6px 0 0; font-size:13px; color:#3d4757; }
-  #err { color:#b91c1c; }
+  #err { color:var(--bad); }
   .muted { color:var(--muted); font-size:12px; }
 </style>
 </head>
@@ -193,8 +193,8 @@ _EVOLVE_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>兰台 · 检索质量看板</title>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2430; --muted:#6b7686;
-          --accent:#2563eb; --line:#e3e7ee; --ok:#16a34a; --warn:#d97706; --bad:#b91c1c; }
+  :root { --bg:#f8f4ed; --card:#fffef8; --ink:#253d24; --muted:#867e76;
+          --accent:#1ba784; --line:#e4dfd7; --ok:#41ae3c; --warn:#feba07; --bad:#862617; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
@@ -213,13 +213,13 @@ _EVOLVE_HTML = """<!DOCTYPE html>
   .bar-row { display:flex; align-items:center; gap:10px; margin:6px 0; }
   .bar-row .name { width:130px; color:var(--muted); font-size:13px; overflow:hidden; text-overflow:ellipsis; }
   .bar-row .track { flex:1; height:16px; background:#eef1f6; border-radius:6px; overflow:hidden; }
-  .bar-row .track i { display:block; height:100%; background:linear-gradient(90deg,#60a5fa,#2563eb); }
+  .bar-row .track i { display:block; height:100%; background:linear-gradient(90deg,#7ccfb5,#1ba784); }
   .bar-row .val { width:110px; font-size:12px; color:var(--muted); text-align:right; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); }
   th { color:var(--muted); font-weight:600; }
   .zero { color:var(--bad); } .noise { color:var(--muted); }
-  #err { color:#b91c1c; margin:10px 0; }
+  #err { color:var(--bad); margin:10px 0; }
 </style>
 </head>
 <body>
@@ -324,15 +324,15 @@ _INDEX_HTML = """<!DOCTYPE html>
 <head><meta charset="utf-8"><title>兰台 · 控制台</title>
 <style>
   body { font:15px/1.7 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
-         background:#f6f7f9; color:#1c2430; margin:0; }
+         background:#f8f4ed; color:#253d24; margin:0; }
   main { max-width:640px; margin:60px auto; padding:0 20px; }
   h1 { font-size:22px; }
-  p { color:#6b7686; }
-  a.card { display:block; background:#fff; border:1px solid #e3e7ee; border-radius:12px;
-           padding:18px 20px; margin:14px 0; text-decoration:none; color:#1c2430; }
-  a.card:hover { border-color:#2563eb; }
-  a.card b { font-size:16px; color:#2563eb; }
-  a.card span { display:block; color:#6b7686; font-size:13px; }
+  p { color:#867e76; }
+  a.card { display:block; background:#fffef8; border:1px solid #e4dfd7; border-radius:12px;
+           padding:18px 20px; margin:14px 0; text-decoration:none; color:#253d24; }
+  a.card:hover { border-color:#1ba784; }
+  a.card b { font-size:16px; color:#1ba784; }
+  a.card span { display:block; color:#867e76; font-size:13px; }
 </style></head>
 <body>
 <main>
@@ -355,8 +355,8 @@ _PULSE_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>兰台 · 脉搏</title>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2430; --muted:#6b7686;
-          --accent:#2563eb; --line:#e3e7ee; --ok:#16a34a; --warn:#d97706; --bad:#b91c1c; }
+  :root { --bg:#f8f4ed; --card:#fffef8; --ink:#253d24; --muted:#867e76;
+          --accent:#1ba784; --line:#e4dfd7; --ok:#41ae3c; --warn:#feba07; --bad:#862617; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
@@ -375,12 +375,12 @@ _PULSE_HTML = """<!DOCTYPE html>
   .bar-row { display:flex; align-items:center; gap:10px; margin:6px 0; }
   .bar-row .name { width:120px; color:var(--muted); font-size:13px; }
   .bar-row .track { flex:1; height:16px; background:#eef1f6; border-radius:6px; overflow:hidden; }
-  .bar-row .track i { display:block; height:100%; background:linear-gradient(90deg,#60a5fa,#2563eb); }
+  .bar-row .track i { display:block; height:100%; background:linear-gradient(90deg,#7ccfb5,#1ba784); }
   .bar-row .val { width:60px; font-size:12px; color:var(--muted); text-align:right; }
   .check { display:inline-block; margin-right:14px; }
   .check b { margin-left:4px; }
   .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
-  #err { color:#b91c1c; margin:10px 0; }
+  #err { color:var(--bad); margin:10px 0; }
 </style>
 </head>
 <body>
@@ -528,8 +528,8 @@ _VAULT_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>兰台 · 档案与锦囊</title>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2430; --muted:#6b7686;
-          --accent:#2563eb; --line:#e3e7ee; --ok:#16a34a; --warn:#d97706; --bad:#b91c1c; }
+  :root { --bg:#f8f4ed; --card:#fffef8; --ink:#253d24; --muted:#867e76;
+          --accent:#1ba784; --line:#e4dfd7; --ok:#41ae3c; --warn:#feba07; --bad:#862617; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
@@ -792,8 +792,8 @@ _MAP_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>兰台 · 记忆星图</title>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2430; --muted:#6b7686;
-          --accent:#2563eb; --line:#e3e7ee; }
+  :root { --bg:#f8f4ed; --card:#fffef8; --ink:#253d24; --muted:#867e76;
+          --accent:#1ba784; --line:#e4dfd7; --bad:#862617; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
@@ -808,13 +808,13 @@ _MAP_HTML = """<!DOCTYPE html>
   .legend { display:flex; gap:16px; flex-wrap:wrap; font-size:12px; color:var(--muted); margin-top:8px; }
   .legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; }
   .legend .edge i { width:18px; height:3px; border-radius:2px; vertical-align:middle; }
-  svg { width:100%; height:auto; background:#fbfcfe; border:1px solid var(--line); border-radius:10px; }
+  svg { width:100%; height:auto; background:#fffef8; border:1px solid var(--line); border-radius:10px; }
   .node { cursor:pointer; }
   .node circle { stroke:#fff; stroke-width:1.5; }
-  .node text { font-size:10px; fill:#3d4757; pointer-events:none; }
+  .node text { font-size:10px; fill:#253d24; pointer-events:none; }
   .node.hot circle { stroke:var(--accent); stroke-width:2.5; }
   #info { min-height:20px; color:var(--muted); font-size:13px; }
-  #err { color:#b91c1c; }
+  #err { color:var(--bad); }
 </style>
 </head>
 <body>
@@ -828,20 +828,20 @@ _MAP_HTML = """<!DOCTYPE html>
     <div class="legend" id="laneLegend"></div>
     <div class="legend" id="edgeLegend"></div>
   </div>
-  <div class="panel"><svg id="svg" viewBox="0 0 1000 700"></svg></div>
+  <div class="panel"><svg id="svg" viewBox="0 0 1800 1300"></svg></div>
   <div class="panel"><div id="info">（悬停节点/连线查看详情）</div></div>
   <div id="err"></div>
 </main>
 <script>
 var LANES = ['fact','rule','experience','preference','chat','general'];
-var LANE_COLOR = {fact:'#2563eb', rule:'#7c3aed', experience:'#0891b2',
-                  preference:'#db2777', chat:'#9ca3af', general:'#16a34a'};
-var EDGE_COLOR = {supports:'#16a34a', refines:'#2563eb', contradicts:'#d97706', supersedes:'#b91c1c'};
+var LANE_COLOR = {fact:'#862617', rule:'#1661ab', experience:'#1ba784',
+                  preference:'#eb507e', chat:'#6e8b74', general:'#4b2e2b'};
+var EDGE_COLOR = {supports:'#1ba784', refines:'#1661ab', contradicts:'#feba07', supersedes:'#ed5126'};
 var EDGE_LABEL = {supports:'支持', refines:'细化', contradicts:'矛盾', supersedes:'取代'};
-var W = 1000, H = 700, CX = 500, CY = 350, R = 300;
+var W = 1800, H = 1300, CX = 900, CY = 650, R = 520;
 var pos = {}, nodes = [], links = [], scenes = {};
 var info = document.getElementById('info');
-var SCENE_PALETTE = ['#f59e0b','#0d9488','#7c3aed','#db2777','#ea580c','#0284c7','#65a30d','#9333ea'];
+var SCENE_PALETTE = ['#1ba784','#1661ab','#eb507e','#862617','#0eb0c9','#feba07','#be7e4a','#310f1b'];
 var sceneColor = {};
 function colorForScene(sid) {
   if (!sceneColor[sid]) {
@@ -889,31 +889,36 @@ function layout() {
   solos.forEach(function (n) { push(n.lane || 'general', {kind: 'solo', nodes: [n]}); });
   Object.keys(laneGroups).forEach(function (lane) {
     var groups = laneGroups[lane], center = laneAngle(lane), half = 26;
-    var nGroups = groups.length;
-    groups.forEach(function (g, gi) {
-      var gAngle = center - half + (gi + 0.5) * (2 * half) / nGroups;
-      if (g.kind === 'solo') {
-        var r = 100 + (gi % 3) * 55;
-        var p = polar(gAngle, r);
-        pos[g.nodes[0].id] = p;
-      } else {
-        var m = g.nodes.length;
-        var spread = m > 1 ? 11 : 0;
-        g.nodes.forEach(function (n, idx) {
-          var a = m === 1 ? gAngle : gAngle + (idx - (m - 1) / 2) * (2 * spread) / Math.max(1, m - 1);
-          var rr = 175 - (idx % 2) * 30;
-          var p = polar(a, Math.max(100, rr));
-          pos[n.id] = p;
-        });
-      }
+    var scenes = [], singles = [];
+    groups.forEach(function (g) { (g.kind === 'scene' ? scenes : singles).push(g); });
+    // 场景组：按成员数比例分槽（大场景占更宽扇区）；组内沿 5 层半径展开（196..300），避免同角堆叠
+    var sceneTotal = scenes.reduce(function (s, g) { return s + g.nodes.length; }, 0);
+    var cursor = center - half;
+    scenes.forEach(function (g, gi) {
+      var slotW = (2 * half) * g.nodes.length / Math.max(1, sceneTotal);
+      var gAngle = cursor + slotW / 2;
+      cursor += slotW;
+      var spread = Math.min(9, slotW * 0.45);
+      g.nodes.forEach(function (n, idx) {
+        var a = g.nodes.length === 1 ? gAngle
+              : gAngle + (idx - (g.nodes.length - 1) / 2) * (2 * spread) / Math.max(1, g.nodes.length - 1);
+        pos[n.id] = polar(a, Math.min(300, 196 + (idx % 5) * 26));
+      });
+    });
+    // 独立记忆：扇区内均分角度，按序换半径环（196/220/244/268），每环角度间隔 >= 7°
+    var perRing = Math.max(1, Math.floor((2 * half) / 6.5));
+    singles.forEach(function (g, si) {
+      var a = center - half + (si % perRing + 0.5) * (2 * half) / Math.max(1, perRing);
+      pos[g.nodes[0].id] = polar(a, Math.min(490, 330 + Math.floor(si / perRing) * 40));
     });
   });
-  // 第二阶段：来源文档节点放外环，角度取邻接记忆的均值（贴着自己支撑的记忆）
+  // 第二阶段：来源文档节点放最外环（半径 286），邻接角度相近的按 6° 桶内均布防重叠
   var adj = {};
   links.forEach(function (l) {
     (adj[l.source] = adj[l.source] || []).push(l.target);
     (adj[l.target] = adj[l.target] || []).push(l.source);
   });
+  var srcItems = [];
   nodes.forEach(function (n) {
     if (n.node_type !== 'source') return;
     var neigh = (adj[n.id] || []).map(function (id) { return pos[id]; }).filter(Boolean);
@@ -926,8 +931,15 @@ function layout() {
       });
       angle = Math.atan2(sumSin, sumCos) * 180 / Math.PI;
     } else { angle = -90; }
-    pos[n.id] = polar(angle, 262);
+    srcItems.push({id: n.id, angle: angle});
   });
+  // 按角度排序后贪心拉开：相邻至少 4°（455 半径 ≈ 32px），避免多来源同角度完全重合
+  srcItems.sort(function (a, b) { return a.angle - b.angle; });
+  for (var si = 1; si < srcItems.length; si++) {
+    var need = srcItems[si - 1].angle + 4;
+    if (srcItems[si].angle < need) srcItems[si].angle = need;
+  }
+  srcItems.forEach(function (it) { pos[it.id] = polar(it.angle, 520); });
 }
 function draw() {
   layout();
@@ -945,7 +957,7 @@ function draw() {
     var line = document.createElementNS(NS, 'line');
     line.setAttribute('x1', pos[s.id].x); line.setAttribute('y1', pos[s.id].y);
     line.setAttribute('x2', pos[t.id].x); line.setAttribute('y2', pos[t.id].y);
-    line.setAttribute('stroke', EDGE_COLOR[l.relation] || '#9ca3af');
+    line.setAttribute('stroke', EDGE_COLOR[l.relation] || '#6e8b74');
     line.setAttribute('stroke-opacity', 0.55);
     line.setAttribute('stroke-width', (1.5 + (l.confidence || 0.5) * 2.2).toFixed(2));
     line.style.cursor = 'pointer';
@@ -968,7 +980,7 @@ function draw() {
       ring = document.createElementNS(NS, 'circle');
       ring.setAttribute('r', 15);
       ring.setAttribute('fill', 'none');
-      ring.setAttribute('stroke', '#f59e0b');
+      ring.setAttribute('stroke', '#1ba784');
       ring.setAttribute('stroke-width', '1');
       ring.setAttribute('stroke-dasharray', '3 2');
       g.appendChild(ring);
@@ -978,20 +990,23 @@ function draw() {
       rect.setAttribute('x', -6); rect.setAttribute('y', -6);
       rect.setAttribute('width', 12); rect.setAttribute('height', 12);
       rect.setAttribute('rx', 2);
-      rect.setAttribute('fill', '#f3f4f6');
-      rect.setAttribute('stroke', '#6b7280');
+      rect.setAttribute('fill', '#f8f4ed');
+      rect.setAttribute('stroke', '#867e76');
       rect.setAttribute('stroke-width', '1.2');
       g.appendChild(rect);
     } else {
       var c = document.createElementNS(NS, 'circle');
       c.setAttribute('r', 7);
-      c.setAttribute('fill', n.scene_id ? colorForScene(n.scene_id) : (LANE_COLOR[n.lane] || '#16a34a'));
+      c.setAttribute('fill', n.scene_id ? colorForScene(n.scene_id) : (LANE_COLOR[n.lane] || '#4b2e2b'));
       g.appendChild(c);
     }
     var t = document.createElementNS(NS, 'text');
-    t.setAttribute('x', 11);
-    t.setAttribute('y', 3);
-    var label = n.label.length > 14 ? n.label.slice(0, 14) + '…' : n.label;
+    t.setAttribute('x', 12);
+    t.setAttribute('y', 4);
+    t.setAttribute('paint-order', 'stroke');
+    t.setAttribute('stroke', '#fffef8');
+    t.setAttribute('stroke-width', '2.5');
+    var label = n.label.length > 10 ? n.label.slice(0, 10) + '…' : n.label;
     t.textContent = label;
     g.appendChild(t);
     var sceneNote = n.scene_id && scenes[n.scene_id] ? '　场景：' + scenes[n.scene_id] : '';
@@ -1041,12 +1056,12 @@ function renderStats(data) {
   });
   var sceneNote = el('span', null, '场景成员同色');
   var sceneDot = document.createElement('i');
-  sceneDot.style.background = '#f59e0b';
+  sceneDot.style.background = '#1ba784';
   sceneNote.prepend(sceneDot);
   ll.appendChild(sceneNote);
   var srcNote = el('span', 'edge', '来源文档');
   var srcDot = document.createElement('i');
-  srcDot.style.background = '#6b7280';
+  srcDot.style.background = '#6e8b74';
   srcNote.prepend(srcDot);
   ll.appendChild(srcNote);
   var elBox = document.getElementById('edgeLegend');
