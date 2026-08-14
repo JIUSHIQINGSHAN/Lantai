@@ -144,6 +144,44 @@ class TestStartSchedulerCatchup:
         assert "reflect_catchup" not in ids
 
 
+class TestAutodreamScheduling:
+    """Fog：autodream 7 天周期蒸馏——AUTODREAM_ENABLED 时注册 interval(days=7) job。"""
+
+    class _FakeScheduler:
+        def __init__(self, **kwargs):
+            self.jobs = []
+
+        def add_job(self, fn, trigger=None, **kwargs):
+            self.jobs.append({"fn": fn, "trigger": trigger, **kwargs})
+
+        def start(self):
+            pass
+
+    @pytest.fixture()
+    def fake_scheduler(self, monkeypatch, sched_db):
+        fake = self._FakeScheduler()
+        monkeypatch.setattr(scheduler_mod, "BackgroundScheduler",
+                            lambda **kw: fake)
+        monkeypatch.setattr(scheduler_mod, "_scheduler", fake)
+        monkeypatch.setattr(scheduler_mod.settings, "PARAM_ADVICE_ENABLED", False)
+        monkeypatch.setattr(scheduler_mod.settings, "DIGEST_ENABLED", False)
+        monkeypatch.setattr(scheduler_mod.settings, "REFLECT_ENABLED", False)
+        return fake
+
+    def test_autodream_job_registered_with_7day_interval(self, fake_scheduler):
+        scheduler_mod.start_scheduler()
+        jobs = {j["id"]: j for j in fake_scheduler.jobs}
+        assert "autodream" in jobs
+        assert jobs["autodream"]["trigger"] == "interval"
+        assert jobs["autodream"]["days"] == 7
+
+    def test_autodream_disabled_no_job(self, fake_scheduler, monkeypatch):
+        monkeypatch.setattr(scheduler_mod.settings, "AUTODREAM_ENABLED", False)
+        scheduler_mod.start_scheduler()
+        ids = [j["id"] for j in fake_scheduler.jobs]
+        assert "autodream" not in ids
+
+
 class TestMigrationsV8ToV11:
     """v7 库 → v11：scheduler_run + reflect_run（含 rejecter_failed）创建 + 版本记账。"""
 

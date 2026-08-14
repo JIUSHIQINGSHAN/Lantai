@@ -110,3 +110,28 @@ def test_run_autodream_apply_pending(autodream_env):
         assert props[0].decided_by == "autodream"
         assert props[0].applied_at is None
         assert len(props[0].evidence_ids) == 2
+
+
+def test_scheduled_worker_creates_pending_and_records_run(autodream_env):
+    """周期入口（Fog：7 天周期）：真实库落 pending 提案 + record_run 可观测。
+
+    调度器接线（interval days=7）见 test_scheduler.py TestAutodreamScheduling。
+    """
+    session_factory, engine = autodream_env
+    with session_factory() as s:
+        s.add_all([
+            _mem("服务A 端口 8080", days=3),
+            _mem("服务A 端口 9090", days=2),
+            _mem("服务A 端口 9090 再次确认", days=1),
+        ])
+        s.commit()
+    from lantai.workers.autodream_worker import run_autodream_scheduled
+    out = run_autodream_scheduled()
+    assert out["created"] >= 1
+    with session_factory() as s:
+        props = s.exec(select(MemoryProposal).where(
+            MemoryProposal.decided_by == "autodream",
+            MemoryProposal.status == "pending")).all()
+        assert props
+    from lantai.core.scheduler import get_last_run
+    assert get_last_run("autodream") is not None

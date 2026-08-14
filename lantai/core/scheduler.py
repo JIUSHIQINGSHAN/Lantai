@@ -150,6 +150,13 @@ def start_scheduler():
                            minute=_REFLECT_CRON_MINUTE,
                            id="reflect", replace_existing=True)
 
+    # Fog: autodream 7 天周期蒸馏（后台合成 → 待审提案，人工闸门；不自动应用）
+    if settings.AUTODREAM_ENABLED:
+        from lantai.workers.autodream_worker import run_autodream_scheduled
+        _scheduler.add_job(run_autodream_scheduled, "interval",
+                           days=settings.AUTODREAM_CRON_DAYS,
+                           id="autodream", replace_existing=True)
+
     # F7: coalesce idle flush（每 2 秒检查一次空闲缓冲；冲刷结果持久化，不静默丢弃）
     if settings.COALESCE_ENABLED:
         from lantai.ingestion.coalesce import get_coalesce_buffer

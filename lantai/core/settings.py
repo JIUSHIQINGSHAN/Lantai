@@ -195,6 +195,7 @@ class Settings(BaseSettings):
     AUTODREAM_MIN_CLUSTER: int = 2
     AUTODREAM_MAX_DAILY: int = 10
     AUTODREAM_MIN_CONFIDENCE: float = 0.5
+    AUTODREAM_CRON_DAYS: int = 7  # 周期蒸馏间隔（Fog：7 天周期记忆蒸馏）
     # 技能结晶（v0.7，借鉴 aiduMEI SkillCrystallizer 窄版）
     CRYSTAL_ENABLED: bool = True
     CRYSTAL_MIN_CLUSTER: int = 3

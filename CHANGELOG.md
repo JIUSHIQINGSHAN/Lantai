@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **autodream 7 天周期蒸馏（Fog 项收口）**: `lantai/workers/autodream_worker.py::run_autodream_scheduled`——后台周期蒸馏落 pending 提案（decided_by="autodream"，人工闸门裁决，宁 miss 不脏写）+ `record_run("autodream")` 可观测；scheduler 注册 interval job（`AUTODREAM_CRON_DAYS`=7 默认，settings 可配，AUTODREAM_ENABLED 门控）。测试：scheduler 注册断言（interval/days=7/开关）+ worker 真实库落库冒烟（test_scheduler.py / test_autodream.py）
+- **arm64 Docker 镜像（Fog 项收口）**: `.github/workflows/ci.yml` `platforms: linux/amd64,linux/arm64`——tag 推送构建双架构镜像
+
 ### Changed
 - **校雠三态去重升级（ADR-0019，结构判别）**: 实测（36 对 / 3 类中文样本，真实 bge-m3）证明单一余弦阈值无法分离 merge/update——更新类 5/12 被误判 merge 静默吞掉新值。升级为两相位：① 余弦预筛（提取前，≥ `DEDUP_PRESCREEN_MERGE`=0.95 直合零 LLM、< 0.65 insert）；② 中带提取后结构判别（`lantai/gate/relation.py::classify_relation`，锚点 + 归一化值规则，中带 LLM 兜底、失败降级 insert——宁 miss 不脏写）。`DEDUP_MERGE_THRESHOLD` 默认 0.80 → 0.90（fastpath 路径阈值）；`DEDUP_STRUCTURAL_ENABLED` / `DEDUP_STRUCTURAL_LLM_ENABLED` / `DEDUP_ANCHOR_HIGH` / `DEDUP_ANCHOR_LOW` 新增。回归样本 36 对入 `tests/test_dedup_relation.py`（规则层不 mock）+ `tests/test_dedup_flow.py` 两相位接线。票据：白皮书路线图「去重阈值实测校准」，prototype 见 `.scratch/dedup-threshold-calibration/`
 

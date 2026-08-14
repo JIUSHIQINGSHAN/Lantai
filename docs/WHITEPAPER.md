@@ -389,11 +389,11 @@ docker run -d -p 8767:8767 \
 ### 12.2 路线图
 
 - [ ] salience 冲突降权与 contradiction gate 整合
-- [ ] autodream 7 天周期记忆蒸馏
+- [x] autodream 7 天周期记忆蒸馏（2026-08-14）——`autodream_worker` 周期入口（`AUTODREAM_CRON_DAYS`=7 默认），落 pending 提案交人工闸门，`record_run` 可观测
 - [ ] checkpoint 五段会话快照
 - [x] 去重阈值实测校准（bge-m3 中文样本）——实测 36 对 / 3 类：单一余弦阈值无法分离 merge/update，升级结构判别（ADR-0019）；prototype 见 `.scratch/dedup-threshold-calibration/`
 - [ ] 评测集扩至 50+ case 并纳入 CI
-- [ ] arm64 Docker 镜像
+- [x] arm64 Docker 镜像（2026-08-14）——CI `platforms: linux/amd64,linux/arm64`
 
 ---
 
