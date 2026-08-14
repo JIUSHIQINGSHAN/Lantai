@@ -218,9 +218,9 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 - [x] v0.3.3 P1 安全收口（SSRF / 备份恢复 / MCP 校验）
 - [x] v0.3.4 FTS5 并列接入 + BM25 缓存（ADR-0008）
 - [x] v0.3.5 测试全绿 120/120 · v0.3.6 供应链加固（Actions 锁 SHA / 非 root）
-- [ ] salience 冲突降权与 contradiction gate 整合（Fog）
-- [ ] autodream 7 天周期记忆蒸馏（Fog）
-- [ ] checkpoint 五段会话快照（Fog）
+- [x] salience 冲突降权与 contradiction gate 整合（Fog，ADR-0020）——反义词词级碰撞 + 低 salience 旧记忆确定性冲突降权放行
+- [x] autodream 7 天周期记忆蒸馏（Fog）——autodream_worker 周期入口，落待审提案
+- [x] checkpoint 五段会话快照（Fog，ADR-0021）——底本：在做/下一步/工作区/决策/待办
 - [x] 去重阈值实测校准（bge-m3 中文样本）——实测 36 对 / 3 类：单一余弦阈值无法分离 merge/update，升级结构判别（ADR-0019）
 
 ## 文档索引
