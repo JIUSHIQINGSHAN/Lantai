@@ -1,4 +1,18 @@
-# 兰台记忆 中文记忆评测集 v1（chinese-memory-v1）
+# 兰台记忆 中文记忆评测集（chinese-memory-v1 → v2）
+
+## v2 扩编（2026-08-14）：13 → 50 case
+
+- 数据源：`lantai/eval/chinese_memory_cases.py`（纯数据，无副作用），dataset 名 `chinese-memory-v2`
+- 规模：**50 case** = typo×15 / fresh×12 / stale×8 / temporal×8 / superseded×7
+- 错别字 case 统一「去首字」模式：query 的全部 trigram 均为 content 的 trigram，
+  FTS AND 链确定性命中（FTS 兜底路径可复现）
+- 陈旧 case 按 lane 半衰期保证归档（chat 90 天 / preference 200 天，decay 必达阈值）
+- 门禁（`GATES`）不变：stale=0 / typo=1 / fresh=1 / temporal=1 / superseded=1，
+  `scripts/run_forgetting_quality.py --check` 实测 PASS
+- **纳入 CI**：`.github/workflows/tests.yml`（push/PR：全量 pytest + 门禁）
+- v1 规格与六维指标定义见下（保持不变）
+
+---
 
 > 状态：v1 发布（2026-08-11）
 > 定位：面向「中文 / 错别字容错 / 遗忘质量 / 时效」的记忆检索自证基准——英文生态

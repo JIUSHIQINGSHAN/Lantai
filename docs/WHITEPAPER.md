@@ -299,13 +299,13 @@ embedding 余弦聚类构建 `MemoryScene`（ADR-0012），heat = 成员 `use_co
 - 60+ 测试文件、700+ 用例全绿（README 徽章 701/701），覆盖 FTS 集成、SSRF、备份恢复、MCP 协议、Shell Hook 超时、迁移链、ACL、场景、Wiki、Vision、召回链等；
 - 测试进程内永不启动真实调度器（fixture 置空 `start_scheduler`），全量顺序执行无污染。
 
-### 8.3 中文记忆评测集 v1（chinese-memory-v1）
+### 8.3 中文记忆评测集 v2（chinese-memory-v2）
 
 面向「中文 / 错别字容错 / 遗忘质量 / 时效」的检索自证基准 —— 西文生态基准不覆盖此场景且不可复现，兰台以**本地可复现命令**作为主张依据：
 
-- 13 case = typo×4 / fresh×3 / stale×2 / temporal×2 / superseded×2，命名空间隔离不污染真实库；
+- **50 case**（v2，2026-08-14 由 v1 13 case 扩编）= typo×15 / fresh×12 / stale×8 / temporal×8 / superseded×7，命名空间隔离不污染真实库；
 - 六维指标：陈旧残留率（0.0）、错别字容错命中（1.0）、对照召回（1.0）、时效排序（1.0）、取代排序（1.0）、取代残留（诚实测量）；
-- 两条复现命令，门禁模式 FAIL 退出码 1 可直接挂 CI。
+- 两条复现命令，门禁模式 FAIL 退出码 1；**已纳入 CI**（`.github/workflows/tests.yml`，push/PR 全量 pytest + 门禁）。
 
 ### 8.4 可观测性
 
@@ -392,7 +392,7 @@ docker run -d -p 8767:8767 \
 - [x] autodream 7 天周期记忆蒸馏（2026-08-14）——`autodream_worker` 周期入口（`AUTODREAM_CRON_DAYS`=7 默认），落 pending 提案交人工闸门，`record_run` 可观测
 - [ ] checkpoint 五段会话快照
 - [x] 去重阈值实测校准（bge-m3 中文样本）——实测 36 对 / 3 类：单一余弦阈值无法分离 merge/update，升级结构判别（ADR-0019）；prototype 见 `.scratch/dedup-threshold-calibration/`
-- [ ] 评测集扩至 50+ case 并纳入 CI
+- [x] 评测集扩至 50+ case 并纳入 CI（2026-08-14）——chinese-memory-v2（50 case 全维度扩编），门禁 PASS，`.github/workflows/tests.yml` 全量 pytest + 门禁
 - [x] arm64 Docker 镜像（2026-08-14）——CI `platforms: linux/amd64,linux/arm64`
 
 ---

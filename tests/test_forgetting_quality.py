@@ -33,6 +33,7 @@ def fq_env():
     vector_store_mock = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
     with patch.object(db_module, "get_session", session_factory), \
          patch("lantai.llm.client.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
          patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock), \
          patch("lantai.retrieval.intent.chat_json",
                return_value={"intent": "fact_lookup", "reason": "test"}):
@@ -117,7 +118,7 @@ def test_evaluate_end_to_end(fq_env):
 
     result = evaluate_forgetting_quality(build_chinese_dataset())
     metrics = result["metrics"]
-    assert metrics["sample_count"] == 13
+    assert metrics["sample_count"] == 50
     # 归档零残留：apply_forgetting 后 status=archived 不参与检索
     assert metrics["stale_hit_rate"] == 0.0
     # 中文错别字（词边界）全部命中
@@ -151,7 +152,7 @@ def test_offline_eval_gates_pass():
     result = run_offline_eval()
     ok, actual = check_gates(result)
     assert ok, f"门禁未过: {actual}"
-    assert result["metrics"]["sample_count"] == 13
+    assert result["metrics"]["sample_count"] == 50
     # superseded 残留是诚实测量（降权不删旧值），只报告不设门槛
     assert result["metrics"]["superseded_residual_rate"] == 1.0
 

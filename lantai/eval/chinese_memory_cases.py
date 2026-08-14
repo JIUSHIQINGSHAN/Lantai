@@ -1,4 +1,4 @@
-"""中文记忆评测集 v1（研究方向「一年内」档）：面向中文场景的遗忘质量自测数据。
+"""中文记忆评测集 v2（研究方向「一年内」档）：面向中文场景的遗忘质量自测数据。
 
 覆盖维度：
 - typo        中文错别字容错——FTS5 trigram 对词边界插入/删除容错（实测确认：
@@ -8,7 +8,11 @@
 - temporal    Chronos 双时间轴（未生效过滤 / 过期降权后新值在前）
 - superseded  矛盾取代（新值应命中；旧值残留率诚实测量）
 
-查询设计约束：query 必须与目标内容共享 ≥1 个 trigram 子串，
+v1 → v2（2026-08-14）：13 → 50 case（typo×15 / fresh×12 / stale×8 / temporal×8 /
+superseded×7），门槛（GATES）不变——FTS 兜底最严格基准下全部确定性可过。
+
+查询设计约束：query 必须与目标内容共享 ≥1 个 trigram 子串（错别字 case 用
+「去首字」模式：query 的全部 trigram 都是 content 的 trigram，FTS AND 链确定命中），
 保证向量不可用时（FTS 兜底路径）测试仍确定。
 """
 from lantai.eval.forgetting_quality import EVAL_NAMESPACE
@@ -17,12 +21,12 @@ from lantai.eval.forgetting_quality import EVAL_NAMESPACE
 def build_chinese_dataset() -> dict:
     """返回评测数据集（纯数据，无副作用）。"""
     return {
-        "name": "chinese-memory-v1",
+        "name": "chinese-memory-v2",
         "namespace": EVAL_NAMESPACE,
-        "description": "中文记忆评测集 v1：错别字容错 / 时效 / 遗忘 / 矛盾取代 / 对照",
+        "description": "中文记忆评测集 v2（50 case）：错别字容错 / 时效 / 遗忘 / 矛盾取代 / 对照",
         "apply_forgetting": True,
         "cases": [
-            # ── 错别字容错（FTS trigram）────────────────────────────
+            # ── 错别字容错（FTS trigram，去首字模式：全部 query trigram ∈ content）────
             {"category": "typo", "query": "器学习用于图像识别",
              "seeds": [{"content": "机器学习用于图像识别与自然语言处理",
                         "lane": "fact"}],
@@ -37,8 +41,41 @@ def build_chinese_dataset() -> dict:
             {"category": "typo", "query": "提示词模板支持变量替换",
              "seeds": [{"content": "自定义提示词模板支持变量替换", "lane": "rule"}],
              "target": 0},
+            {"category": "typo", "query": "据库连接池默认大小",
+             "seeds": [{"content": "数据库连接池默认大小为100", "lane": "fact"}],
+             "target": 0},
+            {"category": "typo", "query": "务启动时加载配置",
+             "seeds": [{"content": "服务启动时加载配置文件", "lane": "fact"}],
+             "target": 0},
+            {"category": "typo", "query": "存策略使用LRU淘汰",
+             "seeds": [{"content": "缓存策略使用LRU淘汰算法", "lane": "rule"}],
+             "target": 0},
+            {"category": "typo", "query": "志文件按天滚动切割",
+             "seeds": [{"content": "日志文件按天滚动切割", "lane": "fact"}],
+             "target": 0},
+            {"category": "typo", "query": "口超时时间设置为30秒",
+             "seeds": [{"content": "接口超时时间设置为30秒", "lane": "rule"}],
+             "target": 0},
+            {"category": "typo", "query": "端页面支持暗色主题",
+             "seeds": [{"content": "前端页面支持暗色主题", "lane": "preference"}],
+             "target": 0},
+            {"category": "typo", "query": "份任务每天凌晨三点执行",
+             "seeds": [{"content": "备份任务每天凌晨三点执行", "lane": "rule"}],
+             "target": 0},
+            {"category": "typo", "query": "索服务支持中英文混合查询",
+             "seeds": [{"content": "搜索服务支持中英文混合查询", "lane": "fact"}],
+             "target": 0},
+            {"category": "typo", "query": "型推理使用GPU加速",
+             "seeds": [{"content": "模型推理使用GPU加速", "lane": "fact"}],
+             "target": 0},
+            {"category": "typo", "query": "据库索引字段避免冗余",
+             "seeds": [{"content": "数据库索引字段避免冗余", "lane": "rule"}],
+             "target": 0},
+            {"category": "typo", "query": "署脚本支持回滚操作",
+             "seeds": [{"content": "部署脚本支持回滚操作", "lane": "rule"}],
+             "target": 0},
 
-            # ── 对照组（管道自检）──────────────────────────────────
+            # ── 对照组（管道自检，query trigram ⊆ content）────────────────
             {"category": "fresh", "query": "喝无糖咖啡",
              "seeds": [{"content": "用户偏好：喜欢喝无糖咖啡", "lane": "preference"}],
              "target": 0},
@@ -48,8 +85,35 @@ def build_chinese_dataset() -> dict:
             {"category": "fresh", "query": "服务端口",
              "seeds": [{"content": "服务端口配置为 8767", "lane": "fact"}],
              "target": 0},
+            {"category": "fresh", "query": "使用SQLite存储",
+             "seeds": [{"content": "数据库使用SQLite存储", "lane": "fact"}],
+             "target": 0},
+            {"category": "fresh", "query": "项目文档用英文",
+             "seeds": [{"content": "项目文档用英文书写", "lane": "preference"}],
+             "target": 0},
+            {"category": "fresh", "query": "早餐时间",
+             "seeds": [{"content": "早餐时间通常是八点半", "lane": "preference"}],
+             "target": 0},
+            {"category": "fresh", "query": "纪要自动归档",
+             "seeds": [{"content": "会议纪要自动归档到知识库", "lane": "rule"}],
+             "target": 0},
+            {"category": "fresh", "query": "邮箱备份策略",
+             "seeds": [{"content": "邮箱备份策略每周执行一次", "lane": "rule"}],
+             "target": 0},
+            {"category": "fresh", "query": "前端构建",
+             "seeds": [{"content": "前端构建使用Vite工具链", "lane": "fact"}],
+             "target": 0},
+            {"category": "fresh", "query": "华东机房",
+             "seeds": [{"content": "服务器部署在华东机房", "lane": "fact"}],
+             "target": 0},
+            {"category": "fresh", "query": "密码策略",
+             "seeds": [{"content": "密码策略要求十二位以上", "lane": "rule"}],
+             "target": 0},
+            {"category": "fresh", "query": "版本发布窗口",
+             "seeds": [{"content": "版本发布窗口定在每周五", "lane": "rule"}],
+             "target": 0},
 
-            # ── 遗忘（已归档不应残留）──────────────────────────────
+            # ── 遗忘（已归档不应残留：chat 90d / preference 200d 必达归档阈值）────
             {"category": "stale", "query": "看了部电影叫",
              "seeds": [{"content": "昨天看了部电影叫流浪地球", "lane": "chat",
                         "created_days_ago": 90, "importance": 0.1}],
@@ -58,8 +122,32 @@ def build_chinese_dataset() -> dict:
              "seeds": [{"content": "偏好：项目文档用英文写", "lane": "preference",
                         "created_days_ago": 200, "importance": 0.1}],
              "forbidden": [0]},
+            {"category": "stale", "query": "前天去了趟动物园",
+             "seeds": [{"content": "前天去了趟动物园", "lane": "chat",
+                        "created_days_ago": 90, "importance": 0.1}],
+             "forbidden": [0]},
+            {"category": "stale", "query": "上周买的耳机坏掉",
+             "seeds": [{"content": "上周买的耳机坏掉了", "lane": "chat",
+                        "created_days_ago": 90, "importance": 0.1}],
+             "forbidden": [0]},
+            {"category": "stale", "query": "上次理发在城东",
+             "seeds": [{"content": "上次理发在城东那家店", "lane": "chat",
+                        "created_days_ago": 90, "importance": 0.1}],
+             "forbidden": [0]},
+            {"category": "stale", "query": "走路上下班",
+             "seeds": [{"content": "偏好：走路上下班", "lane": "preference",
+                        "created_days_ago": 200, "importance": 0.1}],
+             "forbidden": [0]},
+            {"category": "stale", "query": "午休时间半小时",
+             "seeds": [{"content": "偏好：午休时间半小时", "lane": "preference",
+                        "created_days_ago": 200, "importance": 0.1}],
+             "forbidden": [0]},
+            {"category": "stale", "query": "前天煮饭烧糊",
+             "seeds": [{"content": "前天煮饭烧糊了", "lane": "chat",
+                        "created_days_ago": 90, "importance": 0.1}],
+             "forbidden": [0]},
 
-            # ── 时效（Chronos 双时间轴）────────────────────────────
+            # ── 时效（Chronos 双时间轴：未生效过滤 / 过期降权后新值在前）────
             {"category": "temporal", "query": "项目上线时间",
              "seeds": [
                  {"content": "新项目上线时间预计在下季度", "lane": "fact"},
@@ -72,10 +160,44 @@ def build_chinese_dataset() -> dict:
                  {"content": "项目截止日期是 3月15号", "lane": "fact",
                   "valid_to_days": 10},
              ], "preferred": 0, "peer": 1},
+            {"category": "temporal", "query": "系统切换时间",
+             "seeds": [
+                 {"content": "系统切换时间定在八月中旬", "lane": "fact"},
+                 {"content": "系统切换时间改到九月初", "lane": "fact",
+                  "valid_from_days": 30},
+             ], "preferred": 0, "peer": 1},
+            {"category": "temporal", "query": "优惠活动截止日期",
+             "seeds": [
+                 {"content": "优惠活动截止日期是月底", "lane": "fact"},
+                 {"content": "优惠活动截止日期是月初", "lane": "fact",
+                  "valid_to_days": 15},
+             ], "preferred": 0, "peer": 1},
+            {"category": "temporal", "query": "服务迁移窗口",
+             "seeds": [
+                 {"content": "服务迁移窗口在下周", "lane": "fact"},
+                 {"content": "服务迁移窗口改到下月", "lane": "fact",
+                  "valid_from_days": 20},
+             ], "preferred": 0, "peer": 1},
+            {"category": "temporal", "query": "假期开始日期",
+             "seeds": [
+                 {"content": "假期开始日期是十月一号", "lane": "fact"},
+                 {"content": "假期开始日期改到十月十五号", "lane": "fact",
+                  "valid_from_days": 45},
+             ], "preferred": 0, "peer": 1},
+            {"category": "temporal", "query": "证书有效期",
+             "seeds": [
+                 {"content": "证书有效期截止到年底", "lane": "fact"},
+                 {"content": "证书有效期截止到九月底", "lane": "fact",
+                  "valid_to_days": 5},
+             ], "preferred": 0, "peer": 1},
+            {"category": "temporal", "query": "会议日期",
+             "seeds": [
+                 {"content": "会议日期定在周四", "lane": "fact"},
+                 {"content": "会议日期改在周五", "lane": "fact",
+                  "valid_from_days": 60},
+             ], "preferred": 0, "peer": 1},
 
-            # ── 矛盾取代（supersedes 边）───────────────────────────
-            # 旧值早创建（衰减更低但未达归档阈值）→ decay 分确定性让新值在前；
-            # 旧值仍可召回，残留率是诚实测量而非构造失效。
+            # ── 矛盾取代（supersedes 边：旧值早创建衰减低但仍 active，残留诚实测量）────
             {"category": "superseded", "query": "公司域名",
              "seeds": [
                  {"content": "公司域名是 example.com", "lane": "fact",
@@ -89,6 +211,46 @@ def build_chinese_dataset() -> dict:
                  {"content": "API 密钥存储在 config.py", "lane": "fact",
                   "created_days_ago": 60},
                  {"content": "API 密钥改为环境变量注入", "lane": "rule"},
+             ],
+             "edges": [{"source": 1, "target": 0}],
+             "target": 1, "preferred": 1, "peer": 0},
+            {"category": "superseded", "query": "公司邮箱",
+             "seeds": [
+                 {"content": "公司邮箱是 hr@example.com", "lane": "fact",
+                  "created_days_ago": 60},
+                 {"content": "公司邮箱改为 ops@example.com", "lane": "fact"},
+             ],
+             "edges": [{"source": 1, "target": 0}],
+             "target": 1, "preferred": 1, "peer": 0},
+            {"category": "superseded", "query": "服务器地址",
+             "seeds": [
+                 {"content": "服务器地址是 10.0.0.1", "lane": "fact",
+                  "created_days_ago": 60},
+                 {"content": "服务器地址改为 10.0.1.8", "lane": "fact"},
+             ],
+             "edges": [{"source": 1, "target": 0}],
+             "target": 1, "preferred": 1, "peer": 0},
+            {"category": "superseded", "query": "数据库连接串",
+             "seeds": [
+                 {"content": "数据库连接串指向旧库", "lane": "fact",
+                  "created_days_ago": 60},
+                 {"content": "数据库连接串改用新库", "lane": "fact"},
+             ],
+             "edges": [{"source": 1, "target": 0}],
+             "target": 1, "preferred": 1, "peer": 0},
+            {"category": "superseded", "query": "联系人电话",
+             "seeds": [
+                 {"content": "联系人电话是 13811112222", "lane": "fact",
+                  "created_days_ago": 60},
+                 {"content": "联系人电话改为 13933334444", "lane": "fact"},
+             ],
+             "edges": [{"source": 1, "target": 0}],
+             "target": 1, "preferred": 1, "peer": 0},
+            {"category": "superseded", "query": "仓库地址",
+             "seeds": [
+                 {"content": "仓库地址在旧代码库", "lane": "fact",
+                  "created_days_ago": 60},
+                 {"content": "仓库地址迁移到新代码库", "lane": "fact"},
              ],
              "edges": [{"source": 1, "target": 0}],
              "target": 1, "preferred": 1, "peer": 0},

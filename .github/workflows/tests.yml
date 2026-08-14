@@ -1,0 +1,25 @@
+name: Tests
+
+# 测试门禁（评测集纳入 CI）：push 到 master / PR 时跑全量 pytest +
+# 遗忘质量离线门禁（chinese-memory-v2，FTS 兜底最严格基准）。
+# 供应链纪律同 ci.yml：actions 锁 commit SHA（非可变 tag）。
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: pip install -e .
+      - name: Full test suite
+        run: python -m pytest tests/ -q
+      - name: Forgetting quality gate (chinese-memory-v2)
+        run: python scripts/run_forgetting_quality.py --check
