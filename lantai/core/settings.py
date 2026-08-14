@@ -141,6 +141,12 @@ class Settings(BaseSettings):
     # 遗忘配置
     ARCHIVE_DECAY_THRESHOLD: float = 0.01  # decay 低于此值自动 archived
 
+    # 底本（session checkpoint，ADR-0021）：五段会话快照
+    CHECKPOINT_MAX_SESSIONS: int = 5  # 保留最近 N 个会话的快照
+    CHECKPOINT_STALENESS_DAYS: int = 30  # 快照超过此天数注入时标注陈旧
+    CHECKPOINT_MIN_CONTENT: int = 3  # 块内容少于 3 字符不落（宁 miss 不脏写）
+    CHECKPOINT_MAX_CONTENT: int = 600  # 块内容截断上限
+
     # 去重配置（校雠三态判定，ADR-0019 结构判别升级）
     # fastpath 路径：余弦 ≥ DEDUP_MERGE_THRESHOLD → merge（直书高频句型，真重复多，收紧到 0.90）
     DEDUP_MERGE_THRESHOLD: float = 0.90

@@ -390,7 +390,7 @@ docker run -d -p 8767:8767 \
 
 - [x] salience 冲突降权与 contradiction gate 整合（2026-08-14，ADR-0020）——反义词词级碰撞（8 对默认）+ 低 salience 旧记忆确定性冲突降权放行（Checkpoint 可回滚 + 账本 resolved），高 salience/LLM 矛盾维持人工裁决
 - [x] autodream 7 天周期记忆蒸馏（2026-08-14）——`autodream_worker` 周期入口（`AUTODREAM_CRON_DAYS`=7 默认），落 pending 提案交人工闸门，`record_run` 可观测
-- [ ] checkpoint 五段会话快照
+- [x] checkpoint 五段会话快照（2026-08-14，ADR-0021）——底本：在做/下一步/工作区/决策/待办五段会话快照，压缩时写入、下次会话注入（>30 天陈旧标注），保留最近 5 会话；REST + MCP 双入口
 - [x] 去重阈值实测校准（bge-m3 中文样本）——实测 36 对 / 3 类：单一余弦阈值无法分离 merge/update，升级结构判别（ADR-0019）；prototype 见 `.scratch/dedup-threshold-calibration/`
 - [x] 评测集扩至 50+ case 并纳入 CI（2026-08-14）——chinese-memory-v2（50 case 全维度扩编），门禁 PASS，`.github/workflows/tests.yml` 全量 pytest + 门禁
 - [x] arm64 Docker 镜像（2026-08-14）——CI `platforms: linux/amd64,linux/arm64`

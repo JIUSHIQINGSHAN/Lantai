@@ -30,7 +30,7 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert len(resp["result"]["tools"]) == 40  # 第六波：recall_chain（烽燧）
+    assert len(resp["result"]["tools"]) == 42  # 第七波：底本 checkpoint_write/checkpoint_latest
     assert "candidates_pending" in names
     assert "candidate_review" in names
     assert "add_dialogue" in names
@@ -393,6 +393,8 @@ def mcp_env():
     vector_store_mock = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
     with patch.object(db_module, "get_session", session_factory), \
          patch("lantai.llm.client.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]), \
          patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock), \
          patch("lantai.storage.vector_store.get_vector_store", return_value=vector_store_mock):
         yield session_factory, engine

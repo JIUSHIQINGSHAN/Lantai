@@ -479,6 +479,24 @@ def handle_recall_chain(params: dict) -> dict:
     return build_recall_chain(q, max_depth, branch, min_score, total_max)
 
 
+def handle_checkpoint_write(params: dict) -> dict:
+    """底本：写入五段会话快照（ADR-0021）。"""
+    from lantai.services.checkpoint_service import write_session_checkpoint
+    session_id = params.get("session_id", "")
+    blocks = params.get("blocks")
+    if not isinstance(session_id, str) or len(session_id.strip()) < 3:
+        raise ValueError("session_id must be a string of >= 3 chars")
+    if not isinstance(blocks, dict):
+        raise ValueError("blocks must be an object")
+    return write_session_checkpoint(session_id, blocks)
+
+
+def handle_checkpoint_latest(params: dict) -> dict:
+    """底本：最近一次会话快照（只读）。"""
+    from lantai.services.checkpoint_service import get_latest_checkpoint
+    return get_latest_checkpoint()
+
+
 
 TOOLS = {
     "search":   {"description": "搜索记忆", "inputSchema": {
@@ -667,6 +685,14 @@ TOOLS = {
             "min_score": {"type": "number", "default": 0.3, "description": "入选最低分数 [0,1]"},
             "total_max": {"type": "integer", "default": 20, "description": "链总记忆上限 [1,50]"},
         }, "required": ["q"]}},
+    "checkpoint_write": {"description": "底本：写入五段会话快照（在做/下一步/工作区/决策/待办），下次会话启动注入", "inputSchema": {
+        "type": "object", "properties": {
+            "session_id": {"type": "string", "description": "会话标识（≥3 字符）"},
+            "blocks": {"type": "object",
+                       "description": "五段块：cp_active_intent/cp_next_action/cp_current_work/cp_key_decisions/cp_open_notes"},
+        }, "required": ["session_id", "blocks"]}},
+    "checkpoint_latest": {"description": "底本：读取最近一次会话快照（只读）", "inputSchema": {
+        "type": "object", "properties": {}}},
 }
 
 TOOL_HANDLERS = {
@@ -709,6 +735,8 @@ TOOL_HANDLERS = {
     "core_memory_get": handle_core_memory_get,
     "verbatim_search": handle_verbatim_search,
     "graph_view": handle_graph_view,
+    "checkpoint_write": handle_checkpoint_write,
+    "checkpoint_latest": handle_checkpoint_latest,
 }
 
 
@@ -719,7 +747,7 @@ def handle(msg: dict) -> dict | None:
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "lantai", "version": "0.3.1"}}}
+            "serverInfo": {"name": "lantai", "version": "0.14.0"}}}
     if method == "notifications/initialized":
         return None  # 通知无响应
     if method == "ping":

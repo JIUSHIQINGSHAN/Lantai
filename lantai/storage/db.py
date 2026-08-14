@@ -16,7 +16,7 @@ engine = create_engine(settings.DATABASE_URL, echo=False,
 # PRAGMA user_version 记录数据库结构版本；未版本化库（全新库或 v0.5 及以前
 # 老库）自动基线为 v1，增量补丁按版本号依次执行。ALTER TABLE ADD COLUMN 为
 # 毫秒级操作，代码更新与数据重构解耦，异常只记日志不阻断启动（降级而非崩溃）。
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 12
 
 
 def _ensure_column(conn, table: str, column: str, ddl: str) -> None:
@@ -150,7 +150,19 @@ def apply_migrations(conn) -> None:
             conn.execute("PRAGMA user_version = 11")
             conn.commit()
             logger.info("数据库增量迁移 v11 完成（裁决失败留痕）")
-        # 未来版本在此追加：if user_version < 12: ...
+        # v11 -> v12（底本五段会话快照，ADR-0021）：session_checkpoint 表
+        if user_version < 12:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS session_checkpoint ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "session_id TEXT NOT NULL, block_key TEXT NOT NULL, "
+                "content TEXT NOT NULL, created_at DATETIME)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_session_checkpoint_session "
+                         "ON session_checkpoint(session_id)")
+            conn.execute("PRAGMA user_version = 12")
+            conn.commit()
+            logger.info("数据库增量迁移 v12 完成（底本五段会话快照）")
+        # 未来版本在此追加：if user_version < 13: ...
 
     except Exception as exc:
         logger.error("数据库增量迁移异常（服务继续启动）: %s", exc)

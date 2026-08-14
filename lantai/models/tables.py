@@ -364,3 +364,20 @@ class ReflectRun(SQLModel, table=True):
     pending: int = 0
     discarded: int = 0
     error: str = ""              # 未捕获异常时记录（调度器重试前留痕）
+
+
+class SessionCheckpoint(SQLModel, table=True):
+    """底本（ADR-0021，session checkpoint）：五段会话快照。
+
+    五段块（cp_active_intent 在做 / cp_next_action 下一步 / cp_current_work 工作区 /
+    cp_key_decisions 决策 / cp_open_notes 待办）——上下文压缩时写入，下次会话启动时
+    注入（inject_checkpoint_context）；陈旧（> CHECKPOINT_STALENESS_DAYS）注入自动标注。
+    同一 session 重写即替换（upsert 语义）；保留最近 CHECKPOINT_MAX_SESSIONS 个会话。
+    """
+    __tablename__ = "session_checkpoint"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(index=True)
+    block_key: str = ""
+    content: str = ""
+    created_at: datetime = Field(default_factory=utcnow, index=True)
