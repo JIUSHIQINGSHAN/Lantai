@@ -81,7 +81,7 @@ def _batch(suggestions=None, contradictions=None):
 
 SNAP = {"RETRIEVAL_W_VECTOR": 0.6, "RETRIEVAL_W_BM25": 0.25,
         "RETRIEVAL_W_FTS": 0.05, "RETRIEVAL_W_DECAY": 0.1,
-        "DEDUP_MERGE_THRESHOLD": 0.8, "DEDUP_UPDATE_THRESHOLD": 0.65}
+        "DEDUP_MERGE_THRESHOLD": 0.9, "DEDUP_UPDATE_THRESHOLD": 0.65}
 
 
 class TestContamination:

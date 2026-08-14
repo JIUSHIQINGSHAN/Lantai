@@ -24,6 +24,9 @@ def client_fixture(monkeypatch):
                         lambda *a, **kw: {"summary": "t", "claims": [], "methods": [],
                                           "constraints": [], "actions": [], "topic": [],
                                           "extractor_confidence": 0.5})
+    # 结构判别中带 LLM 兜底（ADR-0019）：外部网络 mock
+    monkeypatch.setattr("lantai.llm.client.chat_json",
+                        lambda *a, **kw: {"relation": "update", "reason": "stub"})
 
     from api_server import app
     with TestClient(app) as c:
@@ -47,7 +50,7 @@ def _seed_memory() -> str:
 def test_dedup_merge(client):
     mem_id = _seed_memory()
     client.mock_search.results = [{"id": mem_id, "document": "用户喜欢 coffee",
-                                   "metadata": {}, "distance": 0.1}]  # sim=0.9 ≥ 0.80
+                                   "metadata": {}, "distance": 0.1}]  # sim=0.9 中带 → 结构判 merge
     resp = client.post("/add", json={"title": "x", "content": "用户喜欢喝咖啡测试数据"})
     assert resp.status_code == 200
     data = resp.json()
@@ -58,7 +61,7 @@ def test_dedup_merge(client):
 def test_dedup_update(client):
     mem_id = _seed_memory()
     client.mock_search.results = [{"id": mem_id, "document": "用户喜欢 coffee",
-                                   "metadata": {}, "distance": 0.3}]  # sim=0.7 ∈ [0.65, 0.80)
+                                   "metadata": {}, "distance": 0.3}]  # sim=0.7 中带 → judge update
     resp = client.post("/add", json={"title": "x", "content": "用户最近爱喝拿铁测试数据"})
     assert resp.status_code == 200
     data = resp.json()

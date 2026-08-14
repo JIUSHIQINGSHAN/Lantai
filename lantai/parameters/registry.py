@@ -71,7 +71,8 @@ ADJUSTABLE_SPECS: list[ParamSpec] = [
     ),
     ParamSpec(
         name="DEDUP_MERGE_THRESHOLD", value_type="float", group="dedup_thresholds",
-        description="余弦相似度高于此值合并记忆", source_attr="DEDUP_MERGE_THRESHOLD",
+        description="fastpath 路径余弦相似度高于此值合并记忆（提取路径见 DEDUP_PRESCREEN_MERGE）",
+        source_attr="DEDUP_MERGE_THRESHOLD",
         adjustable=True, minimum=_d(0.75), maximum=_d(0.95), step=_d(0.01),
         max_delta_per_apply=_d(0.05), risk_level="medium",
     ),

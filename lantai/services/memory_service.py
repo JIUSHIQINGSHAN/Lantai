@@ -28,24 +28,36 @@ from lantai.storage.vector_store import get_vector_store
 vector_store = get_vector_store()
 
 
-def _apply_dedup(s, title: str, content: str, lane: str) -> dict | None:
-    """candidate 创建前的三态去重。返回 None 表示 insert（继续正常建候选）。"""
+def _apply_dedup(s, content: str, fastpath: bool) -> tuple[str, MemoryItem | None, float]:
+    """余弦预判（ADR-0019 结构判别第一相位）。
+
+    返回 (action, target_or_None, sim)：
+    - "merge"：余弦 ≥ merge 带（fastpath=0.90 / 提取路径预筛 0.95）→ 直合
+    - "update"：fastpath 中带 → update 提案（有刹车）
+    - "undecided"：提取路径中带 → 提取后交结构判别（relation.py）
+    - "insert"：低相似 → 继续正常建候选
+    """
     try:
         vec_results = vector_store.search(content, top_k=1)
         if not isinstance(vec_results, list):
-            return None
-        action, target, sim = find_similar(s, vec_results)
+            return "insert", None, 0.0
+        return find_similar(s, vec_results, fastpath=fastpath)
     except Exception:
-        return None
+        return "insert", None, 0.0
 
-    if action == "insert" or target is None:
-        return None
-    if action == "merge":
-        target.last_used_at = utcnow()
-        target.importance = min(1.0, target.importance + 0.1)
-        s.add(target)
-        s.commit()
-        return {"dedup_action": "merge", "target_memory_id": target.id, "similarity": round(sim, 4)}
+
+def _dedup_merge(s, target: MemoryItem, sim: float) -> dict:
+    """merge 直合：仅 bump，不吞新文本（新文本已在更高相似带被排除）。"""
+    target.last_used_at = utcnow()
+    target.importance = min(1.0, target.importance + 0.1)
+    s.add(target)
+    s.commit()
+    return {"dedup_action": "merge", "target_memory_id": target.id, "similarity": round(sim, 4)}
+
+
+def _create_update_proposal(s, target: MemoryItem, title: str, content: str,
+                            lane: str, sim: float) -> dict:
+    """update 提案：待审，可批可拒（知识写入有刹车）。"""
     prop = MemoryProposal(
         id=new_id("prop"),
         target_memory_id=target.id,
@@ -59,6 +71,40 @@ def _apply_dedup(s, title: str, content: str, lane: str) -> dict | None:
     s.refresh(prop)
     return {"dedup_action": "update", "target_memory_id": target.id,
             "proposal_id": prop.id, "similarity": round(sim, 4)}
+
+
+def _llm_judge(old: str, new: str) -> str:
+    """中带 LLM 兜底：结构判别判不定的样本交 LLM 裁决。"""
+    from lantai.llm.client import chat_json
+    from lantai.llm.prompts import DEDUP_RELATION_SYS, DEDUP_RELATION_USER
+    out = chat_json(DEDUP_RELATION_SYS, DEDUP_RELATION_USER.format(old=old, new=new))
+    rel = (out or {}).get("relation")
+    if rel not in ("merge", "update", "insert"):
+        raise ValueError(f"bad relation: {rel}")
+    return rel
+
+
+def _dedup_structural(s, target_id: str, title: str, content: str,
+                      lane: str, sim: float) -> dict | None:
+    """结构判别（ADR-0019 第二相位）：提取后对中带样本判类。
+
+    返回 None = insert（继续建候选）；merge → 直合；update → 提案。
+    规则吃不准（中带）交 LLM 兜底；LLM 缺席/失败 → insert（宁 miss 不脏写）。
+    """
+    target = s.get(MemoryItem, target_id)
+    if target is None or target.status != "active":
+        return None
+    if not settings.DEDUP_STRUCTURAL_ENABLED:
+        # 关掉结构判别 → 保守走 update 提案（有刹车，不吞内容）
+        return _create_update_proposal(s, target, title, content, lane, sim)
+    from lantai.gate.relation import classify_relation
+    judge = _llm_judge if settings.DEDUP_STRUCTURAL_LLM_ENABLED else None
+    rel = classify_relation(target.content, content, llm_judge=judge)
+    if rel == "merge":
+        return _dedup_merge(s, target, sim)
+    if rel == "update":
+        return _create_update_proposal(s, target, title, content, lane, sim)
+    return None  # insert
 
 
 def add_memory(req: AddMemoryReq) -> dict:
@@ -107,9 +153,11 @@ def _create_candidate_direct(req: AddMemoryReq, fp_data: dict) -> dict:
     """fastpath 命中——直接创建 RawDocument + MemoryCandidate，不走 LLM"""
     h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
     with db.get_session() as s:
-        dedup_result = _apply_dedup(s, req.title, req.content, req.lane)
-        if dedup_result is not None:
-            return dedup_result
+        action, target, sim = _apply_dedup(s, req.content, fastpath=True)
+        if action == "merge" and target is not None:
+            return _dedup_merge(s, target, sim)
+        if action == "update" and target is not None:
+            return _create_update_proposal(s, target, req.title, req.content, req.lane, sim)
         doc = RawDocument(
             id=new_id("doc"), source_type=req.source_type,
             source_id=req.url or h[:12], url=req.url,
@@ -140,9 +188,20 @@ def _create_candidate_with_extraction(
     """LLM 提取路径；provenance_prompt 覆盖默认 extract-v1（如 vision-caption）。"""
     h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
     with db.get_session() as s:
-        dedup_result = _apply_dedup(s, req.title, req.content, req.lane)
-        if dedup_result is not None:
-            return dedup_result
+        action, target, sim = _apply_dedup(s, req.content, fastpath=False)
+        if action == "merge" and target is not None:
+            return _dedup_merge(s, target, sim)
+        # undecided：提取后交结构判别；insert：正常建候选（仍提取）
+        undecided_target_id = target.id if (action == "undecided" and target is not None) else None
+
+    data = extract_candidate(req.title, req.content)
+
+    with db.get_session() as s:
+        if undecided_target_id is not None:
+            structural = _dedup_structural(
+                s, undecided_target_id, req.title, req.content, req.lane, sim)
+            if structural is not None:
+                return structural
         existed = s.exec(select(RawDocument)
                          .where(RawDocument.content_hash == h)).first()
         if existed:
@@ -156,7 +215,6 @@ def _create_candidate_with_extraction(
             )
             s.add(doc); s.commit(); s.refresh(doc)
 
-        data = extract_candidate(req.title, req.content)
         cand = MemoryCandidate(
             id=new_id("cand"), document_id=doc.id,
             topic=data["topic"] or req.tags,

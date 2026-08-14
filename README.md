@@ -11,9 +11,9 @@
 让 AI 在对的时间，找到对的回忆。
 ```
 
-[![Version](https://img.shields.io/badge/version-0.3.7-blue.svg)](https://github.com/JIUSHIQINGSHAN/Lantai)
+[![Version](https://img.shields.io/badge/version-0.14.0-blue.svg)](https://github.com/JIUSHIQINGSHAN/Lantai)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-yellow.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-120%2F120-green.svg)](docs/aidumem-port-results.md)
+[![Tests](https://img.shields.io/badge/tests-701%2F701-green.svg)](docs/aidumem-port-results.md)
 [![改编自](https://img.shields.io/badge/based%20on-aiduMEM-orange.svg)](https://github.com/monkey2jack/aiduMEM)
 
 ---
@@ -33,7 +33,7 @@
 | 📊 **演化** | 知识生长与自我纠错 | Proposal → Apply 全流程，Checkpoint 快照可一键回滚 |
 | ⏳ **遗忘** | 遗忘是特性，不是 bug | Ebbinghaus 指数衰减，低分自动归档；归档不参与检索、物理不删 |
 | 🕰️ **克罗诺斯** | 时间感知的有效期 | 双时间轴（`valid_from` / `valid_to`），过期事实降权，未生效事实过滤 |
-| 🧹 **去重** | 不写垃圾比事后清理便宜 | 余弦三态判定：`merge / update / insert`（0.80 / 0.65 可配） |
+| 🧹 **去重** | 不写垃圾比事后清理便宜 | 余弦预筛 + 结构判别（ADR-0019）：改写直合 / 值变更走待审提案 / 中带 LLM 兜底（0.90 / 0.65 可配） |
 | 🔗 **双形态** | 读有 Hook，写有 MCP | Shell Hook（零依赖 CLI 注入，2s 硬超时）+ MCP server（标准 JSON-RPC 2.0） |
 | 🛡️ **护盾** | 安全不是可选项 | 默认回环绑定、非回环强制鉴权、SSRF 防护、原子备份恢复、端点白名单 |
 
@@ -90,12 +90,12 @@ python api_server.py
 ### 方式二：Docker 容器运行
 
 ```bash
-docker build -t lantai:0.3.6 .
+docker build -t lantai:0.14.0 .
 docker run -d -p 8767:8767 \
   -e API_KEY=your-admin-key \
   -e OPENAI_API_KEY=sk-xxx \
   -v /your/data:/data \
-  lantai:0.3.6
+  lantai:0.14.0
 ```
 
 > 容器默认 `HOST=0.0.0.0` 对外暴露，**必须注入 `API_KEY`**——启动守卫（`assert_secure_binding`）会在非回环地址且无密钥时拒绝运行。
@@ -199,7 +199,7 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 | `EMBED_MODEL` | `BAAI/bge-m3` | Embedding 模型 |
 | `RERANKER_ENABLED` | `true` | 精排开关（失败自动降级） |
 | `COALESCE_ENABLED` | `false` | 潮波并忆开关 |
-| `DEDUP_MERGE/UPDATE_THRESHOLD` | `0.80` / `0.65` | 三态去重阈值 |
+| `DEDUP_MERGE/UPDATE_THRESHOLD` | `0.90` / `0.65` | fastpath 三态阈值；提取路径预筛 `DEDUP_PRESCREEN_MERGE`=0.95 + 结构判别（ADR-0019） |
 | `GATE_CACHE_TTL` | `15.0` | 闸门热缓存秒数 |
 | `REMEMBRANCE_HOME` | 仓库根 | 数据目录（DB/向量库/备份） |
 | `ALLOWED_API_HOSTS` | openai/siliconflow | 外部 API 域名白名单 |
@@ -221,13 +221,14 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 - [ ] salience 冲突降权与 contradiction gate 整合（Fog）
 - [ ] autodream 7 天周期记忆蒸馏（Fog）
 - [ ] checkpoint 五段会话快照（Fog）
-- [ ] 去重阈值实测校准（bge-m3 中文样本）
+- [x] 去重阈值实测校准（bge-m3 中文样本）——实测 36 对 / 3 类：单一余弦阈值无法分离 merge/update，升级结构判别（ADR-0019）
 
 ## 文档索引
 
 - `CONTEXT.md` — 领域词汇表（lane / gate / coalesce / fastpath / checkpoint…）
 - `docs/adr/` — 架构决策记录 0001-0008
 - `docs/plans/` — 各版本执行方案
+- `docs/release-process.md` — 版本上传规范流程（发布门禁 + 人工闸门）
 - `docs/aidumem-port-results.md` — aiduMEM 移植结果与审计修复记录
 - `AGENTS.md` — Agent 协作约定（issue tracker / 测试纪律）
 

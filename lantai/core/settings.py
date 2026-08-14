@@ -123,9 +123,17 @@ class Settings(BaseSettings):
     # 遗忘配置
     ARCHIVE_DECAY_THRESHOLD: float = 0.01  # decay 低于此值自动 archived
 
-    # 去重配置
-    DEDUP_MERGE_THRESHOLD: float = 0.80  # 余弦相似度 > 此值 → merge
-    DEDUP_UPDATE_THRESHOLD: float = 0.65  # 余弦相似度 > 此值 → update
+    # 去重配置（校雠三态判定，ADR-0019 结构判别升级）
+    # fastpath 路径：余弦 ≥ DEDUP_MERGE_THRESHOLD → merge（直书高频句型，真重复多，收紧到 0.90）
+    DEDUP_MERGE_THRESHOLD: float = 0.90
+    DEDUP_UPDATE_THRESHOLD: float = 0.65  # 余弦相似度 ≥ 此值 → update/中带
+    # 提取路径预筛：余弦 ≥ 此值直接 merge（不提取、不结构判别；改写高位无值变更）
+    DEDUP_PRESCREEN_MERGE: float = 0.95
+    # 结构判类开关与锚点带（lantai/gate/relation.py）
+    DEDUP_STRUCTURAL_ENABLED: bool = True
+    DEDUP_STRUCTURAL_LLM_ENABLED: bool = True  # 中带 LLM 兜底（失败降级 insert）
+    DEDUP_ANCHOR_HIGH: float = 0.6  # 锚点重合 ≥ 此值：有新增值 → update，无 → merge
+    DEDUP_ANCHOR_LOW: float = 0.3  # 锚点重合 < 此值：有新增值 → insert
 
     # Shell Hook 配置
     SHELL_HOOK_TIMEOUT: int = 2  # 秒

@@ -18,7 +18,7 @@ def test_default_snapshot_valid():
     """默认六参数快照必须通过校验。"""
     snap = validate_snapshot(default_snapshot())
     assert snap["RETRIEVAL_W_VECTOR"] == 0.6
-    assert snap["DEDUP_MERGE_THRESHOLD"] == 0.8
+    assert snap["DEDUP_MERGE_THRESHOLD"] == 0.9
 
 
 def test_phantom_param_fails():
@@ -119,13 +119,13 @@ def test_legal_compensated_change_ok():
 
 
 def test_legal_dedup_tune_ok():
-    """合法：两个阈值同步下移，间距保持 0.15。"""
+    """合法：两个阈值同步下移，间距保持 0.25。"""
     after = apply_validated_changes(default_snapshot(), [
-        ParamChange(name="DEDUP_MERGE_THRESHOLD", before=0.80, after=0.78,
+        ParamChange(name="DEDUP_MERGE_THRESHOLD", before=0.90, after=0.88,
                     reason="paper evidence"),
         ParamChange(name="DEDUP_UPDATE_THRESHOLD", before=0.65, after=0.63,
                     reason="paper evidence")])
-    assert after["DEDUP_MERGE_THRESHOLD"] == 0.78
+    assert after["DEDUP_MERGE_THRESHOLD"] == 0.88
     validate_snapshot(after)
 
 

@@ -28,6 +28,19 @@ Return strict JSON:
   confidence: 0.0-1.0
 Only output JSON."""
 
+DEDUP_RELATION_SYS = """You decide the relation between a NEW memory statement and an EXISTING memory statement.
+Return strict JSON:
+  relation: one of [merge, update, insert]
+  reason: short explanation
+- merge: same fact restated (paraphrase, no meaningful change)
+- update: same entity/fact, value changed
+- insert: different fact or topic
+Only output JSON."""
+
+DEDUP_RELATION_USER = """EXISTING memory: {old}
+NEW memory: {new}
+relation:"""
+
 PARAM_ADVICE_SYS = """You are a conservative configuration advisor for an AI agent long-term memory system.
 
 Determine whether the supplied research-paper excerpts provide sufficiently direct and applicable evidence for a small parameter adjustment.
