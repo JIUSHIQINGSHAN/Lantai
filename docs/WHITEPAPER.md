@@ -388,7 +388,7 @@ docker run -d -p 8767:8767 \
 
 ### 12.2 路线图
 
-- [ ] salience 冲突降权与 contradiction gate 整合
+- [x] salience 冲突降权与 contradiction gate 整合（2026-08-14，ADR-0020）——反义词词级碰撞（8 对默认）+ 低 salience 旧记忆确定性冲突降权放行（Checkpoint 可回滚 + 账本 resolved），高 salience/LLM 矛盾维持人工裁决
 - [x] autodream 7 天周期记忆蒸馏（2026-08-14）——`autodream_worker` 周期入口（`AUTODREAM_CRON_DAYS`=7 默认），落 pending 提案交人工闸门，`record_run` 可观测
 - [ ] checkpoint 五段会话快照
 - [x] 去重阈值实测校准（bge-m3 中文样本）——实测 36 对 / 3 类：单一余弦阈值无法分离 merge/update，升级结构判别（ADR-0019）；prototype 见 `.scratch/dedup-threshold-calibration/`

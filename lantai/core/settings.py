@@ -83,6 +83,24 @@ class Settings(BaseSettings):
         {"name": "toggle", "pair": ["已开启", "已关闭"]},
         {"name": "version_change", "pair": ["版本 1", "版本 2"]},
     ]
+    # 反义词碰撞（ADR-0020）：jieba 词级互斥（子串匹配会误伤"开会"≠"不能缺席"）；
+    # 词级 token 集合比较。默认只含多字词对（jieba 稳定成词）；单字否定对
+    # （是/不是、会/不会、能/不能、有/没有、要/不要）因 jieba 并词（"我会"→一词）
+    # 词级匹配不可靠，默认不启用，可在 settings 自行补充（宁 miss 不脏写）
+    CONFLICT_ANTONYM_ENABLED: bool = True
+    CONFLICT_ANTONYM_RULES: list = [
+        {"name": "like_hate", "pair": ["喜欢", "讨厌"]},
+        {"name": "support_oppose", "pair": ["支持", "反对"]},
+        {"name": "agree_reject", "pair": ["同意", "拒绝"]},
+        {"name": "allow_forbid", "pair": ["允许", "禁止"]},
+        {"name": "online_offline", "pair": ["在线", "离线"]},
+        {"name": "free_paid", "pair": ["免费", "付费"]},
+        {"name": "public_private", "pair": ["公开", "私密"]},
+        {"name": "start_stop", "pair": ["开始", "停止"]},
+    ]
+    # salience 冲突降权（ADR-0020）：确定性冲突命中低 salience 旧记忆 → 降权放行
+    CONFLICT_SALIENCE_MIN_IMPORTANCE: float = 0.4  # importance 低于此值 = 弱记忆
+    CONFLICT_SALIENCE_DEMOTE_STEP: float = 0.2  # 每次降权幅度（下限 0，Checkpoint 可回滚）
 
     # 安全
     API_KEY: str = ""

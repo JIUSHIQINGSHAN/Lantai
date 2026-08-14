@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **salience 冲突降权 + 反义词碰撞（ADR-0020，Fog 项收口）**: `gate/conflict_rules.py` 新增 `check_antonyms`（jieba 词级互斥，8 对默认反义词，settings 可配；单字否定对因 jieba 并词默认不启用）——"喜欢咖啡"vs"讨厌咖啡"、"支持 X"vs"反对 X" 零 LLM 确定性命中；`gate/decision.py` 分流：确定性冲突命中低 salience 旧记忆（importance < 0.4）→ 降权 0.2（Checkpoint 可回滚）+ ConflictEvent kind=salience_demote status=resolved + 候选放行走提案链（有刹车）；高 salience / LLM 矛盾维持 archive_conflict 人工裁决。测试：反义词双向/词级不误伤/开关 + 降权/高 salience/LLM 不分流（test_conflict_rules.py，规则层不 mock）
 - **autodream 7 天周期蒸馏（Fog 项收口）**: `lantai/workers/autodream_worker.py::run_autodream_scheduled`——后台周期蒸馏落 pending 提案（decided_by="autodream"，人工闸门裁决，宁 miss 不脏写）+ `record_run("autodream")` 可观测；scheduler 注册 interval job（`AUTODREAM_CRON_DAYS`=7 默认，settings 可配，AUTODREAM_ENABLED 门控）。测试：scheduler 注册断言（interval/days=7/开关）+ worker 真实库落库冒烟（test_scheduler.py / test_autodream.py）
 - **arm64 Docker 镜像（Fog 项收口）**: `.github/workflows/ci.yml` `platforms: linux/amd64,linux/arm64`——tag 推送构建双架构镜像
 

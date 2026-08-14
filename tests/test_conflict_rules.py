@@ -30,7 +30,8 @@ def conflict_env():
     def session_factory() -> Session:
         return Session(engine)
 
-    with patch.object(db_module, "get_session", session_factory):
+    with patch.object(db_module, "get_session", session_factory), \
+         patch("lantai.gate.scorer.embed", return_value=[[0.1] * 8, [0.1] * 8]):
         yield session_factory, engine
 
 
@@ -69,6 +70,113 @@ def test_check_rules_disabled(conflict_env, monkeypatch):
     from lantai.gate.conflict_rules import check_rules
     monkeypatch.setattr(settings, "CONFLICT_RULES_ENABLED", False)
     assert check_rules("启用", "禁用") == []
+
+
+# ── 反义词碰撞（ADR-0020：jieba 词级互斥，子串不误伤）────────────────
+
+def test_check_antonyms_hit_both_directions(conflict_env):
+    from lantai.gate.conflict_rules import check_antonyms
+    hits = check_antonyms("我讨厌咖啡", "我喜欢咖啡")
+    assert any(h["rule_name"] == "like_hate" for h in hits)
+    assert hits[0]["new_matched"] == "讨厌"
+    assert hits[0]["old_matched"] == "喜欢"
+
+    hits2 = check_antonyms("新策略反对自动同步", "旧策略支持自动同步")
+    assert hits2[0]["rule_name"] == "support_oppose"
+    assert hits2[0]["new_matched"] == "反对"
+    assert hits2[0]["old_matched"] == "支持"
+
+
+def test_check_antonyms_no_substring_false_positive(conflict_env):
+    """词级匹配：无反义词共现 → 不误报；多字词对稳定成词。"""
+    from lantai.gate.conflict_rules import check_antonyms
+    # 无任何反义词对共现 → 不命中（子串匹配的"会"∈"开会"误伤不存在）
+    assert check_antonyms("明天开会讨论方案", "明天不能缺席") == []
+    # 真矛盾（多字词对）→ 命中
+    assert check_antonyms("新策略反对自动同步", "旧策略支持自动同步")
+
+
+def test_check_antonyms_disabled(conflict_env, monkeypatch):
+    from lantai.gate.conflict_rules import check_antonyms
+    monkeypatch.setattr(settings, "CONFLICT_ANTONYM_ENABLED", False)
+    assert check_antonyms("我讨厌咖啡", "我喜欢咖啡") == []
+
+
+# ── salience 冲突降权（ADR-0020）────────────────────────
+
+def _seed_imp(conflict_env, existing_content: str, summary: str, importance: float):
+    session_factory, engine = conflict_env
+    with session_factory() as s:
+        s.add(MemoryItem(
+            id=new_id("mem"), memory_type="semantic", key="k1",
+            content=existing_content, lane="fact", status="active",
+            importance=importance, use_count=0, decay_score=1.0))
+        s.add(MemoryCandidate(
+            id=new_id("cand"), document_id="d1", summary=summary,
+            extractor_confidence=0.9, lane="fact"))
+        s.commit()
+        return s.exec(select(MemoryCandidate)).first().id
+
+
+def test_decide_salience_demote_low_importance(conflict_env):
+    """低 salience 旧记忆 + 确定性反义词冲突 → 降权放行，不 archive。"""
+    session_factory, engine = conflict_env
+    from lantai.gate.decision import decide
+
+    cand_id = _seed_imp(conflict_env,
+                        existing_content="旧策略支持自动同步",
+                        summary="新策略反对自动同步",
+                        importance=0.3)
+    with patch("lantai.gate.decision.check_contradiction",
+               side_effect=AssertionError("LLM must not run on deterministic hit")):
+        result = decide(cand_id)
+    assert result["decision"] != "archive_conflict"
+    with session_factory() as s:
+        evs = s.exec(select(ConflictEvent)).all()
+        assert len(evs) == 1
+        assert evs[0].status == "resolved"
+        assert evs[0].kind == "salience_demote"
+        mem = s.exec(select(MemoryItem)).first()
+        assert abs(mem.importance - 0.1) < 1e-9  # 0.3 - 0.2 降权（浮点容差）
+        from lantai.models.tables import MemoryCheckpoint
+        assert s.exec(select(MemoryCheckpoint)).first() is not None  # 可回滚
+
+
+def test_decide_salience_keeps_archive_for_high(conflict_env):
+    """高 salience 旧记忆 + 确定性冲突 → 维持 archive_conflict 人工裁决。"""
+    session_factory, engine = conflict_env
+    from lantai.gate.decision import decide
+
+    cand_id = _seed_imp(conflict_env,
+                        existing_content="旧策略支持自动同步",
+                        summary="新策略反对自动同步",
+                        importance=0.5)
+    result = decide(cand_id)
+    assert result["decision"] == "archive_conflict"
+    with session_factory() as s:
+        evs = s.exec(select(ConflictEvent)).all()
+        assert evs[0].status == "open"
+        mem = s.exec(select(MemoryItem)).first()
+        assert mem.importance == 0.5  # 不降权
+
+
+def test_decide_llm_conflict_no_salience_demote(conflict_env):
+    """LLM 矛盾（非确定性规则）→ 低 salience 也不降权，维持 archive_conflict。"""
+    session_factory, engine = conflict_env
+    from lantai.gate.decision import decide
+
+    cand_id = _seed_imp(conflict_env,
+                        existing_content="当前端口是3000",
+                        summary="把端口改为8080",
+                        importance=0.3)
+    with patch("lantai.gate.decision.check_contradiction",
+               return_value={"contradicts": True, "reason": "port changed",
+                             "severity": "high"}):
+        result = decide(cand_id)
+    assert result["decision"] == "archive_conflict"
+    with session_factory() as s:
+        mem = s.exec(select(MemoryItem)).first()
+        assert mem.importance == 0.3  # 未降权
 
 
 def test_decide_rule_hit_short_circuits_llm(conflict_env):
