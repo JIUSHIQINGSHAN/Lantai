@@ -6,7 +6,7 @@ from lantai.models.tables import MemoryCandidate, MemoryItem, ConflictEvent
 from lantai.storage import db
 from lantai.gate.scorer import novelty_score
 from lantai.gate.contradiction import check_contradiction
-from lantai.gate.conflict_rules import check_rules, check_antonyms
+from lantai.gate.conflict_rules import check_rules, check_antonyms, check_negation_pairs
 from lantai.evolution.promoter import _make_checkpoint
 
 
@@ -75,10 +75,29 @@ def decide(candidate_id: str) -> dict:
         # 规则/反义词均未命中（且无降权动作）→ 回落 LLM 矛盾检测（降级不阻断）
         if not conflicts and not demoted:
             for m in related[:10]:
-                c = check_contradiction(summary_text, m.content)
+                try:
+                    c = check_contradiction(summary_text, m.content)
+                except Exception:
+                    c = {"contradicts": False, "reason": "", "severity": "low"}
                 if c.get("contradicts"):
                     conflicts.append({"memory_id": m.id, "severity": c.get("severity", "low"),
                                       "reason": c.get("reason", "")})
+
+        # ADR-0024：单字否定对候选（是/不是、会/不会…）→ LLM 裁决。
+        # 候选不落硬规则；LLM 判非矛盾/失败 → 放行（宁 miss）。
+        if settings.CONFLICT_NEGATION_ENABLED:
+            for m in related[:10]:
+                if check_negation_pairs(summary_text, m.content):
+                    try:
+                        c = check_contradiction(summary_text, m.content)
+                    except Exception:
+                        c = {"contradicts": False, "reason": "", "severity": "low"}
+                    if c.get("contradicts"):
+                        conflicts.append({
+                            "memory_id": m.id,
+                            "severity": c.get("severity", "low"),
+                            "reason": f"negation candidate: {c.get('reason', '')}",
+                        })
 
         if demoted:
             s.commit()  # 降权 + Checkpoint + resolved 账本持久化（宁 miss 不脏写：有迹可溯）

@@ -102,6 +102,79 @@ def test_check_antonyms_disabled(conflict_env, monkeypatch):
     assert check_antonyms("我讨厌咖啡", "我喜欢咖啡") == []
 
 
+# ── 单字否定对候选探测（ADR-0024：token 级子串 → 候选，交 LLM 裁决）──
+
+def test_check_negation_pairs_hit(conflict_env):
+    """jieba 并词场景："我会"→一词，仍命中候选（会∈我会 / 不会∈不会）。"""
+    from lantai.gate.conflict_rules import check_negation_pairs
+    hits = check_negation_pairs("我会游泳", "我不会游泳")
+    assert any(h["rule_name"] == "can_cannot" for h in hits)
+    assert hits[0]["kind"] == "negation_candidate"
+
+    hits2 = check_negation_pairs("我是学生", "我不是学生")
+    assert any(h["rule_name"] == "be_notbe" for h in hits2)
+
+
+def test_check_negation_pairs_same_side_no_hit(conflict_env):
+    """同一侧共现（都含"会"，无"不会"）→ 非交叉 → 不命中。"""
+    from lantai.gate.conflict_rules import check_negation_pairs
+    assert check_negation_pairs("我会游泳", "他也会游泳") == []
+
+
+def test_check_negation_pairs_disabled(conflict_env, monkeypatch):
+    from lantai.gate.conflict_rules import check_negation_pairs
+    monkeypatch.setattr(settings, "CONFLICT_NEGATION_ENABLED", False)
+    assert check_negation_pairs("我会游泳", "我不能游泳") == []
+
+
+def test_decide_negation_candidate_llm_contradicts(conflict_env):
+    """否定候选 → LLM 判矛盾 → archive_conflict（"我会游泳" vs "我不会游泳"）。"""
+    session_factory, engine = conflict_env
+    from lantai.gate.decision import decide
+
+    cand_id = _seed_imp(conflict_env,
+                        existing_content="用户不会游泳",
+                        summary="用户会游泳",
+                        importance=0.5)
+    with patch("lantai.gate.decision.check_contradiction",
+               return_value={"contradicts": True, "reason": "会 vs 不会",
+                             "severity": "high"}):
+        result = decide(cand_id)
+    assert result["decision"] == "archive_conflict"
+    assert any("negation candidate" in c["reason"] for c in result["conflicts"])
+
+
+def test_decide_negation_candidate_llm_no_conflict(conflict_env):
+    """否定候选 → LLM 判非矛盾 → 放行（"开会" 误候选由 LLM 澄清）。"""
+    session_factory, engine = conflict_env
+    from lantai.gate.decision import decide
+
+    cand_id = _seed_imp(conflict_env,
+                        existing_content="他明天不会迟到",
+                        summary="明天开会讨论方案",
+                        importance=0.5)
+    with patch("lantai.gate.decision.check_contradiction",
+               return_value={"contradicts": False, "reason": "开会≠不会迟到",
+                             "severity": "low"}):
+        result = decide(cand_id)
+    assert result["decision"] != "archive_conflict"
+
+
+def test_decide_negation_llm_failure_passes(conflict_env):
+    """否定候选 + LLM 失败 → 放行（宁 miss，不因探测引入假冲突）。"""
+    session_factory, engine = conflict_env
+    from lantai.gate.decision import decide
+
+    cand_id = _seed_imp(conflict_env,
+                        existing_content="用户不会游泳",
+                        summary="用户会游泳",
+                        importance=0.5)
+    with patch("lantai.gate.decision.check_contradiction",
+               side_effect=RuntimeError("llm down")):
+        result = decide(cand_id)
+    assert result["decision"] != "archive_conflict"
+
+
 # ── salience 冲突降权（ADR-0020）────────────────────────
 
 def _seed_imp(conflict_env, existing_content: str, summary: str, importance: float):

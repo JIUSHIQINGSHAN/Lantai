@@ -101,6 +101,15 @@ class Settings(BaseSettings):
     # salience 冲突降权（ADR-0020）：确定性冲突命中低 salience 旧记忆 → 降权放行
     CONFLICT_SALIENCE_MIN_IMPORTANCE: float = 0.4  # importance 低于此值 = 弱记忆
     CONFLICT_SALIENCE_DEMOTE_STEP: float = 0.2  # 每次降权幅度（下限 0，Checkpoint 可回滚）
+    # 单字否定对候选探测（ADR-0024）：token 级子串命中 → 候选，交 LLM 裁决（不落硬规则）
+    CONFLICT_NEGATION_ENABLED: bool = True
+    CONFLICT_NEGATION_PAIRS: list = [
+        {"name": "be_notbe", "pair": ["是", "不是"]},
+        {"name": "can_cannot", "pair": ["会", "不会"]},
+        {"name": "able_unable", "pair": ["能", "不能"]},
+        {"name": "have_not", "pair": ["有", "没有"]},
+        {"name": "want_not", "pair": ["要", "不要"]},
+    ]
 
     # 安全
     API_KEY: str = ""
@@ -158,6 +167,8 @@ class Settings(BaseSettings):
     DEDUP_STRUCTURAL_LLM_ENABLED: bool = True  # 中带 LLM 兜底（失败降级 insert）
     DEDUP_ANCHOR_HIGH: float = 0.6  # 锚点重合 ≥ 此值：有新增值 → update，无 → merge
     DEDUP_ANCHOR_LOW: float = 0.3  # 锚点重合 < 此值：有新增值 → insert
+    # ADR-0023 实质新词扩展信号：旧锚点零丢失 + 新增实质词 ≥ 此值 → update 提案
+    DEDUP_EXTRA_ANCHOR_LIMIT: int = 2
 
     # Shell Hook 配置
     SHELL_HOOK_TIMEOUT: int = 2  # 秒

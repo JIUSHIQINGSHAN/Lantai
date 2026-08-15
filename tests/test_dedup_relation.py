@@ -54,6 +54,11 @@ _EXPECT = {
     ("项目使用Python开发", "项目文档用英文写"): "insert",
     ("周会时间定在每周一上午10点", "周会由小明主持"): "insert",
     ("公司域名是 example.com", "公司邮箱是 hr@example.com"): "insert",
+    # --- ADR-0023 实质新词扩展信号（old⊆new 旧锚点零丢失 + 新增实质词 ≥ 2）---
+    ("数据库使用SQLite", "数据库使用SQLite并且迁移到了PostgreSQL"): "update",
+    ("项目使用Python开发", "项目使用Python开发并且加入了测试框架"): "update",
+    # 对照组：仅轻微加词（新增实质词 < 阈值）→ 维持 merge
+    ("我喜欢喝无糖咖啡", "我非常喜欢喝无糖咖啡"): "merge",
 }
 
 

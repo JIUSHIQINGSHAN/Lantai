@@ -146,6 +146,12 @@ def classify_relation(old_content: str, new_content: str,
     else:
         if ov & nv:
             return "merge"
+        # ADR-0023 实质新词信号：旧锚点零丢失（改写是替换、扩展是增量）+
+        # 新增实质词 ≥ 阈值 → 扩展事实走 update 提案（有刹车，不吞内容）
+        dropped = oa - na
+        extra = na - oa
+        if not dropped and len(extra) >= settings.DEDUP_EXTRA_ANCHOR_LIMIT:
+            return "update"
         if ratio >= settings.DEDUP_ANCHOR_HIGH:
             return "merge"
     return _judge_or_insert(llm_judge, old_content, new_content)

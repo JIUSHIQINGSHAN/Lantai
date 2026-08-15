@@ -78,3 +78,35 @@ def check_antonyms(new_text: str, existing_text: str) -> list[dict]:
                 "old_matched": b if a_in_new else a,
             })
     return hits
+
+
+def check_negation_pairs(new_text: str, existing_text: str) -> list[dict]:
+    """单字否定对候选探测（ADR-0024）：token 级子串命中 → 候选（非硬规则）。
+
+    jieba 并词使"我会"→一词，词级互斥不可靠；本探测在 token 内做子串匹配：
+    new 任一 token 含 A 且 existing 任一 token 含 B（或反向）→ 候选命中。
+    命中交 LLM 裁决（check_contradiction），不落硬冲突（宁 miss：LLM 判非矛盾即放行）。
+    返回 [{"rule_name", "kind": "negation_candidate", "new_matched", "old_matched"}]。
+    """
+    if not settings.CONFLICT_NEGATION_ENABLED:
+        return []
+    new_toks = _word_tokens(new_text)
+    old_toks = _word_tokens(existing_text)
+    hits: list[dict] = []
+    for rule in settings.CONFLICT_NEGATION_PAIRS:
+        pair = rule.get("pair") or []
+        if len(pair) != 2 or not all(isinstance(x, str) and x for x in pair):
+            continue
+        a, b = pair
+        a_in_new = any(a in t for t in new_toks)
+        b_in_new = any(b in t for t in new_toks)
+        a_in_old = any(a in t for t in old_toks)
+        b_in_old = any(b in t for t in old_toks)
+        if (a_in_new and b_in_old) or (b_in_new and a_in_old):
+            hits.append({
+                "rule_name": rule.get("name", "unnamed"),
+                "kind": "negation_candidate",
+                "new_matched": a if a_in_new else b,
+                "old_matched": b if a_in_new else a,
+            })
+    return hits
