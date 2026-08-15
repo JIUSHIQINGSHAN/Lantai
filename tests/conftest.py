@@ -3,9 +3,16 @@
 1. otel stub——chromadb 依赖的 OTLP gRPC exporter 在当前开发环境版本错配，
    测试环境打桩绕过（生产环境与本测试无关）。
 2. 内存 SQLite fixture——参数建议模块测试复用。
+3. LLM 假 key——lantai.llm.client 模块级实例化 OpenAI client，CI 无真实 key；
+   测试全部 mock chat_json/embed，假 key 仅保证 import 不炸，不会真调 API。
 """
+import os
 import sys
 import types
+
+# 必须在任何 lantai.* import 之前生效（client.py 模块级 OpenAI() 需要非空 key）
+os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ.setdefault("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
 import pytest
 from sqlalchemy.pool import StaticPool
