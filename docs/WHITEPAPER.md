@@ -299,13 +299,13 @@ embedding 余弦聚类构建 `MemoryScene`（ADR-0012），heat = 成员 `use_co
 - 60+ 测试文件、700+ 用例全绿（README 徽章 701/701），覆盖 FTS 集成、SSRF、备份恢复、MCP 协议、Shell Hook 超时、迁移链、ACL、场景、Wiki、Vision、召回链等；
 - 测试进程内永不启动真实调度器（fixture 置空 `start_scheduler`），全量顺序执行无污染。
 
-### 8.3 中文记忆评测集 v2（chinese-memory-v2）
+### 8.3 中文记忆评测集 v3（chinese-memory-v2）
 
 面向「中文 / 错别字容错 / 遗忘质量 / 时效」的检索自证基准 —— 西文生态基准不覆盖此场景且不可复现，兰台以**本地可复现命令**作为主张依据：
 
-- **50 case**（v2，2026-08-14 由 v1 13 case 扩编）= typo×15 / fresh×12 / stale×8 / temporal×8 / superseded×7，命名空间隔离不污染真实库；
+- **80 case**（v3，2026-08-15 由 v2 50 case 扩编）= typo×23 / fresh×18 / stale×14 / temporal×13 / superseded×12，命名空间隔离不污染真实库；
 - 六维指标：陈旧残留率（0.0）、错别字容错命中（1.0）、对照召回（1.0）、时效排序（1.0）、取代排序（1.0）、取代残留（诚实测量）；
-- 两条复现命令，门禁模式 FAIL 退出码 1；**已纳入 CI**（`.github/workflows/tests.yml`，push/PR 全量 pytest + 门禁）。
+- 两条复现命令，门禁模式 FAIL 退出码 1；**已纳入 CI**（`.github/workflows/tests.yml`，push/PR 全量 pytest + 门禁）；计数由防漂移锁定测试钉死。
 
 ### 8.4 可观测性
 

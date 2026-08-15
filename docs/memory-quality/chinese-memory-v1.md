@@ -5,10 +5,10 @@
 > `tests/test_memory_quality_spec.py` 逐项钉死（任何 case 增删/改名都会使测试失败，
 > 直到本文同步更新——防漂移锁定，宁 miss 不脏写）。
 
-## 规格（v2，2026-08-14 起）
+## 规格（v3，2026-08-15 起）
 
 - 数据集：`lantai/eval/chinese_memory_cases.py`（纯数据，无副作用），dataset 名 `chinese-memory-v2`
-- 规模：**50 case** = typo×15 / fresh×12 / stale×8 / temporal×8 / superseded×7
+- 规模：**80 case** = typo×23 / fresh×18 / stale×14 / temporal×13 / superseded×12
 - 命名空间：`eval_fq`（种子与关系边随评测结束自动清理，不污染真实库）
 - 查询设计约束：query 与目标内容共享 ≥1 个 trigram 子串——FTS5 trigram 是整串
   子串匹配（非单字容错），词边界型错字在向量不可用时仍确定性可测；错别字 case 统一
@@ -55,4 +55,5 @@ python scripts/run_forgetting_quality.py --intent rule --out docs/memory-quality
 | 版本 | 日期 | 规模 | 说明 |
 |---|---|---|---|
 | v1 | 2026-08-11 | 13 case = typo×4 / fresh×3 / stale×2 / temporal×2 / superseded×2 | 首发（发布稿） |
-| v2 | 2026-08-14 | 50 case（见上） | 全维度扩编 + 纳入 CI；规格以本文为准，v1 细节见 git 历史 |
+| v2 | 2026-08-14 | 50 case = typo×15 / fresh×12 / stale×8 / temporal×8 / superseded×7 | 全维度扩编 + 纳入 CI |
+| v3 | 2026-08-15 | 80 case（见上） | 5 类内扩至 80，不动 GATES/runner；规格以本文为准 |

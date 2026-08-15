@@ -15,9 +15,9 @@ SPEC_DOC = (Path(__file__).parent.parent
 
 EXPECTED = {
     "name": "chinese-memory-v2",
-    "total": 50,
-    "categories": {"typo": 15, "fresh": 12, "stale": 8,
-                   "temporal": 8, "superseded": 7},
+    "total": 80,
+    "categories": {"typo": 23, "fresh": 18, "stale": 14,
+                   "temporal": 13, "superseded": 12},
 }
 
 
