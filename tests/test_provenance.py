@@ -142,6 +142,7 @@ def test_chain_carries_provenance_to_memory(mem_db, monkeypatch):
                              "new_content": "某结论", "memory_type": "semantic",
                              "reason": "r", "confidence": 0.9}), \
          patch("lantai.llm.client.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]), \
          patch("lantai.retrieval.hybrid.get_vector_store",
                return_value=Mock(add=Mock(), delete=Mock())):
         from lantai.evolution.proposer import propose_from_candidate

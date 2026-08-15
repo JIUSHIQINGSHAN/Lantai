@@ -166,7 +166,7 @@ pytest tests/ --cov=lantai --cov-report=html
 
 - 新增功能必须包含对应测试
 - Bug 修复必须包含回归测试
-- 所有测试必须通过（120+ 测试）
+- 所有测试必须通过（700+ 用例全绿，README 徽章为准）
 - 测试命名清晰：`test_<feature>_<scenario>`
 
 ## PR 检查清单
@@ -183,14 +183,18 @@ pytest tests/ --cov=lantai --cov-report=html
 
 ## 版本发布流程
 
-版本发布遵循 [Semantic Versioning](https://semver.org/)：
+版本发布遵循 [Semantic Versioning](https://semver.org/)，完整规范见 [docs/release-process.md](docs/release-process.md)。
 
-1. **更新版本号**：`pyproject.toml` 中的 `version`
-2. **更新 CHANGELOG**：将 `[Unreleased]` 的变更为新版本
-3. **提交变更**：`chore(release): v0.3.7`
-4. **创建 tag**：`git tag v0.3.7`
-5. **推送**：`git push origin master --tags`
-6. **CI 自动构建**：GitHub Actions 自动构建并推送 Docker 镜像到 GHCR
+发布前必须通过：
+
+1. **全量测试**：`python -m pytest tests/ -q` 全绿
+2. **发布门禁**：`python scripts/release_check.py vX.Y.Z`（版本一致性 + Git 状态，只读；上传前可加 `--online` 查远程 tag）
+3. **CHANGELOG 收口**：`[Unreleased]` → 新版本段
+4. **文档同步**：README / API 版本 / MCP serverInfo
+
+上传步骤：更新版本号 → 收口 CHANGELOG → 复跑门禁 → `chore(release): vX.Y.Z` 提交 → `git tag vX.Y.Z` → `git push origin master --tags` → 验证 GHCR 镜像。
+
+**发布是人工闸门**：门禁脚本只检查不推送；Agent 只准备，不代替维护者确认。
 
 ### 版本号规则
 

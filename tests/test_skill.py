@@ -148,6 +148,7 @@ def test_apply_proposal_persists_structure_and_procedural(mem_db, monkeypatch):
 
     from unittest.mock import Mock, patch
     with patch("lantai.llm.client.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]), \
          patch("lantai.retrieval.hybrid.get_vector_store",
                return_value=Mock(add=Mock(), delete=Mock())):
         from lantai.evolution.promoter import apply_proposal

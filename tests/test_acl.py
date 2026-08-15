@@ -106,6 +106,7 @@ def search_env():
     vector_store_mock = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
     with patch.object(db_module, "get_session", session_factory), \
          patch("lantai.llm.client.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
          patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock), \
          patch("lantai.api.routes_search._try_log", return_value=None):
         from api_server import app

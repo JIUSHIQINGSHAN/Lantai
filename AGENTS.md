@@ -27,3 +27,7 @@ Issues 以本地 markdown 文件形式存放在 `.scratch/<feature>/` 目录下�
 - mock 允许用于：外部网络（LLM/embedding/rerank）、文件系统副作用；**不允许用于**：让被测函数"跳过"其内部计算逻辑。
 - 「宁 miss 不脏写」补充（v0.5 Ticket 02）：校验失败（如低置信度提取）**不静默丢弃、不自动修正**——候选进待审队列（pending_review）交用户裁决，超龄（CANDIDATE_TTL_DAYS）自动归档为 rejected；裁决入口见 `GET /candidates/pending`。
 - 新增或修改核心逻辑时，若该函数没有不 mock 的冒烟测试，测试必须补上，否则不得提交。
+
+### Release discipline（版本上传纪律）
+
+版本上传遵循 `docs/release-process.md`：发布前必须通过 `scripts/release_check.py` 门禁（版本一致性 + Git 干净 + tag 不重复），全量测试全绿，CHANGELOG 收口；上传（push tag）是人工闸门，Agent 只检查/准备，不代替维护者确认。

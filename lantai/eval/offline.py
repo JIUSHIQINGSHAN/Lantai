@@ -78,6 +78,7 @@ def run_offline_eval(dataset: dict | None = None, top_k: int = 5) -> dict:
     vector_store_mock = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
     with patch.object(db_module, "get_session", session_factory), \
          patch("lantai.llm.client.embed", return_value=[[0.1] * 8]), \
+         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
          patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock), \
          patch("lantai.retrieval.hybrid.classify_intent",
                return_value={"intent": _settings.DEFAULT_INTENT,

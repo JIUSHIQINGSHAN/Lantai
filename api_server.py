@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-app = FastAPI(title="兰台记忆（Lantai）", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="兰台记忆（Lantai）", version="0.14.0", lifespan=lifespan)
 
 # 公共端点（不需要鉴权）
 app.include_router(routes_health_router)
@@ -89,4 +89,3 @@ for router in protected_routers:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=settings.HOST, port=settings.PORT)
-
