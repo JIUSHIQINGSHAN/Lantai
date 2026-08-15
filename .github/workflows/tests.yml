@@ -24,4 +24,7 @@ jobs:
       - name: Full test suite
         run: python -m pytest tests/ -q
       - name: Forgetting quality gate (chinese-memory-v2)
+        env:
+          # offline.py 已 patch embed，不会真调 API；假 key 仅满足 client.py 模块级 OpenAI() import
+          OPENAI_API_KEY: test-key
         run: python scripts/run_forgetting_quality.py --check
