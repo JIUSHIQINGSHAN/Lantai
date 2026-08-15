@@ -35,12 +35,17 @@ jobs:
         id: tag
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+      # GHCR 要求 repository name 全小写，owner 必须转小写（否则 invalid tag）
+      - name: Lowercase owner
+        id: owner
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_OUTPUT
+
       - name: Build and push
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/remembrance:${{ steps.tag.outputs.VERSION }}
-            ghcr.io/${{ github.repository_owner }}/remembrance:latest
+            ghcr.io/${{ steps.owner.outputs.OWNER }}/remembrance:${{ steps.tag.outputs.VERSION }}
+            ghcr.io/${{ steps.owner.outputs.OWNER }}/remembrance:latest
           platforms: linux/amd64,linux/arm64
