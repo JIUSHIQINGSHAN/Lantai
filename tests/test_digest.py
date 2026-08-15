@@ -57,17 +57,17 @@ class TestReflectionDistribution:
         session_factory = digest_env
         now = _utc_naive(datetime.now(timezone.utc))
         _seed(session_factory, [
-            MemoryProposal(id="p1", proposal_type="add", candidate_id=None,
+            MemoryProposal(id="p1", proposal_type="add", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "a"},
                            confidence=0.9, status="applied", created_at=now,
                            applied_at=now),
-            MemoryProposal(id="p2", proposal_type="merge", candidate_id=None,
+            MemoryProposal(id="p2", proposal_type="merge", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "b"},
                            confidence=0.75, status="pending", created_at=now),
-            MemoryProposal(id="p3", proposal_type="merge", candidate_id=None,
+            MemoryProposal(id="p3", proposal_type="merge", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "c"},
                            confidence=0.65, status="rejected", created_at=now),
-            MemoryProposal(id="p4", proposal_type="deprecate", candidate_id=None,
+            MemoryProposal(id="p4", proposal_type="deprecate", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "d"},
                            confidence=0.85, status="rejected", created_at=now),
         ])
@@ -100,6 +100,31 @@ class TestReflectionDistribution:
         assert "| 合计 | 1 | 1 | 2 | 0 |" in md
         assert "置信桶（今日新增）" in md
 
+    def test_non_reflect_proposals_excluded(self, digest_env):
+        """口径修复（2026-08-15）：evolve auto / autodream 等其他无候选提案
+        不混入反思统计（decided_by == 'reflect' 为唯一反思标识）。"""
+        session_factory = digest_env
+        now = _utc_naive(datetime.now(timezone.utc))
+        _seed(session_factory, [
+            MemoryProposal(id="rp1", proposal_type="merge", candidate_id=None,
+                           decided_by="reflect", evidence_ids=["e1"],
+                           proposed_patch={"key": "a"}, confidence=0.9,
+                           status="applied", created_at=now),
+            MemoryProposal(id="ap1", proposal_type="merge", candidate_id=None,
+                           decided_by="auto", evidence_ids=["e1"],
+                           proposed_patch={"key": "b"}, confidence=1.0,
+                           status="applied", created_at=now),
+            MemoryProposal(id="dp1", proposal_type="add", candidate_id=None,
+                           decided_by="autodream", evidence_ids=["e1"],
+                           proposed_patch={"key": "c"}, confidence=0.8,
+                           status="pending", created_at=now),
+        ])
+        from lantai.workers.digest_worker import collect_digest_stats
+        rf = collect_digest_stats()["reflection"]
+        assert rf["created"] == 1
+        assert rf["applied"] == 1
+        assert rf["by_type"] == {"merge": {"applied": 1}}
+
 
     def test_reflection_window_consistency(self, digest_env):
         """窗口一致性：跨日应用的提案不计入今日；other 兜底使合计 == created。"""
@@ -107,12 +132,12 @@ class TestReflectionDistribution:
         now = _utc_naive(datetime.now(timezone.utc))
         _seed(session_factory, [
             # 昨日创建、今日应用：created/applied 均不计入今日窗口
-            MemoryProposal(id="p1", proposal_type="add", candidate_id=None,
+            MemoryProposal(id="p1", proposal_type="add", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "a"},
                            confidence=0.9, status="applied",
                            created_at=now - timedelta(days=1), applied_at=now),
             # 今日创建、approved（非 applied/pending/rejected）→ other 兜底
-            MemoryProposal(id="p2", proposal_type="merge", candidate_id=None,
+            MemoryProposal(id="p2", proposal_type="merge", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "b"},
                            confidence=0.8, status="approved", created_at=now),
         ])
@@ -134,23 +159,23 @@ class TestCalibrationStats:
         session_factory = digest_env
         now = _utc_naive(datetime.now(timezone.utc))
         _seed(session_factory, [
-            MemoryProposal(id="p1", proposal_type="add", candidate_id=None,
+            MemoryProposal(id="p1", proposal_type="add", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "a"},
                            confidence=0.9, status="applied", created_at=now,
                            applied_at=now),
-            MemoryProposal(id="p2", proposal_type="merge", candidate_id=None,
+            MemoryProposal(id="p2", proposal_type="merge", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "b"},
                            confidence=0.75, status="pending", created_at=now),
-            MemoryProposal(id="p3", proposal_type="merge", candidate_id=None,
+            MemoryProposal(id="p3", proposal_type="merge", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "c"},
                            confidence=0.65, status="rejected", created_at=now,
                            decision_reason="证据不足，宁 miss"),
-            MemoryProposal(id="p4", proposal_type="deprecate", candidate_id=None,
+            MemoryProposal(id="p4", proposal_type="deprecate", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "d"},
                            confidence=0.85, status="rejected", created_at=now,
                            decision_reason="与新记忆冲突，需人工复核"),
             # 窗口外（旧提案）应排除
-            MemoryProposal(id="p5", proposal_type="add", candidate_id=None,
+            MemoryProposal(id="p5", proposal_type="add", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "e"},
                            confidence=0.8, status="rejected",
                            created_at=now - timedelta(days=10)),
@@ -207,11 +232,11 @@ class TestCalibrationStats:
         session_factory = digest_env
         now = _utc_naive(datetime.now(timezone.utc))
         _seed(session_factory, [
-            MemoryProposal(id="p1", proposal_type="add", candidate_id=None,
+            MemoryProposal(id="p1", proposal_type="add", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "a"},
                            confidence=0.9, status="applied", created_at=now,
                            applied_at=now),
-            MemoryProposal(id="p2", proposal_type="merge", candidate_id=None,
+            MemoryProposal(id="p2", proposal_type="merge", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "b"},
                            confidence=0.65, status="rejected", created_at=now,
                            decision_reason="证据不足"),
@@ -266,10 +291,10 @@ class TestCalibrationStats:
         session_factory = digest_env
         now = _utc_naive(datetime.now(timezone.utc))
         _seed(session_factory, [
-            MemoryProposal(id="p1", proposal_type="add", candidate_id=None,
+            MemoryProposal(id="p1", proposal_type="add", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "a"},
                            confidence=0.9, status="applied", created_at=now),
-            MemoryProposal(id="p2", proposal_type="add", candidate_id=None,
+            MemoryProposal(id="p2", proposal_type="add", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "b"},
                            confidence=0.3, status="rejected", created_at=now),
         ])

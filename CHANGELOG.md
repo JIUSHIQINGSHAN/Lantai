@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **反思校准口径修复（A 项收口，2026-08-15）**: `digest_worker._aggregate_reflection` 反思提案标识由 `candidate_id IS NULL` 收紧为 `decided_by == 'reflect'`（reflector 落 `decided_by="reflect"`，与 evolve auto / autodream 区分）——此前 evolve 自动提案误计为「反思提案」（真实库 16 条 duplicate-merge 被误计），校准输入污染。拒绝原因统计同口径。测试：`test_digest.py::test_non_reflect_proposals_excluded` 回归断言 + 既有反思用例种子同步 `decided_by="reflect"`
+- **校准窗口竞态修复**: `collect_calibration_stats` 窗口边界秒级截断 + 1s 顶边过悬——微秒精度采样与写入同秒撞界致 `run_at < end` 偶发漏数（test_digest 配对 ~50% flaky，复现后修复，配对 20/20 稳定）
+- **观察期数据门判定（8/15）**: 3 次运行 0 产出、2 次 curator LLM 失败 → 样本不足，`REFLECT_IMPORTANCE_POOL`(5.0) / `REFLECT_AUTO_APPLY_CONF`(0.7) / `REFLECT_MIN_CONFIDENCE`(0.5) 维持 dry-run 值（宁 miss 不脏写），`REFLECT_STALE_SCAN_ENABLED` 维持 False；观察期延长至 7 个完整运行日（先修 curator LLM 失败根因）。校准报告 `docs/memory-quality/reflect-calibration-2026-08-15.md`
+
 ### Added
 - **底本五段会话快照（ADR-0021，Fog 项收口）**: `lantai/services/checkpoint_service.py`——五段块（在做/下一步/工作区/决策/待办，移植 aiduMEM checkpoint.py 窄版），上下文压缩时 `write_session_checkpoint` 写入、下次会话启动 `inject_checkpoint_context` 注入（>30 天自动标注陈旧）；同 session 重写即替换、保留最近 5 会话（`CHECKPOINT_MAX_SESSIONS`）、块 <3 字符不落 / >600 截断（宁 miss 不脏写）；schema 迁移 v11→v12（session_checkpoint 表）。REST `POST /checkpoint` + `GET /checkpoint/latest` + `GET /checkpoint?session_id=` + `POST /checkpoint/cleanup`（受保护）；MCP `checkpoint_write`/`checkpoint_latest`（工具 40→42）。「底本」登记 CONTEXT.md 词汇表（ADR-0013）。测试 `tests/test_checkpoint_service.py`（纯函数不 mock + 真实 SQLite）+ 迁移断言 v12
 - **中文记忆评测集 v2（50 case）+ 纳入 CI（路线图收口）**: `lantai/eval/chinese_memory_cases.py` 13 → 50 case（typo×15 / fresh×12 / stale×8 / temporal×8 / superseded×7，dataset 名 chinese-memory-v2）；错别字 case 统一「去首字」模式保证 FTS trigram AND 链确定性命中，陈旧 case 按 lane 半衰期（chat 90d / preference 200d）保证归档；`GATES` 门槛不变，`run_forgetting_quality.py --check` 实测 PASS；新增 `.github/workflows/tests.yml`——push/PR 全量 pytest + 遗忘质量门禁（供应链纪律：actions 锁 SHA）。测试 `test_forgetting_quality.py` 样本计数 13→50

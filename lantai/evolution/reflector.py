@@ -218,7 +218,9 @@ def propose_from_reflection(session, candidates: list[dict],
             confidence=conf,
             conflict_ids=[],
             status=ProposalStatus.PENDING,
-            decided_by="auto",
+            # 唯一来源标识（ADR/校准口径）：digest 反思统计按 decided_by='reflect'
+            # 过滤；evolve 自动路径为 'auto'、autodream 为 'autodream'（勿混）
+            decided_by="reflect",
         )
         session.add(prop)
         props.append(prop)

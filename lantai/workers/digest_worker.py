@@ -44,46 +44,47 @@ def _type_status_rows(refl: dict) -> list[str]:
 def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
     """反思提案窗口聚合：created/applied/pending/rejected/other + 类型×状态 + 置信桶。
 
-    反思提案 = candidate_id IS NULL 的提案（零迁移标识）；start/end 为 naive UTC
-    （库内时间约定）。全部计数统一用 created_at 窗口（「今日创建」语义，与渲染行
-    一致）；applied 也按创建窗口而非 applied_at，避免跨日应用导致「今日 0（自动
+    反思提案 = `decided_by == 'reflect'`（reflector 唯一打标；evolve auto /
+    autodream 等其他无候选提案不混入——校准口径修复 2026-08-15）。start/end 为
+    naive UTC（库内时间约定）。全部计数统一用 created_at 窗口（「今日创建」语义，与
+    渲染行一致）；applied 也按创建窗口而非 applied_at，避免跨日应用导致「今日 0（自动
     应用 1）」自相矛盾。other = 窗口内 created 中非三类状态者（approved/
     rolled_back 等），保证 applied+pending+rejected+other == created。
     """
     created = s.exec(select(func.count()).select_from(MemoryProposal)
-                     .where(MemoryProposal.candidate_id.is_(None),
+                     .where(MemoryProposal.decided_by == "reflect",
                             MemoryProposal.created_at >= start,
                             MemoryProposal.created_at < end)).one()
     applied = s.exec(select(func.count()).select_from(MemoryProposal)
-                     .where(MemoryProposal.candidate_id.is_(None),
+                     .where(MemoryProposal.decided_by == "reflect",
                             MemoryProposal.status == "applied",
                             MemoryProposal.created_at >= start,
                             MemoryProposal.created_at < end)).one()
     pending = s.exec(select(func.count()).select_from(MemoryProposal)
-                     .where(MemoryProposal.candidate_id.is_(None),
+                     .where(MemoryProposal.decided_by == "reflect",
                             MemoryProposal.status == "pending",
                             MemoryProposal.created_at >= start,
                             MemoryProposal.created_at < end)).one()
     rejected = s.exec(select(func.count()).select_from(MemoryProposal)
-                      .where(MemoryProposal.candidate_id.is_(None),
+                      .where(MemoryProposal.decided_by == "reflect",
                              MemoryProposal.status == "rejected",
                              MemoryProposal.created_at >= start,
                              MemoryProposal.created_at < end)).one()
     other = s.exec(select(func.count()).select_from(MemoryProposal)
-                   .where(MemoryProposal.candidate_id.is_(None),
+                   .where(MemoryProposal.decided_by == "reflect",
                           MemoryProposal.created_at >= start,
                           MemoryProposal.created_at < end,
                           MemoryProposal.status.not_in(
                               ["applied", "pending", "rejected"]))).one()
     rows = s.exec(select(MemoryProposal.proposal_type,
                          MemoryProposal.status, func.count())
-                  .where(MemoryProposal.candidate_id.is_(None),
+                  .where(MemoryProposal.decided_by == "reflect",
                          MemoryProposal.created_at >= start,
                          MemoryProposal.created_at < end)
                   .group_by(MemoryProposal.proposal_type,
                             MemoryProposal.status)).all()
     conf_values = s.exec(select(MemoryProposal.confidence)
-                         .where(MemoryProposal.candidate_id.is_(None),
+                         .where(MemoryProposal.decided_by == "reflect",
                                 MemoryProposal.created_at >= start,
                                 MemoryProposal.created_at < end)).all()
     by_type: dict[str, dict[str, int]] = {}
@@ -260,7 +261,11 @@ def collect_calibration_stats(days: int | None = None) -> dict:
     """
     if days is None:
         days = settings.REFLECT_IMPORTANCE_WINDOW_DAYS
-    end = datetime.now(timezone.utc).replace(tzinfo=None)
+    # 窗口边界秒级截断 + 1s 顶边过悬（2026-08-15 竞态修复）：微秒精度下
+    # 「写入毫秒前 + 采样 now」可能同秒撞界（run_at < end 字符串比较失败），
+    # 秒级边界 + 1s 过悬使窗口对采样时刻免疫
+    end = (datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+           + timedelta(seconds=1))
     start = end - timedelta(days=days)
     with db.get_session() as s:
         refl = _aggregate_reflection(s, start, end)
@@ -268,7 +273,7 @@ def collect_calibration_stats(days: int | None = None) -> dict:
                        .where(MemoryItem.created_at >= start,
                               MemoryItem.created_at < end)).one()
         reason_rows = s.exec(select(MemoryProposal.decision_reason, func.count())
-                             .where(MemoryProposal.candidate_id.is_(None),
+                             .where(MemoryProposal.decided_by == "reflect",
                                     MemoryProposal.status == "rejected",
                                     MemoryProposal.decision_reason != "",
                                     MemoryProposal.created_at >= start,
