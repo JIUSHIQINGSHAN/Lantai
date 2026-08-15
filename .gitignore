@@ -45,6 +45,8 @@ logs/
 
 # 每日再生文档（不入库，避免 release 门禁被反复弄脏）
 docs/memory-digest/
-docs/memory-quality/
+# memory-quality 仅忽略生成报告（YYYY-MM-DD.md 等），规格文档白名单保留
+docs/memory-quality/*.md
+!docs/memory-quality/chinese-memory-v1.md
 
 .uv-cache/
