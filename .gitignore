@@ -43,4 +43,8 @@ logs/
 # 本地票据/研究/原型（release 门禁需工作区干净）
 .scratch/
 
+# 每日再生文档（不入库，避免 release 门禁被反复弄脏）
+docs/memory-digest/
+docs/memory-quality/
+
 .uv-cache/
