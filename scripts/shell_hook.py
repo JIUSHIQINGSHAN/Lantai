@@ -214,6 +214,28 @@ def _handle_dialogue(text: str) -> dict:
         return {}
 
 
+def _handle_checkpoint() -> dict:
+    """底本注入通道（ADR-0022）：会话启动读取上次会话五段快照。
+
+    独立于检索预算（非每轮召回）；无快照/异常零侵入返回空。
+    """
+    try:
+        from lantai.services.checkpoint_service import inject_checkpoint_context
+        text = inject_checkpoint_context()
+        return {"context": text} if text else {}
+    except Exception:
+        return {}
+
+
+def _handle_checkpoint_write(session_id: str, blocks: dict) -> dict:
+    """底本写入通道（ADR-0022）：插件 on_session_end 落五段快照（同库同语义）。"""
+    try:
+        from lantai.services.checkpoint_service import write_session_checkpoint
+        return write_session_checkpoint(session_id, blocks)
+    except Exception:
+        return {}
+
+
 def _handle_one(raw: str) -> dict:
     """处理单条请求（单发模式与 serve 模式共用）。"""
     raw = (raw or "").strip()
@@ -234,6 +256,31 @@ def _handle_one(raw: str) -> dict:
             future = pool.submit(_handle_dialogue, text)
             try:
                 return future.result(timeout=settings.SHELL_HOOK_DIALOGUE_TIMEOUT)
+            except FuturesTimeout:
+                return {}
+            except Exception:
+                return {}
+
+    # 底本通道（ADR-0022）：{"type": "checkpoint"} 会话启动注入（读）；
+    # {"type": "checkpoint_write", "session_id", "blocks"} 会话结束落快照（写）。
+    if data.get("type") == "checkpoint":
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_handle_checkpoint)
+            try:
+                return future.result(timeout=settings.SHELL_HOOK_TIMEOUT)
+            except FuturesTimeout:
+                return {}
+            except Exception:
+                return {}
+    if data.get("type") == "checkpoint_write":
+        session_id = data.get("session_id", "")
+        blocks = data.get("blocks")
+        if not isinstance(session_id, str) or not isinstance(blocks, dict):
+            return {}
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_handle_checkpoint_write, session_id, blocks)
+            try:
+                return future.result(timeout=settings.SHELL_HOOK_TIMEOUT)
             except FuturesTimeout:
                 return {}
             except Exception:

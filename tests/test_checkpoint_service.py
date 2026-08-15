@@ -5,6 +5,7 @@
 """
 from datetime import datetime, timedelta, timezone
 
+import json
 import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine, select
@@ -124,3 +125,48 @@ def test_inject_format_and_staleness(ckpt_env, monkeypatch):
     # 清空后无合法块 → 空串（零侵入降级）
     write_session_checkpoint("sess-01", {"cp_active_intent": "清"})  # 过短不落
     assert inject_checkpoint_context(now=now) == ""
+
+
+# ── serve 协议通道（ADR-0022）：{"type":"checkpoint"} 注入 / {"type":"checkpoint_write"} 落快照 ──
+
+import importlib.util
+from pathlib import Path
+
+_HOOK = Path(__file__).parent.parent / "scripts" / "shell_hook.py"
+
+
+def _load_hook():
+    spec = importlib.util.spec_from_file_location("shell_hook_mod", _HOOK)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def test_hook_checkpoint_type_returns_context(ckpt_env):
+    """serve 协议：{"type":"checkpoint"} 返回上次会话快照注入文本（真实库）。"""
+    write_session_checkpoint("sess-01", _BLOCKS)
+    hook = _load_hook()
+    out = hook._handle_one('{"type": "checkpoint"}')
+    assert out.get("context", "").startswith("[Checkpoint · 上次会话]")
+    assert "在做: 兰台记忆项目白皮书审阅" in out["context"]
+
+
+def test_hook_checkpoint_empty_db_returns_empty(ckpt_env):
+    """无快照 → 空 dict（零侵入降级）。"""
+    hook = _load_hook()
+    assert hook._handle_one('{"type": "checkpoint"}') == {}
+
+
+def test_hook_checkpoint_write_persists(ckpt_env):
+    """serve 协议：checkpoint_write 落库（同库同语义），读取可验证。"""
+    hook = _load_hook()
+    out = hook._handle_one(json.dumps({
+        "type": "checkpoint_write", "session_id": "sess-srv",
+        "blocks": {"cp_active_intent": "serve 通道写入测试", "cp_open_notes": "待办X"},
+    }))
+    assert out.get("blocks_written") == 2
+    cp = get_checkpoint("sess-srv")
+    assert cp["blocks"]["cp_active_intent"] == "serve 通道写入测试"
+    # 非法输入（blocks 非 dict / session_id 非 str）→ 空
+    assert hook._handle_one('{"type": "checkpoint_write", "session_id": "s1", "blocks": 3}') == {}
+    assert hook._handle_one('{"type": "checkpoint_write", "session_id": 5, "blocks": {}}') == {}

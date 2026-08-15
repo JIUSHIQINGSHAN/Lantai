@@ -47,6 +47,14 @@ _proc: subprocess.Popen | None = None
 _proc_ready = False  # 子进程是否已通过就绪探测
 # v0.5：会话缓冲——session_id → user_message 列表（on_session_end flush 用）
 _session_buffers: dict[str, list[str]] = {}
+# v0.15（ADR-0022）：已注入底本（checkpoint）的会话集——每会话首轮注入一次
+_checkpoint_injected: set[str] = set()
+_CHECKPOINT_INJECTED_MAX = 50  # 防会话集无限膨胀（只影响首轮注入标记）
+
+# 块来源规则前缀/句式（宁 miss：命中才填，拿不准留空）
+_NEXT_PREFIXES = ("接下来", "下一步", "然后", "待办")
+_DECISION_MARKERS = ("决定了", "就按", "采用", "改为")
+_NOTE_MARKERS = ("别忘了", "记得", "待办", "提醒我")
 
 
 def _ensure_proc() -> subprocess.Popen | None:
@@ -179,6 +187,92 @@ def _call_dialogue(text: str) -> None:
         _proc_ready = False
 
 
+def _call_checkpoint() -> str | None:
+    """向 serve 子进程发底本注入请求（会话首轮，失败静默降级）。"""
+    proc = _ensure_proc()
+    if proc is None:
+        return None
+    if not _wait_ready():
+        return None
+    try:
+        with _lock:
+            line = (json.dumps({"type": "checkpoint"}, ensure_ascii=False)
+                    + "\n").encode("utf-8")
+            assert proc.stdin is not None and proc.stdout is not None
+            proc.stdin.write(line)
+            proc.stdin.flush()
+            buf = bytearray()
+            while True:
+                ch = proc.stdout.read(1)
+                if not ch or ch == b"\n":
+                    break
+                buf += ch
+        out = buf.decode("utf-8", errors="replace").strip().rstrip("\r")
+        if not out:
+            return None
+        data = json.loads(out)
+        ctx = data.get("context", "") if isinstance(data, dict) else ""
+        return str(ctx) if ctx else None
+    except (json.JSONDecodeError, OSError, ValueError, AssertionError) as exc:
+        logger.warning("lantai-hook: checkpoint call failed: %r", exc)
+        global _proc, _proc_ready
+        _proc = None
+        _proc_ready = False
+        return None
+
+
+def _call_checkpoint_write(session_id: str, blocks: dict) -> None:
+    """向 serve 子进程发底本写入请求（on_session_end 落快照，失败静默）。"""
+    proc = _ensure_proc()
+    if proc is None:
+        return
+    if not _wait_ready():
+        return
+    try:
+        with _lock:
+            line = (json.dumps({"type": "checkpoint_write",
+                                "session_id": session_id,
+                                "blocks": blocks},
+                               ensure_ascii=False) + "\n").encode("utf-8")
+            assert proc.stdin is not None and proc.stdout is not None
+            proc.stdin.write(line)
+            proc.stdin.flush()
+            buf = bytearray()
+            while True:
+                ch = proc.stdout.read(1)
+                if not ch or ch == b"\n":
+                    break
+                buf += ch
+    except (OSError, ValueError, AssertionError) as exc:
+        logger.warning("lantai-hook: checkpoint write failed: %r", exc)
+        global _proc, _proc_ready
+        _proc = None
+        _proc_ready = False
+
+
+def build_session_blocks(messages: list[str]) -> dict:
+    """五段块构建（ADR-0022 纯函数，宁 miss 不脏写：命中才填）。
+
+    - cp_active_intent（在做）= 末条 user 消息
+    - cp_next_action（下一步）= 末条以 接下来/下一步/然后/待办 开头
+    - cp_key_decisions（决策）= 末条含 决定/就按/采用/改为 声明句式
+    - cp_open_notes（待办）= 末条含 别忘了/记得/待办/提醒我
+    - cp_current_work（工作区）= 无可靠信号，恒空
+    """
+    msgs = [m for m in (messages or []) if isinstance(m, str) and m.strip()]
+    if not msgs:
+        return {}
+    last = msgs[-1].strip()
+    blocks = {"cp_active_intent": last[:600]}
+    if any(last.startswith(p) for p in _NEXT_PREFIXES):
+        blocks["cp_next_action"] = last[:600]
+    if any(m in last for m in _DECISION_MARKERS):
+        blocks["cp_key_decisions"] = last[:600]
+    if any(m in last for m in _NOTE_MARKERS):
+        blocks["cp_open_notes"] = last[:600]
+    return blocks
+
+
 # ── 会话缓冲（v0.5 对话写通道原料）──────────────────────────────
 
 def _buffer_turn(session_id: str, user_message: str) -> None:
@@ -206,30 +300,51 @@ def _flush_session(session_id: str) -> None:
 
 
 def _on_pre_llm_call(**kwargs) -> dict | None:
-    """pre_llm_call 回调：检索注入 + 会话缓冲。"""
+    """pre_llm_call 回调：底本首轮注入 + 检索注入 + 会话缓冲。"""
     query = kwargs.get("user_message") or ""
     session_id = kwargs.get("session_id") or ""
     if not isinstance(query, str):
         return None
     q = query.strip()
-    if len(q) < _MIN_QUERY_CHARS:
-        return None
     # v0.5：无论是否注入，都把用户消息累积为对话写通道原料
     _buffer_turn(session_id, q)
-    # 短句且无触发词 → 不注入（与 gate 语义一致，省子进程开销）
+    # ADR-0022：会话首轮先注入底本（与查询长度/触发词无关，每会话一次）
+    ck = None
+    if session_id and session_id not in _checkpoint_injected:
+        _mark_checkpoint_injected(session_id)
+        ck = _call_checkpoint()
+    if len(q) < _MIN_QUERY_CHARS:
+        return ({"context": ck} if ck else None)
+    # 短句且无触发词 → 不注入检索（与 gate 语义一致，省子进程开销）
     if len(q) <= 15 and not any(w in q for w in _TRIGGER_WORDS):
-        return None
+        return ({"context": ck} if ck else None)
     ctx = _call_hook(q)
     if not ctx:
-        return None
+        return ({"context": ck} if ck else None)
+    if ck:
+        ctx = ck + "\n\n" + ctx
     return {"context": ctx}
 
 
+def _mark_checkpoint_injected(session_id: str) -> None:
+    """登记已注入底本的会话（有界：超容量清空重建，只影响首轮标记）。"""
+    with _lock:
+        if len(_checkpoint_injected) >= _CHECKPOINT_INJECTED_MAX:
+            _checkpoint_injected.clear()
+        _checkpoint_injected.add(session_id)
+
+
 def _on_session_end(**kwargs) -> None:
-    """on_session_end 回调：每轮对话结束 flush 会话缓冲 → 对话写通道。"""
+    """on_session_end 回调：落底本五段块 + flush 会话缓冲 → 对话写通道。"""
     session_id = kwargs.get("session_id") or ""
-    if session_id:
-        _flush_session(session_id)
+    if not session_id:
+        return
+    with _lock:
+        msgs = list(_session_buffers.get(session_id, []))
+    blocks = build_session_blocks(msgs)
+    if blocks:
+        _call_checkpoint_write(session_id, blocks)
+    _flush_session(session_id)
 
 
 def _warmup() -> None:
