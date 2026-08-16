@@ -12,7 +12,7 @@
 
 现状缺口（必须回应的三个事实）：
 1. 路线图欠「autodream 7 天周期记忆蒸馏」，从未落地。
-2. `docs/memory-quality/2026-08-11.md` 实测 `superseded_residual_rate = 0.5`、`superseded_order_accuracy = 0.5`——被取代的旧记忆仍参与检索。
+2. 早期实测（2026-08-11 遗忘质量报告，已随生成报告归档策略移出 git）`superseded_residual_rate = 0.5`、`superseded_order_accuracy = 0.5`——被取代的旧记忆仍参与检索；修复见 `9cda3dd`（supersedes 排序降权）。
 3. 现有 `lantai/evolution/reflector.py` 只是「使用反馈打分」（record_feedback），真正的反思蒸馏是空白。
 
 ## 二、精读材料索引（执行前必须通读）

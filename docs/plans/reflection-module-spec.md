@@ -10,7 +10,7 @@
 
 兰台记忆链路「摄取→闸门→演化→遗忘→检索」中，**演化**目前只处理「候选→提案」，没有「记忆自我审视」环节。三个事实缺口：
 1. 路线图欠 autodream 蒸馏，从未落地；
-2. `docs/memory-quality/2026-08-11.md` 实测 `superseded_residual_rate = 0.5`——被取代的旧记忆仍参与检索；
+2. 早期实测（2026-08-11 遗忘质量报告，已随生成报告归档策略移出 git）`superseded_residual_rate = 0.5`——被取代的旧记忆仍参与检索；修复见 `9cda3dd`（supersedes 排序降权），当前评测集（chinese-memory-v2，80 case）该指标为诚实测量（降权不删旧值）；
 3. `lantai/evolution/reflector.py` 只有使用反馈打分（record_feedback），无反思蒸馏。
 
 目标：新增**反思/蒸馏模块**——周期性审视既有记忆，发现被取代、过期、冲突、低帮助、可升华的模式，产出 add/update/merge/deprecate 提案，走既有提案链路（自动应用或进锦囊待审），并重测健康指标自证效果。哲学不变：「宁 miss 不脏写」。

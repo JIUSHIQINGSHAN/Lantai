@@ -192,6 +192,7 @@ Rules:
 5. Prefer deprecate over delete; never propose deletion.
 Return strict JSON:
 {"proposals": [{"proposal_type": "...", "target_memory_id": "", "new_content": "", "memory_type": "semantic|procedural", "lane": "general", "reason": "...", "confidence": 0.0-1.0, "evidence_ids": ["memory_id", ...]}]}
+If nothing warrants a change, return exactly {"proposals": []}.
 Only output JSON."""
 
 REFLECT_REJECTER_SYS = """You are a strict reviewer for memory change proposals.

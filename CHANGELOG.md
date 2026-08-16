@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **curator 零产出根因修复（A 遗留，2026-08-15）**: `REFLECT_CURATOR_SYS` 补显式空提案契约（"If nothing warrants a change, return exactly {\"proposals\": []}"）——实测 Qwen3-8B 在缺该指令时对严格 JSON 妥协返回 `{}`（零产出主因）；补指令后正常返回严格 JSON 且产出真实提案。`curate_failed`（2/3 运行）为网络瞬断偶发，已有空降级留痕。观察期校准从本次修复起重新积累有效样本
+- **悬空链接清理（v0.15.2 D1）**: `reflection-module-spec/prompt` 对已删生成报告 `docs/memory-quality/2026-08-11.md` 的引用改为内联数字 + 修复指向（报告按生成归档策略移出 git）
+
 ### Changed
+- **性能基线首份（v0.15.2 D2）**: `scripts/perf_baseline.py` 实跑——20 问全 200，P50=2062.8ms / P95=2089.7ms；延迟主因外部 embedding API（~2s/次），本地管线毫秒级；报告 `docs/memory-quality/perf-baseline-2026-08-15.md`（生成报告本地留档）
 - **评测集 v3（80 case，v0.15.2 C3）**: `chinese_memory_cases.py` 50 → 80 case（typo×23 / fresh×18 / stale×14 / temporal×13 / superseded×12，5 类内扩不动 GATES/runner）；防漂移锁定测试（test_memory_quality_spec.py）计数自动跟随；规格文档/白皮书 8.3 同步；门禁实测 PASS
 - **校雠实质新词扩展信号（ADR-0023，v0.15.1 C1）**: `classify_relation` 无新增值分支加扩展判定——旧锚点零丢失（dropped 空，改写是替换非扩展）+ 新增实质词 ≥ `DEDUP_EXTRA_ANCHOR_LIMIT`(2) → 判 **update 提案**（有刹车，不吞内容）——修复 ADR-0019 锚点比非对称（old⊆new 恒 1.0）导致的扩展事实误 merge 吞并；不扩技术名值类（列表漂移，宁 miss）。36 对回归不回归（改写对 dropped 非空）+ 新增扩展对/对照组 3 例
 - **参商单字否定对候选探测（ADR-0024，v0.15.1 C2）**: `conflict_rules.check_negation_pairs`——token 级子串探测 是/不是、会/不会、能/不能、有/没有、要/不要 交叉命中 → **候选**（不落硬规则）→ `decision.py` 对该记忆调 LLM 矛盾检测裁决；LLM 判非矛盾/失败 → 放行（宁 miss）。jieba 并词（"我会"→一词）场景由此捕获；"开会" 类误候选由 LLM 澄清。既有回落路径与否定路径的 LLM 调用补 try/except 韧性（防御一致性）
