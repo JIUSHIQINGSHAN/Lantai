@@ -1,6 +1,6 @@
 # Spec: aiduMEM 移植——Remembrance-System v0.3.0
 
-**Status**: ready-for-agent
+**Status**: resolved
 **Date**: 2026-08-02
 **ADRs**: 0001-0007
 **Map**: `.scratch/aidumem-port/map.md`

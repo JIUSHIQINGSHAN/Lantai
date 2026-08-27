@@ -105,7 +105,7 @@ def handle_candidates_pending(params: dict) -> dict:
 
 
 def handle_candidate_review(params: dict) -> dict:
-    """审核候选：approve → 进提案链并应用；reject → 归档。"""
+    """审核候选：approve → 生成 pending 提案；reject → 归档。"""
     candidate_id = params.get("candidate_id", "")
     approve = params.get("approve", False)
     reason = params.get("reason", "")
@@ -427,7 +427,7 @@ def handle_crystal_decide(params: dict) -> dict:
 def handle_reflect_run(params: dict) -> dict:
     """执行一轮反思：健康扫描 -> 提案 -> 裁决（高置信 auto-apply，中风险落 pending，宁 miss 不脏写）。"""
     from lantai.evolution.reflector import run_reflect_once
-    return run_reflect_once()
+    return run_reflect_once(source="manual")
 
 
 def handle_mem_usage(params: dict) -> dict:
@@ -534,7 +534,7 @@ TOOLS = {
         "type": "object", "properties": {
             "limit": {"type": "integer", "default": 50},
         }}},
-    "candidate_review": {"description": "审核候选：approve 进提案链并应用，reject 归档", "inputSchema": {
+    "candidate_review": {"description": "审核候选：approve 仅生成 pending 提案（最终写入需再批准提案），reject 归档", "inputSchema": {
         "type": "object", "properties": {
             "candidate_id": {"type": "string"},
             "approve": {"type": "boolean"},
@@ -747,7 +747,7 @@ def handle(msg: dict) -> dict | None:
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "lantai", "version": "0.14.0"}}}
+            "serverInfo": {"name": "lantai", "version": "0.15.2"}}}
     if method == "notifications/initialized":
         return None  # 通知无响应
     if method == "ping":

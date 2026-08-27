@@ -24,6 +24,7 @@ from .routes_crystals import router as routes_crystals_router
 from .routes_graph import router as routes_graph_router
 from .routes_recall_chain import router as routes_recall_chain_router
 from .routes_ui import router as routes_ui_router
+from .routes_work_items import router as routes_work_items_router
 
 __all__ = [
     "routes_health_router",
@@ -50,5 +51,5 @@ __all__ = [
     "routes_graph_router",
     "routes_recall_chain_router",
     "routes_ui_router",
+    "routes_work_items_router",
 ]
-

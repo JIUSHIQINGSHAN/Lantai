@@ -11,9 +11,9 @@
 让 AI 在对的时间，找到对的回忆。
 ```
 
-[![Version](https://img.shields.io/badge/version-0.14.0-blue.svg)](https://github.com/JIUSHIQINGSHAN/Lantai)
+[![Version](https://img.shields.io/badge/version-0.15.2-blue.svg)](https://github.com/JIUSHIQINGSHAN/Lantai)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-yellow.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-701%2F701-green.svg)](docs/aidumem-port-results.md)
+[![Tests](https://img.shields.io/badge/tests-797%2F797-green.svg)](docs/aidumem-port-results.md)
 [![改编自](https://img.shields.io/badge/based%20on-aiduMEM-orange.svg)](https://github.com/monkey2jack/aiduMEM)
 
 ---
@@ -90,12 +90,12 @@ python api_server.py
 ### 方式二：Docker 容器运行
 
 ```bash
-docker build -t lantai:0.14.0 .
+docker build -t lantai:0.15.2 .
 docker run -d -p 8767:8767 \
   -e API_KEY=your-admin-key \
   -e OPENAI_API_KEY=sk-xxx \
   -v /your/data:/data \
-  lantai:0.14.0
+  lantai:0.15.2
 ```
 
 > 容器默认 `HOST=0.0.0.0` 对外暴露，**必须注入 `API_KEY`**——启动守卫（`assert_secure_binding`）会在非回环地址且无密钥时拒绝运行。
@@ -208,7 +208,7 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 
 ```bash
 .venv\Scripts\python.exe -m pytest tests/ -q
-# 120 passed —— 全绿（含 FTS/SSRF/备份恢复/MCP 协议/Shell Hook 超时）
+# 全量测试通过（含 FTS/SSRF/备份恢复/MCP 协议/Shell Hook 超时；以 CI 结果为准）
 ```
 
 ## 路线图
@@ -226,7 +226,7 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 ## 文档索引
 
 - `CONTEXT.md` — 领域词汇表（lane / gate / coalesce / fastpath / checkpoint…）
-- `docs/adr/` — 架构决策记录 0001-0008
+- `docs/adr/` — 架构决策记录 0001-0025
 - `docs/plans/` — 各版本执行方案
 - `docs/release-process.md` — 版本上传规范流程（发布门禁 + 人工闸门）
 - `docs/aidumem-port-results.md` — aiduMEM 移植结果与审计修复记录

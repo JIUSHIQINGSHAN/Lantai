@@ -230,6 +230,9 @@ def propose_from_reflection(session, candidates: list[dict],
     return props
 
 
+_REFLECT_RUN_SOURCES = frozenset({"scheduled", "manual", "unknown"})
+
+
 def _record_reflect_run(run_at=None, **fields) -> None:
     """反思运行结论落库（reflect_run 表；失败不阻断运行，宁 miss 不静默）。"""
     try:
@@ -252,16 +255,18 @@ def _safe_waterline() -> float:
         return 0.0
 
 
-def run_reflect_once() -> dict:
+def run_reflect_once(source: str = "unknown") -> dict:
     """反思主入口（异常留痕后原样抛出，供调度器日志/下轮重试）。"""
+    if source not in _REFLECT_RUN_SOURCES:
+        raise ValueError(f"invalid reflect run source: {source}")
     try:
-        return _run_reflect_once()
+        return _run_reflect_once(source=source)
     except Exception as exc:
-        _record_reflect_run(waterline=_safe_waterline(), error=str(exc))
+        _record_reflect_run(source=source, waterline=_safe_waterline(), error=str(exc))
         raise
 
 
-def _run_reflect_once() -> dict:
+def _run_reflect_once(source: str) -> dict:
     """反思主入口：健康扫描 →（水位触发新记忆蒸馏）→ curator → 提案 → 裁决。
 
     自动应用：confidence >= REFLECT_AUTO_APPLY_CONF 且 rejecter risk=low；
@@ -280,7 +285,8 @@ def _run_reflect_once() -> dict:
     theme_triggered = waterline >= settings.REFLECT_IMPORTANCE_POOL
     if not candidates and not theme_triggered:
         record_run("reflect")
-        _record_reflect_run(waterline=round(waterline, 2), skipped="idle")
+        _record_reflect_run(source=source, waterline=round(waterline, 2),
+                            skipped="idle")
         return {"ok": True, "skipped": "idle",
                 "health": scan["snapshot"], "waterline": round(waterline, 2)}
 
@@ -344,6 +350,7 @@ def _run_reflect_once() -> dict:
 
     record_run("reflect")
     _record_reflect_run(
+        source=source,
         waterline=round(waterline, 2),
         health_before=scan["snapshot"],
         health_after=scan_after["snapshot"],

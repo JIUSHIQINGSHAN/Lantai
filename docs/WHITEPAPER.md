@@ -1,6 +1,6 @@
 # 兰台记忆（Lantai）项目白皮书
 
-**版本**: v0.14.0（代号「缥缃」）
+**版本**: v0.15.2（代号「绳墨」）
 **日期**: 2026-08-13
 **定位**: AI Agent 长期记忆引擎 —— 为 AI 建一座不忘过往的记忆档案库
 
@@ -20,14 +20,14 @@
 
 项目改编自 [aiduMEM（优忆思）](https://github.com/monkey2jack/aiduMEM)（MIT License），移植了相关性闸门、潮波并忆、Ebbinghaus 遗忘、Chronos 时间感知等设计思想；在此基础上**重新实现了存储层**（SQLite + FTS5 + ChromaDB）、**补全了 Shell Hook / MCP 双形态集成**与**完整安全加固**，并持续吸收 TencentDB Agent Memory 等业界方案的可借鉴窄版设计。
 
-截至 v0.14.0：
+截至 v0.15.2：
 
 | 维度 | 现状 |
 |------|------|
-| 版本 | v0.14.0「缥缃」，21 份 ADR 架构决策记录 |
-| 代码规模 | 23 个 REST 路由模块、64 个端点、38 个 MCP 工具 |
-| 测试 | 60+ 测试文件全绿（README 徽章 701/701） |
-| 质量自证 | 中文记忆评测集 v1（13 case / 六维指标，可复现、可 CI 门禁） |
+| 版本 | v0.15.2「绳墨」，25 份 ADR 架构决策记录 |
+| 代码规模 | 24 个 REST 路由模块、102 个端点、42 个 MCP 工具 |
+| 测试 | 75 个测试文件、797 个测试用例全绿 |
+| 质量自证 | 中文记忆评测集 v3（80 case / 六维指标，可复现、可 CI 门禁） |
 | 集成 | Shell Hook（读）+ MCP server（写）+ Hermes 插件 + Docker/GHCR |
 | 部署 | 单机零外部服务（SQLite + 内嵌 ChromaDB），Docker 一键 |
 
@@ -262,7 +262,7 @@ embedding 余弦聚类构建 `MemoryScene`（ADR-0012），heat = 成员 `use_co
 ### 6.2 MCP server（写，标准协议）
 
 - 标准 JSON-RPC 2.0（protocolVersion 2024-11-05），serverInfo「lantai」；
-- **38 个工具**：search / add / feedback 基础三件，覆盖 raw_add、rollback、conflicts、scene、tree、crystal、wiki、offload、digest、graph、recall_chain、vision、provenance 查询、反思触发等全部能力面；
+- **42 个工具**：search / add / feedback 基础三件，覆盖 raw_add、rollback、conflicts、scene、tree、crystal、wiki、offload、digest、graph、recall_chain、vision、provenance 查询、反思触发等全部能力面；
 - 输入校验 + 异常隔离，缺参返回 -32602；
 - **客户端矩阵**：Claude Code / Cursor / Gemini CLI / Codex / Hermes 五端接入指南与逐端合规验证清单（`docs/mcp-client-matrix.md`）。
 
@@ -296,7 +296,7 @@ embedding 余弦聚类构建 `MemoryScene`（ADR-0012），heat = 成员 `use_co
 
 ### 8.2 测试基线
 
-- 60+ 测试文件、700+ 用例全绿（README 徽章 701/701），覆盖 FTS 集成、SSRF、备份恢复、MCP 协议、Shell Hook 超时、迁移链、ACL、场景、Wiki、Vision、召回链等；
+- 75 个测试文件、797 个测试用例全绿，覆盖 FTS 集成、SSRF、备份恢复、MCP 协议、Shell Hook 超时、迁移链、ACL、场景、Wiki、Vision、召回链等；
 - 测试进程内永不启动真实调度器（fixture 置空 `start_scheduler`），全量顺序执行无污染。
 
 ### 8.3 中文记忆评测集 v3（chinese-memory-v2）
@@ -352,7 +352,7 @@ python api_server.py           # http://127.0.0.1:8767
 docker run -d -p 8767:8767 \
   -e API_KEY=your-admin-key -e OPENAI_API_KEY=sk-xxx \
   -v /your/data:/data \
-  ghcr.io/JIUSHIQINGSHAN/remembrance:v0.14.0
+  ghcr.io/JIUSHIQINGSHAN/remembrance:v0.15.2
 ```
 
 > 容器默认 `HOST=0.0.0.0` 对外暴露，**必须注入 `API_KEY`**——启动守卫会在非回环地址且无密钥时拒绝运行。

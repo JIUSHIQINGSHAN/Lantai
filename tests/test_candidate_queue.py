@@ -123,13 +123,14 @@ class TestReview:
             result = review_candidate("cand_1", approve=True)
 
         assert result["ok"] is True
-        assert result["applied"] is True
+        assert result["applied"] is False
+        assert result["proposal_status"] == "pending"
         with session_factory() as s:
             c = s.get(MemoryCandidate, "cand_1")
             assert c.status == "gated"  # proposer 落状态
             props = s.exec(select(MemoryProposal)).all()
             assert len(props) == 1
-            assert props[0].status == "applied"
+            assert props[0].status == "pending"
             assert props[0].candidate_id == "cand_1"
 
     def test_reject_archives(self, param_env):
@@ -139,7 +140,7 @@ class TestReview:
                        review_due_at=datetime.now(timezone.utc) + timedelta(days=1))
 
         from lantai.services.candidate_service import review_candidate
-        result = review_candidate("cand_1", approve=False)
+        result = review_candidate("cand_1", approve=False, reason="不应写入")
 
         assert result["ok"] is True
         assert result["candidate_status"] == "rejected"
@@ -153,6 +154,35 @@ class TestReview:
         from lantai.services.candidate_service import review_candidate
         with pytest.raises(ValueError):
             review_candidate("cand_missing", approve=True)
+
+    def test_reject_requires_reason(self, param_env):
+        session_factory, _ = param_env
+        with session_factory() as s:
+            _make_cand(s, "cand_reason", status="pending_review",
+                       review_due_at=datetime.now(timezone.utc) + timedelta(days=1))
+        from lantai.services.candidate_service import review_candidate
+        with pytest.raises(ValueError, match="reason"):
+            review_candidate("cand_reason", approve=False)
+
+
+class TestDefer:
+    def test_defer_and_undo_real_db(self, param_env):
+        session_factory, _ = param_env
+        due = datetime.now(timezone.utc) + timedelta(days=1)
+        with session_factory() as s:
+            _make_cand(s, "cand_defer", status="pending_review", review_due_at=due)
+
+        from lantai.services.candidate_service import defer_candidate, undo_candidate_defer
+        deferred = defer_candidate("cand_defer", 3, expected_review_due_at=due)
+        assert deferred["defer_count"] == 1
+        restored = undo_candidate_defer(
+            "cand_defer", datetime.fromisoformat(deferred["review_due_at"]))
+        assert restored["candidate_id"] == "cand_defer"
+        with session_factory() as s:
+            candidate = s.get(MemoryCandidate, "cand_defer")
+            actual = candidate.review_due_at.replace(tzinfo=timezone.utc)
+            assert abs((actual - due).total_seconds()) < 0.01
+            assert candidate.defer_count == 0
 
 
 class TestTTL:
@@ -256,14 +286,16 @@ class TestCandidateRoutes:
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
-        assert data["applied"] is True
+        assert data["applied"] is False
+        assert data["proposal_status"] == "pending"
         assert data["candidate_status"] == "gated"
 
     def test_review_reject(self, client):
         with db_module.get_session() as s:
             _make_cand(s, "cand_r", status="pending_review",
                        review_due_at=datetime.now(timezone.utc) + timedelta(days=1))
-        resp = client.post("/candidates/cand_r/review", json={"approve": False})
+        resp = client.post("/candidates/cand_r/review",
+                           json={"approve": False, "reason": "不相关"})
         assert resp.status_code == 200
         assert resp.json()["candidate_status"] == "rejected"
 

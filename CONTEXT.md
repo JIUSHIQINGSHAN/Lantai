@@ -10,6 +10,7 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 |------|------|
 | **兰台（Lantai）** | 项目中文名。取自汉代皇家档案馆「兰台」——为 AI 保存、检索、演化、遗忘长期记忆的档案库。英文代号 Lantai |
 | **锦囊（Jinnang）** | `pending_review` 待审候选队列的别名，取自「锦囊妙计」——待拆的锦囊交用户裁决 |
+| **案牍（Andu）** | 控制台统一待办项：把候选、提案、冲突、参数建议、技能结晶、待整理记忆与运行异常投影为可排序、可检查、可处置的只读工作视图；案牍不替代各来源记录。取自刘禹锡《陋室铭》「无案牍之劳形」，本义为官府文书与待办公务 |
 | **lane**（分轨） | 记忆类型分轨：fact / rule / experience / preference / chat / general。每轨有独立的衰减参数和检索权重 |
 | **tier**（层级） | 记忆层级：working（工作记忆） / long_term（长期记忆）。working 超过 TTL 且无帮助时归档 |
 | **gate**（闸门） | 记忆准入控制：置信度阈值 + 新颖度评分 + 矛盾检测 → 五档决策（reject / working_only / promote_semantic / promote_procedural / archive_conflict） |
@@ -44,11 +45,12 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **digest**（每日盘点） | 每日清晨生成 `docs/memory-digest/YYYY-MM-DD.md`：新增/修改/总量/待审/归档/检索五项统计，Hermes 经 MCP `get_digest` 或 `GET /digest/today` 读取。见 [docs/daily-digest.md](docs/daily-digest.md) |
 | **命名体系** | 中文命名的方向与规则：按对象层级（项目/子系统/机制/数据/版本代号）从传统意象取材，2–4 字、有出处、先登记后使用；见 [ADR-0013](docs/adr/0013-naming-system.md) |
 | **反思**（reflect/蒸馏） | 每日健康扫描 + 水位触发蒸馏 + 提案裁决的自我审视回环（「吾日三省吾身」）：健康候选与水位触发 → curator 提炼 → rejecter 复核 → 自动应用/待审/丢弃（宁 miss）。入口 `run_reflect_once`，spec 见 [docs/plans/reflection-module-spec.md](docs/plans/reflection-module-spec.md) |
-| **观察期**（回填校准窗口） | 反思阈值定标前的真实数据收集期（2026-08-11 起 7 天）：`reflect_run`/`scheduler_run` 落库保证每次运行的 空闲/产出/LLM 失败/异常 可审计，期满后（8/18）用真实分布回填校准阈值 |
+| **观察期**（回填校准窗口） | 反思阈值定标前的真实数据收集期：2026-08-15 curator 修复后重新计数；`reflect_run.source` 区分 scheduled/manual/unknown，只认 **7 次连续、无异常且无 LLM 失败的 scheduled** 记录，旧记录 unknown 不计入。期满后用真实分布回填校准阈值 |
 | **回填校准**（反思阈值回填校准） | 观察期满后用真实分布对标 dry-run 推荐，二次校准 `REFLECT_IMPORTANCE_POOL`/`REFLECT_AUTO_APPLY_CONF`/`REFLECT_MIN_CONFIDENCE`；入口 `scripts/calibrate_reflection.py` + `collect_calibration_stats` |
 | **置信桶**（置信区间分组） | 提案置信度分桶统计（边界走 `DIGEST_CONF_BUCKETS`，ADR-0002 零硬编码），日报与回填校准报告展示分布；桶外置信计「其他」不静默 |
 | **吉金**（Jijin，UI 主题） | v0.14 全局皮肤（默认）：青铜彝器旧称（《墨子》等古籍「吉金」指铸器铜料），取金石厚重、铭文传久——玄青拓片底 `#1c2430` / 铜绿 `#3e7a6b` / 鎏金 `#b08a3e` / 朱砂 `#a33b2e`，签名元素为云雷纹饰带。见 [ADR-0013](docs/adr/0013-naming-system.md) 命名登记 |
 | **漏窗**（Louchuang，UI 主题） | v0.14 全局皮肤（可切换）：苏州园林漏窗借景，「移步换景、借景成画」——绢黄底 `#e9dfc6` / 黛青 `#2f4f4f` / 石绿 `#4e8d7c` / 竹青 `#6f9e8a`，签名元素为回纹画框 + 月洞门形卡片。见 [ADR-0013](docs/adr/0013-naming-system.md) 命名登记 |
 | **缥缃**（Piaoxiang，版本代号） | v0.14.0 版本代号：丝帛书衣，代指书卷——贴合兰台档案/书卷定位。见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
+| **绳墨**（Shengmo，版本代号） | v0.15.2 版本代号：《礼记·经解》「绳墨之于曲直」，以准绳定曲直——贴合反思校准、测试门禁与发布收口。见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
 | **校雠**（三态去重） | 去重机制正式名（ADR-0013 候选意象升格，刘向《别录》校雠订误）：**余弦预筛 + 结构判别**（ADR-0019）——提取路径 sim ≥ `DEDUP_PRESCREEN_MERGE`(0.95) 直合（真重复零 LLM）、中带 [0.65, 0.95) 提取后交 `gate/relation.py::classify_relation`：锚点词比（jieba 内容词，滤值/停用）+ 归一化值差异（日期/邮箱/域名/数字/地点）判 merge/update/insert，中带 LLM 兜底、judge 失败降级 insert（宁 miss 不脏写）；fastpath 路径纯余弦（merge ≥ 0.90）。此处「锚点/锚点词」= 内容词集（与 recall_chain 的锚点自匹配语义不同域，勿混）。见 [ADR-0019](docs/adr/0019-dedup-structural-relation.md) |
 | **底本**（Diben，session checkpoint） | 会话级快照正式名（ADR-0013 意象池「底本」= 校勘所据定本）：**五段会话快照**（ADR-0021，移植 aiduMEM checkpoint.py 窄版）——在做/下一步/工作区/决策/待办五块，上下文压缩时 `write_session_checkpoint` 写入、下次会话启动 `inject_checkpoint_context` 注入；> 30 天注入自动标注陈旧；保留最近 `CHECKPOINT_MAX_SESSIONS`(5) 个会话；块 < 3 字符不落、> 600 截断（宁 miss 不脏写）。与逐记忆回滚的 MemoryCheckpoint（检查点）语义区分。见 [ADR-0021](docs/adr/0021-session-checkpoint.md) |

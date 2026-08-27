@@ -182,10 +182,10 @@ class TestAutodreamScheduling:
         assert "autodream" not in ids
 
 
-class TestMigrationsV8ToV12:
-    """v7 库 → v12：scheduler_run + reflect_run（含 rejecter_failed）+ session_checkpoint。"""
+class TestMigrationsV8ToV14:
+    """v7 库 → v14：调度、反思来源、底本与候选延期迁移均可无损补齐。"""
 
-    def test_v7_to_v12_creates_tables_and_rejecter_col(self, tmp_path):
+    def test_v7_to_v14_creates_tables_and_reflect_source(self, tmp_path):
         import sqlite3
         conn = sqlite3.connect(str(tmp_path / "v7.db"))
         conn.execute("PRAGMA user_version = 7")
@@ -199,5 +199,6 @@ class TestMigrationsV8ToV12:
         assert "session_checkpoint" in tables  # ADR-0021 底本
         cols = {r[1] for r in conn.execute("PRAGMA table_info(reflect_run)")}
         assert "rejecter_failed" in cols
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+        assert "source" in cols
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 14
         conn.close()

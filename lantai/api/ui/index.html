@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="jijin">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>兰台 · 案牍</title>
+  <link rel="stylesheet" href="/ui/assets/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true">蘭</div>
+        <div><strong>兰台</strong><span>记忆工作台</span></div>
+      </div>
+      <nav class="primary-nav">
+        <button class="nav-item active" data-view="tasks"><span>待办</span><b id="navTaskCount">0</b></button>
+        <button class="nav-item" data-view="memory"><span>记忆</span></button>
+        <button class="nav-item" data-view="quality"><span>质量</span></button>
+        <button class="nav-item" data-view="system"><span>系统</span><b id="navSystemCount">0</b></button>
+      </nav>
+      <div class="sidebar-footer">
+        <button class="utility-button" id="themeButton" title="切换吉金/漏窗主题" aria-label="切换主题">式</button>
+        <button class="connection-button" id="connectionButton" title="连接设置">
+          <i id="connectionDot"></i><span id="connectionText">本机连接</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <section class="view active" id="tasksView" aria-labelledby="pageTitle">
+        <header class="topbar">
+          <div>
+            <h1 id="pageTitle">案牍</h1>
+            <p id="queueSummary">正在读取待办</p>
+          </div>
+          <div class="top-actions">
+            <button class="icon-button" id="refreshButton" title="刷新" aria-label="刷新">↻</button>
+          </div>
+        </header>
+
+        <div class="filterbar">
+          <label class="search-field">
+            <span aria-hidden="true">⌕</span>
+            <input id="searchInput" type="search" placeholder="搜索案牍" autocomplete="off">
+          </label>
+          <select id="kindFilter" aria-label="按类型筛选">
+            <option value="">全部类型</option>
+            <option value="candidate">候选</option>
+            <option value="proposal">提案</option>
+            <option value="conflict">冲突</option>
+            <option value="parameter">参数</option>
+            <option value="crystal">结晶</option>
+            <option value="memory">记忆</option>
+            <option value="worker">Worker</option>
+          </select>
+          <select id="riskFilter" aria-label="按风险筛选">
+            <option value="">全部风险</option>
+            <option value="critical">严重</option>
+            <option value="high">高</option>
+            <option value="medium">中</option>
+            <option value="low">低</option>
+          </select>
+        </div>
+
+        <div class="batchbar" id="batchbar" hidden>
+          <span id="selectionCount">已选 0 项</span>
+          <div class="batch-actions" id="batchActions"></div>
+          <button class="text-button" id="clearSelection">取消选择</button>
+        </div>
+
+        <div class="queue" id="queue" aria-live="polite"></div>
+      </section>
+
+      <section class="view tools-view" id="memoryView">
+        <header class="topbar"><div><h1>记忆</h1><p>浏览、组织与追溯</p></div></header>
+        <div class="tool-list">
+          <a href="/ui/vault"><span><b>档案</b><small>记忆列表与候选审阅</small></span><i>→</i></a>
+          <a href="/ui/map"><span><b>星图</b><small>关系、来源与场景</small></span><i>→</i></a>
+        </div>
+      </section>
+
+      <section class="view tools-view" id="qualityView">
+        <header class="topbar"><div><h1>质量</h1><p>检查召回与演化效果</p></div></header>
+        <div class="tool-list">
+          <a href="/ui/recall"><span><b>追忆漏斗</b><small>逐步查看召回结果</small></span><i>→</i></a>
+          <a href="/ui/evolve"><span><b>检索质量</b><small>报告、评测与趋势</small></span><i>→</i></a>
+        </div>
+      </section>
+
+      <section class="view tools-view" id="systemView">
+        <header class="topbar"><div><h1>系统</h1><p>运行状态与维护入口</p></div></header>
+        <div class="tool-list">
+          <a href="/ui/pulse"><span><b>脉搏</b><small>健康、存量与 worker 时间</small></span><i>→</i></a>
+          <button id="systemRefresh"><span><b>刷新案牍状态</b><small>重新读取全部运行记录</small></span><i>↻</i></button>
+        </div>
+      </section>
+    </main>
+
+    <aside class="inspector" id="inspector" aria-label="案牍详情" aria-hidden="true">
+      <header class="inspector-header">
+        <div><span id="inspectorKind">案牍</span><h2 id="inspectorTitle">选择一项查看详情</h2></div>
+        <button class="icon-button" id="closeInspector" title="关闭详情" aria-label="关闭详情">×</button>
+      </header>
+      <div class="inspector-body" id="inspectorBody">
+        <div class="inspector-empty">从队列中选择一项</div>
+      </div>
+      <footer class="inspector-actions" id="inspectorActions"></footer>
+    </aside>
+  </div>
+
+  <nav class="mobile-nav" aria-label="移动端主导航">
+    <button class="active" data-view="tasks">待办</button>
+    <button data-view="memory">记忆</button>
+    <button data-view="quality">质量</button>
+    <button data-view="system">系统</button>
+  </nav>
+
+  <dialog id="actionDialog">
+    <form method="dialog" id="actionForm">
+      <header><h2 id="dialogTitle">确认操作</h2><button value="cancel" aria-label="关闭">×</button></header>
+      <div id="dialogBody"></div>
+      <footer><button value="cancel" class="secondary-button">取消</button><button value="confirm" id="dialogConfirm">确认</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="connectionDialog">
+    <form method="dialog" id="connectionForm">
+      <header><h2>连接设置</h2><button value="cancel" aria-label="关闭">×</button></header>
+      <label class="form-field"><span>API Key</span><input id="apiKeyInput" type="password" autocomplete="off"></label>
+      <label class="check-field"><input id="rememberKey" type="checkbox"><span>记住此设备</span></label>
+      <footer><button value="clear" class="secondary-button">清除</button><button value="save">保存</button></footer>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <script type="module" src="/ui/assets/app.js"></script>
+</body>
+</html>
+

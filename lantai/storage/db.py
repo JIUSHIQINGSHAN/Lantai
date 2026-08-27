@@ -16,7 +16,7 @@ engine = create_engine(settings.DATABASE_URL, echo=False,
 # PRAGMA user_version 记录数据库结构版本；未版本化库（全新库或 v0.5 及以前
 # 老库）自动基线为 v1，增量补丁按版本号依次执行。ALTER TABLE ADD COLUMN 为
 # 毫秒级操作，代码更新与数据重构解耦，异常只记日志不阻断启动（降级而非崩溃）。
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 14
 
 
 def _ensure_column(conn, table: str, column: str, ddl: str) -> None:
@@ -162,7 +162,23 @@ def apply_migrations(conn) -> None:
             conn.execute("PRAGMA user_version = 12")
             conn.commit()
             logger.info("数据库增量迁移 v12 完成（底本五段会话快照）")
-        # 未来版本在此追加：if user_version < 13: ...
+        # v12 -> v13（观察期来源可审计）：区分定时与手动反思；旧数据保守标 unknown
+        if user_version < 13:
+            _ensure_column(conn, "reflect_run", "source",
+                           "TEXT DEFAULT 'unknown'")
+            conn.execute("PRAGMA user_version = 13")
+            conn.commit()
+            logger.info("数据库增量迁移 v13 完成（反思运行来源）")
+        # v13 -> v14（案牍控制台）：候选延期与单步撤销留痕
+        if user_version < 14:
+            _ensure_column(conn, "memorycandidate", "deferred_at", "DATETIME")
+            _ensure_column(conn, "memorycandidate", "previous_review_due_at", "DATETIME")
+            _ensure_column(conn, "memorycandidate", "defer_count", "INTEGER DEFAULT 0")
+            _ensure_column(conn, "memorycandidate", "defer_reason", "TEXT DEFAULT ''")
+            conn.execute("PRAGMA user_version = 14")
+            conn.commit()
+            logger.info("数据库增量迁移 v14 完成（候选延期留痕）")
+        # 未来版本在此追加：if user_version < 15: ...
 
     except Exception as exc:
         logger.error("数据库增量迁移异常（服务继续启动）: %s", exc)

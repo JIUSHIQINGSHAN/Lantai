@@ -32,6 +32,7 @@ from lantai.api import (
     routes_graph_router,
     routes_recall_chain_router,
     routes_ui_router,
+    routes_work_items_router,
 )
 
 
@@ -52,7 +53,7 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-app = FastAPI(title="兰台记忆（Lantai）", version="0.14.0", lifespan=lifespan)
+app = FastAPI(title="兰台记忆（Lantai）", version="0.15.2", lifespan=lifespan)
 
 # 公共端点（不需要鉴权）
 app.include_router(routes_health_router)
@@ -81,6 +82,7 @@ protected_routers = [
     routes_crystals_router,
     routes_graph_router,
     routes_recall_chain_router,
+    routes_work_items_router,
 ]
 for router in protected_routers:
     app.include_router(router, dependencies=[Depends(verify_api_key), Depends(verify_agent)])

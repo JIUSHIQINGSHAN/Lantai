@@ -55,11 +55,20 @@ def test_stdin_forced_utf8_reconfigure(monkeypatch):
     修复背景：Hermes 按 UTF-8 写 JSON（含中文 query），Python 默认按 GBK 解码
     →「你好」变「浣犲ソ」→ 检索零命中、注入静默失效。reconfigure 必须在读 stdin 前执行。
     """
-    mod = _load_hook(monkeypatch)
-    # 模拟 GBK 环境：若 reconfigure 未生效，sys.stdin.encoding 会是 gbk/cp936
-    assert mod.sys.stdin.encoding.lower() in ("utf-8", "utf8")
-    # 且 stdout 也被强制
-    assert mod.sys.stdout.encoding.lower() in ("utf-8", "utf8")
+    class FakeStream:
+        def __init__(self):
+            self.encoding = "gbk"
+
+        def reconfigure(self, encoding=None):
+            self.encoding = encoding
+
+    fake_stdin = FakeStream()
+    fake_stdout = FakeStream()
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    _load_hook(monkeypatch)
+    assert fake_stdin.encoding == "utf-8"
+    assert fake_stdout.encoding == "utf-8"
 
 
 def test_handle_one_empty_returns_empty(monkeypatch):

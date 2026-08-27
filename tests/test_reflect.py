@@ -335,6 +335,17 @@ class TestRunReflectOnce:
 class TestRunOutcome:
     """反思每次运行的结论落库：水位/跳过/产出/LLM 失败（不静默）。"""
 
+    def test_idle_run_records_manual_source(self, reflect_env):
+        """来源字段冒烟：真实空库直调后，手动运行可审计且不依赖 mock。"""
+        session_factory, _ = reflect_env
+        from lantai.evolution.reflector import run_reflect_once
+
+        result = run_reflect_once(source="manual")
+
+        assert result["skipped"] == "idle"
+        with session_factory() as s:
+            assert s.exec(select(ReflectRun)).one().source == "manual"
+
     def test_idle_run_records_outcome(self, reflect_env):
         session_factory, _ = reflect_env
         from lantai.evolution.reflector import run_reflect_once

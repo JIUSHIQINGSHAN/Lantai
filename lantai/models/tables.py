@@ -45,6 +45,10 @@ class MemoryCandidate(SQLModel, table=True):
     lane: str = Field(default="general")  # 分轨：从 AddMemoryReq 传入
     status: str = "new"
     review_due_at: Optional[datetime] = None  # 待审队列 TTL 截止（Ticket 02）
+    deferred_at: Optional[datetime] = None
+    previous_review_due_at: Optional[datetime] = None
+    defer_count: int = 0
+    defer_reason: str = ""
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -353,6 +357,7 @@ class ReflectRun(SQLModel, table=True):
 
     id: str = Field(primary_key=True)
     run_at: datetime = Field(index=True)
+    source: str = "unknown"   # scheduled | manual | unknown（旧记录迁移后保守标 unknown）
     waterline: float = 0.0
     skipped: str = ""            # "" = 正常执行（含空产出）；"idle" = 空闲跳过
     curate_failed: bool = False  # curator LLM 调用失败（宁 miss 空降级，但不静默）

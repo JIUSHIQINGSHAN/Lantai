@@ -1,6 +1,6 @@
 # Spec: 对话闭环（Dialogue Loop）v0.5
 
-Status: ready-for-agent
+Status: resolved
 Type: spec
 
 ## 背景

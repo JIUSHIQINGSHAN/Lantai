@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Optional
+from datetime import datetime
+from typing import Literal, Optional
 
 
 def _validate_metadata_dict(v):
@@ -82,6 +83,16 @@ class CandidateReviewReq(BaseModel):
     reason: str = ""
 
 
+class CandidateDeferReq(BaseModel):
+    days: Literal[3, 7]
+    reason: str = ""
+    expected_review_due_at: datetime | None = None
+
+
+class CandidateDeferUndoReq(BaseModel):
+    expected_review_due_at: datetime | None = None
+
+
 class ImportJsonlReq(BaseModel):
     """冷启动导入请求：JSONL 文本（每行一个 JSON 对象）。"""
 
@@ -147,4 +158,3 @@ class CrystalDecideReq(BaseModel):
     approve: bool
     steps: list[str] = []
     reason: str = ""
-

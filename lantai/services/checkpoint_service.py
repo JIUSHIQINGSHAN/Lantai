@@ -105,14 +105,15 @@ def cleanup_old_checkpoints(max_sessions: int | None = None) -> dict:
     with db.get_session() as s:
         # 按会话取最近时间，保留最新 N 个会话 id（sqlmodel 单列 select 返回标量）
         sessions = list(s.exec(select(SessionCheckpoint.session_id).distinct()).all())
-        latest_by: dict[str, datetime] = {}
+        latest_by: dict[str, tuple[datetime, int]] = {}
         for sid in sessions:
-            m = s.exec(select(SessionCheckpoint.created_at)
-                       .where(SessionCheckpoint.session_id == sid)
-                       .order_by(SessionCheckpoint.created_at.desc())
-                       .limit(1)).first()
-            if m is not None:
-                latest_by[sid] = m
+            latest = s.exec(select(SessionCheckpoint.created_at, SessionCheckpoint.id)
+                        .where(SessionCheckpoint.session_id == sid)
+                        .order_by(SessionCheckpoint.created_at.desc(),
+                                  SessionCheckpoint.id.desc())
+                        .limit(1)).first()
+            if latest is not None:
+                latest_by[sid] = (latest[0], latest[1])
         ordered = sorted(latest_by, key=lambda sid: latest_by[sid], reverse=True)
         keep = ordered[:max_sessions]
         drop = [sid for sid in ordered if sid not in keep]

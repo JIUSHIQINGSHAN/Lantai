@@ -58,3 +58,9 @@ def rollback_override(override_id: str, req: RollbackRequest,
 @router.get("/runtime-params", response_model=RuntimeParamsResponse)
 def runtime_params(_identity: str = Depends(verify_api_key)):
     return service.get_effective_params()
+
+
+@router.post("/param-suggestions/{suggestion_id}/regenerate")
+def regenerate_suggestion(suggestion_id: str,
+                          identity: str = Depends(verify_api_key)):
+    return service.regenerate_suggestion(suggestion_id, identity)

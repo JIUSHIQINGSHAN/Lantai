@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-08-27
+
+### Added
+- **案牍控制台 Phase 1**: `/ui` 重构为单维护者记忆运营工作台，新增七类案牍只读投影、确定性分区/排序、详情检查器、批量拒绝/延期/整理、worker 对应重跑、吉金/漏窗响应式外壳；前端采用 FastAPI 同源托管 HTML/CSS/ES Modules，无构建步骤，五个旧控制台路由继续保留。新增 ADR-0025 与 `.scratch/console-workbench/` 规格票据。
+- **候选延期**: `memorycandidate` 增加延期与单步撤销留痕，schema v14；支持 3/7 天延期，最长不超过首次创建后 30 天。
+- **反思观察门槛可审计**: `reflect_run` 增加 `source`（scheduled/manual/unknown）并迁移至 schema v13；定时任务与 MCP 手动运行分别写入来源，旧记录保守标为 unknown。新增 `scripts/reflect_observation_status.py`：默认只读报告连续合格定时运行次数，`--check` 未满足 7 次时以失败码阻断发布准备。
+
+### Changed
+- **候选审批改为两阶段**: `candidate_review approve=true` 只创建 pending 提案，不再立即应用；最终写入必须通过提案裁决。REST、MCP、控制台与测试统一该语义；拒绝类裁决要求填写理由。
+- **v0.15.2 代号登记**: 计划版本代号定为「绳墨」——《礼记·经解》「绳墨之于曲直」，对应本版的校准、门禁与收口；README 测试说明改为以 CI 为准，ADR 索引更新至 0024。
+
 ### Fixed
 - **curator 零产出根因修复（A 遗留，2026-08-15）**: `REFLECT_CURATOR_SYS` 补显式空提案契约（"If nothing warrants a change, return exactly {\"proposals\": []}"）——实测 Qwen3-8B 在缺该指令时对严格 JSON 妥协返回 `{}`（零产出主因）；补指令后正常返回严格 JSON 且产出真实提案。`curate_failed`（2/3 运行）为网络瞬断偶发，已有空降级留痕。观察期校准从本次修复起重新积累有效样本
 - **悬空链接清理（v0.15.2 D1）**: `reflection-module-spec/prompt` 对已删生成报告 `docs/memory-quality/2026-08-11.md` 的引用改为内联数字 + 修复指向（报告按生成归档策略移出 git）

@@ -106,6 +106,8 @@ def decide_crystal(crystal_id: str, approve: bool,
         crystal = s.get(SkillCrystal, crystal_id)
         if not crystal:
             raise ValueError("crystal not found")
+        if crystal.status != "candidate":
+            raise ValueError("crystal state changed; refresh and retry")
         skill_name, trigger_rule = crystal.skill_name, crystal.trigger_rule
     result = None
     if approve:
@@ -116,6 +118,8 @@ def decide_crystal(crystal_id: str, approve: bool,
         result = create_skill(name=skill_name, description=trigger_rule, steps=steps)
         if not result.get("ok"):
             raise ValueError(result.get("error", "create_skill failed"))
+    elif not (reason or "").strip():
+        raise ValueError("reject reason is required")
     with db.get_session() as s:
         crystal = s.get(SkillCrystal, crystal_id)
         if crystal:

@@ -16,6 +16,7 @@ from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import (
+    ParamAdvicePaper,
     ParamOverride,
     ParamSuggestion,
 )
@@ -116,6 +117,8 @@ def decide_suggestion(suggestion_id: str, req: DecisionRequest,
             raise HTTPException(409, "suggestion_already_decided")
 
         if req.decision == "rejected":
+            if not (req.note or "").strip():
+                raise HTTPException(422, "reject_reason_required")
             sug.status = "rejected"
             sug.decided_at = utcnow()
             sug.decided_by = actor
@@ -233,4 +236,46 @@ def rollback_override(override_id: str, req: RollbackRequest,
         rollback_override=OverrideInfo(id=rollback_id,
                                        revision=rollback_revision,
                                        operation="rollback"),
-        effective_snapshot=effective_snapshot)
+                effective_snapshot=effective_snapshot)
+
+
+def regenerate_suggestion(suggestion_id: str, actor: str,
+                          note: str = "基线已变化，重新生成") -> dict:
+    """拒绝旧建议并把其来源论文重新入队；生成由既有 worker 完成。"""
+    with db.get_session() as s:
+        sug = s.get(ParamSuggestion, suggestion_id)
+        if not sug:
+            raise HTTPException(404, "suggestion_not_found")
+        if sug.status != "pending":
+            raise HTTPException(409, "suggestion_already_decided")
+        current_hash = snapshot_hash(_current_snapshot(s))
+        if sug.base_snapshot_hash == current_hash:
+            raise HTTPException(422, "suggestion_base_is_current")
+        now = utcnow()
+        queued = 0
+        for raw_id in sug.source_document_ids:
+            paper = s.exec(select(ParamAdvicePaper).where(
+                ParamAdvicePaper.raw_document_id == raw_id)).first()
+            if paper is None:
+                paper = ParamAdvicePaper(
+                    id=new_id("pap"), raw_document_id=raw_id,
+                    state="retry", available_at=now, updated_at=now)
+            else:
+                paper.state = "retry"
+                paper.attempt_count = 0
+                paper.run_id = None
+                paper.available_at = now
+                paper.claimed_at = None
+                paper.consumed_at = None
+                paper.last_error_code = None
+                paper.updated_at = now
+            s.add(paper)
+            queued += 1
+        sug.status = "rejected"
+        sug.decided_at = now
+        sug.decided_by = actor
+        sug.decision_note = (note or "").strip() or "基线已变化，重新生成"
+        s.add(sug)
+        s.commit()
+        return {"ok": True, "suggestion_id": suggestion_id,
+                "status": "rejected", "papers_queued": queued}

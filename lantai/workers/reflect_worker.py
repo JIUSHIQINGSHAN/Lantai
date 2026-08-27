@@ -7,4 +7,4 @@ from lantai.evolution.reflector import run_reflect_once as _run_reflect
 
 
 def run_reflect_once() -> dict:
-    return _run_reflect()
+    return _run_reflect(source="scheduled")

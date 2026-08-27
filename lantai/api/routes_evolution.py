@@ -21,8 +21,11 @@ def list_proposals_route(status: str = "pending", limit: int = 50):
 def decide_proposal_route(proposal_id: str, req: ProposalDecisionReq):
     try:
         return decide_proposal(proposal_id, req)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        status = 404 if "not found" in str(e) else 422
+        raise HTTPException(status, str(e)) from e
 
 
 @router.post("/memory/{memory_id}/rollback")

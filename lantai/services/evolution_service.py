@@ -26,6 +26,10 @@ def decide_proposal(proposal_id: str, req: ProposalDecisionReq) -> dict:
         prop = s.get(MemoryProposal, proposal_id)
         if not prop:
             raise ValueError("proposal not found")
+        if prop.status != ProposalStatus.PENDING:
+            raise RuntimeError("proposal state changed; refresh and retry")
+        if not req.approve and not (req.reason or "").strip():
+            raise ValueError("reject reason is required")
         prop.decision_reason = req.reason or ""
         if req.approve:
             prop.status = ProposalStatus.APPROVED

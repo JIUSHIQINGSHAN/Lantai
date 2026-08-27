@@ -16,10 +16,12 @@ def test_recall_console_served():
 
 
 def test_ui_index_lists_panels():
-    """入口页：列出追忆漏斗 / 检索质量看板 / 档案与锦囊。"""
+    """新工作台保留追忆、质量、档案与系统次级入口。"""
     with TestClient(app) as c:
         r = c.get("/ui")
         assert r.status_code == 200
         assert "/ui/recall" in r.text
         assert "/ui/evolve" in r.text
         assert "/ui/vault" in r.text
+        assert "/ui/pulse" in r.text
+        assert "兰台 · 案牍" in r.text

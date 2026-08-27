@@ -85,6 +85,10 @@ class TestApplyMigrations:
         assert "decay_class" in _columns(conn, "memoryitem")
         assert "is_system_noise" in _columns(conn, "retrieval_event")
         assert "review_due_at" in _columns(conn, "memorycandidate")
+        assert "deferred_at" in _columns(conn, "memorycandidate")
+        assert "previous_review_due_at" in _columns(conn, "memorycandidate")
+        assert "defer_count" in _columns(conn, "memorycandidate")
+        assert "defer_reason" in _columns(conn, "memorycandidate")
         # 存量数据零丢失
         rows = conn.execute("SELECT id, content FROM memoryitem ORDER BY id").fetchall()
         assert rows == [("m1", "老数据A"), ("m2", "老数据B")]

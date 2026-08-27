@@ -30,6 +30,8 @@ def resolve_conflict_event(event_id: str, decision: str, note: str = "") -> dict
     """人工裁决冲突事件：decision ∈ resolved（确认冲突成立）/ dismissed（误报）。"""
     if decision not in ("resolved", "dismissed"):
         raise ValueError("decision must be 'resolved' or 'dismissed'")
+    if not (note or "").strip():
+        raise ValueError("decision reason is required")
     with db.get_session() as s:
         ev = s.get(ConflictEvent, event_id)
         if not ev:
@@ -37,7 +39,7 @@ def resolve_conflict_event(event_id: str, decision: str, note: str = "") -> dict
         if ev.status != "open":
             raise ValueError(f"conflict event not open (status={ev.status})")
         ev.status = decision
-        ev.resolved_by = note[:200] or "manual"
+        ev.resolved_by = note.strip()[:200]
         ev.resolved_at = utcnow()
         s.add(ev)
         s.commit()
