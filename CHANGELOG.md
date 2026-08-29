@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- 新增 `docs/plans/roadmap-2026-09-v016.md`，将下一阶段主轴明确为“可控记忆层”：从检索能力竞争转向记忆生命周期质量（写入准确性、冲突可审计、选择性遗忘、可回滚），并分解 v0.16 与中期执行面。
+- 新增 `.scratch/v0.16-memory-quality/` 规格与 6 张 implementation issue（MCP 扩面、变化追踪、控制台闭环、质量评测、中文评测、reflect/autodream 协同），全部以本地 issue tracker 方式发布并标记 `ready-for-agent`。
+
 ## [0.15.2] - 2026-08-27
 
 ### Added
@@ -232,7 +236,6 @@ ecord_verification_result 此前仅有函数无入口，现闭环打通
 - Relevance gate, Tidal coalescing, Fastpath, Dedup, Ebbinghaus forgetting, Chronos
 - Shell Hook + MCP dual-mode integration
 - Security baseline: loopback binding, SSRF guard, atomic backup, endpoint whitelist
-
 
 
 
