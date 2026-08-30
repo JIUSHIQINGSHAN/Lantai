@@ -9,9 +9,9 @@ router = APIRouter()
 @router.post("/search")
 def search(req: SearchReq, trace: bool = False, explain: bool = False,
           agent_id: str = Depends(verify_agent)):
-    # Step 1: 启发式闸门预过滤
+    # Step 1: 启发式闸门预过滤（拾遗 ADR-0028：支持 req.force 透传放行）
     gate = relevance_check(req.query)
-    if not gate["needs_memory"]:
+    if not req.force and not gate["needs_memory"]:
         # 闸门拦截也算一次观测（zero_result=True 的意义之一）
         event_id = _try_log(req, [], 0, gate)
         return {"results": [], "gate": gate, "event_id": event_id}

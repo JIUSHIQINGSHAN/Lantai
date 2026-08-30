@@ -6,6 +6,7 @@ from sqlmodel import select
 from lantai.llm.client import embed
 from lantai.models.tables import MemoryEdge, MemoryItem
 from lantai.storage import db
+from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.retrieval.intent import classify_intent
 from lantai.retrieval.reranker import rerank
@@ -134,11 +135,16 @@ def _hybrid_search_impl(query: str, top_k: int = 5,
             "candidate_count": None, "score_range": None,
         })
 
-    # Step 2: 向量检索（ChromaDB HNSW 索引）
+    # Step 2: 向量检索（ChromaDB HNSW 索引，异常平滑降级：拾遗 ADR-0028）
     fetch_n = candidate_n * settings.RERANKER_CANDIDATE_MULTIPLIER
-    qv = embed([query])[0]
-    vector_store = get_vector_store()
-    vector_results = vector_store.search(qv, top_k=fetch_n)
+    vector_results = []
+    try:
+        qv = embed([query])[0]
+        vector_store = get_vector_store()
+        vector_results = vector_store.search(qv, top_k=fetch_n)
+    except Exception as e:
+        logger.warning(f"Vector search failed, falling back to keyword (Shiyi): {e}")
+        vector_results = []
 
     if trace:
         t2 = time.perf_counter()
@@ -147,10 +153,11 @@ def _hybrid_search_impl(query: str, top_k: int = 5,
             "step": "vector_search", "elapsed_ms": round((t2 - t1) * 1000, 1),
             "candidate_count": len(vector_results),
             "score_range": [round(min(scores), 3), round(max(scores), 3)] if scores else None,
+            "fallback": not vector_results,
         })
 
     if not vector_results:
-        # 向量检索失败（embedding 超时/未配置/空库）→ FTS5 + BM25 兜底，降级可用而非零召回
+        # 向量检索失败（embedding 超时/401/未配置/空库）→ FTS5 + BM25 兜底（拾遗），降级可用而非零召回
         return _keyword_fallback(
             query, top_k, fetch_n, memory_types, lanes,
             trace, trace_steps, t0, explain,
@@ -374,6 +381,23 @@ def _keyword_fallback(
                 query, top_k=max(fetch_n, settings.FTS_RECALL_TOP_K)))
     except Exception:
         candidate_ids = set()
+
+    # 拾遗（ADR-0028）：当 FTS5 无命中（如查询 <3 字符无法触发 trigram）时，
+    # 采用 SQLite LIKE 短子串匹配候选，再由 BM25 + decay 排序
+    if not candidate_ids:
+        clean_q = query.strip()
+        if len(clean_q) >= 2:
+            try:
+                with db.get_session() as s:
+                    like_items = s.exec(
+                        select(MemoryItem.id)
+                        .where(MemoryItem.status == "active")
+                        .where(MemoryItem.content.like(f"%{clean_q}%"))
+                        .limit(max(fetch_n, settings.FTS_RECALL_TOP_K))
+                    ).all()
+                    candidate_ids = set(like_items)
+            except Exception:
+                candidate_ids = set()
 
     if not candidate_ids:
         if trace:

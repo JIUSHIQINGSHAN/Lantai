@@ -51,9 +51,9 @@ EXPLICIT_RECALL = re.compile(
 
 # 不需要记忆的纯社交结束语
 NO_MEMORY_PATTERNS = re.compile(
-    r'^(ok|好|嗯|哦|行|可以|是的|对|收到|了解|明白|知道了|再见|拜拜|谢谢|'
+    r'^(?:ok|好|好的|嗯|哦|行|可以|是的|对|收到|了解|明白|知道了|再见|拜拜|谢谢|'
     r'yes|no|yep|nope|k|kk|okay|thanks|bye|got it|sure|alright|'
-    r'hello|hi|hey|早上好|晚上好|晚安)[!！。.]{0,3}$',
+    r'hello|hi|hey|早上好|晚上好|晚安|[!！。. ]){1,15}$',
     re.IGNORECASE
 )
 
@@ -63,10 +63,16 @@ CORRECTION_PATTERNS = re.compile(
     re.IGNORECASE
 )
 
-# 自我指代基础模式
+# 自我指代基础模式（ADR-0028：收录大哥等项目核心自指）
 _BASE_SELF_REFERENCE = (
     r'我的|我是|我叫|我.*(名字|生日|年龄|地址|电话|邮箱)|'
-    r'assistant|agent|user|用户'
+    r'大哥|master|owner|assistant|agent|user|用户'
+)
+
+# 技术/领域实体模式（ADR-0028 拾遗：短实词查询放行）
+TECHNICAL_DOMAIN_PATTERNS = re.compile(
+    r'架构|系统|配置|算法|原理|方案|模型|显卡|接口|数据|微服务|容器|集群|驱动|硬件|依赖',
+    re.IGNORECASE
 )
 
 # ── 实体词表惰性编译（修 import 时定死）──
@@ -152,8 +158,8 @@ def relevance_check(
     if REFERENCE_PATTERNS.search(q):
         return _update_cache(cache, now, True, q, "reference", "episode")
 
-    # 6. 有实质内容
-    if len(q) > 15 and _has_content_words(q):
+    # 6. 有实质内容（长文本或含专业/技术领域实词的短查询，ADR-0028）
+    if (len(q) > 15 and _has_content_words(q)) or (len(q) >= 4 and TECHNICAL_DOMAIN_PATTERNS.search(q)):
         return _update_cache(cache, now, True, q, "content_query", "pinned")
 
     # 7. 默认不需要

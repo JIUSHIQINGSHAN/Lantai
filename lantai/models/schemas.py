@@ -59,6 +59,7 @@ class SearchReq(BaseModel):
     memory_types: list[str] = []
     lanes: list[str] = []
     use_rerank: bool = True
+    force: bool = False  # 显式透传：为 True 时绕过相关性闸门直接检索（拾遗 ADR-0028）
 
 
 class GateReq(BaseModel):
