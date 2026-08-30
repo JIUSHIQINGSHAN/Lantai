@@ -7,13 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-08-30 - 贯珠 · 辨域 · 潜移 · 札记（四维借鉴闭环）
+
 ### Added
-- **札记（Working Memory Scratchpad 工作区暂存夹，ADR-0032，v0.17.0）**:
-  - 借鉴 Letta (MemGPT) 虚拟内存思想，引入 `SessionScratchpad` 表与数据库迁移 `v16`（为 Agent 提供在对话中主动实时读写的小纸条区域）；
+- **贯珠（基于图谱拓扑的二度语义联想与多跳召回，ADR-0035，借鉴 Cognee）**:
+  - 核心服务 `graph_retriever.py`：基于 BFS 沿 `MemoryEdge` 拓扑进行 1~2 步（hop）关系扩散与隐式记忆联想；
+  - 路径可解释性：联想结果包含跳数、关联关系、前驱节点与边置信度，过滤环路与已访问集合；
+  - 接口面暴露：新增 REST `POST /search/graph_expand` 以及 MCP 工具 `graph_expand_search`（MCP 工具总数扩容至 **51**）；
+  - 命名正式登记：在 `CONTEXT.md` 登记「贯珠」（Guanzhu，出自《汉书·景十三王传》「如贯珠焉」），归档 ADR-0035。
+- **辨域（User-Session-Agent 三维硬隔离与域分治，ADR-0034，借鉴 Mem0）**:
+  - 数据库字段扩展与迁移：`MemoryItem.domain`（user/session/agent）与 SQLite `v17` 幂等增量迁移；
+  - 检索层隔离支持：`hybrid_search` 与 `_keyword_fallback` 支持精确 `domain` 过滤与跨域召回；
+  - 接口面暴露：REST `POST /search` 与 MCP `search` 工具全面支持 `domain` 参数透传；
+  - 命名正式登记：在 `CONTEXT.md` 登记「辨域」（Bianyu，出自《周礼·春官·宗伯》「以辨天地四时之域」），归档 ADR-0034。
+- **潜移（异步摄取管道与非阻塞任务调度，ADR-0033，借鉴 Zep）**:
+  - 核心服务 `async_ingest_service.py`：基于后台线程池与 `TaskRegistry` 任务注册表提供非阻塞摄取调度；
+  - 毫秒级提交：对话提交立即返回 `task_id`（<10ms），后台静默完成提取、提纯（披沙）与去重；
+  - 接口面暴露：新增 REST `POST /dialogue/async`、`GET /dialogue/tasks/{task_id}` 以及 MCP 工具 `dialogue_add_async` / `dialogue_task_status`；
+  - 命名正式登记：在 `CONTEXT.md` 登记「潜移」（Qianyi，出自《文心雕龙》「潜移暗引，莫之能知」），归档 ADR-0033。
+- **札记（Working Memory Scratchpad 工作区暂存夹，ADR-0032，借鉴 Letta / MemGPT）**:
+  - 引入 `SessionScratchpad` 表与数据库迁移 `v16`（为 Agent 提供在对话中主动实时读写的小纸条区域）；
   - 核心服务 `scratchpad_service.py`：支持 `get_scratchpad`、`write_scratchpad` 与 `format_scratchpad_context`（上限 1000 字符，超长自动截断，宁 miss 不脏写）；
   - 协同注入：`inject_checkpoint_context` 联动支持在首轮 Prompt 中与「器识」人格基座与「底本」会话快照协同拼合注入 `【札记】`；
-  - 接口面暴露：新增 REST `GET /scratchpad/{session_id}`、`POST /scratchpad/{session_id}` 以及 MCP 工具 `scratchpad_get` / `scratchpad_write`（MCP 工具总数扩容至 48）；
+  - 接口面暴露：新增 REST `GET /scratchpad/{session_id}`、`POST /scratchpad/{session_id}` 以及 MCP 工具 `scratchpad_get` / `scratchpad_write`；
   - 命名正式登记：在 `CONTEXT.md` 登记「札记」（Zhaji，出自古籍读书摘记要点之木简小帖），归档 ADR-0032。
+
 
 ## [0.16.0] - 2026-08-30 - 更漏（Genglou）
 

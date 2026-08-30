@@ -54,9 +54,9 @@ class MemoryCandidate(SQLModel, table=True):
 
 class MemoryItem(SQLModel, table=True):
     id: str = Field(primary_key=True)
-    memory_type: str = Field(index=True)
+    memory_type: str = Field(default="text", index=True)
     namespace: str = Field(index=True, default="default")
-    key: str = Field(index=True)
+    key: Optional[str] = Field(default="", index=True)
     content: str
     structure: dict = Field(default_factory=dict, sa_column=Column(JSON))
     provenance: dict = Field(default_factory=dict, sa_column=Column(JSON))  # 提取来源（prompt/model/时间，可溯源）
@@ -67,6 +67,7 @@ class MemoryItem(SQLModel, table=True):
     importance: float = 0.5
     tier: str = "working"
     lane: str = Field(default="general", index=True)         # 分轨：fact/rule/experience/preference/chat/general
+    domain: str = Field(default="user", index=True)          # 辨域（ADR-0034）：user/session/agent 三维硬隔离
     source_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     version: int = 1
     status: str = "active"
@@ -79,8 +80,6 @@ class MemoryItem(SQLModel, table=True):
     valid_to: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
-
-
 
 
 class MemoryScene(SQLModel, table=True):
@@ -99,6 +98,8 @@ class MemoryScene(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
 class MemoryEdge(SQLModel, table=True):
     id: str = Field(primary_key=True)
     source_memory_id: str = Field(index=True)
@@ -106,7 +107,6 @@ class MemoryEdge(SQLModel, table=True):
     relation: str  # supports / contradicts / refines / supersedes
     confidence: float = 0.5
     created_at: datetime = Field(default_factory=utcnow)
-
 
 
 class MemoryNode(SQLModel, table=True):
@@ -146,6 +146,7 @@ class SkillCrystal(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
+
 class CoreMemoryBlock(SQLModel, table=True):
     id: str = Field(primary_key=True)
     block: str = Field(index=True)
@@ -173,7 +174,6 @@ class MemoryProposal(SQLModel, table=True):
     applied_at: Optional[datetime] = None
 
 
-
 class ConflictEvent(SQLModel, table=True):
     """冲突消解确定性层账本（P0-2）：规则命中即落账，可溯源、可裁决。"""
 
@@ -187,6 +187,8 @@ class ConflictEvent(SQLModel, table=True):
     resolved_by: str = ""
     created_at: datetime = Field(default_factory=utcnow)
     resolved_at: Optional[datetime] = None
+
+
 class MemoryCheckpoint(SQLModel, table=True):
     id: str = Field(primary_key=True)
     memory_id: str = Field(index=True)
@@ -339,6 +341,7 @@ class RetrievalEvent(SQLModel, table=True):
     is_system_noise: bool = Field(default=False, index=True)  # 系统注入噪音（技能库维护等），评估统计时排除
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
+
 class SchedulerRun(SQLModel, table=True):
     """worker 上次运行时间（观察期保底：/stats 持久化 + 每日任务启动补跑判定）。"""
     __tablename__ = "scheduler_run"
@@ -419,4 +422,3 @@ class SessionScratchpad(SQLModel, table=True):
     content: str = ""
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
-

@@ -202,5 +202,5 @@ class TestMigrationsV8ToV15:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(reflect_run)")}
         assert "rejecter_failed" in cols
         assert "source" in cols
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 16
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 17
         conn.close()

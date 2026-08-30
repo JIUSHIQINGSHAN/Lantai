@@ -16,7 +16,7 @@ engine = create_engine(settings.DATABASE_URL, echo=False,
 # PRAGMA user_version 记录数据库结构版本；未版本化库（全新库或 v0.5 及以前
 # 老库）自动基线为 v1，增量补丁按版本号依次执行。ALTER TABLE ADD COLUMN 为
 # 毫秒级操作，代码更新与数据重构解耦，异常只记日志不阻断启动（降级而非崩溃）。
-CURRENT_SCHEMA_VERSION = 16
+CURRENT_SCHEMA_VERSION = 17
 
 
 def _ensure_column(conn, table: str, column: str, ddl: str) -> None:
@@ -209,6 +209,20 @@ def apply_migrations(conn) -> None:
             conn.execute("PRAGMA user_version = 16")
             conn.commit()
             logger.info("数据库增量迁移 v16 完成（札记 Session Scratchpad）")
+        # v16 -> v17（辨域 User-Session-Agent 三维硬隔离，ADR-0034）：memoryitem.domain 列
+        if user_version < 17:
+            _ensure_column(conn, "memoryitem", "domain", "TEXT DEFAULT 'user'")
+            try:
+                tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+                if "memoryitem" in tables:
+                    conn.execute("CREATE INDEX IF NOT EXISTS idx_memoryitem_domain ON memoryitem(domain)")
+            except Exception:
+                pass
+            conn.execute("PRAGMA user_version = 17")
+            conn.commit()
+            logger.info("数据库增量迁移 v17 完成（辨域 MemoryItem domain 列与索引）")
+
+
 
 
     except Exception as exc:

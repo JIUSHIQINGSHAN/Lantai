@@ -38,13 +38,15 @@ def handle_search(params: dict) -> dict:
     top_k = params.get("top_k", 5)
     if not isinstance(top_k, int) or isinstance(top_k, bool) or not (1 <= top_k <= 100):
         raise ValueError("top_k must be an int in [1, 100]")
+    force = bool(params.get("force", False))
     gate = relevance_check(query)
-    if not gate["needs_memory"]:
+    if not force and not gate["needs_memory"]:
         event_id = _try_log(query, [], 0, gate)
         return {"results": [], "gate": gate, "event_id": event_id}
+    domain = params.get("domain")
     import time
     t0 = time.perf_counter()
-    results = hybrid_search(query, top_k=top_k)
+    results = hybrid_search(query, top_k=top_k, domain=domain)
     latency_ms = int((time.perf_counter() - t0) * 1000)
     event_id = _try_log(query, results, latency_ms, gate)
     # Ticket 04: 检索透明——命中来源说明（id + 摘要 + 分数）
@@ -538,9 +540,45 @@ def handle_scratchpad_write(params: dict) -> dict:
     return write_scratchpad(session_id, content)
 
 
+def handle_dialogue_add_async(params: dict) -> dict:
+    """潜移：异步提交对话（ADR-0033）。"""
+    text = str(params.get("text", "")).strip()
+    user_id = str(params.get("user_id", "default"))
+    source = str(params.get("source", "dialogue"))
+    from lantai.services.async_ingest_service import submit_async_dialogue
+    return submit_async_dialogue(text=text, user_id=user_id, source=source)
+
+
+def handle_dialogue_task_status(params: dict) -> dict:
+    """潜移：查询异步对话摄取任务状态（ADR-0033）。"""
+    task_id = str(params.get("task_id", "")).strip()
+    from lantai.services.async_ingest_service import get_task_status
+    return get_task_status(task_id)
+
+
+def handle_graph_expand_search(params: dict) -> dict:
+    """贯珠：图增强混合检索（初筛 + 拓扑二度联想，ADR-0035）。"""
+    query = str(params.get("query", "")).strip()
+    if not query:
+        raise ValueError("query 不能为空")
+    top_k = int(params.get("top_k", 5))
+    max_hops = int(params.get("max_hops", 2))
+    min_edge_conf = float(params.get("min_edge_conf", 0.5))
+    domain = params.get("domain")
+    from lantai.retrieval.graph_retriever import graph_augmented_search
+    return graph_augmented_search(
+        query=query,
+        top_k=top_k,
+        max_hops=max_hops,
+        min_edge_conf=min_edge_conf,
+        domain=domain,
+    )
+
+
 
 def handle_persona_set(params: dict) -> dict:
     """器识：设置或更新人格基座（L/G/E）。"""
+
     from lantai.services.persona_service import set_persona
     name = params.get("name", "")
     if not isinstance(name, str) or not name.strip():
@@ -556,11 +594,21 @@ def handle_persona_set(params: dict) -> dict:
 
 
 TOOLS = {
-    "search":   {"description": "搜索记忆", "inputSchema": {
+    "search":   {"description": "搜索记忆（支持辨域 domain 过滤）", "inputSchema": {
         "type": "object", "properties": {
             "query": {"type": "string", "description": "搜索查询"},
             "top_k": {"type": "integer", "default": 5},
+            "domain": {"type": "string", "description": "辨域过滤：user/session/agent/all", "enum": ["user", "session", "agent", "all"]},
         }, "required": ["query"]}},
+    "graph_expand_search": {"description": "贯珠：图增强检索（混合初筛 + 沿 MemoryEdge 展开 1~2 步拓扑二度联想，ADR-0035）", "inputSchema": {
+        "type": "object", "properties": {
+            "query": {"type": "string", "description": "检索查询文本"},
+            "top_k": {"type": "integer", "default": 5, "description": "初筛数量"},
+            "max_hops": {"type": "integer", "default": 2, "description": "图扩散跳数 [1, 3]"},
+            "min_edge_conf": {"type": "number", "default": 0.5, "description": "边最低置信度"},
+            "domain": {"type": "string", "description": "辨域过滤"},
+        }, "required": ["query"]}},
+
     "add":      {"description": "添加记忆（media_url 提供时走目识 vision：图片 -> 视觉描述作为正文，与 content 二选一）", "inputSchema": {
         "type": "object", "properties": {
             "title": {"type": "string"},
@@ -587,6 +635,17 @@ TOOLS = {
             "user_id": {"type": "string", "default": "default"},
             "source": {"type": "string", "default": "dialogue"},
         }, "required": ["text"]}},
+    "dialogue_add_async": {"description": "潜移：异步对话写通道，立即返回 task_id，后台静默提纯入库（ADR-0033）", "inputSchema": {
+        "type": "object", "properties": {
+            "text": {"type": "string", "description": "对话文本"},
+            "user_id": {"type": "string", "default": "default"},
+            "source": {"type": "string", "default": "dialogue"},
+        }, "required": ["text"]}},
+    "dialogue_task_status": {"description": "潜移：查询异步对话摄取任务状态与提纯结果（ADR-0033）", "inputSchema": {
+        "type": "object", "properties": {
+            "task_id": {"type": "string", "description": "任务 ID"},
+        }, "required": ["task_id"]}},
+
     "candidates_pending": {"description": "列出待审候选（被闸门拒绝、等人工裁决）", "inputSchema": {
         "type": "object", "properties": {
             "limit": {"type": "integer", "default": 50},
@@ -781,6 +840,7 @@ TOOLS = {
 
 TOOL_HANDLERS = {
     "search": handle_search,
+    "graph_expand_search": handle_graph_expand_search,
     "add": handle_add,
     "feedback": handle_feedback,
     "backfill": handle_backfill,
@@ -795,6 +855,8 @@ TOOL_HANDLERS = {
     "conflicts_list": handle_conflicts_list,
     "conflict_resolve": handle_conflict_resolve,
     "add_dialogue": handle_add_dialogue,
+    "dialogue_add_async": handle_dialogue_add_async,
+    "dialogue_task_status": handle_dialogue_task_status,
     "scene_get": handle_scene_get,
     "scenes_list": handle_scenes_list,
     "recall_report": handle_recall_report,
@@ -837,7 +899,7 @@ def handle(msg: dict) -> dict | None:
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "lantai", "version": "0.16.0"}}}
+            "serverInfo": {"name": "lantai", "version": "0.18.0"}}}
     if method == "notifications/initialized":
         return None  # 通知无响应
     if method == "ping":

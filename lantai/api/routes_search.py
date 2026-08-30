@@ -1,3 +1,5 @@
+from typing import Optional
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends
 from lantai.core.acl import allowed_lanes, filter_results_by_lanes, verify_agent
 from lantai.models.schemas import SearchReq
@@ -21,7 +23,7 @@ def search(req: SearchReq, trace: bool = False, explain: bool = False,
     t0 = time.perf_counter()
     result = hybrid_search(req.query, req.top_k, req.memory_types,
                            req.lanes, req.use_rerank, trace=trace,
-                           explain=explain)
+                           explain=explain, domain=req.domain)
     latency_ms = int((time.perf_counter() - t0) * 1000)
     if trace and isinstance(result, tuple):
         results, trace_steps = result
@@ -37,6 +39,28 @@ def search(req: SearchReq, trace: bool = False, explain: bool = False,
                 "event_id": event_id, "evidence": evidence}
     return {"results": results, "gate": gate, "event_id": event_id,
             "evidence": evidence}
+
+
+class GraphExpandReq(BaseModel):
+    query: str
+    top_k: int = 5
+    max_hops: int = 2
+    min_edge_conf: float = 0.5
+    domain: Optional[str] = None
+
+
+@router.post("/search/graph_expand")
+def search_graph_expand(req: GraphExpandReq):
+    """贯珠（ADR-0035）：图增强混合检索。"""
+    from lantai.retrieval.graph_retriever import graph_augmented_search
+    return graph_augmented_search(
+        query=req.query,
+        top_k=req.top_k,
+        max_hops=req.max_hops,
+        min_edge_conf=req.min_edge_conf,
+        domain=req.domain,
+    )
+
 
 
 def _try_log(req, results: list, latency_ms: int, gate: dict) -> str | None:

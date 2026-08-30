@@ -22,3 +22,24 @@ def dialogue_route(req: DialogueIngestReq):
         return ingest_dialogue(req.text, user_id=req.user_id, source=req.source)
     except ValueError as e:
         raise HTTPException(422, str(e))
+
+
+@router.post("/dialogue/async")
+def dialogue_async_route(req: DialogueIngestReq):
+    """潜移（ADR-0033）：异步提交对话进行提纯摄取，立即返回 task_id。"""
+    try:
+        from lantai.services.async_ingest_service import submit_async_dialogue
+        return submit_async_dialogue(req.text, user_id=req.user_id, source=req.source)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@router.get("/dialogue/tasks/{task_id}")
+def dialogue_task_status_route(task_id: str):
+    """潜移（ADR-0033）：查询异步对话摄取任务的状态与结果。"""
+    from lantai.services.async_ingest_service import get_task_status
+    res = get_task_status(task_id)
+    if res.get("status") == "not_found":
+        raise HTTPException(404, "任务未找到")
+    return res
+

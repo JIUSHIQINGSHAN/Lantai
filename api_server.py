@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-app = FastAPI(title="兰台记忆（Lantai）", version="0.16.0", lifespan=lifespan)
+app = FastAPI(title="兰台记忆（Lantai）", version="0.18.0", lifespan=lifespan)
 
 # 公共端点（不需要鉴权）
 app.include_router(routes_health_router)

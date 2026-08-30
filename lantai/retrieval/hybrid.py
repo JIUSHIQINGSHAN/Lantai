@@ -1,3 +1,4 @@
+from typing import Any, Optional
 import jieba
 import time
 from rank_bm25 import BM25Okapi
@@ -68,14 +69,19 @@ def _apply_supersedes_order(scored: list, breakdowns: dict | None = None) -> lis
     out.sort(key=lambda x: -x[0])
     return out
 
-def hybrid_search(query: str, top_k: int = 5,
-                  memory_types: list[str] | None = None,
-                  lanes: list[str] | None = None,
-                  use_rerank: bool = True,
-                  trace: bool = False,
-                  explain: bool = False,
-                  param_overrides: dict | None = None) -> list[dict] | tuple[list[dict], list[dict]]:
-    """混合检索：向量 + BM25 + 衰减。
+def hybrid_search(
+    query: str,
+    top_k: int = 5,
+    memory_types: list[str] | None = None,
+    lanes: list[str] | None = None,
+    use_rerank: bool = True,
+    trace: bool = False,
+    explain: bool = False,
+    param_overrides: dict | None = None,
+    domain: str | None = None,
+    session: Any = None,
+) -> list[dict] | tuple[list[dict], list[dict]]:
+    """混合检索：向量 + BM25 + 衰减（支持辨域 ADR-0034 domain 过滤）。
 
     trace=True 时返回 (results, trace_steps)。
     explain=True 时每条结果附带分项 {vector, bm25, fts, decay, lane_boost,
@@ -86,7 +92,10 @@ def hybrid_search(query: str, top_k: int = 5,
     """
     with _param_override(param_overrides):
         return _hybrid_search_impl(
-            query, top_k, memory_types, lanes, use_rerank, trace, explain)
+            query, top_k, memory_types, lanes, use_rerank, trace, explain,
+            domain=domain, session=session,
+        )
+
 
 
 def _param_override(overrides: dict | None):
@@ -116,12 +125,17 @@ def _param_override(overrides: dict | None):
     return _ctx()
 
 
-def _hybrid_search_impl(query: str, top_k: int = 5,
-                        memory_types: list[str] | None = None,
-                        lanes: list[str] | None = None,
-                        use_rerank: bool = True,
-                        trace: bool = False,
-                        explain: bool = False) -> list[dict] | tuple[list[dict], list[dict]]:
+def _hybrid_search_impl(
+    query: str,
+    top_k: int = 5,
+    memory_types: list[str] | None = None,
+    lanes: list[str] | None = None,
+    use_rerank: bool = True,
+    trace: bool = False,
+    explain: bool = False,
+    domain: str | None = None,
+    session: Any = None,
+) -> list[dict] | tuple[list[dict], list[dict]]:
     trace_steps = []
     t0 = time.perf_counter()
 
@@ -161,19 +175,27 @@ def _hybrid_search_impl(query: str, top_k: int = 5,
         return _keyword_fallback(
             query, top_k, fetch_n, memory_types, lanes,
             trace, trace_steps, t0, explain,
+            domain=domain, session=session,
         )
 
     # 从 SQLite 加载完整记忆项——仅 active
     ids = [r["id"] for r in vector_results]
-    with db.get_session() as s:
-        items = s.exec(
+
+    def _query_items(s):
+        return s.exec(
             select(MemoryItem)
             .where(MemoryItem.id.in_(ids))
             .where(MemoryItem.status == "active")
         ).all()
+
+    if session is not None:
+        items = _query_items(session)
+    else:
+        with db.get_session() as s:
+            items = _query_items(s)
     items_by_id = {m.id: m for m in items}
 
-    # 过滤 memory_types / lanes
+    # 过滤 memory_types / lanes / domain
     if memory_types:
         items = [m for m in items if m.memory_type in memory_types]
     elif not settings.VERBATIM_IN_RECALL:
@@ -181,6 +203,9 @@ def _hybrid_search_impl(query: str, top_k: int = 5,
         items = [m for m in items if m.memory_type != "verbatim"]
     if lanes:
         items = [m for m in items if m.lane in lanes]
+    if domain and domain != "all":
+        items = [m for m in items if getattr(m, "domain", "user") == domain]
+
 
     # Step 2.5: Chronos 双时间过滤（DB 读出的 datetime 为 naive，需先归一时区）
     items = _chronos_filter(items)
@@ -368,6 +393,8 @@ def _keyword_fallback(
     trace_steps: list,
     t0: float,
     explain: bool = False,
+    domain: str | None = None,
+    session: Any = None,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     """向量检索降级路径：FTS5 召回作候选集，BM25 + decay 打分（无向量分）。
 
@@ -376,11 +403,19 @@ def _keyword_fallback(
     """
     # FTS5 子串召回作候选集（含追加语义：FTS 命中即候选）
     candidate_ids: set[str] = set()
-    try:
+
+    def _get_s(cb):
+        if session is not None:
+            return cb(session)
         with db.get_session() as s:
-            candidate_ids = set(search_fts(
+            return cb(s)
+
+    try:
+        def _fts_cb(s):
+            return search_fts(
                 s.connection().connection.driver_connection,
-                query, top_k=max(fetch_n, settings.FTS_RECALL_TOP_K)))
+                query, top_k=max(fetch_n, settings.FTS_RECALL_TOP_K))
+        candidate_ids = set(_get_s(_fts_cb))
     except Exception:
         candidate_ids = set()
 
@@ -388,28 +423,35 @@ def _keyword_fallback(
     # 采用 SQLite LIKE 短子串匹配候选，再由 BM25 + decay 排序
     if not candidate_ids:
         clean_q = query.strip()
-        if len(clean_q) >= 2:
+        tokens = [w.strip() for w in jieba.lcut(clean_q) if len(w.strip()) >= 1]
+        if tokens:
             try:
-                with db.get_session() as s:
-                    like_items = s.exec(
+                from sqlalchemy import or_
+                def _like_cb(s):
+                    conditions = [MemoryItem.content.like(f"%{t}%") for t in tokens]
+                    return s.exec(
                         select(MemoryItem.id)
                         .where(MemoryItem.status == "active")
-                        .where(MemoryItem.content.like(f"%{clean_q}%"))
+                        .where(or_(*conditions))
                         .limit(max(fetch_n, settings.FTS_RECALL_TOP_K))
                     ).all()
-                    candidate_ids = set(like_items)
+                like_items = _get_s(_like_cb)
+                candidate_ids = set(like_items)
             except Exception:
                 candidate_ids = set()
+
 
     if not candidate_ids:
         if trace:
             return [], trace_steps
         return []
 
-    with db.get_session() as s:
-        items = s.exec(select(MemoryItem)
+    def _items_cb(s):
+        return s.exec(select(MemoryItem)
                        .where(MemoryItem.id.in_(candidate_ids),
                               MemoryItem.status == "active")).all()
+
+    items = _get_s(_items_cb)
 
     if memory_types:
         items = [m for m in items if m.memory_type in memory_types]
@@ -418,7 +460,10 @@ def _keyword_fallback(
         items = [m for m in items if m.memory_type != "verbatim"]
     if lanes:
         items = [m for m in items if m.lane in lanes]
+    if domain and domain != "all":
+        items = [m for m in items if getattr(m, "domain", "user") == domain]
     items = _chronos_filter(items)
+
 
     if not items:
         if trace:
