@@ -68,9 +68,157 @@ function setView(view) {
   state.view = view;
   document.querySelectorAll('.view').forEach(value => value.classList.remove('active'));
   document.querySelectorAll('[data-view]').forEach(value => value.classList.toggle('active', value.dataset.view === view));
-  $(`#${view}View`).classList.add('active');
+  const targetView = $(`#${view}View`);
+  if (targetView) targetView.classList.add('active');
   if (view !== 'tasks') closeInspector();
+
+  if (view === 'studio') {
+    loadPersona();
+    loadScratchpad($('#scratchpadSession')?.value || 'default');
+  } else if (view === 'consolidation') {
+    loadConsolidationReport();
+  }
 }
+
+// ===== 1. 器识与札记工作室 (Studio) =====
+async function loadPersona() {
+  try {
+    const data = await api('/persona');
+    if (data) {
+      $('#personaName').value = data.name || 'default';
+      $('#personaStyle').value = data.linguistic_style || '';
+      $('#personaGuidelines').value = data.guidelines || '';
+      $('#personaFacts').value = data.epistemic_facts || '';
+    }
+  } catch (err) {
+    showToast(`读取人格失败: ${err.message}`);
+  }
+}
+
+async function savePersona(e) {
+  e.preventDefault();
+  const payload = {
+    name: $('#personaName').value.trim() || 'default',
+    linguistic_style: $('#personaStyle').value.trim(),
+    guidelines: $('#personaGuidelines').value.trim(),
+    epistemic_facts: $('#personaFacts').value.trim(),
+    is_active: true,
+  };
+  try {
+    await api('/persona', {method: 'POST', body: JSON.stringify(payload)});
+    showToast('👑 器识人格基座已成功更新并落库！');
+  } catch (err) {
+    showToast(`更新人格失败: ${err.message}`);
+  }
+}
+
+async function loadScratchpad(sessionId) {
+  try {
+    const data = await api(`/scratchpad?session_id=${encodeURIComponent(sessionId)}`);
+    const content = (data && data.content) || '';
+    $('#scratchpadContent').value = content;
+    $('#scratchpadCount').textContent = `${content.length} / 1000 字符`;
+  } catch (err) {
+    showToast(`读取札记失败: ${err.message}`);
+  }
+}
+
+async function saveScratchpad(e) {
+  e.preventDefault();
+  const sid = $('#scratchpadSession').value.trim() || 'default';
+  const content = $('#scratchpadContent').value;
+  try {
+    await api('/scratchpad', {method: 'POST', body: JSON.stringify({session_id: sid, content})});
+    showToast('📝 札记工作区便签已成功保存！');
+  } catch (err) {
+    showToast(`保存札记失败: ${err.message}`);
+  }
+}
+
+// ===== 2. 沉潜夜梦沉淀 (Consolidation) =====
+async function loadConsolidationReport() {
+  try {
+    const report = await api('/evolution/consolidate/report');
+    if (report) {
+      $('#conStatus').textContent = report.status || 'idle';
+      $('#conGroups').textContent = report.consolidated_groups || 0;
+      $('#conNew').textContent = report.new_memories || 0;
+      $('#conPruned').textContent = report.pruned_count || 0;
+      $('#conReportRaw').textContent = JSON.stringify(report, null, 2);
+    }
+  } catch (err) {
+    $('#conReportRaw').textContent = `读取沉淀报告异常: ${err.message}`;
+  }
+}
+
+async function triggerConsolidation() {
+  const btn = $('#triggerConsolidateBtn');
+  btn.disabled = true;
+  btn.textContent = '🌙 正在沉淀聚类与修剪...';
+  try {
+    const res = await api('/evolution/consolidate', {method: 'POST'});
+    showToast(`沉潜完成：提纯 ${res.new_memories || 0} 条主记忆，修剪 ${res.pruned_count || 0} 条衰减噪音`);
+    await loadConsolidationReport();
+  } catch (err) {
+    showToast(`沉淀执行失败: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🌙 立即触发一次夜梦沉淀';
+  }
+}
+
+// ===== 3. 四路检索与探针演练场 (Playground) =====
+async function runPlaygroundSearch() {
+  const query = $('#playgroundQuery').value.trim();
+  if (!query) {
+    showToast('请输入检索测试文本');
+    return;
+  }
+  const domain = $('#playgroundDomain').value;
+  const resultsBox = $('#playgroundResults');
+  resultsBox.innerHTML = '<div class="inspector-empty">正在检索与拓扑扩散...</div>';
+
+  // 1. 同时请求检索与探针检测
+  try {
+    const [searchRes, probeRes] = await Promise.all([
+      api('/search', {method: 'POST', body: JSON.stringify({query, top_k: 6, domain: domain === 'all' ? undefined : domain})}),
+      api('/probing/detect', {method: 'POST', body: JSON.stringify({query})}),
+    ]);
+
+    // 探针展示
+    const alertBox = $('#probingAlertBox');
+    if (probeRes && probeRes.probes && probeRes.probes.length > 0) {
+      alertBox.hidden = false;
+      $('#probeQuestionText').textContent = probeRes.probes[0].question;
+    } else {
+      alertBox.hidden = true;
+    }
+
+    // 结果渲染
+    const items = (searchRes && searchRes.memories) || [];
+    if (!items.length) {
+      resultsBox.innerHTML = '<div class="inspector-empty">未命中任何相关记忆（零召回）</div>';
+      return;
+    }
+
+    resultsBox.innerHTML = '';
+    items.forEach((m, idx) => {
+      const card = node('div', 'result-item');
+      const meta = node('div', 'meta-row');
+      meta.innerHTML = `<span>#${idx+1} [${m.domain || 'user'}/${m.lane || 'general'}] ID: ${m.id}</span><span class="score-tag">综合得分: ${(m.score || 1.0).toFixed(4)}</span>`;
+      const body = node('div', 'text-body', m.content);
+      const breakdown = node('div', 'score-breakdown');
+      breakdown.innerHTML = `<span>时效衰减: ${(m.decay_score || 1.0).toFixed(2)}</span><span>置信度: ${(m.confidence || 0.9).toFixed(2)}</span><span>重要性: ${(m.importance || 0.8).toFixed(2)}</span><span>版本: v${m.version || 1}</span>`;
+      card.appendChild(meta);
+      card.appendChild(body);
+      card.appendChild(breakdown);
+      resultsBox.appendChild(card);
+    });
+  } catch (err) {
+    resultsBox.innerHTML = `<div class="inspector-empty" style="color:var(--bad)">检索异常: ${err.message}</div>`;
+  }
+}
+
 
 async function fetchSection(section) {
   const slot = state.sections[section];
@@ -547,6 +695,20 @@ function bindEvents() {
     updateConnection(); await loadQueue();
   });
   $('#themeButton').addEventListener('click', toggleTheme);
+  
+  // 悬镜 Studio 表单绑定
+  $('#personaForm')?.addEventListener('submit', savePersona);
+  $('#scratchpadForm')?.addEventListener('submit', saveScratchpad);
+  $('#scratchpadSession')?.addEventListener('change', e => loadScratchpad(e.target.value.trim() || 'default'));
+  $('#scratchpadContent')?.addEventListener('input', e => {
+    $('#scratchpadCount').textContent = `${e.target.value.length} / 1000 字符`;
+  });
+  $('#triggerConsolidateBtn')?.addEventListener('click', triggerConsolidation);
+  $('#playgroundSearchBtn')?.addEventListener('click', runPlaygroundSearch);
+  $('#playgroundQuery')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); runPlaygroundSearch(); }
+  });
+
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && shell.classList.contains('inspector-open')) closeInspector();
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {

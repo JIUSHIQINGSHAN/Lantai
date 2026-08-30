@@ -201,3 +201,36 @@ dialog header button { width: 32px; height: 32px; border: 0; background: transpa
 @media (prefers-reduced-motion: no-preference) {
   .work-row, .tool-list a, .tool-list button { transition: background-color .14s ease, padding .14s ease; }
 }
+
+/* ===== 悬镜控制台 (Lantai Studio) 专属样式 ===== */
+.studio-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 20px; padding: 20px; }
+.panel-card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
+.panel-card h2, .panel-card h3 { margin: 0 0 8px; font-size: 16px; color: var(--ink); }
+.studio-form { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+.studio-form textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); padding: 10px; font-family: inherit; font-size: 13px; line-height: 1.5; resize: vertical; box-sizing: border-box; }
+.studio-form input[type=text] { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); padding: 10px; font-size: 13px; box-sizing: border-box; }
+.primary-btn { padding: 10px 20px; border: 0; border-radius: 8px; background: var(--accent); color: var(--btn-ink); font-weight: 600; font-size: 13px; cursor: pointer; transition: opacity .15s ease; }
+.primary-btn:hover { opacity: .9; }
+.form-footer { display: flex; justify-content: space-between; align-items: center; }
+
+/* 沉潜夜梦沉淀仪表盘 */
+.consolidation-dashboard { padding: 20px; }
+.metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; }
+.metric-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; text-align: center; }
+.metric-card .val { display: block; font-size: 24px; font-weight: 700; color: var(--accent); }
+.metric-card .lbl { font-size: 12px; color: var(--muted); margin-top: 4px; display: block; }
+.code-box { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; color: var(--ink); overflow-x: auto; white-space: pre-wrap; }
+
+/* 检索演练场 */
+.search-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.search-input { flex: 1 1 300px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font-size: 14px; }
+.select-box { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font-size: 13px; }
+.probe-alert { background: rgba(176,138,62,0.15); border: 1px solid var(--warn); border-radius: 10px; padding: 14px; margin: 16px 20px 0; color: var(--ink); }
+.probe-tag { font-weight: 700; color: var(--warn); font-size: 13px; margin-bottom: 6px; display: inline-block; }
+.results-list { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.result-item { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.result-item .meta-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.result-item .score-tag { color: var(--accent); font-weight: 700; font-size: 14px; }
+.result-item .text-body { font-size: 14px; line-height: 1.6; color: var(--ink); }
+.score-breakdown { display: flex; gap: 12px; font-size: 11px; color: var(--muted); margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+

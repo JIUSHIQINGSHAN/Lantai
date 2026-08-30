@@ -955,7 +955,7 @@ def handle(msg: dict) -> dict | None:
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "lantai", "version": "0.20.0"}}}
+            "serverInfo": {"name": "lantai", "version": "0.21.0"}}}
     if method == "notifications/initialized":
         return None  # 通知无响应
     if method == "ping":

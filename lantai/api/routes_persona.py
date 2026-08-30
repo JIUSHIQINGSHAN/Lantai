@@ -7,13 +7,15 @@ from lantai.services import persona_service
 router = APIRouter()
 
 
+@router.get("/persona")
 @router.get("/persona/active")
 def get_active():
     """获取当前激活的人格基座（器识 ADR-0029）。"""
     p = persona_service.get_active_persona()
     if not p:
-        raise HTTPException(status_code=404, detail="No active persona")
+        return {"name": "default", "linguistic_style": "", "guidelines": "", "epistemic_facts": "", "is_active": True}
     return p.model_dump(mode="json")
+
 
 
 @router.get("/persona/list")

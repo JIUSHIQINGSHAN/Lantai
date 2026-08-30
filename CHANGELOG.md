@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-08-31 - 悬镜（Xuanjing · 兰台可视化管理控制台 Lantai Studio）
+
+### Added
+- **悬镜（全功能可视化记忆管理控制台，ADR-0038）**:
+  - 前端架构升级（Lantai Studio）：重构 `/ui` 单页工作台，打造一站式人机协同记忆运维界面，彻底打破纯 MCP 命令行运维壁垒；
+  - 器识与札记在线工作室（Persona & Scratchpad Studio）：支持在线查看、编辑并一键保存 L/G/E 人格基座与工作区即时便签；
+  - 沉潜夜梦沉淀仪表盘（Consolidation Console）：实时查看最近沉淀审计报告、碎片聚类统计与修剪突触计数，支持一键触发夜梦沉淀；
+  - 四路检索与探针演练场（Playground）：交互式输入 Query，实时拆解展示向量分、BM25 分、FTS5 字串匹配分、时效衰减乘数与【探颐】主动探针提示；
+  - 界面与主题美化：支持「吉金」（青铜深色）与「漏窗」（园林浅色）双典籍主题自适应与移动端响应式布局；
+  - 命名正式登记：在 `CONTEXT.md` 登记「悬镜」（Xuanjing，出自宝镜高悬意象），归档 ADR-0038。
+
 ## [0.20.0] - 2026-08-31 - 探颐（Tanyi · 记忆主动探针与自然交互消歧）
 
 ### Added

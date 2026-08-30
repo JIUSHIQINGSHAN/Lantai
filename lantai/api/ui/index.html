@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <title>兰台 · 案牍</title>
+  <title>兰台 · 案牍（悬镜控制台）</title>
   <link rel="stylesheet" href="/ui/assets/styles.css">
 </head>
 <body>
@@ -12,13 +12,15 @@
     <aside class="sidebar" aria-label="主导航">
       <div class="brand-block">
         <div class="brand-mark" aria-hidden="true">蘭</div>
-        <div><strong>兰台</strong><span>记忆工作台</span></div>
+        <div><strong>兰台</strong><span>悬镜控制台</span></div>
       </div>
       <nav class="primary-nav">
-        <button class="nav-item active" data-view="tasks"><span>待办</span><b id="navTaskCount">0</b></button>
-        <button class="nav-item" data-view="memory"><span>记忆</span></button>
-        <button class="nav-item" data-view="quality"><span>质量</span></button>
-        <button class="nav-item" data-view="system"><span>系统</span><b id="navSystemCount">0</b></button>
+        <button class="nav-item active" data-view="tasks"><span>案牍待办</span><b id="navTaskCount">0</b></button>
+        <button class="nav-item" data-view="studio"><span>器识札记</span></button>
+        <button class="nav-item" data-view="consolidation"><span>沉潜夜梦</span></button>
+        <button class="nav-item" data-view="playground"><span>检索演练</span></button>
+        <button class="nav-item" data-view="memory"><span>档案星图</span></button>
+        <button class="nav-item" data-view="system"><span>系统脉搏</span><b id="navSystemCount">0</b></button>
       </nav>
       <div class="sidebar-footer">
         <button class="utility-button" id="themeButton" title="切换吉金/漏窗主题" aria-label="切换主题">式</button>
@@ -29,10 +31,11 @@
     </aside>
 
     <main class="workspace">
+      <!-- 1. 案牍待办工作区 -->
       <section class="view active" id="tasksView" aria-labelledby="pageTitle">
         <header class="topbar">
           <div>
-            <h1 id="pageTitle">案牍</h1>
+            <h1 id="pageTitle">案牍审阅</h1>
             <p id="queueSummary">正在读取待办</p>
           </div>
           <div class="top-actions">
@@ -73,29 +76,110 @@
         <div class="queue" id="queue" aria-live="polite"></div>
       </section>
 
+      <!-- 2. 器识与札记工作室 (Studio) -->
+      <section class="view" id="studioView">
+        <header class="topbar">
+          <div><h1>器识与札记工作室</h1><p>管理智能体人格基座（L/G/E）与工作区即时便签</p></div>
+        </header>
+        <div class="studio-grid">
+          <!-- 器识卡片 -->
+          <div class="panel-card">
+            <h2>👑 器识（Persona 人格基座）</h2>
+            <p class="muted">定义 AI 的言语风格、行为准则与认知底色（常量级不衰减）。</p>
+            <form id="personaForm" class="studio-form">
+              <label class="form-field"><span>人格名称</span><input id="personaName" type="text" placeholder="default" required></label>
+              <label class="form-field"><span>L · 言语与表达风格 (Linguistic Style)</span><textarea id="personaStyle" rows="3" placeholder="例如：温润儒雅，言简意赅，善用典故。"></textarea></label>
+              <label class="form-field"><span>G · 行为准则与戒律 (Guidelines)</span><textarea id="personaGuidelines" rows="3" placeholder="例如：宁 miss 不脏写；涉及不可逆操作必须确认。"></textarea></label>
+              <label class="form-field"><span>E · 认知底色与核心事实 (Epistemic Facts)</span><textarea id="personaFacts" rows="3" placeholder="例如：当前系统运行在兰台架构之上。"></textarea></label>
+              <button type="submit" class="primary-btn">💾 保存并更新人格基座</button>
+            </form>
+          </div>
+
+          <!-- 札记卡片 -->
+          <div class="panel-card">
+            <h2>📝 札记（Working Memory 便签）</h2>
+            <p class="muted">跨多轮对话的工作区实时便签（上限 1000 字符，会话首轮注入）。</p>
+            <form id="scratchpadForm" class="studio-form">
+              <label class="form-field"><span>会话 ID (Session ID)</span><input id="scratchpadSession" type="text" value="default"></label>
+              <label class="form-field"><span>即时便签内容</span><textarea id="scratchpadContent" rows="8" placeholder="在这里记下当前会话的即时目标、待办事项或临时决策..."></textarea></label>
+              <div class="form-footer">
+                <span id="scratchpadCount" class="muted">0 / 1000 字符</span>
+                <button type="submit" class="primary-btn">📌 写入便签</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. 沉潜夜梦沉淀 (Consolidation) -->
+      <section class="view" id="consolidationView">
+        <header class="topbar">
+          <div><h1>沉潜夜梦沉淀</h1><p>闲时多维拓扑聚类、概念提纯合成与突触修剪</p></div>
+          <div class="top-actions">
+            <button class="primary-btn" id="triggerConsolidateBtn">🌙 立即触发一次夜梦沉淀</button>
+          </div>
+        </header>
+        <div class="consolidation-dashboard">
+          <div class="metrics-grid">
+            <div class="metric-card"><span class="val" id="conStatus">idle</span><span class="lbl">最近运行状态</span></div>
+            <div class="metric-card"><span class="val" id="conGroups">0</span><span class="lbl">发现碎片聚类群</span></div>
+            <div class="metric-card"><span class="val" id="conNew">0</span><span class="lbl">提纯折叠主记忆</span></div>
+            <div class="metric-card"><span class="val" id="conPruned">0</span><span class="lbl">修剪衰减突触</span></div>
+          </div>
+          <div class="panel-card" style="margin-top:16px;">
+            <h3>📊 最近一次沉淀审计报告</h3>
+            <pre id="conReportRaw" class="code-box">正在读取报告...</pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. 检索与探针演练场 (Playground) -->
+      <section class="view" id="playgroundView">
+        <header class="topbar">
+          <div><h1>四路检索与探针演练场</h1><p>实时测试向量/BM25/FTS5/衰减得分与【探颐】主动探针</p></div>
+        </header>
+        <div class="panel-card">
+          <div class="search-controls">
+            <input type="text" id="playgroundQuery" placeholder="输入搜索查询或测试对话文本..." class="search-input">
+            <select id="playgroundDomain" class="select-box">
+              <option value="all">全域 (all)</option>
+              <option value="user" selected>用户域 (user)</option>
+              <option value="session">会话域 (session)</option>
+              <option value="agent">智能体域 (agent)</option>
+            </select>
+            <button id="playgroundSearchBtn" class="primary-btn">🔍 检索测试</button>
+          </div>
+        </div>
+
+        <!-- 探针命中提醒 -->
+        <div id="probingAlertBox" class="probe-alert" hidden>
+          <span class="probe-tag">🎯 【探颐】主动探针触发</span>
+          <p id="probeQuestionText"></p>
+        </div>
+
+        <!-- 检索结果拆解列表 -->
+        <div id="playgroundResults" class="results-list"></div>
+      </section>
+
+      <!-- 5. 档案星图 -->
       <section class="view tools-view" id="memoryView">
-        <header class="topbar"><div><h1>记忆</h1><p>浏览、组织与追溯</p></div></header>
+        <header class="topbar"><div><h1>档案与星图</h1><p>全景记忆浏览、拓扑图谱与关系追溯</p></div></header>
         <div class="tool-list">
-          <a href="/ui/vault"><span><b>档案</b><small>记忆列表与候选审阅</small></span><i>→</i></a>
-          <a href="/ui/map"><span><b>星图</b><small>关系、来源与场景</small></span><i>→</i></a>
+          <a href="/ui/vault"><span><b>档案库</b><small>全库记忆结构化列表与多维检索</small></span><i>→</i></a>
+          <a href="/ui/map"><span><b>知识星图</b><small>关系、实体双链与拓扑场景</small></span><i>→</i></a>
         </div>
       </section>
 
-      <section class="view tools-view" id="qualityView">
-        <header class="topbar"><div><h1>质量</h1><p>检查召回与演化效果</p></div></header>
-        <div class="tool-list">
-          <a href="/ui/recall"><span><b>追忆漏斗</b><small>逐步查看召回结果</small></span><i>→</i></a>
-          <a href="/ui/evolve"><span><b>检索质量</b><small>报告、评测与趋势</small></span><i>→</i></a>
-        </div>
-      </section>
-
+      <!-- 6. 系统脉搏 -->
       <section class="view tools-view" id="systemView">
-        <header class="topbar"><div><h1>系统</h1><p>运行状态与维护入口</p></div></header>
+        <header class="topbar"><div><h1>系统脉搏与质量</h1><p>存储健康度、Worker 调度与监控报告</p></div></header>
         <div class="tool-list">
-          <a href="/ui/pulse"><span><b>脉搏</b><small>健康、存量与 worker 时间</small></span><i>→</i></a>
-          <button id="systemRefresh"><span><b>刷新案牍状态</b><small>重新读取全部运行记录</small></span><i>↻</i></button>
+          <a href="/ui/recall"><span><b>追忆漏斗</b><small>逐步查看检索漏斗与各层召回</small></span><i>→</i></a>
+          <a href="/ui/pulse"><span><b>系统脉搏</b><small>存储可用性与 Worker 调度记录</small></span><i>→</i></a>
+          <a href="/ui/evolve"><span><b>检索质量</b><small>零召回率、评测与演化看板</small></span><i>→</i></a>
         </div>
       </section>
+
     </main>
 
     <aside class="inspector" id="inspector" aria-label="案牍详情" aria-hidden="true">
@@ -112,8 +196,10 @@
 
   <nav class="mobile-nav" aria-label="移动端主导航">
     <button class="active" data-view="tasks">待办</button>
-    <button data-view="memory">记忆</button>
-    <button data-view="quality">质量</button>
+    <button data-view="studio">工作室</button>
+    <button data-view="consolidation">沉潜</button>
+    <button data-view="playground">演练</button>
+    <button data-view="memory">档案</button>
     <button data-view="system">系统</button>
   </nav>
 
@@ -138,4 +224,3 @@
   <script type="module" src="/ui/assets/app.js"></script>
 </body>
 </html>
-
