@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **开发工作流标准化**: 确立《研发工作流规范》（`docs/development-workflow.md`），基于六阶段标准（需求立项拆解、5 步根因诊断、架构与命名治理、TDD 先导与核心函数不 mock 冒烟、代码审查门禁、版本收口与发布闸门），并作为 `AGENTS.md` 强制规则。
+- **拾遗检索韧性与多级降级（ADR-0028）**: 
+  - 混合检索 `hybrid_search` 嵌入异常防护：外部 Embedding API 鉴权 401/网络超时/连接中断时不挂死，平滑降级至 `_keyword_fallback` 本地 FTS5 + BM25 关键词检索；
+  - 降级候选提取补充 SQLite LIKE 子串匹配，彻底解决 < 3 字符短词（如 "电脑"、"显卡"、"测试"）无法触发 FTS5 trigram 分词导致的零召回；
+  - `SearchReq` 增加 `force: bool = False`，支持显式透传直接绕过闸门检索；
+  - 「拾遗」正式登记 `CONTEXT.md` 词汇表（ADR-0013 意象池「拾遗」= 唐代谏官官职，取「拾遗补阙、失落必还」之意）。
+- **察窗观察期滑动窗口（ADR-0027，v0.16.0）**: `scripts/reflect_observation_status.py` 支持 `reference_date` 参数，反思观察期由连续口径改为滑动窗口内合格天数统计。
+
+### Fixed
+- **相关性闸门短查询与自指校准（ADR-0028）**:
+  - `_BASE_SELF_REFERENCE` 正则收录 "大哥" 等项目核心自指，使 "大哥电脑配置" 准确识别为自指；
+  - 社交结束语 `NO_MEMORY_PATTERNS` 增强支持多词组合（如 "好的谢谢"、"好的好的"）；
+  - 内容查询放行技术/领域专业词短查询（如 "什么是事件驱动架构"、"华硕天选三显卡"），消除武断的 15 字符硬门槛对短实词的误杀；
+  - 修复 `tests/test_reflect_observation_status.py` 静态时间戳导致的滑动窗口老化失效。
+
 ## [0.15.2] - 2026-08-27
 
 ### Added
