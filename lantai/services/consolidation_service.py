@@ -75,6 +75,36 @@ def find_consolidation_clusters(
     return clusters
 
 
+def _verify_trustmem_transition(cluster_items: list[MemoryItem], content: str) -> bool:
+    """可信记忆迁移校验器（TrustMem Verifier，借鉴 arXiv:2606.25161）。
+
+    校验：
+    1. 长度与基础非空校验；
+    2. 核心共识关键词覆盖校验（防止关键实体遗漏与幻觉丢失）；
+    3. 异常截断防护。
+    """
+    clean_c = content.strip()
+    if not (5 <= len(clean_c) <= 2000):
+        logger.warning("沉潜 TrustMem 校验失败：提纯长度不合规 (%d 字符)", len(clean_c))
+        return False
+
+    kw_freq = defaultdict(int)
+    for m in cluster_items:
+        tags = jieba.analyse.extract_tags(m.content, topK=3)
+        for t in tags:
+            if len(t.strip()) >= 2:
+                kw_freq[t.strip()] += 1
+
+    # 找出在多数碎片（>=2）中都出现的共识关键词
+    consensus_kws = [k for k, count in kw_freq.items() if count >= 2]
+    if consensus_kws:
+        has_match = any(kw in clean_c for kw in consensus_kws)
+        if not has_match:
+            logger.warning("沉潜 TrustMem 校验失败：提纯内容丢失共识关键词 %s", consensus_kws)
+            return False
+    return True
+
+
 def consolidate_cluster(
     cluster_items: list[MemoryItem], session: Optional[Session] = None
 ) -> Optional[MemoryItem]:
@@ -111,8 +141,13 @@ def consolidate_cluster(
             return None
 
         content = str(res["consolidated_content"]).strip()
+        if not _verify_trustmem_transition(cluster_items, content):
+            logger.warning("沉潜：TrustMem 迁移校验不通过，放弃折叠以防脏写")
+            return None
+
         importance = float(res.get("importance", 0.8))
         confidence = float(res.get("confidence", 0.9))
+
 
         dom = getattr(cluster_items[0], "domain", "user")
         lane = cluster_items[0].lane
