@@ -1,48 +1,62 @@
 :root {
   color-scheme: dark;
-  --bg: #182129;
-  --panel: #202b34;
-  --surface: #293640;
-  --surface-strong: #32414b;
-  --ink: #e7e0d0;
-  --muted: #9aa6a5;
-  --line: #3c4a54;
-  --accent: #b48c47;
-  --green: #4f8c79;
-  --red: #b65a4b;
-  --blue: #6e91a3;
-  --focus: #d7b56f;
-  --shadow: rgba(0, 0, 0, .24);
-  --sidebar: 208px;
-  --inspector: 410px;
-  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  --bg: #0d1217;
+  --panel: #141c24;
+  --surface: #1d2732;
+  --surface-strong: #283745;
+  --ink: #f7f8f8;
+  --fg-2: #d0d6e0;
+  --muted: #8a96a3;
+  --meta: #626e7a;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-soft: rgba(255, 255, 255, 0.04);
+  --accent: #c69b51;
+  --accent-hover: #dcb36d;
+  --accent-on: #0d1217;
+  --green: #38a169;
+  --red: #e53e3e;
+  --blue: #4299e1;
+  --warn: #dd6b20;
+  --focus: #c69b51;
+  --shadow: rgba(0, 0, 0, 0.4);
+  --sidebar: 216px;
+  --inspector: 420px;
+  --font-display: "KaiTi", "STKaiti", "Songti SC", "Inter Variable", "SF Pro Display", serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "Fira Code", "Cascadia Code", ui-monospace, "SF Mono", Menlo, monospace;
 }
 
 [data-theme="louchuang"] {
   color-scheme: light;
-  --bg: #e9eeea;
-  --panel: #f8faf7;
-  --surface: #e2e9e3;
-  --surface-strong: #d5e0d8;
-  --ink: #243a36;
-  --muted: #65756f;
-  --line: #bccac1;
-  --accent: #947238;
-  --green: #477d6d;
-  --red: #a65449;
-  --blue: #557d8a;
-  --focus: #72571f;
-  --shadow: rgba(35, 58, 54, .14);
+  --bg: #f4f6f4;
+  --panel: #ffffff;
+  --surface: #edf2ee;
+  --surface-strong: #e1e9e2;
+  --ink: #1a2723;
+  --fg-2: #344843;
+  --muted: #677b75;
+  --meta: #8a9d97;
+  --line: rgba(0, 0, 0, 0.08);
+  --line-soft: rgba(0, 0, 0, 0.04);
+  --accent: #9e7839;
+  --accent-hover: #b78f4a;
+  --accent-on: #ffffff;
+  --green: #2f855a;
+  --red: #c53030;
+  --blue: #3182ce;
+  --warn: #c05621;
+  --focus: #9e7839;
+  --shadow: rgba(0, 0, 0, 0.08);
 }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { min-height: 100%; }
-body { margin: 0; background: var(--bg); color: var(--ink); font-size: 14px; letter-spacing: 0; }
-button, input, select, textarea { font: inherit; letter-spacing: 0; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 13.5px; line-height: 1.5; letter-spacing: -0.01em; -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font-family: inherit; font-size: inherit; letter-spacing: inherit; }
 button, a, input, select, textarea { outline: none; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 42%, transparent);
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus);
 }
 button { cursor: pointer; }
 
