@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **考功（记忆价值演化与升降评定体系，ADR-0031，v0.16.4）**:
+  - 核心服务 `kaogong_service.py`：基于长程使用反馈（`MemoryUsageFeedback`）与采纳率实现全库记忆功过评定；
+  - 升降规则：高频高采纳记忆（`use_count >= 3, helpful_ratio >= 0.8`）上考晋升长期语义层（`tier="longterm", decay_class="semantic"`），高频低效记忆（`helpful_ratio <= 0.2`）下考降权，样本不足保持原状（宁 miss 不脏写）；
+  - 接口面暴露：新增 REST `POST /evolution/kaogong`、`GET /evolution/kaogong/report` 以及 MCP 工具 `kaogong_eval`（MCP 工具总数扩容至 46）；
+  - 命名正式登记：在 `CONTEXT.md` 登记「考功」（Kaogong，出自唐代吏部考功司，掌官吏功过品级考评），归档 ADR-0031。
+- **沙汰阈值校准（ADR-0026，v0.16.4）**:
+  - `CANDIDATE_MIN_CONFIDENCE` 默认值安全校准为 `0.15`，自动淘汰闲聊废话（conf=0.0）与残片，保障待审队列高质量。
 - **披沙（候选记忆递归精炼 Refine 机制，ADR-0030，v0.16.3）**:
   - 核心服务 `refine_service.py`：针对模糊置信度（0.2~0.6）的候选记忆进行 LLM 指代消解、消除口语化废话、原子化提纯与置信度重估；
   - 严格降级保护（宁 miss 不脏写）：LLM 异常、超时或校验失败时优雅降级保持原始文本不变，绝不损坏原有数据；

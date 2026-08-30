@@ -132,6 +132,13 @@ def handle_get_digest(params: dict) -> dict:
     return load_today_digest()
 
 
+def handle_kaogong_eval(params: dict) -> dict:
+    """考功：执行全库记忆价值演化考评周期（ADR-0031）。"""
+    from lantai.services.kaogong_service import run_kaogong_cycle
+    return run_kaogong_cycle()
+
+
+
 
 
 def handle_feedback(params: dict) -> dict:
@@ -578,6 +585,9 @@ TOOLS = {
         "type": "object", "properties": {
             "candidate_id": {"type": "string", "description": "候选记忆 ID"},
         }, "required": ["candidate_id"]}},
+    "kaogong_eval": {"description": "考功（演化）：基于长程使用反馈与采纳率，对全库记忆执行功过升降级评定（ADR-0031）", "inputSchema": {
+        "type": "object", "properties": {},
+    }},
     "raw_add": {"description": "原文直存（verbatim）：内容直入 FTS5+向量，零 LLM", "inputSchema": {
         "type": "object", "properties": {
             "content": {"type": "string", "description": "原文内容（代码/日志/配置等）"},
@@ -751,6 +761,7 @@ TOOL_HANDLERS = {
     "candidates_pending": handle_candidates_pending,
     "candidate_review": handle_candidate_review,
     "candidate_refine": handle_candidate_refine,
+    "kaogong_eval": handle_kaogong_eval,
     "get_digest": handle_get_digest,
     "raw_add": handle_raw_add,
     "obsidian_sync": handle_obsidian_sync,

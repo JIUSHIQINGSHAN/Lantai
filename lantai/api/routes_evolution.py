@@ -41,3 +41,18 @@ def feedback_route(req: FeedbackReq):
 @router.post("/evolve/run")
 def evolve_run_route():
     return run_evolve()
+
+
+@router.post("/evolution/kaogong")
+def kaogong_run_route():
+    """考功（ADR-0031）：执行一次全库记忆价值演化考评周期。"""
+    from lantai.services.kaogong_service import run_kaogong_cycle
+    return run_kaogong_cycle()
+
+
+@router.get("/evolution/kaogong/report")
+def kaogong_report_route():
+    """考功（ADR-0031）：获取最新考功评定审计报告。"""
+    from lantai.services.kaogong_service import get_kaogong_report
+    return get_kaogong_report()
+

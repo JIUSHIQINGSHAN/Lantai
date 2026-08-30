@@ -42,8 +42,8 @@ class Settings(BaseSettings):
     # 候选可见队列（Ticket 02）：reject 进待审队列，超龄自动归档
     CANDIDATE_TTL_DAYS: int = 7
     # 沙汰：候选入队地板信噪门（ADR-0026）。低于此值的候选直接 rejected（不入待审队列）。
-    # 默认 0.0 = 零行为变化；初始校准建议 0.15（闲聊 conf=0.0 自动淘汰）。
-    CANDIDATE_MIN_CONFIDENCE: float = 0.0
+    # 校准为 0.15（闲聊 conf=0.0 与无效残片自动淘汰，不污染待审队列）。
+    CANDIDATE_MIN_CONFIDENCE: float = 0.15
 
     # 对话写通道（Ticket 01）：分 lane 自动提取 vs 闲聊入队
     DIALOGUE_ENABLED: bool = True
