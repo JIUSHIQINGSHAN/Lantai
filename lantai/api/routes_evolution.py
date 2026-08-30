@@ -56,3 +56,18 @@ def kaogong_report_route():
     from lantai.services.kaogong_service import get_kaogong_report
     return get_kaogong_report()
 
+
+@router.post("/evolution/consolidate")
+def consolidate_run_route():
+    """沉潜（ADR-0036）：执行一次闲时夜梦记忆沉淀与折叠压缩周期。"""
+    from lantai.services.consolidation_service import run_consolidation_cycle
+    return run_consolidation_cycle()
+
+
+@router.get("/evolution/consolidate/report")
+def consolidate_report_route():
+    """沉潜（ADR-0036）：获取最新夜梦沉淀审计报告。"""
+    from lantai.services.consolidation_service import get_consolidation_report
+    return get_consolidation_report()
+
+

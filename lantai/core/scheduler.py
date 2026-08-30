@@ -157,6 +157,13 @@ def start_scheduler():
                            days=settings.AUTODREAM_CRON_DAYS,
                            id="autodream", replace_existing=True)
 
+    # 沉潜（ADR-0036）：每日夜梦沉淀与折叠压缩（北京时间凌晨 03:30 / UTC 19:30）
+    from lantai.services.consolidation_service import run_consolidation_cycle
+    _scheduler.add_job(run_consolidation_cycle, "cron",
+                       hour=19, minute=30,
+                       id="consolidation", replace_existing=True)
+
+
     # F7: coalesce idle flush（每 2 秒检查一次空闲缓冲；冲刷结果持久化，不静默丢弃）
     if settings.COALESCE_ENABLED:
         from lantai.ingestion.coalesce import get_coalesce_buffer

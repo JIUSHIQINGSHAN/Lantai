@@ -140,6 +140,19 @@ def handle_kaogong_eval(params: dict) -> dict:
     return run_kaogong_cycle()
 
 
+def handle_memory_consolidate(params: dict) -> dict:
+    """沉潜：执行闲时夜梦记忆沉淀与折叠压缩周期（ADR-0036）。"""
+    from lantai.services.consolidation_service import run_consolidation_cycle
+    return run_consolidation_cycle()
+
+
+def handle_consolidation_report(params: dict) -> dict:
+    """沉潜：获取最新夜梦沉淀审计报告（ADR-0036）。"""
+    from lantai.services.consolidation_service import get_consolidation_report
+    return get_consolidation_report()
+
+
+
 
 
 
@@ -663,6 +676,13 @@ TOOLS = {
     "kaogong_eval": {"description": "考功（演化）：基于长程使用反馈与采纳率，对全库记忆执行功过升降级评定（ADR-0031）", "inputSchema": {
         "type": "object", "properties": {},
     }},
+    "memory_consolidate": {"description": "沉潜（折叠压缩）：扫描高密度碎片记忆聚类提纯为主记忆，并修剪极度衰减的边缘噪音（ADR-0036）", "inputSchema": {
+        "type": "object", "properties": {},
+    }},
+    "consolidation_report": {"description": "沉潜（审计报告）：获取最近一次夜梦沉淀与折叠压缩的审计结果（ADR-0036）", "inputSchema": {
+        "type": "object", "properties": {},
+    }},
+
     "raw_add": {"description": "原文直存（verbatim）：内容直入 FTS5+向量，零 LLM", "inputSchema": {
         "type": "object", "properties": {
             "content": {"type": "string", "description": "原文内容（代码/日志/配置等）"},
@@ -848,6 +868,8 @@ TOOL_HANDLERS = {
     "candidate_review": handle_candidate_review,
     "candidate_refine": handle_candidate_refine,
     "kaogong_eval": handle_kaogong_eval,
+    "memory_consolidate": handle_memory_consolidate,
+    "consolidation_report": handle_consolidation_report,
     "get_digest": handle_get_digest,
     "raw_add": handle_raw_add,
     "obsidian_sync": handle_obsidian_sync,
@@ -899,7 +921,7 @@ def handle(msg: dict) -> dict | None:
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "lantai", "version": "0.18.0"}}}
+            "serverInfo": {"name": "lantai", "version": "0.19.0"}}}
     if method == "notifications/initialized":
         return None  # 通知无响应
     if method == "ping":

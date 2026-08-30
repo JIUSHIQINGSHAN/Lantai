@@ -30,11 +30,13 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert len(resp["result"]["tools"]) == 51  # 第十三波：贯珠 graph_expand_search (ADR-0035)
+    assert len(resp["result"]["tools"]) == 53  # 第十四波：沉潜 memory_consolidate/consolidation_report (ADR-0036)
     assert "persona_get" in names
     assert "persona_set" in names
     assert "candidate_refine" in names
     assert "kaogong_eval" in names
+    assert "memory_consolidate" in names
+    assert "consolidation_report" in names
     assert "scratchpad_get" in names
     assert "scratchpad_write" in names
     assert "dialogue_add_async" in names

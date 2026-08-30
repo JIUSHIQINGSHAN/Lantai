@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-08-31 - 沉潜（Chenqian · 闲时夜梦沉淀与折叠压缩）
+
+### Added
+- **沉潜（闲时夜梦沉淀与记忆折叠压缩，ADR-0036）**:
+  - 核心服务 `consolidation_service.py`：基于 `find_consolidation_clusters` 自动扫描 `(domain, lane)` 分组下的高重合度碎片记忆群（$\ge 3$ 条）；
+  - 概念提纯与折叠：调用 LLM 归纳提纯出 1 条高阶概括性主记忆，挂载 `source_ids` 溯源，并将原碎片状态置为 `consolidated`（折叠归档，主检索不再重复干扰）；
+  - 衰减突触修剪：`prune_decayed_synapses` 自动将极度衰减（`decay_score < 0.05`）且无高采纳反馈的边缘噪音转入 `archived` 休眠；
+  - 调度器集成：在 `scheduler.py` 注册每日闲时/夜间沉淀任务（北京时间凌晨 03:30 自动执行）；
+  - 接口面暴露：新增 REST `POST /evolution/consolidate`、`GET /evolution/consolidate/report` 以及 MCP 工具 `memory_consolidate` / `consolidation_report`（MCP 工具总数扩容至 **53**）；
+  - 命名正式登记：在 `CONTEXT.md` 登记「沉潜」（Chenqian，出自《荀子》「沉潜以思」），归档 ADR-0036。
+
 ## [0.18.0] - 2026-08-30 - 贯珠 · 辨域 · 潜移 · 札记（四维借鉴闭环）
 
 ### Added
