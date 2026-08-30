@@ -4,7 +4,7 @@
 不改 fastpath / gate 语义：
 
 1. fastpath 白名单直通（"记住：X" / 自我声明 / 偏好表达）——绕过 LLM 提取
-2. 闲聊（过短 / 纯社交结束语）——直接建兜底候选进待审队列（不落库为记忆）
+2. 闲聊（过短 / 纯社交结束语）——直接 rejected（沙汰，ADR-0026，不进待审队列）
 3. 其余文本——LLM 提取建候选（status=new，走现有 gate 分层）；
    低置信度 / 提取失败（上游 502）→ 候选进待审队列，不丢数据
 """
@@ -63,7 +63,7 @@ def ingest_dialogue(text: str, *, user_id: str = "default",
 
     返回 {"ingested", "candidate_id", "fastpath", "lane", "status"}
     status：fastpath（直通）/ new（待 evolve gate 分层）/
-    pending_review（闲聊 / 低置信度 / 提取失败兜底）
+    pending_review（低置信度 / 提取失败兜底；闲聊直接 rejected）
     """
     text = (text or "").strip()
     if not text:
@@ -78,10 +78,10 @@ def ingest_dialogue(text: str, *, user_id: str = "default",
                                  status="fastpath", user_id=user_id,
                                  source=source, created_at=created_at)
 
-    # 2) 闲聊 → 兜底候选进待审队列（不静默丢弃、不落库为记忆）
+    # 2) 闲聊 → 直接 rejected（沙汰，ADR-0026），不进待审队列
     if _is_chitchat(text):
         return _create_candidate(text, lane="general", fp_data=None,
-                                 status="pending_review", user_id=user_id,
+                                 status="rejected", user_id=user_id,
                                  source=source, created_at=created_at)
 
     # 3) LLM 提取（extract_candidate 自带降级 fallback）→ 走现有 gate 分层
@@ -91,9 +91,20 @@ def ingest_dialogue(text: str, *, user_id: str = "default",
                                user_id=user_id, source=source,
                                created_at=created_at)
     if data["extractor_confidence"] < settings.DIALOGUE_MIN_EXTRACTOR_CONF:
-        # 低置信度 / 提取失败兜底 → 待审队列（不丢数据，交用户裁决）
-        enqueue_rejected(result["candidate_id"])
-        result["status"] = "pending_review"
+        if data["extractor_confidence"] < settings.CANDIDATE_MIN_CONFIDENCE:
+            # 沙汰：低于地板信噪门 → 直接 rejected（ADR-0026）
+            from lantai.models.tables import MemoryCandidate
+            with db.get_session() as s:
+                c = s.get(MemoryCandidate, result["candidate_id"])
+                if c:
+                    c.status = "rejected"
+                    s.add(c)
+                    s.commit()
+            result["status"] = "rejected"
+        else:
+            # 低置信度 / 提取失败兜底 → 待审队列（不丢数据，交用户裁决）
+            enqueue_rejected(result["candidate_id"])
+            result["status"] = "pending_review"
     return result
 
 
@@ -109,6 +120,7 @@ def _create_candidate(text: str, *, lane: str, fp_data: dict | None,
     provenance_prompt = {
         "fastpath": PROVENANCE_PROMPT_DIALOGUE_FASTPATH,
         "pending_review": PROVENANCE_PROMPT_DIALOGUE_CHITCHAT,
+        "rejected": PROVENANCE_PROMPT_DIALOGUE_CHITCHAT,
     }.get(status, PROVENANCE_PROMPT_EXTRACT)
     if created_at is not None:
         provenance_prompt = PROVENANCE_PROMPT_DIALOGUE_IMPORT

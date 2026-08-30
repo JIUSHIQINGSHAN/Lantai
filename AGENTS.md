@@ -31,3 +31,8 @@ Issues 以本地 markdown 文件形式存放在 `.scratch/<feature>/` 目录下�
 ### Release discipline（版本上传纪律）
 
 版本上传遵循 `docs/release-process.md`：发布前必须通过 `scripts/release_check.py` 门禁（版本一致性 + Git 干净 + tag 不重复），全量测试全绿，CHANGELOG 收口；上传（push tag）是人工闸门，Agent 只检查/准备，不代替维护者确认。
+
+### Development workflow（开发工作流）
+
+端到端开发遵循 `docs/development-workflow.md` 六阶段标准（需求票据化 → 5 步根因诊断 → 架构与命名治理 → TDD 先导与不 mock 冒烟 → 代码审查门禁 → 发布闸门）。
+

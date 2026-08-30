@@ -69,18 +69,17 @@ class TestDialogueIngest:
             assert cand.lane == "preference"
 
     def test_chitchat_enters_pending_review(self, param_env):
-        """闲聊（短文本/社交结束语）→ 候选进 pending_review，不落库为记忆"""
+        """闲聊（短文本/社交结束语）→ 沙汰直接 rejected，不落库为记忆（ADR-0026）"""
         session_factory, _ = param_env
         from lantai.ingestion.dialogue import ingest_dialogue
         with patch("lantai.parsing.extractor.chat_json",
                    side_effect=AssertionError("闲聊不应触发 LLM 提取")):
             result = ingest_dialogue("哈哈，好的")
         assert result["ingested"] is True
-        assert result["status"] == "pending_review"
+        assert result["status"] == "rejected"
         with session_factory() as s:
             cand = s.get(MemoryCandidate, result["candidate_id"])
-            assert cand.status == "pending_review"
-            assert cand.review_due_at is not None
+            assert cand.status == "rejected"
             assert s.exec(select(RawDocument)).all()  # rawdocument 仍建（可追溯）
 
     def test_extraction_failure_falls_back_to_queue(self, param_env):
@@ -178,7 +177,7 @@ class TestDialogueRoute:
     def test_chitchat_pending(self, client):
         resp = client.post("/dialogue", json={"text": "哈哈，好的"})
         assert resp.status_code == 200
-        assert resp.json()["status"] == "pending_review"
+        assert resp.json()["status"] == "rejected"
 
     def test_empty_422(self, client):
         resp = client.post("/dialogue", json={"text": "   "})

@@ -110,7 +110,7 @@ def test_dialogue_fastpath_candidate_carries_provenance(mem_db, monkeypatch):
 
 
 def test_dialogue_chitchat_candidate_carries_provenance(mem_db, monkeypatch):
-    """对话闲聊兜底：provenance.prompt == dialogue-chitchat（待审不丢数据）。"""
+    """对话闲聊沙汰：provenance.prompt == dialogue-chitchat（直接 rejected，ADR-0026）。"""
     session_factory, _ = mem_db
     monkeypatch.setattr("lantai.ingestion.dialogue.fastpath_check",
                         lambda text: None)
@@ -120,7 +120,7 @@ def test_dialogue_chitchat_candidate_carries_provenance(mem_db, monkeypatch):
     out = ingest_dialogue("好的好的")
     with session_factory() as s:
         cand = s.get(MemoryCandidate, out["candidate_id"])
-        assert cand.status == "pending_review"
+        assert cand.status == "rejected"
         assert cand.provenance["prompt"] == "dialogue-chitchat"
 
 

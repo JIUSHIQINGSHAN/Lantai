@@ -41,6 +41,9 @@ class Settings(BaseSettings):
 
     # 候选可见队列（Ticket 02）：reject 进待审队列，超龄自动归档
     CANDIDATE_TTL_DAYS: int = 7
+    # 沙汰：候选入队地板信噪门（ADR-0026）。低于此值的候选直接 rejected（不入待审队列）。
+    # 默认 0.0 = 零行为变化；初始校准建议 0.15（闲聊 conf=0.0 自动淘汰）。
+    CANDIDATE_MIN_CONFIDENCE: float = 0.0
 
     # 对话写通道（Ticket 01）：分 lane 自动提取 vs 闲聊入队
     DIALOGUE_ENABLED: bool = True
@@ -290,6 +293,9 @@ class Settings(BaseSettings):
     REFLECT_ENABLED: bool = True             # 观察期开启（2026-08-11 起；8/15 校准数据不足，延长观察至有 7 个完整运行日）
     REFLECT_CRON_HOUR: int = 22              # UTC；与 digest 同小时错 1 分钟
     REFLECT_MAX_BATCH: int = 20              # 单次蒸馏候选上限（LLM 成本防护）
+    # 察窗：观察期滑动窗口口径（ADR-0027）。从连续改为窗口内计数。
+    REFLECT_OBSERVATION_WINDOW_DAYS: int = 14   # 滑动窗口大小（天）
+    REFLECT_OBSERVATION_REQUIRED_RUNS: int = 7  # 窗口内合格运行天数门槛
     REFLECT_IMPORTANCE_POOL: float = 5.0     # 水位触发阈值（dry-run 推荐值维持；校准报告 2026-08-15：样本不足不下调）
     REFLECT_IMPORTANCE_WINDOW_DAYS: int = 7  # 水位窗口（近似「自上次反思以来」，零新表）
     REFLECT_AUTO_APPLY_CONF: float = 0.7     # 与 evolve 自动应用阈值一致（维持）
