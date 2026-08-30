@@ -152,6 +152,27 @@ def handle_consolidation_report(params: dict) -> dict:
     return get_consolidation_report()
 
 
+def handle_probe_detect(params: dict) -> dict:
+    """探颐：检测当前查询相关的主动求证探针（ADR-0037）。"""
+    from lantai.services.probing_service import detect_memory_probes, format_probing_context
+    q = params.get("query", "")
+    sid = params.get("session_id")
+    probes = detect_memory_probes(query=q, session_id=sid)
+    return {
+        "probes": probes,
+        "prompt_context": format_probing_context(probes),
+    }
+
+
+def handle_probe_resolve(params: dict) -> dict:
+    """探颐：根据用户自然答复消解冲突与更新记忆（ADR-0037）。"""
+    from lantai.services.probing_service import resolve_probe_response
+    cid = params.get("conflict_id", "")
+    reply = params.get("user_reply", "")
+    return resolve_probe_response(conflict_id=cid, user_reply=reply)
+
+
+
 
 
 
@@ -682,6 +703,17 @@ TOOLS = {
     "consolidation_report": {"description": "沉潜（审计报告）：获取最近一次夜梦沉淀与折叠压缩的审计结果（ADR-0036）", "inputSchema": {
         "type": "object", "properties": {},
     }},
+    "probe_detect": {"description": "探颐（主动探针）：检测当前检索查询相关的未决冲突与模糊事实探针（ADR-0037）", "inputSchema": {
+        "type": "object", "properties": {
+            "query": {"type": "string", "description": "用户当前查询或对话文本"},
+            "session_id": {"type": "string", "description": "会话 ID（可选）"},
+        }, "required": ["query"]}},
+    "probe_resolve": {"description": "探颐（消歧闭环）：根据用户次轮自然答复自动消解冲突与更替记忆版本（ADR-0037）", "inputSchema": {
+        "type": "object", "properties": {
+            "conflict_id": {"type": "string", "description": "冲突事件 ID"},
+            "user_reply": {"type": "string", "description": "用户自然语言答复"},
+        }, "required": ["conflict_id", "user_reply"]}},
+
 
     "raw_add": {"description": "原文直存（verbatim）：内容直入 FTS5+向量，零 LLM", "inputSchema": {
         "type": "object", "properties": {
@@ -870,6 +902,8 @@ TOOL_HANDLERS = {
     "kaogong_eval": handle_kaogong_eval,
     "memory_consolidate": handle_memory_consolidate,
     "consolidation_report": handle_consolidation_report,
+    "probe_detect": handle_probe_detect,
+    "probe_resolve": handle_probe_resolve,
     "get_digest": handle_get_digest,
     "raw_add": handle_raw_add,
     "obsidian_sync": handle_obsidian_sync,
@@ -921,7 +955,7 @@ def handle(msg: dict) -> dict | None:
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "lantai", "version": "0.19.0"}}}
+            "serverInfo": {"name": "lantai", "version": "0.20.0"}}}
     if method == "notifications/initialized":
         return None  # 通知无响应
     if method == "ping":

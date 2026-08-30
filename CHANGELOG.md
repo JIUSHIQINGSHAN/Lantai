@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-08-31 - 探颐（Tanyi · 记忆主动探针与自然交互消歧）
+
+### Added
+- **探颐（记忆主动探针与自然交互消歧，ADR-0037）**:
+  - 核心服务 `probing_service.py`：基于 `detect_memory_probes` 扫描未决冲突账本（`ConflictEvent(status="open")`），在检索命中时自动生成温和的自然语言求证探针；
+  - 上下文协同插桩：`format_probing_context` 将求证事项注入 Prompt `【探颐·待求证事项】` 区域，供 Agent 顺带发问；
+  - 答复识别与闭环消解：`resolve_probe_response` 识别用户次轮自然答复（肯定/否定/纠正），肯定时自动消解冲突并更新记忆版本，记录 `MemoryCheckpoint` 快照；否定时自动归档废弃；
+  - 接口面暴露：新增 REST `POST /probing/detect`、`POST /probing/resolve` 以及 MCP 工具 `probe_detect` / `probe_resolve`（MCP 工具总数扩容至 **55**）；
+  - 命名正式登记：在 `CONTEXT.md` 登记「探颐」（Tanyi，出自《易·系辞上》「探赜索隐，钩深致远」），归档 ADR-0037。
+
 ## [0.19.0] - 2026-08-31 - 沉潜（Chenqian · 闲时夜梦沉淀与折叠压缩）
 
 ### Added
