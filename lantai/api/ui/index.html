@@ -140,21 +140,29 @@
         </header>
         <div class="panel-card">
           <div class="search-controls">
-            <input type="text" id="playgroundQuery" placeholder="输入搜索查询或测试对话文本..." class="search-input">
+            <input type="text" id="playgroundQuery" placeholder="输入搜索查询或测试对话文本（按回车直接检索）..." class="search-input">
             <select id="playgroundDomain" class="select-box">
               <option value="all">全域 (all)</option>
               <option value="user" selected>用户域 (user)</option>
               <option value="session">会话域 (session)</option>
               <option value="agent">智能体域 (agent)</option>
             </select>
+            <label class="check-field inline"><input id="playgroundForce" type="checkbox" checked><span>强制放行闸门</span></label>
             <button id="playgroundSearchBtn" class="primary-btn">🔍 检索测试</button>
+          </div>
+          <div class="quick-chips">
+            <span class="muted" style="font-size:12px;">快捷测试词：</span>
+            <button class="chip-btn" data-query="喝无糖咖啡">喝无糖咖啡</button>
+            <button class="chip-btn" data-query="公司域名">公司域名</button>
+            <button class="chip-btn" data-query="项目上线时间">项目上线时间</button>
+            <button class="chip-btn" data-query="处理待审候选">处理待审候选</button>
           </div>
         </div>
 
         <!-- 探针命中提醒 -->
         <div id="probingAlertBox" class="probe-alert" hidden>
-          <span class="probe-tag">🎯 【探颐】主动探针触发</span>
-          <p id="probeQuestionText"></p>
+          <span class="probe-tag">🎯 【探颐】主动求证探针触发</span>
+          <p id="probeQuestionText" style="margin: 4px 0 0; font-size: 13px;"></p>
         </div>
 
         <!-- 检索结果拆解列表 -->

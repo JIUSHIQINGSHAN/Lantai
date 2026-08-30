@@ -175,13 +175,24 @@ async function runPlaygroundSearch() {
     return;
   }
   const domain = $('#playgroundDomain').value;
+  const force = Boolean($('#playgroundForce')?.checked);
   const resultsBox = $('#playgroundResults');
-  resultsBox.innerHTML = '<div class="inspector-empty">正在检索与拓扑扩散...</div>';
+  const searchBtn = $('#playgroundSearchBtn');
+  
+  searchBtn.disabled = true;
+  searchBtn.textContent = '🔍 检索中...';
+  resultsBox.innerHTML = '<div class="inspector-empty">正在进行四路检索与拓扑探针检测...</div>';
 
-  // 1. 同时请求检索与探针检测
   try {
+    const payload = {
+      query,
+      top_k: 6,
+      force,
+      domain: domain === 'all' ? undefined : domain,
+    };
+
     const [searchRes, probeRes] = await Promise.all([
-      api('/search', {method: 'POST', body: JSON.stringify({query, top_k: 6, domain: domain === 'all' ? undefined : domain})}),
+      api('/search', {method: 'POST', body: JSON.stringify(payload)}),
       api('/probing/detect', {method: 'POST', body: JSON.stringify({query})}),
     ]);
 
@@ -189,26 +200,40 @@ async function runPlaygroundSearch() {
     const alertBox = $('#probingAlertBox');
     if (probeRes && probeRes.probes && probeRes.probes.length > 0) {
       alertBox.hidden = false;
-      $('#probeQuestionText').textContent = probeRes.probes[0].question;
+      $('#probeQuestionText').textContent = probeRes.probes[0].question || '存在未决记忆冲突，建议向用户求证。';
     } else {
       alertBox.hidden = true;
     }
 
     // 结果渲染
-    const items = (searchRes && searchRes.memories) || [];
+    const items = (searchRes && (searchRes.results || searchRes.memories)) || [];
     if (!items.length) {
-      resultsBox.innerHTML = '<div class="inspector-empty">未命中任何相关记忆（零召回）</div>';
+      const gateMsg = searchRes && searchRes.gate && !searchRes.gate.needs_memory
+        ? `（相关性闸门拦截: ${searchRes.gate.reason}，可勾选“强制放行”重试）`
+        : '（未命中任何相关记忆）';
+      resultsBox.innerHTML = `<div class="inspector-empty">零召回 ${gateMsg}</div>`;
       return;
     }
 
     resultsBox.innerHTML = '';
-    items.forEach((m, idx) => {
+    items.forEach((resItem, idx) => {
+      const m = resItem.memory || resItem;
+      const score = typeof resItem.score === 'number' ? resItem.score : (m.score || 1.0);
       const card = node('div', 'result-item');
+      
       const meta = node('div', 'meta-row');
-      meta.innerHTML = `<span>#${idx+1} [${m.domain || 'user'}/${m.lane || 'general'}] ID: ${m.id}</span><span class="score-tag">综合得分: ${(m.score || 1.0).toFixed(4)}</span>`;
-      const body = node('div', 'text-body', m.content);
+      meta.innerHTML = `<span>#${idx+1} [${m.domain || 'user'}/${m.lane || 'general'}] <code style="font-size:11px;color:var(--muted);">${m.id || '—'}</code></span><span class="score-tag">得分: ${score.toFixed(4)}</span>`;
+      
+      const body = node('div', 'text-body', m.content || m.key || '—');
+      
       const breakdown = node('div', 'score-breakdown');
-      breakdown.innerHTML = `<span>时效衰减: ${(m.decay_score || 1.0).toFixed(2)}</span><span>置信度: ${(m.confidence || 0.9).toFixed(2)}</span><span>重要性: ${(m.importance || 0.8).toFixed(2)}</span><span>版本: v${m.version || 1}</span>`;
+      const decay = typeof m.decay_score === 'number' ? m.decay_score.toFixed(2) : '1.00';
+      const conf = typeof m.confidence === 'number' ? m.confidence.toFixed(2) : '0.90';
+      const imp = typeof m.importance === 'number' ? m.importance.toFixed(2) : '0.80';
+      const ver = m.version || 1;
+      const mtype = m.memory_type || 'semantic';
+      breakdown.innerHTML = `<span>类型: ${mtype}</span><span>时效衰减: ${decay}</span><span>置信度: ${conf}</span><span>重要性: ${imp}</span><span>版本: v${ver}</span>`;
+      
       card.appendChild(meta);
       card.appendChild(body);
       card.appendChild(breakdown);
@@ -216,6 +241,9 @@ async function runPlaygroundSearch() {
     });
   } catch (err) {
     resultsBox.innerHTML = `<div class="inspector-empty" style="color:var(--bad)">检索异常: ${err.message}</div>`;
+  } finally {
+    searchBtn.disabled = false;
+    searchBtn.textContent = '🔍 检索测试';
   }
 }
 
@@ -709,10 +737,27 @@ function bindEvents() {
     if (e.key === 'Enter') { e.preventDefault(); runPlaygroundSearch(); }
   });
 
+  // 演练场快捷词点击
+  document.querySelectorAll('.chip-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const q = btn.dataset.query;
+      if (q) {
+        $('#playgroundQuery').value = q;
+        runPlaygroundSearch();
+      }
+    });
+  });
+
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && shell.classList.contains('inspector-open')) closeInspector();
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
       event.preventDefault(); setView('tasks'); $('#searchInput').focus();
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+      if (state.view === 'studio') {
+        event.preventDefault();
+        $('#scratchpadForm')?.requestSubmit();
+      }
     }
   });
 }
