@@ -9,17 +9,18 @@
 </head>
 <body>
   <div class="app-shell">
+    <!-- 全局主侧边栏 -->
     <aside class="sidebar" aria-label="主导航">
       <div class="brand-block">
         <div class="brand-mark" aria-hidden="true">蘭</div>
         <div><strong>兰台</strong><span>悬镜控制台</span></div>
       </div>
       <nav class="primary-nav">
-        <button class="nav-item active" data-view="tasks"><span>案牍待办</span><b id="navTaskCount">0</b></button>
-        <button class="nav-item" data-view="studio"><span>器识札记</span></button>
-        <button class="nav-item" data-view="consolidation"><span>沉潜夜梦</span></button>
+        <button class="nav-item" data-view="overview"><span>中枢总览</span></button>
+        <button class="nav-item active" data-view="tasks"><span>案牍审阅</span><b id="navTaskCount">0</b></button>
+        <button class="nav-item" data-view="vault"><span>档案星图</span></button>
+        <button class="nav-item" data-view="studio"><span>认知进化</span></button>
         <button class="nav-item" data-view="playground"><span>检索演练</span></button>
-        <button class="nav-item" data-view="memory"><span>档案星图</span></button>
         <button class="nav-item" data-view="system"><span>系统脉搏</span><b id="navSystemCount">0</b></button>
       </nav>
       <div class="sidebar-footer">
@@ -30,8 +31,61 @@
       </div>
     </aside>
 
+    <!-- 工作区主体 -->
     <main class="workspace">
-      <!-- 1. 案牍待办工作区 -->
+      <!-- 1. 中枢总览 (Overview) -->
+      <section class="view" id="overviewView">
+        <header class="topbar">
+          <div><h1>中枢总览</h1><p>全景记忆中枢健康指标、分轨分布与快捷操作</p></div>
+          <div class="top-actions">
+            <button class="primary-btn" id="quickConsolidateBtn">🌙 立即夜梦沉淀</button>
+          </div>
+        </header>
+        <div class="view-content">
+          <div class="metrics-grid">
+            <div class="metric-card"><span class="val" id="ovTotalMem">—</span><span class="lbl">全库记忆总量</span></div>
+            <div class="metric-card"><span class="val" id="ovPendingTasks">0</span><span class="lbl">待审案牍事项</span></div>
+            <div class="metric-card"><span class="val" id="ovHealthStatus">健康</span><span class="lbl">系统可用状态</span></div>
+            <div class="metric-card"><span class="val" id="ovZeroRecall">0.0%</span><span class="lbl">近 24h 零召回率</span></div>
+          </div>
+
+          <div class="studio-grid" style="padding:0; margin-top:20px;">
+            <div class="panel-card">
+              <h3>⚡ 快捷工作台入口</h3>
+              <div class="quick-nav-grid">
+                <button class="quick-nav-card" data-goto="tasks">
+                  <strong>⚖️ 案牍治理</strong>
+                  <small>审核候选、消解冲突与提案批准</small>
+                </button>
+                <button class="quick-nav-card" data-goto="studio">
+                  <strong>👑 器识与札记</strong>
+                  <small>调优 AI 人格基座与 Working 便签</small>
+                </button>
+                <button class="quick-nav-card" data-goto="playground">
+                  <strong>🧪 检索演练场</strong>
+                  <small>四路召回得分拆解与探针测试</small>
+                </button>
+                <button class="quick-nav-card" data-goto="vault">
+                  <strong>📚 全景档案库</strong>
+                  <small>结构化多维浏览与关系追溯</small>
+                </button>
+              </div>
+            </div>
+
+            <div class="panel-card">
+              <h3>🧬 分轨与认知健康</h3>
+              <div id="laneDistributionBox" class="meta-grid" style="margin-top:12px;">
+                <div><span>用户域 (user)</span><b id="ovUserMem">—</b></div>
+                <div><span>会话域 (session)</span><b id="ovSessionMem">—</b></div>
+                <div><span>智能体域 (agent)</span><b id="ovAgentMem">—</b></div>
+                <div><span>当前活跃人格</span><b id="ovActivePersona">兰台执笔</b></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. 案牍审阅工作区 (Tasks & Triage) -->
       <section class="view active" id="tasksView" aria-labelledby="pageTitle">
         <header class="topbar">
           <div>
@@ -46,7 +100,7 @@
         <div class="filterbar">
           <label class="search-field">
             <span aria-hidden="true">⌕</span>
-            <input id="searchInput" type="search" placeholder="搜索案牍" autocomplete="off">
+            <input id="searchInput" type="search" placeholder="搜索案牍标题或内容..." autocomplete="off">
           </label>
           <select id="kindFilter" aria-label="按类型筛选">
             <option value="">全部类型</option>
@@ -76,120 +130,155 @@
         <div class="queue" id="queue" aria-live="polite"></div>
       </section>
 
-      <!-- 2. 器识与札记工作室 (Studio) -->
+      <!-- 3. 档案星图工作区 (Vault & Map) -->
+      <section class="view" id="vaultView">
+        <header class="topbar">
+          <div><h1>档案与星图</h1><p>全景记忆结构化检索、标签过滤与拓扑星图</p></div>
+          <div class="top-actions">
+            <a href="/ui/map" target="_blank" class="secondary-button" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;padding:8px 14px;">🕸️ 打开独立星图 ↗</a>
+          </div>
+        </header>
+        <div class="view-content">
+          <div class="filterbar" style="padding: 0 0 16px 0;">
+            <label class="search-field">
+              <span aria-hidden="true">⌕</span>
+              <input id="vaultSearchInput" type="search" placeholder="在全库档案中全文检索..." autocomplete="off">
+            </label>
+            <select id="vaultDomainFilter">
+              <option value="">全部分域</option>
+              <option value="user">用户域 (user)</option>
+              <option value="session">会话域 (session)</option>
+              <option value="agent">智能体域 (agent)</option>
+            </select>
+            <button id="vaultSearchBtn" class="primary-btn">筛选</button>
+          </div>
+          <div id="vaultList" class="results-list" style="padding:0;">
+            <div class="inspector-empty">正在加载档案库...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. 认知进化工作室 (Cognition & Studio) -->
       <section class="view" id="studioView">
         <header class="topbar">
-          <div><h1>器识与札记工作室</h1><p>管理智能体人格基座（L/G/E）与工作区即时便签</p></div>
-        </header>
-        <div class="studio-grid">
-          <!-- 器识卡片 -->
-          <div class="panel-card">
-            <h2>👑 器识（Persona 人格基座）</h2>
-            <p class="muted">定义 AI 的言语风格、行为准则与认知底色（常量级不衰减）。</p>
-            <form id="personaForm" class="studio-form">
-              <label class="form-field"><span>人格名称</span><input id="personaName" type="text" placeholder="default" required></label>
-              <label class="form-field"><span>L · 言语与表达风格 (Linguistic Style)</span><textarea id="personaStyle" rows="3" placeholder="例如：温润儒雅，言简意赅，善用典故。"></textarea></label>
-              <label class="form-field"><span>G · 行为准则与戒律 (Guidelines)</span><textarea id="personaGuidelines" rows="3" placeholder="例如：宁 miss 不脏写；涉及不可逆操作必须确认。"></textarea></label>
-              <label class="form-field"><span>E · 认知底色与核心事实 (Epistemic Facts)</span><textarea id="personaFacts" rows="3" placeholder="例如：当前系统运行在兰台架构之上。"></textarea></label>
-              <button type="submit" class="primary-btn">💾 保存并更新人格基座</button>
-            </form>
+          <div><h1>认知进化工作室</h1><p>管理智能体人格基座（L/G/E）、札记便签与夜梦沉淀</p></div>
+          <div class="tab-switcher">
+            <button class="tab-btn active" data-studio-tab="persona">👑 器识人格</button>
+            <button class="tab-btn" data-studio-tab="scratchpad">📝 会话札记</button>
+            <button class="tab-btn" data-studio-tab="consolidation">🌙 沉潜夜梦</button>
           </div>
+        </header>
 
-          <!-- 札记卡片 -->
-          <div class="panel-card">
-            <h2>📝 札记（Working Memory 便签）</h2>
-            <p class="muted">跨多轮对话的工作区实时便签（上限 1000 字符，会话首轮注入）。</p>
-            <form id="scratchpadForm" class="studio-form">
-              <label class="form-field"><span>会话 ID (Session ID)</span><input id="scratchpadSession" type="text" value="default"></label>
-              <label class="form-field"><span>即时便签内容</span><textarea id="scratchpadContent" rows="8" placeholder="在这里记下当前会话的即时目标、待办事项或临时决策..."></textarea></label>
-              <div class="form-footer">
-                <span id="scratchpadCount" class="muted">0 / 1000 字符</span>
-                <button type="submit" class="primary-btn">📌 写入便签</button>
+        <div class="view-content">
+          <!-- 器识人格面板 -->
+          <div class="studio-tab-panel active" id="panelPersona">
+            <div class="panel-card">
+              <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                <div>
+                  <h2>👑 器识（Persona 人格基座）</h2>
+                  <p class="muted">定义 AI 的言语风格、行为准则与认知底色（常量级不衰减）。</p>
+                </div>
               </div>
-            </form>
+              <form id="personaForm" class="studio-form">
+                <label class="form-field"><span>人格名称</span><input id="personaName" type="text" placeholder="default" required></label>
+                <label class="form-field"><span>L · 言语与表达风格 (Linguistic Style)</span><textarea id="personaStyle" rows="3" placeholder="例如：沉稳典雅，名实相副，言简意赅。"></textarea></label>
+                <label class="form-field"><span>G · 行为准则与戒律 (Guidelines)</span><textarea id="personaGuidelines" rows="3" placeholder="例如：遵循「宁 miss 不脏写」原则；涉及不可逆操作必须确认。"></textarea></label>
+                <label class="form-field"><span>E · 认知底色与核心事实 (Epistemic Facts)</span><textarea id="personaFacts" rows="3" placeholder="例如：运行在兰台架构之上；本地第一。"></textarea></label>
+                <div class="form-footer">
+                  <span class="muted" style="font-size:12px;">提示：修改后即刻生效，将在下一次记忆召回与对话构建中注入。</span>
+                  <button type="submit" class="primary-btn">💾 保存并应用人格基座</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <!-- 札记便签面板 -->
+          <div class="studio-tab-panel" id="panelScratchpad">
+            <div class="panel-card">
+              <h2>📝 札记（Working Memory 便签）</h2>
+              <p class="muted">跨多轮对话的工作区实时便签（上限 1000 字符，会话首轮注入，支持 Ctrl+S 快捷保存）。</p>
+              <form id="scratchpadForm" class="studio-form">
+                <label class="form-field"><span>会话 ID (Session ID)</span><input id="scratchpadSession" type="text" value="default"></label>
+                <label class="form-field"><span>即时便签内容</span><textarea id="scratchpadContent" rows="10" placeholder="在这里记下当前会话的即时目标、待办事项或临时决策..."></textarea></label>
+                <div class="form-footer">
+                  <span id="scratchpadCount" class="muted">0 / 1000 字符</span>
+                  <button type="submit" class="primary-btn">📌 写入便签 (Ctrl+S)</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <!-- 沉潜夜梦面板 -->
+          <div class="studio-tab-panel" id="panelConsolidation">
+            <div class="metrics-grid">
+              <div class="metric-card"><span class="val" id="conStatus">idle</span><span class="lbl">最近运行状态</span></div>
+              <div class="metric-card"><span class="val" id="conGroups">0</span><span class="lbl">发现碎片聚类群</span></div>
+              <div class="metric-card"><span class="val" id="conNew">0</span><span class="lbl">提纯折叠主记忆</span></div>
+              <div class="metric-card"><span class="val" id="conPruned">0</span><span class="lbl">修剪衰减突触</span></div>
+            </div>
+            <div class="panel-card" style="margin-top:16px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <h3 style="margin:0;">📊 最近一次沉淀审计报告</h3>
+                <button class="primary-btn" id="triggerConsolidateBtn">🌙 立即触发夜梦沉淀</button>
+              </div>
+              <pre id="conReportRaw" class="code-box">正在读取报告...</pre>
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- 3. 沉潜夜梦沉淀 (Consolidation) -->
-      <section class="view" id="consolidationView">
-        <header class="topbar">
-          <div><h1>沉潜夜梦沉淀</h1><p>闲时多维拓扑聚类、概念提纯合成与突触修剪</p></div>
-          <div class="top-actions">
-            <button class="primary-btn" id="triggerConsolidateBtn">🌙 立即触发一次夜梦沉淀</button>
-          </div>
-        </header>
-        <div class="consolidation-dashboard">
-          <div class="metrics-grid">
-            <div class="metric-card"><span class="val" id="conStatus">idle</span><span class="lbl">最近运行状态</span></div>
-            <div class="metric-card"><span class="val" id="conGroups">0</span><span class="lbl">发现碎片聚类群</span></div>
-            <div class="metric-card"><span class="val" id="conNew">0</span><span class="lbl">提纯折叠主记忆</span></div>
-            <div class="metric-card"><span class="val" id="conPruned">0</span><span class="lbl">修剪衰减突触</span></div>
-          </div>
-          <div class="panel-card" style="margin-top:16px;">
-            <h3>📊 最近一次沉淀审计报告</h3>
-            <pre id="conReportRaw" class="code-box">正在读取报告...</pre>
-          </div>
-        </div>
-      </section>
-
-      <!-- 4. 检索与探针演练场 (Playground) -->
+      <!-- 5. 检索与探针演练场 (Playground) -->
       <section class="view" id="playgroundView">
         <header class="topbar">
           <div><h1>四路检索与探针演练场</h1><p>实时测试向量/BM25/FTS5/衰减得分与【探颐】主动探针</p></div>
         </header>
-        <div class="panel-card">
-          <div class="search-controls">
-            <input type="text" id="playgroundQuery" placeholder="输入搜索查询或测试对话文本（按回车直接检索）..." class="search-input">
-            <select id="playgroundDomain" class="select-box">
-              <option value="all">全域 (all)</option>
-              <option value="user" selected>用户域 (user)</option>
-              <option value="session">会话域 (session)</option>
-              <option value="agent">智能体域 (agent)</option>
-            </select>
-            <label class="check-field inline"><input id="playgroundForce" type="checkbox" checked><span>强制放行闸门</span></label>
-            <button id="playgroundSearchBtn" class="primary-btn">🔍 检索测试</button>
+        <div class="view-content">
+          <div class="panel-card">
+            <div class="search-controls">
+              <input type="text" id="playgroundQuery" placeholder="输入搜索查询或测试对话文本（按回车直接检索）..." class="search-input">
+              <select id="playgroundDomain" class="select-box">
+                <option value="all">全域 (all)</option>
+                <option value="user" selected>用户域 (user)</option>
+                <option value="session">会话域 (session)</option>
+                <option value="agent">智能体域 (agent)</option>
+              </select>
+              <label class="check-field inline"><input id="playgroundForce" type="checkbox" checked><span>强制放行闸门</span></label>
+              <button id="playgroundSearchBtn" class="primary-btn">🔍 检索测试</button>
+            </div>
+            <div class="quick-chips">
+              <span class="muted" style="font-size:12px;">快捷测试词：</span>
+              <button class="chip-btn" data-query="喝无糖咖啡">喝无糖咖啡</button>
+              <button class="chip-btn" data-query="公司域名">公司域名</button>
+              <button class="chip-btn" data-query="项目上线时间">项目上线时间</button>
+              <button class="chip-btn" data-query="处理待审候选">处理待审候选</button>
+            </div>
           </div>
-          <div class="quick-chips">
-            <span class="muted" style="font-size:12px;">快捷测试词：</span>
-            <button class="chip-btn" data-query="喝无糖咖啡">喝无糖咖啡</button>
-            <button class="chip-btn" data-query="公司域名">公司域名</button>
-            <button class="chip-btn" data-query="项目上线时间">项目上线时间</button>
-            <button class="chip-btn" data-query="处理待审候选">处理待审候选</button>
+
+          <!-- 探针命中提醒 -->
+          <div id="probingAlertBox" class="probe-alert" hidden>
+            <span class="probe-tag">🎯 【探颐】主动求证探针触发</span>
+            <p id="probeQuestionText" style="margin: 4px 0 0; font-size: 13px;"></p>
           </div>
-        </div>
 
-        <!-- 探针命中提醒 -->
-        <div id="probingAlertBox" class="probe-alert" hidden>
-          <span class="probe-tag">🎯 【探颐】主动求证探针触发</span>
-          <p id="probeQuestionText" style="margin: 4px 0 0; font-size: 13px;"></p>
-        </div>
-
-        <!-- 检索结果拆解列表 -->
-        <div id="playgroundResults" class="results-list"></div>
-      </section>
-
-      <!-- 5. 档案星图 -->
-      <section class="view tools-view" id="memoryView">
-        <header class="topbar"><div><h1>档案与星图</h1><p>全景记忆浏览、拓扑图谱与关系追溯</p></div></header>
-        <div class="tool-list">
-          <a href="/ui/vault"><span><b>档案库</b><small>全库记忆结构化列表与多维检索</small></span><i>→</i></a>
-          <a href="/ui/map"><span><b>知识星图</b><small>关系、实体双链与拓扑场景</small></span><i>→</i></a>
+          <!-- 检索结果拆解列表 -->
+          <div id="playgroundResults" class="results-list"></div>
         </div>
       </section>
 
-      <!-- 6. 系统脉搏 -->
+      <!-- 6. 系统脉搏与质量 (System & Pulse) -->
       <section class="view tools-view" id="systemView">
         <header class="topbar"><div><h1>系统脉搏与质量</h1><p>存储健康度、Worker 调度与监控报告</p></div></header>
         <div class="tool-list">
+          <a href="/ui/vault"><span><b>全景档案库</b><small>独立档案库管理与多维浏览</small></span><i>→</i></a>
+          <a href="/ui/map"><span><b>知识星图</b><small>关系、实体双链与拓扑场景</small></span><i>→</i></a>
           <a href="/ui/recall"><span><b>追忆漏斗</b><small>逐步查看检索漏斗与各层召回</small></span><i>→</i></a>
           <a href="/ui/pulse"><span><b>系统脉搏</b><small>存储可用性与 Worker 调度记录</small></span><i>→</i></a>
           <a href="/ui/evolve"><span><b>检索质量</b><small>零召回率、评测与演化看板</small></span><i>→</i></a>
         </div>
       </section>
-
     </main>
 
+    <!-- 抽屉式案牍详情 (Inspector) -->
     <aside class="inspector" id="inspector" aria-label="案牍详情" aria-hidden="true">
       <header class="inspector-header">
         <div><span id="inspectorKind">案牍</span><h2 id="inspectorTitle">选择一项查看详情</h2></div>
@@ -202,15 +291,17 @@
     </aside>
   </div>
 
+  <!-- 移动端底部导航 -->
   <nav class="mobile-nav" aria-label="移动端主导航">
+    <button data-view="overview">总览</button>
     <button class="active" data-view="tasks">待办</button>
-    <button data-view="studio">工作室</button>
-    <button data-view="consolidation">沉潜</button>
+    <button data-view="vault">档案</button>
+    <button data-view="studio">进化</button>
     <button data-view="playground">演练</button>
-    <button data-view="memory">档案</button>
     <button data-view="system">系统</button>
   </nav>
 
+  <!-- 确认弹窗 -->
   <dialog id="actionDialog">
     <form method="dialog" id="actionForm">
       <header><h2 id="dialogTitle">确认操作</h2><button value="cancel" aria-label="关闭">×</button></header>
@@ -219,6 +310,7 @@
     </form>
   </dialog>
 
+  <!-- 连接设置弹窗 -->
   <dialog id="connectionDialog">
     <form method="dialog" id="connectionForm">
       <header><h2>连接设置</h2><button value="cancel" aria-label="关闭">×</button></header>

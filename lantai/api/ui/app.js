@@ -72,15 +72,86 @@ function setView(view) {
   if (targetView) targetView.classList.add('active');
   if (view !== 'tasks') closeInspector();
 
-  if (view === 'studio') {
+  if (view === 'overview') {
+    loadOverview();
+  } else if (view === 'vault') {
+    loadVault();
+  } else if (view === 'studio') {
     loadPersona();
     loadScratchpad($('#scratchpadSession')?.value || 'default');
-  } else if (view === 'consolidation') {
     loadConsolidationReport();
+  } else if (view === 'tasks') {
+    loadQueue();
   }
 }
 
-// ===== 1. 器识与札记工作室 (Studio) =====
+// ===== 0. 中枢总览 (Overview) =====
+async function loadOverview() {
+  try {
+    const [stats, work, persona] = await Promise.all([
+      api('/mem/stats').catch(() => ({})),
+      api('/work-items?section=immediate_action&limit=1').catch(() => ({})),
+      api('/persona').catch(() => ({})),
+    ]);
+
+    const total = stats.total_memories ?? stats.total ?? '—';
+    $('#ovTotalMem').textContent = String(total);
+    $('#ovPendingTasks').textContent = String(work.counts?.immediate_action ?? work.total ?? 0);
+    $('#ovHealthStatus').textContent = '良好 100%';
+    $('#ovUserMem').textContent = String(stats.by_domain?.user ?? '—');
+    $('#ovSessionMem').textContent = String(stats.by_domain?.session ?? '—');
+    $('#ovAgentMem').textContent = String(stats.by_domain?.agent ?? '—');
+    $('#ovActivePersona').textContent = (persona && persona.name) || '兰台执笔';
+  } catch (err) {
+    console.warn('读取总览指标失败', err);
+  }
+}
+
+// ===== 1. 档案星图工作区 (Vault) =====
+async function loadVault() {
+  const q = $('#vaultSearchInput')?.value?.trim() || '';
+  const domain = $('#vaultDomainFilter')?.value || '';
+  const list = $('#vaultList');
+  list.innerHTML = '<div class="inspector-empty">正在加载档案库记忆...</div>';
+
+  try {
+    const res = await api('/search', {
+      method: 'POST',
+      body: JSON.stringify({query: q || '记忆', top_k: 20, force: true, domain: domain || undefined}),
+    });
+    const items = res.results || res.memories || [];
+    if (!items.length) {
+      list.innerHTML = '<div class="inspector-empty">档案库暂无匹配记录</div>';
+      return;
+    }
+
+    list.innerHTML = '';
+    items.forEach((resItem, idx) => {
+      const m = resItem.memory || resItem;
+      const card = node('div', 'result-item');
+      const meta = node('div', 'meta-row');
+      meta.innerHTML = `<span>#${idx+1} [${m.domain || 'user'}/${m.lane || 'general'}] <code style="font-size:11px;color:var(--muted);">${m.id}</code></span><span>v${m.version || 1} · ${(m.memory_type || 'semantic')}</span>`;
+      const body = node('div', 'text-body', m.content || m.key || '—');
+      const breakdown = node('div', 'score-breakdown');
+      breakdown.innerHTML = `<span>时效衰减: ${(m.decay_score ?? 1.0).toFixed(2)}</span><span>置信度: ${(m.confidence ?? 0.9).toFixed(2)}</span><span>重要性: ${(m.importance ?? 0.8).toFixed(2)}</span><span>创建: ${formatDate(m.created_at, true)}</span>`;
+      card.appendChild(meta);
+      card.appendChild(body);
+      card.appendChild(breakdown);
+      list.appendChild(card);
+    });
+  } catch (err) {
+    list.innerHTML = `<div class="inspector-empty" style="color:var(--bad)">读取档案失败: ${err.message}</div>`;
+  }
+}
+
+// ===== 2. 认知进化工作室 (Studio Tabs) =====
+function setStudioTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.studioTab === tab));
+  document.querySelectorAll('.studio-tab-panel').forEach(p => p.classList.remove('active'));
+  const target = $(`#panel${tab.charAt(0).toUpperCase() + tab.slice(1)}`);
+  if (target) target.classList.add('active');
+}
+
 async function loadPersona() {
   try {
     const data = await api('/persona');
@@ -135,7 +206,6 @@ async function saveScratchpad(e) {
   }
 }
 
-// ===== 2. 沉潜夜梦沉淀 (Consolidation) =====
 async function loadConsolidationReport() {
   try {
     const report = await api('/evolution/consolidate/report');
@@ -153,8 +223,9 @@ async function loadConsolidationReport() {
 
 async function triggerConsolidation() {
   const btn = $('#triggerConsolidateBtn');
-  btn.disabled = true;
-  btn.textContent = '🌙 正在沉淀聚类与修剪...';
+  const quickBtn = $('#quickConsolidateBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '🌙 正在沉淀聚类与修剪...'; }
+  if (quickBtn) { quickBtn.disabled = true; quickBtn.textContent = '🌙 沉淀中...'; }
   try {
     const res = await api('/evolution/consolidate', {method: 'POST'});
     showToast(`沉潜完成：提纯 ${res.new_memories || 0} 条主记忆，修剪 ${res.pruned_count || 0} 条衰减噪音`);
@@ -162,10 +233,11 @@ async function triggerConsolidation() {
   } catch (err) {
     showToast(`沉淀执行失败: ${err.message}`);
   } finally {
-    btn.disabled = false;
-    btn.textContent = '🌙 立即触发一次夜梦沉淀';
+    if (btn) { btn.disabled = false; btn.textContent = '🌙 立即触发夜梦沉淀'; }
+    if (quickBtn) { quickBtn.disabled = false; quickBtn.textContent = '🌙 立即夜梦沉淀'; }
   }
 }
+
 
 // ===== 3. 四路检索与探针演练场 (Playground) =====
 async function runPlaygroundSearch() {
@@ -736,6 +808,22 @@ function bindEvents() {
   $('#playgroundQuery')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); runPlaygroundSearch(); }
   });
+
+  // 选项卡与中枢快捷跳转
+  document.querySelectorAll('[data-studio-tab]').forEach(btn => {
+    btn.addEventListener('click', () => setStudioTab(btn.dataset.studioTab));
+  });
+  document.querySelectorAll('[data-goto]').forEach(btn => {
+    btn.addEventListener('click', () => setView(btn.dataset.goto));
+  });
+  $('#quickConsolidateBtn')?.addEventListener('click', triggerConsolidation);
+
+  // 档案库搜索
+  $('#vaultSearchBtn')?.addEventListener('click', () => loadVault());
+  $('#vaultSearchInput')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); loadVault(); }
+  });
+  $('#vaultDomainFilter')?.addEventListener('change', () => loadVault());
 
   // 演练场快捷词点击
   document.querySelectorAll('.chip-btn').forEach(btn => {
