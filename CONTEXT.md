@@ -60,6 +60,8 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **器识**（Qishi，Persona 人格基座） | 人格基座正式名（ADR-0013 典籍意象「器识」= 《新唐书·裴行俭传》「士之致远，先器识而后文艺」）：大模型长程交互立身之本，分 L/G/E 三层（言语风格 L、行事准则 G、认知底色 E）；常量级不衰减（decay_score 恒 1.0），会话首轮注入、检索偏好加权（Persona Boost）与反思演化防漂移。见 [ADR-0029](docs/adr/0029-persona-base.md) |
 | **披沙**（Pisha，候选递归精炼） | 候选精炼正式名（ADR-0013 意象池「披沙」= 《世说新语·德行》「披沙拣金，往往见宝」）：针对反思与会话提取出的中低置信度候选记忆（0.2~0.6），进行二次消歧与事实提纯（消除口语废话、消除代词指代歧义、原子化事实收敛），重新评定置信度，使模糊事实升格为高置信度候选（>=0.7），无价值闲聊自动沙汰。见 [ADR-0030](docs/adr/0030-candidate-refine.md) |
 | **考功**（Kaogong，价值演化与升降考评） | 记忆价值演化正式名（ADR-0013 意象池「考功」= 唐代吏部考功司，掌官吏功过品级考评）：基于用户使用反馈（MemoryUsageFeedback）、检索回填（backfill）与人工裁决历史，对全库记忆进行功过考评；高频高采纳记忆晋升长期语义层（tier=longterm / decay_class=semantic），高频低效/幻觉记忆自动降权或废弃，形成自适应负反馈闭环。见 [ADR-0031](docs/adr/0031-kaogong-weight-evolution.md) |
+| **札记**（Zhaji，Working Memory Scratchpad） | 核心工作区暂存夹正式名（ADR-0013 意象池「札记」= 古代读书摘记要点之木简便签）：借鉴 Letta (MemGPT) 虚拟内存思想，为 Agent 提供主动实时读写的小纸条区域（上限 1000 字符，宁 miss 不脏写）；会话首轮自动注入 Prompt 顶部，提供 `scratchpad_get` / `scratchpad_write` 工具，使 Agent 在多轮复杂对话中具备主动上下文控制力。见 [ADR-0032](docs/adr/0032-session-scratchpad.md) |
+
 
 
 

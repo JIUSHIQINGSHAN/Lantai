@@ -26,6 +26,7 @@ from .routes_recall_chain import router as routes_recall_chain_router
 from .routes_ui import router as routes_ui_router
 from .routes_work_items import router as routes_work_items_router
 from .routes_persona import router as routes_persona_router
+from .routes_scratchpad import router as routes_scratchpad_router
 
 __all__ = [
     "routes_health_router",
@@ -54,5 +55,7 @@ __all__ = [
     "routes_ui_router",
     "routes_work_items_router",
     "routes_persona_router",
+    "routes_scratchpad_router",
 ]
+
 

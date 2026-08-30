@@ -16,7 +16,7 @@ engine = create_engine(settings.DATABASE_URL, echo=False,
 # PRAGMA user_version 记录数据库结构版本；未版本化库（全新库或 v0.5 及以前
 # 老库）自动基线为 v1，增量补丁按版本号依次执行。ALTER TABLE ADD COLUMN 为
 # 毫秒级操作，代码更新与数据重构解耦，异常只记日志不阻断启动（降级而非崩溃）。
-CURRENT_SCHEMA_VERSION = 15
+CURRENT_SCHEMA_VERSION = 16
 
 
 def _ensure_column(conn, table: str, column: str, ddl: str) -> None:
@@ -197,6 +197,19 @@ def apply_migrations(conn) -> None:
             conn.execute("PRAGMA user_version = 15")
             conn.commit()
             logger.info("数据库增量迁移 v15 完成（器识 Persona 人格基座）")
+        # v15 -> v16（札记 Session Scratchpad，ADR-0032）：session_scratchpad 表
+        if user_version < 16:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS session_scratchpad ("
+                "session_id TEXT PRIMARY KEY, "
+                "content TEXT DEFAULT '', "
+                "created_at DATETIME, "
+                "updated_at DATETIME)"
+            )
+            conn.execute("PRAGMA user_version = 16")
+            conn.commit()
+            logger.info("数据库增量迁移 v16 完成（札记 Session Scratchpad）")
+
 
     except Exception as exc:
         logger.error("数据库增量迁移异常（服务继续启动）: %s", exc)

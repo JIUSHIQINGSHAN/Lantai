@@ -198,8 +198,9 @@ class TestMigrationsV8ToV15:
         assert "reflect_run" in tables
         assert "session_checkpoint" in tables  # ADR-0021 底本
         assert "persona_profile" in tables     # ADR-0029 器识
+        assert "session_scratchpad" in tables  # ADR-0032 札记
         cols = {r[1] for r in conn.execute("PRAGMA table_info(reflect_run)")}
         assert "rejecter_failed" in cols
         assert "source" in cols
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 15
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 16
         conn.close()

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **札记（Working Memory Scratchpad 工作区暂存夹，ADR-0032，v0.17.0）**:
+  - 借鉴 Letta (MemGPT) 虚拟内存思想，引入 `SessionScratchpad` 表与数据库迁移 `v16`（为 Agent 提供在对话中主动实时读写的小纸条区域）；
+  - 核心服务 `scratchpad_service.py`：支持 `get_scratchpad`、`write_scratchpad` 与 `format_scratchpad_context`（上限 1000 字符，超长自动截断，宁 miss 不脏写）；
+  - 协同注入：`inject_checkpoint_context` 联动支持在首轮 Prompt 中与「器识」人格基座与「底本」会话快照协同拼合注入 `【札记】`；
+  - 接口面暴露：新增 REST `GET /scratchpad/{session_id}`、`POST /scratchpad/{session_id}` 以及 MCP 工具 `scratchpad_get` / `scratchpad_write`（MCP 工具总数扩容至 48）；
+  - 命名正式登记：在 `CONTEXT.md` 登记「札记」（Zhaji，出自古籍读书摘记要点之木简小帖），归档 ADR-0032。
+
 ## [0.16.0] - 2026-08-30 - 更漏（Genglou）
 
 ### Added

@@ -30,11 +30,13 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert len(resp["result"]["tools"]) == 46  # 第十波：考功 kaogong_eval (ADR-0031)
+    assert len(resp["result"]["tools"]) == 48  # 第十一波：札记 scratchpad_get/write (ADR-0032)
     assert "persona_get" in names
     assert "persona_set" in names
     assert "candidate_refine" in names
     assert "kaogong_eval" in names
+    assert "scratchpad_get" in names
+    assert "scratchpad_write" in names
     assert "candidates_pending" in names
     assert "candidate_review" in names
     assert "add_dialogue" in names

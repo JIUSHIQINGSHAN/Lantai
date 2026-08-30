@@ -135,44 +135,60 @@ def _parse_naive_utc(value) -> datetime:
     return dt
 
 
-def inject_checkpoint_context(now: datetime | None = None, include_persona: bool = False) -> str:
-    """生成注入文本：`[Checkpoint · 上次会话]` + 五段行；陈旧自动标注；可联动注入器识（Persona）。
+def inject_checkpoint_context(
+    now: datetime | None = None,
+    include_persona: bool = False,
+    include_scratchpad: bool = True,
+    session_id: str = "default",
+) -> str:
+    """生成注入文本：`[Checkpoint · 上次会话]` + 五段行；陈旧自动标注；可联动注入器识（Persona）与札记（Scratchpad）。
 
     无快照/无合法块返回空串（零侵入降级）。纯格式函数，测试可注入 now。
     """
-    persona_text = ""
+    parts = []
     if include_persona:
         try:
             from lantai.services.persona_service import format_persona_context
-            persona_text = format_persona_context()
+            p_text = format_persona_context()
+            if p_text.strip():
+                parts.append(p_text.strip())
         except Exception:
-            persona_text = ""
+            pass
+
+    if include_scratchpad:
+        try:
+            from lantai.services.scratchpad_service import format_scratchpad_context
+            sp_text = format_scratchpad_context(session_id)
+            if sp_text.strip():
+                parts.append(sp_text.strip())
+        except Exception:
+            pass
 
     cp = get_latest_checkpoint()
-    if not cp or not cp.get("blocks"):
-        return persona_text
+    if cp and cp.get("blocks"):
+        now = now or utcnow()
+        stale = False
+        created = cp.get("created_at")
+        if created:
+            try:
+                stale = (now - _parse_naive_utc(created)
+                         > timedelta(days=settings.CHECKPOINT_STALENESS_DAYS))
+            except (ValueError, TypeError):
+                stale = True
+        header = "[Checkpoint · 上次会话]"
+        if stale:
+            header = (f"[Checkpoint · 上次会话 ⚠️ {settings.CHECKPOINT_STALENESS_DAYS}"
+                      f"天+前，仅供参考]")
+        lines = [header]
+        for key, label in BLOCK_LABELS.items():
+            content = (cp["blocks"] or {}).get(key, "")
+            if content.strip():
+                lines.append(f"{label}: {content}")
 
-    now = now or utcnow()
-    stale = False
-    created = cp.get("created_at")
-    if created:
-        try:
-            stale = (now - _parse_naive_utc(created)
-                     > timedelta(days=settings.CHECKPOINT_STALENESS_DAYS))
-        except (ValueError, TypeError):
-            stale = True
-    header = "[Checkpoint · 上次会话]"
-    if stale:
-        header = (f"[Checkpoint · 上次会话 ⚠️ {settings.CHECKPOINT_STALENESS_DAYS}"
-                  f"天+前，仅供参考]")
-    lines = [header]
-    for key, label in BLOCK_LABELS.items():
-        content = (cp["blocks"] or {}).get(key, "")
-        if content.strip():
-            lines.append(f"{label}: {content}")
+        cp_body = "\n".join(lines) if len(lines) > 1 else ""
+        if cp_body.strip():
+            parts.append(cp_body.strip())
 
-    cp_body = "\n".join(lines) if len(lines) > 1 else ""
-    if persona_text and cp_body:
-        return f"{persona_text}\n\n{cp_body}"
-    return persona_text or cp_body
+    return "\n\n".join(parts)
+
 

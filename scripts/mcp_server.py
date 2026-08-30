@@ -523,6 +523,22 @@ def handle_persona_get(params: dict) -> dict:
     return {"persona": p.model_dump(mode="json"), "context": format_persona_context(p)}
 
 
+def handle_scratchpad_get(params: dict) -> dict:
+    """札记：读取指定会话的工作区便签（ADR-0032）。"""
+    session_id = str(params.get("session_id", "default") or "default")
+    from lantai.services.scratchpad_service import get_scratchpad
+    return {"session_id": session_id, "content": get_scratchpad(session_id)}
+
+
+def handle_scratchpad_write(params: dict) -> dict:
+    """札记：更新/覆盖指定会话的工作区便签（ADR-0032）。"""
+    session_id = str(params.get("session_id", "default") or "default")
+    content = str(params.get("content", "") or "")
+    from lantai.services.scratchpad_service import write_scratchpad
+    return write_scratchpad(session_id, content)
+
+
+
 def handle_persona_set(params: dict) -> dict:
     """器识：设置或更新人格基座（L/G/E）。"""
     from lantai.services.persona_service import set_persona
@@ -751,6 +767,16 @@ TOOLS = {
             "epistemic_facts": {"type": "string", "description": "E: 认知底色与核心事实"},
             "is_active": {"type": "boolean", "default": True},
         }, "required": ["name"]}},
+    "scratchpad_get": {"description": "札记：读取指定会话的工作区便签（ADR-0032，只读）", "inputSchema": {
+        "type": "object", "properties": {
+            "session_id": {"type": "string", "default": "default", "description": "会话标识"},
+        }}},
+    "scratchpad_write": {"description": "札记：更新/覆盖指定会话的工作区便签（ADR-0032，最大 1000 字符）", "inputSchema": {
+        "type": "object", "properties": {
+            "session_id": {"type": "string", "default": "default", "description": "会话标识"},
+            "content": {"type": "string", "description": "要记下的即时便签文本"},
+        }, "required": ["content"]}},
+
 }
 
 TOOL_HANDLERS = {
@@ -799,6 +825,8 @@ TOOL_HANDLERS = {
     "checkpoint_latest": handle_checkpoint_latest,
     "persona_get": handle_persona_get,
     "persona_set": handle_persona_set,
+    "scratchpad_get": handle_scratchpad_get,
+    "scratchpad_write": handle_scratchpad_write,
 }
 
 

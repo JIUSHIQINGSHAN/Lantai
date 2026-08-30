@@ -405,3 +405,18 @@ class PersonaProfile(SQLModel, table=True):
     epistemic_facts: str = ""
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class SessionScratchpad(SQLModel, table=True):
+    """会话工作区暂存夹（ADR-0032 札记）。
+
+    借鉴 Letta (MemGPT) 虚拟内存工作区思想，为 Agent 提供在对话中主动
+    实时读写的小纸条区域（上限 1000 字符，宁 miss 不脏写截断）。
+    """
+    __tablename__ = "session_scratchpad"
+
+    session_id: str = Field(primary_key=True)
+    content: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
