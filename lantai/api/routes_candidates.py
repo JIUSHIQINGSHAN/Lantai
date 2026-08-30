@@ -54,3 +54,22 @@ def candidates_defer_undo(candidate_id: str, req: CandidateDeferUndoReq):
     except ValueError as e:
         status = 404 if "not found" in str(e) else 422
         raise HTTPException(status, str(e)) from e
+
+
+@router.post("/candidates/{candidate_id}/refine")
+def candidates_refine(candidate_id: str):
+    """披沙（ADR-0030）：对单条候选记忆进行指代消解与提纯。"""
+    try:
+        from lantai.services.refine_service import refine_candidate_record
+        return refine_candidate_record(candidate_id)
+    except ValueError as e:
+        status = 404 if "not found" in str(e) or "未找到" in str(e) else 422
+        raise HTTPException(status, str(e)) from e
+
+
+@router.post("/candidates/batch_refine")
+def candidates_batch_refine(min_conf: float = 0.15, max_conf: float = 0.6, limit: int = 20):
+    """披沙（ADR-0030）：批量对模糊区间的候选执行提纯。"""
+    from lantai.services.refine_service import batch_refine_candidates
+    return batch_refine_candidates(min_conf=min_conf, max_conf=max_conf, limit=limit)
+

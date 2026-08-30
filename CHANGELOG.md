@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **披沙（候选记忆递归精炼 Refine 机制，ADR-0030，v0.16.3）**:
+  - 核心服务 `refine_service.py`：针对模糊置信度（0.2~0.6）的候选记忆进行 LLM 指代消解、消除口语化废话、原子化提纯与置信度重估；
+  - 严格降级保护（宁 miss 不脏写）：LLM 异常、超时或校验失败时优雅降级保持原始文本不变，绝不损坏原有数据；
+  - 接口面暴露：新增 REST `POST /candidates/{id}/refine`、`POST /candidates/batch_refine` 以及 MCP 工具 `candidate_refine`（MCP 工具总数扩容至 45）；
+  - 命名正式登记：在 `CONTEXT.md` 登记「披沙」（Pisha，出自《世说新语·德行》「披沙拣金，往往见宝」），归档 ADR-0030。
 - **器识（Persona 人格基座 L/G/E，ADR-0029，v0.16.2）**:
   - 引入 `PersonaProfile` 表与数据库迁移 `v15`（支持言语风格 L、行为准则 G、认知底色 E 三层认知模型）；
   - 核心服务 `persona_service.py`：支持激活切换、多 Profile 管理、格式化 Prompt 上下文生成与纯函数防护；

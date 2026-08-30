@@ -117,10 +117,20 @@ def handle_candidate_review(params: dict) -> dict:
     return review_candidate(candidate_id, approve=approve, reason=reason)
 
 
+def handle_candidate_refine(params: dict) -> dict:
+    """披沙：对单条候选记忆进行指代消解与提纯（ADR-0030）。"""
+    candidate_id = params.get("candidate_id", "")
+    if not isinstance(candidate_id, str) or not candidate_id.strip():
+        raise ValueError("candidate_id must be a non-empty string")
+    from lantai.services.refine_service import refine_candidate_record
+    return refine_candidate_record(candidate_id.strip())
+
+
 def handle_get_digest(params: dict) -> dict:
     """当日记忆盘点报告（Ticket 03）。"""
     from lantai.workers.digest_worker import load_today_digest
     return load_today_digest()
+
 
 
 
@@ -564,6 +574,10 @@ TOOLS = {
             "approve": {"type": "boolean"},
             "reason": {"type": "string", "default": ""},
         }, "required": ["candidate_id", "approve"]}},
+    "candidate_refine": {"description": "披沙（精炼）：对指定候选记忆执行指代消解与结构化提纯（ADR-0030）", "inputSchema": {
+        "type": "object", "properties": {
+            "candidate_id": {"type": "string", "description": "候选记忆 ID"},
+        }, "required": ["candidate_id"]}},
     "raw_add": {"description": "原文直存（verbatim）：内容直入 FTS5+向量，零 LLM", "inputSchema": {
         "type": "object", "properties": {
             "content": {"type": "string", "description": "原文内容（代码/日志/配置等）"},
@@ -736,6 +750,7 @@ TOOL_HANDLERS = {
     "backfill": handle_backfill,
     "candidates_pending": handle_candidates_pending,
     "candidate_review": handle_candidate_review,
+    "candidate_refine": handle_candidate_refine,
     "get_digest": handle_get_digest,
     "raw_add": handle_raw_add,
     "obsidian_sync": handle_obsidian_sync,
