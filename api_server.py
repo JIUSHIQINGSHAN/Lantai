@@ -36,6 +36,7 @@ from lantai.api import (
     routes_persona_router,
     routes_scratchpad_router,
     routes_probing_router,
+    routes_terminal_router,
 )
 
 
@@ -89,6 +90,7 @@ protected_routers = [
     routes_persona_router,
     routes_scratchpad_router,
     routes_probing_router,
+    routes_terminal_router,
 ]
 for router in protected_routers:
     app.include_router(router, dependencies=[Depends(verify_api_key), Depends(verify_agent)])

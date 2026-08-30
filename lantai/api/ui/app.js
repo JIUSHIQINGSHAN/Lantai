@@ -1,5 +1,12 @@
 import {api, clearApiKey, getApiKey, saveApiKey} from './api.js';
 
+import { initTerminal, activateTerminalView } from './terminal.js';
+
+// Init Terminal on load
+document.addEventListener('DOMContentLoaded', () => {
+  initTerminal();
+});
+
 const SECTION_ORDER = ['immediate_action', 'pending_decisions', 'organization_needed', 'runtime_status'];
 const SECTION_LABELS = {
   immediate_action: '立即处理', pending_decisions: '待决',
@@ -76,6 +83,8 @@ function setView(view) {
     loadOverview();
   } else if (view === 'vault') {
     loadVault();
+  } else if (view === 'terminal') {
+    activateTerminalView();
   } else if (view === 'studio') {
     loadPersona();
     loadScratchpad($('#scratchpadSession')?.value || 'default');

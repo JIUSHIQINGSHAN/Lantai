@@ -28,6 +28,7 @@ from .routes_work_items import router as routes_work_items_router
 from .routes_persona import router as routes_persona_router
 from .routes_scratchpad import router as routes_scratchpad_router
 from .routes_probing import router as routes_probing_router
+from .routes_terminal import router as routes_terminal_router
 
 __all__ = [
     "routes_health_router",
@@ -57,6 +58,7 @@ __all__ = [
     "routes_work_items_router",
     "routes_persona_router",
     "routes_scratchpad_router",
+    "routes_terminal_router",
 ]
 
 

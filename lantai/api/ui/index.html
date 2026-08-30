@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="dark light">
   <title>兰台 · 案牍（悬镜控制台）</title>
   <link rel="stylesheet" href="/ui/assets/styles.css">
+  <link rel="stylesheet" href="/ui/assets/terminal.css">
 </head>
 <body>
   <div class="app-shell">
@@ -21,6 +22,7 @@
         <button class="nav-item" data-view="vault"><span>档案星图</span></button>
         <button class="nav-item" data-view="studio"><span>认知进化</span></button>
         <button class="nav-item" data-view="playground"><span>检索演练</span></button>
+        <button class="nav-item" data-view="terminal"><span>认知终端</span></button>
         <button class="nav-item" data-view="system"><span>系统脉搏</span><b id="navSystemCount">0</b></button>
       </nav>
       <div class="sidebar-footer">
@@ -265,7 +267,66 @@
         </div>
       </section>
 
-      <!-- 6. 系统脉搏与质量 (System & Pulse) -->
+      <!-- 6. 认知终端 (Glass-box Terminal) -->
+      <section class="view" id="terminalView">
+        <div class="terminal-split">
+          <!-- 左侧：对话流 -->
+          <div class="terminal-chat">
+            <header class="topbar">
+              <div><h1>认知终端</h1><p>透明化对话 · 实时记忆透视与深度图谱编辑</p></div>
+            </header>
+            <div class="chat-feed" id="chatFeed">
+              <div class="chat-welcome">
+                <div class="chat-welcome-icon">蘭</div>
+                <h3>欢迎使用兰台认知终端</h3>
+                <p>在下方输入查询，右侧将实时展示记忆检索过程与知识图谱。<br>您可以在图谱中点击节点编辑、拖拽连线、或合并碎片记忆。</p>
+              </div>
+            </div>
+            <div class="chat-input-bar">
+              <input type="text" id="terminalInput" placeholder="输入查询，观察记忆检索全过程..." autocomplete="off">
+              <select id="terminalDomain">
+                <option value="all">全域</option>
+                <option value="user" selected>用户域</option>
+                <option value="session">会话域</option>
+                <option value="agent">智能体域</option>
+              </select>
+              <button id="terminalSendBtn" class="primary-btn">发送</button>
+            </div>
+          </div>
+          <!-- 右侧：记忆透视图谱 -->
+          <div class="terminal-graph">
+            <header class="topbar" style="border-bottom:1px solid var(--line);">
+              <div><h1>记忆透视</h1><p id="graphStatus">等待查询...</p></div>
+              <div class="top-actions">
+                <button class="secondary-button" id="graphLoadAllBtn" title="加载全图谱">全量加载</button>
+              </div>
+            </header>
+            <svg id="graphCanvas" class="graph-canvas"></svg>
+            <!-- 节点编辑器面板 -->
+            <div class="node-editor" id="nodeEditor" hidden>
+              <div class="node-editor-header">
+                <h3 id="nodeEditorTitle">节点详情</h3>
+                <button class="icon-button" id="nodeEditorClose" title="关闭">×</button>
+              </div>
+              <div class="node-editor-body">
+                <label class="form-field"><span>记忆 ID</span><input id="neId" type="text" readonly></label>
+                <label class="form-field"><span>内容</span><textarea id="neContent" rows="5"></textarea></label>
+                <label class="form-field"><span>重要性 (0-1)</span><input id="neImportance" type="number" step="0.01" min="0" max="1"></label>
+                <label class="form-field"><span>置信度 (0-1)</span><input id="neConfidence" type="number" step="0.01" min="0" max="1"></label>
+                <label class="form-field"><span>类型</span><input id="neType" type="text"></label>
+              </div>
+              <div class="node-editor-actions">
+                <button class="primary-btn" id="neSaveBtn">保存修改</button>
+                <button class="danger-btn" id="neDeleteBtn">删除节点</button>
+                <button class="secondary-button" id="neLinkBtn" title="进入连线模式：点击另一个节点创建关系">🔗 连线</button>
+                <button class="secondary-button" id="neMergeBtn" title="进入合并模式：点击另一个节点合并">🔀 合并</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 7. 系统脉搏与质量 (System & Pulse) -->
       <section class="view tools-view" id="systemView">
         <header class="topbar"><div><h1>系统脉搏与质量</h1><p>存储健康度、Worker 调度与监控报告</p></div></header>
         <div class="tool-list">
@@ -321,6 +382,7 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
   <script type="module" src="/ui/assets/app.js"></script>
 </body>
 </html>
