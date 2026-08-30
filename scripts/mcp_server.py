@@ -809,7 +809,7 @@ def handle(msg: dict) -> dict | None:
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "lantai", "version": "0.15.2"}}}
+            "serverInfo": {"name": "lantai", "version": "0.16.0"}}}
     if method == "notifications/initialized":
         return None  # 通知无响应
     if method == "ping":

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-30 - 更漏（Genglou）
+
 ### Added
 - **考功（记忆价值演化与升降评定体系，ADR-0031，v0.16.4）**:
   - 核心服务 `kaogong_service.py`：基于长程使用反馈（`MemoryUsageFeedback`）与采纳率实现全库记忆功过评定；
