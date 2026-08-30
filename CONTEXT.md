@@ -57,4 +57,6 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **校雠**（三态去重） | 去重机制正式名（ADR-0013 候选意象升格，刘向《别录》校雠订误）：**余弦预筛 + 结构判别**（ADR-0019）——提取路径 sim ≥ `DEDUP_PRESCREEN_MERGE`(0.95) 直合（真重复零 LLM）、中带 [0.65, 0.95) 提取后交 `gate/relation.py::classify_relation`：锚点词比（jieba 内容词，滤值/停用）+ 归一化值差异（日期/邮箱/域名/数字/地点）判 merge/update/insert，中带 LLM 兜底、judge 失败降级 insert（宁 miss 不脏写）；fastpath 路径纯余弦（merge ≥ 0.90）。此处「锚点/锚点词」= 内容词集（与 recall_chain 的锚点自匹配语义不同域，勿混）。见 [ADR-0019](docs/adr/0019-dedup-structural-relation.md) |
 | **底本**（Diben，session checkpoint） | 会话级快照正式名（ADR-0013 意象池「底本」= 校勘所据定本）：**五段会话快照**（ADR-0021，移植 aiduMEM checkpoint.py 窄版）——在做/下一步/工作区/决策/待办五块，上下文压缩时 `write_session_checkpoint` 写入、下次会话启动 `inject_checkpoint_context` 注入；> 30 天注入自动标注陈旧；保留最近 `CHECKPOINT_MAX_SESSIONS`(5) 个会话；块 < 3 字符不落、> 600 截断（宁 miss 不脏写）。与逐记忆回滚的 MemoryCheckpoint（检查点）语义区分。见 [ADR-0021](docs/adr/0021-session-checkpoint.md) |
 | **拾遗**（Shiyi，检索韧性与降级召回） | 检索找回与多级降级正式名（ADR-0013 意象池「拾遗」= 捡拾遗漏之物，唐代谏官官职，取「拾遗补阙、失落必还」）：当外部向量检索异常（网络中断、Token 401、超时）时，平滑降级至本地 FTS5 + BM25 关键词检索；校准前置相关性闸门（prefilter），支持短实体查询（>=3 字符实词与默认自指）与显式检索透传，从根本上杜绝零召回。见 [ADR-0028](docs/adr/0028-zero-recall-remediation.md) |
+| **器识**（Qishi，Persona 人格基座） | 人格基座正式名（ADR-0013 典籍意象「器识」= 《新唐书·裴行俭传》「士之致远，先器识而后文艺」）：大模型长程交互立身之本，分 L/G/E 三层（言语风格 L、行事准则 G、认知底色 E）；常量级不衰减（decay_score 恒 1.0），会话首轮注入、检索偏好加权（Persona Boost）与反思演化防漂移。见 [ADR-0029](docs/adr/0029-persona-base.md) |
+
 

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **器识（Persona 人格基座 L/G/E，ADR-0029，v0.16.2）**:
+  - 引入 `PersonaProfile` 表与数据库迁移 `v15`（支持言语风格 L、行为准则 G、认知底色 E 三层认知模型）；
+  - 核心服务 `persona_service.py`：支持激活切换、多 Profile 管理、格式化 Prompt 上下文生成与纯函数防护；
+  - 会话级联动：`inject_checkpoint_context` 支持与「底本」会话快照协同注入首轮 Prompt，赋予 Agent 恒定立身风骨；
+  - 混合检索加权（Persona Boost）：`hybrid_search` 针对 preference 与 rule 分轨自动叠加 1.05x 偏好增益，并在 explain 中透明记录；
+  - 接口面暴露：新增 REST `/persona/*` 路由端点与 MCP 工具 `persona_get` / `persona_set`（MCP 工具总数扩容至 44）；
+  - 命名正式登记：在 `CONTEXT.md` 登记「器识」（Qishi，出自《新唐书·裴行俭传》「士之致远，先器识而后文艺」），归档 ADR-0029。
 - **开发工作流标准化**: 确立《研发工作流规范》（`docs/development-workflow.md`），基于六阶段标准（需求立项拆解、5 步根因诊断、架构与命名治理、TDD 先导与核心函数不 mock 冒烟、代码审查门禁、版本收口与发布闸门），并作为 `AGENTS.md` 强制规则。
 - **拾遗检索韧性与多级降级（ADR-0028）**: 
   - 混合检索 `hybrid_search` 嵌入异常防护：外部 Embedding API 鉴权 401/网络超时/连接中断时不挂死，平滑降级至 `_keyword_fallback` 本地 FTS5 + BM25 关键词检索；

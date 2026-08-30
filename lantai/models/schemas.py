@@ -159,3 +159,13 @@ class CrystalDecideReq(BaseModel):
     approve: bool
     steps: list[str] = []
     reason: str = ""
+
+
+class SetPersonaReq(BaseModel):
+    """设置/更新器识（Persona 人格基座，ADR-0029）。"""
+    name: str = Field(min_length=1, max_length=100)
+    linguistic_style: str = Field(default="", max_length=2000)
+    guidelines: str = Field(default="", max_length=2000)
+    epistemic_facts: str = Field(default="", max_length=2000)
+    is_active: bool = True
+

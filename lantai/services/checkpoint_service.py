@@ -135,14 +135,23 @@ def _parse_naive_utc(value) -> datetime:
     return dt
 
 
-def inject_checkpoint_context(now: datetime | None = None) -> str:
-    """生成注入文本：`[Checkpoint · 上次会话]` + 五段行；陈旧自动标注。
+def inject_checkpoint_context(now: datetime | None = None, include_persona: bool = False) -> str:
+    """生成注入文本：`[Checkpoint · 上次会话]` + 五段行；陈旧自动标注；可联动注入器识（Persona）。
 
     无快照/无合法块返回空串（零侵入降级）。纯格式函数，测试可注入 now。
     """
+    persona_text = ""
+    if include_persona:
+        try:
+            from lantai.services.persona_service import format_persona_context
+            persona_text = format_persona_context()
+        except Exception:
+            persona_text = ""
+
     cp = get_latest_checkpoint()
     if not cp or not cp.get("blocks"):
-        return ""
+        return persona_text
+
     now = now or utcnow()
     stale = False
     created = cp.get("created_at")
@@ -161,4 +170,9 @@ def inject_checkpoint_context(now: datetime | None = None) -> str:
         content = (cp["blocks"] or {}).get(key, "")
         if content.strip():
             lines.append(f"{label}: {content}")
-    return "\n".join(lines) if len(lines) > 1 else ""
+
+    cp_body = "\n".join(lines) if len(lines) > 1 else ""
+    if persona_text and cp_body:
+        return f"{persona_text}\n\n{cp_body}"
+    return persona_text or cp_body
+

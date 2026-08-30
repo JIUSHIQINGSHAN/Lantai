@@ -182,10 +182,10 @@ class TestAutodreamScheduling:
         assert "autodream" not in ids
 
 
-class TestMigrationsV8ToV14:
-    """v7 库 → v14：调度、反思来源、底本与候选延期迁移均可无损补齐。"""
+class TestMigrationsV8ToV15:
+    """v7 库 → v15：调度、反思来源、底本、候选延期与器识人格基座迁移均可无损补齐。"""
 
-    def test_v7_to_v14_creates_tables_and_reflect_source(self, tmp_path):
+    def test_v7_to_v15_creates_tables_and_reflect_source(self, tmp_path):
         import sqlite3
         conn = sqlite3.connect(str(tmp_path / "v7.db"))
         conn.execute("PRAGMA user_version = 7")
@@ -197,8 +197,9 @@ class TestMigrationsV8ToV14:
         assert "scheduler_run" in tables
         assert "reflect_run" in tables
         assert "session_checkpoint" in tables  # ADR-0021 底本
+        assert "persona_profile" in tables     # ADR-0029 器识
         cols = {r[1] for r in conn.execute("PRAGMA table_info(reflect_run)")}
         assert "rejecter_failed" in cols
         assert "source" in cols
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 14
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 15
         conn.close()

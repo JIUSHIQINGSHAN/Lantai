@@ -386,3 +386,22 @@ class SessionCheckpoint(SQLModel, table=True):
     block_key: str = ""
     content: str = ""
     created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class PersonaProfile(SQLModel, table=True):
+    """器识（ADR-0029，Persona 人格基座）：L/G/E 三层认知模型。
+
+    L (linguistic_style): 言语风格（诗词点缀、沉稳典雅）
+    G (guidelines): 行为准则（宁 miss 不脏写、核心函数不 mock）
+    E (epistemic_facts): 认知底色与核心事实（华硕天选三硬件环境、大哥为尊）
+    """
+    __tablename__ = "persona_profile"
+
+    id: str = Field(primary_key=True)
+    name: str = Field(index=True, unique=True)
+    is_active: bool = Field(default=False, index=True)
+    linguistic_style: str = ""
+    guidelines: str = ""
+    epistemic_facts: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)

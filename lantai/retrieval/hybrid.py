@@ -221,12 +221,13 @@ def _hybrid_search_impl(query: str, top_k: int = 5,
         vs = 1.0 - distances.get(m.id, 1.0)
         lane = getattr(m, "lane", "general") or "general"
         lane_boost = settings.LANE_RETRIEVAL_BOOST.get(lane, 1.0)
+        persona_boost = 1.05 if lane in ("preference", "rule") else 1.0
         fts_hit = 1.0 if m.id in fts_hits else 0.0
         bm_val = float(bm_norm[i])
         score = (settings.RETRIEVAL_W_VECTOR * vs
                  + settings.RETRIEVAL_W_BM25 * bm_val
                  + settings.RETRIEVAL_W_FTS * fts_hit
-                 + settings.RETRIEVAL_W_DECAY * m.decay_score) * lane_boost
+                 + settings.RETRIEVAL_W_DECAY * m.decay_score) * lane_boost * persona_boost
         scored_items.append((score, m))
         if explain:
             breakdowns[m.id] = {
@@ -235,6 +236,7 @@ def _hybrid_search_impl(query: str, top_k: int = 5,
                 "fts": round(settings.RETRIEVAL_W_FTS * fts_hit, 4),
                 "decay": round(settings.RETRIEVAL_W_DECAY * m.decay_score, 4),
                 "lane_boost": lane_boost,
+                "persona_boost": persona_boost,
                 "final": round(score, 4),
                 "decay_class": m.decay_class,
                 # decay_multiplier 是 decay_class 理论半衰期参考（0.5^(age/hl)）；

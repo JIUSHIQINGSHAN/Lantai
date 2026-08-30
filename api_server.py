@@ -33,6 +33,7 @@ from lantai.api import (
     routes_recall_chain_router,
     routes_ui_router,
     routes_work_items_router,
+    routes_persona_router,
 )
 
 
@@ -83,6 +84,7 @@ protected_routers = [
     routes_graph_router,
     routes_recall_chain_router,
     routes_work_items_router,
+    routes_persona_router,
 ]
 for router in protected_routers:
     app.include_router(router, dependencies=[Depends(verify_api_key), Depends(verify_agent)])

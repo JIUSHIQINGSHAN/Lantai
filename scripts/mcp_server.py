@@ -497,6 +497,30 @@ def handle_checkpoint_latest(params: dict) -> dict:
     return get_latest_checkpoint()
 
 
+def handle_persona_get(params: dict) -> dict:
+    """器识：获取当前激活人格基座（只读）。"""
+    from lantai.services.persona_service import get_active_persona, format_persona_context
+    p = get_active_persona()
+    if not p:
+        return {"persona": None, "context": ""}
+    return {"persona": p.model_dump(mode="json"), "context": format_persona_context(p)}
+
+
+def handle_persona_set(params: dict) -> dict:
+    """器识：设置或更新人格基座（L/G/E）。"""
+    from lantai.services.persona_service import set_persona
+    name = params.get("name", "")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("name must be a non-empty string")
+    p = set_persona(
+        name=name.strip(),
+        linguistic_style=str(params.get("linguistic_style", "")),
+        guidelines=str(params.get("guidelines", "")),
+        epistemic_facts=str(params.get("epistemic_facts", "")),
+        is_active=bool(params.get("is_active", True)),
+    )
+    return p.model_dump(mode="json")
+
 
 TOOLS = {
     "search":   {"description": "搜索记忆", "inputSchema": {
@@ -693,6 +717,16 @@ TOOLS = {
         }, "required": ["session_id", "blocks"]}},
     "checkpoint_latest": {"description": "底本：读取最近一次会话快照（只读）", "inputSchema": {
         "type": "object", "properties": {}}},
+    "persona_get": {"description": "器识：获取当前激活人格基座（L/G/E 三层与提示块，只读）", "inputSchema": {
+        "type": "object", "properties": {}}},
+    "persona_set": {"description": "器识：设置/更新人格基座（L/G/E 三层认知模型）", "inputSchema": {
+        "type": "object", "properties": {
+            "name": {"type": "string", "description": "人格名称"},
+            "linguistic_style": {"type": "string", "description": "L: 言语与表达风格"},
+            "guidelines": {"type": "string", "description": "G: 行为准则与戒律"},
+            "epistemic_facts": {"type": "string", "description": "E: 认知底色与核心事实"},
+            "is_active": {"type": "boolean", "default": True},
+        }, "required": ["name"]}},
 }
 
 TOOL_HANDLERS = {
@@ -737,6 +771,8 @@ TOOL_HANDLERS = {
     "graph_view": handle_graph_view,
     "checkpoint_write": handle_checkpoint_write,
     "checkpoint_latest": handle_checkpoint_latest,
+    "persona_get": handle_persona_get,
+    "persona_set": handle_persona_set,
 }
 
 
