@@ -131,7 +131,7 @@ def consolidate_cluster(
         user_prompt = f"待提纯碎片记忆列表：\n{sources_text}"
 
         try:
-            res = chat_json(sys_prompt=sys_prompt, user_prompt=user_prompt)
+            res = chat_json(system=sys_prompt, user=user_prompt)
         except Exception as exc:
             logger.warning("沉潜：LLM 提纯失败，保持原库不变（宁 miss 不脏写）: %s", exc)
             return None
@@ -194,7 +194,10 @@ def consolidate_cluster(
 
         # 4. 同步更新向量库与 FTS 索引
         try:
-            index_memory_item(master)
+            from lantai.llm.client import embed
+            embeddings = embed([master.content])
+            if embeddings:
+                index_memory_item(master.id, embeddings[0], {"lane": master.lane, "domain": master.domain})
         except Exception as exc:
             logger.warning("沉潜：主记忆向量索引同步异常（已落库）: %s", exc)
 
