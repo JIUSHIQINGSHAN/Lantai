@@ -271,7 +271,13 @@ def ui_index():
 
 @router.get("/ui/assets/{asset_name}")
 def ui_asset(asset_name: str):
-    allowed = {"styles.css": "text/css", "api.js": "text/javascript", "app.js": "text/javascript"}
+    allowed = {
+        "styles.css": "text/css",
+        "terminal.css": "text/css",
+        "api.js": "text/javascript",
+        "app.js": "text/javascript",
+        "terminal.js": "text/javascript",
+    }
     media_type = allowed.get(asset_name)
     if media_type is None:
         raise HTTPException(404, "ui asset not found")

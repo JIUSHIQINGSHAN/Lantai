@@ -1,8 +1,14 @@
 /* ---------------- Glass-box Terminal 样式 ---------------- */
+#terminalView.active {
+  display: block;
+  height: 100vh;
+  overflow: hidden;
+}
+
 .terminal-split {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  height: 100%;
+  height: 100vh;
   overflow: hidden;
 }
 
