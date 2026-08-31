@@ -143,7 +143,7 @@ async function loadFullGraph() {
   if (st) st.textContent = '加载全库拓扑...';
   
   try {
-    const data = await api('/terminal/graph?limit=200');
+    const data = await api('/terminal/graph?limit=100');
     if (graph) {
       graph.setData(data.nodes || [], data.edges || []);
       if (st) st.textContent = `全图谱 (节点: ${(data.nodes || []).length})`;

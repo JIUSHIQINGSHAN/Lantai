@@ -22,6 +22,7 @@ const state = {
   sections: Object.fromEntries(SECTION_ORDER.map(name => [name, {items: [], total: 0, limit: 50, error: ''}])),
   selected: new Map(), activeId: '', activeDetail: null, detailDirty: false, refreshPending: false,
   filters: {q: '', kind: '', risk: ''}, view: 'tasks', tree: null,
+  aiTriageMap: new Map(),
 };
 
 const $ = selector => document.querySelector(selector);
@@ -430,6 +431,25 @@ function renderRow(item) {
   });
   const main = node('div', 'row-main');
   main.append(node('strong', '', item.title), node('small', '', item.summary || item.badges.join(' · ')));
+  
+  // AI 智能预审研判建议徽标
+  const aiRec = state.aiTriageMap?.get(item.source_id);
+  if (aiRec) {
+    const badgeWrap = node('div', 'ai-triage-wrap');
+    const ACTION_MAP = {
+      approve: { text: '🟢 AI 建议批准', cls: 'approve' },
+      reject: { text: '🔴 AI 建议淘汰', cls: 'reject' },
+      refine: { text: '✨ AI 建议提纯', cls: 'refine' },
+      manual: { text: '🟡 AI 建议复核', cls: 'manual' },
+    };
+    const confText = Math.round((aiRec.confidence_score || 0.5) * 100);
+    const info = ACTION_MAP[aiRec.action] || ACTION_MAP.manual;
+    const badge = node('span', `ai-triage-badge ${info.cls}`, `${info.text} (${confText}%)`);
+    const reason = node('span', 'ai-triage-reason', aiRec.reason || '');
+    badgeWrap.append(badge, reason);
+    main.append(badgeWrap);
+  }
+
   const reason = node('div', 'row-reason', item.reason);
   const kind = node('span', 'kind-label', KIND_LABELS[item.kind]);
   const time = node('span', 'row-time', formatDate(item.due_at || item.created_at, true));
@@ -599,6 +619,7 @@ function renderInspectorActions(detail) {
   const add = (label, action, className = '') => {
     const button = node('button', className, label); button.addEventListener('click', action); footer.append(button);
   };
+  if (item.kind === 'candidate') add('✨ AI 披沙提纯', () => refineCandidateItem(detail), 'secondary-button');
   if (item.allowed_actions.includes('defer')) add('延期', () => chooseDefer(detail), 'secondary-button');
   if (item.allowed_actions.includes('regenerate')) add('重新生成', () => regenerateParameter(detail), 'secondary-button');
   if (item.allowed_actions.includes('organize')) add('挂载', () => organizeMemory(detail));
@@ -735,11 +756,87 @@ function updateBatchbar() {
   if (values.every(item => item.allowed_actions.includes('reject'))) {
     const button = node('button', 'danger', '批量拒绝'); button.addEventListener('click', batchReject); actions.append(button);
   }
-  if (values.every(item => item.kind === 'candidate')) {
-    const button = node('button', '', '批量延期'); button.addEventListener('click', batchDefer); actions.append(button);
-  }
   if (values.every(item => item.kind === 'memory')) {
     const button = node('button', '', '批量挂载'); button.addEventListener('click', batchOrganize); actions.append(button);
+  }
+  
+  // AI 预审批量采纳快捷按钮
+  const selectedCandidates = values.filter(item => item.kind === 'candidate');
+  if (selectedCandidates.length && state.aiTriageMap.size > 0) {
+    const aiRejects = selectedCandidates.filter(c => state.aiTriageMap.get(c.source_id)?.action === 'reject');
+    const aiApproves = selectedCandidates.filter(c => state.aiTriageMap.get(c.source_id)?.action === 'approve');
+    if (aiRejects.length) {
+      const btn = node('button', 'danger', `采纳 AI 淘汰 (${aiRejects.length})`);
+      btn.addEventListener('click', () => batchApplyAiDecision(aiRejects, 'reject'));
+      actions.append(btn);
+    }
+    if (aiApproves.length) {
+      const btn = node('button', '', `采纳 AI 批准 (${aiApproves.length})`);
+      btn.addEventListener('click', () => batchApplyAiDecision(aiApproves, 'approve'));
+      actions.append(btn);
+    }
+  }
+}
+
+async function refineCandidateItem(detail) {
+  const {item} = detail;
+  showToast('AI 披沙提纯中...');
+  try {
+    const res = await api(`/candidates/${encodeURIComponent(item.source_id)}/refine`, {method: 'POST'});
+    showToast('披沙提纯完成');
+    await openInspector(item.id);
+    await loadQueue({silent: true});
+  } catch (error) {
+    handleActionError(error);
+  }
+}
+
+async function runAiAutoTriage() {
+  const btn = $('#aiTriageBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '🤖 研判中...'; }
+  showToast('AI 正在扫描案牍并研判决策...');
+  try {
+    const res = await api('/candidates/ai_triage?limit=50', {method: 'POST'});
+    const recs = res.recommendations || [];
+    state.aiTriageMap.clear();
+    recs.forEach(r => state.aiTriageMap.set(r.id, r));
+    renderQueue();
+    const rejectCount = recs.filter(r => r.action === 'reject').length;
+    const approveCount = recs.filter(r => r.action === 'approve').length;
+    showToast(`AI 研判完成：${approveCount} 建议批准，${rejectCount} 建议淘汰`);
+  } catch (err) {
+    showToast(`AI 预审失败: ${err.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🤖 AI 智能预审'; }
+  }
+}
+
+async function batchApplyAiDecision(candidates, action) {
+  const label = action === 'approve' ? '批准' : '淘汰';
+  const answer = await ask({
+    title: `批量采纳 AI ${label}建议`,
+    note: `即将对已选的 ${candidates.length} 条候选执行【${label}】。`,
+    confirm: `确认批量${label}`,
+    danger: action === 'reject'
+  });
+  if (!answer.confirmed) return;
+
+  const payload = candidates.map(c => ({
+    id: c.source_id,
+    action: action,
+    reason: state.aiTriageMap.get(c.source_id)?.reason || `AI 批量${label}`
+  }));
+
+  try {
+    const res = await api('/candidates/batch_apply_triage', {
+      method: 'POST',
+      body: JSON.stringify({actions: payload})
+    });
+    showToast(`批量处理完成：${label === '批准' ? res.approved : res.rejected} 项已处理`);
+    state.selected.clear();
+    await loadQueue();
+  } catch (err) {
+    handleActionError(err);
   }
 }
 
@@ -788,6 +885,7 @@ async function batchOrganize() {
 function bindEvents() {
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => setView(button.dataset.view)));
   $('#refreshButton').addEventListener('click', () => loadQueue());
+  $('#aiTriageBtn')?.addEventListener('click', runAiAutoTriage);
   $('#systemRefresh').addEventListener('click', async () => { setView('tasks'); await loadQueue(); });
   $('#closeInspector').addEventListener('click', closeInspector);
   $('#clearSelection').addEventListener('click', () => { state.selected.clear(); renderQueue(); });

@@ -73,3 +73,21 @@ def candidates_batch_refine(min_conf: float = 0.15, max_conf: float = 0.6, limit
     from lantai.services.refine_service import batch_refine_candidates
     return batch_refine_candidates(min_conf=min_conf, max_conf=max_conf, limit=limit)
 
+
+@router.post("/candidates/ai_triage")
+def candidates_ai_triage(limit: int = 50):
+    """AI 智能预审：扫描待审候选并返回智能研判与决策建议。"""
+    from lantai.services.auto_triage_service import run_ai_triage
+    return run_ai_triage(limit=limit)
+
+
+@router.post("/candidates/batch_apply_triage")
+def candidates_batch_apply_triage(req: dict):
+    """批量采纳 AI 预审决策（一键批量批准/淘汰/提纯）。"""
+    from lantai.services.auto_triage_service import apply_ai_triage_batch
+    actions = req.get("actions", [])
+    if not isinstance(actions, list):
+        raise HTTPException(422, "actions 必须为列表")
+    return apply_ai_triage_batch(actions)
+
+
