@@ -128,6 +128,40 @@ def handle_candidate_refine(params: dict) -> dict:
     return refine_candidate_record(candidate_id.strip())
 
 
+def handle_triage_analyze(params: dict) -> dict:
+    """持节：扫描待审候选库并由 LLM 生成智能研判与决策建议。"""
+    limit = params.get("limit", 50)
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
+        raise ValueError("limit must be an int in [1, 500]")
+    from lantai.services.auto_triage_service import run_ai_triage
+    return run_ai_triage(limit=limit)
+
+
+def handle_triage_apply(params: dict) -> dict:
+    """持节：批量执行研判决策（approve 批准入提案 / reject 淘汰归档 / refine 提纯）。"""
+    actions = params.get("actions", [])
+    if not isinstance(actions, list) or not actions:
+        raise ValueError("actions must be a non-empty list of objects")
+    from lantai.services.auto_triage_service import apply_ai_triage_batch
+    return apply_ai_triage_batch(actions)
+
+
+def handle_triage_auto_pilot(params: dict) -> dict:
+    """持节：智能体一键全流程自主巡检与记忆审批（扫描→提纯→淘汰噪音→批准优质事实）。"""
+    min_approve = float(params.get("min_approve_conf", 0.85))
+    max_reject = float(params.get("max_reject_conf", 0.25))
+    limit = int(params.get("limit", 50))
+    dry_run = bool(params.get("dry_run", False))
+    from lantai.services.auto_triage_service import run_triage_auto_pilot
+    return run_triage_auto_pilot(
+        min_approve_conf=min_approve,
+        max_reject_conf=max_reject,
+        limit=limit,
+        dry_run=dry_run,
+    )
+
+
+
 def handle_get_digest(params: dict) -> dict:
     """当日记忆盘点报告（Ticket 03）。"""
     from lantai.workers.digest_worker import load_today_digest
@@ -694,6 +728,33 @@ TOOLS = {
         "type": "object", "properties": {
             "candidate_id": {"type": "string", "description": "候选记忆 ID"},
         }, "required": ["candidate_id"]}},
+    "triage_analyze": {"description": "持节（智能研判）：扫描待审候选库，由 AI 批量研判并生成决策建议（approve/reject/refine/manual）", "inputSchema": {
+        "type": "object", "properties": {
+            "limit": {"type": "integer", "default": 50, "description": "扫描候选条数 [1,500]"},
+        }}},
+    "triage_apply": {"description": "持节（批量审批）：批量采纳并执行研判决策（批准入提案、淘汰归档、精炼提纯）", "inputSchema": {
+        "type": "object", "properties": {
+            "actions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "description": "候选记忆 ID"},
+                        "action": {"type": "string", "description": "approve | reject | refine"},
+                        "reason": {"type": "string", "default": "", "description": "审批理由"},
+                    },
+                    "required": ["id", "action"]
+                },
+                "description": "待执行的决策清单"
+            },
+        }, "required": ["actions"]}},
+    "triage_auto_pilot": {"description": "持节（一键自治）：智能体案牍巡检官一键全自动巡检（扫描→提纯→淘汰噪音→批准优质事实）", "inputSchema": {
+        "type": "object", "properties": {
+            "min_approve_conf": {"type": "number", "default": 0.85, "description": "自动批准的置信度门槛 [0.0, 1.0]"},
+            "max_reject_conf": {"type": "number", "default": 0.25, "description": "自动淘汰的置信度天花板 [0.0, 1.0]"},
+            "limit": {"type": "integer", "default": 50, "description": "巡检候选条数 [1,500]"},
+            "dry_run": {"type": "boolean", "default": False, "description": "true=仅预演生成报告不写库"},
+        }}},
     "kaogong_eval": {"description": "考功（演化）：基于长程使用反馈与采纳率，对全库记忆执行功过升降级评定（ADR-0031）", "inputSchema": {
         "type": "object", "properties": {},
     }},
@@ -899,6 +960,9 @@ TOOL_HANDLERS = {
     "candidates_pending": handle_candidates_pending,
     "candidate_review": handle_candidate_review,
     "candidate_refine": handle_candidate_refine,
+    "triage_analyze": handle_triage_analyze,
+    "triage_apply": handle_triage_apply,
+    "triage_auto_pilot": handle_triage_auto_pilot,
     "kaogong_eval": handle_kaogong_eval,
     "memory_consolidate": handle_memory_consolidate,
     "consolidation_report": handle_consolidation_report,

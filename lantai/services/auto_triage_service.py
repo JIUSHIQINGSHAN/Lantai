@@ -183,3 +183,73 @@ def apply_ai_triage_batch(
             applied["failed"] += 1
 
     return applied
+
+
+def run_triage_auto_pilot(
+    min_approve_conf: float = 0.85,
+    max_reject_conf: float = 0.25,
+    limit: int = 50,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """「持节」· 智能体案牍巡检官一键自治（Auto-Pilot）：
+    
+    1. 扫描 pending_review 待审候选；
+    2. 执行 LLM 智能研判与置信度评估；
+    3. 自动归档低信噪比/闲聊噪音（<= max_reject_conf）；
+    4. 自动提纯中段模糊事实；
+    5. 自动批准确凿高价值记忆（>= min_approve_conf）；
+    6. 返回全流程治理统计报告。
+    """
+    triage_result = run_ai_triage(limit=limit)
+    recommendations = triage_result.get("recommendations", [])
+    
+    actions_to_apply = []
+    summary = {
+        "scanned": len(recommendations),
+        "auto_approved": 0,
+        "auto_rejected": 0,
+        "auto_refined": 0,
+        "kept_pending": 0,
+        "dry_run": dry_run,
+        "details": [],
+    }
+
+    for r in recommendations:
+        cid = r["id"]
+        action = r["action"]
+        score = r["confidence_score"]
+        reason = r["reason"]
+
+        final_act = "manual"
+        if action == "reject" or score <= max_reject_conf:
+            final_act = "reject"
+            summary["auto_rejected"] += 1
+        elif action == "approve" and score >= min_approve_conf:
+            final_act = "approve"
+            summary["auto_approved"] += 1
+        elif action == "refine":
+            final_act = "refine"
+            summary["auto_refined"] += 1
+        else:
+            summary["kept_pending"] += 1
+
+        summary["details"].append({
+            "id": cid,
+            "decision": final_act,
+            "score": score,
+            "reason": reason,
+        })
+
+        if final_act in ("approve", "reject", "refine"):
+            actions_to_apply.append({
+                "id": cid,
+                "action": final_act,
+                "reason": f"[持节·AutoPilot] {reason}",
+            })
+
+    if not dry_run and actions_to_apply:
+        applied_stats = apply_ai_triage_batch(actions_to_apply)
+        summary["applied_stats"] = applied_stats
+
+    return summary
+

@@ -30,10 +30,13 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert len(resp["result"]["tools"]) == 55  # 第十五波：探颐 probe_detect/probe_resolve (ADR-0037)
+    assert len(resp["result"]["tools"]) == 58  # 第十六波：持节 triage_analyze/triage_apply/triage_auto_pilot
     assert "persona_get" in names
     assert "persona_set" in names
     assert "candidate_refine" in names
+    assert "triage_analyze" in names
+    assert "triage_apply" in names
+    assert "triage_auto_pilot" in names
     assert "kaogong_eval" in names
     assert "memory_consolidate" in names
     assert "consolidation_report" in names
@@ -606,3 +609,60 @@ def test_graph_view_limit_invalid(mcp_env):
     resp = mod.handle({"jsonrpc": "2.0", "id": 99, "method": "tools/call",
                        "params": {"name": "graph_view", "arguments": {"limit": 9999}}})
     assert "error" in resp
+
+
+def test_triage_mcp_tools(mcp_env):
+    """持节：测试通过 MCP 进行待审候选分析、批量审批与一键 AutoPilot。"""
+    session_factory, _ = mcp_env
+    from lantai.models.tables import MemoryCandidate
+    with session_factory() as s:
+        s.add(MemoryCandidate(
+            id="mcp_cand_1",
+            document_id="doc_mcp_1",
+            summary="哈哈好的",
+            claims=["哈哈好的"],
+            status="pending_review",
+            extractor_confidence=0.1,
+        ))
+        s.add(MemoryCandidate(
+            id="mcp_cand_2",
+            document_id="doc_mcp_2",
+            summary="用户固定使用 Chrome 浏览器调试前端页面",
+            claims=["用户固定使用 Chrome 浏览器调试前端页面"],
+            status="pending_review",
+            extractor_confidence=0.9,
+        ))
+        s.commit()
+
+    mod = _load_mcp()
+
+    # 1. 测试 triage_analyze
+    out_analyze = _call_tool(mod, "triage_analyze", {"limit": 10})
+    assert out_analyze["total"] == 2
+    assert len(out_analyze["recommendations"]) == 2
+
+    # 2. 测试 triage_apply
+    actions = [
+        {"id": "mcp_cand_1", "action": "reject", "reason": "闲聊"},
+        {"id": "mcp_cand_2", "action": "approve", "reason": "高价值偏好"},
+    ]
+    out_apply = _call_tool(mod, "triage_apply", {"actions": actions})
+    assert out_apply["approved"] == 1
+    assert out_apply["rejected"] == 1
+
+    # 3. 测试 triage_auto_pilot
+    with session_factory() as s:
+        s.add(MemoryCandidate(
+            id="mcp_cand_3",
+            document_id="doc_mcp_3",
+            summary="收到！",
+            claims=["收到！"],
+            status="pending_review",
+            extractor_confidence=0.05,
+        ))
+        s.commit()
+
+    out_pilot = _call_tool(mod, "triage_auto_pilot", {"dry_run": True, "limit": 10})
+    assert out_pilot["scanned"] >= 1
+    assert out_pilot["dry_run"] is True
+
