@@ -12,16 +12,18 @@ export function initTerminal() {
 }
 
 export function activateTerminalView() {
-  if (!graph && window.d3) {
-    try {
-      graph = new MemoryGraph('#graphCanvas');
-    } catch (e) {
-      console.warn('初始化图谱异常', e);
+  requestAnimationFrame(() => {
+    if (!graph && window.d3) {
+      try {
+        graph = new MemoryGraph('#graphCanvas');
+      } catch (e) {
+        console.warn('初始化图谱异常', e);
+      }
     }
-  }
-  if (graph && graph.nodes.length === 0) {
-    loadFullGraph();
-  }
+    if (graph && graph.nodes.length === 0) {
+      loadFullGraph();
+    }
+  });
 }
 
 function appendChatBubble(role, text) {
@@ -315,6 +317,16 @@ class MemoryGraph {
   }
 
   updateView() {
+    const el = document.querySelector('#graphCanvas');
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        this.width = rect.width;
+        this.height = rect.height;
+        this.simulation.force("center", d3.forceCenter(this.width / 2, this.height / 2));
+      }
+    }
+
     // Links
     this.linkElements = this.linkGroup.selectAll("line")
       .data(this.links, d => d.id || `${d.source?.id || d.source}-${d.target?.id || d.target}`);
@@ -353,7 +365,7 @@ class MemoryGraph {
     // Update Simulation
     this.simulation.nodes(this.nodes).on("tick", this.ticked.bind(this));
     this.simulation.force("link").links(this.links);
-    this.simulation.alpha(0.3).restart();
+    this.simulation.alpha(0.8).restart();
   }
 
   ticked() {

@@ -131,7 +131,7 @@ def terminal_graph(domain: str = "", limit: int = 100):
     """获取记忆图谱数据（节点 + 边）用于 D3 力导向图"""
     memories = list_memories(lane="", status="", decay_class="",
                              memory_type="", limit=limit, offset=0)
-    items = memories.get("items", [])
+    items = memories.get("memories") or memories.get("items") or []
     if domain:
         items = [m for m in items if m.get("domain") == domain]
 
