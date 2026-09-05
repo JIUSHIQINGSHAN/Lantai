@@ -122,6 +122,15 @@ class Settings(BaseSettings):
     # 安全
     API_KEY: str = ""
 
+    # Feature Flags (Core vs Ext)
+    FEATURE_OBSIDIAN: bool = False
+    FEATURE_WIKI: bool = False
+    FEATURE_VISION: bool = False
+    FEATURE_KAOGONG: bool = False
+    FEATURE_SCENES: bool = False
+    FEATURE_TERMINAL: bool = False
+    FEATURE_WORK_ITEMS: bool = False
+
     # Reranker 配置（硅基流 /v1/rerank）
     RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"
     RERANKER_BASE_URL: str = "https://api.siliconflow.cn/v1"

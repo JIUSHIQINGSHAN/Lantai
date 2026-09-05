@@ -29,21 +29,6 @@ class TestMemoryItemNoEmbedding:
         assert "embedding" not in MemoryItem.model_fields
 
 
-class TestJiebaBM25:
-    """hybrid_search 使用 jieba 分词"""
-
-    def test_jieba_imported(self):
-        """jieba 模块在 hybrid 模块中可用"""
-        from lantai.retrieval import hybrid
-        assert hasattr(hybrid, "jieba")
-
-    def test_chinese_tokenization(self):
-        """jieba 对中文正确分词"""
-        import jieba
-        tokens = list(jieba.lcut("我喜欢Python编程"))
-        assert "我" in tokens
-        assert "喜欢" in tokens
-        assert "Python" in tokens
 
 
 class TestCosineMetric:

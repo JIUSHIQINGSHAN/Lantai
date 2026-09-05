@@ -38,8 +38,10 @@ def apply_forgetting():
                     changed = True
             else:
                 last = m.last_used_at or m.created_at
-                if last.tzinfo is None:
-                    last = last.replace(tzinfo=timezone.utc)
+                if last.tzinfo is not None and now.tzinfo is None:
+                    last = last.replace(tzinfo=None)
+                elif last.tzinfo is None and now.tzinfo is not None:
+                    last = last.replace(tzinfo=now.tzinfo)
                 days = max(0.0, (now - last).total_seconds() / 86400.0)
                 strength = _lane_strength(m.importance, m.use_count, m.lane)
                 new_decay = math.exp(-days / strength)

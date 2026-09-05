@@ -107,8 +107,8 @@ class TestServiceFallback:
         fake = {"document_id": "doc1", "candidate_id": "c1"}
         with patch.object(ms.settings, "COALESCE_ENABLED", False), \
              patch.object(ms, "add_memory", return_value=fake) as m:
-            res = ms.add_memory_async(req)
-        m.assert_called_once_with(req)
+            res = ms.add_memory_async(req, user_id="default")
+        m.assert_called_once_with(req, user_id="default")
         assert res["status"] == "synced"
         assert res["document_id"] == "doc1"
         assert len(res["job_id"]) == 16

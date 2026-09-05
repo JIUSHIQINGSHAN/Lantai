@@ -26,9 +26,6 @@ from lantai.evolution.promoter import _make_checkpoint
 from lantai.storage import db
 from lantai.storage.vector_store import get_vector_store
 
-vector_store = get_vector_store()
-
-
 def _apply_dedup(s, content: str, fastpath: bool) -> tuple[str, MemoryItem | None, float]:
     """余弦预判（ADR-0019 结构判别第一相位）。
 
@@ -40,7 +37,7 @@ def _apply_dedup(s, content: str, fastpath: bool) -> tuple[str, MemoryItem | Non
     """
     try:
         qv = embed([content])[0]
-        vec_results = vector_store.search(qv, top_k=1)
+        vec_results = get_vector_store().search(qv, top_k=1)
         if not isinstance(vec_results, list):
             return "insert", None, 0.0
         return find_similar(s, vec_results, fastpath=fastpath)

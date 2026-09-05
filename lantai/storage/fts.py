@@ -6,6 +6,7 @@ FTS5 全文搜索：trigram 分词器 + 同事务写入同步（ADR-0008）
 - search_fts：子串召回
 """
 import sqlite3
+import re
 
 from lantai.core.logger import logger
 
@@ -59,19 +60,16 @@ def index_fts(conn: sqlite3.Connection, memory_id: str, content: str):
 
 
 def search_fts(conn: sqlite3.Connection, query: str, top_k: int = 5) -> list[str]:
-    """FTS5 全文搜索，返回匹配的记忆 ID 列表。"""
+    """FTS5 全文匹配的记忆 ID 列表"""
     try:
+        query = re.sub(r'[^\w\u4e00-\u9fa5]+', ' ', query)
         keywords = [w.strip() for w in query.split() if w.strip()]
-        # trigram 最小 3 字符：短词（如 2 字中文「密钥」/ 1 字符号）在索引侧
-        # 永远无法成词，AND 链中掺入只会毒化整条查询（实测 "API 密钥" 类查询
-        # 因「密钥」零命中而整体失效）——直接剔除，保住长词命中。
+        # trigram 最小 3 字符构成，2 个汉字/ 1 字符等自动无法生成词。
+        # 自动无法生成词，AND 且查不到，导致 "API 接口" 查不到接口。
+        # 将过短词剔除，交由兜底处理。
         keywords = [k for k in keywords if len(k) >= 3]
         if not keywords:
             return []
-        # 逐词引号包裹：FTS5 MATCH 语法里 = @ . ? / 等字符会触发 syntax error，
-        # 使整条 FTS 通道降级（实测真实查询大量触发）；引号把词转义为字面量，
-        # trigram 分词器下仍按子串匹配（ADR-0008 容错语义不变）。
-        # 词内双引号按 FTS5 规则用 "" 转义。
         match_query = " AND ".join(
             '"' + k.replace('"', '""') + '"' for k in keywords)
         cursor = conn.execute(
@@ -81,5 +79,27 @@ def search_fts(conn: sqlite3.Connection, query: str, top_k: int = 5) -> list[str
         return [row[0] for row in cursor.fetchall()]
     except Exception as e:
         logger.warning("FTS5 search failed: %s", e)
+        return []
+
+def search_fts_bm25(conn: sqlite3.Connection, query: str, top_k: int = 50) -> list[tuple[str, float]]:
+    """FTS5 全文匹配 (记忆ID, bm25分) 列表（越小越好，通常为负）"""
+    try:
+        query = re.sub(r'[^\w\u4e00-\u9fa5]+', ' ', query)
+        keywords = [w.strip() for w in query.split() if w.strip()]
+        keywords = [k for k in keywords if len(k) >= 3]
+        if not keywords:
+            return []
+        match_query = " OR ".join(
+            '"' + k.replace('"', '""') + '"' for k in keywords)
+        
+        # 使用 sqlite 的 bm25 函数
+        cursor = conn.execute(
+            "SELECT memory_id, bm25(memory_fts, 10.0, 5.0) as score "
+            "FROM memory_fts WHERE memory_fts MATCH ? ORDER BY score LIMIT ?",
+            (match_query, top_k)
+        )
+        return cursor.fetchall()
+    except Exception as e:
+        logger.warning("FTS5 bm25 search failed: %s", e)
         return []
 

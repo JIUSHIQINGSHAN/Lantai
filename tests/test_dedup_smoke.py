@@ -50,7 +50,7 @@ def smoke_env(tmp_path, monkeypatch):
     # 重新创建 vector_store 实例并注入到 memory_service
     from lantai.storage.vector_store import get_vector_store
     fresh_vs = get_vector_store()
-    monkeypatch.setattr("lantai.services.memory_service.vector_store", fresh_vs)
+    monkeypatch.setattr("lantai.services.memory_service.get_vector_store", lambda: fresh_vs)
 
     # mock embed（外部网络调用），返回固定向量
     def fake_embed(texts):

@@ -47,6 +47,12 @@ class TestDomainIsolationDB:
             )
             s.add_all([m_user, m_session, m_agent])
             s.commit()
+            
+            from lantai.storage.fts import sync_fts
+            sync_fts(s, m_user.id, m_user.content)
+            sync_fts(s, m_session.id, m_session.content)
+            sync_fts(s, m_agent.id, m_agent.content)
+            s.commit()
 
             # 1. 过滤 user 域
             res_user = hybrid_search("茶 端口 冒烟测试", session=s, domain="user")
@@ -92,6 +98,9 @@ class TestDomainEndpointsAndMCP:
             )
             s.add(m)
             s.commit()
+            from lantai.storage.fts import sync_fts
+            sync_fts(s, m.id, m.content)
+            s.commit()
 
         client = TestClient(app)
         # 查询 user 域 (force=True 绕过闸门)
@@ -117,6 +126,10 @@ class TestDomainEndpointsAndMCP:
                 decay_score=1.0,
             )
             s.add(m)
+            s.commit()
+            
+            from lantai.storage.fts import sync_fts
+            sync_fts(s, m.id, m.content)
             s.commit()
 
         from scripts.mcp_server import handle_search

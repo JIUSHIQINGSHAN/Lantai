@@ -18,6 +18,13 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine
 
+from lantai.core.settings import settings
+settings.FEATURE_OBSIDIAN = True
+settings.FEATURE_WIKI = True
+settings.FEATURE_WORK_ITEMS = True
+settings.FEATURE_VISION = True
+settings.FEATURE_TERMINAL = True
+
 
 def _install_otel_stub() -> None:
     """chromadb 会 import OTLPSpanExporter；本地环境该依赖破损，测试时打桩。"""
@@ -72,12 +79,43 @@ def param_env():
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
+    from lantai.storage.fts import init_fts
+    with engine.connect() as conn:
+        init_fts(conn.connection.driver_connection)
 
     def session_factory() -> Session:
         return Session(engine)
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(db_module, "get_session", session_factory)
+        
+        # Mock vector store to avoid hitting network/ChromaDB in all DB tests
+        import lantai.storage.vector_store as vector_store_module
+        import lantai.retrieval.hybrid as hybrid_module
+        import lantai.services.memory_service as memory_service
+        class DummyVS:
+            def search(self, *args, **kwargs): return []
+            def search_batch(self, *args, **kwargs): return []
+            def add(self, *args, **kwargs): pass
+            def update(self, *args, **kwargs): pass
+            def delete(self, *args, **kwargs): pass
+        dummy_vs = DummyVS()
+        mp.setattr(vector_store_module, "get_vector_store", lambda: dummy_vs)
+        mp.setattr(hybrid_module, "get_vector_store", lambda: dummy_vs)
+        mp.setattr(memory_service, "get_vector_store", lambda: dummy_vs)
+        
+        import lantai.llm.client as llm_client
+        mp.setattr(llm_client, "embed", lambda texts: [[0.1] * 1536 for _ in texts])
+        mp.setattr(hybrid_module, "embed", lambda texts: [[0.1] * 1536 for _ in texts])
+        mp.setattr(llm_client, "chat_json", lambda *args, **kwargs: {"candidate_n": 5, "lanes": []})
+        import lantai.retrieval.intent as intent_module
+        mp.setattr(intent_module, "chat_json", lambda *args, **kwargs: {"candidate_n": 5, "lanes": []})
+        
+        import lantai.retrieval.reranker as reranker_module
+        dummy_rerank = lambda q, docs, k: [{"index": i, "score": 0.9, "document": d} for i, d in enumerate(docs)]
+        mp.setattr(reranker_module, "rerank", dummy_rerank)
+        mp.setattr(hybrid_module, "rerank", dummy_rerank)
+        
         yield session_factory, engine
 
     # 恢复 settings 白名单参数

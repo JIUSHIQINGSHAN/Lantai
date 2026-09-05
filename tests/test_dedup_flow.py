@@ -24,7 +24,11 @@ def env_fixture(monkeypatch):
     def mock_search(content_or_vec, top_k=8, where=None):
         return getattr(mock_search, "results", [])
 
-    monkeypatch.setattr("lantai.services.memory_service.vector_store.search", mock_search)
+    class MockVectorStore:
+        def search(self, content_or_vec, top_k=8, where=None):
+            return mock_search(content_or_vec, top_k, where)
+    
+    monkeypatch.setattr("lantai.services.memory_service.get_vector_store", lambda: MockVectorStore())
     # DD-01 修复后 _apply_dedup 先调 embed 再 search，需 mock embed 网络调用
     monkeypatch.setattr("lantai.services.memory_service.embed",
                         lambda texts: [[0.1] * 768 for _ in texts])

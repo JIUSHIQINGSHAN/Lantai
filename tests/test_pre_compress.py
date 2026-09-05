@@ -137,7 +137,7 @@ def test_metadata_persisted_to_raw_document():
          patch.object(ms, "extract_candidate", return_value={
              "topic": [], "summary": "s", "claims": [], "methods": [],
              "constraints": [], "actions": [], "extractor_confidence": 0.9}), \
-         patch.object(ms, "vector_store", Mock()), \
+         patch.object(ms, "get_vector_store", return_value=Mock()), \
          patch("lantai.services.memory_service.fastpath_check", return_value=None):
         ms.add_memory(req)
     with Session(engine) as s:

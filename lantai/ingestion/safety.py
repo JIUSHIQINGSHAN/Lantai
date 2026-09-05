@@ -102,7 +102,20 @@ def validate_api_url(url: str) -> str:
 def fetch_with_safety(url: str, max_bytes: int | None = None,
                       timeout: float | None = None,
                       max_redirects: int | None = None) -> bytes:
-    """带 SSRF 防护的抓取：逐跳校验 + 响应限长。返回响应体 bytes。"""
+    """带 SSRF 防护的抓取：逐跳校验 + 响应限长。返回响应体 bytes。
+    
+    Threat Model 说明 (DD-05)：
+    当前使用系统 DNS 解析校验 IP，随后由 httpx 发起连接（重新解析 DNS）。
+    理论上存在 DNS Rebinding TOCTOU 窗口。但在 Lantai 的典型场景（低频 RSS、可信信息源抓取）下，
+    此风险极低，暂作为已知限制接受。
+    """
+    from importlib.metadata import version
+    
+    try:
+        app_version = version("lantai")
+    except Exception:
+        app_version = "0.0.0"
+        
     max_bytes = max_bytes or settings.SSRF_MAX_BYTES
     timeout = timeout or settings.RSS_TIMEOUT
     max_redirects = max_redirects or settings.SSRF_MAX_REDIRECTS
@@ -110,7 +123,7 @@ def fetch_with_safety(url: str, max_bytes: int | None = None,
     current = validate_fetch_url(url)
     for _ in range(max_redirects + 1):
         with httpx.Client(follow_redirects=False, timeout=timeout) as client:
-            r = client.get(current, headers={"User-Agent": "lantai/0.3.3"})
+            r = client.get(current, headers={"User-Agent": f"lantai/{app_version}"})
         if r.status_code in (301, 302, 303, 307, 308):
             loc = r.headers.get("location")
             if not loc:

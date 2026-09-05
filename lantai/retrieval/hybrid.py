@@ -1,9 +1,7 @@
 from typing import Any, Optional, Mapping
 from dataclasses import dataclass, field
 import threading
-import jieba
 import time
-from rank_bm25 import BM25Okapi
 from sqlmodel import select
 
 from lantai.llm.client import embed
@@ -14,7 +12,7 @@ from lantai.core.settings import settings
 from lantai.retrieval.intent import classify_intent
 from lantai.retrieval.reranker import rerank
 from lantai.storage.vector_store import get_vector_store
-from lantai.storage.fts import search_fts
+from lantai.storage.fts import search_fts, search_fts_bm25
 
 
 @dataclass(frozen=True)
@@ -81,31 +79,17 @@ class RetrievalParams:
         return self.extra.get(key, getattr(settings, key, default))
 
 
-# BM25 语料缓存（M4）：key = items 的 (id, content) 有序元组，线程锁保护（F3）
-_BM25_LOCK = threading.Lock()
-_BM25_CACHE: dict = {"key": None, "bm25": None}
 
-
-def _get_bm25(items: list) -> "BM25Okapi":
-    key = tuple((m.id, m.content) for m in items)
-    with _BM25_LOCK:
-        if _BM25_CACHE.get("key") == key:
-            return _BM25_CACHE["bm25"]
-    corpus = [jieba.lcut(m.content) for m in items]
-    bm25 = BM25Okapi(corpus)
-    with _BM25_LOCK:
-        _BM25_CACHE["key"] = key
-        _BM25_CACHE["bm25"] = bm25
-    return bm25
 
 
 def _apply_supersedes_order(scored: list, breakdowns: dict | None = None,
-                            params: RetrievalParams | None = None) -> list:
-    """supersedes 边感知降权：被取代旧值若其新值同在候选集，压到新值之下。
+                            params: RetrievalParams | None = None,
+                            session: Any = None) -> list:
+    """supersedes 边感知重排序。新值顶替旧值，将旧值压入新值之下。
 
-    宁 miss 不脏写：不删除旧值（残留如实留在结果中），仅保证新值在前；
-    新值不在候选集时不动旧值（有旧值可用总比空手好）。仅按候选 id 做一次
-    边查找，异常/缺边静默降级为原排序。
+    宁 miss 不脏写的实践：旧值在校正、证实前保留，
+    新值若在候选集时，新值的确信度应比旧值好，旧值被取代。
+    边不存在、异常/缺边均默认视为原样。
     """
     p = params or RetrievalParams()
     if not p.supersedes_enabled or not scored:
@@ -113,12 +97,18 @@ def _apply_supersedes_order(scored: list, breakdowns: dict | None = None,
     ids = [m.id for _, m in scored]
     superseded_by: dict[str, list[str]] = {}
     try:
-        with db.get_session() as s:
-            edges = s.exec(select(MemoryEdge).where(
+        def _get_s(cb):
+            if session is not None:
+                return cb(session)
+            with db.get_session() as s:
+                return cb(s)
+        def _edge_cb(s):
+            return s.exec(select(MemoryEdge).where(
                 MemoryEdge.relation == "supersedes",
                 MemoryEdge.source_memory_id.in_(ids),
                 MemoryEdge.target_memory_id.in_(ids),
             )).all()
+        edges = _get_s(_edge_cb)
     except Exception:
         return scored
     for e in edges:
@@ -230,6 +220,8 @@ def _hybrid_search_impl(
         qv = embed([query])[0]
         vector_store = get_vector_store()
         vector_results = vector_store.search(qv, top_k=fetch_n)
+        # ADR-0008: Drop irrelevant vector results (Chroma pads up to top_k)
+        vector_results = [r for r in vector_results if r.get("distance", 1.0) < 0.8]
     except Exception as e:
         logger.warning(f"Vector search failed, falling back to keyword (Shiyi): {e}")
         vector_results = []
@@ -252,13 +244,44 @@ def _hybrid_search_impl(
             domain=domain, session=session, params=p,
         )
 
-    # 从 SQLite 加载完整记忆项——仅 active
-    ids = [r["id"] for r in vector_results]
+    # Step 3: FTS5 子串召回（ADR-0008）与 BM25 召回（F2 重构）
+    fts_hits: set[str] = set()
+    fts_bm25_results = []
+    fts_hits: set[str] = set()
+    try:
+        def _get_s(cb):
+            if session is not None:
+                return cb(session)
+            with db.get_session() as s:
+                return cb(s)
+                
+        def _search_fts_cb(s):
+            return set(search_fts(
+                s.connection().connection.driver_connection,
+                query, top_k=p.fts_recall_top_k))
+        fts_hits = _get_s(_search_fts_cb)
+        
+        def _search_fts_bm25_cb(s):
+            return search_fts_bm25(
+                s.connection().connection.driver_connection,
+                query, top_k=fetch_n)
+        fts_bm25_results = _get_s(_search_fts_bm25_cb)
+    except Exception:
+        pass
+
+    # 从 SQLite 加载完整记忆项（Vector, BM25 和 FTS 的并集）
+    vector_ids = [r["id"] for r in vector_results]
+    bm25_ids = [r[0] for r in fts_bm25_results]
+    all_ids = set(vector_ids) | set(bm25_ids) | fts_hits
+    if not all_ids:
+        if trace:
+            return [], trace_steps
+        return []
 
     def _query_items(s):
         return s.exec(
             select(MemoryItem)
-            .where(MemoryItem.id.in_(ids))
+            .where(MemoryItem.id.in_(list(all_ids)))
             .where(MemoryItem.status == "active")
         ).all()
 
@@ -267,21 +290,17 @@ def _hybrid_search_impl(
     else:
         with db.get_session() as s:
             items = _query_items(s)
-    items_by_id = {m.id: m for m in items}
 
     # 过滤 memory_types / lanes / domain
     if memory_types:
         items = [m for m in items if m.memory_type in memory_types]
     elif not p.verbatim_in_recall:
-        # 原文直存默认不进混合召回（Ticket 02）：GET /verbatim/search 专用通道可查
         items = [m for m in items if m.memory_type != "verbatim"]
     if lanes:
         items = [m for m in items if m.lane in lanes]
     if domain and domain != "all":
         items = [m for m in items if getattr(m, "domain", "user") == domain]
 
-
-    # Step 2.5: Chronos 双时间过滤（DB 读出的 datetime 为 naive，需先归一时区）
     items = _chronos_filter(items)
 
     if trace:
@@ -296,67 +315,52 @@ def _hybrid_search_impl(
             return [], trace_steps
         return []
 
-    # Step 3: FTS5 子串召回（ADR-0008）
-    fts_hits: set[str] = set()
-    try:
-        with db.get_session() as s:
-            fts_hits = set(search_fts(
-                s.connection().connection.driver_connection,
-                query, top_k=p.fts_recall_top_k))
-    except Exception:
-        fts_hits = set()  # FTS 不可用不影响主检索
-
-    # Step 4: BM25（带缓存，M4）+ 向量距离 + FTS 命中 + 衰减 融合打分
-    distances = {r["id"]: r["distance"] for r in vector_results}
-    bm25 = _get_bm25(items)
-    bm_scores = bm25.get_scores(jieba.lcut(query))
-    # 不用 ndarray.ptp()（numpy>=2 已移除），min/max 兼容各版本
-    bm_range = bm_scores.max() - bm_scores.min()
-    bm_norm = (bm_scores - bm_scores.min()) / (bm_range + 1e-8)
-
+    # Step 4: RRF (Reciprocal Rank Fusion) + 衰减 融合打分 (F2)
+    vector_ranks = {r["id"]: idx for idx, r in enumerate(vector_results)}
+    bm25_ranks = {r[0]: idx for idx, r in enumerate(fts_bm25_results)}
+    
     scored_items = []
     breakdowns: dict[str, dict] = {}
-    for i, m in enumerate(items):
-        vs = 1.0 - distances.get(m.id, 1.0)
+    rrf_k = 60
+    
+    for m in items:
         lane = getattr(m, "lane", "general") or "general"
         lane_boost = p.lane_boost.get(lane, 1.0)
         persona_boost = 1.05 if lane in ("preference", "rule") else 1.0
         fts_hit = 1.0 if m.id in fts_hits else 0.0
-        bm_val = float(bm_norm[i])
-        score = (p.w_vector * vs
-                 + p.w_bm25 * bm_val
+        
+        # RRF 分数计算，并根据权重放大以与原来量级对齐
+        rrf_vec = 1.0 / (rrf_k + vector_ranks[m.id] + 1) if m.id in vector_ranks else 0.0
+        rrf_bm = 1.0 / (rrf_k + bm25_ranks[m.id] + 1) if m.id in bm25_ranks else 0.0
+        
+        # 将 RRF 分数放大（因为 1/61 约等于 0.016，乘以常数让它回到接近 1.0 的量级，或者直接接受新分数）
+        RRF_SCALE = 60.0 
+        vec_score = p.w_vector * rrf_vec * RRF_SCALE
+        bm25_score = p.w_bm25 * rrf_bm * RRF_SCALE
+        
+        score = (vec_score
+                 + bm25_score
                  + p.w_fts * fts_hit
                  + p.w_decay * m.decay_score) * lane_boost * persona_boost
+                 
         scored_items.append((score, m))
         if explain:
             breakdowns[m.id] = {
-                "vector": round(p.w_vector * vs, 4),
-                "bm25": round(p.w_bm25 * bm_val, 4),
+                "vector": round(vec_score, 4),
+                "bm25": round(bm25_score, 4),
                 "fts": round(p.w_fts * fts_hit, 4),
                 "decay": round(p.w_decay * m.decay_score, 4),
                 "lane_boost": lane_boost,
                 "persona_boost": persona_boost,
                 "final": round(score, 4),
                 "decay_class": m.decay_class,
-                # decay_multiplier 是 decay_class 理论半衰期参考（0.5^(age/hl)）；
-                # 实际打分中的 decay 分项用的是 forgetting 的 lane-strength 指数衰减
-                # （m.decay_score），两者不同源，decay_multiplier 仅供观测。
                 "decay_multiplier": round(_age_multiplier(m), 4),
             }
 
-    # 追加召回：FTS 命中但未进向量候选的 active 记忆（并列召回，ADR-0008 决策 1）
-    ranked_ids = {m.id for _, m in scored_items}
-    extra_ids = fts_hits - ranked_ids
-    if extra_ids:
-        with db.get_session() as s:
-            extra = s.exec(select(MemoryItem)
-                           .where(MemoryItem.id.in_(extra_ids),
-                                  MemoryItem.status == "active")).all()
-        for m in extra:
-            scored_items.append(
-                (p.w_fts + p.w_decay * m.decay_score, m))
+    # 按照分数降序排列
+    scored_items.sort(key=lambda x: x[0], reverse=True)
 
-    scored_items = _apply_supersedes_order(scored_items, breakdowns, params=p)
+    scored_items = _apply_supersedes_order(scored_items, breakdowns, params=p, session=session)
     candidates = scored_items[:fetch_n]
 
     # Step 5: Reranker（可选）
@@ -387,15 +391,12 @@ def _hybrid_search_impl(
                 t4 = time.perf_counter()
                 rr_scores = [r["score"] for r in reranked]
                 trace_steps.append({
-                    "step": "rerank", "elapsed_ms": round((t4 - t3) * 1000, 1),
-                    "candidate_count": len(results),
-                    "score_range": [round(min(rr_scores), 3), round(max(rr_scores), 3)],
+                    "step": "reranker",
+                    "time_ms": round((t4 - t3) * 1000, 2),
+                    "model": "bge-reranker-v2-m3",
+                    "scores": rr_scores,
                 })
-                trace_steps.append({
-                    "step": "final", "elapsed_ms": round((t4 - t0) * 1000, 1),
-                    "candidate_count": len(results),
-                    "score_range": [round(min(rr_scores), 3), round(max(rr_scores), 3)],
-                })
+            if trace:
                 return results, trace_steps
             return results
 
@@ -488,8 +489,8 @@ def _keyword_fallback(
     不触发 reranker——embedding 已不可用，rerank 大概率同样失败，保持降级可用。
     """
     p = params or RetrievalParams()
-    # FTS5 子串召回作候选集（含追加语义：FTS 命中即候选）
-    candidate_ids: set[str] = set()
+    fts_bm25_results = []
+    fts_hits: set[str] = set()
 
     def _get_s(cb):
         if session is not None:
@@ -498,19 +499,33 @@ def _keyword_fallback(
             return cb(s)
 
     try:
-        def _fts_cb(s):
+        def _fts_bm25_cb(s):
+            return search_fts_bm25(
+                s.connection().connection.driver_connection,
+                query, top_k=max(fetch_n, p.fts_recall_top_k))
+        fts_bm25_results = _get_s(_fts_bm25_cb)
+
+        def _fts_hit_cb(s):
             return search_fts(
                 s.connection().connection.driver_connection,
                 query, top_k=max(fetch_n, p.fts_recall_top_k))
-        candidate_ids = set(_get_s(_fts_cb))
-    except Exception:
-        candidate_ids = set()
+        fts_hits = set(_get_s(_fts_hit_cb))
+    except Exception as e:
+        pass
 
-    # 拾遗（ADR-0028）：当 FTS5 无命中（如查询 <3 字符无法触发 trigram）时，
-    # 采用 SQLite LIKE 短子串匹配候选，再由 BM25 + decay 排序
-    if not candidate_ids:
-        clean_q = query.strip()
-        tokens = [w.strip() for w in jieba.lcut(clean_q) if len(w.strip()) >= 1]
+    candidate_ids = set(r[0] for r in fts_bm25_results) | fts_hits
+
+    # ADR-0028
+    clean_q = query.strip()
+    import re
+    clean_q_no_punct = re.sub(r'[^\w\u4e00-\u9fa5]+', ' ', clean_q).strip()
+    tokens = [w for w in clean_q_no_punct.split() if w.strip()]
+    if not tokens:
+        tokens = [w for w in list(clean_q.replace(" ", "")) if w.strip()]
+    
+    has_short_tokens = any(len(t) < 3 for t in tokens)
+
+    if not candidate_ids or has_short_tokens:
         if tokens:
             try:
                 from sqlalchemy import or_
@@ -523,9 +538,9 @@ def _keyword_fallback(
                         .limit(max(fetch_n, p.fts_recall_top_k))
                     ).all()
                 like_items = _get_s(_like_cb)
-                candidate_ids = set(like_items)
+                candidate_ids |= set(like_items)
             except Exception:
-                candidate_ids = set()
+                pass
 
 
     if not candidate_ids:
@@ -535,7 +550,7 @@ def _keyword_fallback(
 
     def _items_cb(s):
         return s.exec(select(MemoryItem)
-                       .where(MemoryItem.id.in_(candidate_ids),
+                       .where(MemoryItem.id.in_(list(candidate_ids)),
                               MemoryItem.status == "active")).all()
 
     items = _get_s(_items_cb)
@@ -543,7 +558,6 @@ def _keyword_fallback(
     if memory_types:
         items = [m for m in items if m.memory_type in memory_types]
     elif not p.verbatim_in_recall:
-        # 原文直存默认不进混合召回（Ticket 02）：GET /verbatim/search 专用通道可查
         items = [m for m in items if m.memory_type != "verbatim"]
     if lanes:
         items = [m for m in items if m.lane in lanes]
@@ -557,38 +571,37 @@ def _keyword_fallback(
             return [], trace_steps
         return []
 
-    # BM25 + decay 融合（FTS 命中恒 1.0：候选集全部来自 FTS）
-    bm25 = _get_bm25(items)
-    bm_scores = bm25.get_scores(jieba.lcut(query))
-    bm_range = bm_scores.max() - bm_scores.min()
-    bm_norm = (bm_scores - bm_scores.min()) / (bm_range + 1e-8)
+    # FTS BM25 + decay 融合
+    bm25_ranks = {r[0]: idx for idx, r in enumerate(fts_bm25_results)}
     total_w = (p.w_bm25 + p.w_fts + p.w_decay)
-
+    rrf_k = 60
+    
     scored = []
     breakdowns: dict[str, dict] = {}
-    for i, m in enumerate(items):
+    for m in items:
         lane = getattr(m, "lane", "general") or "general"
         lane_boost = p.lane_boost.get(lane, 1.0)
-        bm_val = float(bm_norm[i])
+        
+        rrf_bm = 1.0 / (rrf_k + bm25_ranks[m.id] + 1) if m.id in bm25_ranks else 0.0
+        bm25_score = p.w_bm25 * rrf_bm * 60.0
+        fts_hit = 1.0 if m.id in fts_hits else 0.0
+        
         score = (
-            (p.w_bm25 * bm_val
-             + p.w_fts * 1.0
+            (bm25_score
+             + p.w_fts * fts_hit
              + p.w_decay * m.decay_score)
             / total_w
         ) * lane_boost
         scored.append((score, m))
         if explain:
             breakdowns[m.id] = {
-                "vector": 0.0,  # 降级路径无向量分
-                "bm25": round(p.w_bm25 * bm_val / total_w, 4),
-                "fts": round(p.w_fts / total_w, 4),
+                "vector": 0.0,
+                "bm25": round(bm25_score / total_w, 4),
+                "fts": round(p.w_fts * fts_hit / total_w, 4),
                 "decay": round(p.w_decay * m.decay_score / total_w, 4),
                 "lane_boost": lane_boost,
                 "final": round(score, 4),
                 "decay_class": m.decay_class,
-                # decay_multiplier 是 decay_class 理论半衰期参考（0.5^(age/hl)）；
-                # 实际打分中的 decay 分项用的是 forgetting 的 lane-strength 指数衰减
-                # （m.decay_score），两者不同源，decay_multiplier 仅供观测。
                 "decay_multiplier": round(_age_multiplier(m), 4),
             }
 
