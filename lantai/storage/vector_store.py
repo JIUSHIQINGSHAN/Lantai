@@ -1,4 +1,4 @@
-"""向量存储抽象层：支持 Chromadb / pgvector 多后端"""
+"""向量存储抽象层（当前提供内嵌 ChromaDB 实现，预留存储后端扩展点）"""
 from abc import ABC, abstractmethod
 from lantai.core.settings import settings
 
@@ -11,7 +11,7 @@ class VectorStore(ABC):
     @abstractmethod
     def search(self, query_embedding: list[float], top_k: int,
                filters: dict | None = None) -> list[dict]:
-        """返回 [{"id": str, "score": float, "metadata": dict}]"""
+        """返回 [{"id": str, "distance": float, "metadata": dict}]"""
         ...
 
     @abstractmethod
@@ -29,8 +29,11 @@ class ChromaVectorStore(VectorStore):
             path=settings.CHROMADB_PATH,
             settings=ChromaSettings(anonymized_telemetry=False),
         )
+        # DD-08 命名规范：既有数据库平滑兼容旧名 remembrance_vectors，全新初始化使用 lantai_vectors
+        existing = [c.name for c in self._client.list_collections()]
+        coll_name = "remembrance_vectors" if "remembrance_vectors" in existing else "lantai_vectors"
         self._collection = self._client.get_or_create_collection(
-            name="remembrance_vectors",
+            name=coll_name,
             metadata={"hnsw:space": "cosine"},
         )
 

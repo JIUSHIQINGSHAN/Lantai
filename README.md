@@ -99,6 +99,8 @@ docker run -d -p 8767:8767 \
 ```
 
 > 容器默认 `HOST=0.0.0.0` 对外暴露，**必须注入 `API_KEY`**——启动守卫（`assert_secure_binding`）会在非回环地址且无密钥时拒绝运行。
+> 
+> ⚠️ **部署约束（单进程部署）**：当前版本的后台定时任务调度器（APScheduler）与嵌入式底座（SQLite WAL + 内嵌 ChromaDB）按单进程架构设计。请在部署时保持单进程运行（`--workers 1`，默认行为）；多 Worker 运行会导致遗忘与蒸馏任务重复触发及向量库写锁争用。
 
 ## 接口列表
 
@@ -201,7 +203,7 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 | `COALESCE_ENABLED` | `false` | 潮波并忆开关 |
 | `DEDUP_MERGE/UPDATE_THRESHOLD` | `0.90` / `0.65` | fastpath 三态阈值；提取路径预筛 `DEDUP_PRESCREEN_MERGE`=0.95 + 结构判别（ADR-0019） |
 | `GATE_CACHE_TTL` | `15.0` | 闸门热缓存秒数 |
-| `REMEMBRANCE_HOME` | 仓库根 | 数据目录（DB/向量库/备份） |
+| `LANTAI_HOME` | 仓库根 | 数据目录（DB/向量库/备份）；旧名 `REMEMBRANCE_HOME` 兼容回退 |
 | `ALLOWED_API_HOSTS` | openai/siliconflow | 外部 API 域名白名单 |
 
 ## 测试

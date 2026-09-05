@@ -19,10 +19,19 @@ dependencies = [
   "lxml>=5.2",
   "openai>=1.40",
   "tenacity>=8.5",
-  "chromadb>=0.4",
+  "chromadb>=0.4,<1.0",
   "jieba>=0.42",
   "requests>=2.31",
 ]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+lantai-mcp = "scripts.mcp_server:main"
 
 [build-system]
 requires = ["setuptools>=68"]

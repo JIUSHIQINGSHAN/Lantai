@@ -1,6 +1,7 @@
 from sqlmodel import select
 from lantai.core.settings import settings
 from lantai.core.ids import new_id
+from lantai.core.logger import logger
 from lantai.models.enums import GateDecision
 from lantai.models.tables import MemoryCandidate, MemoryItem, ConflictEvent
 from lantai.storage import db
@@ -8,6 +9,37 @@ from lantai.gate.scorer import novelty_score
 from lantai.gate.contradiction import check_contradiction
 from lantai.gate.conflict_rules import check_rules, check_antonyms, check_negation_pairs
 from lantai.evolution.promoter import _make_checkpoint
+from lantai.llm.client import embed
+from lantai.storage.vector_store import get_vector_store
+
+
+def _load_conflict_candidates(s, summary_text: str) -> list[MemoryItem]:
+    """按向量相似度召回冲突检测候选（DD-03 修复：替代全表 [:10] 插入序抽查）。
+
+    降级策略：向量检索失败时回退到全表前 CONFLICT_CHECK_TOP_K 条（宁有偏 miss 不全漏）。
+    """
+    top_k = settings.CONFLICT_CHECK_TOP_K
+    try:
+        qv = embed([summary_text])[0]
+        vs = get_vector_store()
+        vec_results = vs.search(qv, top_k=top_k)
+        if vec_results:
+            near_ids = [r["id"] for r in vec_results]
+            candidates = s.exec(
+                select(MemoryItem)
+                .where(MemoryItem.id.in_(near_ids), MemoryItem.status == "active")
+            ).all()
+            if candidates:
+                return candidates
+    except Exception as e:
+        logger.warning("conflict vector recall failed, falling back to rowid order: %s", e)
+
+    # 降级：向量不可用时按 rowid 取前 top_k（行为与修复前一致但可配置）
+    return s.exec(
+        select(MemoryItem)
+        .where(MemoryItem.status == "active")
+        .limit(top_k)
+    ).all()
 
 
 def decide(candidate_id: str) -> dict:
@@ -20,10 +52,12 @@ def decide(candidate_id: str) -> dict:
             return {"decision": GateDecision.REJECT,
                     "reason": f"low extractor confidence {cand.extractor_confidence:.2f}"}
 
-        related = s.exec(select(MemoryItem).where(MemoryItem.status == "active")).all()
-        related_texts = [m.content for m in related][:50]
-
         summary_text = cand.summary or " ".join(cand.claims)[:400]
+
+        # DD-03: 用向量召回语义近邻作为冲突检测候选
+        related = _load_conflict_candidates(s, summary_text)
+        related_texts = [m.content for m in related][:settings.GATE_NOVELTY_SAMPLE_SIZE]
+
         nv = novelty_score(summary_text, related_texts) if related_texts else 1.0
 
         conflicts = []   # 硬冲突（高 salience 确定性 + LLM）→ archive_conflict
@@ -31,7 +65,7 @@ def decide(candidate_id: str) -> dict:
         demote_t = settings.CONFLICT_SALIENCE_MIN_IMPORTANCE
         demote_step = settings.CONFLICT_SALIENCE_DEMOTE_STEP
         # ADR-0020：确定性规则 + 反义词碰撞双通道优先（零 LLM、可复现）
-        for m in related[:10]:
+        for m in related:
             hits = check_rules(summary_text, m.content) \
                 + check_antonyms(summary_text, m.content)
             for hit in hits:
@@ -74,7 +108,7 @@ def decide(candidate_id: str) -> dict:
                     ))
         # 规则/反义词均未命中（且无降权动作）→ 回落 LLM 矛盾检测（降级不阻断）
         if not conflicts and not demoted:
-            for m in related[:10]:
+            for m in related:
                 try:
                     c = check_contradiction(summary_text, m.content)
                 except Exception:
@@ -86,7 +120,7 @@ def decide(candidate_id: str) -> dict:
         # ADR-0024：单字否定对候选（是/不是、会/不会…）→ LLM 裁决。
         # 候选不落硬规则；LLM 判非矛盾/失败 → 放行（宁 miss）。
         if settings.CONFLICT_NEGATION_ENABLED:
-            for m in related[:10]:
+            for m in related:
                 if check_negation_pairs(summary_text, m.content):
                     try:
                         c = check_contradiction(summary_text, m.content)
@@ -108,7 +142,7 @@ def decide(candidate_id: str) -> dict:
                     "reason": "hard contradiction with existing memory",
                     "conflicts": conflicts, "novelty": nv}
 
-        if nv < 0.15:
+        if nv < settings.GATE_NOVELTY_THRESHOLD:
             # 语义高度重叠 ≠ 丢弃：可能有增量信息（如新配置项）。
             # 降级到 WORKING_ONLY，由提案系统走 update/merge 并入现有记忆，
             # 而不是静默 reject 丢数据（落地实战发现：显卡 RTX3050 增量被误杀）。

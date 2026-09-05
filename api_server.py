@@ -42,6 +42,14 @@ from lantai.api import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import os
+    concurrency = int(os.environ.get("WEB_CONCURRENCY", "1") or "1")
+    if concurrency > 1:
+        logger.warning(
+            "检测到 WEB_CONCURRENCY=%d > 1：当前版本调度器（APScheduler）与嵌入式 SQLite/ChromaDB "
+            "按单进程模型设计。多 Worker 并发运行会导致遗忘/蒸馏定时任务重复执行及向量库写锁争用。"
+            "生产环境强烈建议单进程部署（--workers 1）。", concurrency
+        )
     assert_secure_binding()
     settings.validate_config()
     init_db()

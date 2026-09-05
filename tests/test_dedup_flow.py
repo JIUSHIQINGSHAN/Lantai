@@ -25,6 +25,9 @@ def env_fixture(monkeypatch):
         return getattr(mock_search, "results", [])
 
     monkeypatch.setattr("lantai.services.memory_service.vector_store.search", mock_search)
+    # DD-01 修复后 _apply_dedup 先调 embed 再 search，需 mock embed 网络调用
+    monkeypatch.setattr("lantai.services.memory_service.embed",
+                        lambda texts: [[0.1] * 768 for _ in texts])
     monkeypatch.setattr(
         "lantai.parsing.extractor.chat_json",
         lambda *a, **kw: {"summary": "t", "claims": [], "methods": [],

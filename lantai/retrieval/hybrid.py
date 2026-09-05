@@ -1,4 +1,6 @@
-from typing import Any, Optional
+from typing import Any, Optional, Mapping
+from dataclasses import dataclass, field
+import threading
 import jieba
 import time
 from rank_bm25 import BM25Okapi
@@ -15,29 +17,98 @@ from lantai.storage.vector_store import get_vector_store
 from lantai.storage.fts import search_fts
 
 
-# BM25 语料缓存（M4）：key = items 的 (id, content) 有序元组，命中即复用
+@dataclass(frozen=True)
+class RetrievalParams:
+    """不可变检索参数快照（F3 修复：并发安全，杜绝修改全局 settings 单例）。"""
+    w_vector: float = field(default_factory=lambda: float(settings.RETRIEVAL_W_VECTOR))
+    w_bm25: float = field(default_factory=lambda: float(settings.RETRIEVAL_W_BM25))
+    w_fts: float = field(default_factory=lambda: float(settings.RETRIEVAL_W_FTS))
+    w_decay: float = field(default_factory=lambda: float(settings.RETRIEVAL_W_DECAY))
+    lane_boost: dict = field(default_factory=lambda: dict(settings.LANE_RETRIEVAL_BOOST))
+    reranker_multiplier: int = field(default_factory=lambda: int(settings.RERANKER_CANDIDATE_MULTIPLIER))
+    reranker_enabled: bool = field(default_factory=lambda: bool(settings.RERANKER_ENABLED))
+    verbatim_in_recall: bool = field(default_factory=lambda: bool(settings.VERBATIM_IN_RECALL))
+    fts_recall_top_k: int = field(default_factory=lambda: int(settings.FTS_RECALL_TOP_K))
+    supersedes_enabled: bool = field(default_factory=lambda: bool(settings.SUPERSEDES_ORDERING_ENABLED))
+    supersedes_demote_epsilon: float = field(default_factory=lambda: float(settings.SUPERSEDES_DEMOTE_EPSILON))
+    extra: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_overrides(cls, overrides: dict | None = None) -> "RetrievalParams":
+        """从覆盖字典构造不可变快照，支持 settings 大写名及 dataclass 小写名。"""
+        if not overrides:
+            return cls()
+        mapping = {
+            "RETRIEVAL_W_VECTOR": "w_vector",
+            "RETRIEVAL_W_BM25": "w_bm25",
+            "RETRIEVAL_W_FTS": "w_fts",
+            "RETRIEVAL_W_DECAY": "w_decay",
+            "LANE_RETRIEVAL_BOOST": "lane_boost",
+            "RERANKER_CANDIDATE_MULTIPLIER": "reranker_multiplier",
+            "RERANKER_ENABLED": "reranker_enabled",
+            "VERBATIM_IN_RECALL": "verbatim_in_recall",
+            "FTS_RECALL_TOP_K": "fts_recall_top_k",
+            "SUPERSEDES_ORDERING_ENABLED": "supersedes_enabled",
+            "SUPERSEDES_DEMOTE_EPSILON": "supersedes_demote_epsilon",
+        }
+        known = {}
+        extra = {}
+        for k, v in overrides.items():
+            attr = mapping.get(k, k)
+            if attr in cls.__dataclass_fields__ and attr != "extra":
+                known[attr] = v
+            else:
+                extra[k] = v
+        return cls(**known, extra=extra)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        mapping = {
+            "RETRIEVAL_W_VECTOR": "w_vector",
+            "RETRIEVAL_W_BM25": "w_bm25",
+            "RETRIEVAL_W_FTS": "w_fts",
+            "RETRIEVAL_W_DECAY": "w_decay",
+            "LANE_RETRIEVAL_BOOST": "lane_boost",
+            "RERANKER_CANDIDATE_MULTIPLIER": "reranker_multiplier",
+            "RERANKER_ENABLED": "reranker_enabled",
+            "VERBATIM_IN_RECALL": "verbatim_in_recall",
+            "FTS_RECALL_TOP_K": "fts_recall_top_k",
+            "SUPERSEDES_ORDERING_ENABLED": "supersedes_enabled",
+            "SUPERSEDES_DEMOTE_EPSILON": "supersedes_demote_epsilon",
+        }
+        attr = mapping.get(key, key)
+        if hasattr(self, attr):
+            return getattr(self, attr)
+        return self.extra.get(key, getattr(settings, key, default))
+
+
+# BM25 语料缓存（M4）：key = items 的 (id, content) 有序元组，线程锁保护（F3）
+_BM25_LOCK = threading.Lock()
 _BM25_CACHE: dict = {"key": None, "bm25": None}
 
 
 def _get_bm25(items: list) -> "BM25Okapi":
     key = tuple((m.id, m.content) for m in items)
-    if _BM25_CACHE.get("key") == key:
-        return _BM25_CACHE["bm25"]
+    with _BM25_LOCK:
+        if _BM25_CACHE.get("key") == key:
+            return _BM25_CACHE["bm25"]
     corpus = [jieba.lcut(m.content) for m in items]
     bm25 = BM25Okapi(corpus)
-    _BM25_CACHE["key"] = key
-    _BM25_CACHE["bm25"] = bm25
+    with _BM25_LOCK:
+        _BM25_CACHE["key"] = key
+        _BM25_CACHE["bm25"] = bm25
     return bm25
 
 
-def _apply_supersedes_order(scored: list, breakdowns: dict | None = None) -> list:
+def _apply_supersedes_order(scored: list, breakdowns: dict | None = None,
+                            params: RetrievalParams | None = None) -> list:
     """supersedes 边感知降权：被取代旧值若其新值同在候选集，压到新值之下。
 
     宁 miss 不脏写：不删除旧值（残留如实留在结果中），仅保证新值在前；
     新值不在候选集时不动旧值（有旧值可用总比空手好）。仅按候选 id 做一次
     边查找，异常/缺边静默降级为原排序。
     """
-    if not settings.SUPERSEDES_ORDERING_ENABLED or not scored:
+    p = params or RetrievalParams()
+    if not p.supersedes_enabled or not scored:
         return scored
     ids = [m.id for _, m in scored]
     superseded_by: dict[str, list[str]] = {}
@@ -60,7 +131,7 @@ def _apply_supersedes_order(scored: list, breakdowns: dict | None = None) -> lis
         superseder_ids = [n for n in superseded_by.get(m.id, []) if n in id_to_score]
         if superseder_ids:
             sc = min(sc, max(id_to_score[n] for n in superseder_ids)
-                      - settings.SUPERSEDES_DEMOTE_EPSILON)
+                      - p.supersedes_demote_epsilon)
             # 检索透明：explain 里标注被哪条新值降权（可审计，ADR-0008 溯源精神）
             if breakdowns is not None and m.id in breakdowns:
                 breakdowns[m.id]["superseded_by"] = superseder_ids
@@ -80,6 +151,7 @@ def hybrid_search(
     param_overrides: dict | None = None,
     domain: str | None = None,
     session: Any = None,
+    params: RetrievalParams | None = None,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     """混合检索：向量 + BM25 + 衰减（支持辨域 ADR-0034 domain 过滤）。
 
@@ -88,13 +160,13 @@ def hybrid_search(
     final, decay_class, decay_multiplier}（reranker 开启时也保留原始分项）。
 
     param_overrides: 临时覆盖 settings 检索参数（如 {"RETRIEVAL_W_VECTOR": 0.7}）。
-    仅本调用生效，结束后恢复；None 时行为与旧版本完全一致。
+    通过局部快照 RetrievalParams 注入，不再修改全局 settings 单例（并发安全，F3）。
     """
-    with _param_override(param_overrides):
-        return _hybrid_search_impl(
-            query, top_k, memory_types, lanes, use_rerank, trace, explain,
-            domain=domain, session=session,
-        )
+    effective_params = params or RetrievalParams.from_overrides(param_overrides)
+    return _hybrid_search_impl(
+        query, top_k, memory_types, lanes, use_rerank, trace, explain,
+        domain=domain, session=session, params=effective_params,
+    )
 
 
 
@@ -135,7 +207,9 @@ def _hybrid_search_impl(
     explain: bool = False,
     domain: str | None = None,
     session: Any = None,
+    params: RetrievalParams | None = None,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
+    p = params or RetrievalParams()
     trace_steps = []
     t0 = time.perf_counter()
 
@@ -150,7 +224,7 @@ def _hybrid_search_impl(
         })
 
     # Step 2: 向量检索（ChromaDB HNSW 索引，异常平滑降级：拾遗 ADR-0028）
-    fetch_n = candidate_n * settings.RERANKER_CANDIDATE_MULTIPLIER
+    fetch_n = candidate_n * p.reranker_multiplier
     vector_results = []
     try:
         qv = embed([query])[0]
@@ -175,7 +249,7 @@ def _hybrid_search_impl(
         return _keyword_fallback(
             query, top_k, fetch_n, memory_types, lanes,
             trace, trace_steps, t0, explain,
-            domain=domain, session=session,
+            domain=domain, session=session, params=p,
         )
 
     # 从 SQLite 加载完整记忆项——仅 active
@@ -198,7 +272,7 @@ def _hybrid_search_impl(
     # 过滤 memory_types / lanes / domain
     if memory_types:
         items = [m for m in items if m.memory_type in memory_types]
-    elif not settings.VERBATIM_IN_RECALL:
+    elif not p.verbatim_in_recall:
         # 原文直存默认不进混合召回（Ticket 02）：GET /verbatim/search 专用通道可查
         items = [m for m in items if m.memory_type != "verbatim"]
     if lanes:
@@ -228,7 +302,7 @@ def _hybrid_search_impl(
         with db.get_session() as s:
             fts_hits = set(search_fts(
                 s.connection().connection.driver_connection,
-                query, top_k=settings.FTS_RECALL_TOP_K))
+                query, top_k=p.fts_recall_top_k))
     except Exception:
         fts_hits = set()  # FTS 不可用不影响主检索
 
@@ -245,21 +319,21 @@ def _hybrid_search_impl(
     for i, m in enumerate(items):
         vs = 1.0 - distances.get(m.id, 1.0)
         lane = getattr(m, "lane", "general") or "general"
-        lane_boost = settings.LANE_RETRIEVAL_BOOST.get(lane, 1.0)
+        lane_boost = p.lane_boost.get(lane, 1.0)
         persona_boost = 1.05 if lane in ("preference", "rule") else 1.0
         fts_hit = 1.0 if m.id in fts_hits else 0.0
         bm_val = float(bm_norm[i])
-        score = (settings.RETRIEVAL_W_VECTOR * vs
-                 + settings.RETRIEVAL_W_BM25 * bm_val
-                 + settings.RETRIEVAL_W_FTS * fts_hit
-                 + settings.RETRIEVAL_W_DECAY * m.decay_score) * lane_boost * persona_boost
+        score = (p.w_vector * vs
+                 + p.w_bm25 * bm_val
+                 + p.w_fts * fts_hit
+                 + p.w_decay * m.decay_score) * lane_boost * persona_boost
         scored_items.append((score, m))
         if explain:
             breakdowns[m.id] = {
-                "vector": round(settings.RETRIEVAL_W_VECTOR * vs, 4),
-                "bm25": round(settings.RETRIEVAL_W_BM25 * bm_val, 4),
-                "fts": round(settings.RETRIEVAL_W_FTS * fts_hit, 4),
-                "decay": round(settings.RETRIEVAL_W_DECAY * m.decay_score, 4),
+                "vector": round(p.w_vector * vs, 4),
+                "bm25": round(p.w_bm25 * bm_val, 4),
+                "fts": round(p.w_fts * fts_hit, 4),
+                "decay": round(p.w_decay * m.decay_score, 4),
                 "lane_boost": lane_boost,
                 "persona_boost": persona_boost,
                 "final": round(score, 4),
@@ -280,25 +354,32 @@ def _hybrid_search_impl(
                                   MemoryItem.status == "active")).all()
         for m in extra:
             scored_items.append(
-                (settings.RETRIEVAL_W_FTS + settings.RETRIEVAL_W_DECAY * m.decay_score, m))
+                (p.w_fts + p.w_decay * m.decay_score, m))
 
-    scored_items = _apply_supersedes_order(scored_items, breakdowns)
+    scored_items = _apply_supersedes_order(scored_items, breakdowns, params=p)
     candidates = scored_items[:fetch_n]
 
     # Step 5: Reranker（可选）
-    if use_rerank and settings.RERANKER_ENABLED and candidates:
+    if use_rerank and p.reranker_enabled and candidates:
         docs = [m.content for _, m in candidates]
         reranked = rerank(query, docs, top_k)
         if reranked:
             doc_to_m = {m.content: m for _, m in candidates}
-            reranked_scored = [
-                (r["score"], doc_to_m[r["document"]])
-                for r in reranked if r["document"] in doc_to_m
-            ]
-            reranked_scored = _apply_supersedes_order(reranked_scored, breakdowns)
+            reranked_scored = []
+            for r in reranked:
+                idx = r.get("index")
+                if idx is not None and 0 <= idx < len(candidates):
+                    reranked_scored.append((r["score"], candidates[idx][1]))
+                elif r.get("document") in doc_to_m:
+                    reranked_scored.append((r["score"], doc_to_m[r["document"]]))
+            reranked_scored = _apply_supersedes_order(reranked_scored, breakdowns, params=p)
             results = []
             for s, m in reranked_scored:
-                item = {"score": s, "document": m.content}
+                item = {
+                    "score": s,
+                    "memory": m.model_dump(mode="json"),
+                    "document": m.content,
+                }
                 if explain:
                     item["explain"] = breakdowns.get(m.id)
                 results.append(item)
@@ -320,7 +401,11 @@ def _hybrid_search_impl(
 
     results = []
     for s, m in candidates[:top_k]:
-        item = {"score": s, "memory": m.model_dump(mode="json")}
+        item = {
+            "score": s,
+            "memory": m.model_dump(mode="json"),
+            "document": m.content,
+        }
         if explain:
             item["explain"] = breakdowns.get(m.id)
         results.append(item)
@@ -395,12 +480,14 @@ def _keyword_fallback(
     explain: bool = False,
     domain: str | None = None,
     session: Any = None,
+    params: RetrievalParams | None = None,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     """向量检索降级路径：FTS5 召回作候选集，BM25 + decay 打分（无向量分）。
 
     权重归一化到 1：只使用 (W_BM25 + W_FTS + W_DECAY)。
     不触发 reranker——embedding 已不可用，rerank 大概率同样失败，保持降级可用。
     """
+    p = params or RetrievalParams()
     # FTS5 子串召回作候选集（含追加语义：FTS 命中即候选）
     candidate_ids: set[str] = set()
 
@@ -414,7 +501,7 @@ def _keyword_fallback(
         def _fts_cb(s):
             return search_fts(
                 s.connection().connection.driver_connection,
-                query, top_k=max(fetch_n, settings.FTS_RECALL_TOP_K))
+                query, top_k=max(fetch_n, p.fts_recall_top_k))
         candidate_ids = set(_get_s(_fts_cb))
     except Exception:
         candidate_ids = set()
@@ -433,7 +520,7 @@ def _keyword_fallback(
                         select(MemoryItem.id)
                         .where(MemoryItem.status == "active")
                         .where(or_(*conditions))
-                        .limit(max(fetch_n, settings.FTS_RECALL_TOP_K))
+                        .limit(max(fetch_n, p.fts_recall_top_k))
                     ).all()
                 like_items = _get_s(_like_cb)
                 candidate_ids = set(like_items)
@@ -455,7 +542,7 @@ def _keyword_fallback(
 
     if memory_types:
         items = [m for m in items if m.memory_type in memory_types]
-    elif not settings.VERBATIM_IN_RECALL:
+    elif not p.verbatim_in_recall:
         # 原文直存默认不进混合召回（Ticket 02）：GET /verbatim/search 专用通道可查
         items = [m for m in items if m.memory_type != "verbatim"]
     if lanes:
@@ -475,29 +562,27 @@ def _keyword_fallback(
     bm_scores = bm25.get_scores(jieba.lcut(query))
     bm_range = bm_scores.max() - bm_scores.min()
     bm_norm = (bm_scores - bm_scores.min()) / (bm_range + 1e-8)
-    total_w = (settings.RETRIEVAL_W_BM25
-               + settings.RETRIEVAL_W_FTS
-               + settings.RETRIEVAL_W_DECAY)
+    total_w = (p.w_bm25 + p.w_fts + p.w_decay)
 
     scored = []
     breakdowns: dict[str, dict] = {}
     for i, m in enumerate(items):
         lane = getattr(m, "lane", "general") or "general"
-        lane_boost = settings.LANE_RETRIEVAL_BOOST.get(lane, 1.0)
+        lane_boost = p.lane_boost.get(lane, 1.0)
         bm_val = float(bm_norm[i])
         score = (
-            (settings.RETRIEVAL_W_BM25 * bm_val
-             + settings.RETRIEVAL_W_FTS * 1.0
-             + settings.RETRIEVAL_W_DECAY * m.decay_score)
+            (p.w_bm25 * bm_val
+             + p.w_fts * 1.0
+             + p.w_decay * m.decay_score)
             / total_w
         ) * lane_boost
         scored.append((score, m))
         if explain:
             breakdowns[m.id] = {
                 "vector": 0.0,  # 降级路径无向量分
-                "bm25": round(settings.RETRIEVAL_W_BM25 * bm_val / total_w, 4),
-                "fts": round(settings.RETRIEVAL_W_FTS / total_w, 4),
-                "decay": round(settings.RETRIEVAL_W_DECAY * m.decay_score / total_w, 4),
+                "bm25": round(p.w_bm25 * bm_val / total_w, 4),
+                "fts": round(p.w_fts / total_w, 4),
+                "decay": round(p.w_decay * m.decay_score / total_w, 4),
                 "lane_boost": lane_boost,
                 "final": round(score, 4),
                 "decay_class": m.decay_class,
@@ -507,10 +592,14 @@ def _keyword_fallback(
                 "decay_multiplier": round(_age_multiplier(m), 4),
             }
 
-    scored = _apply_supersedes_order(scored, breakdowns)
+    scored = _apply_supersedes_order(scored, breakdowns, params=p)
     results = []
     for s, m in scored[:top_k]:
-        item = {"score": s, "memory": m.model_dump(mode="json")}
+        item = {
+            "score": s,
+            "memory": m.model_dump(mode="json"),
+            "document": m.content,
+        }
         if explain:
             item["explain"] = breakdowns.get(m.id)
         results.append(item)

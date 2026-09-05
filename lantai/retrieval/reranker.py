@@ -64,5 +64,5 @@ def _parse_response(data: dict, original_docs: list[str], top_k: int) -> list[di
         idx = item.get("index", 0)
         score = item.get("score", 0.0)
         doc_text = item.get("document", original_docs[idx] if idx < len(original_docs) else "")
-        reranked.append({"score": score, "document": doc_text})
+        reranked.append({"score": score, "document": doc_text, "index": idx})
     return reranked

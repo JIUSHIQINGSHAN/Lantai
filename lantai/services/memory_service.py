@@ -1,5 +1,6 @@
 """记忆写入与 CoreMemory service 层"""
 import hashlib
+from lantai.core.logger import logger
 from datetime import datetime
 
 from sqlmodel import select
@@ -38,11 +39,13 @@ def _apply_dedup(s, content: str, fastpath: bool) -> tuple[str, MemoryItem | Non
     - "insert"：低相似 → 继续正常建候选
     """
     try:
-        vec_results = vector_store.search(content, top_k=1)
+        qv = embed([content])[0]
+        vec_results = vector_store.search(qv, top_k=1)
         if not isinstance(vec_results, list):
             return "insert", None, 0.0
         return find_similar(s, vec_results, fastpath=fastpath)
-    except Exception:
+    except Exception as e:
+        logger.warning("dedup prescreen failed (insert fallback): %s", e)
         return "insert", None, 0.0
 
 
