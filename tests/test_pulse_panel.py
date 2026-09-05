@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.storage.db as db_module
 from lantai.models.tables import MemoryItem
@@ -40,6 +40,7 @@ def _mem(i, **kw):
 def test_ui_pulse_served():
     """页面可达：/ui/pulse 200 + 面板标记 + 三个数据端点引用。"""
     from fastapi.testclient import TestClient
+
     from api_server import app
     with TestClient(app) as c:
         r = c.get("/ui/pulse")
@@ -60,6 +61,7 @@ def test_stats_endpoint_aggregates(pulse_env):
         s.add(_mem(3, lane="general", tier="working", status="archived"))
         s.commit()
     from fastapi.testclient import TestClient
+
     from api_server import app
     with TestClient(app) as c:
         r = c.get("/stats")
@@ -75,6 +77,7 @@ def test_stats_endpoint_aggregates(pulse_env):
 def test_ui_index_includes_pulse():
     """入口页含三面板链接。"""
     from fastapi.testclient import TestClient
+
     from api_server import app
     with TestClient(app) as c:
         r = c.get("/ui")

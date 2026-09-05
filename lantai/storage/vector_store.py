@@ -1,5 +1,6 @@
 """向量存储抽象层（当前提供内嵌 ChromaDB 实现，预留存储后端扩展点）"""
 from abc import ABC, abstractmethod
+
 from lantai.core.settings import settings
 
 

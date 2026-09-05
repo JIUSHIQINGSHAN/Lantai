@@ -7,15 +7,15 @@
 4. REST 路由 POST /candidates/{id}/refine 与 MCP candidate_refine 工具。
 """
 from unittest.mock import patch
-import pytest
+
 from fastapi.testclient import TestClient
 
 from api_server import app
 from lantai.models.tables import MemoryCandidate
 from lantai.services.refine_service import (
-    refine_memory_text,
-    refine_candidate_record,
     batch_refine_candidates,
+    refine_candidate_record,
+    refine_memory_text,
 )
 
 

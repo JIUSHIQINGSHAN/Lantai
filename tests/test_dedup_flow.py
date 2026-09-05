@@ -4,14 +4,14 @@
 extractor chat_json（外部 LLM）、judge chat_json（外部 LLM）。
 """
 import pytest
-from sqlmodel import SQLModel, create_engine, Session
+from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from lantai.storage import db
-from lantai.models.tables import MemoryItem, MemoryProposal
 from lantai.core.ids import new_id
 from lantai.models.schemas import AddMemoryReq
+from lantai.models.tables import MemoryItem, MemoryProposal
 from lantai.services import memory_service
+from lantai.storage import db
 
 
 @pytest.fixture(name="env")

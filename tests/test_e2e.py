@@ -1,19 +1,15 @@
 """
 兰台记忆（Lantai）端到端测试
 """
-import pytest
-from fastapi.testclient import TestClient
-from sqlmodel import SQLModel, Session, create_engine, select
 from unittest.mock import patch
 
-from api_server import app
+import pytest
+from fastapi.testclient import TestClient
+from sqlmodel import Session, SQLModel, create_engine
+
 import lantai.storage.db as db_module
-from lantai.storage.db import get_session, init_db
+from api_server import app
 from lantai.core.settings import settings
-from lantai.models.tables import (
-    MemoryItem, MemoryCandidate, RawDocument, Source,
-    MemoryProposal, CoreMemoryBlock, MemoryCheckpoint
-)
 
 
 @pytest.fixture(scope="function")
@@ -46,9 +42,8 @@ def client():
                return_value=[[0.1] * 8]), \
          patch("lantai.retrieval.hybrid.embed",
                return_value=[[0.1] * 8]), \
-         patch("lantai.storage.vector_store.ChromaVectorStore"):
-        with TestClient(app) as c:
-            yield c
+         patch("lantai.storage.vector_store.ChromaVectorStore"), TestClient(app) as c:
+        yield c
 
 
 class TestHealth:
@@ -165,7 +160,6 @@ class TestGate:
         """低置信度候选应被 Gate 拒绝"""
         # 显式固定阈值，避免被宿主 .env 的 GATE_MIN_EXTRACTOR_CONF 污染
         from unittest.mock import patch as _patch
-        from lantai.core.settings import settings
         monkeypatch.setattr(settings, "GATE_MIN_EXTRACTOR_CONF", 0.55)
         # 该用例专门测低置信度路径：提取器 mock 返回兜底 0.3（< 0.55）
         low_conf = {"summary": "x", "claims": [], "methods": [],

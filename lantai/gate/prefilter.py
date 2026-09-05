@@ -19,11 +19,11 @@ v0.4 变更：
 - relevance_check 支持注入 cache/now，成为可测的 pure function，同时保持
   _LAST_GATE_DECISION 模块属性以兼容既有测试 fixture。
 """
+import logging
 import os
 import re
 import sys
 import time
-import logging
 
 from lantai.core.settings import settings
 

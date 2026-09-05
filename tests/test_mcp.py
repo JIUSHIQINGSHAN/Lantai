@@ -1,13 +1,13 @@
 """MCP 协议测试：标准错误码 + 输入校验 + 异常隔离"""
 import importlib.util
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 MCP_PATH = Path(__file__).parent.parent / "scripts" / "mcp_server.py"
 
@@ -418,7 +418,7 @@ def mcp_env():
 
 def _seed_memory(s, mid, content, lane="fact", status="active"):
     from lantai.models.tables import MemoryItem
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     s.add(MemoryItem(
         id=mid, memory_type="semantic", key=f"k-{mid}", content=content,
         lane=lane, status=status, importance=0.5, decay_score=1.0,
@@ -585,7 +585,7 @@ def test_core_memory_get_readonly(mcp_env):
 
 def test_verbatim_search_roundtrip(mcp_env):
     out = _call_tool(_load_mcp(), "verbatim_search", {"query": "发布会"})
-    assert isinstance(out, list) or isinstance(out, dict)
+    assert isinstance(out, (list, dict))
 
 
 def test_reflect_run_idle(mcp_env):

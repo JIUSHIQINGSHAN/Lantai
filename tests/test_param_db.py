@@ -16,10 +16,10 @@ from lantai.models.tables import (
     ParamSuggestion,
     RawDocument,
 )
+from lantai.parameters import queue, runtime, service
 from lantai.parameters.registry import default_snapshot
 from lantai.parameters.schemas import DecisionRequest, RollbackRequest
 from lantai.parameters.validation import snapshot_hash
-from lantai.parameters import queue, runtime, service
 
 
 def _add_paper(session_factory, n=1, days_ago=0):

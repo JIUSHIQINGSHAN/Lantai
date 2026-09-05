@@ -7,7 +7,10 @@ middle 带（锚点比中低）交 LLM judge —— 测试注入桩 judge（仅�
 import pytest
 
 from lantai.gate.relation import (
-    classify_relation, anchors_of, values_of, diff_values,
+    anchors_of,
+    classify_relation,
+    diff_values,
+    values_of,
 )
 
 # 期望表：A 改写 → merge；B 同实体更新 → update；C 不相关 → insert

@@ -1,7 +1,7 @@
 """
 V2 批量结构 + 信号校验冒烟测试（方向一后半 + 方向四）。
 """
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -45,7 +45,7 @@ def _view(sid, tier="A", eligible=True):
     return QualitySignalView(
         source_id=sid, arxiv_id=sid, venue_class="journal",
         evidence_tier=tier,
-        published_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        published_at=datetime(2025, 1, 1, tzinfo=UTC),
         version=2, age_days=100, staleness_level="fresh",
         primary_evidence_eligible=eligible, tier_reason=["venue=journal"])
 

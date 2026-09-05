@@ -1,12 +1,14 @@
 """Ticket 2.4 [DD-06]: Ebbinghaus forgetting (`forgetting.py`) must skip updates if `|Δdecay| < 0.001` and use batching."""
-import pytest
 from unittest.mock import patch
+
+import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.storage.db as db_module
-from lantai.models.tables import MemoryItem
 from lantai.memory.forgetting import apply_forgetting
+from lantai.models.tables import MemoryItem
+
 
 @pytest.fixture
 def fq_env():
@@ -37,7 +39,7 @@ def test_forgetting_skips_small_deltas(fq_env):
             mock_utcnow.return_value = m.created_at
             
         s = session_factory()
-        with patch.object(s, "add") as mock_add, patch.object(s, "commit") as mock_commit:
+        with patch.object(s, "add") as mock_add, patch.object(s, "commit"):
             with patch("lantai.memory.forgetting.db.get_session", return_value=s):
                 apply_forgetting()
                 assert mock_add.call_count == 0  # no updates
@@ -58,7 +60,7 @@ def test_forgetting_batching(fq_env):
             mock_utcnow.return_value = m.created_at + datetime.timedelta(days=100)
             
         s = session_factory()
-        with patch.object(s, "add") as mock_add, patch.object(s, "commit") as mock_commit:
+        with patch.object(s, "add"), patch.object(s, "commit") as mock_commit:
             with patch("lantai.memory.forgetting.db.get_session", return_value=s):
                 apply_forgetting()
                 # If batch size is 100, we should see 3 commits (100, 100, 50)

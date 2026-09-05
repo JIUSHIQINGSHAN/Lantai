@@ -7,7 +7,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.models.tables  # noqa: F401
 import lantai.parameters.trust_models  # noqa: F401

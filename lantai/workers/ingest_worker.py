@@ -1,20 +1,20 @@
 from sqlmodel import select
-from lantai.core.ids import new_id
-from lantai.core.time import utcnow
-from lantai.core.logger import logger
-from lantai.core.settings import settings
-from lantai.ingestion.registry import ADAPTERS
-from lantai.parsing.extractor import extract_candidate
-from lantai.core.provenance import PROVENANCE_PROMPT_EXTRACT, make_provenance
-from lantai.models.tables import (Source, IngestJob, RawDocument,
-                                       MemoryCandidate)
-from lantai.storage import db
+
 from lantai.core import scheduler as scheduler_mod
+from lantai.core.ids import new_id
+from lantai.core.logger import logger
+from lantai.core.provenance import PROVENANCE_PROMPT_EXTRACT, make_provenance
+from lantai.core.settings import settings
+from lantai.core.time import utcnow
+from lantai.ingestion.registry import ADAPTERS
+from lantai.models.tables import IngestJob, MemoryCandidate, RawDocument, Source
+from lantai.parsing.extractor import extract_candidate
+from lantai.storage import db
 
 
 def run_ingest_once():
     with db.get_session() as s:
-        sources = s.exec(select(Source).where(Source.enabled == True)).all()
+        sources = s.exec(select(Source).where(Source.enabled)).all()
     for src in sources:
         job = IngestJob(id=new_id("job"), source_id=src.id,
                         status="running", started_at=utcnow())
@@ -62,9 +62,9 @@ def run_ingest_once():
             # 质量信号落库（方向一）：doc.meta 中携带的解析草稿 → paper_quality_signal
             if paper_doc_ids and settings.PAPER_SIGNAL_ENABLED:
                 try:
+                    from lantai.models.tables import RawDocument as RD
                     from lantai.parameters.paper_signals import QualitySignalDraft
                     from lantai.parameters.signal_service import upsert_from_draft
-                    from lantai.models.tables import RawDocument as RD
                     with db.get_session() as s:
                         docs = s.exec(select(RD).where(RD.id.in_(paper_doc_ids))).all()
                         drafts = {d.id: d.meta.get("quality_signal") for d in docs}

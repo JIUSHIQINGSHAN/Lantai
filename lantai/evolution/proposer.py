@@ -1,9 +1,9 @@
 from sqlmodel import select
+
 from lantai.core.ids import new_id
-from lantai.core.time import utcnow
 from lantai.llm.client import chat_json
 from lantai.llm.prompts import PROPOSAL_SYS
-from lantai.models.enums import ProposalType, ProposalStatus
+from lantai.models.enums import ProposalStatus
 from lantai.models.tables import MemoryCandidate, MemoryItem, MemoryProposal
 from lantai.storage import db
 

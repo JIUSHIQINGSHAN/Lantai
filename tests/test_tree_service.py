@@ -2,12 +2,12 @@
 
 纯函数直调不 mock；落库用真实临时 SQLite（仅 patch db.get_session）。
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.storage.db as db_module
 from lantai.models.tables import MemoryItem, MemoryNode
@@ -32,7 +32,7 @@ def tree_env():
 
 
 def _mem(s, mid, content, lane="fact", status="active"):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     s.add(MemoryItem(
         id=mid, memory_type="semantic", key=f"k-{mid}", content=content,
         lane=lane, status=status, importance=0.5, decay_score=1.0,

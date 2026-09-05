@@ -7,7 +7,7 @@
 """
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Optional
+from typing import Any
 
 from lantai.core.logger import logger
 from lantai.core.time import utcnow

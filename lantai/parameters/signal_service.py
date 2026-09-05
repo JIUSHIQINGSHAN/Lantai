@@ -5,7 +5,7 @@
       解析异常/字段缺失 → 保底 tier D 记录（缺失一律按最低档，绝不能因缺失升档）。
 读取：load_signal_views 供建议链路取只读投影。
 """
-from datetime import timezone
+from datetime import UTC
 
 from sqlmodel import select
 
@@ -30,7 +30,7 @@ from lantai.storage import db
 
 def _ensure_aware(dt):
     if dt is not None and dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -130,7 +130,7 @@ def load_signal_views(raw_document_ids: list[str], *, now=None) -> dict[str, Qua
             PaperQualitySignal.raw_document_id.in_(raw_document_ids))).all()
         docs = s.exec(select(RawDocument).where(
             RawDocument.id.in_(raw_document_ids))).all()
-    fetched = {d.id: d.fetched_at for d in docs}
+    {d.id: d.fetched_at for d in docs}
     out: dict[str, QualitySignalView] = {}
     for r in rows:
         pub = _ensure_aware(r.published_at)

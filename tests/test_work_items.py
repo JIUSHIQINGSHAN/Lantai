@@ -1,5 +1,5 @@
 """案牍投影与控制台 API：纯函数 + 真实 SQLite 冒烟。"""
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from sqlmodel import select
@@ -35,7 +35,7 @@ def test_candidate_group_ids_exact_rules():
 
 def test_project_work_items_priority_is_deterministic():
     from lantai.services.work_item_service import project_work_items
-    now = datetime(2026, 8, 16, 8, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 16, 8, tzinfo=UTC)
     snapshot = {
         "candidates": [{
             "id": "cand", "document_id": "doc", "summary": "即将到期",
@@ -55,7 +55,7 @@ def test_project_work_items_priority_is_deterministic():
 
 
 def _seed_all_sources(session_factory):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     current_hash = snapshot_hash(default_snapshot())
     with session_factory() as s:
         s.add(RawDocument(id="doc-1", source_type="manual", source_id="src-1",

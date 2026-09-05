@@ -3,12 +3,13 @@
 默认 dry-run，--apply 才真正执行
 """
 import sys
+
 from sqlmodel import select
 
-from lantai.models.tables import RawDocument, MemoryCandidate
-from lantai.storage import db
-from lantai.parsing.extractor import extract_candidate
 from lantai.core.ids import new_id
+from lantai.models.tables import MemoryCandidate, RawDocument
+from lantai.parsing.extractor import extract_candidate
+from lantai.storage import db
 
 
 def reextract(apply: bool = False) -> dict:

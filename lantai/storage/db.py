@@ -1,10 +1,10 @@
 """
 数据库初始化与 FTS5 全文搜索
 """
-import sqlite3
-from sqlmodel import SQLModel, Session, create_engine
-from lantai.core.settings import settings
+from sqlmodel import Session, SQLModel, create_engine
+
 from lantai.core.logger import logger
+from lantai.core.settings import settings
 from lantai.storage.fts import init_fts
 
 # busy_timeout=30s：pre_compress daemon 线程与请求线程并发写库时避免

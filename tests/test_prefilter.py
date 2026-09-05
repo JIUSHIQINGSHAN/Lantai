@@ -2,6 +2,7 @@
 测试启发式相关性闸门
 """
 import pytest
+
 from lantai.gate.prefilter import relevance_check
 
 
@@ -180,7 +181,7 @@ class TestEntityKeywordsLazy:
 
     def test_missing_keywords_warns_once(self, monkeypatch, capsys, caplog):
         import logging
-        import lantai.gate.prefilter as pf
+
         with caplog.at_level(logging.WARNING, logger="lantai.gate"):
             relevance_check("你好世界")
             relevance_check("你好世界")

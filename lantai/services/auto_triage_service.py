@@ -5,7 +5,8 @@
 2. 批量调用 LLM 生成结构化研判建议（action: approve | reject | refine | manual, reason, score）；
 3. 支持一键或批量执行裁决。
 """
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from sqlmodel import Session, select
 
 from lantai.core.logger import logger
@@ -48,8 +49,8 @@ TRIAGE_SYSTEM_PROMPT = """你是一个专业的长程记忆管理与知识审阅
 
 
 def triage_candidates_batch(
-    candidates_data: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    candidates_data: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """批量对候选列表执行 LLM 智能研判（纯函数 + 降级保护）。"""
     if not candidates_data:
         return []
@@ -117,9 +118,9 @@ def triage_candidates_batch(
     return fallback_output
 
 
-def run_ai_triage(limit: int = 50, session: Optional[Session] = None) -> Dict[str, Any]:
+def run_ai_triage(limit: int = 50, session: Session | None = None) -> dict[str, Any]:
     """扫描数据库中所有 pending_review 的候选并生成 AI 预审建议清单。"""
-    def _run(s: Session) -> Dict[str, Any]:
+    def _run(s: Session) -> dict[str, Any]:
         candidates = s.exec(
             select(MemoryCandidate)
             .where(MemoryCandidate.status == "pending_review")
@@ -153,8 +154,8 @@ def run_ai_triage(limit: int = 50, session: Optional[Session] = None) -> Dict[st
 
 
 def apply_ai_triage_batch(
-    actions: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+    actions: list[dict[str, Any]],
+) -> dict[str, Any]:
     """批量执行用户确认的 AI 预审裁决决策。
     
     actions 格式: [{"id": "cand_1", "action": "approve" | "reject" | "refine", "reason": "..."}]
@@ -190,7 +191,7 @@ def run_triage_auto_pilot(
     max_reject_conf: float = 0.25,
     limit: int = 50,
     dry_run: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """「持节」· 智能体案牍巡检官一键自治（Auto-Pilot）：
     
     1. 扫描 pending_review 待审候选；

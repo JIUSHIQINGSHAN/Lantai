@@ -3,7 +3,7 @@
 语义：被闸门拒绝的候选不再静默丢弃——进待审队列（pending_review），
 由用户 list/review 裁决；超龄（CANDIDATE_TTL_DAYS）自动归档为 rejected。
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlmodel import select
 
@@ -44,7 +44,7 @@ class CandidateStateConflict(ValueError):
 
 def _aware(value: datetime | None) -> datetime | None:
     if value is not None and value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
+        return value.replace(tzinfo=UTC)
     return value
 
 
@@ -174,7 +174,7 @@ def run_candidate_ttl_once() -> dict:
             if due is None:
                 continue
             if due.tzinfo is None:
-                due = due.replace(tzinfo=timezone.utc)
+                due = due.replace(tzinfo=UTC)
             if due <= now:
                 c.status = "rejected"
                 _clear_defer_state(c)

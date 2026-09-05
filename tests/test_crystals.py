@@ -3,12 +3,12 @@
 检测/候选纯函数直调不 mock；detect 落库与 decide 用真实 SQLite+FTS
 （仅 mock embedding/向量存储两个外部依赖，覆盖 create_skill 链路）。
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, func, select
+from sqlmodel import Session, SQLModel, create_engine, func, select
 
 import lantai.storage.db as db_module
 from lantai.models.tables import MemoryItem, SkillCrystal
@@ -40,8 +40,8 @@ def _m(mid, content, lane="fact"):
         id=mid, memory_type="semantic", key=f"k-{mid}", content=content,
         lane=lane, status="active", importance=0.5, decay_score=1.0,
         decay_class="episodic", use_count=0,
-        created_at=datetime.now(timezone.utc) - timedelta(days=1),
-        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC) - timedelta(days=1),
+        updated_at=datetime.now(UTC),
     )
 
 

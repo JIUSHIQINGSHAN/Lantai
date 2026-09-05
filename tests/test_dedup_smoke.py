@@ -10,17 +10,14 @@
   "mock 允许用于：外部网络（LLM/embedding/rerank）；
    不允许用于：让被测函数跳过其内部计算逻辑。"
 """
+
 import pytest
-import tempfile
-import shutil
-from unittest.mock import patch
-from sqlmodel import SQLModel, create_engine, Session
+from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from lantai.storage import db
-from lantai.models.tables import MemoryItem
 from lantai.core.ids import new_id
-
+from lantai.models.tables import MemoryItem
+from lantai.storage import db
 
 # 固定 768 维假向量（只 mock embed 网络调用，不 mock search / find_similar）
 _FIXED_VECTOR = [0.1] * 768

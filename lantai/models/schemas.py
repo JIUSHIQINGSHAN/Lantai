@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def _validate_metadata_dict(v):
@@ -29,7 +30,7 @@ class AddMemoryReq(BaseModel):
     authors: list[str] = []
     tags: list[str] = []
     lane: str = Field(default="general")  # fact/rule/experience/preference/chat/general
-    domain: Optional[str] = None          # 辨域（ADR-0034）：user/session/agent
+    domain: str | None = None          # 辨域（ADR-0034）：user/session/agent
     metadata: dict = {}  # 附加元数据，落 RawDocument.meta（如 source=pre_compress）
 
     @field_validator("metadata")
@@ -59,7 +60,7 @@ class SearchReq(BaseModel):
     top_k: int = Field(5, ge=1, le=100)
     memory_types: list[str] = []
     lanes: list[str] = []
-    domain: Optional[str] = None  # 辨域（ADR-0034）：user/session/agent/all
+    domain: str | None = None  # 辨域（ADR-0034）：user/session/agent/all
     use_rerank: bool = True
     force: bool = False  # 显式透传：为 True 时绕过相关性闸门直接检索（拾遗 ADR-0028）
 

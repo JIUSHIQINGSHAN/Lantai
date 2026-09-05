@@ -5,7 +5,6 @@
 - 诚实原则：无数据时返回 None 或 0.0，绝不编造
 - 接口契约见 docs/dry-run-eval-task-split.md
 """
-from typing import Optional
 
 
 def zero_result_rate(per_query: list[dict]) -> float:
@@ -49,7 +48,7 @@ def jaccard_overlap(a: list[list[str]], b: list[list[str]]) -> float:
 
 
 def weak_hit_rate(per_query: list[dict], *,
-                  used_ids_map: Optional[dict[str, list[str]]] = None) -> float | None:
+                  used_ids_map: dict[str, list[str]] | None = None) -> float | None:
     """弱命中率：used_ids 在 top-k 结果中的比例。
 
     used_ids_map: {event_id: [used_id, ...]}（来自回填，无生成侧时缺省）
@@ -75,7 +74,7 @@ def weak_hit_rate(per_query: list[dict], *,
 
 def compute_metrics(per_query: list[dict], *,
                     baseline_per_query: list[list[str]] | None = None,
-                    used_ids_map: Optional[dict[str, list[str]]] = None) -> dict:
+                    used_ids_map: dict[str, list[str]] | None = None) -> dict:
     """聚合全部指标。
 
     返回：

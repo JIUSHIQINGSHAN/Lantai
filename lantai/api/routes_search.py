@@ -1,10 +1,11 @@
-from typing import Optional
-from pydantic import BaseModel
+
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+
 from lantai.core.acl import allowed_lanes, filter_results_by_lanes, verify_agent
+from lantai.gate.prefilter import relevance_check
 from lantai.models.schemas import SearchReq
 from lantai.retrieval.hybrid import hybrid_search
-from lantai.gate.prefilter import relevance_check
 
 router = APIRouter()
 
@@ -46,7 +47,7 @@ class GraphExpandReq(BaseModel):
     top_k: int = 5
     max_hops: int = 2
     min_edge_conf: float = 0.5
-    domain: Optional[str] = None
+    domain: str | None = None
 
 
 @router.post("/search/graph_expand")

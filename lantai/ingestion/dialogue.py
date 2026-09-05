@@ -15,14 +15,17 @@ from datetime import timedelta
 from sqlmodel import select
 
 from lantai.core.ids import new_id
+from lantai.core.provenance import (
+    PROVENANCE_PROMPT_DIALOGUE_CHITCHAT,
+    PROVENANCE_PROMPT_DIALOGUE_FASTPATH,
+    PROVENANCE_PROMPT_DIALOGUE_IMPORT,
+    PROVENANCE_PROMPT_EXTRACT,
+    make_provenance,
+)
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.gate.prefilter import NO_MEMORY_PATTERNS
-from lantai.core.provenance import (
-    PROVENANCE_PROMPT_DIALOGUE_CHITCHAT, PROVENANCE_PROMPT_DIALOGUE_FASTPATH,
-    PROVENANCE_PROMPT_DIALOGUE_IMPORT, PROVENANCE_PROMPT_EXTRACT,
-    make_provenance)
-from lantai.models.tables import RawDocument, MemoryCandidate
+from lantai.models.tables import MemoryCandidate, RawDocument
 from lantai.parsing.extractor import extract_candidate
 from lantai.parsing.fastpath import fastpath_check
 from lantai.services.candidate_service import enqueue_rejected

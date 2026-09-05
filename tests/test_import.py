@@ -5,12 +5,12 @@ import_session_jsonl / 演化链时间戳继承用真实 SQLite，仅 mock 外�
 依赖（LLM 提取、embedding、向量存储）。
 """
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.models.tables  # noqa: F401
 from lantai.models.tables import MemoryCandidate, MemoryItem
@@ -186,8 +186,8 @@ def _propose_and_promote(candidate_id: str):
          patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]), \
          patch("lantai.retrieval.hybrid.get_vector_store",
                return_value=Mock(add=Mock(), delete=Mock())):
-        from lantai.evolution.proposer import propose_from_candidate
         from lantai.evolution.promoter import apply_proposal
+        from lantai.evolution.proposer import propose_from_candidate
         prop = propose_from_candidate(candidate_id, {"decision": "promote_semantic"})
         return apply_proposal(prop.id)
 

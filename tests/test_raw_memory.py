@@ -7,12 +7,12 @@ from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from lantai.models.schemas import RawMemoryReq
 from lantai.models.tables import MemoryItem
-from lantai.storage.fts import init_fts, search_fts
+from lantai.storage.fts import init_fts
 
 
 @pytest.fixture()
@@ -53,6 +53,7 @@ def _count_fts(engine, memory_id: str) -> int:
 def test_build_verbatim_item_smoke():
     """构造纯函数不 mock：sha256 幂等 key + 固定语义字段 + 时间戳显式/缺省。"""
     from datetime import datetime
+
     from lantai.services.memory_service import build_verbatim_item
 
     item = build_verbatim_item(
@@ -122,8 +123,8 @@ def test_add_raw_zero_llm(raw_env):
 def test_add_raw_searchable_via_fts_fallback(raw_env):
     """检索自动命中：向量不可用时 FTS 兜底路径能召回 verbatim 原文。"""
     session_factory, engine, _ = raw_env
-    from lantai.services.memory_service import add_raw_memory
     from lantai.retrieval.hybrid import hybrid_search
+    from lantai.services.memory_service import add_raw_memory
 
     content = "系统部署手册：备份命令 mysqldump -u root db > backup.sql"
     add_raw_memory(RawMemoryReq(content=content))

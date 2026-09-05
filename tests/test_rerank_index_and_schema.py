@@ -4,11 +4,10 @@
 2. 验证当有多条 content 相同（不同 id/lane）的候选时，rerank 按 index 正确回填对应 memory 对象，
    避免 doc_to_m = {m.content: m} 正文反查覆盖撞键。
 """
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 from lantai.models.tables import MemoryItem
-from lantai.retrieval.hybrid import hybrid_search, RetrievalParams
+from lantai.retrieval.hybrid import RetrievalParams, hybrid_search
 from lantai.retrieval.reranker import _parse_response
 
 
@@ -35,7 +34,6 @@ def test_rerank_index_backfill_handles_duplicate_content(monkeypatch):
     mem2 = MemoryItem(id="mem_2", content="会议定在下周一召开", lane="chat", status="active")
 
     # 模拟 candidates
-    fake_candidates = [(0.8, mem1), (0.7, mem2)]
 
     # 模拟 rerank 返回反向排序：第 1 项（mem2）得分更高，第 0 项（mem1）得分较低
     fake_rerank_output = [

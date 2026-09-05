@@ -5,7 +5,7 @@
 2. graph_augmented_search: 混合检索初筛 + 图拓扑扩召一体化搜索。
 """
 from collections import deque
-from typing import Any, Optional
+
 from sqlmodel import Session, or_, select
 
 from lantai.core.logger import logger
@@ -19,8 +19,8 @@ def expand_graph_associations(
     max_hops: int = 2,
     min_edge_conf: float = 0.5,
     max_expanded: int = 10,
-    session: Optional[Session] = None,
-    allowed_lanes: Optional[list[str]] = None,
+    session: Session | None = None,
+    allowed_lanes: list[str] | None = None,
 ) -> list[dict]:
     """沿实体图谱进行 1~2 步广度优先（BFS）联想遍历。"""
     seeds = [sid for sid in seed_memory_ids if sid]
@@ -97,9 +97,9 @@ def graph_augmented_search(
     top_k: int = 5,
     max_hops: int = 2,
     min_edge_conf: float = 0.5,
-    domain: Optional[str] = None,
-    session: Optional[Session] = None,
-    allowed_lanes: Optional[list[str]] = None,
+    domain: str | None = None,
+    session: Session | None = None,
+    allowed_lanes: list[str] | None = None,
 ) -> dict:
     """图增强混合检索：混合初筛 + 拓扑二度联想。"""
     # 1. 混合检索初筛

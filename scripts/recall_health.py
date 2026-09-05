@@ -12,6 +12,7 @@ sys.path.insert(0, ".")
 
 from lantai.core.settings import settings  # noqa: E402
 
+
 def _database_path() -> Path:
     prefix = "sqlite:///"
     url = settings.DATABASE_URL
@@ -65,7 +66,7 @@ def render_health(h: dict) -> str:
         "",
         "每日检索趋势：",
     ]
-    for d, n, z in h["daily"]:
+    for d, n, _z in h["daily"]:
         bar = "█" * min(n, 40)
         lines.append(f"  {d}  {n:3d} 次  {bar}")
     if not h["total"]:

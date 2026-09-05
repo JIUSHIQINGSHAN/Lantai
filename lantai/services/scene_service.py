@@ -23,7 +23,7 @@ def cosine_sim(a: list[float], b: list[float]) -> float:
     """余弦相似度（纯函数）。"""
     if not a or not b or len(a) != len(b):
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     if na == 0.0 or nb == 0.0:
@@ -40,7 +40,7 @@ def cluster_scenes(items: list, vectors: list[list[float]],
     clusters: list[list] = []
     cluster_vecs: list[list[list[float]]] = []
     centroids: list[list[float]] = []
-    for item, vec in zip(items, vectors):
+    for item, vec in zip(items, vectors, strict=False):
         best_idx, best_sim = -1, threshold
         for i, centroid in enumerate(centroids):
             s = cosine_sim(vec, centroid)
@@ -114,7 +114,7 @@ def _name_scenes(clusters: list[list]) -> list[tuple[str, str]]:
         if not isinstance(items_out, list) or len(items_out) != len(clusters):
             return fallback
         out = []
-        for cluster, item in zip(clusters, items_out):
+        for cluster, item in zip(clusters, items_out, strict=False):
             if not isinstance(item, dict):
                 return fallback
             name = (item.get("name") or "").strip()
@@ -145,12 +145,12 @@ def rebuild_scenes(threshold: float | None = None) -> dict:
             return {"ok": True, "scene_count": 0, "member_count": 0}
         from lantai.llm.client import embed  # 外部依赖：允许 mock
         vectors = embed([m.content for m in items])
-        vec_map = {m.id: vec for m, vec in zip(items, vectors)}
+        vec_map = {m.id: vec for m, vec in zip(items, vectors, strict=False)}
         clusters = [c for c in cluster_scenes(items, vectors, thr) if len(c) >= 2]
         named = _name_scenes(clusters)
         now = utcnow()
         scene_count = 0
-        for members, (name, summary) in zip(clusters, named):
+        for members, (name, summary) in zip(clusters, named, strict=False):
             scene = MemoryScene(
                 id=new_id("scene"),
                 name=name or "未命名场景",

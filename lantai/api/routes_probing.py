@@ -1,5 +1,5 @@
 """探颐（ADR-0037）：主动探针 REST 路由。"""
-from typing import Optional
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -14,7 +14,7 @@ router = APIRouter()
 
 class ProbeDetectReq(BaseModel):
     query: str
-    session_id: Optional[str] = None
+    session_id: str | None = None
 
 
 class ProbeResolveReq(BaseModel):

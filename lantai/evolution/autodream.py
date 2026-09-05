@@ -8,9 +8,8 @@ MemoryProposal(status=pending, decided_by="autodream") 交人工闸门裁决—�
 宁 miss 不脏写：只建提案，绝不自动应用；低置信度入 skipped 报告（不静默丢弃）。
 LLM 精炼总结留作后续增强（当前为确定性、可复现的规则蒸馏）。
 """
-from sqlmodel import select
-
 import jieba
+from sqlmodel import select
 
 from lantai.core.ids import new_id
 from lantai.core.settings import settings
@@ -43,7 +42,7 @@ def cluster_memories(items: list[MemoryItem],
     for m in ordered:
         kws = set(_keywords(m.content))
         target = None
-        for idx, (cl, ck) in enumerate(zip(cluster_lanes, cluster_keys)):
+        for idx, (cl, ck) in enumerate(zip(cluster_lanes, cluster_keys, strict=False)):
             if m.lane == cl and (ck & kws):
                 target = idx
                 break

@@ -3,7 +3,6 @@
 账本由 gate/decision.py 在闸门决策时写入（确定性规则命中）；此处提供审计
 与人工裁决入口（REST + MCP），裁决不影响闸门结果，只标记处置。
 """
-from datetime import datetime
 
 from sqlmodel import select
 

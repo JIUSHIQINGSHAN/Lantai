@@ -16,9 +16,10 @@ os.environ.setdefault("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 from lantai.core.settings import settings
+
 settings.FEATURE_OBSIDIAN = True
 settings.FEATURE_WIKI = True
 settings.FEATURE_WORK_ITEMS = True
@@ -90,9 +91,9 @@ def param_env():
         mp.setattr(db_module, "get_session", session_factory)
         
         # Mock vector store to avoid hitting network/ChromaDB in all DB tests
-        import lantai.storage.vector_store as vector_store_module
         import lantai.retrieval.hybrid as hybrid_module
         import lantai.services.memory_service as memory_service
+        import lantai.storage.vector_store as vector_store_module
         class DummyVS:
             def search(self, *args, **kwargs): return []
             def search_batch(self, *args, **kwargs): return []
@@ -112,7 +113,8 @@ def param_env():
         mp.setattr(intent_module, "chat_json", lambda *args, **kwargs: {"candidate_n": 5, "lanes": []})
         
         import lantai.retrieval.reranker as reranker_module
-        dummy_rerank = lambda q, docs, k: [{"index": i, "score": 0.9, "document": d} for i, d in enumerate(docs)]
+        def dummy_rerank(q, docs, k):
+            return [{"index": i, "score": 0.9, "document": d} for i, d in enumerate(docs)]
         mp.setattr(reranker_module, "rerank", dummy_rerank)
         mp.setattr(hybrid_module, "rerank", dummy_rerank)
         

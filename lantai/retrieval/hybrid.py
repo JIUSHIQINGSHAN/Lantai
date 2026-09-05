@@ -1,18 +1,19 @@
-from typing import Any, Optional, Mapping
-from dataclasses import dataclass, field
-import threading
 import time
+from dataclasses import dataclass, field
+from datetime import UTC
+from typing import Any
+
 from sqlmodel import select
 
-from lantai.llm.client import embed
-from lantai.models.tables import MemoryEdge, MemoryItem
-from lantai.storage import db
 from lantai.core.logger import logger
 from lantai.core.settings import settings
+from lantai.llm.client import embed
+from lantai.models.tables import MemoryEdge, MemoryItem
 from lantai.retrieval.intent import classify_intent
 from lantai.retrieval.reranker import rerank
-from lantai.storage.vector_store import get_vector_store
+from lantai.storage import db
 from lantai.storage.fts import search_fts, search_fts_bm25
+from lantai.storage.vector_store import get_vector_store
 
 
 @dataclass(frozen=True)
@@ -172,18 +173,14 @@ def _param_override(overrides: dict | None):
         for key, val in overrides.items():
             if hasattr(settings, key):
                 saved[key] = getattr(settings, key)
-                try:
+                with contextlib.suppress(Exception):
                     setattr(settings, key, val)
-                except Exception:
-                    pass
         try:
             yield
         finally:
             for key, val in saved.items():
-                try:
+                with contextlib.suppress(Exception):
                     setattr(settings, key, val)
-                except Exception:
-                    pass
     return _ctx()
 
 
@@ -438,17 +435,16 @@ def delete_memory_item(memory_id: str):
 
 def _chronos_filter(items: list) -> list:
     """Chronos 双时间过滤：未到 valid_from 的剔除，已过 valid_to 的衰减到 0.3 倍。"""
-    from datetime import timezone
     from lantai.core.time import utcnow
     now = utcnow()
     temporally_valid = []
     for m in items:
         vf = m.valid_from
         if vf and vf.tzinfo is None:
-            vf = vf.replace(tzinfo=timezone.utc)
+            vf = vf.replace(tzinfo=UTC)
         vt = m.valid_to
         if vt and vt.tzinfo is None:
-            vt = vt.replace(tzinfo=timezone.utc)
+            vt = vt.replace(tzinfo=UTC)
         if vf and vf > now:
             continue
         if vt and vt < now:
@@ -459,12 +455,11 @@ def _chronos_filter(items: list) -> list:
 
 def _age_multiplier(m) -> float:
     """按衰减类计算 decay_multiplier（调试字段；procedural 恒 1.0）。"""
-    from datetime import timezone as _tz
     from lantai.core.time import utcnow as _utcnow
     from lantai.memory.decay_class import decay_multiplier as _dm
     last = m.last_used_at or m.created_at
     if last.tzinfo is None:
-        last = last.replace(tzinfo=_tz.utc)
+        last = last.replace(tzinfo=UTC)
     days = max(0.0, (_utcnow() - last).total_seconds() / 86400.0)
     return _dm(getattr(m, "decay_class", "episodic"), days)
 
@@ -510,7 +505,7 @@ def _keyword_fallback(
                 s.connection().connection.driver_connection,
                 query, top_k=max(fetch_n, p.fts_recall_top_k))
         fts_hits = set(_get_s(_fts_hit_cb))
-    except Exception as e:
+    except Exception:
         pass
 
     candidate_ids = set(r[0] for r in fts_bm25_results) | fts_hits
@@ -525,22 +520,21 @@ def _keyword_fallback(
     
     has_short_tokens = any(len(t) < 3 for t in tokens)
 
-    if not candidate_ids or has_short_tokens:
-        if tokens:
-            try:
-                from sqlalchemy import or_
-                def _like_cb(s):
-                    conditions = [MemoryItem.content.like(f"%{t}%") for t in tokens]
-                    return s.exec(
-                        select(MemoryItem.id)
-                        .where(MemoryItem.status == "active")
-                        .where(or_(*conditions))
-                        .limit(max(fetch_n, p.fts_recall_top_k))
-                    ).all()
-                like_items = _get_s(_like_cb)
-                candidate_ids |= set(like_items)
-            except Exception:
-                pass
+    if (not candidate_ids or has_short_tokens) and tokens:
+        try:
+            from sqlalchemy import or_
+            def _like_cb(s):
+                conditions = [MemoryItem.content.like(f"%{t}%") for t in tokens]
+                return s.exec(
+                    select(MemoryItem.id)
+                    .where(MemoryItem.status == "active")
+                    .where(or_(*conditions))
+                    .limit(max(fetch_n, p.fts_recall_top_k))
+                ).all()
+            like_items = _get_s(_like_cb)
+            candidate_ids |= set(like_items)
+        except Exception:
+            pass
 
 
     if not candidate_ids:

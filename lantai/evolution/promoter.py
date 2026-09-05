@@ -1,15 +1,22 @@
 from sqlmodel import select
+
 from lantai.core.ids import new_id
-from lantai.core.time import utcnow
-from lantai.core.settings import settings
-from lantai.llm.client import embed
-from lantai.retrieval.hybrid import index_memory_item, delete_memory_item
-from lantai.models.enums import ProposalStatus, MemoryTier
 from lantai.core.provenance import PROVENANCE_PROMPT_DIALOGUE_IMPORT
-from lantai.models.tables import (MemoryProposal, MemoryItem, MemoryCheckpoint, MemoryEdge, MemoryCandidate)
-from lantai.storage.fts import sync_fts
-from lantai.storage import db
+from lantai.core.settings import settings
+from lantai.core.time import utcnow
+from lantai.llm.client import embed
 from lantai.memory.decay_class import infer_decay_class
+from lantai.models.enums import MemoryTier, ProposalStatus
+from lantai.models.tables import (
+    MemoryCandidate,
+    MemoryCheckpoint,
+    MemoryEdge,
+    MemoryItem,
+    MemoryProposal,
+)
+from lantai.retrieval.hybrid import delete_memory_item, index_memory_item
+from lantai.storage import db
+from lantai.storage.fts import sync_fts
 
 
 def _make_checkpoint(session, mem: MemoryItem, before: dict,

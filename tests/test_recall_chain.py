@@ -6,12 +6,12 @@ BFS 逐层展开 / 去重 / 自匹配排除 / 总量封顶 全部真实执行。
 """
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.storage.db as db_module
 from lantai.models.tables import MemoryItem
@@ -19,7 +19,7 @@ from lantai.storage.fts import init_fts, sync_fts
 
 
 def _utcnow():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class LocalEmbedder:
@@ -52,7 +52,7 @@ class FakeVectorStore:
         self._vectors = {mid: embedder.embed([c])[0] for mid, c in rows}
 
     def search(self, query_embedding, top_k):
-        scored = [(mid, sum(a * b for a, b in zip(query_embedding, v)))
+        scored = [(mid, sum(a * b for a, b in zip(query_embedding, v, strict=False)))
                   for mid, v in self._vectors.items()]
         scored.sort(key=lambda x: -x[1])
         # If there is any overlap (s > 0), make distance < 0.8 so it passes hybrid_search filter
@@ -104,7 +104,7 @@ class ChainHarness:
                 sync_fts(s, m.id, c)
                 ids.append(m.id)
             s.commit()
-        self.rows.extend(zip(ids, contents))
+        self.rows.extend(zip(ids, contents, strict=False))
         self._rebuild()
         return ids
 

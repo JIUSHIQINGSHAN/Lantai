@@ -4,7 +4,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
 WorkItemKind = Literal[
     "candidate", "proposal", "conflict", "parameter", "crystal", "memory", "worker"
 ]

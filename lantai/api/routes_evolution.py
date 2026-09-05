@@ -1,10 +1,10 @@
 from fastapi import APIRouter, HTTPException
 
-from lantai.models.schemas import ProposalDecisionReq, FeedbackReq
+from lantai.models.schemas import FeedbackReq, ProposalDecisionReq
 from lantai.services.evolution_service import (
-    list_proposals,
     decide_proposal,
     do_rollback,
+    list_proposals,
     record_feedback_entry,
     run_evolve,
 )

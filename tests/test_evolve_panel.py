@@ -2,12 +2,12 @@
 
 recent_retrieval_events 真实 DB 直调（不 mock）；页面/端点只验证可达与契约。
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.storage.db as db_module
 from lantai.models.tables import RetrievalEvent
@@ -42,7 +42,7 @@ def _event(i, created_at, zero=False, noise=False, lane="general"):
 def test_recent_retrieval_events_orders_desc(ev_env):
     """真实 DB：新→旧排序 + 字段齐全。"""
     session_factory, _ = ev_env
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with session_factory() as s:
         for i, dt in [(1, now - timedelta(hours=2)),
                       (2, now), (3, now - timedelta(hours=1))]:
@@ -66,6 +66,7 @@ def test_recent_retrieval_events_limit_validation(ev_env):
 def test_ui_evolve_served():
     """页面可达：/ui/evolve 200 + 面板标记 + 数据端点引用。"""
     from fastapi.testclient import TestClient
+
     from api_server import app
     with TestClient(app) as c:
         r = c.get("/ui/evolve")
@@ -79,12 +80,13 @@ def test_ui_evolve_served():
 def test_recent_events_endpoint(ev_env):
     """数据端点：/retrieval/recent-events 返回事件流（新→旧）。"""
     session_factory, _ = ev_env
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with session_factory() as s:
         s.add(_event(1, now, zero=True))
         s.add(_event(2, now - timedelta(minutes=5)))
         s.commit()
     from fastapi.testclient import TestClient
+
     from api_server import app
     with TestClient(app) as c:
         r = c.get("/retrieval/recent-events?limit=5")

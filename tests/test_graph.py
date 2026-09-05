@@ -3,11 +3,11 @@
 build_graph 纯函数直调不 mock；用真实 SQLite 验证节点入选规则、
 边过滤（跨池边丢弃）与 supersedes 链保留。
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 from lantai.models.tables import MemoryEdge, MemoryItem, MemoryScene, RawDocument
 
@@ -33,8 +33,8 @@ def _m(mid, content, lane="fact", scene_id=None, status="active",
         id=mid, memory_type="semantic", key=f"k-{mid}", content=content,
         lane=lane, scene_id=scene_id, status=status, importance=0.5,
         decay_score=1.0, decay_class="episodic", use_count=0,
-        created_at=datetime.now(timezone.utc) - timedelta(days=1),
-        updated_at=datetime.now(timezone.utc) - timedelta(days=updated_days),
+        created_at=datetime.now(UTC) - timedelta(days=1),
+        updated_at=datetime.now(UTC) - timedelta(days=updated_days),
     )
 
 

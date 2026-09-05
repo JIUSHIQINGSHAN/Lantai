@@ -1,14 +1,15 @@
 from sqlmodel import select
-from lantai.core.logger import logger
-from lantai.models.tables import MemoryCandidate, MemoryProposal
-from lantai.models.enums import ProposalStatus
-from lantai.storage import db
-from lantai.gate.decision import decide
-from lantai.services.candidate_service import enqueue_rejected
-from lantai.evolution.proposer import propose_from_candidate
-from lantai.evolution.promoter import apply_proposal
-from lantai.core.settings import settings
+
 from lantai.core import scheduler as scheduler_mod
+from lantai.core.logger import logger
+from lantai.core.settings import settings
+from lantai.evolution.promoter import apply_proposal
+from lantai.evolution.proposer import propose_from_candidate
+from lantai.gate.decision import decide
+from lantai.models.enums import ProposalStatus
+from lantai.models.tables import MemoryCandidate, MemoryProposal
+from lantai.services.candidate_service import enqueue_rejected
+from lantai.storage import db
 
 
 def run_evolve_once():

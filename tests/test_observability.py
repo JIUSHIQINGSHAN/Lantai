@@ -4,9 +4,9 @@ import sqlite3
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine
 
-from lantai.models.tables import MemoryItem, MemoryScene, RetrievalEvent
+from lantai.models.tables import RetrievalEvent
 
 
 @pytest.fixture()

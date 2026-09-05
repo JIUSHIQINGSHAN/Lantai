@@ -19,12 +19,12 @@ from sqlmodel import select
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.core.settings import settings
-from lantai.models.tables import MemoryItem
+from lantai.llm.client import embed  # 外部依赖：允许 mock
 from lantai.models.enums import MemoryTier
+from lantai.models.tables import MemoryItem
+from lantai.retrieval.hybrid import index_memory_item
 from lantai.storage import db
 from lantai.storage.fts import sync_fts
-from lantai.retrieval.hybrid import index_memory_item
-from lantai.llm.client import embed  # 外部依赖：允许 mock
 
 MEM_HELP_TEXT = """**支持的 mem: 命令（MCP 工具）：**
 

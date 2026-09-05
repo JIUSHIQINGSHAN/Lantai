@@ -12,6 +12,7 @@ build_graph(session, limit) 是纯函数（测试直传临时 session，不 mock
 get_graph(limit) 打开默认会话执行。
 """
 from collections import Counter
+from datetime import UTC
 
 from sqlmodel import Session, or_, select
 
@@ -152,8 +153,8 @@ def get_graph(limit: int = 150) -> dict:
 
 
 def _now_iso() -> str:
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    from datetime import datetime
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _doc_label(doc) -> str:

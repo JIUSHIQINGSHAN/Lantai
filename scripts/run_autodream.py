@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, ".")
 
-from lantai.evolution.autodream import plan_distillation, run_autodream_once  # noqa: E402
+from lantai.evolution.autodream import run_autodream_once  # noqa: E402
 
 
 def main() -> int:

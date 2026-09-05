@@ -43,7 +43,6 @@ from lantai.parameters.validation import (
 )
 from lantai.storage import db
 
-
 # ---------------------------------------------------------------- 查询
 
 def list_suggestions(status: str | None = None, limit: int = 20,

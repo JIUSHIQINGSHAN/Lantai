@@ -3,12 +3,12 @@
 测试纪律（AGENTS.md）：核心逻辑不 mock——纯函数直调；DB 操作用内存 SQLite
 真实建表（patch db.engine/get_session，仅隔离存储）。
 """
-from datetime import datetime, timedelta, timezone
-
 import json
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.models.tables  # noqa: F401  注册全部表
 import lantai.storage.db as db_module
@@ -16,12 +16,12 @@ from lantai.core.settings import settings
 from lantai.models.tables import SessionCheckpoint
 from lantai.services.checkpoint_service import (
     BLOCK_LABELS,
-    validate_blocks,
-    write_session_checkpoint,
+    cleanup_old_checkpoints,
     get_checkpoint,
     get_latest_checkpoint,
-    cleanup_old_checkpoints,
     inject_checkpoint_context,
+    validate_blocks,
+    write_session_checkpoint,
 )
 
 _BLOCKS = {
@@ -109,7 +109,7 @@ def test_cleanup_keeps_n_sessions(ckpt_env):
 
 def test_inject_format_and_staleness(ckpt_env, monkeypatch):
     write_session_checkpoint("sess-01", _BLOCKS)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     text = inject_checkpoint_context(now=now)
     assert text.startswith("[Checkpoint · 上次会话]")
     assert "在做: 兰台记忆项目白皮书审阅" in text

@@ -1,8 +1,8 @@
 """Reranker 和意图分类单元测试"""
-import pytest
-from unittest.mock import patch, MagicMock
-from lantai.retrieval.reranker import rerank, _parse_response
+from unittest.mock import MagicMock, patch
+
 from lantai.retrieval.intent import classify_intent
+from lantai.retrieval.reranker import rerank
 
 
 class TestRerank:

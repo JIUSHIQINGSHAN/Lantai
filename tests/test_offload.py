@@ -79,7 +79,7 @@ def test_shell_hook_offload_injection(monkeypatch, tmp_path):
     """集成冒烟：超长记忆 → 落盘 + 上下文只注入摘要与路径，evidence 收窄。"""
     mod = _load_module(HOOK_PATH, "shell_hook_offload")
     from sqlalchemy.pool import StaticPool
-    from sqlmodel import SQLModel, Session, create_engine
+    from sqlmodel import Session, SQLModel, create_engine
     engine = create_engine("sqlite:///:memory:",
                            connect_args={"check_same_thread": False},
                            poolclass=StaticPool)
@@ -118,7 +118,7 @@ def test_shell_hook_short_memory_no_offload(monkeypatch, tmp_path):
     """集成冒烟：短记忆不落盘（保持普通截断注入路径）。"""
     mod = _load_module(HOOK_PATH, "shell_hook_short")
     from sqlalchemy.pool import StaticPool
-    from sqlmodel import SQLModel, Session, create_engine
+    from sqlmodel import Session, SQLModel, create_engine
     engine = create_engine("sqlite:///:memory:",
                            connect_args={"check_same_thread": False},
                            poolclass=StaticPool)

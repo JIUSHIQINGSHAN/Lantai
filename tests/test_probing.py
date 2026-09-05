@@ -6,7 +6,6 @@ r"""探颐（ADR-0037）：记忆主动探针与自然交互消歧测试。
 3. resolve_probe_response 识别用户自然语言肯定/否定并闭环消解冲突；
 4. REST POST /probing/detect, /probing/resolve 与 MCP probe_detect, probe_resolve 工具。
 """
-import pytest
 from fastapi.testclient import TestClient
 
 from api_server import app

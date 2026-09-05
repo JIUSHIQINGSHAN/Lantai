@@ -1,14 +1,14 @@
 """Glass-box Terminal：透明化对话与记忆透视 SSE 端点"""
+import contextlib
 import json
 import time
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from lantai.services.memory_service import list_memories
 from lantai.services.edge_service import list_edges
+from lantai.services.memory_service import list_memories
 from lantai.storage.db import get_session
 
 router = APIRouter()
@@ -27,10 +27,10 @@ class ChatReq(BaseModel):
 
 
 class MemoryUpdateReq(BaseModel):
-    content: Optional[str] = None
-    importance: Optional[float] = None
-    confidence: Optional[float] = None
-    memory_type: Optional[str] = None
+    content: str | None = None
+    importance: float | None = None
+    confidence: float | None = None
+    memory_type: str | None = None
 
 
 class MergeReq(BaseModel):
@@ -45,8 +45,8 @@ def _sse(event: str, data: dict) -> str:
 @router.post("/terminal/chat")
 async def terminal_chat_stream(req: ChatReq):
     """SSE 流式端点：透明化展示记忆检索全过程"""
-    from lantai.services.search_service import search_memories
     from lantai.services.gate_service import check_gate
+    from lantai.services.search_service import search_memories
 
     def generate():
         # Step 1: 闸门判定
@@ -263,10 +263,8 @@ def merge_memories(req: MergeReq):
         
         # 创建 supersedes 边记录
         from lantai.services.edge_service import add_edge
-        try:
+        with contextlib.suppress(Exception):
             add_edge(req.target_id, req.source_id, "supersedes", 1.0)
-        except Exception:
-            pass
             
         session.commit()
         return {"ok": True, "merged_into": req.target_id, "content": merged_content}

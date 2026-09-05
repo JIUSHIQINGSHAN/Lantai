@@ -5,12 +5,12 @@
 2. prefilter.relevance_check 识别「大哥」自指及常见实词短查询，不再被武断拦截。
 3. routes_search 在 force=True 或有效实词短查询时不被盲目阻断。
 """
-from datetime import datetime, timezone
-import pytest
-from sqlmodel import Session
+from datetime import UTC, datetime
 
-from lantai.models.tables import MemoryItem
+import pytest
+
 from lantai.gate.prefilter import relevance_check
+from lantai.models.tables import MemoryItem
 from lantai.retrieval.hybrid import hybrid_search
 from lantai.storage.fts import index_fts, init_fts
 
@@ -64,8 +64,8 @@ class TestHybridSearchShiyiFallback:
             content="大哥的电脑配置为华硕天选三，RTX 3050显卡。",
             lane="fact",
             status="active",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
             decay_score=1.0,
             importance=0.8,
         )
@@ -100,8 +100,8 @@ class TestHybridSearchShiyiFallback:
             content="飞书卡片审美要求使用古诗词点缀。",
             lane="preference",
             status="active",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
             decay_score=1.0,
             importance=0.8,
         )
@@ -125,6 +125,7 @@ class TestRoutesSearchForce:
 
     def test_search_with_force_bypasses_gate(self, param_env, monkeypatch):
         from fastapi.testclient import TestClient
+
         from api_server import app
 
         session_factory, engine = param_env
@@ -137,8 +138,8 @@ class TestRoutesSearchForce:
             content="这是一条用于测试强制检索透传的知识记录。",
             lane="general",
             status="active",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
             decay_score=1.0,
             importance=0.8,
         )

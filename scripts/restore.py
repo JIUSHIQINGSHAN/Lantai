@@ -58,9 +58,7 @@ def service_online(port: int) -> bool:
         with urllib.request.urlopen(f"http://localhost:{port}/health", timeout=1) as r:
             return r.status == 200
     except urllib.error.URLError as e:
-        if isinstance(e.reason, ConnectionRefusedError):
-            return False
-        return True
+        return not isinstance(e.reason, ConnectionRefusedError)
     except Exception:
         return True
 

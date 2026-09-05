@@ -12,7 +12,7 @@
 宁 miss 不脏写：块内容 < CHECKPOINT_MIN_CONTENT 不落、非法 block_key 拒绝、
 session_id < 3 字符拒绝；同 session 重写即替换（upsert）。
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlmodel import delete, select
 
@@ -131,7 +131,7 @@ def _parse_naive_utc(value) -> datetime:
     if isinstance(dt, str):
         dt = datetime.fromisoformat(dt)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 

@@ -4,13 +4,14 @@ from unittest.mock import patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
 from lantai.memory.decay_class import (
-    DECAY_CLASS_HALFLIFE, decay_multiplier, infer_decay_class,
+    decay_multiplier,
+    infer_decay_class,
 )
 from lantai.models.tables import MemoryCheckpoint, MemoryItem
 
@@ -133,6 +134,7 @@ class TestMigration:
     def test_init_db_adds_decay_class_to_legacy_table(self):
         """老库（无 decay_class 列）→ init_db 幂等迁移加列；重复执行不炸"""
         from unittest.mock import patch as _patch
+
         from sqlalchemy import text
 
         legacy = create_engine("sqlite:///:memory:")

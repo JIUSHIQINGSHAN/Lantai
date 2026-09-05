@@ -2,12 +2,12 @@
 
 build_memories_page 纯函数真实临时 SQLite 直调（不 mock）；页面/端点冒烟。
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 
 @pytest.fixture()
@@ -31,7 +31,7 @@ def vault_env():
 def _mem(s, i, content, lane="fact", status="active", decay_class="episodic",
          updated=None, memory_type="semantic"):
     from lantai.models.tables import MemoryItem
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     m = MemoryItem(
         id=f"mem_{i}", memory_type=memory_type, key=f"k{i}",
         content=content, lane=lane, status=status,
@@ -46,7 +46,7 @@ def _mem(s, i, content, lane="fact", status="active", decay_class="episodic",
 def test_build_memories_page_orders_and_filters(vault_env):
     """纯函数：updated_at 新→旧排序；lane/status/decay_class 过滤。"""
     session_factory, _ = vault_env
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with session_factory() as s:
         _mem(s, 1, "记忆甲", lane="fact", updated=now - timedelta(hours=3))
         _mem(s, 2, "记忆乙", lane="rule", status="archived",
@@ -109,6 +109,7 @@ def test_build_memories_page_validation(vault_env):
 def test_ui_vault_served():
     """页面可达：/ui/vault 200 + 面板标记 + 数据端点引用。"""
     from fastapi.testclient import TestClient
+
     from api_server import app
     with TestClient(app) as c:
         r = c.get("/ui/vault")
@@ -127,6 +128,7 @@ def test_memories_endpoint(vault_env):
         _mem(s, 2, "规则记忆", lane="rule")
         s.commit()
     from fastapi.testclient import TestClient
+
     from api_server import app
     with TestClient(app) as c:
         r = c.get("/memories?lane=fact&limit=5")

@@ -6,7 +6,7 @@ RetrievalEvent 只追加事件 → recall_report 按窗口聚合：
 - 场景维度（SCENE_LAYER_ENABLED 时命中场景成员的比例，scene_ids）
 - token 成本粗估（查询 + 注入结果，零依赖）
 """
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from sqlmodel import select
 

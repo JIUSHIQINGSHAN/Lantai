@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends
-from lantai.core.auth import verify_api_key
+from fastapi import APIRouter
+from sqlmodel import select
+
 from lantai.core import scheduler
 from lantai.core.settings import settings
-from lantai.storage import db
-from lantai.models.tables import MemoryItem
 from lantai.ingestion.coalesce import get_coalesce_buffer
-from sqlmodel import select
+from lantai.models.tables import MemoryItem
+from lantai.storage import db
 
 # 公共路由（不需要鉴权）
 router = APIRouter()
@@ -41,7 +41,7 @@ def health_deep():
     # ChromaDB
     try:
         from lantai.storage.vector_store import get_vector_store
-        store = get_vector_store()
+        get_vector_store()
         checks["chromadb"] = "ok"
     except Exception as e:
         checks["chromadb"] = f"fail: {e}"

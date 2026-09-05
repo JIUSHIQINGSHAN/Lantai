@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from lantai.models.tables import MemoryEdge, MemoryItem
@@ -89,6 +89,7 @@ def test_dataset_queries_fts_hittable():
     错别字维度用词边界插入/删除型（FTS5 trigram 实测语义：整串子串匹配）。
     """
     import sqlite3
+
     from lantai.eval.chinese_memory_cases import build_chinese_dataset
 
     ds = build_chinese_dataset()

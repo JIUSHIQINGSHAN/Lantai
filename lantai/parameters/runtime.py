@@ -6,7 +6,7 @@
 - 启动时加载 DB head；跨进程用 revision 轮询（PARAM_OVERRIDE_REFRESH_SECONDS）。
 - 损坏的 DB 快照不应用（校验失败即拒绝，保持上一有效配置）。
 """
-from sqlmodel import select, func
+from sqlmodel import select
 
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
@@ -130,6 +130,7 @@ def open_shadow(override_id: str, param_overrides: dict, *,
     影子参数仅记录在本窗，不写入 ParamOverride（DEDUP shadow-only）。
     """
     from datetime import timedelta
+
     from lantai.core.settings import settings as _s
     from lantai.parameters.trust_models import ShadowWindow
 

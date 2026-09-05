@@ -8,7 +8,7 @@
 build_overview(session) 是纯函数（测试直传临时 session，不 mock 内部逻辑）；
 get_overview() 打开默认会话执行。
 """
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlmodel import func, select
 
@@ -56,7 +56,7 @@ def build_overview(session) -> dict:
         prompt = prov.get("prompt") or "unknown"
         by_prompt[prompt] = by_prompt.get(prompt, 0) + 1
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "memories": {
             "total": int(mem_total),
             "active": int(mem_active),

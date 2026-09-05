@@ -6,14 +6,12 @@
 3. graph_augmented_search 协同初筛与二度联想；
 4. REST POST /search/graph_expand 与 MCP graph_expand_search 工具。
 """
-import pytest
 from fastapi.testclient import TestClient
 
 from api_server import app
 from lantai.models.tables import MemoryEdge, MemoryItem
 from lantai.retrieval.graph_retriever import (
     expand_graph_associations,
-    graph_augmented_search,
 )
 
 

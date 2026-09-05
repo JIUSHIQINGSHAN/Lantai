@@ -7,7 +7,7 @@
 - consumed       ：已处理完毕（产出建议 / 合法 abstain / 非法输出，不再重试）
 - dead           ：网络重试耗尽
 """
-from datetime import timedelta, timezone
+from datetime import UTC, timedelta
 
 from sqlmodel import select
 
@@ -16,8 +16,8 @@ from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import (
-    ParamAdviceRun,
     ParamAdvicePaper,
+    ParamAdviceRun,
     RawDocument,
 )
 from lantai.parameters.registry import default_snapshot, get_registry_version
@@ -28,7 +28,7 @@ from lantai.storage import db
 def _ensure_aware(dt):
     """SQLite 读回的 datetime 是 naive；统一视为 UTC（项目标准处理）。"""
     if dt is not None and dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
     return dt
 
 

@@ -42,7 +42,7 @@ def _week_waterline(items):
 def _auto_apply_rate(threshold: float) -> tuple[float, float, float]:
     """返回 (自动应用率, 待审率, 丢弃率) —— 丢弃 = 置信<min 或 risk=high。"""
     total = sum(w for _, _, w in CONF_HIST)
-    auto = med = low_conf = 0.0
+    auto = med = 0.0
     for lo, hi, w in CONF_HIST:
         mid = (lo + hi) / 2
         if mid >= threshold:

@@ -8,14 +8,13 @@ from unittest.mock import Mock, patch
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
-from lantai.core.settings import settings
 from lantai.core.acl import allowed_lanes, filter_results_by_lanes, lane_allowed
+from lantai.core.settings import settings
 from lantai.models.tables import MemoryItem
 from lantai.storage.fts import init_fts, sync_fts
-
 
 # ── 纯函数：三态 ───────────────────────────────────────────────
 

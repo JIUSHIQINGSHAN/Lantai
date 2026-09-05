@@ -9,9 +9,8 @@ from sqlmodel import select
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.core.time import utcnow
-from lantai.eval.models import EvalQuerySet, EvalRun
 from lantai.eval.metrics import compute_metrics
-from lantai.eval.query_set import load_query_set
+from lantai.eval.models import EvalQuerySet, EvalRun
 from lantai.models.tables import RetrievalEvent
 from lantai.parameters.registry import default_snapshot
 from lantai.retrieval.hybrid import hybrid_search

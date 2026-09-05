@@ -3,9 +3,9 @@ from fastapi import APIRouter
 from lantai.models.schemas import SourceReq
 from lantai.services.source_service import (
     add_source,
+    list_candidates,
     list_sources,
     run_ingest,
-    list_candidates,
 )
 
 router = APIRouter()

@@ -21,7 +21,7 @@ def main() -> int:
     parser.add_argument("--key", default="", help="X-API-Key（服务配置了 API_KEY 时必填）")
     args = parser.parse_args()
 
-    with open(args.file, "r", encoding="utf-8") as fh:
+    with open(args.file, encoding="utf-8") as fh:
         text = fh.read()
 
     req = urllib.request.Request(

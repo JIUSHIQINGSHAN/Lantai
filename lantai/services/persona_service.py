@@ -6,10 +6,10 @@
 3. L/G/E 上下文格式化生成（注入会话首轮）
 4. 检索偏好加权辅助
 """
-from datetime import datetime, timezone
-from typing import Optional
-from ulid import ULID
+from datetime import UTC, datetime
+
 from sqlmodel import Session, select
+from ulid import ULID
 
 from lantai.core.logger import logger
 from lantai.models.tables import PersonaProfile
@@ -28,7 +28,7 @@ DEFAULT_EPISTEMIC_FACTS = (
 )
 
 
-def ensure_default_persona(session: Optional[Session] = None) -> PersonaProfile:
+def ensure_default_persona(session: Session | None = None) -> PersonaProfile:
     """确保系统中至少存在一个默认激活的人格基座（兰台执笔）。"""
     def _run(s: Session) -> PersonaProfile:
         active = s.exec(select(PersonaProfile).where(PersonaProfile.is_active == True)).first()  # noqa: E712
@@ -38,7 +38,7 @@ def ensure_default_persona(session: Optional[Session] = None) -> PersonaProfile:
         default_p = s.exec(select(PersonaProfile).where(PersonaProfile.name == DEFAULT_PERSONA_NAME)).first()
         if default_p:
             default_p.is_active = True
-            default_p.updated_at = datetime.now(timezone.utc)
+            default_p.updated_at = datetime.now(UTC)
             s.add(default_p)
             s.commit()
             s.refresh(default_p)
@@ -51,8 +51,8 @@ def ensure_default_persona(session: Optional[Session] = None) -> PersonaProfile:
             linguistic_style=DEFAULT_LINGUISTIC_STYLE,
             guidelines=DEFAULT_GUIDELINES,
             epistemic_facts=DEFAULT_EPISTEMIC_FACTS,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         s.add(new_p)
         s.commit()
@@ -66,7 +66,7 @@ def ensure_default_persona(session: Optional[Session] = None) -> PersonaProfile:
         return _run(s)
 
 
-def get_active_persona(session: Optional[Session] = None) -> PersonaProfile:
+def get_active_persona(session: Session | None = None) -> PersonaProfile:
     """获取当前激活的人格基座；若无则自动初始化默认人格。"""
     def _run(s: Session) -> PersonaProfile:
         active = s.exec(select(PersonaProfile).where(PersonaProfile.is_active == True)).first()  # noqa: E712
@@ -86,7 +86,7 @@ def set_persona(
     guidelines: str = "",
     epistemic_facts: str = "",
     is_active: bool = True,
-    session: Optional[Session] = None,
+    session: Session | None = None,
 ) -> PersonaProfile:
     """创建或更新人格基座（L/G/E）。"""
     name = (name or "").strip()
@@ -100,7 +100,7 @@ def set_persona(
 
     def _run(s: Session) -> PersonaProfile:
         existing = s.exec(select(PersonaProfile).where(PersonaProfile.name == name)).first()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if is_active:
             # 取消其他所有 active 标记
@@ -144,7 +144,7 @@ def set_persona(
         return _run(s)
 
 
-def list_personas(session: Optional[Session] = None) -> list[PersonaProfile]:
+def list_personas(session: Session | None = None) -> list[PersonaProfile]:
     """列出系统内所有人格基座。"""
     def _run(s: Session) -> list[PersonaProfile]:
         # 确保至少有默认项
@@ -159,13 +159,13 @@ def list_personas(session: Optional[Session] = None) -> list[PersonaProfile]:
         return _run(s)
 
 
-def activate_persona(persona_id_or_name: str, session: Optional[Session] = None) -> Optional[PersonaProfile]:
+def activate_persona(persona_id_or_name: str, session: Session | None = None) -> PersonaProfile | None:
     """根据 ID 或名称激活指定人格基座。"""
     target = (persona_id_or_name or "").strip()
     if not target:
         return None
 
-    def _run(s: Session) -> Optional[PersonaProfile]:
+    def _run(s: Session) -> PersonaProfile | None:
         item = s.exec(
             select(PersonaProfile).where(
                 (PersonaProfile.id == target) | (PersonaProfile.name == target)
@@ -174,7 +174,7 @@ def activate_persona(persona_id_or_name: str, session: Optional[Session] = None)
         if not item:
             return None
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         all_active = s.exec(select(PersonaProfile).where(PersonaProfile.is_active == True)).all()  # noqa: E712
         for act in all_active:
             if act.id != item.id:
@@ -195,7 +195,7 @@ def activate_persona(persona_id_or_name: str, session: Optional[Session] = None)
         return _run(s)
 
 
-def format_persona_context(persona: Optional[PersonaProfile] = None) -> str:
+def format_persona_context(persona: PersonaProfile | None = None) -> str:
     """将人格基座格式化为三层提示词注入块。"""
     p = persona or get_active_persona()
     if not p:

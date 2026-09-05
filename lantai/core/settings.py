@@ -339,10 +339,10 @@ class Settings(BaseSettings):
     def validate_config(self):
         """轻量校验——只 warn 不 crash。"""
         if not self.OPENAI_API_KEY:
-            warnings.warn("OPENAI_API_KEY not set — LLM features will fail")
+            warnings.warn("OPENAI_API_KEY not set — LLM features will fail", stacklevel=2)
         if self.RERANKER_ENABLED and not self.OPENAI_API_KEY:
             warnings.warn(
-                "Reranker enabled but no API key — will fall back to no rerank"
+                "Reranker enabled but no API key — will fall back to no rerank", stacklevel=2
             )
         if not self.API_KEY:
             logger.warning("API_KEY 为空：API 将以无鉴权模式运行（仅建议本机开发）")

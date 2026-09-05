@@ -8,13 +8,13 @@
 - evolve_worker 集成：gate REJECT 不再静默丢弃
 - REST 路由：GET /candidates/pending、POST /candidates/{id}/review
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from lantai.core.settings import settings
@@ -52,11 +52,11 @@ class TestEnqueueRejected:
             c = s.get(MemoryCandidate, "cand_1")
             assert c.status == "pending_review"
             assert c.review_due_at is not None
-            expected = datetime.now(timezone.utc) + timedelta(
+            expected = datetime.now(UTC) + timedelta(
                 days=settings.CANDIDATE_TTL_DAYS)
             due = c.review_due_at
             if due.tzinfo is None:  # SQLite 存 naive datetime，比较前归一
-                due = due.replace(tzinfo=timezone.utc)
+                due = due.replace(tzinfo=UTC)
             assert abs((due - expected).total_seconds()) < 60
 
     def test_enqueue_missing_is_noop(self, param_env):
@@ -72,7 +72,7 @@ class TestListPending:
 
     def test_only_pending_review_returned(self, param_env):
         session_factory, _ = param_env
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         with session_factory() as s:
             _make_cand(s, "cand_p", status="pending_review",
                        review_due_at=now + timedelta(days=1))
@@ -86,7 +86,7 @@ class TestListPending:
 
     def test_orders_by_due_date_asc(self, param_env):
         session_factory, _ = param_env
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         with session_factory() as s:
             _make_cand(s, "cand_late", status="pending_review",
                        review_due_at=now + timedelta(days=3))
@@ -109,7 +109,7 @@ class TestReview:
         with session_factory() as s:
             _make_cand(s, "cand_1", status="pending_review",
                        extractor_confidence=0.9,
-                       review_due_at=datetime.now(timezone.utc) + timedelta(days=1))
+                       review_due_at=datetime.now(UTC) + timedelta(days=1))
 
         with patch("lantai.evolution.proposer.chat_json", return_value={
                 "proposal_type": "add", "target_key": "k1",
@@ -137,7 +137,7 @@ class TestReview:
         session_factory, _ = param_env
         with session_factory() as s:
             _make_cand(s, "cand_1", status="pending_review",
-                       review_due_at=datetime.now(timezone.utc) + timedelta(days=1))
+                       review_due_at=datetime.now(UTC) + timedelta(days=1))
 
         from lantai.services.candidate_service import review_candidate
         result = review_candidate("cand_1", approve=False, reason="不应写入")
@@ -159,7 +159,7 @@ class TestReview:
         session_factory, _ = param_env
         with session_factory() as s:
             _make_cand(s, "cand_reason", status="pending_review",
-                       review_due_at=datetime.now(timezone.utc) + timedelta(days=1))
+                       review_due_at=datetime.now(UTC) + timedelta(days=1))
         from lantai.services.candidate_service import review_candidate
         with pytest.raises(ValueError, match="reason"):
             review_candidate("cand_reason", approve=False)
@@ -168,7 +168,7 @@ class TestReview:
 class TestDefer:
     def test_defer_and_undo_real_db(self, param_env):
         session_factory, _ = param_env
-        due = datetime.now(timezone.utc) + timedelta(days=1)
+        due = datetime.now(UTC) + timedelta(days=1)
         with session_factory() as s:
             _make_cand(s, "cand_defer", status="pending_review", review_due_at=due)
 
@@ -180,7 +180,7 @@ class TestDefer:
         assert restored["candidate_id"] == "cand_defer"
         with session_factory() as s:
             candidate = s.get(MemoryCandidate, "cand_defer")
-            actual = candidate.review_due_at.replace(tzinfo=timezone.utc)
+            actual = candidate.review_due_at.replace(tzinfo=UTC)
             assert abs((actual - due).total_seconds()) < 0.01
             assert candidate.defer_count == 0
 
@@ -190,7 +190,7 @@ class TestTTL:
 
     def test_expired_archived_future_kept(self, param_env):
         session_factory, _ = param_env
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         with session_factory() as s:
             _make_cand(s, "cand_expired", status="pending_review",
                        review_due_at=now - timedelta(hours=1))
@@ -272,7 +272,7 @@ class TestCandidateRoutes:
 
         with db_module.get_session() as s:
             _make_cand(s, "cand_p", status="pending_review",
-                       review_due_at=datetime.now(timezone.utc) + timedelta(days=1))
+                       review_due_at=datetime.now(UTC) + timedelta(days=1))
         resp = client.get("/candidates/pending")
         ids = [c["id"] for c in resp.json()["candidates"]]
         assert ids == ["cand_p"]
@@ -281,7 +281,7 @@ class TestCandidateRoutes:
         with db_module.get_session() as s:
             _make_cand(s, "cand_r", status="pending_review",
                        extractor_confidence=0.9,
-                       review_due_at=datetime.now(timezone.utc) + timedelta(days=1))
+                       review_due_at=datetime.now(UTC) + timedelta(days=1))
         resp = client.post("/candidates/cand_r/review", json={"approve": True})
         assert resp.status_code == 200
         data = resp.json()
@@ -293,7 +293,7 @@ class TestCandidateRoutes:
     def test_review_reject(self, client):
         with db_module.get_session() as s:
             _make_cand(s, "cand_r", status="pending_review",
-                       review_due_at=datetime.now(timezone.utc) + timedelta(days=1))
+                       review_due_at=datetime.now(UTC) + timedelta(days=1))
         resp = client.post("/candidates/cand_r/review",
                            json={"approve": False, "reason": "不相关"})
         assert resp.status_code == 200

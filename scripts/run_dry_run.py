@@ -59,7 +59,7 @@ def main() -> int:
         intent_mode=args.intent,
     )
 
-    print(f"\n=== Dry-Run 报告 ===")
+    print("\n=== Dry-Run 报告 ===")
     print(f"run_id      : {run.id}")
     print(f"查询集      : {run.query_set_name}（{qs.sample_count} 条样本）")
     print(f"top_k       : {args.top_k} | rerank: {not args.no_rerank} | intent: {args.intent}")

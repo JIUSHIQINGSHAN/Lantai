@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from lantai.models.tables import MemoryItem
@@ -175,6 +175,7 @@ def test_import_invalid_lines_not_imported(imp_env):
 
 def test_import_endpoint(imp_env):
     from fastapi.testclient import TestClient
+
     from api_server import app
     with TestClient(app) as c:
         r = c.post("/import/jsonl", json={"text": '{"content": "端点导入"}\n'})

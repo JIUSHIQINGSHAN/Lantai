@@ -1,6 +1,7 @@
 from fastapi import APIRouter
-from lantai.models.schemas import GateReq
+
 from lantai.gate.decision import decide
+from lantai.models.schemas import GateReq
 
 router = APIRouter()
 

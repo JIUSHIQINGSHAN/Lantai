@@ -1,4 +1,5 @@
-import logging, sys
+import logging
+import sys
 
 logger = logging.getLogger("lantai")
 if not logger.handlers:

@@ -61,9 +61,7 @@ def _keep(token: str) -> bool:
         return False
     if all(ch in _PUNCT for ch in t):
         return False
-    if t in _STOP_WORDS:
-        return False
-    return True
+    return t not in _STOP_WORDS
 
 
 def _value_spans(text: str) -> list[str]:
@@ -93,10 +91,7 @@ def anchors_of(text: str) -> set[str]:
 
 
 def _is_value_token(token: str) -> bool:
-    for pat in _VALUE_PATTERNS:
-        if re.fullmatch(pat, token):
-            return True
-    return False
+    return any(re.fullmatch(pat, token) for pat in _VALUE_PATTERNS)
 
 
 def _location_tokens(text: str) -> set[str]:

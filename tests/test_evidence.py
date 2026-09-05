@@ -5,7 +5,6 @@
 - rerank 结构：{"score", "document"} → 反查 DB 拿 id（查不到则 id=None）
 - 空输入 → 空列表；异常静默降级
 """
-from sqlmodel import select
 
 from lantai.models.tables import MemoryItem
 

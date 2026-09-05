@@ -4,21 +4,20 @@
 record_run/get_last_run 用内存 SQLite 真实建表（patch db.engine，仅隔离存储）。
 仅允许 mock 外部副作用：BackgroundScheduler（外部调度器对象）。
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
 from sqlalchemy import text
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.core.scheduler as scheduler_mod
 import lantai.storage.db as db_module
-from lantai.core.scheduler import (record_run, get_last_run, should_catch_up)
-from lantai.models.tables import SchedulerRun
+from lantai.core.scheduler import get_last_run, record_run, should_catch_up
 
 
 def _utc(dt: datetime) -> datetime:
-    return dt.astimezone(timezone.utc)
+    return dt.astimezone(UTC)
 
 
 @pytest.fixture()
@@ -48,7 +47,7 @@ def _seed_run(engine, name: str, last_run_utc: str) -> None:
 class TestShouldCatchUp:
     """纯判定：每日 cron 任务漏跑 → 补跑；已跑/未到点 → 不补。"""
 
-    NOW = datetime(2026, 8, 12, 12, 0, 0, tzinfo=timezone.utc)  # 已过 06:00/06:01
+    NOW = datetime(2026, 8, 12, 12, 0, 0, tzinfo=UTC)  # 已过 06:00/06:01
 
     def test_none_last_run_catches_up(self, sched_db):
         # sched_db 隔离存储：last_run=None 回落 get_last_run 时读空表 → None
@@ -69,8 +68,8 @@ class TestShouldCatchUp:
 
     def test_before_todays_fire_with_todays_run_skips(self):
         # 10:00 UTC（未到今天 22:00 调度点），今早 06:01 已跑过 → 不补（避免双跑）
-        now = datetime(2026, 8, 11, 10, 0, 0, tzinfo=timezone.utc)
-        last = (datetime(2026, 8, 11, 6, 1, 0, tzinfo=timezone.utc).isoformat())
+        now = datetime(2026, 8, 11, 10, 0, 0, tzinfo=UTC)
+        last = (datetime(2026, 8, 11, 6, 1, 0, tzinfo=UTC).isoformat())
         assert not should_catch_up("digest", 22, 0, now=now, last_run=last)
 
     def test_unparseable_last_run_catches_up(self):
@@ -124,7 +123,7 @@ class TestStartSchedulerCatchup:
         return fake
 
     def test_stale_last_run_adds_catchup_jobs(self, fake_scheduler, sched_db):
-        old = (datetime(2026, 8, 10, 6, 1, 0, tzinfo=timezone.utc).isoformat())
+        old = (datetime(2026, 8, 10, 6, 1, 0, tzinfo=UTC).isoformat())
         _seed_run(sched_db, "digest", old)
         _seed_run(sched_db, "reflect", old)
         scheduler_mod.start_scheduler()
@@ -135,7 +134,7 @@ class TestStartSchedulerCatchup:
                    for j in fake_scheduler.jobs)
 
     def test_fresh_last_run_skips_catchup(self, fake_scheduler, sched_db):
-        fresh = datetime.now(timezone.utc).isoformat()
+        fresh = datetime.now(UTC).isoformat()
         _seed_run(sched_db, "digest", fresh)
         _seed_run(sched_db, "reflect", fresh)
         scheduler_mod.start_scheduler()

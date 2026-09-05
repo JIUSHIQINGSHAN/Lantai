@@ -19,10 +19,13 @@ jobs:
           python-version: '3.11'
       - name: Install
         run: |
-          pip install -e .
-          pip install pytest
-      - name: Full test suite
-        run: python -m pytest tests/ -q
+          pip install -e .[dev]
+      - name: Lint and Format Check (Ruff)
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Full test suite with coverage
+        run: pytest tests/ -q --cov=lantai --cov-report=term-missing
       - name: Forgetting quality gate (chinese-memory-v2)
         env:
           # offline.py 已 patch embed，不会真调 API；假 key 仅满足 client.py 模块级 OpenAI() import

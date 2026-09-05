@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlmodel import select
@@ -30,7 +30,6 @@ from lantai.parameters.registry import default_snapshot
 from lantai.parameters.validation import snapshot_hash
 from lantai.storage import db
 
-
 _PROCESS_STARTED_AT = utcnow()
 _TYPE_ORDER = {
     "candidate": 0,
@@ -54,8 +53,8 @@ def _aware(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -139,8 +138,8 @@ def worker_schedule_specs() -> dict[str, dict[str, Any]]:
 
 
 def _work_item_sort_key(item: WorkItem) -> tuple:
-    due = _aware(item.due_at) or datetime.max.replace(tzinfo=timezone.utc)
-    created = _aware(item.created_at) or datetime.max.replace(tzinfo=timezone.utc)
+    due = _aware(item.due_at) or datetime.max.replace(tzinfo=UTC)
+    created = _aware(item.created_at) or datetime.max.replace(tzinfo=UTC)
     return (
         _SECTION_ORDER[item.section],
         _PRIORITY_ORDER[item.priority],

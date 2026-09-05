@@ -7,8 +7,8 @@
   undecided ∈ [UPDATE, PRESCREEN)（提取后交结构判别 relation.py）；
   insert < UPDATE。
 """
-from lantai.models.tables import MemoryItem
 from lantai.core.settings import settings
+from lantai.models.tables import MemoryItem
 
 
 def find_similar(session, query_results: list[dict], fastpath: bool = False) -> tuple[str, MemoryItem | None, float]:

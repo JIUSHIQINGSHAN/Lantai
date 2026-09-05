@@ -10,7 +10,6 @@ used_ids 回填通道自检（Hermes 接入验证）。
 
 用法：python scripts/verify_backfill.py
 """
-import os
 import sys
 from pathlib import Path
 
@@ -88,8 +87,8 @@ def main() -> int:
     #    backfill_used_ids 是 UPDATE-only（查不到即跳过，不 INSERT）。
     #    必须先用 log_retrieval 真实落一条事件，再回填验证——用假 id 测必然 FAIL。
     try:
-        from lantai.observability.retrieval_log import log_retrieval, backfill_used_ids
         from lantai.models.tables import RetrievalEvent
+        from lantai.observability.retrieval_log import backfill_used_ids, log_retrieval
         test_eid = log_retrieval("verify_backfill selfcheck", [],
                                  latency_ms=1, trace_id="verify_backfill")
         if not test_eid:

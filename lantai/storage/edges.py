@@ -1,7 +1,8 @@
 """记忆关系（边）管理"""
 from sqlmodel import select
-from lantai.storage import db
+
 from lantai.models.tables import MemoryEdge
+from lantai.storage import db
 
 
 def create_edge(source_memory_id: str, target_memory_id: str,

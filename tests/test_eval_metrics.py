@@ -3,7 +3,11 @@
 覆盖边界：空列表、全 zero_result、部分零结果、used_ids 命中/未命中/无数据、jaccard 空集合。
 """
 from lantai.eval.metrics import (
-    avg_result_count, compute_metrics, jaccard_overlap, weak_hit_rate, zero_result_rate,
+    avg_result_count,
+    compute_metrics,
+    jaccard_overlap,
+    weak_hit_rate,
+    zero_result_rate,
 )
 
 

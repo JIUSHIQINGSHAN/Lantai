@@ -5,7 +5,7 @@ import math
 
 import pytest
 
-from lantai.parameters.registry import default_snapshot, get_param_registry
+from lantai.parameters.registry import default_snapshot
 from lantai.parameters.schemas import ParamChange
 from lantai.parameters.validation import (
     ParamValidationError,

@@ -1,6 +1,8 @@
 """Reranker 客户端：调用硅基流 /v1/rerank 做精排"""
 import time
+
 import requests
+
 from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.ingestion.safety import validate_api_url

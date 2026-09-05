@@ -1,4 +1,5 @@
 import numpy as np
+
 from lantai.llm.client import embed
 
 

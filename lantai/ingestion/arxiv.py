@@ -1,12 +1,13 @@
 import hashlib
-import httpx
+from datetime import UTC, datetime
+
 import feedparser
-from datetime import datetime, timezone
+import httpx
 
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
-from lantai.models.tables import RawDocument
 from lantai.ingestion.base import SourceAdapter
+from lantai.models.tables import RawDocument
 from lantai.parameters.paper_signals import extract_quality_signals
 
 
@@ -39,7 +40,7 @@ class ArxivAdapter(SourceAdapter):
                 url=e.get("link", ""),
                 title=e.get("title", "").strip(),
                 authors=[a.name for a in e.get("authors", [])],
-                published_at=datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
+                published_at=datetime(*e.published_parsed[:6], tzinfo=UTC)
                              if e.get("published_parsed") else None,
                 lang="en",
                 content_hash=h,

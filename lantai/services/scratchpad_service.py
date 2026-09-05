@@ -5,7 +5,7 @@
 2. write_scratchpad: 覆盖更新札记内容（限制最大 1000 字符，宁 miss 不脏写截断）；
 3. format_scratchpad_context: 格式化为 Prompt 上下文（与「底本」协同注入）。
 """
-from typing import Optional
+
 from sqlmodel import Session
 
 from lantai.core.logger import logger
@@ -16,7 +16,7 @@ from lantai.storage import db
 MAX_SCRATCHPAD_CHARS = 1000
 
 
-def get_scratchpad(session_id: str = "default", session: Optional[Session] = None) -> str:
+def get_scratchpad(session_id: str = "default", session: Session | None = None) -> str:
     """获取指定会话的札记便签内容。"""
     sid = (session_id or "default").strip()
 
@@ -33,7 +33,7 @@ def get_scratchpad(session_id: str = "default", session: Optional[Session] = Non
 def write_scratchpad(
     session_id: str = "default",
     content: str = "",
-    session: Optional[Session] = None,
+    session: Session | None = None,
 ) -> dict:
     """写入/覆盖指定会话的札记便签内容（上限 1000 字符，超长自动截断）。"""
     sid = (session_id or "default").strip()
@@ -76,7 +76,7 @@ def write_scratchpad(
 
 def format_scratchpad_context(
     session_id: str = "default",
-    session: Optional[Session] = None,
+    session: Session | None = None,
 ) -> str:
     """格式化札记便签，供首轮 Prompt 注入（与底本协同）。"""
     text = get_scratchpad(session_id, session=session)

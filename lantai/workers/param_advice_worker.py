@@ -12,7 +12,6 @@ from lantai.core import scheduler as scheduler_mod
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
 from lantai.models.tables import ParamSuggestion
 from lantai.parameters.advisor import generate_param_advice
 from lantai.parameters.queue import (

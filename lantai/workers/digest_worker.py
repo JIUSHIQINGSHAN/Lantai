@@ -4,16 +4,20 @@
 - run_digest_once：生成当日盘点报告 docs/memory-digest/YYYY-MM-DD.md（Ticket 03）
   五项统计：新增记忆 / 修改记忆 / 待审数 / 归档数 / 检索统计
 """
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 from sqlmodel import func, select
 
 from lantai.core.scheduler import record_run
 from lantai.core.settings import settings
-from lantai.models.tables import (MemoryCandidate, MemoryItem,
-                                    MemoryProposal, ReflectRun,
-                                    RetrievalEvent)
+from lantai.models.tables import (
+    MemoryCandidate,
+    MemoryItem,
+    MemoryProposal,
+    ReflectRun,
+    RetrievalEvent,
+)
 from lantai.services.candidate_service import run_candidate_ttl_once
 from lantai.storage import db
 
@@ -135,8 +139,8 @@ def _local_day_window_utc(day: date | None = None) -> tuple[datetime, datetime]:
         day = local_now.date()
     local_start = datetime.combine(day, time.min, tzinfo=local_now.tzinfo)
     local_end = local_start + timedelta(days=1)
-    return (local_start.astimezone(timezone.utc).replace(tzinfo=None),
-            local_end.astimezone(timezone.utc).replace(tzinfo=None))
+    return (local_start.astimezone(UTC).replace(tzinfo=None),
+            local_end.astimezone(UTC).replace(tzinfo=None))
 
 
 def collect_digest_stats(day: date | None = None) -> dict:
@@ -264,7 +268,7 @@ def collect_calibration_stats(days: int | None = None) -> dict:
     # 窗口边界秒级截断 + 1s 顶边过悬（2026-08-15 竞态修复）：微秒精度下
     # 「写入毫秒前 + 采样 now」可能同秒撞界（run_at < end 字符串比较失败），
     # 秒级边界 + 1s 过悬使窗口对采样时刻免疫
-    end = (datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+    end = (datetime.now(UTC).replace(tzinfo=None, microsecond=0)
            + timedelta(seconds=1))
     start = end - timedelta(days=days)
     with db.get_session() as s:

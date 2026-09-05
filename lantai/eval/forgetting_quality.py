@@ -15,9 +15,10 @@ evaluate_forgetting_quality：真实 DB 种子（namespace='eval_fq'）→ 真�
 （search 可注入，默认 hybrid_search；外部 LLM/embedding/向量由调用方按测试纪律 mock）
 → 指标 → finally 清理种子。
 """
+import contextlib
 from datetime import timedelta
 
-from sqlmodel import delete, select
+from sqlmodel import delete
 
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
@@ -196,7 +197,5 @@ def evaluate_forgetting_quality(dataset: dict, *, search=None, top_k: int = 5) -
                 s.commit()
         # 向量库独立清理（失败静默，不影响 DB 清理结论）
         for mid in seeded:
-            try:
+            with contextlib.suppress(Exception):
                 delete_memory_item(mid)
-            except Exception:
-                pass

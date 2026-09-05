@@ -2,8 +2,8 @@
 from sqlmodel import select
 
 from lantai.core.ids import new_id
-from lantai.models.tables import Source, MemoryCandidate
 from lantai.models.schemas import SourceReq
+from lantai.models.tables import MemoryCandidate, Source
 from lantai.storage import db
 from lantai.workers.ingest_worker import run_ingest_once
 

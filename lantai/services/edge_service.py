@@ -1,5 +1,5 @@
 """记忆关系（边）service 层——从路由 handler 下沉"""
-from lantai.storage.edges import create_edge, get_edges, delete_edge, get_supersed_chain
+from lantai.storage.edges import create_edge, delete_edge, get_edges, get_supersed_chain
 
 
 def add_edge(source_id: str, target_id: str, relation: str, confidence: float = 0.5) -> dict:

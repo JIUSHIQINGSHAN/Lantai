@@ -7,8 +7,7 @@
 4. run_consolidation_cycle: 调度执行完整沉潜周期。
 """
 from collections import defaultdict
-from datetime import datetime
-from typing import Any, Optional
+
 import jieba.analyse
 from sqlmodel import Session, select
 from ulid import ULID
@@ -49,7 +48,7 @@ def find_consolidation_clusters(
     clusters: list[list[MemoryItem]] = []
 
     # 2. 组内主题关键词聚类
-    for (dom, lane), items in group_map.items():
+    for (dom, _lane), items in group_map.items():
         if len(items) < min_cluster_size:
             continue
 
@@ -63,7 +62,7 @@ def find_consolidation_clusters(
 
         # 找出命中同一关键词且数量 >= min_cluster_size 的子集
         clustered_ids = set()
-        for kw, cand_items in keyword_item_map.items():
+        for _kw, cand_items in keyword_item_map.items():
             unique_items = {i.id: i for i in cand_items if i.id not in clustered_ids}
             if len(unique_items) >= min_cluster_size:
                 cluster = list(unique_items.values())
@@ -106,13 +105,13 @@ def _verify_trustmem_transition(cluster_items: list[MemoryItem], content: str) -
 
 
 def consolidate_cluster(
-    cluster_items: list[MemoryItem], session: Optional[Session] = None
-) -> Optional[MemoryItem]:
+    cluster_items: list[MemoryItem], session: Session | None = None
+) -> MemoryItem | None:
     """对一组碎片记忆进行概念提纯与合成，生成主记忆并折叠子记忆。"""
     if not cluster_items:
         return None
 
-    def _execute(s: Session) -> Optional[MemoryItem]:
+    def _execute(s: Session) -> MemoryItem | None:
         sources_text = "\n".join(
             f"- [ID: {m.id}] {m.content}" for m in cluster_items
         )
@@ -214,7 +213,7 @@ def consolidate_cluster(
 
 
 def prune_decayed_synapses(
-    threshold: float = 0.05, session: Optional[Session] = None
+    threshold: float = 0.05, session: Session | None = None
 ) -> int:
     """自动修剪极度衰减的边缘碎片（转为 archived 休眠）。"""
     def _prune(s: Session) -> int:
@@ -243,7 +242,7 @@ def prune_decayed_synapses(
         return _prune(s)
 
 
-def run_consolidation_cycle(session: Optional[Session] = None) -> dict:
+def run_consolidation_cycle(session: Session | None = None) -> dict:
     """运行一次完整的沉潜夜梦沉淀周期。"""
     def _run(s: Session) -> dict:
         global _LAST_CONSOLIDATION_REPORT

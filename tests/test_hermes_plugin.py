@@ -4,7 +4,6 @@
 测试不依赖 Hermes 进程——register(ctx) 用假 ctx；serve 子进程交互全部 mock。
 """
 import importlib.util
-import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -123,7 +122,7 @@ class TestCheckpointInjection:
              patch.object(mod, "_call_hook", return_value="检索上下文") as hk:
             r1 = mod._on_pre_llm_call(user_message="继续上次的工作",
                                       session_id="sess_ck")
-            r2 = mod._on_pre_llm_call(user_message="继续上次的工作",
+            mod._on_pre_llm_call(user_message="继续上次的工作",
                                       session_id="sess_ck")
         assert r1["context"].startswith("[Checkpoint · 上次会话]")
         assert "检索上下文" in r1["context"]

@@ -1,43 +1,43 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends
 
-from lantai.core.settings import settings
-from lantai.core.logger import logger
-from lantai.core.scheduler import start_scheduler, stop_scheduler
-from lantai.core.auth import verify_api_key, assert_secure_binding
-from lantai.core.acl import verify_agent
-from lantai.storage.db import init_db
+from fastapi import Depends, FastAPI
 
 from lantai.api import (
-    routes_memory_router,
-    routes_search_router,
-    routes_gate_router,
-    routes_checkpoint_router,
-    routes_sources_router,
-    routes_evolution_router,
-    routes_health_router,
-    routes_health_protected_router,
-    routes_edges_router,
-    routes_param_advice_router,
-    routes_retrieval_router,
-    routes_verification_router,
     routes_candidates_router,
+    routes_checkpoint_router,
+    routes_conflicts_router,
+    routes_crystals_router,
     routes_dialogue_router,
     routes_digest_router,
-    routes_conflicts_router,
-    routes_obsidian_router,
-    routes_import_router,
-    routes_tree_router,
-    routes_crystals_router,
+    routes_edges_router,
+    routes_evolution_router,
+    routes_gate_router,
     routes_graph_router,
-    routes_recall_chain_router,
-    routes_ui_router,
-    routes_work_items_router,
+    routes_health_protected_router,
+    routes_health_router,
+    routes_import_router,
+    routes_memory_router,
+    routes_obsidian_router,
+    routes_param_advice_router,
     routes_persona_router,
-    routes_scratchpad_router,
     routes_probing_router,
+    routes_recall_chain_router,
+    routes_retrieval_router,
+    routes_scratchpad_router,
+    routes_search_router,
+    routes_sources_router,
     routes_terminal_router,
+    routes_tree_router,
+    routes_ui_router,
+    routes_verification_router,
+    routes_work_items_router,
 )
+from lantai.core.acl import verify_agent
+from lantai.core.auth import assert_secure_binding, verify_api_key
+from lantai.core.logger import logger
+from lantai.core.scheduler import start_scheduler, stop_scheduler
+from lantai.core.settings import settings
+from lantai.storage.db import init_db
 
 
 @asynccontextmanager

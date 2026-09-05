@@ -66,7 +66,6 @@ def test_service_online_fail_closed():
         m.side_effect = urllib.error.URLError(ConnectionRefusedError())
         assert R.service_online(8767) is False
     # 超时（socket.timeout）→ 保守视为在线 → True
-    import socket
     with patch("urllib.request.urlopen") as m:
-        m.side_effect = urllib.error.URLError(socket.timeout())
+        m.side_effect = urllib.error.URLError(TimeoutError())
         assert R.service_online(8767) is True

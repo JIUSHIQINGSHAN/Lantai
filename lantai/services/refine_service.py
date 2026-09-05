@@ -5,7 +5,7 @@
 2. refine_candidate_record: 针对单条候选记录进行精炼并更新 DB；
 3. batch_refine_candidates: 针对模糊区间候选批量披沙提纯。
 """
-from typing import Optional
+
 from sqlmodel import Session, select
 
 from lantai.core.logger import logger
@@ -35,7 +35,7 @@ REFINE_SYSTEM_PROMPT = """你是一个严谨的记忆精炼与事实提纯专家
 """
 
 
-def refine_memory_text(text: str, context: str = "", metadata: Optional[dict] = None) -> dict:
+def refine_memory_text(text: str, context: str = "", metadata: dict | None = None) -> dict:
     """对单段记忆文本执行指代消解与结构化提纯（纯函数，异常时宁 miss 不脏写降级）。"""
     raw_text = (text or "").strip()
     if not raw_text:
@@ -83,7 +83,7 @@ def refine_memory_text(text: str, context: str = "", metadata: Optional[dict] = 
     }
 
 
-def refine_candidate_record(candidate_id: str, session: Optional[Session] = None) -> dict:
+def refine_candidate_record(candidate_id: str, session: Session | None = None) -> dict:
     """对指定 ID 的候选记录执行精炼并落库。"""
     cand_id = (candidate_id or "").strip()
     if not cand_id:
@@ -122,7 +122,7 @@ def batch_refine_candidates(
     min_conf: float = 0.15,
     max_conf: float = 0.6,
     limit: int = 20,
-    session: Optional[Session] = None,
+    session: Session | None = None,
 ) -> dict:
     """批量对处于模糊置信度区间的候选执行披沙提纯。"""
     def _run(s: Session) -> dict:

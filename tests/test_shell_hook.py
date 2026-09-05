@@ -5,8 +5,6 @@ import json
 import os
 import time
 
-import pytest
-
 HOOK_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                          "scripts", "shell_hook.py")
 
@@ -94,7 +92,7 @@ def test_build_context_has_evidence(monkeypatch):
     """有命中时：context 含"依据"段（记忆 id + 摘要），并返回结构化 evidence。"""
     mod = _load_hook(monkeypatch)
     from sqlalchemy.pool import StaticPool
-    from sqlmodel import SQLModel, Session, create_engine
+    from sqlmodel import Session, SQLModel, create_engine
     engine = create_engine("sqlite:///:memory:",
                            connect_args={"check_same_thread": False},
                            poolclass=StaticPool)
@@ -233,7 +231,7 @@ def test_build_context_budget_and_guide(monkeypatch):
     """集成冒烟：多条长记忆 → 单条截断 + 总预算丢弃 + 注入末尾附工具指南。"""
     mod = _load_hook(monkeypatch)
     from sqlalchemy.pool import StaticPool
-    from sqlmodel import SQLModel, Session, create_engine
+    from sqlmodel import Session, SQLModel, create_engine
     engine = create_engine("sqlite:///:memory:",
                            connect_args={"check_same_thread": False},
                            poolclass=StaticPool)

@@ -1,6 +1,6 @@
-from typing import Optional
 from datetime import datetime
-from sqlmodel import SQLModel, Field, Column, JSON
+
+from sqlmodel import JSON, Column, Field, SQLModel
 
 from lantai.core.time import utcnow
 
@@ -12,7 +12,7 @@ class RawDocument(SQLModel, table=True):
     url: str
     title: str
     authors: list = Field(default_factory=list, sa_column=Column(JSON))
-    published_at: Optional[datetime] = None
+    published_at: datetime | None = None
     fetched_at: datetime = Field(default_factory=utcnow)
     lang: str = "en"
     content_hash: str = Field(index=True, unique=True)
@@ -44,9 +44,9 @@ class MemoryCandidate(SQLModel, table=True):
     provenance: dict = Field(default_factory=dict, sa_column=Column(JSON))  # 提取来源（prompt/model/时间，借鉴腾讯 provenance）
     lane: str = Field(default="general")  # 分轨：从 AddMemoryReq 传入
     status: str = "new"
-    review_due_at: Optional[datetime] = None  # 待审队列 TTL 截止（Ticket 02）
-    deferred_at: Optional[datetime] = None
-    previous_review_due_at: Optional[datetime] = None
+    review_due_at: datetime | None = None  # 待审队列 TTL 截止（Ticket 02）
+    deferred_at: datetime | None = None
+    previous_review_due_at: datetime | None = None
     defer_count: int = 0
     defer_reason: str = ""
     created_at: datetime = Field(default_factory=utcnow)
@@ -56,13 +56,13 @@ class MemoryItem(SQLModel, table=True):
     id: str = Field(primary_key=True)
     memory_type: str = Field(default="text", index=True)
     namespace: str = Field(index=True, default="default")
-    key: Optional[str] = Field(default="", index=True)
+    key: str | None = Field(default="", index=True)
     content: str
     structure: dict = Field(default_factory=dict, sa_column=Column(JSON))
     provenance: dict = Field(default_factory=dict, sa_column=Column(JSON))  # 提取来源（prompt/model/时间，可溯源）
     tags: list = Field(default_factory=list, sa_column=Column(JSON))
-    scene_id: Optional[str] = Field(default=None, index=True)  # 场景聚合归属（ADR-0012）
-    tree_path: Optional[str] = Field(default=None, index=True)  # 分类树挂载路径（v0.7，借鉴 TreeMemory）
+    scene_id: str | None = Field(default=None, index=True)  # 场景聚合归属（ADR-0012）
+    tree_path: str | None = Field(default=None, index=True)  # 分类树挂载路径（v0.7，借鉴 TreeMemory）
     confidence: float = 0.5
     importance: float = 0.5
     tier: str = "working"
@@ -71,13 +71,13 @@ class MemoryItem(SQLModel, table=True):
     source_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     version: int = 1
     status: str = "active"
-    last_used_at: Optional[datetime] = None
+    last_used_at: datetime | None = None
     use_count: int = 0
     helpful_count: int = 0
     decay_score: float = 1.0
     decay_class: str = "episodic"  # procedural(永不衰减)/semantic(慢)/episodic(快)；与 tier 正交
-    valid_from: Optional[datetime] = None
-    valid_to: Optional[datetime] = None
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -117,7 +117,7 @@ class MemoryNode(SQLModel, table=True):
     """
 
     id: str = Field(primary_key=True)
-    parent_id: Optional[str] = Field(default=None, index=True)
+    parent_id: str | None = Field(default=None, index=True)
     name: str = Field(index=True)
     node_path: str = Field(index=True, unique=True)
     depth: int = 0
@@ -159,8 +159,8 @@ class CoreMemoryBlock(SQLModel, table=True):
 class MemoryProposal(SQLModel, table=True):
     id: str = Field(primary_key=True)
     proposal_type: str
-    target_memory_id: Optional[str] = None
-    candidate_id: Optional[str] = None
+    target_memory_id: str | None = None
+    candidate_id: str | None = None
     evidence_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     reason: str = ""
     proposed_patch: dict = Field(default_factory=dict, sa_column=Column(JSON))
@@ -171,7 +171,7 @@ class MemoryProposal(SQLModel, table=True):
     decision_reason: str = ""  # 裁决原因（用户/自动拒绝理由，反馈回路与回填校准输入）
     provenance: dict = Field(default_factory=dict, sa_column=Column(JSON))  # 继承候选提取来源（可溯源）
     created_at: datetime = Field(default_factory=utcnow)
-    applied_at: Optional[datetime] = None
+    applied_at: datetime | None = None
 
 
 class ConflictEvent(SQLModel, table=True):
@@ -186,7 +186,7 @@ class ConflictEvent(SQLModel, table=True):
     status: str = "open"               # open / resolved / dismissed
     resolved_by: str = ""
     created_at: datetime = Field(default_factory=utcnow)
-    resolved_at: Optional[datetime] = None
+    resolved_at: datetime | None = None
 
 
 class MemoryCheckpoint(SQLModel, table=True):
@@ -195,7 +195,7 @@ class MemoryCheckpoint(SQLModel, table=True):
     version: int
     before: dict = Field(default_factory=dict, sa_column=Column(JSON))
     after: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    proposal_id: Optional[str] = None
+    proposal_id: str | None = None
     trigger: str = "manual"
     created_at: datetime = Field(default_factory=utcnow)
 
@@ -219,7 +219,7 @@ class Source(SQLModel, table=True):
     config: dict = Field(default_factory=dict, sa_column=Column(JSON))
     enabled: bool = True
     trust_score: float = 0.7
-    last_fetched_at: Optional[datetime] = None
+    last_fetched_at: datetime | None = None
 
 
 class IngestJob(SQLModel, table=True):
@@ -227,8 +227,8 @@ class IngestJob(SQLModel, table=True):
     source_id: str
     status: str = "pending"
     stats: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    started_at: Optional[datetime] = None
-    finished_at: Optional[datetime] = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
     error: str = ""
 
 
@@ -244,10 +244,10 @@ class ParamAdviceRun(SQLModel, table=True):
     base_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
     base_snapshot_hash: str = ""
     registry_version: str = ""
-    llm_output: Optional[dict] = Field(default=None, sa_column=Column(JSON))
-    error_code: Optional[str] = None
+    llm_output: dict | None = Field(default=None, sa_column=Column(JSON))
+    error_code: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
-    finished_at: Optional[datetime] = None
+    finished_at: datetime | None = None
 
 
 class ParamAdvicePaper(SQLModel, table=True):
@@ -259,11 +259,11 @@ class ParamAdvicePaper(SQLModel, table=True):
         index=True, unique=True, foreign_key="rawdocument.id")
     state: str = Field(default="new", index=True)
     attempt_count: int = 0
-    run_id: Optional[str] = Field(default=None, index=True)
+    run_id: str | None = Field(default=None, index=True)
     available_at: datetime = Field(default_factory=utcnow)
-    claimed_at: Optional[datetime] = None
-    consumed_at: Optional[datetime] = None
-    last_error_code: Optional[str] = None
+    claimed_at: datetime | None = None
+    consumed_at: datetime | None = None
+    last_error_code: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -291,10 +291,10 @@ class ParamSuggestion(SQLModel, table=True):
     registry_version: str = ""
     fingerprint: str = Field(unique=True, index=True)
     created_at: datetime = Field(default_factory=utcnow)
-    decided_at: Optional[datetime] = None
-    decided_by: Optional[str] = None
-    decision_note: Optional[str] = None
-    override_id: Optional[str] = Field(
+    decided_at: datetime | None = None
+    decided_by: str | None = None
+    decision_note: str | None = None
+    override_id: str | None = Field(
         default=None, foreign_key="param_override.id")
 
 
@@ -305,9 +305,9 @@ class ParamOverride(SQLModel, table=True):
     id: str = Field(primary_key=True)
     revision: int = Field(unique=True, index=True)
     operation: str = Field(index=True)  # apply | rollback
-    suggestion_id: Optional[str] = Field(
+    suggestion_id: str | None = Field(
         default=None, foreign_key="param_suggestion.id")
-    rollback_of_override_id: Optional[str] = Field(
+    rollback_of_override_id: str | None = Field(
         default=None, foreign_key="param_override.id")
     before_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
     after_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
@@ -316,7 +316,7 @@ class ParamOverride(SQLModel, table=True):
     changes: list = Field(default_factory=list, sa_column=Column(JSON))
     registry_version: str = ""
     actor: str = ""
-    note: Optional[str] = None
+    note: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -329,7 +329,7 @@ class RetrievalEvent(SQLModel, table=True):
     query_text: str = ""
     query_norm_hash: str = Field(index=True)
     lane: str = ""
-    intent_bucket: Optional[str] = Field(default=None, index=True)
+    intent_bucket: str | None = Field(default=None, index=True)
     param_snapshot_hash: str = Field(index=True)  # 当时生效参数快照 hash
     result_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     result_scores: list = Field(default_factory=list, sa_column=Column(JSON))
@@ -384,7 +384,7 @@ class SessionCheckpoint(SQLModel, table=True):
     """
     __tablename__ = "session_checkpoint"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     session_id: str = Field(index=True)
     block_key: str = ""
     content: str = ""

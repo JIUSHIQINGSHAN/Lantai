@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.models.tables  # noqa: F401
 from lantai.models.tables import MemoryItem, MemoryScene

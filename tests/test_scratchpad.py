@@ -6,15 +6,13 @@
 3. scratchpad_service 格式化与底本协同注入；
 4. REST 路由 GET/POST /scratchpad/{session_id} 与 MCP scratchpad_get / scratchpad_write 工具。
 """
-import pytest
 from fastapi.testclient import TestClient
 
 from api_server import app
-from lantai.models.tables import SessionScratchpad
 from lantai.services.scratchpad_service import (
+    format_scratchpad_context,
     get_scratchpad,
     write_scratchpad,
-    format_scratchpad_context,
 )
 
 
@@ -72,7 +70,7 @@ class TestScratchpadEndpointsAndMCP:
         assert r2.json()["content"] == "REST 札记写入测试"
 
     def test_mcp_scratchpad_tools(self, param_env):
-        from scripts.mcp_server import handle_scratchpad_write, handle_scratchpad_get
+        from scripts.mcp_server import handle_scratchpad_get, handle_scratchpad_write
 
         # 写入
         w_res = handle_scratchpad_write({"session_id": "mcp_sess", "content": "MCP 札记写入测试"})

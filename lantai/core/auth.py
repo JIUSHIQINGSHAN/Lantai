@@ -1,7 +1,8 @@
 """API Key 鉴权依赖 + 部署绑定安全检查"""
 import hmac
 
-from fastapi import HTTPException, Header
+from fastapi import Header, HTTPException
+
 from lantai.core.settings import settings
 
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}

@@ -1,8 +1,9 @@
 import math
-from datetime import timedelta, timezone
+
 from sqlmodel import select
-from lantai.core.time import utcnow
+
 from lantai.core.settings import settings
+from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
 
@@ -52,10 +53,7 @@ def apply_forgetting():
                     changed = True
 
                 # 自动归档：decay 极低 或 working memory 过期且无用
-                if m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD and m.status != "archived":
-                    m.status = "archived"
-                    changed = True
-                elif (m.tier == "working"
+                if m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD and m.status != "archived" or (m.tier == "working"
                       and days > settings.WORKING_MEMORY_TTL_DAYS
                       and m.helpful_count == 0
                       and m.status != "archived"):

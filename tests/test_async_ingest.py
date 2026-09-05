@@ -8,14 +8,14 @@
 """
 import time
 from unittest.mock import patch
-import pytest
+
 from fastapi.testclient import TestClient
 
 from api_server import app
 from lantai.services.async_ingest_service import (
-    submit_async_dialogue,
-    get_task_status,
     clear_tasks,
+    get_task_status,
+    submit_async_dialogue,
 )
 
 

@@ -6,7 +6,7 @@
 3. resolve_probe_response: 根据用户次轮自然语言答复自动闭环消解冲突。
 """
 import re
-from typing import Any, Optional
+
 import jieba
 from sqlmodel import Session, select
 from ulid import ULID
@@ -30,8 +30,8 @@ _NEGATIVE_PATTERNS = [
 
 def detect_memory_probes(
     query: str,
-    session_id: Optional[str] = None,
-    session: Optional[Session] = None,
+    session_id: str | None = None,
+    session: Session | None = None,
 ) -> list[dict]:
     """扫描未决冲突账本，检测与当前查询相关的冲突事实，生成主动求证探针。"""
     clean_q = query.strip()
@@ -92,7 +92,7 @@ def format_probing_context(probes: list[dict]) -> str:
 def resolve_probe_response(
     conflict_id: str,
     user_reply: str,
-    session: Optional[Session] = None,
+    session: Session | None = None,
 ) -> dict:
     """分析用户对探针的自然语言答复，自动执行冲突消解与版本更替。"""
     clean_reply = user_reply.strip()

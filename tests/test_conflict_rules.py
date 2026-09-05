@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from lantai.core.ids import new_id
@@ -293,8 +293,7 @@ def test_decide_llm_fallback_when_no_rule(conflict_env):
 
 def test_conflict_service_resolve(conflict_env):
     session_factory, engine = conflict_env
-    from lantai.services.conflict_service import (
-        list_conflict_events, resolve_conflict_event)
+    from lantai.services.conflict_service import list_conflict_events, resolve_conflict_event
 
     with session_factory() as s:
         ev = ConflictEvent(id=new_id("cfev"), memory_id="m1",

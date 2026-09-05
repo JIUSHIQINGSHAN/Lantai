@@ -1,14 +1,12 @@
 """
 论文质量信号冒烟测试（方向一）——纯函数真实直调，含真实 arXiv Atom 固件。
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import feedparser
-import pytest
 from sqlmodel import select
 
 from lantai.core.ids import new_id
-from lantai.core.time import utcnow
 from lantai.models.tables import RawDocument
 from lantai.parameters.paper_signals import (
     QualitySignalDraft,
@@ -23,7 +21,7 @@ from lantai.parameters.signal_service import (
 )
 from lantai.parameters.trust_models import PaperQualitySignal
 
-NOW = datetime(2026, 8, 1, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 1, tzinfo=UTC)
 
 # 真实 arXiv Atom 固件（含 arxiv:comment / arxiv:journal_ref / arxiv:doi 自定义命名空间）
 ATOM_FIXTURE = """<?xml version="1.0" encoding="UTF-8"?>

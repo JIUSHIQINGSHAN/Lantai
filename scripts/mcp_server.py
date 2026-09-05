@@ -22,11 +22,11 @@ except (AttributeError, ValueError):
 
 from pydantic import ValidationError
 
-from lantai.models.schemas import AddMemoryReq, SearchReq, FeedbackReq
-from lantai.services.memory_service import add_memory
-from lantai.services.evolution_service import record_feedback_entry
-from lantai.retrieval.hybrid import hybrid_search
 from lantai.gate.prefilter import relevance_check
+from lantai.models.schemas import AddMemoryReq, FeedbackReq
+from lantai.retrieval.hybrid import hybrid_search
+from lantai.services.evolution_service import record_feedback_entry
+from lantai.services.memory_service import add_memory
 
 PROTOCOL_VERSION = "2024-11-05"
 
@@ -310,7 +310,7 @@ def handle_scenes_list(params: dict) -> dict:
 
 def handle_recall_report(params: dict) -> dict:
     """零召回率监控报告：最近 N 天检索聚合（零召回率/按 lane/场景命中/token 估算）。"""
-    days = params.get("days", None)
+    days = params.get("days")
     if days is not None and (not isinstance(days, int) or isinstance(days, bool)
                              or not (1 <= days <= 365)):
         raise ValueError("days must be an int in [1, 365]")
@@ -382,6 +382,7 @@ def handle_mem_health(params: dict) -> dict:
     checks: dict = {}
     try:
         from sqlmodel import func, select
+
         from lantai.models.tables import MemoryItem
         from lantai.storage import db
         with db.get_session() as s:
@@ -586,7 +587,7 @@ def handle_checkpoint_latest(params: dict) -> dict:
 
 def handle_persona_get(params: dict) -> dict:
     """器识：获取当前激活人格基座（只读）。"""
-    from lantai.services.persona_service import get_active_persona, format_persona_context
+    from lantai.services.persona_service import format_persona_context, get_active_persona
     p = get_active_persona()
     if not p:
         return {"persona": None, "context": ""}

@@ -6,17 +6,23 @@ FTS5 真实建表（init_fts），DB 用内存 SQLite 真实建表。
 """
 from contextlib import contextmanager
 from datetime import timedelta
+from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
-from unittest.mock import Mock, patch
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
-from lantai.models.tables import (ConflictEvent, MemoryCheckpoint, MemoryEdge,
-                                  MemoryItem, MemoryProposal, ReflectRun)
+from lantai.models.tables import (
+    ConflictEvent,
+    MemoryCheckpoint,
+    MemoryEdge,
+    MemoryItem,
+    MemoryProposal,
+    ReflectRun,
+)
 from lantai.storage.fts import init_fts, search_fts, sync_fts
 
 
@@ -349,7 +355,7 @@ class TestRunOutcome:
     def test_idle_run_records_outcome(self, reflect_env):
         session_factory, _ = reflect_env
         from lantai.evolution.reflector import run_reflect_once
-        with patch("lantai.evolution.reflector.chat_json") as mock_chat:
+        with patch("lantai.evolution.reflector.chat_json"):
             result = run_reflect_once()
         assert result["skipped"] == "idle"
         with session_factory() as s:
@@ -454,9 +460,8 @@ class TestRunOutcome:
         ])
         from lantai.evolution.reflector import run_reflect_once
         with patch("lantai.evolution.reflector.health_scan",
-                   side_effect=RuntimeError("scan boom")):
-            with pytest.raises(RuntimeError):
-                run_reflect_once()
+                   side_effect=RuntimeError("scan boom")), pytest.raises(RuntimeError):
+            run_reflect_once()
         with session_factory() as s:
             r = s.exec(select(ReflectRun)).one()
             assert r.error != ""

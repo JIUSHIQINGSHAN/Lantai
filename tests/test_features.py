@@ -1,17 +1,14 @@
 """
 T04-T11: 功能测试——coalesce / fastpath / search_trace / health / dedup
 """
-import json
-import warnings
-from unittest.mock import patch, Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.storage.db as db_module
-from lantai.core.settings import settings
 
 
 @pytest.fixture(scope="function")
@@ -149,11 +146,11 @@ class TestForgettingArchived:
 
     def test_decay_below_threshold_auto_archived(self, client):
         from datetime import timedelta
+
+        from lantai.core.ids import new_id
+        from lantai.core.time import utcnow
         from lantai.memory.forgetting import apply_forgetting
         from lantai.models.tables import MemoryItem
-        from lantai.core.time import utcnow
-        from lantai.core.ids import new_id
-        from sqlmodel import select
         from lantai.storage import db as db_mod
 
         with db_mod.get_session() as s:
@@ -178,6 +175,7 @@ class TestForgettingArchived:
 
     def test_search_excludes_archived(self, client):
         import inspect
+
         from lantai.retrieval import hybrid
         src = inspect.getsource(hybrid)
         assert '.where(MemoryItem.status == "active")' in src

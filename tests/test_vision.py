@@ -4,17 +4,16 @@ validate_media_url / schema 二选一 / build_vision_memory 纯函数直调不 m
 add 全链路用真实 SQLite+FTS，仅 mock 外部 LLM（vision_caption / extract_candidate
 / embedding）与向量存储。
 """
-from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 import pytest
 from pydantic import ValidationError
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.storage.db as db_module
-from lantai.models.tables import MemoryCandidate, RawDocument
 from lantai.models.schemas import AddMemoryReq
+from lantai.models.tables import MemoryCandidate, RawDocument
 
 
 @pytest.fixture()
@@ -130,9 +129,8 @@ def test_add_vision_failure_no_write(vision_env):
     from lantai.services.memory_service import add_memory
     req = AddMemoryReq(title="坏图", content="", media_url="https://example.com/bad.png")
     with patch("lantai.services.vision_service.vision_caption",
-               side_effect=RuntimeError("vision api down")):
-        with pytest.raises(RuntimeError):
-            add_memory(req)
+               side_effect=RuntimeError("vision api down")), pytest.raises(RuntimeError):
+        add_memory(req)
     with session_factory() as s:
         assert s.exec(select_count(RawDocument)).one() == 0
         assert s.exec(select_count(MemoryCandidate)).one() == 0
@@ -147,6 +145,7 @@ def select_count(model):
 
 def test_validate_media_url_data_uri_rules():
     import base64
+
     from lantai.ingestion.safety import validate_media_url
     tiny = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 30).decode()
     uri = f"data:image/png;base64,{tiny}"
@@ -163,6 +162,7 @@ def test_validate_media_url_data_uri_rules():
 
 def test_validate_media_url_data_uri_too_large(monkeypatch):
     import base64
+
     from lantai.core.settings import settings
     from lantai.ingestion.safety import validate_media_url
     monkeypatch.setattr(settings, "MEDIA_DATA_URI_MAX_BYTES", 10)

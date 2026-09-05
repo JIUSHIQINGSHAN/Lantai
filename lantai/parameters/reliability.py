@@ -68,6 +68,7 @@ def reliability_penalty(venue_class: str) -> float:
     # TTL 过期 → 恢复 1.0（降权不永久，防历史偏见）
     if stat.last_verified_at is not None:
         from datetime import timedelta
+
         from lantai.core.time import utcnow as _now
         now = _now()
         last = stat.last_verified_at

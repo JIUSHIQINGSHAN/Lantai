@@ -1,7 +1,7 @@
 """性能基线工具——用 aiduMEM 50 问中文中性样本跑 POST /search"""
-import time
 import json
 import sys
+import time
 
 import requests
 

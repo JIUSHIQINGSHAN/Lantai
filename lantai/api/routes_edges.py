@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from lantai.services.edge_service import add_edge, list_edges, get_chain, remove_edge
+from lantai.services.edge_service import add_edge, get_chain, list_edges, remove_edge
 
 router = APIRouter()
 

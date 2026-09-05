@@ -12,7 +12,9 @@ sys.path.insert(0, ".")
 
 from lantai.storage.db import init_db  # noqa: E402
 from lantai.workers.digest_worker import (  # noqa: E402
-    collect_calibration_stats, render_calibration_markdown)
+    collect_calibration_stats,
+    render_calibration_markdown,
+)
 
 
 def main() -> int:

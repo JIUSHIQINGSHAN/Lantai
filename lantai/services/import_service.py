@@ -7,7 +7,7 @@ parse_import_lines 为纯函数（测试直调不 mock）。
 """
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlmodel import select
 
@@ -36,7 +36,7 @@ def _parse_dt(value, field: str) -> datetime:
     else:
         raise ValueError(f"{field} 时间戳为空")
     if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        dt = dt.astimezone(UTC).replace(tzinfo=None)
     return dt
 
 

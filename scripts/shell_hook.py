@@ -4,7 +4,8 @@
 import json
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 
 # ── 强制 UTF-8 I/O ──────────────────────────────────────────────
 # Windows 默认 GBK 解码 stdin；Hermes 按 UTF-8 写 JSON，按 GBK 读则中文乱码
@@ -17,16 +18,16 @@ except (AttributeError, ValueError):
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lantai.core.settings import settings
-from lantai.llm.client import embed
-from lantai.storage.vector_store import get_vector_store
-from lantai.storage import db
-from lantai.models.tables import MemoryItem
 from sqlmodel import select
+
+from lantai.core.settings import settings
 from lantai.core.text import apply_recall_budget as _apply_recall_budget
 from lantai.core.text import truncate_codepoints as _truncate_codepoints
-from lantai.services.offload_service import build_offload_inject
-from lantai.services.offload_service import write_offload_file
+from lantai.llm.client import embed
+from lantai.models.tables import MemoryItem
+from lantai.services.offload_service import build_offload_inject, write_offload_file
+from lantai.storage import db
+from lantai.storage.vector_store import get_vector_store
 
 # ── 召回预算与工具指南（借鉴 TencentDB Agent Memory auto-recall）─────────────
 # 单条记忆上限 + 总字符预算双控；按码点截断（不会切开 emoji 代理对）；

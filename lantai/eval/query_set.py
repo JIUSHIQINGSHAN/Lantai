@@ -6,7 +6,6 @@ from sqlmodel import Session, select
 
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
-from lantai.core.time import utcnow
 from lantai.eval.models import EvalQuerySet
 from lantai.models.tables import RetrievalEvent
 from lantai.storage import db

@@ -7,16 +7,15 @@ r"""沉潜（ADR-0036）：闲时夜梦沉淀与记忆折叠压缩测试。
 4. REST POST /evolution/consolidate 与 MCP memory_consolidate 工具。
 """
 from unittest.mock import patch
-import pytest
+
 from fastapi.testclient import TestClient
 
 from api_server import app
 from lantai.models.tables import MemoryItem
 from lantai.services.consolidation_service import (
-    find_consolidation_clusters,
     consolidate_cluster,
+    find_consolidation_clusters,
     prune_decayed_synapses,
-    run_consolidation_cycle,
 )
 
 
@@ -134,7 +133,7 @@ class TestConsolidationEndpointsAndMCP:
             assert data["pruned_count"] == 2
 
     def test_mcp_consolidation_tools(self, param_env):
-        from scripts.mcp_server import handle_memory_consolidate, handle_consolidation_report
+        from scripts.mcp_server import handle_consolidation_report, handle_memory_consolidate
         with patch("lantai.services.consolidation_service.run_consolidation_cycle", return_value={
             "consolidated_groups": 0,
             "new_memories": 0,

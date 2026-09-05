@@ -1,7 +1,7 @@
 """Tidal Coalescing — 短消息异步缓冲合并，减少 LLM 提取调用"""
 import hashlib
-import time
 import threading
+import time
 
 from lantai.core.settings import settings
 

@@ -196,10 +196,7 @@ def classify_tier(sig: QualitySignalDraft, *, now: datetime,
             except TypeError:
                 age_days = 0
         reason.append(f"age_days={age_days} version={sig.version}")
-        if sig.version >= 2 or age_days >= seasoned_days:
-            tier = "C"
-        else:
-            tier = "D"
+        tier = "C" if sig.version >= 2 or age_days >= seasoned_days else "D"
     return TierDecision(tier=tier, reason=reason)
 
 

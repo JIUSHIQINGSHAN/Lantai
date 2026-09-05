@@ -1,5 +1,7 @@
-import hashlib, feedparser
-from datetime import datetime, timezone
+import hashlib
+from datetime import UTC, datetime
+
+import feedparser
 
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
@@ -30,7 +32,7 @@ class RSSAdapter(SourceAdapter):
                 url=e.get("link", ""),
                 title=e.get("title", "").strip(),
                 authors=[e.get("author")] if e.get("author") else [],
-                published_at=datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
+                published_at=datetime(*e.published_parsed[:6], tzinfo=UTC)
                              if e.get("published_parsed") else None,
                 lang=config.get("lang", "en"),
                 content_hash=h,

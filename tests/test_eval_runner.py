@@ -3,24 +3,24 @@
 覆盖：run_dry_run 落库、metrics 有值、单条失败不中断、param_overrides 生效、
 baseline jaccard、load/list。
 """
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.storage.db as db_module
-from lantai.models.tables import MemoryItem, RetrievalEvent
-from lantai.eval.models import EvalQuerySet, EvalRun
+from lantai.eval.models import EvalRun
 from lantai.eval.query_set import build_query_set
 from lantai.eval.runner import list_runs, load_run, run_dry_run
+from lantai.models.tables import MemoryItem, RetrievalEvent
 
 
 @pytest.fixture(scope="function")
 def db_session():
     """内存 SQLite + patch db.get_session + 外部网络 mock。"""
-    import lantai.models.tables  # noqa: F401
     import lantai.eval.models  # noqa: F401
+    import lantai.models.tables  # noqa: F401
     test_engine = create_engine(
         "sqlite://", echo=False,
         connect_args={"check_same_thread": False},
@@ -45,6 +45,7 @@ def db_session():
 def _seed(db_session, events=2):
     """造几条检索事件 + 一条记忆，返回查询集。"""
     import datetime
+
     from lantai.core.time import utcnow
     with db_session() as s:
         base = utcnow() - datetime.timedelta(minutes=events)
@@ -146,7 +147,7 @@ class TestParamOverrideContext:
         original = settings.RETRIEVAL_W_VECTOR
         with _param_override({"RETRIEVAL_W_VECTOR": 0.99}):
             assert settings.RETRIEVAL_W_VECTOR == 0.99
-        assert settings.RETRIEVAL_W_VECTOR == original
+        assert original == settings.RETRIEVAL_W_VECTOR
 
     def test_none_override_noop(self):
         from lantai.retrieval.hybrid import _param_override

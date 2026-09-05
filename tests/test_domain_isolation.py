@@ -5,7 +5,6 @@
 2. hybrid_search 支持 domain 精确过滤与全域召回；
 3. REST POST /search 与 MCP search 工具支持 domain 参数。
 """
-import pytest
 from fastapi.testclient import TestClient
 
 from api_server import app

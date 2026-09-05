@@ -7,7 +7,6 @@ T02: 基础设施栈测试
 - jieba 分词替代 content.split()
 - ChromaDB 使用 cosine 距离
 """
-import pytest
 from lantai.core.settings import Settings
 from lantai.models.tables import MemoryItem
 
@@ -36,7 +35,8 @@ class TestCosineMetric:
 
     def test_cosine_space_in_collection(self):
         """ChromaVectorStore 创建 collection 时使用 cosine 距离"""
-        from lantai.storage.vector_store import ChromaVectorStore
         import inspect
+
+        from lantai.storage.vector_store import ChromaVectorStore
         source = inspect.getsource(ChromaVectorStore.__init__)
         assert "cosine" in source

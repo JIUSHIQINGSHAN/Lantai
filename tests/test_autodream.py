@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.models.tables  # noqa: F401  注册全部表
 import lantai.storage.db as db_module

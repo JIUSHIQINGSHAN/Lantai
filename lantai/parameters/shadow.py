@@ -7,7 +7,6 @@
 
 接口契约见 docs/step7-shadow-task-split.md。
 """
-from typing import Optional
 
 
 def evaluate_window(base: dict, shadow: dict, *,
@@ -66,13 +65,12 @@ def evaluate_window(base: dict, shadow: dict, *,
             }
 
     # ── 护栏 3：召回偏离（有基线时才检查） ──
-    if jaccard is not None:
-        if jaccard < jaccard_floor:
-            return {
-                "verdict": "rollback",
-                "reason": f"jaccard 偏离: {jaccard:.4f} < {jaccard_floor}",
-                "signals": signals,
-            }
+    if jaccard is not None and jaccard < jaccard_floor:
+        return {
+            "verdict": "rollback",
+            "reason": f"jaccard 偏离: {jaccard:.4f} < {jaccard_floor}",
+            "signals": signals,
+        }
 
     # ── 通过全部护栏 → promote（但保守：任一关键指标缺失时 hold） ──
     if base_zero is None or shadow_zero is None or base_avg is None or shadow_avg is None:
@@ -115,8 +113,9 @@ def decide_promote_target(window, *, min_promote_days: int = 0) -> bool:
     if not shadow_is_due(window):
         return False
     if min_promote_days > 0:
-        from lantai.core.time import utcnow
         from datetime import timedelta
+
+        from lantai.core.time import utcnow
         started = getattr(window, "started_at", None)
         if started is None:
             return False

@@ -10,7 +10,6 @@ T01: P0 修复 + 零硬编码 测试
 import warnings
 from pathlib import Path
 
-import pytest
 from lantai.core.settings import Settings, settings
 
 

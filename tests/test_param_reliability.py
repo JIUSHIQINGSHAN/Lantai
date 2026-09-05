@@ -6,7 +6,7 @@ apply_penalty_to_weight。
 """
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.storage.db as db_module
 from lantai.parameters.reliability import (
@@ -38,7 +38,6 @@ def rel_db():
 
 class TestRecordVerification:
     def test_record_pass_creates_stat(self, rel_db):
-        sf = rel_db
         stat = record_verification_result("journal", passed=True)
         assert stat.venue_class == "journal"
         assert stat.pass_count == 1
@@ -100,15 +99,16 @@ class TestReliabilityPenalty:
     def test_ttl_expiry_restores(self, rel_db):
         """TTL 过期后恢复 1.0（降权不永久）。"""
         from datetime import timedelta
-        from unittest.mock import patch
+
         from lantai.core.time import utcnow
         # 制造 3 连败
         for _ in range(3):
             record_verification_result("workshop", passed=False)
         assert reliability_penalty("workshop") < 1.0
         # 把 last_verified_at 拨回 200 天前（> TTL 180）
-        from lantai.parameters.trust_models import SignalReliabilityStat
         from sqlmodel import select
+
+        from lantai.parameters.trust_models import SignalReliabilityStat
         sf = rel_db
         with sf() as s:
             stat = s.exec(select(SignalReliabilityStat).where(

@@ -5,8 +5,8 @@ FTS5 全文搜索：trigram 分词器 + 同事务写入同步（ADR-0008）
 - sync_fts：在调用方的 SQLAlchemy 事务内同步索引（强一致）
 - search_fts：子串召回
 """
-import sqlite3
 import re
+import sqlite3
 
 from lantai.core.logger import logger
 

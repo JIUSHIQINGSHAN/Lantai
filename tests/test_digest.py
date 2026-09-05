@@ -6,17 +6,22 @@
 - load_today_digest：今日报告读取（未生成则生成）
 - REST GET /digest/today：返回报告内容
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.storage.db as db_module
 from lantai.core.settings import settings
-from lantai.models.tables import (MemoryCandidate, MemoryItem,
-                                    MemoryProposal, ReflectRun, RetrievalEvent)
+from lantai.models.tables import (
+    MemoryCandidate,
+    MemoryItem,
+    MemoryProposal,
+    ReflectRun,
+    RetrievalEvent,
+)
 
 
 def _utc_naive(dt: datetime) -> datetime:
@@ -55,7 +60,7 @@ class TestReflectionDistribution:
 
     def test_reflection_distribution(self, digest_env):
         session_factory = digest_env
-        now = _utc_naive(datetime.now(timezone.utc))
+        now = _utc_naive(datetime.now(UTC))
         _seed(session_factory, [
             MemoryProposal(id="p1", proposal_type="add", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "a"},
@@ -72,8 +77,7 @@ class TestReflectionDistribution:
                            confidence=0.85, status="rejected", created_at=now),
         ])
 
-        from lantai.workers.digest_worker import (collect_digest_stats,
-                                                  render_digest_markdown)
+        from lantai.workers.digest_worker import collect_digest_stats, render_digest_markdown
         stats = collect_digest_stats()
         rf = stats["reflection"]
         assert rf["created"] == 4
@@ -104,7 +108,7 @@ class TestReflectionDistribution:
         """口径修复（2026-08-15）：evolve auto / autodream 等其他无候选提案
         不混入反思统计（decided_by == 'reflect' 为唯一反思标识）。"""
         session_factory = digest_env
-        now = _utc_naive(datetime.now(timezone.utc))
+        now = _utc_naive(datetime.now(UTC))
         _seed(session_factory, [
             MemoryProposal(id="rp1", proposal_type="merge", candidate_id=None,
                            decided_by="reflect", evidence_ids=["e1"],
@@ -129,7 +133,7 @@ class TestReflectionDistribution:
     def test_reflection_window_consistency(self, digest_env):
         """窗口一致性：跨日应用的提案不计入今日；other 兜底使合计 == created。"""
         session_factory = digest_env
-        now = _utc_naive(datetime.now(timezone.utc))
+        now = _utc_naive(datetime.now(UTC))
         _seed(session_factory, [
             # 昨日创建、今日应用：created/applied 均不计入今日窗口
             MemoryProposal(id="p1", proposal_type="add", candidate_id=None, decided_by="reflect",
@@ -157,7 +161,7 @@ class TestCalibrationStats:
 
     def test_collect_calibration_stats_window(self, digest_env):
         session_factory = digest_env
-        now = _utc_naive(datetime.now(timezone.utc))
+        now = _utc_naive(datetime.now(UTC))
         _seed(session_factory, [
             MemoryProposal(id="p1", proposal_type="add", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "a"},
@@ -230,7 +234,7 @@ class TestCalibrationStats:
 
     def test_render_calibration_markdown(self, digest_env):
         session_factory = digest_env
-        now = _utc_naive(datetime.now(timezone.utc))
+        now = _utc_naive(datetime.now(UTC))
         _seed(session_factory, [
             MemoryProposal(id="p1", proposal_type="add", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "a"},
@@ -248,7 +252,9 @@ class TestCalibrationStats:
                        proposals_created=1),
         ])
         from lantai.workers.digest_worker import (
-            collect_calibration_stats, render_calibration_markdown)
+            collect_calibration_stats,
+            render_calibration_markdown,
+        )
         stats = collect_calibration_stats(days=7)
         md = render_calibration_markdown(stats)
         assert "反思阈值回填校准（真实观察数据）" in md
@@ -263,7 +269,7 @@ class TestCalibrationStats:
     def test_runs_five_way_classification(self, digest_env):
         """运行记录五分类互斥：空闲/异常/LLM 失败/产出/零产出。"""
         session_factory = digest_env
-        now = _utc_naive(datetime.now(timezone.utc))
+        now = _utc_naive(datetime.now(UTC))
         _seed(session_factory, [
             ReflectRun(id="r_idle", run_at=now, skipped="idle"),
             ReflectRun(id="r_err", run_at=now, skipped="", error="boom"),
@@ -289,7 +295,7 @@ class TestCalibrationStats:
     def test_conf_bucket_outlier_lands_in_other(self, digest_env):
         """桶外置信（<0.5）计入「其他」兜底桶，不静默丢失。"""
         session_factory = digest_env
-        now = _utc_naive(datetime.now(timezone.utc))
+        now = _utc_naive(datetime.now(UTC))
         _seed(session_factory, [
             MemoryProposal(id="p1", proposal_type="add", candidate_id=None, decided_by="reflect",
                            evidence_ids=["e1"], proposed_patch={"key": "a"},
@@ -298,8 +304,7 @@ class TestCalibrationStats:
                            evidence_ids=["e1"], proposed_patch={"key": "b"},
                            confidence=0.3, status="rejected", created_at=now),
         ])
-        from lantai.workers.digest_worker import (collect_digest_stats,
-                                                  render_digest_markdown)
+        from lantai.workers.digest_worker import collect_digest_stats, render_digest_markdown
         rf = collect_digest_stats()["reflection"]
         assert rf["conf_buckets"]["其他"] == 1
         assert rf["conf_buckets"]["0.5-0.6"] == 0
@@ -312,7 +317,7 @@ class TestCollectStats:
 
     def test_window_counts(self, digest_env):
         session_factory = digest_env
-        now = _utc_naive(datetime.now(timezone.utc))
+        now = _utc_naive(datetime.now(UTC))
         old = now - timedelta(days=2)
         _seed(session_factory, [
             # 今日新增记忆 1（mem_a）；mem_c 今日更新（修改数 1）；mem_b 在窗外
@@ -364,7 +369,7 @@ class TestRunDigest:
 
     def test_run_digest_once_writes_report(self, digest_env):
         session_factory = digest_env
-        now = _utc_naive(datetime.now(timezone.utc))
+        now = _utc_naive(datetime.now(UTC))
         _seed(session_factory, [
             MemoryItem(id="mem_a", memory_type="semantic", key="a", content="A",
                        created_at=now, updated_at=now),
@@ -413,6 +418,7 @@ class TestDigestRoute:
 
     def test_get_today(self, digest_env):
         from fastapi.testclient import TestClient
+
         from api_server import app
         with TestClient(app) as c:
             resp = c.get("/digest/today")

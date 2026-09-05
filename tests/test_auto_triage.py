@@ -1,6 +1,6 @@
 """AI 智能预审与批处理服务测试（真实 SQLite 数据库冒烟）。"""
 import pytest
-from sqlmodel import Session, select
+from sqlmodel import select
 
 from lantai.models.tables import MemoryCandidate
 from lantai.services.auto_triage_service import (

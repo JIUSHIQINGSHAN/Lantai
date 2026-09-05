@@ -1,7 +1,7 @@
+from lantai.core.ids import new_id
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem, MemoryUsageFeedback
 from lantai.storage import db
-from lantai.core.ids import new_id
 
 
 def record_feedback(memory_id: str, query: str,
@@ -28,7 +28,7 @@ def record_feedback(memory_id: str, query: str,
 
 
 # ── 反思/蒸馏（spec: docs/plans/reflection-module-spec.md）─────────────
-from datetime import timedelta, timezone
+from datetime import UTC, timedelta
 
 from sqlmodel import select
 
@@ -38,8 +38,7 @@ from lantai.core.settings import settings
 from lantai.llm.client import chat_json
 from lantai.llm.prompts import REFLECT_CURATOR_SYS, REFLECT_REJECTER_SYS
 from lantai.models.enums import ProposalStatus
-from lantai.models.tables import (ConflictEvent, MemoryEdge, MemoryItem,
-                                  MemoryProposal)
+from lantai.models.tables import ConflictEvent, MemoryEdge, MemoryProposal
 
 _VALID_TYPES = {"add", "update", "merge", "deprecate"}
 
@@ -47,7 +46,7 @@ _VALID_TYPES = {"add", "update", "merge", "deprecate"}
 def _as_utc(dt):
     if dt is None:
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def _cand(mem: MemoryItem, signal: str, extra: dict | None = None) -> dict:
@@ -335,8 +334,7 @@ def _run_reflect_once(source: str) -> dict:
                 src = cand_by_id.get(prop.target_memory_id)
                 if src and src.get("conflict_event_id"):
                     try:
-                        from lantai.services.conflict_service import (
-                            resolve_conflict_event)
+                        from lantai.services.conflict_service import resolve_conflict_event
                         resolve_conflict_event(src["conflict_event_id"],
                                                "resolved",
                                                "reflection proposal applied")

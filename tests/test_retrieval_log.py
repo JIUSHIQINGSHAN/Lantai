@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from lantai.models.tables import MemoryItem, RetrievalEvent
@@ -137,7 +137,6 @@ class TestSystemNoiseFilter:
 class TestShellHookLog:
     def test_shell_hook_logs_event(self):
         """Shell Hook 独立向量路径也要埋点（真实流量主通道之一）。"""
-        from unittest.mock import Mock
 
         import scripts.shell_hook as hook
         with patch("scripts.shell_hook.embed",

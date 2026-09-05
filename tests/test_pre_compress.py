@@ -1,10 +1,9 @@
 """压缩前抢救测试：_render 纯函数 + flush_before_compress + metadata 落库"""
-import threading
 from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from lantai.integrations.pre_compress import _render, flush_before_compress
 from lantai.models.schemas import AddMemoryReq
@@ -123,8 +122,8 @@ def test_metadata_persisted_to_raw_document():
                            poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)
 
-    import lantai.storage.db as db_module
     import lantai.services.memory_service as ms
+    import lantai.storage.db as db_module
     from lantai.models.tables import RawDocument
 
     def get_test_session():

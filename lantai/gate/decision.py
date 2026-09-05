@@ -1,15 +1,16 @@
 from sqlmodel import select
-from lantai.core.settings import settings
+
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
-from lantai.models.enums import GateDecision
-from lantai.models.tables import MemoryCandidate, MemoryItem, ConflictEvent
-from lantai.storage import db
-from lantai.gate.scorer import novelty_score
-from lantai.gate.contradiction import check_contradiction
-from lantai.gate.conflict_rules import check_rules, check_antonyms, check_negation_pairs
+from lantai.core.settings import settings
 from lantai.evolution.promoter import _make_checkpoint
+from lantai.gate.conflict_rules import check_antonyms, check_negation_pairs, check_rules
+from lantai.gate.contradiction import check_contradiction
+from lantai.gate.scorer import novelty_score
 from lantai.llm.client import embed
+from lantai.models.enums import GateDecision
+from lantai.models.tables import ConflictEvent, MemoryCandidate, MemoryItem
+from lantai.storage import db
 from lantai.storage.vector_store import get_vector_store
 
 

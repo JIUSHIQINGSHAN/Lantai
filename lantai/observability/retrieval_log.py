@@ -5,11 +5,9 @@
 后续 dry-run/shadow 用这些事件做相对指标（zero_result / jaccard / 弱命中率）。
 """
 import hashlib
-import time
 
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
-from lantai.core.time import utcnow
 from lantai.models.tables import RetrievalEvent
 from lantai.parameters.registry import default_snapshot
 from lantai.parameters.validation import snapshot_hash
@@ -63,7 +61,10 @@ def log_retrieval(query: str, results: list[dict], *, latency_ms: int,
                          if isinstance(r, dict) and "score" in r]
         intent = (gate or {}).get("intent") if isinstance(gate, dict) else None
         from lantai.observability.recall_report import (
-            _scenes_from_results, _tokens_from_results, estimate_tokens)
+            _scenes_from_results,
+            _tokens_from_results,
+            estimate_tokens,
+        )
         with db.get_session() as s:
             s.add(RetrievalEvent(
                 id=event_id,

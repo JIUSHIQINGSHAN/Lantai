@@ -7,19 +7,15 @@
 4. REST 路由 (/persona/active, /persona/list, /persona, /persona/{id}/activate) 与 MCP 工具；
 5. 会话首轮基座注入联动（与底本 Checkpoint 协同）。
 """
-from datetime import datetime, timezone
-import pytest
 from fastapi.testclient import TestClient
 
 from api_server import app
-from lantai.models.tables import PersonaProfile
 from lantai.services.persona_service import (
+    activate_persona,
+    ensure_default_persona,
+    format_persona_context,
     get_active_persona,
     set_persona,
-    list_personas,
-    activate_persona,
-    format_persona_context,
-    ensure_default_persona,
 )
 
 
@@ -164,8 +160,8 @@ class TestPersonaMCPAndIntegrations:
     def test_checkpoint_injection_with_persona(self, param_env):
         """测试底本上下文与器识人格基座联动注入。"""
         from lantai.services.checkpoint_service import (
-            write_session_checkpoint,
             inject_checkpoint_context,
+            write_session_checkpoint,
         )
 
         # 写入一条底本快照

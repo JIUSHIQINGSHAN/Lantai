@@ -8,13 +8,12 @@
 - 低置信度提取 → pending_review
 - REST：POST /dialogue
 """
-from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from lantai.models.tables import MemoryCandidate, RawDocument

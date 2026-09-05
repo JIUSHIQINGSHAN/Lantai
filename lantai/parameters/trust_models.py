@@ -5,12 +5,10 @@
 来源锁：signal_source 固定 "arxiv_atom"，service 写入时断言，其他写入路径不开放。
 """
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
-from sqlmodel import SQLModel, Column, JSON, Field
+from sqlmodel import JSON, Column, Field, SQLModel
 
-from lantai.core.ids import new_id
 from lantai.core.time import utcnow
 
 
@@ -23,11 +21,11 @@ class PaperQualitySignal(SQLModel, table=True):
                                  foreign_key="rawdocument.id")
     arxiv_id: str = Field(index=True)
     version: int = 1
-    published_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    comment_raw: Optional[str] = None
-    journal_ref: Optional[str] = None
-    doi: Optional[str] = None
+    published_at: datetime | None = None
+    updated_at: datetime | None = None
+    comment_raw: str | None = None
+    journal_ref: str | None = None
+    doi: str | None = None
     primary_category: str = ""
     categories: list = Field(default_factory=list, sa_column=Column(JSON))
     authors: list = Field(default_factory=list, sa_column=Column(JSON))
@@ -51,7 +49,7 @@ class QualitySignalView(BaseModel):
     arxiv_id: str
     venue_class: str
     evidence_tier: str
-    published_at: Optional[datetime] = None
+    published_at: datetime | None = None
     version: int = 1
     age_days: int = 0
     staleness_level: str = "fresh"
@@ -90,8 +88,8 @@ class ParamContradictionReport(SQLModel, table=True):
     side_b: dict = Field(default_factory=dict, sa_column=Column(JSON))
     scope_note: str = ""
     status: str = Field(default="open", index=True)  # open | acknowledged | closed
-    acknowledged_by: Optional[str] = None
-    acknowledged_at: Optional[datetime] = None
+    acknowledged_by: str | None = None
+    acknowledged_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -110,12 +108,12 @@ class ShadowWindow(SQLModel, table=True):
     base_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
     status: str = Field(default="observing", index=True)  # observing / promoted / rolled_back / cancelled
     started_at: datetime = Field(default_factory=utcnow)
-    finished_at: Optional[datetime] = None
+    finished_at: datetime | None = None
     check_deadline: datetime = Field(default_factory=utcnow)  # started_at + SHADOW_OBSERVE_DAYS
     metrics_base: dict = Field(default_factory=dict, sa_column=Column(JSON))
     metrics_shadow: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    rollback_reason: Optional[str] = None
-    verdict_reason: Optional[str] = None  # promote/rollback 的判定理由（可审计）
+    rollback_reason: str | None = None
+    verdict_reason: str | None = None  # promote/rollback 的判定理由（可审计）
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -132,5 +130,5 @@ class SignalReliabilityStat(SQLModel, table=True):
     pass_count: int = 0
     fail_count: int = 0
     fail_streak: int = 0  # 连续失败次数（触发 PENALTY_FAIL_STREAK）
-    last_verified_at: Optional[datetime] = None
+    last_verified_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)

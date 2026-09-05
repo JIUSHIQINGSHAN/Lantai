@@ -1,30 +1,40 @@
 """记忆写入与 CoreMemory service 层"""
 import hashlib
-from lantai.core.logger import logger
 from datetime import datetime
 
 from sqlmodel import select
 
 from lantai.core.ids import new_id
+from lantai.core.logger import logger
+from lantai.core.provenance import (
+    PROVENANCE_PROMPT_EXTRACT,
+    PROVENANCE_PROMPT_FASTPATH_DIRECT,
+    PROVENANCE_PROMPT_VISION,
+    make_provenance,
+)
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
-from lantai.models.tables import RawDocument, MemoryCandidate, CoreMemoryBlock, MemoryItem, MemoryProposal
+from lantai.evolution.promoter import _make_checkpoint
+from lantai.gate.dedup import find_similar
+from lantai.ingestion.coalesce import get_coalesce_buffer
+from lantai.llm.client import embed
+from lantai.memory.decay_class import DECAY_CLASS_HALFLIFE
 from lantai.models.enums import MemoryTier
 from lantai.models.schemas import AddMemoryReq, RawMemoryReq
-from lantai.llm.client import embed
-from lantai.core.provenance import (
-    PROVENANCE_PROMPT_EXTRACT, PROVENANCE_PROMPT_FASTPATH_DIRECT,
-    PROVENANCE_PROMPT_VISION, make_provenance)
-from lantai.retrieval.hybrid import index_memory_item
-from lantai.storage.fts import sync_fts
+from lantai.models.tables import (
+    CoreMemoryBlock,
+    MemoryCandidate,
+    MemoryItem,
+    MemoryProposal,
+    RawDocument,
+)
 from lantai.parsing.extractor import extract_candidate
 from lantai.parsing.fastpath import fastpath_check
-from lantai.ingestion.coalesce import get_coalesce_buffer
-from lantai.gate.dedup import find_similar
-from lantai.memory.decay_class import DECAY_CLASS_HALFLIFE
-from lantai.evolution.promoter import _make_checkpoint
+from lantai.retrieval.hybrid import index_memory_item
 from lantai.storage import db
+from lantai.storage.fts import sync_fts
 from lantai.storage.vector_store import get_vector_store
+
 
 def _apply_dedup(s, content: str, fastpath: bool) -> tuple[str, MemoryItem | None, float]:
     """余弦预判（ADR-0019 结构判别第一相位）。
@@ -114,8 +124,7 @@ def add_memory(req: AddMemoryReq, user_id: str = "default") -> dict:
     fastpath 命中时直接写入（绕过 LLM 提取）。
     """
     if (req.media_url or "").strip():
-        from lantai.services.vision_service import (
-            build_vision_memory, vision_provenance_extra)
+        from lantai.services.vision_service import build_vision_memory, vision_provenance_extra
         req = build_vision_memory(req)
         return _create_candidate_with_extraction(
             req,

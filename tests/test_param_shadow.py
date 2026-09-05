@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from lantai.core.time import utcnow
@@ -143,8 +143,8 @@ class TestDecidePromoteTarget:
 @pytest.fixture(scope="function")
 def shadow_db():
     """内存 SQLite + patch db.get_session + mock dry-run 外部网络。"""
-    import lantai.models.tables  # noqa: F401
     import lantai.eval.models  # noqa: F401
+    import lantai.models.tables  # noqa: F401
     import lantai.parameters.trust_models  # noqa: F401
     test_engine = create_engine(
         "sqlite://", echo=False,
@@ -262,7 +262,7 @@ class TestShadowIntegration:
 
     def test_rollback_writes_override(self, shadow_db):
         """rollback 时写 ParamOverride(operation=rollback) 恢复基线。"""
-        from lantai.parameters.runtime import open_shadow, _rollback_snapshot
+        from lantai.parameters.runtime import _rollback_snapshot, open_shadow
         from lantai.parameters.trust_models import ShadowWindow
         sf = shadow_db
         self._seed_query_set(sf)

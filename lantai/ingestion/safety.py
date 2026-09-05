@@ -5,7 +5,6 @@ from urllib.parse import urlparse
 
 import httpx
 
-from lantai.core.logger import logger
 from lantai.core.settings import settings
 
 

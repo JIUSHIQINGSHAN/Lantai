@@ -15,7 +15,6 @@ from lantai.models.tables import (
     ParamSuggestion,
 )
 
-
 # ---------------------------------------------------------------- LLM 输出
 
 class EvidenceItem(BaseModel):

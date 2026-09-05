@@ -15,6 +15,7 @@ sys.path.insert(0, ".")
 
 from lantai.core.settings import settings  # noqa: E402
 
+
 def _is_success(row: sqlite3.Row) -> bool:
     return not row["error"] and not row["curate_failed"] and not row["rejecter_failed"]
 

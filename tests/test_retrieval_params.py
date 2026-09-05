@@ -6,8 +6,8 @@
 3. 并发查询下不同的 param_overrides 互相隔离，杜绝全局竞态污染。
 """
 import threading
+
 import pytest
-from unittest.mock import patch
 
 from lantai.core.settings import settings
 from lantai.retrieval.hybrid import RetrievalParams, hybrid_search
@@ -52,8 +52,8 @@ def test_param_overrides_does_not_mutate_global_settings(monkeypatch):
     assert mock_called["w_vector"] == 0.999
     # 但全局 settings 绝未被修改
     assert mock_called["settings_w_vector"] == orig_w_vector
-    assert settings.RETRIEVAL_W_VECTOR == orig_w_vector
-    assert settings.RETRIEVAL_W_BM25 == orig_w_bm25
+    assert orig_w_vector == settings.RETRIEVAL_W_VECTOR
+    assert orig_w_bm25 == settings.RETRIEVAL_W_BM25
 
 
 def test_concurrent_param_overrides_isolation(monkeypatch):

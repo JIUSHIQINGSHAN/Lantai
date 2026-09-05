@@ -34,6 +34,7 @@ def _make_search(intent_mode: str, top_k: int):
     from lantai.retrieval.hybrid import hybrid_search
     if intent_mode == "rule":
         from unittest.mock import patch
+
         from lantai.core.settings import settings as s
         patch("lantai.retrieval.hybrid.classify_intent",
               return_value={"intent": s.DEFAULT_INTENT,

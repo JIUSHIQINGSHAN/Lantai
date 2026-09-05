@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
+
 from lantai.models.tables import RawDocument
+
 
 class SourceAdapter(ABC):
     kind: str = "base"

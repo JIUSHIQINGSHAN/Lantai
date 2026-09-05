@@ -1,12 +1,13 @@
 """API Key 鉴权测试"""
-import pytest
 from unittest.mock import patch
-from api_server import app
+
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.storage.db as db_module
+from api_server import app
 from lantai.core.settings import settings
 
 
@@ -24,9 +25,8 @@ def client():
     def get_test_session():
         return Session(test_engine)
 
-    with patch.object(db_module, "get_session", get_test_session):
-        with TestClient(app) as c:
-            yield c
+    with patch.object(db_module, "get_session", get_test_session), TestClient(app) as c:
+        yield c
 
 
 class TestAuthDisabled:

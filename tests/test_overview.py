@@ -1,7 +1,7 @@
 """轻量概览冒烟测试：真实临时库 + 真实行，不 mock 聚合逻辑。"""
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 from lantai.models.tables import (
     MemoryCandidate,

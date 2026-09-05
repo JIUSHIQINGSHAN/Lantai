@@ -11,7 +11,7 @@ created_at = 消息时间，provenance.prompt = dialogue-session-import，随演
 """
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from lantai.core.settings import settings
 
@@ -27,10 +27,10 @@ def normalize_timestamp(value) -> datetime:
     if isinstance(value, (int, float)):
         if value >= 1e11:
             return datetime.fromtimestamp(value / 1000.0,
-                                          tz=timezone.utc).replace(tzinfo=None)
+                                          tz=UTC).replace(tzinfo=None)
         if value >= 1e9:
             return datetime.fromtimestamp(value,
-                                          tz=timezone.utc).replace(tzinfo=None)
+                                          tz=UTC).replace(tzinfo=None)
         raise ValueError(f"timestamp out of range: {value}")
     if isinstance(value, str):
         s = value.strip()
@@ -46,7 +46,7 @@ def normalize_timestamp(value) -> datetime:
         except ValueError:
             raise ValueError(f"invalid ISO timestamp: {value}") from None
         if dt.tzinfo is not None:
-            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            dt = dt.astimezone(UTC).replace(tzinfo=None)
         return dt
     raise ValueError(f"unsupported timestamp type: {type(value).__name__}")
 

@@ -6,11 +6,9 @@
 - 字段名与 docs/dry-run-eval-task-split.md 契约一致
 """
 from datetime import datetime
-from typing import Optional
 
-from sqlmodel import SQLModel, Field, Column, JSON
+from sqlmodel import JSON, Column, Field, SQLModel
 
-from lantai.core.ids import new_id
 from lantai.core.time import utcnow
 
 
@@ -40,9 +38,9 @@ class EvalRun(SQLModel, table=True):
     param_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
     # 实际生效参数快照（default_snapshot() 合并 overrides 后）
     started_at: datetime = Field(default_factory=utcnow)
-    finished_at: Optional[datetime] = None
+    finished_at: datetime | None = None
     status: str = "running"  # running / done / error
     metrics: dict = Field(default_factory=dict, sa_column=Column(JSON))
     per_query: list = Field(default_factory=list, sa_column=Column(JSON))
     # [{"query": str, "result_ids": [..], "top_scores": [..], "zero_result": bool, "latency_ms": int}]
-    baseline_run_id: Optional[str] = None  # jaccard 对比的基线运行
+    baseline_run_id: str | None = None  # jaccard 对比的基线运行

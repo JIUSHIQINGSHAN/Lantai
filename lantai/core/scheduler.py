@@ -1,8 +1,9 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from lantai.core.settings import settings
+
 from lantai.core.logger import logger
+from lantai.core.settings import settings
 
 _scheduler: BackgroundScheduler | None = None
 
@@ -18,6 +19,7 @@ def _last_run_from_db(name: str) -> str | None:
     """读 DB 持久化的上次运行时间；异常降级返回 None（不影响运行）。"""
     try:
         from sqlalchemy import text
+
         from lantai.storage.db import get_session
         with get_session() as s:
             row = s.exec(
@@ -35,6 +37,7 @@ def record_run(name: str) -> None:
     WORKER_LAST_RUN[name] = stamp
     try:
         from sqlalchemy import text
+
         from lantai.storage.db import get_session
         with get_session() as s:
             s.exec(
@@ -56,8 +59,8 @@ def _parse_utc_iso(value: str) -> datetime | None:
     try:
         dt = datetime.fromisoformat(value)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC)
     except Exception:
         return None
 
@@ -69,7 +72,7 @@ def should_catch_up(name: str, cron_hour: int, cron_minute: int = 0,
     调度时间 → 需补跑。未记录/无法解析按未跑处理（宁补跑不静默缺样本）。"""
     if last_run is None:
         last_run = get_last_run(name)
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     today_fire = now.replace(hour=cron_hour, minute=cron_minute,
                              second=0, microsecond=0)
     most_recent_fire = (today_fire if now >= today_fire
@@ -98,7 +101,7 @@ def _catch_up_daily_jobs() -> None:
                      settings.REFLECT_CRON_HOUR, _REFLECT_CRON_MINUTE))
     for name, fn, hour, minute in jobs:
         if should_catch_up(name, hour, minute):
-            run_at = datetime.now(timezone.utc) + timedelta(seconds=2)
+            run_at = datetime.now(UTC) + timedelta(seconds=2)
             _scheduler.add_job(fn, "date", run_date=run_at,
                                id=f"{name}_catchup", replace_existing=True)
             logger.info("启动补跑：%s 错过调度点，立即补跑一次", name)
@@ -106,9 +109,9 @@ def _catch_up_daily_jobs() -> None:
 
 def start_scheduler():
     global _scheduler
-    from lantai.workers.ingest_worker import run_ingest_once
     from lantai.workers.evolve_worker import run_evolve_once
     from lantai.workers.forgetting_worker import run_forgetting_once
+    from lantai.workers.ingest_worker import run_ingest_once
 
     _scheduler = BackgroundScheduler(timezone="UTC")
     _scheduler.add_job(run_ingest_once, "interval",
@@ -132,8 +135,8 @@ def start_scheduler():
 
     # 参数建议（论文驱动优化·辅助模式）
     if settings.PARAM_ADVICE_ENABLED:
-        from lantai.workers.param_advice_worker import run_param_advice_once
         from lantai.parameters.runtime import refresh_runtime_params
+        from lantai.workers.param_advice_worker import run_param_advice_once
         _scheduler.add_job(run_param_advice_once, "interval",
                            minutes=settings.PARAM_ADVICE_CRON_MINUTES,
                            id="param_advice", replace_existing=True)
@@ -166,7 +169,6 @@ def start_scheduler():
 
     # F7: coalesce idle flush（每 2 秒检查一次空闲缓冲；冲刷结果持久化，不静默丢弃）
     if settings.COALESCE_ENABLED:
-        from lantai.ingestion.coalesce import get_coalesce_buffer
         from lantai.workers.ingest_worker import run_coalesce_idle
         _scheduler.add_job(run_coalesce_idle, "interval",
                            seconds=2, id="coalesce_idle", replace_existing=True)

@@ -9,11 +9,13 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from lantai.services.evolution_service import list_checkpoints
 from lantai.services.checkpoint_service import (
-    write_session_checkpoint, get_checkpoint, get_latest_checkpoint,
     cleanup_old_checkpoints,
+    get_checkpoint,
+    get_latest_checkpoint,
+    write_session_checkpoint,
 )
+from lantai.services.evolution_service import list_checkpoints
 
 router = APIRouter()
 

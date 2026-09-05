@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from lantai.core.ids import new_id
@@ -82,6 +82,7 @@ def _seed(session_factory, rows):
 def test_migration_v7_adds_decision_reason(tmp_path):
     """v6 老库 → apply_migrations → decision_reason 列补齐，版本前进。"""
     import sqlite3
+
     from lantai.storage.db import CURRENT_SCHEMA_VERSION, apply_migrations
     path = tmp_path / "legacy-v6.db"
     conn = sqlite3.connect(str(path))

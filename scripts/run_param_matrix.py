@@ -16,7 +16,6 @@ top1 一致率 / top3 集合一致率 / 平均位置漂移。
 见 docs/param-matrix-report.md 实证：W_VECTOR 0.6->0.75 时 14/179 条 top1 改变。
 """
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
@@ -24,7 +23,6 @@ from pathlib import Path
 sys.path.insert(0, ".")
 
 from lantai.core.settings import settings  # noqa: E402
-from lantai.eval.metrics import compute_metrics  # noqa: E402
 from lantai.eval.query_set import load_query_set  # noqa: E402
 from lantai.eval.runner import run_dry_run  # noqa: E402
 
@@ -64,7 +62,7 @@ def position_sensitive_metrics(default_pq: list[dict], ov_pq: list[dict]) -> dic
     pos_drift = 0.0
     pos_pairs = 0
     scores_a, scores_b = [], []
-    for a, b in zip(default_pq[:n], ov_pq[:n]):
+    for a, b in zip(default_pq[:n], ov_pq[:n], strict=False):
         ai, bi = a.get("result_ids") or [], b.get("result_ids") or []
         if ai and bi and ai[0] == bi[0]:
             top1_same += 1
@@ -92,7 +90,7 @@ def _pearson(x: list[float], y: list[float]) -> float:
     import math
     n = len(x)
     mx, my = sum(x) / n, sum(y) / n
-    cov = sum((a - mx) * (b - my) for a, b in zip(x, y))
+    cov = sum((a - mx) * (b - my) for a, b in zip(x, y, strict=False))
     vx = math.sqrt(sum((a - mx) ** 2 for a in x))
     vy = math.sqrt(sum((b - my) ** 2 for b in y))
     if not vx or not vy:
@@ -177,33 +175,33 @@ def main() -> int:
 
     if not args.no_write:
         _write_report(qs, results, base_pq, args)
-        print(f"\n报告已写入 docs/param-matrix-report.md")
+        print("\n报告已写入 docs/param-matrix-report.md")
     return 0
 
 
 def _write_report(qs, results, base_pq, args):
     lines = [
-        f"# 调参对比矩阵报告",
-        f"",
+        "# 调参对比矩阵报告",
+        "",
         f"> 日期：{time.strftime('%Y-%m-%d %H:%M')} | 查询集：{qs.name}（{qs.sample_count} 样本）",
         f"> 命令：`python scripts/run_param_matrix.py --query-set {qs.name} --intent {args.intent}"
         f" --no-rerank --top-k {args.top_k}`",
-        f"",
-        f"## 一、矩阵结果",
-        f"",
-        f"| 标签 | overrides | zero_rate | avg_count | jaccard | 耗时 |",
-        f"|---|---|---|---|---|---|",
+        "",
+        "## 一、矩阵结果",
+        "",
+        "| 标签 | overrides | zero_rate | avg_count | jaccard | 耗时 |",
+        "|---|---|---|---|---|---|",
     ]
     for r in results:
         lines.append(
             f"| {r['label']} | `{r['overrides']}` | {r['zero']} | {r['avg']} "
             f"| {r['jaccard']} | {r['elapsed_s']}s |")
     lines += [
-        f"",
-        f"## 二、位置敏感对比（vs 基线轮，Jaccard 盲区补充）",
-        f"",
-        f"| 标签 | top1一致率 | top3集合一致率 | 平均位置漂移 | 分数相关 |",
-        f"|---|---|---|---|---|",
+        "",
+        "## 二、位置敏感对比（vs 基线轮，Jaccard 盲区补充）",
+        "",
+        "| 标签 | top1一致率 | top3集合一致率 | 平均位置漂移 | 分数相关 |",
+        "|---|---|---|---|---|",
     ]
     if base_pq:
         for r in results[1:]:
@@ -213,16 +211,16 @@ def _write_report(qs, results, base_pq, args):
                 f"| {r['label']} | {r['top1_consistency']} | {r['top3_set_consistency']} "
                 f"| {r['avg_pos_drift']} | {r['score_corr']} |")
     lines += [
-        f"",
-        f"## 三、解读",
-        f"",
-        f"- **jaccard 是集合指标，忽略排序**：top-k 结果集合不变不代表排序不变。",
-        f"- **位置敏感指标**（top1/top3 一致率、位置漂移）才能暴露权重影响。",
-        f"- 库量级小（当前 4 条记忆）时，结果集中在少数记忆上，集合几乎不变，",
-        f"  但权重变化会改变排序——矩阵应同时看两类指标。",
-        f"- 库量级涨上来后（>100 条记忆），jaccard 与位置敏感指标都会出现分化。",
-        f"",
-        f"## 附：run_id",
+        "",
+        "## 三、解读",
+        "",
+        "- **jaccard 是集合指标，忽略排序**：top-k 结果集合不变不代表排序不变。",
+        "- **位置敏感指标**（top1/top3 一致率、位置漂移）才能暴露权重影响。",
+        "- 库量级小（当前 4 条记忆）时，结果集中在少数记忆上，集合几乎不变，",
+        "  但权重变化会改变排序——矩阵应同时看两类指标。",
+        "- 库量级涨上来后（>100 条记忆），jaccard 与位置敏感指标都会出现分化。",
+        "",
+        "## 附：run_id",
     ]
     for r in results:
         lines.append(f"- {r['label']}: `{r['run_id']}`")

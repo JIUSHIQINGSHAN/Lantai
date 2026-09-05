@@ -7,8 +7,8 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from lantai.observability.retrieval_log import backfill_used_ids
 from lantai.observability.recall_report import recall_report, recent_retrieval_events
+from lantai.observability.retrieval_log import backfill_used_ids
 
 router = APIRouter(prefix="/retrieval", tags=["retrieval"])
 
