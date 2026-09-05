@@ -12,7 +12,7 @@ router = APIRouter()
 def search(req: SearchReq, trace: bool = False, explain: bool = False,
           agent_id: str = Depends(verify_agent)):
     # Step 1: 启发式闸门预过滤（拾遗 ADR-0028：支持 req.force 透传放行）
-    gate = relevance_check(req.query)
+    gate = relevance_check(req.query, user_id=agent_id)
     if not req.force and not gate["needs_memory"]:
         # 闸门拦截也算一次观测（zero_result=True 的意义之一）
         event_id = _try_log(req, [], 0, gate)
@@ -50,7 +50,7 @@ class GraphExpandReq(BaseModel):
 
 
 @router.post("/search/graph_expand")
-def search_graph_expand(req: GraphExpandReq):
+def search_graph_expand(req: GraphExpandReq, agent_id: str = Depends(verify_agent)):
     """贯珠（ADR-0035）：图增强混合检索。"""
     from lantai.retrieval.graph_retriever import graph_augmented_search
     return graph_augmented_search(
@@ -59,6 +59,7 @@ def search_graph_expand(req: GraphExpandReq):
         max_hops=req.max_hops,
         min_edge_conf=req.min_edge_conf,
         domain=req.domain,
+        allowed_lanes=allowed_lanes(agent_id)
     )
 
 

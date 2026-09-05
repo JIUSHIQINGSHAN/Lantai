@@ -20,6 +20,7 @@ def expand_graph_associations(
     min_edge_conf: float = 0.5,
     max_expanded: int = 10,
     session: Optional[Session] = None,
+    allowed_lanes: Optional[list[str]] = None,
 ) -> list[dict]:
     """沿实体图谱进行 1~2 步广度优先（BFS）联想遍历。"""
     seeds = [sid for sid in seed_memory_ids if sid]
@@ -63,6 +64,8 @@ def expand_graph_associations(
                 # 读取邻居记忆项
                 neighbor_item = s.get(MemoryItem, neighbor_id)
                 if neighbor_item and neighbor_item.status == "active":
+                    if allowed_lanes is not None and neighbor_item.lane not in allowed_lanes:
+                        continue
                     expanded.append({
                         "memory_id": neighbor_id,
                         "hop": next_hop,
@@ -96,6 +99,7 @@ def graph_augmented_search(
     min_edge_conf: float = 0.5,
     domain: Optional[str] = None,
     session: Optional[Session] = None,
+    allowed_lanes: Optional[list[str]] = None,
 ) -> dict:
     """图增强混合检索：混合初筛 + 拓扑二度联想。"""
     # 1. 混合检索初筛
@@ -121,6 +125,7 @@ def graph_augmented_search(
         max_hops=max_hops,
         min_edge_conf=min_edge_conf,
         session=session,
+        allowed_lanes=allowed_lanes,
     )
 
     return {

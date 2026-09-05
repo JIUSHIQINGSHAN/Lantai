@@ -149,6 +149,26 @@ class TestServiceFallback:
         combined = m.call_args.args[0].content
         assert "这是第0条" in combined and "这是第7条" in combined
 
+    def test_add_memory_async_user_isolation(self):
+        """Ticket 2.1 [DD-09]: Tidal coalescing buffer must isolate by user_id."""
+        from lantai.services import memory_service as ms
+        from lantai.models.schemas import AddMemoryReq
+
+        buf = CoalesceBuffer()
+        req1 = AddMemoryReq(title="t", content="用户A的内容足够长可以被提取")
+        req2 = AddMemoryReq(title="t", content="用户B的内容足够长可以被提取")
+
+        with patch.object(ms.settings, "COALESCE_ENABLED", True), \
+             patch.object(ms, "get_coalesce_buffer", return_value=buf):
+            ms.add_memory_async(req1, user_id="userA")
+            ms.add_memory_async(req2, user_id="userB")
+
+        # 检查 active keys 是否有两个
+        wl = buf.water_level()
+        assert wl["active_keys"] == 2
+        assert "userA:general" in buf._buffers
+        assert "userB:general" in buf._buffers
+
     def test_add_memory_async_flush_failure_forgets_fingerprint(self):
         """持久化失败 → 清除指纹 + 该批消息锁内恢复，允许重试（不丢数据）"""
         from lantai.services import memory_service as ms

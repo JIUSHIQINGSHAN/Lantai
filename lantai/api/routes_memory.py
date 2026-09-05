@@ -21,8 +21,8 @@ def add_memory_route(req: AddMemoryReq, async_mode: bool = False,
                      agent_id: str = Depends(verify_agent)):
     _guard_lane_allowed(agent_id, req.lane)
     if async_mode:
-        return add_memory_async(req)
-    return add_memory(req)
+        return add_memory_async(req, user_id=agent_id)
+    return add_memory(req, user_id=agent_id)
 
 
 @router.get("/core-memory")

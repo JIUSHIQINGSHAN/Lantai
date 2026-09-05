@@ -114,10 +114,11 @@ def _self_reference_pattern() -> re.Pattern:
 
 # 热缓存（模块级，兼容既有测试 fixture 的 monkeypatch.setattr 替换）
 _LAST_GATE_DECISION = {"time": 0.0, "query": "", "needs_memory": False}
+_USER_GATE_DECISIONS = {}
 
 
 def relevance_check(
-    query: str, *, cache: dict | None = None, now: float | None = None
+    query: str, *, user_id: str = "default", cache: dict | None = None, now: float | None = None
 ) -> dict:
     """
     判断查询是否需要记忆上下文。
@@ -125,7 +126,14 @@ def relevance_check(
 
     cache/now 可注入 → 单测无需 monkeypatch 模块属性，并发用例各持独立 cache。
     """
-    cache = cache if cache is not None else _LAST_GATE_DECISION
+    if cache is None:
+        if user_id == "default":
+            cache = _LAST_GATE_DECISION
+        else:
+            cache = _USER_GATE_DECISIONS.setdefault(
+                user_id, {"time": 0.0, "query": "", "needs_memory": False}
+            )
+    
     now = now if now is not None else time.time()
 
     if not query or len(query.strip()) < 2:

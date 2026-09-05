@@ -48,6 +48,31 @@ class TestGraphRetrieverDB:
             assert "mem_gpu_01" in exp_ids_2
             assert "mem_cuda_01" in exp_ids_2
 
+    def test_expand_graph_acl_isolation(self, param_env):
+        """Ticket 2.3 [DD-10]: Graph search edge traversal must enforce lane ACL filtering."""
+        session_factory, _ = param_env
+
+        with session_factory() as s:
+            m1 = MemoryItem(id="mem_a1", content="公开节点", decay_score=1.0, lane="general")
+            m2 = MemoryItem(id="mem_a2", content="私密节点", decay_score=1.0, lane="private")
+            s.add_all([m1, m2])
+            e1 = MemoryEdge(id="edge_a1", source_memory_id="mem_a1", target_memory_id="mem_a2", relation="contains", confidence=0.9)
+            s.add(e1)
+            s.commit()
+
+            # 不传 allowed_lanes，召回所有（兼容旧逻辑，或者如果必须的话）
+            # 但既然要求 enforce lane ACL filtering，我们传 allowed_lanes=["general"]
+            exp_filtered = expand_graph_associations(
+                ["mem_a1"], max_hops=1, session=s, allowed_lanes=["general"]
+            )
+            assert len(exp_filtered) == 0  # 私密节点被过滤
+            
+            exp_all = expand_graph_associations(
+                ["mem_a1"], max_hops=1, session=s, allowed_lanes=["general", "private"]
+            )
+            assert len(exp_all) == 1
+            assert exp_all[0]["memory_id"] == "mem_a2"
+
 
 class TestGraphRetrieverEndpointsAndMCP:
     """测试 REST 端点与 MCP 工具。"""

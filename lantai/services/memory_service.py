@@ -110,13 +110,11 @@ def _dedup_structural(s, target_id: str, title: str, content: str,
     return None  # insert
 
 
-def add_memory(req: AddMemoryReq) -> dict:
+def add_memory(req: AddMemoryReq, user_id: str = "default") -> dict:
     """创建 RawDocument + MemoryCandidate。
 
     当 COALESCE_ENABLED=true 时走缓冲路径。
     fastpath 命中时直接写入（绕过 LLM 提取）。
-    media_url（目识 vision）时：caption 生成后走提取路径，溯源记
-    vision-caption + media_url；失败在 vision_service 抛 ValueError（422）。
     """
     if (req.media_url or "").strip():
         from lantai.services.vision_service import (
@@ -136,7 +134,7 @@ def add_memory(req: AddMemoryReq) -> dict:
     if settings.COALESCE_ENABLED:
         buffer = get_coalesce_buffer()
         result = buffer.add(
-            user_id="default", lane=req.lane,
+            user_id=user_id, lane=req.lane,
             content=req.content, title=req.title,
         )
         if result.get("buffered"):
@@ -235,7 +233,7 @@ def _create_candidate_with_extraction(
         return {"document_id": doc.id, "candidate_id": cand.id}
 
 
-def add_memory_async(req: AddMemoryReq) -> dict:
+def add_memory_async(req: AddMemoryReq, user_id: str = "default") -> dict:
     """异步批量写入（幂等）：COALESCE_ENABLED=false 时降级同步，不丢数据。
 
     COALESCE_ENABLED=true 时入队；若入队即触发冲刷，在此处持久化
@@ -243,10 +241,10 @@ def add_memory_async(req: AddMemoryReq) -> dict:
     """
     buffer = get_coalesce_buffer()
     if not settings.COALESCE_ENABLED:
-        result = add_memory(req)
-        return {"status": "synced", "job_id": buffer.job_id("default", req.lane, req.content),
+        result = add_memory(req, user_id=user_id)
+        return {"status": "synced", "job_id": buffer.job_id(user_id, req.lane, req.content),
                 **result}
-    result = buffer.add_async("default", req.lane, req.content, req.title)
+    result = buffer.add_async(user_id, req.lane, req.content, req.title)
     if result.get("status") == "flushed":
         detail = result.get("detail") or {}
         req_copy = req.model_copy()

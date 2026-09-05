@@ -210,3 +210,19 @@ class TestGateCacheInjectable:
         relevance_check("上次我们聊的项目", cache=c, now=0.0)
         res = relevance_check("然后呢", cache=c, now=s.settings.GATE_CACHE_TTL + 1.0)
         assert res["reason"] != "session_followup_hot"
+
+class TestGateUserIsolation:
+    """Ticket 2.2 [DD-07]: Gate 15s hot cache must be isolated by user."""
+    def test_user_isolation(self):
+        # 模拟用户A在前一秒发了一个长句（触发热缓存）
+        res_a1 = relevance_check("这是一个非常长的句子，包含很多实词，比如架构、系统、微服务等", user_id="userA", now=1.0)
+        assert res_a1["needs_memory"] is True
+        
+        # 用户B在后一秒发了一个短句，不应该受用户A的热缓存影响
+        res_b = relevance_check("这是啥", user_id="userB", now=2.0)
+        assert res_b["needs_memory"] is False  # 没有受 userA 热缓存影响
+
+        # 用户A在3秒时发了一个短句，应该受自己热缓存影响
+        res_a2 = relevance_check("继续说", user_id="userA", now=3.0)
+        assert res_a2["needs_memory"] is True
+        assert res_a2["reason"] == "session_followup_hot"
