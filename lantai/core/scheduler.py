@@ -1,6 +1,8 @@
 from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from lantai.storage.db import engine
 
 from lantai.core.logger import logger
 from lantai.core.settings import settings
@@ -113,7 +115,7 @@ def start_scheduler():
     from lantai.workers.forgetting_worker import run_forgetting_once
     from lantai.workers.ingest_worker import run_ingest_once
 
-    _scheduler = BackgroundScheduler(timezone="UTC")
+    _scheduler = BackgroundScheduler(jobstores={"default": SQLAlchemyJobStore(engine=engine, tablename="apscheduler_jobs")}, timezone="UTC")
     _scheduler.add_job(run_ingest_once, "interval",
                        minutes=settings.INGEST_CRON_MINUTES, id="ingest")
     _scheduler.add_job(run_evolve_once, "interval",

@@ -138,10 +138,10 @@ def test_import_respects_agent_lane_bindings(imp_env, monkeypatch):
     monkeypatch.setattr(settings, "AGENT_LANE_BINDINGS", {"agent-a": ["fact"]})
     text = (
         '{"content": "绑定lane事实", "lane": "fact"}\n'
-        '{"content": "越界规则", "lane": "rule"}\n'
+        '{"content": "这是一条很长的越界规则用于测试", "lane": "rule"}\n'
     )
     from lantai.services.import_service import run_jsonl_import
-    report = run_jsonl_import(text, agent_id="agent-a")
+    report = run_jsonl_import(text, allowed_lanes=["fact"])
     assert report["imported"] == 1
     assert len(report["errors"]) == 1
     assert "ACL" in report["errors"][0]["reason"]
@@ -151,7 +151,7 @@ def test_import_respects_agent_lane_bindings(imp_env, monkeypatch):
         assert rows[0].lane == "fact"
     # ACL 未启用（"no-acl" 哨兵）→ lane_allowed 恒真，全量导入
     monkeypatch.setattr(settings, "AGENT_LANE_BINDINGS", {})
-    report2 = run_jsonl_import(text, agent_id="no-acl")
+    report2 = run_jsonl_import(text, allowed_lanes=None)
     assert report2["imported"] == 1 and report2["duplicates"] == 1
 
 

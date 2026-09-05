@@ -32,8 +32,7 @@ from lantai.api import (
     routes_verification_router,
     routes_work_items_router,
 )
-from lantai.core.acl import verify_agent
-from lantai.core.auth import assert_secure_binding, verify_api_key
+from lantai.core.auth import assert_secure_binding, get_current_user
 from lantai.core.logger import logger
 from lantai.core.scheduler import start_scheduler, stop_scheduler
 from lantai.core.settings import settings
@@ -59,7 +58,8 @@ async def lifespan(app: FastAPI):
         load_runtime_params_at_startup()
     except Exception:
         logger.exception("load runtime params at startup failed (keep defaults)")
-    start_scheduler()
+    if settings.LANTAI_RUN_SCHEDULER:
+        start_scheduler()
     logger.info("兰台记忆（Lantai） started on %s:%s", settings.HOST, settings.PORT)
     yield
     stop_scheduler()
@@ -107,7 +107,7 @@ EXT_ROUTERS = {
     "crystals": (False, routes_crystals_router),
 }
 
-AUTH = [Depends(verify_api_key), Depends(verify_agent)]
+AUTH = [Depends(get_current_user)]
 
 for r in CORE_ROUTERS:
     app.include_router(r, dependencies=AUTH)

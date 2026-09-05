@@ -422,3 +422,26 @@ class SessionScratchpad(SQLModel, table=True):
     content: str = ""
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ApiKey(SQLModel, table=True):
+    __tablename__ = "api_keys"
+
+    id: str = Field(primary_key=True)
+    key_hash: str = Field(index=True, unique=True)
+    user_id: str = Field(index=True)
+    allowed_lanes: list = Field(default_factory=list, sa_column=Column(JSON))
+    rate_limit_rpm: int = Field(default=60)
+    created_at: datetime = Field(default_factory=utcnow)
+    is_active: bool = Field(default=True)
+
+
+class OperationLog(SQLModel, table=True):
+    __tablename__ = "operation_logs"
+
+    id: str = Field(primary_key=True)
+    user_id: str = Field(index=True)
+    endpoint: str = Field(index=True)
+    latency_ms: float = 0.0
+    status_code: int = 200
+    created_at: datetime = Field(default_factory=utcnow)

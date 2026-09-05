@@ -1,19 +1,20 @@
-"""API Key 鉴权测试"""
+"""API Key Authentication and Tenant Isolation Tests"""
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from api_server import app
 from lantai.core.settings import settings
-
+from lantai.models.tables import ApiKey
+from lantai.core.auth import hash_key, create_api_key
 
 @pytest.fixture(scope="function")
 def client():
-    """创建测试客户端，使用内存数据库"""
+    """Test client with an in-memory database."""
     test_engine = create_engine(
         "sqlite:///:memory:",
         echo=False,
@@ -28,60 +29,51 @@ def client():
     with patch.object(db_module, "get_session", get_test_session), TestClient(app) as c:
         yield c
 
-
-class TestAuthDisabled:
-    """API Key 鉴权关闭时（默认）"""
-
-    def test_public_endpoint_no_key(self, client):
-        """公共端点不需要 key"""
+class TestAuthFallback:
+    def test_public_endpoint(self, client):
         resp = client.get("/health")
         assert resp.status_code == 200
 
-    def test_protected_endpoint_no_key(self, client):
-        """业务端点不需要 key（鉴权关闭）"""
+    def test_protected_endpoint_fallback(self, client):
+        # When DB has no keys, it should allow fallback (dev mode)
         resp = client.post("/add", json={"title": "test", "content": "test content long enough"})
         assert resp.status_code == 200
 
+class TestAuthEnforced:
+    @pytest.fixture(autouse=True)
+    def setup_api_keys(self, client):
+        # We need to insert a key so that DEV MODE is disabled
+        with db_module.get_session() as s:
+            raw_key, api_key = create_api_key("user123", ["default"])
+            self.raw_key = raw_key
+            s.add(api_key)
+            s.commit()
 
-class TestAuthEnabled:
-    """API Key 鉴权开启时"""
-
-    @patch.object(settings, "API_KEY", "test-key")
-    def test_missing_key(self, client):
-        """缺少 X-API-Key → 401"""
-        resp = client.post("/add", json={"title": "t", "content": "test content"})
+    def test_missing_header(self, client):
+        resp = client.get("/candidates/pending")
         assert resp.status_code == 401
+        assert "Missing Authorization header" in resp.json()["detail"]
 
-    @patch.object(settings, "API_KEY", "test-key")
     def test_wrong_key(self, client):
-        """错误的 X-API-Key → 403"""
-        resp = client.post(
-            "/add",
-            json={"title": "t", "content": "test content"},
-            headers={"X-API-Key": "wrong-key"},
+        resp = client.get(
+            "/candidates/pending",
+            headers={"Authorization": "Bearer wrong-key"},
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 401
+        assert "Invalid API Key" in resp.json()["detail"]
 
-    @patch.object(settings, "API_KEY", "test-key")
     def test_correct_key(self, client):
-        """正确的 X-API-Key → 200"""
-        resp = client.post(
-            "/add",
-            json={"title": "test", "content": "test content long enough"},
-            headers={"X-API-Key": "test-key"},
+        resp = client.get(
+            "/candidates/pending",
+            headers={"Authorization": f"Bearer {self.raw_key}"},
         )
         assert resp.status_code == 200
 
-    @patch.object(settings, "API_KEY", "test-key")
     def test_public_endpoint_with_key_set(self, client):
-        """公共端点即使设置了 key也不需要"""
         resp = client.get("/health")
         assert resp.status_code == 200
 
-
 class TestSecureBinding:
-    """P0-2: 非回环绑定必须配置 API_KEY"""
-
     def test_non_loopback_without_key_rejected(self, monkeypatch):
         from lantai.core.auth import assert_secure_binding
         monkeypatch.setattr(settings, "HOST", "0.0.0.0")
@@ -93,7 +85,7 @@ class TestSecureBinding:
         from lantai.core.auth import assert_secure_binding
         monkeypatch.setattr(settings, "HOST", "0.0.0.0")
         monkeypatch.setattr(settings, "API_KEY", "k" * 16)
-        assert_secure_binding()  # 不抛异常
+        assert_secure_binding()
 
     def test_loopback_without_key_allowed(self, monkeypatch):
         from lantai.core.auth import assert_secure_binding

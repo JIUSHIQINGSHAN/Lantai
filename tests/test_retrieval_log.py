@@ -93,7 +93,7 @@ class TestRetrievalLog:
     def test_log_failure_non_fatal(self, client):
         """埋点失败绝不影响主链路。"""
         c, sf = client
-        with patch("lantai.observability.retrieval_log.db.get_session",
+        with patch("sqlmodel.Session.commit",
                    side_effect=RuntimeError("db down")):
             r = c.post("/search", json={"query": "好的谢谢再见",
                                         "top_k": 3})

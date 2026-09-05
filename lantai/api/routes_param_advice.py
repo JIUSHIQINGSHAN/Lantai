@@ -1,7 +1,7 @@
 """参数建议路由——薄路由，业务全在 service 层。"""
 from fastapi import APIRouter, Depends, Query
 
-from lantai.core.auth import verify_api_key
+from lantai.core.auth import get_current_user, SecurityContext
 from lantai.parameters import service
 from lantai.parameters.schemas import (
     DecisionRequest,
@@ -22,7 +22,7 @@ def list_suggestions(
     status: str | None = Query(None, pattern="^(pending|accepted|rejected)$"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    _identity: str = Depends(verify_api_key),
+    _ctx: SecurityContext = Depends(get_current_user),
 ):
     return service.list_suggestions(status, limit, offset)
 
@@ -30,37 +30,37 @@ def list_suggestions(
 @router.get("/param-suggestions/{suggestion_id}",
             response_model=SuggestionDetailResponse)
 def get_suggestion(suggestion_id: str,
-                   _identity: str = Depends(verify_api_key)):
+                   _ctx: SecurityContext = Depends(get_current_user)):
     return service.get_suggestion(suggestion_id)
 
 
 @router.post("/param-suggestions/{suggestion_id}/decision",
              response_model=DecisionResponse)
 def decide_suggestion(suggestion_id: str, req: DecisionRequest,
-                      identity: str = Depends(verify_api_key)):
-    return service.decide_suggestion(suggestion_id, req, identity)
+                      ctx: SecurityContext = Depends(get_current_user)):
+    return service.decide_suggestion(suggestion_id, req, ctx.user_id)
 
 
 @router.get("/param-overrides", response_model=OverrideListResponse)
 def list_overrides(limit: int = Query(20, ge=1, le=100),
                    offset: int = Query(0, ge=0),
-                   _identity: str = Depends(verify_api_key)):
+                   _ctx: SecurityContext = Depends(get_current_user)):
     return service.list_overrides(limit, offset)
 
 
 @router.post("/param-overrides/{override_id}/rollback",
              response_model=RollbackResponse)
 def rollback_override(override_id: str, req: RollbackRequest,
-                      identity: str = Depends(verify_api_key)):
-    return service.rollback_override(override_id, req, identity)
+                      ctx: SecurityContext = Depends(get_current_user)):
+    return service.rollback_override(override_id, req, ctx.user_id)
 
 
 @router.get("/runtime-params", response_model=RuntimeParamsResponse)
-def runtime_params(_identity: str = Depends(verify_api_key)):
+def runtime_params(_ctx: SecurityContext = Depends(get_current_user)):
     return service.get_effective_params()
 
 
 @router.post("/param-suggestions/{suggestion_id}/regenerate")
 def regenerate_suggestion(suggestion_id: str,
-                          identity: str = Depends(verify_api_key)):
-    return service.regenerate_suggestion(suggestion_id, identity)
+                          ctx: SecurityContext = Depends(get_current_user)):
+    return service.regenerate_suggestion(suggestion_id, ctx.user_id)

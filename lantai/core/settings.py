@@ -21,6 +21,7 @@ class Settings(BaseSettings):
 
     HOST: str = "127.0.0.1"  # 默认只监听回环；非回环部署必须同时设置 API_KEY
     PORT: int = 8767
+    LANTAI_RUN_SCHEDULER: bool = True
     DATABASE_URL: str = ""  # 为空时从 LANTAI_HOME 自动推导
 
     OPENAI_API_KEY: str = ""

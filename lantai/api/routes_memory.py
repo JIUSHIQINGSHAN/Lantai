@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from lantai.core.acl import lane_allowed, verify_agent
+from lantai.core.auth import get_current_user, SecurityContext
 from lantai.models.schemas import AddMemoryReq, RawMemoryReq
 from lantai.services.memory_service import (
     add_memory,
@@ -22,11 +22,12 @@ def _guard_lane_allowed(agent_id: str, lane: str | None) -> None:
 
 @router.post("/add")
 def add_memory_route(req: AddMemoryReq, async_mode: bool = False,
-                     agent_id: str = Depends(verify_agent)):
-    _guard_lane_allowed(agent_id, req.lane)
+                     ctx: SecurityContext = Depends(get_current_user)):
+    if req.lane not in ctx.allowed_lanes:
+        raise HTTPException(status_code=403, detail=f"Lane {req.lane} not allowed for agent")
     if async_mode:
-        return add_memory_async(req, user_id=agent_id)
-    return add_memory(req, user_id=agent_id)
+        return add_memory_async(req, user_id=ctx.user_id)
+    return add_memory(req, user_id=ctx.user_id)
 
 
 @router.get("/core-memory")
@@ -42,9 +43,10 @@ def put_core_memory_route(block: str, content: str, namespace: str = "default"):
         raise HTTPException(400, str(e))
 
 @router.post("/add/raw")
-def add_raw_memory_route(req: RawMemoryReq, agent_id: str = Depends(verify_agent)):
+def add_raw_memory_route(req: RawMemoryReq, ctx: SecurityContext = Depends(get_current_user)):
     """原文直存（verbatim）：内容直入 FTS5+向量，零 LLM，不走提取/闸门/演化。"""
-    _guard_lane_allowed(agent_id, req.lane)
+    if req.lane not in ctx.allowed_lanes:
+        raise HTTPException(status_code=403, detail=f"Lane {req.lane} not allowed for agent")
     return add_raw_memory(req)
 
 @router.get("/memories")

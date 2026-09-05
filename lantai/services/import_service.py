@@ -123,20 +123,19 @@ def _store_imported_memory(s, content, created_at, updated_at, lane, tags) -> st
     return "imported"
 
 
-def import_memory_lines(lines: list[dict], agent_id: str | None = None) -> dict:
+def import_memory_lines(lines: list[dict], allowed_lanes: list[str] | None = None) -> dict:
     """按文件顺序落库；单行异常记 errors 不中断（宁 miss 不脏写）。
 
     agent_id 非空时按 ACL 收窄：lane 不在绑定集的行记 errors 不导入（403 语义，
     宁 miss 不放行）；ACL 未启用时 agent_id 为 "no-acl" 哨兵 → lane_allowed 恒真。
     """
     report = {"imported": 0, "duplicates": 0, "errors": []}
-    from lantai.core.acl import lane_allowed
     with db.get_session() as s:
         for line in lines:
-            if agent_id is not None and not lane_allowed(agent_id, line["lane"]):
+            if allowed_lanes is not None and line["lane"] not in allowed_lanes:
                 report["errors"].append({
                     "content": line["content"][:60],
-                    "reason": f"lane {line['lane']!r} 不在 agent {agent_id!r} 绑定集（ACL）",
+                    "reason": f"lane {line['lane']!r} 不在允许集（ACL）",
                 })
                 continue
             try:
@@ -154,10 +153,10 @@ def import_memory_lines(lines: list[dict], agent_id: str | None = None) -> dict:
     return report
 
 
-def run_jsonl_import(text: str, agent_id: str | None = None) -> dict:
+def run_jsonl_import(text: str, allowed_lanes: list[str] | None = None) -> dict:
     """解析 + 落库 + 汇总报告。非法行只报告不导入；agent_id 按 ACL 收窄。"""
     lines, invalid = parse_import_lines(text)
-    report = import_memory_lines(lines, agent_id=agent_id)
+    report = import_memory_lines(lines, allowed_lanes=allowed_lanes)
     report["invalid"] = invalid
     report["ok"] = True
     return report
