@@ -50,6 +50,6 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ steps.owner.outputs.OWNER }}/remembrance:${{ steps.tag.outputs.VERSION }}
-            ghcr.io/${{ steps.owner.outputs.OWNER }}/remembrance:latest
+            ghcr.io/${{ steps.owner.outputs.OWNER }}/lantai:${{ steps.tag.outputs.VERSION }}
+            ghcr.io/${{ steps.owner.outputs.OWNER }}/lantai:latest
           platforms: linux/amd64,linux/arm64
