@@ -445,3 +445,10 @@ class OperationLog(SQLModel, table=True):
     latency_ms: float = 0.0
     status_code: int = 200
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class PromptTemplate(SQLModel, table=True):
+    id: str = Field(primary_key=True)
+    template: str
+    description: str = ""
+    updated_at: datetime = Field(default_factory=utcnow)

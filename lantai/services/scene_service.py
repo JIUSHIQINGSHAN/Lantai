@@ -106,6 +106,7 @@ def _name_scenes(clusters: list[list]) -> list[tuple[str, str]]:
         return fallback
     try:
         from lantai.llm.client import chat_json
+        from lantai.services.prompt_service import get_prompt
         from lantai.llm.prompts import SCENE_NAMING_SYS
         reps = [(_fallback_name(c) or "无") for c in clusters]
         user = "\n".join(f"{i + 1}. {k}" for i, k in enumerate(reps))

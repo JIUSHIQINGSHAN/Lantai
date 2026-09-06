@@ -6,6 +6,7 @@ from lantai.services.source_service import (
     list_candidates,
     list_sources,
     run_ingest,
+    delete_document,
 )
 
 router = APIRouter()
@@ -29,3 +30,7 @@ def ingest_run_route():
 @router.get("/candidates")
 def list_candidates_route(status: str = "new", limit: int = 20):
     return list_candidates(status, limit)
+
+@router.delete("/documents/{document_id}")
+def delete_document_route(document_id: str):
+    return delete_document(document_id)

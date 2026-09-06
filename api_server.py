@@ -26,11 +26,13 @@ from lantai.api import (
     routes_scratchpad_router,
     routes_search_router,
     routes_sources_router,
+    routes_prompts_router,
     routes_terminal_router,
     routes_tree_router,
     routes_ui_router,
     routes_verification_router,
     routes_work_items_router,
+    routes_prompts_router,
 )
 from lantai.core.auth import assert_secure_binding, get_current_user
 from lantai.core.logger import logger
@@ -93,6 +95,7 @@ CORE_ROUTERS = [
     routes_probing_router,
     routes_recall_chain_router,
     routes_sources_router,
+    routes_prompts_router,
     routes_graph_router,
 ]
 

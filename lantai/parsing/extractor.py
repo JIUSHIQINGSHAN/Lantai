@@ -1,11 +1,12 @@
 from lantai.llm.client import chat_json
 from lantai.llm.prompts import EXTRACT_SYS
+from lantai.services.prompt_service import get_prompt
 
 
 def extract_candidate(title: str, content: str) -> dict:
     user = f"TITLE:\n{title}\n\nCONTENT:\n{content[:6000]}"
     try:
-        data = chat_json(EXTRACT_SYS, user)
+        data = chat_json(get_prompt("EXTRACT_SYS", EXTRACT_SYS), user)
     except Exception:
         return {"summary": content[:400], "claims": [], "methods": [],
                 "constraints": [], "actions": [], "topic": [],

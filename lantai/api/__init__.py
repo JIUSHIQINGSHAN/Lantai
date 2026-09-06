@@ -29,6 +29,7 @@ from .routes_tree import router as routes_tree_router
 from .routes_ui import router as routes_ui_router
 from .routes_verification import router as routes_verification_router
 from .routes_work_items import router as routes_work_items_router
+from .routes_prompts import router as routes_prompts_router
 
 __all__ = [
     "routes_health_router",
@@ -56,6 +57,7 @@ __all__ = [
     "routes_recall_chain_router",
     "routes_ui_router",
     "routes_work_items_router",
+    "routes_prompts_router",
     "routes_persona_router",
     "routes_scratchpad_router",
     "routes_terminal_router",

@@ -1,5 +1,6 @@
 from lantai.llm.client import chat_json
 from lantai.llm.prompts import CONTRADICTION_SYS
+from lantai.services.prompt_service import get_prompt
 
 
 def check_contradiction(new_claim: str, existing_content: str) -> dict:

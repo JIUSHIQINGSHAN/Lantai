@@ -36,6 +36,7 @@ from lantai.core.logger import logger
 from lantai.core.scheduler import record_run
 from lantai.core.settings import settings
 from lantai.llm.client import chat_json
+from lantai.services.prompt_service import get_prompt
 from lantai.llm.prompts import REFLECT_CURATOR_SYS, REFLECT_REJECTER_SYS
 from lantai.models.enums import ProposalStatus
 from lantai.models.tables import ConflictEvent, MemoryEdge, MemoryProposal
@@ -150,7 +151,7 @@ def _curate(candidates: list[dict], related_texts: str) -> dict:
     user = (f"FLAGGED MEMORIES:\n{batch_text}\n\n"
             f"RELATED EXISTING MEMORIES:\n{related_texts or '(none)'}")
     try:
-        return chat_json(REFLECT_CURATOR_SYS, user)
+        return chat_json(get_prompt("REFLECT_CURATOR_SYS", REFLECT_CURATOR_SYS), user)
     except Exception:
         return {"proposals": [], "curate_failed": True}
 
@@ -164,7 +165,7 @@ def _reject(prop: MemoryProposal, evidence_texts: str) -> dict:
             f"target={prop.target_memory_id}\ncontent={patch.get('content', '')}\n"
             f"reason={prop.reason}\n\nEVIDENCE:\n{evidence_texts}")
     try:
-        return chat_json(REFLECT_REJECTER_SYS, user)
+        return chat_json(get_prompt("REFLECT_REJECTER_SYS", REFLECT_REJECTER_SYS), user)
     except Exception:
         return {"accept": False, "risk": "high", "reason": "rejecter unavailable",
                 "unavailable": True}

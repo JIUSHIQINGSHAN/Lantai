@@ -3,6 +3,7 @@ from sqlmodel import select
 from lantai.core.ids import new_id
 from lantai.llm.client import chat_json
 from lantai.llm.prompts import PROPOSAL_SYS
+from lantai.services.prompt_service import get_prompt
 from lantai.models.enums import ProposalStatus
 from lantai.models.tables import MemoryCandidate, MemoryItem, MemoryProposal
 from lantai.storage import db
@@ -19,7 +20,7 @@ def propose_from_candidate(candidate_id: str, gate_result: dict) -> MemoryPropos
                 f"EXISTING:\n{existing_snippets or '(none)'}\n\n"
                 f"GATE:\n{gate_result}")
         try:
-            data = chat_json(PROPOSAL_SYS, user)
+            data = chat_json(get_prompt("PROPOSAL_SYS", PROPOSAL_SYS), user)
         except Exception:
             data = {"proposal_type": "add", "target_key": "",
                     "new_content": cand.summary, "memory_type": "semantic",

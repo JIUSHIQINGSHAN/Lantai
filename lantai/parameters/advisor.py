@@ -7,6 +7,7 @@ LLM 建议生成器——只提出候选，不直接写 settings / .env / overri
 from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.llm.client import chat_json
+from lantai.services.prompt_service import get_prompt
 from lantai.llm.prompts import PARAM_ADVICE_SYS_V2
 from lantai.parameters.registry import (
     GROUP_CONSTRAINTS,
@@ -123,7 +124,7 @@ def generate_param_advice(papers: list[dict],
     user = build_param_advice_user_prompt(papers, current_snapshot,
                                           views=views, prompt_version="v2")
     try:
-        raw = chat_json(PARAM_ADVICE_SYS_V2, user)
+        raw = chat_json(get_prompt("PARAM_ADVICE_SYS_V2", PARAM_ADVICE_SYS_V2), user)
     except Exception as e:  # chat_json 内部已重试 3 次
         logger.warning("param advice LLM call failed: %s", e)
         return {"ok": False, "error_code": "llm_error"}

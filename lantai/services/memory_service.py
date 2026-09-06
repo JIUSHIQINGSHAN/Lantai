@@ -87,7 +87,8 @@ def _llm_judge(old: str, new: str) -> str:
     """中带 LLM 兜底：结构判别判不定的样本交 LLM 裁决。"""
     from lantai.llm.client import chat_json
     from lantai.llm.prompts import DEDUP_RELATION_SYS, DEDUP_RELATION_USER
-    out = chat_json(DEDUP_RELATION_SYS, DEDUP_RELATION_USER.format(old=old, new=new))
+    from lantai.services.prompt_service import get_prompt
+    out = chat_json(get_prompt("DEDUP_RELATION_SYS", DEDUP_RELATION_SYS), get_prompt("DEDUP_RELATION_USER", DEDUP_RELATION_USER).format(old=old, new=new))
     rel = (out or {}).get("relation")
     if rel not in ("merge", "update", "insert"):
         raise ValueError(f"bad relation: {rel}")
