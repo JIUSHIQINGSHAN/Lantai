@@ -117,6 +117,7 @@ docker run -d -p 8767:8767 \
 | `GET` / `POST` | `/sources` · `/ingest/run` | 摄取源管理 |
 | `GET` / `POST` / `DELETE` | `/edges...` | 记忆关系与 supersedes 链 |
 | `GET` | `/health` `/health/deep` `/stats` | 健康检查与统计 |
+| `GET` | `/monitor/snapshot` `/monitor/health` | 瞭望监控面板：全量运维快照（健康/队列/Worker/检索/吞吐/存储）与轻量告警 |
 
 ### 示例：搜索（带诊断）
 

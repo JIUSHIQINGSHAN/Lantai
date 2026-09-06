@@ -31,7 +31,9 @@ class ChromaVectorStore(VectorStore):
             settings=ChromaSettings(anonymized_telemetry=False),
         )
         # DD-08 命名规范：既有数据库平滑兼容旧名 remembrance_vectors，全新初始化使用 lantai_vectors
-        existing = [c.name for c in self._client.list_collections()]
+        # ChromaDB v0.6+ list_collections() 返回名称字符串列表；旧版返回 Collection 对象
+        listed = self._client.list_collections()
+        existing = [c if isinstance(c, str) else c.name for c in listed]
         coll_name = "remembrance_vectors" if "remembrance_vectors" in existing else "lantai_vectors"
         self._collection = self._client.get_or_create_collection(
             name=coll_name,

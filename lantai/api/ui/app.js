@@ -90,6 +90,8 @@ function setView(view) {
     loadPersona();
     loadScratchpad($('#scratchpadSession')?.value || 'default');
     loadConsolidationReport();
+  } else if (view === 'system') {
+    loadMonitor();
   } else if (view === 'tasks') {
     loadQueue();
   }
@@ -98,19 +100,26 @@ function setView(view) {
 // ===== 0. 中枢总览 (Overview) =====
 async function loadOverview() {
   try {
-    const [stats, work, persona] = await Promise.all([
-      api('/mem/stats').catch(() => ({})),
+    const [stats, work, persona, monitor] = await Promise.all([
+      api('/stats').catch(() => ({})),
       api('/work-items?section=immediate_action&limit=1').catch(() => ({})),
       api('/persona').catch(() => ({})),
+      api('/monitor/health').catch(() => null),
     ]);
 
     const total = stats.total_memories ?? stats.total ?? '—';
     $('#ovTotalMem').textContent = String(total);
     $('#ovPendingTasks').textContent = String(work.counts?.immediate_action ?? work.total ?? 0);
-    $('#ovHealthStatus').textContent = '良好 100%';
-    $('#ovUserMem').textContent = String(stats.by_domain?.user ?? '—');
-    $('#ovSessionMem').textContent = String(stats.by_domain?.session ?? '—');
-    $('#ovAgentMem').textContent = String(stats.by_domain?.agent ?? '—');
+    const healthMap = {ok: '健康', degraded: '降级', unknown: '未知'};
+    if (monitor) {
+      $('#ovHealthStatus').textContent = healthMap[monitor.overall] || '—';
+      $('#ovHealthStatus').className = monitor.overall === 'ok' ? '' : 'val mon-warn';
+    } else {
+      $('#ovHealthStatus').textContent = '—';
+    }
+    $('#ovUserMem').textContent = String(stats.by_domain?.user ?? stats.by_lane?.user ?? '—');
+    $('#ovSessionMem').textContent = String(stats.by_domain?.session ?? stats.by_lane?.session ?? '—');
+    $('#ovAgentMem').textContent = String(stats.by_domain?.agent ?? stats.by_lane?.agent ?? '—');
     $('#ovActivePersona').textContent = (persona && persona.name) || '兰台执笔';
   } catch (err) {
     console.warn('读取总览指标失败', err);
@@ -882,11 +891,345 @@ async function batchOrganize() {
   } catch (error) { handleActionError(error); }
 }
 
+// ===== 7. 瞭望台 · 后台监控面板 (Monitor) =====
+const monitorState = { timer: null, loading: false, lastSnapshot: null };
+
+function fmtBytes(bytes) {
+  if (bytes === null || bytes === undefined) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let v = Number(bytes), i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function fmtUptime(seconds) {
+  if (!seconds && seconds !== 0) return '—';
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}天 ${h}时`;
+  if (h > 0) return `${h}时 ${m}分`;
+  return `${m}分`;
+}
+
+function fmtAge(seconds) {
+  if (seconds === null || seconds === undefined) return '从未';
+  if (seconds < 60) return `${Math.floor(seconds)} 秒前`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时前`;
+  return `${Math.floor(seconds / 86400)} 天前`;
+}
+
+function fmtInterval(seconds) {
+  if (!seconds && seconds !== 0) return '—';
+  if (seconds % 86400 === 0) return `${seconds / 86400} 天`;
+  if (seconds % 3600 === 0) return `${seconds / 3600} 小时`;
+  return `${Math.round(seconds / 60)} 分钟`;
+}
+
+function monEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined && text !== null) el.textContent = text;
+  return el;
+}
+
+const MON_HEALTH = {
+  ok: {label: '健康', cls: 'mon-ok'},
+  degraded: {label: '降级', cls: 'mon-bad'},
+  unknown: {label: '未知', cls: 'mon-warn'},
+};
+const MON_WORKER_STATE = {
+  ok: {label: '正常', cls: 'mon-ok'},
+  overdue: {label: '漏跑', cls: 'mon-bad'},
+  disabled: {label: '已停用', cls: 'mon-muted'},
+  never_run: {label: '未运行', cls: 'mon-warn'},
+};
+
+async function loadMonitor() {
+  if (monitorState.loading) return;
+  monitorState.loading = true;
+  const btn = $('#monRefreshBtn');
+  if (btn) btn.classList.add('spinning');
+  try {
+    const snap = await api('/monitor/snapshot');
+    monitorState.lastSnapshot = snap;
+    renderMonitor(snap);
+  } catch (err) {
+    $('#monSubtitle').textContent = `监控数据加载失败：${err.message}`;
+  } finally {
+    monitorState.loading = false;
+    if (btn) btn.classList.remove('spinning');
+  }
+}
+
+function renderMonitor(snap) {
+  $('#monSubtitle').textContent = `数据更新于 ${formatDate(snap.generated_at, true)} · 依赖健康、闸门队列、Worker 调度、检索质量与吞吐一览`;
+
+  // ---- 告警
+  const alertsBox = $('#monAlerts');
+  alertsBox.innerHTML = '';
+  if (snap.alerts && snap.alerts.length) {
+    alertsBox.hidden = false;
+    snap.alerts.forEach(a => {
+      const row = monEl('div', `mon-alert mon-alert-${a.level === 'critical' ? 'bad' : 'warn'}`);
+      row.append(monEl('b', '', a.level === 'critical' ? '🔴 ' : '🟡 '),
+                 monEl('span', '', a.message));
+      alertsBox.appendChild(row);
+    });
+  } else {
+    alertsBox.hidden = true;
+  }
+
+  // ---- 顶部指标卡
+  const h = MON_HEALTH[snap.health.overall] || MON_HEALTH.unknown;
+  const healthVal = $('#monHealth');
+  healthVal.textContent = h.label;
+  healthVal.className = `val ${h.cls}`;
+  const degraded = Object.entries(snap.health.checks).filter(([, c]) => c.status === 'degraded');
+  $('#monHealthDetail').textContent = degraded.length
+    ? `${degraded.map(([n]) => n).join(' / ')} 异常`
+    : 'SQLite · ChromaDB · LLM 均正常';
+
+  $('#monUptime').textContent = fmtUptime(snap.runtime.uptime_seconds);
+  $('#monVersion').textContent = `v${snap.runtime.version} · :${snap.runtime.port}`;
+
+  const r24 = snap.retrieval.last_24h;
+  const zeroPct = (r24.zero_recall_rate * 100).toFixed(1);
+  const zeroVal = $('#monZeroRate');
+  zeroVal.textContent = r24.real ? `${zeroPct}%` : '—';
+  zeroVal.className = `val ${r24.real >= 10 && r24.zero_recall_rate >= 0.5 ? 'mon-bad' : 'mon-ok'}`;
+  $('#monZeroDetail').textContent = `${r24.real} 次真实检索 · ${r24.zero_recall} 次零召回`;
+
+  const p95 = r24.latency_p95_ms || 0;
+  $('#monLatency').textContent = r24.real ? `${Math.round(p95)} ms` : '—';
+  $('#monLatencyDetail').textContent = `均值 ${Math.round(r24.latency_avg_ms || 0)} ms · 估算 ${fmtTokens(r24.estimated_tokens)} tokens`;
+
+  const q = snap.queues;
+  const backlog = q.candidates_pending + q.proposals_pending + q.conflicts_open;
+  const backlogVal = $('#monBacklog');
+  backlogVal.textContent = backlog;
+  backlogVal.className = `val ${backlog > 50 ? 'mon-bad' : backlog > 0 ? 'mon-warn' : 'mon-ok'}`;
+
+  const storageTotal = (snap.storage.sqlite_bytes || 0) + (snap.storage.chromadb_bytes || 0);
+  $('#monStorage').textContent = storageTotal ? fmtBytes(storageTotal) : '—';
+  $('#monStorageDetail').textContent = `DB ${fmtBytes(snap.storage.sqlite_bytes)} · 向量 ${fmtBytes(snap.storage.chromadb_bytes)}`;
+
+  // ---- 依赖健康
+  const checks = $('#monChecks');
+  checks.innerHTML = '';
+  Object.entries(snap.health.checks).forEach(([name, c]) => {
+    const state = MON_HEALTH[c.status] || MON_HEALTH.unknown;
+    const chip = monEl('div', `mon-check ${state.cls === 'mon-ok' ? 'mon-ok' : c.status === 'degraded' ? 'mon-bad' : 'mon-warn'}`);
+    chip.append(monEl('i', 'mon-dot'), monEl('b', '', name), monEl('span', '', c.detail || state.label));
+    checks.appendChild(chip);
+  });
+
+  // ---- 闸门队列
+  const queues = $('#monQueues');
+  queues.innerHTML = '';
+  const queueItems = [
+    {label: '待审候选', value: q.candidates_pending, warn: 50, goto: 'tasks'},
+    {label: '待决提案', value: q.proposals_pending, warn: 10, goto: 'tasks'},
+    {label: '未消解冲突', value: q.conflicts_open, warn: 1, goto: 'tasks'},
+    {label: '待裁参数建议', value: q.param_suggestions_pending, warn: 5, goto: 'tasks'},
+    {label: '待审技能结晶', value: q.crystals_candidate, warn: 5, goto: 'tasks'},
+  ];
+  queueItems.forEach(item => {
+    const row = monEl('div', 'mon-queue-row');
+    row.append(monEl('span', 'mon-queue-label', item.label));
+    const bar = monEl('div', 'mon-mini-bar');
+    const fill = monEl('i');
+    fill.style.width = `${Math.min(100, (item.value / Math.max(1, item.warn)) * 100)}%`;
+    fill.className = item.value >= item.warn ? 'fill-bad' : item.value > 0 ? 'fill-warn' : 'fill-ok';
+    bar.appendChild(fill);
+    row.append(bar, monEl('b', item.value >= item.warn ? 'mon-bad' : item.value > 0 ? 'mon-warn' : 'mon-ok', String(item.value)));
+    queues.appendChild(row);
+  });
+
+  // ---- 检索质量（7d）
+  const r7 = snap.retrieval.last_7d;
+  const retrieval = $('#monRetrieval');
+  retrieval.innerHTML = '';
+  const kv = (label, value, cls = '') => {
+    const row = monEl('div', 'mon-kv');
+    row.append(monEl('span', '', label), monEl('b', cls, value));
+    return row;
+  };
+  retrieval.append(
+    kv('7 天检索总量', `${r7.total} 次（真实 ${r7.real} · 噪音 ${r7.system_noise}）`),
+    kv('零召回率', r7.real ? `${(r7.zero_recall_rate * 100).toFixed(1)}%（${r7.zero_recall} 次）` : '—',
+       r7.real >= 20 && r7.zero_recall_rate >= 0.4 ? 'mon-bad' : ''),
+    kv('平均延迟', r7.real ? `${Math.round(r7.latency_avg_ms)} ms` : '—'),
+    kv('P95 延迟', r7.real ? `${Math.round(r7.latency_p95_ms)} ms` : '—'),
+    kv('估算注入 tokens', fmtTokens(r7.estimated_tokens)),
+    kv('潮波缓冲', `${snap.coalesce_buffer.total_messages || 0} 条 / ${snap.coalesce_buffer.active_keys || 0} 键（累计冲刷 ${snap.coalesce_buffer.flush_count || 0}）`),
+  );
+
+  // ---- 吞吐双序列柱图
+  renderThroughput(snap.retrieval.daily_series);
+
+  // ---- Worker 表
+  const workersBody = $('#monWorkers');
+  workersBody.innerHTML = '';
+  snap.workers.forEach(w => {
+    const state = MON_WORKER_STATE[w.state] || MON_WORKER_STATE.ok;
+    const tr = monEl('tr');
+    const nameTd = monEl('td', 'mon-worker-name');
+    nameTd.append(document.createTextNode(w.label));
+    nameTd.appendChild(monEl('span', 'mon-worker-id', w.name));
+    const statusTd = monEl('td');
+    statusTd.appendChild(monEl('span', `mon-pill ${state.cls}`, state.label));
+    tr.append(
+      nameTd,
+      statusTd,
+      monEl('td', 'mon-muted', w.enabled ? fmtInterval(w.interval_seconds) : '—'),
+      monEl('td', 'mon-muted', w.last_run ? formatDate(w.last_run, true) : '—'),
+      monEl('td', w.state === 'overdue' ? 'mon-bad' : 'mon-muted', w.enabled ? fmtAge(w.age_seconds) : '—'),
+    );
+    const actionTd = monEl('td');
+    if (w.enabled) {
+      const runBtn = monEl('button', 'mon-run-btn', '立即运行');
+      runBtn.addEventListener('click', () => runMonitorWorker(w.name, runBtn));
+      actionTd.appendChild(runBtn);
+    }
+    tr.appendChild(actionTd);
+    workersBody.appendChild(tr);
+  });
+
+  // ---- 摄取任务
+  const ingest = $('#monIngest');
+  ingest.innerHTML = '';
+  if (snap.ingestion.recent_jobs.length) {
+    const table = monEl('table', 'mon-table');
+    const thead = monEl('thead');
+    const hr = monEl('tr');
+    ['来源', '状态', '开始时间', '错误'].forEach(t => hr.appendChild(monEl('th', '', t)));
+    thead.appendChild(hr); table.appendChild(thead);
+    const tb = monEl('tbody');
+    snap.ingestion.recent_jobs.forEach(j => {
+      const tr = monEl('tr');
+      const statusPill = monEl('span', `mon-pill ${j.status === 'failed' ? 'mon-bad' : j.status === 'done' ? 'mon-ok' : 'mon-warn'}`,
+        {done: '完成', failed: '失败', running: '进行中', pending: '待处理'}[j.status] || j.status);
+      const tdStatus = monEl('td'); tdStatus.appendChild(statusPill);
+      tr.append(
+        monEl('td', 'mon-muted', j.source_id),
+        tdStatus,
+        monEl('td', 'mon-muted', j.started_at ? formatDate(j.started_at, true) : '—'),
+        monEl('td', j.error ? 'mon-bad' : 'mon-muted', j.error || '—'),
+      );
+      tb.appendChild(tr);
+    });
+    table.appendChild(tb);
+    ingest.appendChild(table);
+  } else {
+    ingest.appendChild(monEl('p', 'mon-muted', '暂无摄取任务记录'));
+  }
+  const srcInfo = monEl('p', 'mon-muted', `来源 ${snap.ingestion.sources_enabled}/${snap.ingestion.sources_total} 启用 · 近 24h 失败 ${snap.ingestion.jobs_failed_24h} 个`);
+  ingest.appendChild(srcInfo);
+
+  // ---- 运行时
+  const runtime = $('#monRuntime');
+  runtime.innerHTML = '';
+  runtime.append(
+    kv('服务版本', `v${snap.runtime.version}`),
+    kv('监听', `${snap.runtime.host}:${snap.runtime.port}`),
+    kv('调度器', snap.runtime.scheduler_enabled ? '运行中' : '已关闭'),
+    kv('服务器时间', formatDate(snap.runtime.server_time, true)),
+  );
+  const featBox = monEl('div', 'mon-features');
+  const featLabels = {
+    digest: '每日盘点', reflect: '反思蒸馏', autodream: '雾梦蒸馏',
+    param_advice: '参数建议', coalesce: '潮波合并', reranker: '重排器', scene_layer: '场景层',
+  };
+  Object.entries(snap.runtime.features).forEach(([key, on]) => {
+    const pill = monEl('span', `mon-pill ${on ? 'mon-ok' : 'mon-muted'}`, `${featLabels[key] || key} · ${on ? '开' : '关'}`);
+    featBox.appendChild(pill);
+  });
+  runtime.appendChild(featBox);
+
+  // ---- 慢查询
+  const slowBody = $('#monSlow');
+  slowBody.innerHTML = '';
+  if (snap.retrieval.slow_queries.length) {
+    snap.retrieval.slow_queries.forEach(e => {
+      const tr = monEl('tr');
+      tr.append(
+        monEl('td', 'mon-query-cell', e.query || '(空查询)'),
+        monEl('td', 'mon-muted', e.lane),
+        monEl('td', e.latency_ms > 2000 ? 'mon-bad' : e.latency_ms > 800 ? 'mon-warn' : '', `${e.latency_ms} ms`),
+        monEl('td', e.zero_result ? 'mon-bad' : 'mon-ok', e.zero_result ? '零召回' : '有结果'),
+        monEl('td', 'mon-muted', e.created_at ? formatDate(e.created_at, true) : '—'),
+      );
+      slowBody.appendChild(tr);
+    });
+  } else {
+    const tr = monEl('tr');
+    const td = monEl('td', 'mon-muted', '近 7 天暂无检索事件');
+    td.colSpan = 5;
+    tr.appendChild(td);
+    slowBody.appendChild(tr);
+  }
+}
+
+function fmtTokens(n) {
+  if (n === null || n === undefined) return '—';
+  if (n >= 10000) return `${(n / 10000).toFixed(1)} 万`;
+  return String(n);
+}
+
+function renderThroughput(series) {
+  const box = $('#monThroughput');
+  box.innerHTML = '';
+  if (!series || !series.length) { box.appendChild(monEl('p', 'mon-muted', '暂无数据')); return; }
+  const maxV = Math.max(1, ...series.map(d => Math.max(d.new_memories, d.retrievals)));
+  const wrap = monEl('div', 'mon-bars');
+  series.forEach(d => {
+    const col = monEl('div', 'mon-bar-col');
+    const track = monEl('div', 'mon-bar-track');
+    const memBar = monEl('i', 'bar-mem');
+    memBar.style.height = `${(d.new_memories / maxV) * 100}%`;
+    memBar.title = `新增记忆 ${d.new_memories}`;
+    const reBar = monEl('i', 'bar-re');
+    reBar.style.height = `${(d.retrievals / maxV) * 100}%`;
+    reBar.title = `检索 ${d.retrievals}`;
+    track.append(reBar, memBar);
+    col.append(track, monEl('span', 'mon-bar-val', `${d.new_memories}/${d.retrievals}`),
+               monEl('span', 'mon-bar-date', d.date.slice(5)));
+    wrap.appendChild(col);
+  });
+  box.appendChild(wrap);
+}
+
+async function runMonitorWorker(name, btn) {
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '运行中…';
+  try {
+    const result = await api(`/workers/${encodeURIComponent(name)}/run`, {method: 'POST'});
+    showToast(`${name} 手动运行完成${result.result ? '' : ''}`);
+    await loadMonitor();
+  } catch (err) {
+    showToast(`运行失败：${err.message}`);
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
+function startMonitorAutoRefresh() {
+  if (monitorState.timer) clearInterval(monitorState.timer);
+  monitorState.timer = setInterval(() => {
+    if (!document.hidden && state.view === 'system' && $('#monAutoRefresh')?.checked) {
+      loadMonitor();
+    }
+  }, 30000);
+}
+
 function bindEvents() {
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => setView(button.dataset.view)));
   $('#refreshButton').addEventListener('click', () => loadQueue());
   $('#aiTriageBtn')?.addEventListener('click', runAiAutoTriage);
-  $('#systemRefresh').addEventListener('click', async () => { setView('tasks'); await loadQueue(); });
+  $('#monRefreshBtn')?.addEventListener('click', () => loadMonitor());
   $('#closeInspector').addEventListener('click', closeInspector);
   $('#clearSelection').addEventListener('click', () => { state.selected.clear(); renderQueue(); });
   $('#searchInput').addEventListener('input', debounce(event => { state.filters.q = event.target.value.trim(); loadQueue(); }, 260));
@@ -973,6 +1316,7 @@ function initTheme() {
 
 async function init() {
   initTheme(); updateConnection(); bindEvents(); await loadQueue();
+  startMonitorAutoRefresh();
   refreshTimer = setInterval(() => { if (!document.hidden && state.view === 'tasks') loadQueue({silent: true}); }, 30000);
 }
 

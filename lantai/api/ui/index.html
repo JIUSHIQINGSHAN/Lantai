@@ -327,15 +327,129 @@
         </div>
       </section>
 
-      <!-- 7. 系统脉搏与质量 (System & Pulse) -->
-      <section class="view tools-view" id="systemView">
-        <header class="topbar"><div><h1>系统脉搏与质量</h1><p>存储健康度、Worker 调度与监控报告</p></div></header>
-        <div class="tool-list">
-          <a href="/ui/vault"><span><b>全景档案库</b><small>独立档案库管理与多维浏览</small></span><i>→</i></a>
-          <a href="/ui/map"><span><b>知识星图</b><small>关系、实体双链与拓扑场景</small></span><i>→</i></a>
-          <a href="/ui/recall"><span><b>追忆漏斗</b><small>逐步查看检索漏斗与各层召回</small></span><i>→</i></a>
-          <a href="/ui/pulse"><span><b>系统脉搏</b><small>存储可用性与 Worker 调度记录</small></span><i>→</i></a>
-          <a href="/ui/evolve"><span><b>检索质量</b><small>零召回率、评测与演化看板</small></span><i>→</i></a>
+      <!-- 7. 瞭望台 · 后台监控面板 (Monitor) -->
+      <section class="view" id="systemView">
+        <header class="topbar">
+          <div>
+            <h1>瞭望台 · 后台监控</h1>
+            <p id="monSubtitle">依赖健康、闸门队列、Worker 调度、检索质量与吞吐一览</p>
+          </div>
+          <div class="top-actions">
+            <label class="check-field inline" style="margin-right:4px;">
+              <input id="monAutoRefresh" type="checkbox" checked><span>30s 自动刷新</span>
+            </label>
+            <button class="icon-button" id="monRefreshBtn" title="刷新监控数据" aria-label="刷新">↻</button>
+          </div>
+        </header>
+
+        <div class="view-content monitor-dashboard">
+          <!-- 告警条 -->
+          <div id="monAlerts" class="mon-alerts" hidden></div>
+
+          <!-- 顶部指标卡 -->
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <span class="val" id="monHealth">—</span><span class="lbl">系统健康</span>
+              <small id="monHealthDetail" class="metric-sub">探测中…</small>
+            </div>
+            <div class="metric-card">
+              <span class="val" id="monUptime">—</span><span class="lbl">运行时长</span>
+              <small id="monVersion" class="metric-sub"></small>
+            </div>
+            <div class="metric-card">
+              <span class="val" id="monZeroRate">—</span><span class="lbl">近 24h 零召回率</span>
+              <small id="monZeroDetail" class="metric-sub"></small>
+            </div>
+            <div class="metric-card">
+              <span class="val" id="monLatency">—</span><span class="lbl">检索 P95 延迟</span>
+              <small id="monLatencyDetail" class="metric-sub"></small>
+            </div>
+            <div class="metric-card">
+              <span class="val" id="monBacklog">—</span><span class="lbl">闸门待决积压</span>
+              <small class="metric-sub">候选 / 提案 / 冲突</small>
+            </div>
+            <div class="metric-card">
+              <span class="val" id="monStorage">—</span><span class="lbl">存储占用</span>
+              <small id="monStorageDetail" class="metric-sub"></small>
+            </div>
+          </div>
+
+          <!-- 依赖健康 -->
+          <div class="panel-card mon-panel">
+            <h3>🩺 依赖健康</h3>
+            <div id="monChecks" class="mon-checks">探测中…</div>
+          </div>
+
+          <div class="mon-grid-2">
+            <!-- 人工闸门队列 -->
+            <div class="panel-card mon-panel">
+              <h3>⚖️ 人工闸门队列</h3>
+              <div id="monQueues" class="mon-queues">加载中…</div>
+            </div>
+            <!-- 检索质量 -->
+            <div class="panel-card mon-panel">
+              <h3>🔍 检索质量（近 7 天）</h3>
+              <div id="monRetrieval" class="mon-retrieval">加载中…</div>
+            </div>
+          </div>
+
+          <!-- 吞吐趋势 -->
+          <div class="panel-card mon-panel">
+            <h3>📈 吞吐趋势（近 7 天）</h3>
+            <div id="monThroughput" class="mon-chart">加载中…</div>
+            <div class="mon-legend">
+              <span><i class="dot dot-mem"></i>新增记忆</span>
+              <span><i class="dot dot-re"></i>检索次数</span>
+            </div>
+          </div>
+
+          <!-- Worker 调度 -->
+          <div class="panel-card mon-panel">
+            <h3>⏲️ Worker 调度</h3>
+            <div class="mon-table-wrap">
+              <table class="mon-table">
+                <thead><tr>
+                  <th>Worker</th><th>状态</th><th>调度周期</th><th>上次运行</th><th>距今</th><th></th>
+                </tr></thead>
+                <tbody id="monWorkers"><tr><td colspan="6">加载中…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 摄取任务 + 运行时 -->
+          <div class="mon-grid-2">
+            <div class="panel-card mon-panel">
+              <h3>📥 摄取任务（最近）</h3>
+              <div id="monIngest" class="mon-table-wrap">加载中…</div>
+            </div>
+            <div class="panel-card mon-panel">
+              <h3>⚙️ 运行时与功能开关</h3>
+              <div id="monRuntime" class="mon-runtime">加载中…</div>
+            </div>
+          </div>
+
+          <!-- 慢查询 -->
+          <div class="panel-card mon-panel">
+            <h3>🐢 慢查询 Top 10（近 7 天）</h3>
+            <div class="mon-table-wrap">
+              <table class="mon-table">
+                <thead><tr><th>查询</th><th>lane</th><th>延迟</th><th>结果</th><th>时间</th></tr></thead>
+                <tbody id="monSlow"><tr><td colspan="5">加载中…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 旧版独立面板入口 -->
+          <div class="panel-card mon-panel">
+            <h3>🧭 专项面板</h3>
+            <div class="mon-links">
+              <a href="/ui/recall" target="_blank">追忆漏斗 ↗</a>
+              <a href="/ui/pulse" target="_blank">旧版脉搏页 ↗</a>
+              <a href="/ui/evolve" target="_blank">检索质量看板 ↗</a>
+              <a href="/ui/map" target="_blank">知识星图 ↗</a>
+              <a href="/ui/vault" target="_blank">全景档案库 ↗</a>
+            </div>
+          </div>
         </div>
       </section>
     </main>

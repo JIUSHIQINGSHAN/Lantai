@@ -1,11 +1,11 @@
 from datetime import UTC, datetime, timedelta
 
-from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-from lantai.storage.db import engine
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from lantai.core.logger import logger
 from lantai.core.settings import settings
+from lantai.storage.db import engine
 
 _scheduler: BackgroundScheduler | None = None
 
@@ -117,11 +117,14 @@ def start_scheduler():
 
     _scheduler = BackgroundScheduler(jobstores={"default": SQLAlchemyJobStore(engine=engine, tablename="apscheduler_jobs")}, timezone="UTC")
     _scheduler.add_job(run_ingest_once, "interval",
-                       minutes=settings.INGEST_CRON_MINUTES, id="ingest")
+                       minutes=settings.INGEST_CRON_MINUTES, id="ingest",
+                       replace_existing=True)
     _scheduler.add_job(run_evolve_once, "interval",
-                       minutes=settings.EVOLVE_CRON_MINUTES, id="evolve")
+                       minutes=settings.EVOLVE_CRON_MINUTES, id="evolve",
+                       replace_existing=True)
     _scheduler.add_job(run_forgetting_once, "interval",
-                       hours=settings.FORGET_CRON_HOURS, id="forget")
+                       hours=settings.FORGET_CRON_HOURS, id="forget",
+                       replace_existing=True)
     # Ticket 02: 候选待审队列 TTL 归档
     from lantai.workers.digest_worker import run_candidate_ttl
     _scheduler.add_job(run_candidate_ttl, "interval",

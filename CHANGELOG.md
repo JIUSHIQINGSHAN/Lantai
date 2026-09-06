@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **瞭望（Liaowang · 悬镜后台监控面板）**：
+  - 后端只读聚合服务 `lantai/ops/monitor.py`：`build_monitor_snapshot(session)` 纯函数（测试直传临时 session，不 mock 内部逻辑），单次请求聚合依赖健康（SQLite/ChromaDB/LLM 探测）、人工闸门队列水位（候选/提案/冲突/参数建议/结晶）、Worker 调度漏跑判定（周期 × 1.5 宽限，启动 10 分钟宽限不误报）、检索质量（24h/7d 零召回率、均值/P95 延迟、估算 token、排除系统噪音）、近 7 天吞吐双序列（新增记忆 × 检索次数）、摄取任务成败与来源统计、SQLite/ChromaDB 磁盘占用、功能开关矩阵与告警汇总；
+  - 接口面暴露：新增 REST `GET /monitor/snapshot`（全量快照）与 `GET /monitor/health`（轻量健康 + 告警，供外部探针）；只读不改写任何系统状态，Worker 手动处置复用既有 `POST /workers/{name}/run`；
+  - 悬镜控制台「系统脉搏」视图由静态链接列表改造为实时监控仪表盘：6 张指标卡、告警条、依赖健康灯、闸门队列水位条、检索质量 KV、吞吐双序列柱图（纯 CSS 零依赖）、Worker 调度表（含一键运行）、摄取任务表、运行时开关矩阵、慢查询 Top 10，支持 30 秒自动刷新与手动刷新；
+  - 中枢总览健康卡接入真实 `/monitor/health`（原先硬编码「良好 100%」）；
+  - 命名正式登记：在 `CONTEXT.md` 登记「瞭望」（Liaowang，出自古代瞭望塔登高侦候意象）。
+
+### Fixed
+- **ChromaDB 0.6.x 兼容**：`list_collections()` 在 v0.6+ 返回名称字符串列表而非 Collection 对象，旧代码 `[c.name for c in ...]` 导致向量库初始化直接报错（`/health/deep` chromadb 探测与全部向量读写均受影响）；改为同时兼容字符串/对象两种返回；
+- **调度器重启冲突**：核心定时任务 ingest/evolve/forget 注册时缺 `replace_existing=True`，持久化 SQLAlchemy jobstore 中残留同名 job 时重启报 `ConflictingIdError` 启动失败；补齐参数；
+- **LLM 健康探测失效**：`/health/deep` 导入已不存在的 `lantai.llm.client._client`（重构遗留），改用 `get_client()`；
+- **总览分域计数恒为空**：`/stats` 从未返回 `by_domain`（MemoryItem 辨域字段已有聚合缺失），补充分域 GROUP BY；
+- **依赖声明补全**：`jieba`（6 个核心模块使用）未声明在 `pyproject.toml`。
+
 ## [0.21.0] - 2026-08-31 - 悬镜（Xuanjing · 兰台可视化管理控制台 Lantai Studio）
 
 ### Added

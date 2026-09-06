@@ -20,6 +20,7 @@ dependencies = [
   "tenacity>=8.5",
   "chromadb>=0.4,<1.0",
   "requests>=2.31",
+  "jieba>=0.42",
 ]
 
 [project.optional-dependencies]

@@ -51,8 +51,8 @@ def health_deep():
         checks["llm"] = "skipped (no key)"
     else:
         try:
-            from lantai.llm.client import _client
-            _client.models.list()
+            from lantai.llm.client import get_client
+            get_client().models.list()
             checks["llm"] = "ok"
         except Exception as e:
             checks["llm"] = f"fail: {e}"
@@ -69,6 +69,8 @@ def stats():
         total = s.exec(select(func.count()).select_from(MemoryItem)).one()
         lane_rows = s.exec(select(MemoryItem.lane, func.count())
                            .group_by(MemoryItem.lane)).all()
+        domain_rows = s.exec(select(MemoryItem.domain, func.count())
+                             .group_by(MemoryItem.domain)).all()
         status_rows = s.exec(select(MemoryItem.status, func.count())
                              .group_by(MemoryItem.status)).all()
         tier_rows = s.exec(select(MemoryItem.tier, func.count())
@@ -80,6 +82,7 @@ def stats():
     return {
         "total_memories": total,
         "by_lane": {k: v for k, v in lane_rows},
+        "by_domain": {k: v for k, v in domain_rows},
         "by_status": {k: v for k, v in status_rows},
         "by_tier": {k: v for k, v in tier_rows},
         "by_decay_class": {k: v for k, v in decay_rows},
