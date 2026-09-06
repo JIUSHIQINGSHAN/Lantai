@@ -20,6 +20,10 @@ dependencies = [
   "tenacity>=8.5",
   "chromadb>=0.4,<1.0",
   "requests>=2.31",
+  # 中文分词与 BM25（四路混合检索的词级通道）——此前仅在文档中提及、未声明依赖，
+  # 干净环境 `pip install -e .` 后 import lantai.gate.conflict_rules 直接 ModuleNotFoundError
+  "jieba>=0.42",
+  "rank-bm25>=0.2.2",
 ]
 
 [project.optional-dependencies]

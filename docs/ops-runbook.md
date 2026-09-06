@@ -1,5 +1,36 @@
 # 兰台运维手册
 
+## 先看司天（运行监控面板）
+
+任何排障先开监控面板，别一上来就翻日志：
+
+```powershell
+# 浏览器
+start http://127.0.0.1:8767/ui        # 侧边栏「司天监控」
+
+# 或者命令行三件套
+curl -s http://127.0.0.1:8767/monitor/overview | python -m json.tool | more
+curl -s "http://127.0.0.1:8767/monitor/logs?only_problems=true" | python -m json.tool
+curl -s http://127.0.0.1:8767/monitor/prometheus | head -40
+```
+
+**读法**（自上而下）：
+
+| 看什么 | 指标 | 异常时怎么办 |
+|--------|------|--------------|
+| 服务活着吗 | `summary.status` / 告警区 | `critical` 优先处理，`scheduler_not_running` 先查启动日志 |
+| worker 停没停 | 调度器表「状态」列 | 逾期 → `POST /monitor/workers/{name}/run` 手动补跑 |
+| 接口慢不慢 | p95 延迟 + 端点耗时排行 | 排行里 p95 高的端点通常是 LLM/精排调用，查端点可达性 |
+| 有没有报错 | 5xx 错误率 + 最近问题请求 | `/monitor/logs?only_problems=true` 看具体端点与状态码 |
+| 库在膨胀吗 | 存储占用 + 表行数 | 跑遗忘/沉淀；必要时备份后归档旧库 |
+| 记忆质量 | 零召回率 | 见下文「零召回」与 ADR-0028（拾遗） |
+| 检索有没有真被召回 | 记忆管道水位（潮波缓冲/待审积压） | 待审积压高 → 案牍台批量处置或收紧 `CANDIDATE_MIN_CONFIDENCE` |
+
+**接入外部监控**：`GET /monitor/prometheus` 是标准文本格式（`lantai_*` 指标族），
+Prometheus 直接抓即可；该端点走 API Key 鉴权，非回环部署记得带 `Authorization: Bearer <key>`。
+
+**关掉遥测**：`MONITOR_ENABLED=false`——中间件零开销直通，面板接口仍可用（只是请求维度为空）。
+
 ## 常见问题
 
 ### 1. 反思观察期门禁卡住

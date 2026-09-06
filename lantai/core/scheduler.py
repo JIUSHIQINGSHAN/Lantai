@@ -57,6 +57,95 @@ def get_last_run(name: str) -> str | None:
     return _last_run_from_db(name) or WORKER_LAST_RUN.get(name)
 
 
+def is_running() -> bool:
+    """调度器是否已启动（司天监控面板用；测试进程通常为 False）。"""
+    return bool(_scheduler is not None and _scheduler.running)
+
+
+def scheduler_status() -> dict:
+    """调度器运行态与作业清单（只读；未启动时 running=False、jobs=[]）。
+
+    司天（ADR-0044）监控面板的数据源之一：APScheduler 作业的真实下一次触发时间
+    只有调度器自己知道，DB 里的 `scheduler_run` 只回答「上次跑没跑」。
+    """
+    if _scheduler is None:
+        return {"running": False, "configured": bool(settings.LANTAI_RUN_SCHEDULER),
+                "job_count": 0, "jobs": []}
+    jobs = []
+    now = datetime.now(UTC)
+    try:
+        for job in _scheduler.get_jobs():
+            next_run = job.next_run_time
+            if next_run is not None and next_run.tzinfo is None:
+                next_run = next_run.replace(tzinfo=UTC)
+            jobs.append({
+                "id": job.id,
+                "name": getattr(job, "name", job.id),
+                "trigger": str(job.trigger),
+                "next_run_time": next_run.isoformat() if next_run else None,
+                "next_run_in_seconds": (round((next_run - now).total_seconds(), 1)
+                                        if next_run else None),
+                "paused": next_run is None,
+            })
+    except Exception:
+        logger.exception("读取调度器作业清单失败（降级为空清单）")
+    jobs.sort(key=lambda row: (row["next_run_in_seconds"] is None,
+                               row["next_run_in_seconds"] or 0, row["id"]))
+    return {"running": bool(_scheduler.running),
+            "configured": bool(settings.LANTAI_RUN_SCHEDULER),
+            "job_count": len(jobs), "jobs": jobs}
+
+
+def worker_staleness(name: str, *, period_seconds: int, last_run: datetime | None,
+                     now: datetime | None = None,
+                     process_started_at: datetime | None = None,
+                     grace_factor: float | None = None,
+                     critical_factor: float | None = None) -> dict:
+    """worker 逾期判定（纯函数，司天与案牍共用同一口径）。
+
+    规则（与案牍 `runtime_status` 投影一致）：
+    - 基线 = 上次运行时间，缺失则退到进程启动时间（宁保守不误报）；
+    - 宽限 = max(周期 × grace_factor, 15 分钟)，吸收调度抖动；
+    - 超过基线 + 周期 + 宽限 = overdue；超过 critical_factor 个完整周期 = critical。
+    """
+    from lantai.core.time import utcnow
+
+    grace_ratio = (float(settings.MONITOR_WORKER_GRACE_FACTOR)
+                   if grace_factor is None else float(grace_factor))
+    critical_ratio = (float(settings.MONITOR_WORKER_CRITICAL_FACTOR)
+                      if critical_factor is None else float(critical_factor))
+    now = now or utcnow()
+    period = timedelta(seconds=max(1, int(period_seconds)))
+    grace = max(period * grace_ratio, timedelta(minutes=15))
+    baseline = last_run or process_started_at
+    if baseline is None:
+        return {"name": name, "period_seconds": int(period.total_seconds()),
+                "last_run": None, "last_run_age_seconds": None, "baseline": None,
+                "due_at": None, "overdue": False, "overdue_seconds": 0.0,
+                "critical": False, "status": "unknown"}
+    due = baseline + period + grace
+    elapsed = now - baseline
+    overdue = now > due
+    critical = bool(overdue and elapsed > period * critical_ratio)
+    if not overdue:
+        status = "ok" if last_run is not None else "never"
+    else:
+        status = "critical" if critical else "overdue"
+    return {
+        "name": name,
+        "period_seconds": int(period.total_seconds()),
+        "last_run": last_run.isoformat() if last_run else None,
+        "last_run_age_seconds": (round((last_run - now).total_seconds() * -1, 1)
+                                 if last_run else None),
+        "baseline": baseline.isoformat(),
+        "due_at": due.isoformat(),
+        "overdue": bool(overdue),
+        "overdue_seconds": round(max(0.0, (now - due).total_seconds()), 1),
+        "critical": critical,
+        "status": status,
+    }
+
+
 def _parse_utc_iso(value: str) -> datetime | None:
     try:
         dt = datetime.fromisoformat(value)
@@ -116,12 +205,18 @@ def start_scheduler():
     from lantai.workers.ingest_worker import run_ingest_once
 
     _scheduler = BackgroundScheduler(jobstores={"default": SQLAlchemyJobStore(engine=engine, tablename="apscheduler_jobs")}, timezone="UTC")
+    # replace_existing=True 是必需的：jobstore 是 SQLAlchemyJobStore（持久化在同一个
+    # SQLite 库里），第二次启动时旧作业仍在表中——缺这个参数会让 start() 抛
+    # ConflictingIdError，服务对已存在的库再也起不来（只能删库或手工清表）。
     _scheduler.add_job(run_ingest_once, "interval",
-                       minutes=settings.INGEST_CRON_MINUTES, id="ingest")
+                       minutes=settings.INGEST_CRON_MINUTES, id="ingest",
+                       replace_existing=True)
     _scheduler.add_job(run_evolve_once, "interval",
-                       minutes=settings.EVOLVE_CRON_MINUTES, id="evolve")
+                       minutes=settings.EVOLVE_CRON_MINUTES, id="evolve",
+                       replace_existing=True)
     _scheduler.add_job(run_forgetting_once, "interval",
-                       hours=settings.FORGET_CRON_HOURS, id="forget")
+                       hours=settings.FORGET_CRON_HOURS, id="forget",
+                       replace_existing=True)
     # Ticket 02: 候选待审队列 TTL 归档
     from lantai.workers.digest_worker import run_candidate_ttl
     _scheduler.add_job(run_candidate_ttl, "interval",
@@ -180,6 +275,15 @@ def start_scheduler():
     _catch_up_daily_jobs()
 
 def stop_scheduler():
-    if _scheduler:
-        _scheduler.shutdown(wait=False)
+    """关闭调度器（幂等）：已停止/未启动都不抛，避免 shutdown 路径连带炸掉。"""
+    global _scheduler
+    if _scheduler is None:
+        return
+    try:
+        if _scheduler.running:
+            _scheduler.shutdown(wait=False)
+    except Exception:
+        logger.exception("调度器关闭异常（忽略，不阻断退出）")
+    finally:
+        _scheduler = None
 

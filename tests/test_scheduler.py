@@ -203,3 +203,62 @@ class TestMigrationsV8ToV15:
         assert "source" in cols
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 17
         conn.close()
+
+
+class TestSchedulerRestart:
+    """重启回归：jobstore 持久化在同一个库里，第二次启动必须替换旧作业而不是炸。
+
+    真实 BackgroundScheduler + 真实文件 SQLite jobstore（不 mock 调度器）——
+    这条正是为了防住 ingest/evolve/forget 三个 add_job 漏 replace_existing 时
+    `start()` 抛 ConflictingIdError、服务对已存在的库再也起不来的故障。
+    """
+
+    def test_start_twice_against_same_jobstore(self, monkeypatch, tmp_path):
+        from sqlmodel import create_engine
+
+        from lantai.core.settings import settings
+
+        engine = create_engine(f"sqlite:///{tmp_path / 'jobs.db'}")
+        SQLModel.metadata.create_all(engine)
+        monkeypatch.setattr(scheduler_mod, "engine", engine)
+        monkeypatch.setattr(scheduler_mod, "_scheduler", None)
+        # 关掉会在启动后 2 秒补跑真 LLM 的每日任务，只验证作业注册幂等
+        monkeypatch.setattr(settings, "DIGEST_ENABLED", False)
+        monkeypatch.setattr(settings, "REFLECT_ENABLED", False)
+        monkeypatch.setattr(settings, "PARAM_ADVICE_ENABLED", False)
+        monkeypatch.setattr(settings, "AUTODREAM_ENABLED", False)
+        monkeypatch.setattr(settings, "COALESCE_ENABLED", False)
+
+        try:
+            scheduler_mod.start_scheduler()
+            first = scheduler_mod.scheduler_status()
+            assert first["running"] is True
+            ids = {job["id"] for job in first["jobs"]}
+            assert {"ingest", "evolve", "forget", "candidate_ttl",
+                    "consolidation"} <= ids
+            assert all(job["next_run_time"] for job in first["jobs"])
+            scheduler_mod.stop_scheduler()
+
+            # 第二次启动：旧作业仍在 jobstore 表中
+            scheduler_mod.start_scheduler()
+            second = scheduler_mod.scheduler_status()
+            assert second["running"] is True
+            assert {job["id"] for job in second["jobs"]} == ids
+            scheduler_mod.stop_scheduler()
+        finally:
+            scheduler_mod.stop_scheduler()   # 幂等：已停止时不再抛
+            monkeypatch.setattr(scheduler_mod, "_scheduler", None)
+
+    def test_stop_scheduler_is_idempotent(self, monkeypatch):
+        """重复关闭 / 未启动就关闭都不该抛（lifespan 退出路径不能被它带崩）。"""
+        monkeypatch.setattr(scheduler_mod, "_scheduler", None)
+        scheduler_mod.stop_scheduler()
+        scheduler_mod.stop_scheduler()
+
+    def test_scheduler_status_reports_not_running_when_idle(self, monkeypatch):
+        monkeypatch.setattr(scheduler_mod, "_scheduler", None)
+        status = scheduler_mod.scheduler_status()
+        assert status == {"running": False,
+                          "configured": bool(scheduler_mod.settings.LANTAI_RUN_SCHEDULER),
+                          "job_count": 0, "jobs": []}
+        assert scheduler_mod.is_running() is False

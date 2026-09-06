@@ -36,6 +36,7 @@
 | 🧹 **去重** | 不写垃圾比事后清理便宜 | 余弦预筛 + 结构判别（ADR-0019）：改写直合 / 值变更走待审提案 / 中带 LLM 兜底（0.90 / 0.65 可配） |
 | 🔗 **双形态** | 读有 Hook，写有 MCP | Shell Hook（零依赖 CLI 注入，2s 硬超时）+ MCP server（标准 JSON-RPC 2.0） |
 | 🛡️ **护盾** | 安全不是可选项 | 默认回环绑定、非回环强制鉴权、SSRF 防护、原子备份恢复、端点白名单 |
+| 📡 **司天** | 系统自己会报告状态 | 后台监控面板：进程/存储/调度/请求遥测 + 规则告警 + Prometheus 出口，一屏看清「现在跑得怎么样」 |
 
 ---
 
@@ -53,6 +54,8 @@
 │  evolution/ → 提案/应用/回滚 + Checkpoint 快照     │
 │  retrieval/ → 四路融合检索 + 意图分类 + Reranker   │
 │  memory/    → Ebbinghaus 遗忘 + 自动归档          │
+│  observability/ → 请求遥测 + 检索事件 + 零召回报告 │
+│  ops/       → 只读聚合（概览 / 司天监控 / 星图）   │
 ├──────────────────────────────────────────────────┤
 │  SQLite（结构化 + FTS5 trigram 全文索引）          │
 │  ChromaDB（向量存储，cosine）                      │
@@ -117,6 +120,10 @@ docker run -d -p 8767:8767 \
 | `GET` / `POST` | `/sources` · `/ingest/run` | 摄取源管理 |
 | `GET` / `POST` / `DELETE` | `/edges...` | 记忆关系与 supersedes 链 |
 | `GET` | `/health` `/health/deep` `/stats` | 健康检查与统计 |
+| `GET` | `/monitor/overview` `/monitor/series` | 司天监控快照与分钟级趋势 |
+| `GET` | `/monitor/logs` `/monitor/config` | 请求遥测落库记录与生效配置（密钥打码） |
+| `GET` | `/monitor/prometheus` | Prometheus 文本格式指标 |
+| `POST` | `/monitor/workers/{name}/run` | 手动触发一次 worker（同名互斥） |
 
 ### 示例：搜索（带诊断）
 
@@ -180,6 +187,39 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 - **备份/恢复原子化**：SQLite online backup 一致性快照 + manifest sha256 校验 + 路径限定 + 原子换入 + fail-closed 停服保护
 - **端点白名单**：LLM/精排 base_url 域名 allowlist，独立最小权限 `RERANKER_API_KEY`
 
+### 📡 司天（后台运行监控面板）
+
+> 观天象、察灾异、报异常——系统自己会报告状态。
+
+浏览器打开 `http://127.0.0.1:8767/ui` → 侧边栏「司天监控」，或直接调 REST：
+
+```bash
+# 全量快照（进程/存储/记忆/管道/调度/请求/安全 + 规则告警）
+curl -s http://127.0.0.1:8767/monitor/overview | jq '.summary, .alerts'
+
+# 分钟级趋势 / 端点耗时排行 / 错误与慢请求
+curl -s "http://127.0.0.1:8767/monitor/series?minutes=60" | jq '.series[-5:]'
+curl -s "http://127.0.0.1:8767/monitor/logs?only_problems=true" | jq '.items[:5]'
+
+# 外部监控直接抓取（Prometheus 文本格式）
+curl -s http://127.0.0.1:8767/monitor/prometheus | head -20
+
+# worker 停摆时手动补跑一次（与案牍共用互斥锁）
+curl -s -X POST http://127.0.0.1:8767/monitor/workers/forgetting/run
+```
+
+面板一屏给出：运行时长 / 请求速率 / p95 延迟 / 5xx 错误率 / 记忆总量 / 待审积压 /
+worker 逾期数 / 存储占用 / 零召回率；下方是规则告警、服务与依赖、请求趋势曲线（纯 SVG）、
+端点耗时排行、记忆管道水位、调度器与 worker 明细、最近问题请求与生效配置（密钥打码）。
+
+**告警规则**（阈值全部可配，见 `MONITOR_ALERT_*`）：调度器停摆、worker 逾期（超 2 个周期升
+critical）、反思/参数建议任务失败、5xx 错误率、p95 延迟、零召回率、待审候选积压、SQLite
+体积、非回环绑定无鉴权、缺 LLM Key。
+
+**写入代价**：请求级指标只进内存环形缓冲；落 `operation_logs` 的只有 4xx/5xx、超过
+`MONITOR_PERSIST_SLOW_MS` 的慢请求，以及 1/`MONITOR_PERSIST_SAMPLE` 的正常请求采样——
+不给记忆主链路加写放大。`MONITOR_ENABLED=false` 整体关闭。
+
 ## 技术栈
 
 - **运行时**：Python 3.11+、FastAPI、Uvicorn、APScheduler
@@ -205,6 +245,10 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 | `GATE_CACHE_TTL` | `15.0` | 闸门热缓存秒数 |
 | `LANTAI_HOME` | 仓库根 | 数据目录（DB/向量库/备份）；旧名 `REMEMBRANCE_HOME` 兼容回退 |
 | `ALLOWED_API_HOSTS` | openai/siliconflow | 外部 API 域名白名单 |
+| `MONITOR_ENABLED` | `true` | 司天监控与请求遥测开关（关闭后中间件零开销直通） |
+| `MONITOR_PERSIST_SLOW_MS` / `MONITOR_PERSIST_SAMPLE` | `800` / `20` | 慢请求阈值（必落库）与正常请求落库采样率 1/N |
+| `MONITOR_RETENTION_DAYS` | `7` | `operation_logs` 保留天数 |
+| `MONITOR_ALERT_*` | 见 settings | 告警阈值：错误率 / p95 / 零召回率 / 待审积压 / 库体积 |
 
 ## 测试
 
@@ -234,7 +278,7 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 ## 文档索引
 
 - `CONTEXT.md` — 领域词汇表（lane / gate / coalesce / fastpath / checkpoint…）
-- `docs/adr/` — 架构决策记录 0001-0025
+- `docs/adr/` — 架构决策记录 0001-0044
 - `docs/plans/` — 各版本执行方案
 - `docs/release-process.md` — 版本上传规范流程（发布门禁 + 人工闸门）
 - `docs/aidumem-port-results.md` — aiduMEM 移植结果与审计修复记录

@@ -276,6 +276,7 @@ def ui_asset(asset_name: str):
         "terminal.css": "text/css",
         "api.js": "text/javascript",
         "app.js": "text/javascript",
+        "monitor.js": "text/javascript",
         "terminal.js": "text/javascript",
     }
     media_type = allowed.get(asset_name)

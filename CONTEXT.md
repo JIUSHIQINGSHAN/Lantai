@@ -68,6 +68,7 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **探颐**（Tanyi，记忆主动探针与消歧） | 记忆主动探针与自然消歧正式名（ADR-0013 意象池「探颐」= 《易·系辞上》「探赜索隐，钩深致远」）：改变记忆系统被动查询现状，在检索命中冲突账本（ConflictEvent）或模糊事实时，主动生成自然探针并注入回复引导区；当次轮用户给出肯定答复时自动闭环解决冲突、更新记忆与快照，实现自然对话中的自纠错。见 [ADR-0037](docs/adr/0037-proactive-memory-probing.md) |
 | **悬镜**（Xuanjing，可视化管理控制台） | 可视化管理中台正式名（ADR-0013 意象池「悬镜」= 宝镜高悬、洞烛幽微）：为人类管理者提供现代化的单页 Web 控制台（Lantai Studio），一站式集成案牍审阅大厅、器识/札记在线编辑器、沉潜夜梦沉淀面板、四路检索与探针演练场、拓扑星图与全景档案，彻底打破纯 MCP 命令行运维壁垒。见 [ADR-0038](docs/adr/0038-visual-management-studio.md) |
 | **持节**（Chijie，智能体案牍巡检官与自主审批） | 智能体记忆审批自治正式名（ADR-0013 典籍意象「持节」= 汉唐天子特使持符节巡行天下、决断刑政）：通过标准化 MCP 协议（`triage_analyze` / `triage_apply` / `triage_auto_pilot`）赋予外部 AI 智能体（如 Hermes、Antigravity、Claude Code）自主治理与审批记忆库的特权；支持自动化待审巡检、结构化置信度研判、噪音剔除与确凿事实批准，实现人机协同与无人值守自治的双模闭环。见 [ADR-0039](docs/adr/0039-agent-autonomous-triage.md) |
+| **司天**（Sitian，后台运行监控面板） | 运行监控面板正式名（ADR-0013 典籍意象「司天」= 司天监掌观天象、察灾异、报异常）：把散落的运行事实拼成一张可判断的快照——进程（uptime/RSS/线程）、存储（SQLite/WAL/FTS5/向量库体积与行数）、记忆管道（待审积压/冲突/潮波水位/24h 归档）、调度器（APScheduler 作业下次触发 + worker 逾期，口径与案牍同源）、请求遥测（环形缓冲 + 采样落 `operation_logs`，补齐 ADR-0040 死表）与安全绑定态；配 `evaluate_alerts` 规则告警与 `/monitor/prometheus` 文本出口，三处消费同一快照（悬镜「司天监控」视图 / REST / Prometheus）。只读、零第三方依赖、密钥打码。见 [ADR-0044](docs/adr/0044-sitian-ops-monitor-panel.md) |
 
 
 

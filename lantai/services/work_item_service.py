@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlmodel import select
 
+from lantai.core.scheduler import worker_staleness
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import (
@@ -343,15 +344,16 @@ def project_work_items(
     for name, spec in snapshot.get("worker_schedules", {}).items():
         if not spec.get("enabled") or name in explicit_workers:
             continue
-        period = timedelta(seconds=max(1, int(spec["seconds"])))
-        grace = max(period * 0.25, timedelta(minutes=15))
+        # 逾期口径统一到 scheduler.worker_staleness（司天监控面板同源，ADR-0044）
         last_run = last_runs.get(name)
-        baseline = last_run or process_started_at
-        due = baseline + period + grace
-        if now <= due:
+        staleness = worker_staleness(
+            name, period_seconds=spec["seconds"], last_run=last_run,
+            now=now, process_started_at=process_started_at)
+        if not staleness["overdue"]:
             continue
-        elapsed = now - baseline
-        critical = elapsed > period * 2
+        critical = staleness["critical"]
+        baseline = _parse_iso(staleness["baseline"])
+        due = _parse_iso(staleness["due_at"])
         items.append(WorkItem(
             id=f"worker:{name}:overdue", kind="worker", source_id=name,
             title=f"{name} 未按计划运行",

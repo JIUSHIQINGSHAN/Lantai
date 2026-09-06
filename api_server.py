@@ -17,6 +17,7 @@ from lantai.api import (
     routes_health_router,
     routes_import_router,
     routes_memory_router,
+    routes_monitor_router,
     routes_obsidian_router,
     routes_param_advice_router,
     routes_persona_router,
@@ -38,6 +39,7 @@ from lantai.core.auth import assert_secure_binding, get_current_user
 from lantai.core.logger import logger
 from lantai.core.scheduler import start_scheduler, stop_scheduler
 from lantai.core.settings import settings
+from lantai.observability.telemetry import TelemetryMiddleware, get_writer
 from lantai.storage.db import init_db
 
 
@@ -62,12 +64,20 @@ async def lifespan(app: FastAPI):
         logger.exception("load runtime params at startup failed (keep defaults)")
     if settings.LANTAI_RUN_SCHEDULER:
         start_scheduler()
+    # 司天（ADR-0044）：遥测落库后台线程（采样批量写 operation_logs，失败不影响请求）
+    if settings.MONITOR_ENABLED:
+        get_writer().start()
     logger.info("兰台记忆（Lantai） started on %s:%s", settings.HOST, settings.PORT)
     yield
+    if settings.MONITOR_ENABLED:
+        get_writer().stop()
     stop_scheduler()
 
 
 app = FastAPI(title="兰台记忆（Lantai）", version="0.21.0", lifespan=lifespan)
+
+# 司天（ADR-0044）：请求级遥测（内存指标 + 采样落库）；关闭时中间件零开销直通
+app.add_middleware(TelemetryMiddleware)
 
 # 公共端点（不需要鉴权）
 app.include_router(routes_health_router)
@@ -78,6 +88,7 @@ CORE_ROUTERS = [
     routes_memory_router,
     routes_search_router,
     routes_gate_router,
+    routes_monitor_router,
     routes_checkpoint_router,
     routes_evolution_router,
     routes_health_protected_router,
