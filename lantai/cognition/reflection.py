@@ -43,37 +43,16 @@ class ReflectionEngine:
         failures = self.db.exec(select(FailureRecord)).all()
         report.failures = len(failures)
 
-        # 步骤 2：查找重复 Observation，归纳 Pattern 候选
+        # 步骤 2：查找重复 Observation，归纳 Pattern 候选（复用 EvolutionEngine 词袋与语义签名聚类）
         observations = self.db.exec(
             select(MemoryItem).where(MemoryItem.role == CognitiveRole.OBSERVATION)
         ).all()
 
-        content_counter = Counter(obs.content.strip().lower() for obs in observations)
-        repeated = {
-            content: count
-            for content, count in content_counter.items()
-            if count > self.REPETITION_THRESHOLD
-        }
-
-        for content_key, count in repeated.items():
-            source_ids = [
-                obs.id for obs in observations
-                if obs.content.strip().lower() == content_key
-            ]
-            pattern = CognitivePattern(
-                id=new_id("pat"),
-                pattern_type="recurrence",
-                description=content_key,
-                source_ids=source_ids,
-                occurrence_count=count,
-                independent_source_count=len(set(source_ids)),
-                confidence=min(0.5 + 0.1 * count, 0.9),
-                status="candidate",
-                updated_at=utcnow(),
-            )
-            self.db.add(pattern)
-            report.proposed_patterns.append(pattern)
-            report.new_patterns += 1
+        from lantai.cognition.evolution import EvolutionEngine
+        evo = EvolutionEngine(self.db)
+        patterns = evo.detect_patterns(observations)
+        report.proposed_patterns = patterns
+        report.new_patterns = len(patterns)
 
         # 步骤 3：检查 Belief 是否置信度过低（反证衰减导致）
         beliefs = self.db.exec(
@@ -91,9 +70,25 @@ class ReflectionEngine:
             if r.confidence < 0.5:
                 report.rules_weakened += 1
 
+        # 步骤 5：使用 EvolutionEngine 从发现的 Pattern 候选晋升 Belief 候选，从 Belief 晋升 Rule 候选
+        if report.proposed_patterns:
+            from lantai.cognition.evolution import EvolutionEngine
+            evo = EvolutionEngine(self.db)
+            b_cands = evo.propose_beliefs(report.proposed_patterns)
+            report.belief_candidates = len(b_cands)
+            for b in b_cands:
+                self.db.add(b)
+
+            if beliefs:
+                r_cands = evo.propose_rules(beliefs)
+                report.rule_candidates = len(r_cands)
+                for r in r_cands:
+                    self.db.add(r)
+
         if report.new_patterns > 0 or report.failures > 0:
             report.summary = (
                 f"Reflection completed: {report.new_patterns} new pattern(s) detected, "
+                f"{report.belief_candidates} belief candidate(s), "
                 f"{report.failures} failure(s) on record, "
                 f"{report.rules_weakened} rule(s) weakened."
             )

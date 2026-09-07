@@ -645,6 +645,37 @@ def handle_checkpoint_latest(params: dict) -> dict:
     return get_latest_checkpoint()
 
 
+def handle_cognitive_context(params: dict) -> dict:
+    """心斋（认知上下文）：从 7 切面分流构建 Agent 决策上下文与 prompt。"""
+    task = params.get("task", "") or ""
+    top_k = params.get("top_k", 10)
+    as_prompt = bool(params.get("as_prompt", True))
+    if not isinstance(task, str):
+        raise ValueError("task must be a string")
+    if not isinstance(top_k, int) or isinstance(top_k, bool) or not (1 <= top_k <= 50):
+        raise ValueError("top_k must be an int in [1, 50]")
+
+    from lantai.cognition.context import CognitiveContextBuilder
+    from lantai.storage import db
+
+    with db.get_session() as s:
+        builder = CognitiveContextBuilder(s)
+        ctx = builder.build(task=task, top_k=top_k)
+        res = {
+            "task": ctx.task,
+            "facts": ctx.facts,
+            "experience": ctx.experience,
+            "beliefs": ctx.beliefs,
+            "rules": ctx.rules,
+            "principles": ctx.principles,
+            "failures": ctx.failures,
+            "conflicts": ctx.conflicts,
+        }
+        if as_prompt:
+            res["prompt"] = ctx.to_prompt()
+        return res
+
+
 def handle_persona_get(params: dict) -> dict:
     """器识：获取当前激活人格基座（只读）。"""
     from lantai.services.persona_service import format_persona_context, get_active_persona
@@ -1372,9 +1403,21 @@ TOOLS = {
             "required": ["content"],
         },
     },
+    "cognitive_context": {
+        "description": "心斋：提取当前任务的 7 切面结构化认知上下文与提示词（事实/经验/信念/规则/原则/失败/冲突）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "default": "", "description": "当前任务描述或目标"},
+                "top_k": {"type": "integer", "default": 10, "description": "各切面返回最大条目数 [1, 50]"},
+                "as_prompt": {"type": "boolean", "default": True, "description": "是否附带渲染好的 Markdown Prompt"},
+            },
+        },
+    },
 }
 
 TOOL_HANDLERS = {
+    "cognitive_context": handle_cognitive_context,
     "search": handle_search,
     "graph_expand_search": handle_graph_expand_search,
     "add": handle_add,

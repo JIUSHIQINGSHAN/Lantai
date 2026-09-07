@@ -38,13 +38,26 @@ def db():
 # Benchmark 1: Promotion Precision — 高质量 Pattern → Belief
 # ──────────────────────────────────────────────────────────────
 def test_promotion_precision_high_quality(db):
-    """高质量 Pattern (confidence=0.85, independent>=2) 应该被成功提拔为 Belief 候选。"""
+    """高质量 Pattern (带有真实独立的 Evidence 支撑) 应该通过真实计算被成功提拔为 Belief 候选。"""
+    # 真实插入 3 条高质量独立 Evidence
+    for i in range(3):
+        db.add(Evidence(
+            id=f"ev_hq_{i}",
+            evidence_type="benchmark_run",
+            source_memory_id=f"exp_{i}",
+            content=f"Measured speedup trial {i}: WAL mode 2.8x faster",
+            reliability=0.9,
+            independence=1.0,
+            created_at=utcnow(),
+        ))
+    db.commit()
+
     eng = EvolutionEngine(db)
     pattern = CognitivePattern(
         id="pat_hq",
         pattern_type="recurrence",
         description="SQLite WAL mode consistently improves read throughput",
-        source_ids=["exp1", "exp2", "exp3"],
+        source_ids=["exp_0", "exp_1", "exp_2"],
         occurrence_count=3,
         independent_source_count=3,
         confidence=0.85,
@@ -52,9 +65,10 @@ def test_promotion_precision_high_quality(db):
         updated_at=utcnow(),
     )
     proposals = eng.propose_beliefs([pattern])
-    assert len(proposals) == 1, "高质量 Pattern 应被提拔"
+    assert len(proposals) == 1, "有真实高质量 Evidence 支撑的 Pattern 应被提拔"
     assert proposals[0].role == CognitiveRole.BELIEF
     assert proposals[0].status == "candidate"  # 绝不自动 commit
+    assert proposals[0].confidence >= 0.70
 
 
 # ──────────────────────────────────────────────────────────────
@@ -170,20 +184,27 @@ def test_rule_stability(db):
 # ──────────────────────────────────────────────────────────────
 def test_promotion_recall_observations_to_patterns(db):
     """
-    写入 4 条重复内容的 Observation 后，
-    Reflection 应该能发现并提出 >= 1 个 Pattern 候选（高召回率）。
+    即使观察在语序和停用词上存在自然语言扰动，
+    Reflection 也应该通过语义词袋特征签名聚类并提出 >= 1 个 Pattern 候选（高召回率）。
     """
     from lantai.cognition.reflection import ReflectionEngine
 
-    for i in range(4):
+    phrasings = [
+        "SQLite WAL mode improves read concurrency",
+        "The WAL mode in SQLite improves read concurrency significantly",
+        "For SQLite, WAL mode improves read concurrency for workloads",
+    ]
+    for i, p in enumerate(phrasings):
         db.add(MemoryItem(
             id=f"obs_recall_{i}",
-            content="SQLite WAL mode improves read concurrency",
+            content=p,
             role=CognitiveRole.OBSERVATION,
+            source_ids=[f"src_obs_{i}"],
         ))
     db.commit()
 
     engine = ReflectionEngine(db)
     report = engine.run_reflection()
 
-    assert report.new_patterns >= 1, "4 条重复 Observation 应产生 Pattern 候选（Recall 测试）"
+    assert report.new_patterns >= 1, "语义相近但带自然语言扰动的 Observation 应当被召回并聚类为 Pattern"
+    assert report.proposed_patterns[0].occurrence_count >= 2

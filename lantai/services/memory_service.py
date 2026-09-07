@@ -24,6 +24,7 @@ from lantai.models.enums import MemoryTier
 from lantai.models.schemas import AddMemoryReq, RawMemoryReq
 from lantai.models.tables import (
     CoreMemoryBlock,
+    Evidence,
     MemoryCandidate,
     MemoryItem,
     MemoryProposal,
@@ -424,6 +425,22 @@ def add_raw_memory(req: RawMemoryReq) -> dict:
             },
         )
         sync_fts(s, mem.id, mem.content)
+        s.add(
+            Evidence(
+                id=new_id("ev"),
+                tenant_id=mem.tenant_id,
+                user_id=mem.user_id,
+                agent_id=mem.agent_id,
+                session_id=mem.session_id,
+                evidence_type="verbatim_ingest",
+                source_memory_id=mem.id,
+                content=mem.content,
+                reliability=1.0,
+                independence=1.0,
+                provenance={"source": "raw_add", "lane": lane},
+                created_at=utcnow(),
+            )
+        )
         s.commit()
         return {"memory_id": mem.id, "dedup": False, "verbatim": True}
 

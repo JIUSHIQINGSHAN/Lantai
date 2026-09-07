@@ -8,6 +8,7 @@ from lantai.llm.client import embed
 from lantai.memory.decay_class import infer_decay_class
 from lantai.models.enums import MemoryTier, ProposalStatus
 from lantai.models.tables import (
+    Evidence,
     MemoryCandidate,
     MemoryCheckpoint,
     MemoryEdge,
@@ -200,6 +201,23 @@ def apply_proposal(proposal_id: str) -> dict:
                         confidence=prop.confidence,
                     )
                 )
+            # 闭环：新写入 MemoryItem 时为其创建对应的根证据 Evidence
+            s.add(
+                Evidence(
+                    id=new_id("ev"),
+                    tenant_id=mem.tenant_id,
+                    user_id=mem.user_id,
+                    agent_id=mem.agent_id,
+                    session_id=mem.session_id,
+                    evidence_type="proposal_applied",
+                    source_memory_id=mem.id,
+                    content=mem.content,
+                    reliability=max(0.6, prop.confidence),
+                    independence=1.0,
+                    provenance=prop.provenance or {},
+                    created_at=utcnow(),
+                )
+            )
         else:
             before = existing.model_dump(mode="json")
             existing.content = content

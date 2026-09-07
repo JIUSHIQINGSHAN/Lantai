@@ -19,17 +19,55 @@ def record_feedback(
         mem.importance = max(0.0, min(1.0, mem.importance + delta))
         mem.last_used_at = utcnow()
         s.add(mem)
-        s.add(
-            MemoryUsageFeedback(
-                id=new_id("fb"),
-                memory_id=memory_id,
-                query=query,
-                helped=helped,
-                user_accepted=user_accepted,
-                hallucination_risk=hallucination_risk,
-                score_delta=delta,
-            )
+        fb = MemoryUsageFeedback(
+            id=new_id("fb"),
+            memory_id=memory_id,
+            query=query,
+            helped=helped,
+            user_accepted=user_accepted,
+            hallucination_risk=hallucination_risk,
+            score_delta=delta,
         )
+        s.add(fb)
+
+        # 闭环：当用户明确拒绝、未帮助或存在高幻觉风险时，生成 ActionOutcome 与 FailureRecord
+        if (not helped or not user_accepted or hallucination_risk >= 0.5):
+            from lantai.models.tables import ActionOutcome, FailureRecord
+
+            act_id = new_id("out")
+            action_out = ActionOutcome(
+                id=act_id,
+                task_id=query[:100] or "retrieval_feedback",
+                action_type="retrieval_response",
+                action_summary=f"Query: {query[:120]} -> Memory: {mem.content[:120]}",
+                success=False,
+                score=max(0.0, 0.5 + delta),
+                side_effects=["retrieval_rejected_or_hallucinated"],
+                feedback={
+                    "query": query,
+                    "helped": helped,
+                    "user_accepted": user_accepted,
+                    "hallucination_risk": hallucination_risk,
+                },
+                created_at=utcnow(),
+            )
+            s.add(action_out)
+
+            fail_rec = FailureRecord(
+                id=new_id("fail"),
+                task=query[:100] or "retrieval_task",
+                action="recall_memory",
+                expected="helpful and truthful recall",
+                actual=f"Rejected by user or hallucination risk {hallucination_risk:.2f}",
+                cause=f"Memory {mem.id} provided insufficient or conflicting facts",
+                lesson=f"Review and verify memory [{mem.key or mem.id}]: {mem.content[:80]}",
+                severity=max(0.4, hallucination_risk),
+                recurrence_count=1,
+                source_ids=[mem.id, fb.id, act_id],
+                created_at=utcnow(),
+            )
+            s.add(fail_rec)
+
         s.commit()
         return {"ok": True, "importance": mem.importance}
 

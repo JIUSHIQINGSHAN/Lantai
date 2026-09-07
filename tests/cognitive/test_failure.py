@@ -3,10 +3,12 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from datetime import datetime
 
 try:
-    from lantai.models.tables import FailureRecord, ActionOutcome
+    from lantai.models.tables import FailureRecord, ActionOutcome, MemoryItem, CognitiveRole
 except ImportError:
     FailureRecord = None
     ActionOutcome = None
+    MemoryItem = None
+    CognitiveRole = None
 
 
 @pytest.fixture
@@ -70,3 +72,40 @@ def test_action_outcome_creation(test_db):
     assert len(fetched.side_effects) == 2
     assert fetched.feedback["user_note"] == "revert to 1 worker"
     assert fetched.created_at is not None
+
+
+def test_record_feedback_creates_failure_and_outcome(test_db, monkeypatch):
+    """验证主链路反馈 (record_feedback) 在用户拒绝或高幻觉时真实生成 FailureRecord 和 ActionOutcome。"""
+    from lantai.evolution.reflector import record_feedback
+    from lantai.storage import db
+
+    # 让 db.get_session() 返回 test_db
+    class DummySessionCtx:
+        def __enter__(self):
+            return test_db
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    monkeypatch.setattr(db, "get_session", lambda: DummySessionCtx())
+
+    mem = MemoryItem(id="mem_target", content="Old bad instruction", role=CognitiveRole.RULE)
+    test_db.add(mem)
+    test_db.commit()
+
+    res = record_feedback(
+        memory_id="mem_target",
+        query="how to optimize sqlite",
+        helped=False,
+        user_accepted=False,
+        hallucination_risk=0.8,
+    )
+    assert res["ok"] is True
+
+    failures = test_db.exec(select(FailureRecord)).all()
+    assert len(failures) == 1, "必须真实持久化一条 FailureRecord"
+    assert "mem_target" in failures[0].source_ids
+    assert failures[0].severity >= 0.8
+
+    outcomes = test_db.exec(select(ActionOutcome)).all()
+    assert len(outcomes) == 1, "必须真实持久化一条 ActionOutcome"
+    assert outcomes[0].success is False

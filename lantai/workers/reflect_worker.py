@@ -8,4 +8,22 @@ from lantai.evolution.reflector import run_reflect_once as _run_reflect
 
 
 def run_reflect_once() -> dict:
-    return _run_reflect(source="scheduled")
+    res = _run_reflect(source="scheduled")
+    try:
+        from lantai.cognition.reflection import ReflectionEngine
+        from lantai.storage import db
+
+        with db.get_session() as s:
+            engine = ReflectionEngine(s)
+            report = engine.run_reflection()
+            res["cognitive_reflection"] = {
+                "new_patterns": report.new_patterns,
+                "belief_candidates": report.belief_candidates,
+                "rule_candidates": report.rule_candidates,
+                "rules_weakened": report.rules_weakened,
+                "failures": report.failures,
+                "summary": report.summary,
+            }
+    except Exception:
+        pass
+    return res
