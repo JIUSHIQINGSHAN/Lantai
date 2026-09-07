@@ -108,3 +108,32 @@ def test_cognitive_context_to_prompt(test_db):
     assert "## Governing Rules" in prompt
     assert "Don't share SQLite across threads" in prompt
     assert "## Relevant Facts" in prompt
+
+
+def test_context_task_relevance_sorting(test_db):
+    """task_relevance 排序：sqlite 相关 rule 应排在 UI rule 之前，即便置信度更低。"""
+    assert MemoryItem is not None
+
+    # rule_sqlite: 与 task 'sqlite database optimization' 高度相关，但 confidence 较低
+    test_db.add(MemoryItem(
+        id="rule_sqlite",
+        content="always use SQLite WAL mode for database optimization",
+        role=CognitiveRole.RULE,
+        confidence=0.7,
+    ))
+    # rule_ui: 与 task 无关，但 confidence 更高
+    test_db.add(MemoryItem(
+        id="rule_ui",
+        content="use dark mode UI theme",
+        role=CognitiveRole.RULE,
+        confidence=0.9,
+    ))
+    test_db.commit()
+
+    builder = CognitiveContextBuilder(test_db)
+    ctx = builder.build(task="sqlite database optimization", top_k=5)
+
+    assert len(ctx.rules) >= 1, "rules 切面不应为空"
+    assert ctx.rules[0]["id"] == "rule_sqlite", (
+        f"期望 rule_sqlite 排在第一位（task 相关性更高），实际得到: {ctx.rules[0]['id']}"
+    )

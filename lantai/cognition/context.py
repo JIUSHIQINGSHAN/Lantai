@@ -75,15 +75,36 @@ class CognitiveContextBuilder:
     def __init__(self, db: Session):
         self.db = db
 
+    @staticmethod
+    def _task_relevance(content: str, task: str) -> float:
+        """计算内容与任务的词汇重叠相关度（Jaccard 系数）。"""
+        task_words = set(task.lower().split())
+        content_words = set(content.lower().split())
+        if not task_words and not content_words:
+            return 0.0
+        return len(task_words & content_words) / len(task_words | content_words)
+
     def build(self, task: str, top_k: int = 12) -> CognitiveContext:
         ctx = CognitiveContext(task=task)
 
-        # 1. 拉取所有 MemoryItem，按 role 分流
+        # 1. 拉取所有 MemoryItem，按综合分（task_relevance + confidence）全局排序
         memories = self.db.exec(select(MemoryItem)).all()
 
-        for mem in memories[:top_k * 3]:   # 宽松加载，后续可加 task_relevance 过滤
+        def _score(mem: MemoryItem) -> float:
+            relevance = self._task_relevance(mem.content or "", task)
+            confidence = mem.confidence if mem.confidence is not None else 0.0
+            return 0.6 * relevance + 0.4 * confidence
+
+        memories_sorted = sorted(memories, key=_score, reverse=True)
+
+        # 2. 按 role 分流到各切面，每切面最多 top_k 条
+        for mem in memories_sorted:
             section_key = _ROLE_TO_SECTION.get(mem.role)
             if section_key is None:
+                continue
+
+            target: list = getattr(ctx, section_key)
+            if len(target) >= top_k:
                 continue
 
             record = {
@@ -96,11 +117,9 @@ class CognitiveContextBuilder:
                 scope = mem.structure.get("scope", {})
                 record["scope"] = scope.get("domain", "")
 
-            target: list = getattr(ctx, section_key)
-            if len(target) < top_k:
-                target.append(record)
+            target.append(record)
 
-        # 2. 拉取 FailureRecord
+        # 3. 拉取 FailureRecord
         failures = self.db.exec(select(FailureRecord)).all()
         for f in failures[:top_k]:
             ctx.failures.append({
@@ -111,7 +130,8 @@ class CognitiveContextBuilder:
                 "severity": f.severity,
             })
 
-        # 3. conflicts 预留（后续接入 ConflictEngine 实时检测）
+        # 4. conflicts 预留（后续接入 ConflictEngine 实时检测）
         ctx.conflicts = []
 
         return ctx
+

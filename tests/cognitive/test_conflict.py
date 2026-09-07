@@ -1,13 +1,17 @@
 import pytest
+from sqlmodel import Session, SQLModel, create_engine
 try:
     from lantai.cognition.conflicts import ConflictEngine, ConflictResult, ConflictResolution
-    from lantai.models.tables import MemoryItem, CognitiveRole
+    from lantai.models.tables import MemoryItem, CognitiveRole, Evidence
+    from lantai.core.time import utcnow
 except ImportError:
     ConflictEngine = None
     ConflictResult = None
     ConflictResolution = None
     MemoryItem = None
     CognitiveRole = None
+    Evidence = None
+    utcnow = None
 
 def test_conflict_engine_coexist():
     """Verify ConflictEngine returns COEXIST when scopes differ."""
@@ -48,3 +52,54 @@ def test_conflict_engine_win_a():
     
     assert result.resolution == ConflictResolution.WIN_A
     assert result.winner_id == r1.id
+
+
+def test_conflict_full_score_wins_by_evidence():
+    """Smoke test: 6-dim scoring — item with strong Evidence beats item with none."""
+    assert ConflictEngine is not None
+    assert Evidence is not None
+
+    db_engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(db_engine)
+
+    with Session(db_engine) as session:
+        now = utcnow()
+
+        # item_a: has strong Evidence (reliability=0.9, independence=1.0)
+        item_a = MemoryItem(
+            id="high_ev",
+            content="A with evidence",
+            role=CognitiveRole.RULE,
+            confidence=0.7,
+            created_at=now,
+            structure={"scope": {"domain": "engineering"}},
+        )
+        session.add(item_a)
+
+        ev = Evidence(
+            id="ev_for_high",
+            evidence_type="observation",
+            source_memory_id="high_ev",
+            content="observed fact",
+            reliability=0.9,
+            independence=1.0,
+        )
+        session.add(ev)
+
+        # item_b: no Evidence
+        item_b = MemoryItem(
+            id="no_ev",
+            content="B without evidence",
+            role=CognitiveRole.RULE,
+            confidence=0.7,
+            created_at=now,
+            structure={"scope": {"domain": "engineering"}},
+        )
+        session.add(item_b)
+        session.commit()
+
+        result = ConflictEngine().resolve(item_a, item_b, session=session)
+
+    assert result.resolution == ConflictResolution.WIN_A, (
+        f"Expected WIN_A but got {result.resolution}: {result.reason}"
+    )

@@ -48,3 +48,33 @@ def test_propose_principles():
     assert "scope" in prin.structure
     assert "conditions" in prin.structure["scope"]
     assert "exceptions" in prin.structure["scope"]
+
+
+def test_detect_patterns_from_experiences(test_db):
+    """detect_patterns() 对相同词袋前缀的 Experience 聚类，写入真实 DB。"""
+    assert EvolutionEngine is not None
+
+    content = "sqlite wal mode improves read concurrency"
+    experiences = [
+        MemoryItem(
+            id=f"exp_{i}",
+            content=content,
+            role=CognitiveRole.EXPERIENCE,
+            source_ids=[f"src_{i}"],
+        )
+        for i in range(3)
+    ]
+
+    engine = EvolutionEngine(db=test_db)
+    patterns = engine.detect_patterns(experiences)
+
+    assert len(patterns) >= 1
+    pat = patterns[0]
+    assert pat.occurrence_count >= 2
+    assert pat.status == "candidate"
+
+    # 验证已写入真实 DB
+    from sqlmodel import select
+    db_pat = test_db.exec(select(CognitivePattern).where(CognitivePattern.id == pat.id)).first()
+    assert db_pat is not None
+    assert db_pat.occurrence_count >= 2

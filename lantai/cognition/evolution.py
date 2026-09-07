@@ -1,6 +1,8 @@
+from collections import Counter
 from sqlmodel import Session
 from lantai.models.tables import MemoryItem, CognitiveRole, CognitivePattern
 from lantai.core.ids import new_id
+from lantai.core.time import utcnow
 
 class EvolutionEngine:
     def __init__(self, db: Session | None = None):
@@ -34,8 +36,45 @@ class EvolutionEngine:
         return p
 
     def detect_patterns(self, experiences: list[MemoryItem]) -> list[CognitivePattern]:
-        # Stub logic
-        return []
+        """
+        对 Experience 列表做词袋聚类。
+        策略：content.lower().split() 取前 5 个词为 bucket_key。
+        相同 key 且出现 >= 2 次 → 生成一个 CognitivePattern（status='candidate'）。
+        """
+        # 建立 bucket_key -> [MemoryItem] 的映射
+        buckets: dict[str, list[MemoryItem]] = {}
+        for exp in experiences:
+            words = exp.content.lower().split()
+            key = " ".join(words[:5])
+            buckets.setdefault(key, []).append(exp)
+
+        now = utcnow()
+        patterns: list[CognitivePattern] = []
+        for key, items in buckets.items():
+            if len(items) < 2:
+                continue
+            occurrence_count = len(items)
+            source_ids = [sid for item in items for sid in (item.source_ids or [])]
+            independent_source_count = len(set(source_ids))
+            confidence = min(0.5 + 0.1 * occurrence_count, 0.9)
+
+            pat = CognitivePattern(
+                id=new_id("pat"),
+                pattern_type="recurrence",
+                description=key,
+                source_ids=source_ids,
+                occurrence_count=occurrence_count,
+                independent_source_count=independent_source_count,
+                confidence=confidence,
+                status="candidate",
+                created_at=now,
+                updated_at=now,
+            )
+            if self.db is not None:
+                self.db.add(pat)
+                self.db.commit()
+            patterns.append(pat)
+        return patterns
 
     def propose_beliefs(self, patterns: list[CognitivePattern], mock_score: float = 0.0) -> list[MemoryItem]:
         proposals = []
