@@ -142,6 +142,47 @@ class MemoryScene(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+
+class Evidence(SQLModel, table=True):
+    id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
+    session_id: str | None = Field(default=None, index=True)
+    
+    evidence_type: str
+    source_memory_id: str | None = Field(default=None, index=True)
+    
+    content: str
+    reliability: float = 0.5
+    independence: float = 1.0
+    
+    observed_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+    
+    provenance: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    status: str = "active"
+
+
+class CognitivePattern(SQLModel, table=True):
+    id: str = Field(primary_key=True)
+    
+    pattern_type: str
+    description: str
+    
+    source_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    
+    occurrence_count: int = 0
+    independent_source_count: int = 0
+    
+    confidence: float = 0.0
+    novelty: float = 0.0
+    
+    status: str = "candidate"
+    
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
 class MemoryEdge(SQLModel, table=True):
     id: str = Field(primary_key=True)
     tenant_id: str | None = Field(default=None, index=True)
