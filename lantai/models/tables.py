@@ -183,6 +183,42 @@ class CognitivePattern(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
+
+class FailureRecord(SQLModel, table=True):
+    id: str = Field(primary_key=True)
+
+    task: str
+    action: str
+    expected: str
+    actual: str
+
+    cause: str = ""
+    lesson: str = ""
+
+    severity: float = 0.5
+    recurrence_count: int = 1
+
+    source_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class ActionOutcome(SQLModel, table=True):
+    id: str = Field(primary_key=True)
+
+    task_id: str
+    action_type: str
+
+    action_summary: str
+
+    success: bool
+    score: float = 0.0
+
+    side_effects: list = Field(default_factory=list, sa_column=Column(JSON))
+    feedback: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+    created_at: datetime = Field(default_factory=utcnow)
+
 class MemoryEdge(SQLModel, table=True):
     id: str = Field(primary_key=True)
     tenant_id: str | None = Field(default=None, index=True)
