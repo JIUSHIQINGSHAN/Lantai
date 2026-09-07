@@ -3,6 +3,7 @@
 后台合成 → 待审提案（decided_by="autodream"，人工闸门裁决，宁 miss 不脏写）。
 record_run("autodream") 供 /stats 与启动补跑体系观测。
 """
+
 from lantai.core.scheduler import record_run
 from lantai.core.settings import settings
 from lantai.evolution.autodream import run_autodream_once

@@ -1,4 +1,5 @@
 """技能结晶路由（v0.7，借鉴 aiduMEI SkillCrystallizer 窄版）。"""
+
 from fastapi import APIRouter, HTTPException
 
 from lantai.models.schemas import CrystalDecideReq
@@ -23,7 +24,6 @@ def crystals_detect_route(dry_run: bool = False):
 def crystal_decide_route(crystal_id: str, req: CrystalDecideReq):
     """裁决候选：approve 必须带非空 steps -> 落 Skill 资产；reject -> archived。"""
     try:
-        return crystal_service.decide_crystal(
-            crystal_id, req.approve, req.steps, req.reason)
+        return crystal_service.decide_crystal(crystal_id, req.approve, req.steps, req.reason)
     except ValueError as e:
         raise HTTPException(422, str(e))

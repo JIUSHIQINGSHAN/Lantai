@@ -1,5 +1,6 @@
 """可观测性测试（零召回监控 + token 估算 + scene 埋点）：
 estimate_tokens / 迁移纯函数不 mock；log_retrieval / recall_report 用真实内存 SQLite。"""
+
 import sqlite3
 
 import pytest
@@ -13,11 +14,13 @@ from lantai.models.tables import RetrievalEvent
 def mem_db():
     """内存 SQLite 真实建表（可观测性全链路测试用）。"""
     import lantai.models.tables  # noqa: F401
-    engine = create_engine("sqlite://",
-                           connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     SQLModel.metadata.create_all(engine)
     from lantai.storage.fts import init_fts
+
     init_fts(engine.raw_connection())
 
     def session_factory() -> Session:
@@ -28,6 +31,7 @@ def mem_db():
     @contextmanager
     def _patch_session(session_factory):
         import lantai.storage.db as dbm
+
         original = dbm.get_session
         dbm.get_session = session_factory
         try:
@@ -51,6 +55,7 @@ def _result(memory_id, content, scene_id=None):
 
 def test_estimate_tokens_cjk_and_ascii():
     from lantai.observability.recall_report import estimate_tokens
+
     assert estimate_tokens("") == 0
     assert estimate_tokens("你好世界") == 4  # 4 个 CJK 字
     assert estimate_tokens("abcdefgh") == 2  # 8 字符 / 4
@@ -61,6 +66,7 @@ def test_estimate_tokens_cjk_and_ascii():
 def test_migration_v4_adds_observability_columns(tmp_path):
     """v3 老库 → v4：retrieval_event 补 scene_ids / estimated_tokens + 数据零丢失。"""
     from lantai.storage.db import CURRENT_SCHEMA_VERSION, apply_migrations
+
     path = tmp_path / "v3.db"
     conn = sqlite3.connect(str(path))
     conn.executescript(
@@ -86,8 +92,10 @@ def test_migration_v4_adds_observability_columns(tmp_path):
     assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
     cols = {r[1] for r in conn.execute("PRAGMA table_info(retrieval_event)").fetchall()}
     assert "scene_ids" in cols and "estimated_tokens" in cols
-    assert conn.execute(
-        "SELECT query_text FROM retrieval_event WHERE id='r1'").fetchone()[0] == "老事件"
+    assert (
+        conn.execute("SELECT query_text FROM retrieval_event WHERE id='r1'").fetchone()[0]
+        == "老事件"
+    )
     conn.close()
 
 
@@ -97,12 +105,16 @@ def test_migration_v4_adds_observability_columns(tmp_path):
 def test_log_retrieval_records_scene_and_tokens(mem_db, monkeypatch):
     """埋点：命中记忆的 scene_id 去重落库 + query/结果 token 估算。"""
     from lantai.observability.retrieval_log import log_retrieval
+
     session_factory, _ = mem_db
-    results = [_result("m1", "你好世界部署", scene_id="sc_a"),
-               _result("m2", "abcdefgh", scene_id="sc_a"),
-               _result("m3", "无场景内容", scene_id=None)]
-    event_id = log_retrieval("查部署方案", results, latency_ms=12,
-                             gate={"intent": "factual"}, trace_id="test")
+    results = [
+        _result("m1", "你好世界部署", scene_id="sc_a"),
+        _result("m2", "abcdefgh", scene_id="sc_a"),
+        _result("m3", "无场景内容", scene_id=None),
+    ]
+    event_id = log_retrieval(
+        "查部署方案", results, latency_ms=12, gate={"intent": "factual"}, trace_id="test"
+    )
     assert event_id is not None
     with session_factory() as s:
         ev = s.get(RetrievalEvent, event_id)
@@ -115,6 +127,7 @@ def test_log_retrieval_records_scene_and_tokens(mem_db, monkeypatch):
 def test_log_retrieval_zero_and_noise(mem_db, monkeypatch):
     """埋点：零结果 + 系统噪音标记。"""
     from lantai.observability.retrieval_log import log_retrieval
+
     session_factory, _ = mem_db
     event_id = log_retrieval("review the conversation above and save", [], latency_ms=3)
     with session_factory() as s:
@@ -123,16 +136,23 @@ def test_log_retrieval_zero_and_noise(mem_db, monkeypatch):
         assert ev.is_system_noise is True
         assert ev.estimated_tokens == 9  # 38 字符 / 4 = 9（非 CJK）
 
+
 def test_recall_report_aggregates(mem_db, monkeypatch):
     """报告聚合（核心函数不 mock）：排除噪音、按 lane/intent 分组、场景命中、token 汇总。"""
     from lantai.observability.retrieval_log import log_retrieval
+
     session_factory, _ = mem_db
-    log_retrieval("查部署方案", [_result("m1", "你好世界部署", scene_id="sc_a")],
-                  latency_ms=5, gate={"intent": "factual"}, lanes=["general"])
-    log_retrieval("独有名词不存在", [], latency_ms=3,
-                  gate={"intent": "entity"}, lanes=["general"])
+    log_retrieval(
+        "查部署方案",
+        [_result("m1", "你好世界部署", scene_id="sc_a")],
+        latency_ms=5,
+        gate={"intent": "factual"},
+        lanes=["general"],
+    )
+    log_retrieval("独有名词不存在", [], latency_ms=3, gate={"intent": "entity"}, lanes=["general"])
     log_retrieval("review the conversation above and save", [], latency_ms=2)
     from lantai.observability.recall_report import recall_report
+
     monkeypatch.setattr("lantai.core.settings.settings.SCENE_LAYER_ENABLED", True)
     rep = recall_report(days=7)
     assert rep["total"] == 3

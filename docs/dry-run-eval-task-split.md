@@ -27,55 +27,72 @@ scripts/run_dry_run.py # [DeepSeek] CLI
 ### 表结构（models.py，GLM5.2 负责，字段名钉死）
 
 ```python
-class EvalQuerySet(SQLModel, table=True):      # 表名 eval_query_set
-    id: str = Field(primary_key=True)          # new_id("eqs")
-    name: str = Field(index=True)              # 查询集名（唯一）
+class EvalQuerySet(SQLModel, table=True):  # 表名 eval_query_set
+    id: str = Field(primary_key=True)  # new_id("eqs")
+    name: str = Field(index=True)  # 查询集名（唯一）
     built_at: datetime = Field(default_factory=utcnow)
     criteria: dict = Field(default_factory=dict, sa_column=Column(JSON))
-        # {"noise_excluded": true, "dedup": true, "source": "retrieval_event"}
+    # {"noise_excluded": true, "dedup": true, "source": "retrieval_event"}
     sample_count: int = 0
     queries: list = Field(default_factory=list, sa_column=Column(JSON))
-        # [{"query": str, "event_id": str, "lane": str, "norm_hash": str}]
+    # [{"query": str, "event_id": str, "lane": str, "norm_hash": str}]
 
-class EvalRun(SQLModel, table=True):           # 表名 eval_run
-    id: str = Field(primary_key=True)          # new_id("erun")
+
+class EvalRun(SQLModel, table=True):  # 表名 eval_run
+    id: str = Field(primary_key=True)  # new_id("erun")
     query_set_id: str = Field(index=True)
     query_set_name: str = ""
     param_overrides: dict = Field(default_factory=dict, sa_column=Column(JSON))
-        # 本次运行覆盖的参数 {key: value}
+    # 本次运行覆盖的参数 {key: value}
     param_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
-        # 实际生效参数快照（default_snapshot() 合并 overrides 后）
+    # 实际生效参数快照（default_snapshot() 合并 overrides 后）
     started_at: datetime = Field(default_factory=utcnow)
     finished_at: Optional[datetime] = None
-    status: str = "running"                    # running / done / error
+    status: str = "running"  # running / done / error
     metrics: dict = Field(default_factory=dict, sa_column=Column(JSON))
     per_query: list = Field(default_factory=list, sa_column=Column(JSON))
-        # [{"query": str, "result_ids": [..], "top_scores": [..], "zero_result": bool, "latency_ms": int}]
-    baseline_run_id: Optional[str] = None      # jaccard 对比的基线运行
+    # [{"query": str, "result_ids": [..], "top_scores": [..], "zero_result": bool, "latency_ms": int}]
+    baseline_run_id: Optional[str] = None  # jaccard 对比的基线运行
 ```
 
 ### 函数签名（各任务按此实现，不得改名）
 
 ```python
 # query_set.py [GLM5.2]
-def build_query_set(name: str, *, noise_excluded: bool = True,
-                    dedup: bool = True, limit: int | None = None) -> EvalQuerySet:
+def build_query_set(
+    name: str, *, noise_excluded: bool = True, dedup: bool = True, limit: int | None = None
+) -> EvalQuerySet:
     """从 retrieval_event 干净事件构造查询集（去重 norm_hash），入库并返回。"""
+
 
 # metrics.py [Kimi-K3] 全部纯函数，不碰 DB
 def zero_result_rate(per_query: list[dict]) -> float: ...
 def avg_result_count(per_query: list[dict]) -> float: ...
 def jaccard_overlap(a: list[list[str]], b: list[list[str]]) -> float:
     """两轮运行同查询的召回集合 Jaccard 均值；a/b 是每查询的 result_ids 列表。"""
-def weak_hit_rate(per_query: list[dict], *, used_ids_map: dict[str, list[str]] | None = None) -> float | None:
+
+
+def weak_hit_rate(
+    per_query: list[dict], *, used_ids_map: dict[str, list[str]] | None = None
+) -> float | None:
     """弱命中率：used_ids 在 top-k 结果中的比例；无 used_ids 数据时返回 None（诚实标 unavailable）。"""
-def compute_metrics(per_query: list[dict], *, baseline_per_query: list[list[str]] | None = None) -> dict:
+
+
+def compute_metrics(
+    per_query: list[dict], *, baseline_per_query: list[list[str]] | None = None
+) -> dict:
     """聚合全部指标，返回 {"zero_result_rate":.., "avg_result_count":.., "weak_hit_rate":..|None, "jaccard_vs_baseline":..|None, "sample_count":n}"""
 
+
 # runner.py [DeepSeek]
-def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
-                top_k: int = 5, baseline_run_id: str | None = None,
-                use_rerank: bool = True) -> EvalRun:
+def run_dry_run(
+    query_set: EvalQuerySet,
+    *,
+    param_overrides: dict | None = None,
+    top_k: int = 5,
+    baseline_run_id: str | None = None,
+    use_rerank: bool = True,
+) -> EvalRun:
     """遍历查询集调 hybrid_search（注入 param_overrides），算指标，写 EvalRun。"""
 ```
 

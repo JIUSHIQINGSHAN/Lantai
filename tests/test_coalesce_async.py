@@ -1,4 +1,5 @@
 """coalesce add_async 测试：幂等 / job_id / 合并统计 / 并发 / 降级同步"""
+
 from unittest.mock import patch
 
 import pytest
@@ -105,8 +106,10 @@ class TestServiceFallback:
 
         req = AddMemoryReq(title="t", content="这是一段足够长的内容")
         fake = {"document_id": "doc1", "candidate_id": "c1"}
-        with patch.object(ms.settings, "COALESCE_ENABLED", False), \
-             patch.object(ms, "add_memory", return_value=fake) as m:
+        with (
+            patch.object(ms.settings, "COALESCE_ENABLED", False),
+            patch.object(ms, "add_memory", return_value=fake) as m,
+        ):
             res = ms.add_memory_async(req, user_id="default")
         m.assert_called_once_with(req, user_id="default")
         assert res["status"] == "synced"
@@ -119,9 +122,11 @@ class TestServiceFallback:
 
         buf = CoalesceBuffer()
         req = AddMemoryReq(title="t", content="这是一段足够长的内容")
-        with patch.object(ms.settings, "COALESCE_ENABLED", True), \
-             patch.object(ms, "get_coalesce_buffer", return_value=buf), \
-             patch.object(ms, "add_memory") as m:
+        with (
+            patch.object(ms.settings, "COALESCE_ENABLED", True),
+            patch.object(ms, "get_coalesce_buffer", return_value=buf),
+            patch.object(ms, "add_memory") as m,
+        ):
             res = ms.add_memory_async(req)
         m.assert_not_called()  # 入队路径不落库
         assert res["status"] == "queued"
@@ -133,16 +138,21 @@ class TestServiceFallback:
         from lantai.services import memory_service as ms
 
         buf = CoalesceBuffer()
-        with patch.object(ms.settings, "COALESCE_ENABLED", True), \
-             patch.object(ms, "get_coalesce_buffer", return_value=buf), \
-             patch.object(ms, "_create_candidate_with_extraction",
-                          return_value={"document_id": "doc1",
-                                        "candidate_id": "c1"}) as m:
+        with (
+            patch.object(ms.settings, "COALESCE_ENABLED", True),
+            patch.object(ms, "get_coalesce_buffer", return_value=buf),
+            patch.object(
+                ms,
+                "_create_candidate_with_extraction",
+                return_value={"document_id": "doc1", "candidate_id": "c1"},
+            ) as m,
+        ):
             last = None
             # general profile max_parts=8；不同内容 → 互不去重，第 8 条触发冲刷
             for i in range(8):
-                last = ms.add_memory_async(AddMemoryReq(
-                    title="t", content=f"这是第{i}条足够长的异步内容"))
+                last = ms.add_memory_async(
+                    AddMemoryReq(title="t", content=f"这是第{i}条足够长的异步内容")
+                )
         assert last["status"] == "flushed"
         assert last["document_id"] == "doc1"
         assert m.call_count == 1
@@ -158,8 +168,10 @@ class TestServiceFallback:
         req1 = AddMemoryReq(title="t", content="用户A的内容足够长可以被提取")
         req2 = AddMemoryReq(title="t", content="用户B的内容足够长可以被提取")
 
-        with patch.object(ms.settings, "COALESCE_ENABLED", True), \
-             patch.object(ms, "get_coalesce_buffer", return_value=buf):
+        with (
+            patch.object(ms.settings, "COALESCE_ENABLED", True),
+            patch.object(ms, "get_coalesce_buffer", return_value=buf),
+        ):
             ms.add_memory_async(req1, user_id="userA")
             ms.add_memory_async(req2, user_id="userB")
 
@@ -175,13 +187,16 @@ class TestServiceFallback:
         from lantai.services import memory_service as ms
 
         buf = CoalesceBuffer()
-        with patch.object(ms.settings, "COALESCE_ENABLED", True), \
-             patch.object(ms, "get_coalesce_buffer", return_value=buf), \
-             patch.object(ms, "_create_candidate_with_extraction",
-                          side_effect=RuntimeError("llm down")), pytest.raises(RuntimeError):
+        with (
+            patch.object(ms.settings, "COALESCE_ENABLED", True),
+            patch.object(ms, "get_coalesce_buffer", return_value=buf),
+            patch.object(
+                ms, "_create_candidate_with_extraction", side_effect=RuntimeError("llm down")
+            ),
+            pytest.raises(RuntimeError),
+        ):
             for i in range(8):
-                ms.add_memory_async(AddMemoryReq(
-                    title="t", content=f"这是第{i}条足够长的异步内容"))
+                ms.add_memory_async(AddMemoryReq(title="t", content=f"这是第{i}条足够长的异步内容"))
         # 指纹已清除 → 同内容可重新提交
         jid = buf.job_id("default", "general", "这是第7条足够长的异步内容")
         assert jid not in buf._seen
@@ -201,10 +216,12 @@ class TestIdleConsumer:
         with buf._lock:
             buf._timestamps["u:general"] = 0.0  # 空闲超时已到
 
-        with patch("lantai.ingestion.coalesce.get_coalesce_buffer",
-                   return_value=buf), \
-             patch.object(ms, "_create_candidate_with_extraction",
-                          return_value={"document_id": "doc1"}) as m:
+        with (
+            patch("lantai.ingestion.coalesce.get_coalesce_buffer", return_value=buf),
+            patch.object(
+                ms, "_create_candidate_with_extraction", return_value={"document_id": "doc1"}
+            ) as m,
+        ):
             run_coalesce_idle()
         assert m.call_count == 1
         combined = m.call_args.args[0].content
@@ -223,10 +240,12 @@ class TestIdleConsumer:
         with buf._lock:
             buf._timestamps["u:general"] = 0.0
 
-        with patch("lantai.ingestion.coalesce.get_coalesce_buffer",
-                   return_value=buf), \
-             patch.object(ms, "_create_candidate_with_extraction",
-                          side_effect=RuntimeError("llm down")):
+        with (
+            patch("lantai.ingestion.coalesce.get_coalesce_buffer", return_value=buf),
+            patch.object(
+                ms, "_create_candidate_with_extraction", side_effect=RuntimeError("llm down")
+            ),
+        ):
             run_coalesce_idle()  # 不抛——异常被吞并恢复
         assert buf.water_level()["total_messages"] == 7  # 全部恢复在缓冲
         assert buf.water_level()["active_keys"] == 1
@@ -234,8 +253,7 @@ class TestIdleConsumer:
     def test_requeue_does_not_retrigger_flush(self):
         """requeue 只恢复缓冲，不触发 max_parts 立即冲刷"""
         buf = CoalesceBuffer()
-        items = [{"content": f"内容{i}足够长", "title": "", "ts": 0.0}
-                 for i in range(8)]
+        items = [{"content": f"内容{i}足够长", "title": "", "ts": 0.0} for i in range(8)]
         buf.requeue("u:general", items)  # 8 条 = max_parts，也不应冲刷
         assert buf.water_level()["total_messages"] == 8
         assert buf.water_level()["active_keys"] == 1

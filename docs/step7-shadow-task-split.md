@@ -26,34 +26,40 @@ tests/test_param_shadow.py          # [DeepSeek] 测试（核心函数不 mock �
 ### ShadowWindow 表（Kimi 定字段 → DeepSeek 实现）
 
 ```python
-class ShadowWindow(SQLModel, table=True):   # 表名 shadow_window
-    id: str = Field(primary_key=True)        # new_id("sw")
-    override_id: str = Field(index=True)     # 关联 ParamOverride.revision（发起者）
-    base_revision: int = 0                   # 观察起点 revision
+class ShadowWindow(SQLModel, table=True):  # 表名 shadow_window
+    id: str = Field(primary_key=True)  # new_id("sw")
+    override_id: str = Field(index=True)  # 关联 ParamOverride.revision（发起者）
+    base_revision: int = 0  # 观察起点 revision
     param_overrides: dict = Field(default_factory=dict, sa_column=Column(JSON))
-        # 本次影子参数 {key: value}
+    # 本次影子参数 {key: value}
     base_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
-        # 基线参数快照（默认快照）
-    status: str = "observing"                # observing / promoted / rolled_back / cancelled
+    # 基线参数快照（默认快照）
+    status: str = "observing"  # observing / promoted / rolled_back / cancelled
     started_at: datetime = Field(default_factory=utcnow)
     finished_at: Optional[datetime] = None
-    check_deadline: datetime = Field(default_factory=utcnow)  # 观察截止（started_at + OBSERVE_DAYS）
+    check_deadline: datetime = Field(
+        default_factory=utcnow
+    )  # 观察截止（started_at + OBSERVE_DAYS）
     metrics_base: dict = Field(default_factory=dict, sa_column=Column(JSON))
-        # 基线运行指标（compute_metrics 输出）
+    # 基线运行指标（compute_metrics 输出）
     metrics_shadow: dict = Field(default_factory=dict, sa_column=Column(JSON))
-        # 影子运行指标
+    # 影子运行指标
     rollback_reason: Optional[str] = None
-    verdict_reason: Optional[str] = None     # promote/rollback 的判定理由（可审计）
+    verdict_reason: Optional[str] = None  # promote/rollback 的判定理由（可审计）
 ```
 
 ### 决策函数（Kimi 实现，DeepSeek 不得改签名）
 
 ```python
 # shadow.py [Kimi]
-def evaluate_window(base: dict, shadow: dict, *,
-                    zero_result_delta: float = 0.05,
-                    avg_result_delta: float = 1.0,
-                    jaccard_floor: float = 0.7) -> dict:
+def evaluate_window(
+    base: dict,
+    shadow: dict,
+    *,
+    zero_result_delta: float = 0.05,
+    avg_result_delta: float = 1.0,
+    jaccard_floor: float = 0.7,
+) -> dict:
     """判定观察窗结果。
 
     base/shadow: compute_metrics 输出（含 zero_result_rate / avg_result_count / jaccard_vs_baseline）。
@@ -83,11 +89,15 @@ def decide_promote_target(window, *, min_promote_days: int = 0) -> bool:
 
 ```python
 # runtime.py [DeepSeek] 追加
-def open_shadow(override_id: str, param_overrides: dict, *, observe_days: int | None = None) -> ShadowWindow:
+def open_shadow(
+    override_id: str, param_overrides: dict, *, observe_days: int | None = None
+) -> ShadowWindow:
     """建议批准后打开观察窗（status=observing）。"""
+
 
 def check_shadow_due() -> list[ShadowWindow]:
     """轮询到期观察窗，跑对比 dry-run，调 evaluate_window 判定，更新状态。"""
+
 
 def rollback_shadow(window_id: str, reason: str) -> None:
     """护栏回滚：恢复 base_snapshot 并记录。"""

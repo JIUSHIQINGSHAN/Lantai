@@ -1,6 +1,7 @@
 """
 LLM 输出校验冒烟测试（不 mock 网络，真实直调 validate_param_advice）。
 """
+
 import pytest
 from pydantic import ValidationError
 
@@ -12,12 +13,16 @@ from lantai.parameters.validation import (
 )
 
 PAPERS = [
-    {"source_document_id": "raw_p1",
-     "title": "Hybrid Retrieval Study",
-     "source_url": "https://arxiv.org/abs/2501.00001",
-     "content": ("We compare weighted fusion of dense and sparse retrieval. "
-                 "A vector weight of 0.55 with BM25 weight of 0.30 improves "
-                 "recall on the benchmark.")},
+    {
+        "source_document_id": "raw_p1",
+        "title": "Hybrid Retrieval Study",
+        "source_url": "https://arxiv.org/abs/2501.00001",
+        "content": (
+            "We compare weighted fusion of dense and sparse retrieval. "
+            "A vector weight of 0.55 with BM25 weight of 0.30 improves "
+            "recall on the benchmark."
+        ),
+    },
 ]
 
 SNAP = default_snapshot()
@@ -34,16 +39,16 @@ def _suggest(conf=0.88, **over):
         "risk_notes": "语料差异可能不适用",
         "validation_plan": "Recall@10 + MRR@10 本地评估",
         "evidence": [
-            {"source_document_id": "raw_p1",
-             "quote": "A vector weight of 0.55 with BM25 weight of 0.30",
-             "finding": "稀疏权重 0.30 更优",
-             "applicability": "仅小步假设"}
+            {
+                "source_document_id": "raw_p1",
+                "quote": "A vector weight of 0.55 with BM25 weight of 0.30",
+                "finding": "稀疏权重 0.30 更优",
+                "applicability": "仅小步假设",
+            }
         ],
         "changes": [
-            {"name": "RETRIEVAL_W_VECTOR", "before": 0.6, "after": 0.55,
-             "reason": "论文建议"},
-            {"name": "RETRIEVAL_W_BM25", "before": 0.25, "after": 0.30,
-             "reason": "论文建议"},
+            {"name": "RETRIEVAL_W_VECTOR", "before": 0.6, "after": 0.55, "reason": "论文建议"},
+            {"name": "RETRIEVAL_W_BM25", "before": 0.25, "after": 0.30, "reason": "论文建议"},
         ],
     }
     base.update(over)
@@ -57,8 +62,7 @@ def test_valid_suggest_accepted():
 
 
 def test_abstain_accepted():
-    payload = validate_param_advice(
-        {"decision": "abstain", "reason": "证据不充分"}, SNAP, PAPERS)
+    payload = validate_param_advice({"decision": "abstain", "reason": "证据不充分"}, SNAP, PAPERS)
     assert isinstance(payload, AbstainPayload)
 
 

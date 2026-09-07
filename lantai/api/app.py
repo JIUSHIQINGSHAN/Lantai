@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 
 from lantai.api import (
+    routes_admin_router,
     routes_candidates_router,
     routes_checkpoint_router,
     routes_conflicts_router,
@@ -21,18 +22,17 @@ from lantai.api import (
     routes_param_advice_router,
     routes_persona_router,
     routes_probing_router,
+    routes_prompts_router,
     routes_recall_chain_router,
     routes_retrieval_router,
     routes_scratchpad_router,
     routes_search_router,
     routes_sources_router,
-    routes_prompts_router,
     routes_terminal_router,
     routes_tree_router,
     routes_ui_router,
     routes_verification_router,
     routes_work_items_router,
-    routes_prompts_router,
 )
 from lantai.core.auth import assert_secure_binding, get_current_user
 from lantai.core.logger import logger
@@ -44,18 +44,21 @@ from lantai.storage.db import init_db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import os
+
     concurrency = int(os.environ.get("WEB_CONCURRENCY", "1") or "1")
     if concurrency > 1:
         logger.warning(
             "检测到 WEB_CONCURRENCY=%d > 1：当前版本调度器（APScheduler）与嵌入式 SQLite/ChromaDB "
             "按单进程模型设计。多 Worker 并发运行会导致遗忘/蒸馏定时任务重复执行及向量库写锁争用。"
-            "生产环境强烈建议单进程部署（--workers 1）。", concurrency
+            "生产环境强烈建议单进程部署（--workers 1）。",
+            concurrency,
         )
     assert_secure_binding()
     settings.validate_config()
     init_db()
     # 启动时加载 DB 参数 override（论文驱动优化的当前生效配置）
     from lantai.parameters.runtime import load_runtime_params_at_startup
+
     try:
         load_runtime_params_at_startup()
     except Exception:
@@ -72,6 +75,7 @@ app = FastAPI(title="兰台记忆（Lantai）", version="0.21.0", lifespan=lifes
 # 公共端点（不需要鉴权）
 app.include_router(routes_health_router)
 app.include_router(routes_ui_router)
+app.include_router(routes_admin_router)
 
 # 业务端点（需要 API Key 鉴权）
 CORE_ROUTERS = [
@@ -102,7 +106,7 @@ CORE_ROUTERS = [
 EXT_ROUTERS = {
     "obsidian": (settings.FEATURE_OBSIDIAN, routes_obsidian_router),
     "wiki": (settings.FEATURE_WIKI, routes_tree_router),
-    "vision": (settings.FEATURE_VISION, None), 
+    "vision": (settings.FEATURE_VISION, None),
     "kaogong": (settings.FEATURE_KAOGONG, None),
     "scenes": (settings.FEATURE_SCENES, None),
     "terminal": (settings.FEATURE_TERMINAL, routes_terminal_router),
@@ -122,4 +126,5 @@ for name, (enabled, r) in EXT_ROUTERS.items():
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host=settings.HOST, port=settings.PORT)

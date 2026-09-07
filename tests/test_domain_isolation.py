@@ -5,9 +5,10 @@
 2. hybrid_search 支持 domain 精确过滤与全域召回；
 3. REST POST /search 与 MCP search 工具支持 domain 参数。
 """
+
 from fastapi.testclient import TestClient
 
-from api_server import app
+from lantai.api.app import app
 from lantai.models.tables import MemoryItem
 from lantai.retrieval.hybrid import hybrid_search
 
@@ -46,8 +47,9 @@ class TestDomainIsolationDB:
             )
             s.add_all([m_user, m_session, m_agent])
             s.commit()
-            
+
             from lantai.storage.fts import sync_fts
+
             sync_fts(s, m_user.id, m_user.content)
             sync_fts(s, m_session.id, m_session.content)
             sync_fts(s, m_agent.id, m_agent.content)
@@ -98,6 +100,7 @@ class TestDomainEndpointsAndMCP:
             s.add(m)
             s.commit()
             from lantai.storage.fts import sync_fts
+
             sync_fts(s, m.id, m.content)
             s.commit()
 
@@ -106,13 +109,21 @@ class TestDomainEndpointsAndMCP:
         resp = client.post("/search", json={"query": "RTX 3050", "domain": "user", "force": True})
         assert resp.status_code == 200
         results = resp.json()["results"]
-        assert any(i.get("id") == "mem_user_rest" or i.get("memory", {}).get("id") == "mem_user_rest" for i in results)
+        assert any(
+            i.get("id") == "mem_user_rest" or i.get("memory", {}).get("id") == "mem_user_rest"
+            for i in results
+        )
 
         # 查询 agent 域（应为空）
-        resp_agent = client.post("/search", json={"query": "RTX 3050", "domain": "agent", "force": True})
+        resp_agent = client.post(
+            "/search", json={"query": "RTX 3050", "domain": "agent", "force": True}
+        )
         assert resp_agent.status_code == 200
         results_agent = resp_agent.json()["results"]
-        assert not any(i.get("id") == "mem_user_rest" or i.get("memory", {}).get("id") == "mem_user_rest" for i in results_agent)
+        assert not any(
+            i.get("id") == "mem_user_rest" or i.get("memory", {}).get("id") == "mem_user_rest"
+            for i in results_agent
+        )
 
     def test_mcp_search_with_domain(self, param_env):
         session_factory, _ = param_env
@@ -126,14 +137,22 @@ class TestDomainEndpointsAndMCP:
             )
             s.add(m)
             s.commit()
-            
+
             from lantai.storage.fts import sync_fts
+
             sync_fts(s, m.id, m.content)
             s.commit()
 
-        from scripts.mcp_server import handle_search
+        from lantai.cli.mcp import handle_search
+
         res = handle_search({"query": "记住：戒律准则", "domain": "agent", "force": True})
-        assert any(i.get("id") == "mem_agent_mcp" or i.get("memory", {}).get("id") == "mem_agent_mcp" for i in res["results"])
+        assert any(
+            i.get("id") == "mem_agent_mcp" or i.get("memory", {}).get("id") == "mem_agent_mcp"
+            for i in res["results"]
+        )
 
         res_user = handle_search({"query": "记住：戒律准则", "domain": "user", "force": True})
-        assert not any(i.get("id") == "mem_agent_mcp" or i.get("memory", {}).get("id") == "mem_agent_mcp" for i in res_user["results"])
+        assert not any(
+            i.get("id") == "mem_agent_mcp" or i.get("memory", {}).get("id") == "mem_agent_mcp"
+            for i in res_user["results"]
+        )

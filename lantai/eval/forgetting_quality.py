@@ -15,6 +15,7 @@ evaluate_forgetting_quality：真实 DB 种子（namespace='eval_fq'）→ 真�
 （search 可注入，默认 hybrid_search；外部 LLM/embedding/向量由调用方按测试纪律 mock）
 → 指标 → finally 清理种子。
 """
+
 import contextlib
 from datetime import timedelta
 
@@ -42,6 +43,7 @@ def compute_forgetting_metrics(per_query: list[dict]) -> dict:
     - forbidden_ids 出现 = 期望不召回的（已归档/未生效）记忆残留
     - preferred_id/peer_id = 新值 vs 旧值（时效/取代），preferred 应排 peer 之前
     """
+
     def _rate(qs, hit_fn):
         if not qs:
             return 0.0
@@ -100,11 +102,11 @@ def _seed_case(s, case: dict, now) -> dict[str, str]:
             importance=seed.get("importance", 0.5),
             decay_class=seed.get("decay_class", "episodic"),
             valid_from=(
-                now + timedelta(days=seed["valid_from_days"])
-                if "valid_from_days" in seed else None),
+                now + timedelta(days=seed["valid_from_days"]) if "valid_from_days" in seed else None
+            ),
             valid_to=(
-                now - timedelta(days=seed["valid_to_days"])
-                if "valid_to_days" in seed else None),
+                now - timedelta(days=seed["valid_to_days"]) if "valid_to_days" in seed else None
+            ),
             created_at=created,
             updated_at=created,
             last_used_at=seed.get("last_used_at") or created,
@@ -114,13 +116,15 @@ def _seed_case(s, case: dict, now) -> dict[str, str]:
         sync_fts(s, mem.id, mem.content)
         mapping[str(i)] = mem.id
     for edge in case.get("edges", []):
-        s.add(MemoryEdge(
-            id=new_id("edge"),
-            source_memory_id=mapping[str(edge["source"])],
-            target_memory_id=mapping[str(edge["target"])],
-            relation="supersedes",
-            confidence=1.0,
-        ))
+        s.add(
+            MemoryEdge(
+                id=new_id("edge"),
+                source_memory_id=mapping[str(edge["source"])],
+                target_memory_id=mapping[str(edge["target"])],
+                relation="supersedes",
+                confidence=1.0,
+            )
+        )
     return mapping
 
 
@@ -167,18 +171,23 @@ def evaluate_forgetting_quality(dataset: dict, *, search=None, top_k: int = 5) -
             mapping = case_maps[idx]
             results = run_search(case["query"], top_k=top_k, use_rerank=False)
             result_ids = _collect_ids(results)
-            per_query.append({
-                "category": case["category"],
-                "query": case["query"],
-                "result_ids": result_ids,
-                "target_id": mapping.get(str(case["target"]))
-                if case.get("target") is not None else None,
-                "forbidden_ids": [mapping[str(i)] for i in case.get("forbidden", [])],
-                "preferred_id": mapping.get(str(case["preferred"]))
-                if case.get("preferred") is not None else None,
-                "peer_id": mapping.get(str(case["peer"]))
-                if case.get("peer") is not None else None,
-            })
+            per_query.append(
+                {
+                    "category": case["category"],
+                    "query": case["query"],
+                    "result_ids": result_ids,
+                    "target_id": mapping.get(str(case["target"]))
+                    if case.get("target") is not None
+                    else None,
+                    "forbidden_ids": [mapping[str(i)] for i in case.get("forbidden", [])],
+                    "preferred_id": mapping.get(str(case["preferred"]))
+                    if case.get("preferred") is not None
+                    else None,
+                    "peer_id": mapping.get(str(case["peer"]))
+                    if case.get("peer") is not None
+                    else None,
+                }
+            )
         return {
             "dataset": dataset.get("name", ""),
             "metrics": compute_forgetting_metrics(per_query),
@@ -188,9 +197,12 @@ def evaluate_forgetting_quality(dataset: dict, *, search=None, top_k: int = 5) -
         # 同一事务内删边 + 删记忆本体 + 删 FTS 索引（杜绝跨 session 残留）
         with db.get_session() as s:
             if seeded:
-                s.exec(delete(MemoryEdge).where(
-                    MemoryEdge.source_memory_id.in_(seeded) |
-                    MemoryEdge.target_memory_id.in_(seeded)))
+                s.exec(
+                    delete(MemoryEdge).where(
+                        MemoryEdge.source_memory_id.in_(seeded)
+                        | MemoryEdge.target_memory_id.in_(seeded)
+                    )
+                )
                 s.exec(delete(MemoryItem).where(MemoryItem.id.in_(seeded)))
                 for mid in seeded:
                     sync_fts(s, mid, None)

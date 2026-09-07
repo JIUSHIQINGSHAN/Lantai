@@ -1,4 +1,5 @@
 """三态去重（dedup）测试：merge / update / insert。"""
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
@@ -11,8 +12,9 @@ from lantai.storage import db
 
 @pytest.fixture(name="client")
 def client_fixture(monkeypatch):
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     db.engine = engine
     SQLModel.metadata.create_all(engine)
 
@@ -22,20 +24,33 @@ def client_fixture(monkeypatch):
     class MockVectorStore:
         def search(self, content_or_vec, top_k=8, where=None):
             return mock_search(content_or_vec, top_k, where)
-    
-    monkeypatch.setattr("lantai.services.memory_service.get_vector_store", lambda: MockVectorStore())
-    # DD-01 修复后 _apply_dedup 先调 embed 再 search，需 mock embed 网络调用
-    monkeypatch.setattr("lantai.services.memory_service.embed",
-                        lambda texts: [[0.1] * 768 for _ in texts])
-    monkeypatch.setattr("lantai.parsing.extractor.chat_json",
-                        lambda *a, **kw: {"summary": "t", "claims": [], "methods": [],
-                                          "constraints": [], "actions": [], "topic": [],
-                                          "extractor_confidence": 0.5})
-    # 结构判别中带 LLM 兜底（ADR-0019）：外部网络 mock
-    monkeypatch.setattr("lantai.llm.client.chat_json",
-                        lambda *a, **kw: {"relation": "update", "reason": "stub"})
 
-    from api_server import app
+    monkeypatch.setattr(
+        "lantai.services.memory_service.get_vector_store", lambda: MockVectorStore()
+    )
+    # DD-01 修复后 _apply_dedup 先调 embed 再 search，需 mock embed 网络调用
+    monkeypatch.setattr(
+        "lantai.services.memory_service.embed", lambda texts: [[0.1] * 768 for _ in texts]
+    )
+    monkeypatch.setattr(
+        "lantai.parsing.extractor.chat_json",
+        lambda *a, **kw: {
+            "summary": "t",
+            "claims": [],
+            "methods": [],
+            "constraints": [],
+            "actions": [],
+            "topic": [],
+            "extractor_confidence": 0.5,
+        },
+    )
+    # 结构判别中带 LLM 兜底（ADR-0019）：外部网络 mock
+    monkeypatch.setattr(
+        "lantai.llm.client.chat_json", lambda *a, **kw: {"relation": "update", "reason": "stub"}
+    )
+
+    from lantai.api.app import app
+
     with TestClient(app) as c:
         c.mock_search = mock_search
         yield c
@@ -45,9 +60,13 @@ def _seed_memory() -> str:
     with Session(db.engine) as s:
         mem = MemoryItem(
             id=new_id("mem"),
-            memory_type="preference", key="pref_coffee",
-            content="用户喜欢 coffee", lane="preference",
-            status="active", importance=0.5)
+            memory_type="preference",
+            key="pref_coffee",
+            content="用户喜欢 coffee",
+            lane="preference",
+            status="active",
+            importance=0.5,
+        )
         s.add(mem)
         s.commit()
         s.refresh(mem)
@@ -56,8 +75,9 @@ def _seed_memory() -> str:
 
 def test_dedup_merge(client):
     mem_id = _seed_memory()
-    client.mock_search.results = [{"id": mem_id, "document": "用户喜欢 coffee",
-                                   "metadata": {}, "distance": 0.1}]  # sim=0.9 中带 → 结构判 merge
+    client.mock_search.results = [
+        {"id": mem_id, "document": "用户喜欢 coffee", "metadata": {}, "distance": 0.1}
+    ]  # sim=0.9 中带 → 结构判 merge
     resp = client.post("/add", json={"title": "x", "content": "用户喜欢喝咖啡测试数据"})
     assert resp.status_code == 200
     data = resp.json()
@@ -67,8 +87,9 @@ def test_dedup_merge(client):
 
 def test_dedup_update(client):
     mem_id = _seed_memory()
-    client.mock_search.results = [{"id": mem_id, "document": "用户喜欢 coffee",
-                                   "metadata": {}, "distance": 0.3}]  # sim=0.7 中带 → judge update
+    client.mock_search.results = [
+        {"id": mem_id, "document": "用户喜欢 coffee", "metadata": {}, "distance": 0.3}
+    ]  # sim=0.7 中带 → judge update
     resp = client.post("/add", json={"title": "x", "content": "用户最近爱喝拿铁测试数据"})
     assert resp.status_code == 200
     data = resp.json()

@@ -8,6 +8,7 @@
 增量维护：run_wiki_update_once() 按当前库状态幂等重写（mem_sync 挂接），
 页随场景/技能增删自动增删；核心渲染均为纯函数（不 mock 冒烟可测）。
 """
+
 import re
 import time
 from datetime import datetime
@@ -30,14 +31,13 @@ _WIKI_OVERVIEW_SYS = (
     "把各主题串成连贯叙事，帮助读者快速建立整体认知。要求："
     "1) 按主题组织，不要逐条罗列；"
     "2) 用 [[页面标题]] wikilink 指向具体页（只用标题，不带路径后缀）；"
-    "3) 只输出 JSON {\"overview\": \"综述正文\"}。"
+    '3) 只输出 JSON {"overview": "综述正文"}。'
 )
 
 
 def wiki_dir() -> Path:
     """Wiki 输出目录：settings.WIKI_OUTPUT_DIR 为空时默认仓库 docs/memory-wiki。"""
-    return Path(settings.WIKI_OUTPUT_DIR) if settings.WIKI_OUTPUT_DIR \
-        else _DEFAULT_WIKI_DIR
+    return Path(settings.WIKI_OUTPUT_DIR) if settings.WIKI_OUTPUT_DIR else _DEFAULT_WIKI_DIR
 
 
 def slugify(name: str) -> str:
@@ -169,15 +169,17 @@ def _overview_llm(briefs: list) -> str | None:
     """LLM 综述（外部依赖：允许 mock；失败返回 None → 确定性兜底）。"""
     try:
         from lantai.llm.client import chat_json
+
         list_text = "\n".join(
-            f"- {b['title']} [{b['type']}] {b.get('description') or ''}" for b in briefs)
-        data = chat_json(_WIKI_OVERVIEW_SYS,
-                         f"## Wiki Pages\n{list_text}\n\nWrite the global overview.")
+            f"- {b['title']} [{b['type']}] {b.get('description') or ''}" for b in briefs
+        )
+        data = chat_json(
+            _WIKI_OVERVIEW_SYS, f"## Wiki Pages\n{list_text}\n\nWrite the global overview."
+        )
         body = (data.get("overview") or "").strip()
         return body or None
     except Exception:
         return None
-
 
 
 def _related_scenes(scene, scenes: list, top: int) -> list:
@@ -210,12 +212,16 @@ def run_wiki_update_once(overview_llm: bool | None = None) -> dict:
         scenes = s.exec(select(MemoryScene).order_by(MemoryScene.heat.desc())).all()
         members_by_scene = {}
         for sc in scenes:
-            members_by_scene[sc.id] = s.exec(select(MemoryItem).where(
-                MemoryItem.scene_id == sc.id,
-                MemoryItem.status == "active")).all()
-        skills = s.exec(select(MemoryItem).where(
-            MemoryItem.memory_type == "skill",
-            MemoryItem.status == "active")).all()
+            members_by_scene[sc.id] = s.exec(
+                select(MemoryItem).where(
+                    MemoryItem.scene_id == sc.id, MemoryItem.status == "active"
+                )
+            ).all()
+        skills = s.exec(
+            select(MemoryItem).where(
+                MemoryItem.memory_type == "skill", MemoryItem.status == "active"
+            )
+        ).all()
 
     # ── 写页面（幂等覆盖）──
     briefs = _collect_pages_from_scenes(scenes, skills)
@@ -226,14 +232,14 @@ def run_wiki_update_once(overview_llm: bool | None = None) -> dict:
         slug = slugify(sc.name)
         current_slugs.add(slug)
         (pages_dir / f"{slug}.md").write_text(
-            render_scene_page(sc, members, related), encoding="utf-8")
+            render_scene_page(sc, members, related), encoding="utf-8"
+        )
     for item in skills:
         st = item.structure or {}
         title = st.get("name") or item.key or "技能"
         slug = slugify(title)
         current_slugs.add(slug)
-        (pages_dir / f"{slug}.md").write_text(
-            render_skill_page(item), encoding="utf-8")
+        (pages_dir / f"{slug}.md").write_text(render_skill_page(item), encoding="utf-8")
 
     # ── 清理过期页（页随场景/技能删除而消失；仅限 pages 目录内）──
     stale_removed = 0
@@ -252,27 +258,48 @@ def run_wiki_update_once(overview_llm: bool | None = None) -> dict:
     if not body:
         member_total = sum(len(v) for v in members_by_scene.values())
         top_scenes = [(sc.name, sc.heat) for sc in scenes[: settings.WIKI_RELATED_TOP]]
-        stats = {"scene_count": len(scenes), "skill_count": len(skills),
-                 "member_count": member_total, "top_scenes": top_scenes}
+        stats = {
+            "scene_count": len(scenes),
+            "skill_count": len(skills),
+            "member_count": member_total,
+            "top_scenes": top_scenes,
+        }
         body = render_overview_fallback(briefs, stats)
     (out_dir / "overview.md").write_text(body, encoding="utf-8")
 
-    return {"ok": True, "dir": str(out_dir), "pages": len(current_slugs),
-            "stale_removed": stale_removed, "overview": overview_source,
-            "took_ms": int((time.monotonic() - started) * 1000)}
+    return {
+        "ok": True,
+        "dir": str(out_dir),
+        "pages": len(current_slugs),
+        "stale_removed": stale_removed,
+        "overview": overview_source,
+        "took_ms": int((time.monotonic() - started) * 1000),
+    }
 
 
 def _collect_pages_from_scenes(scenes: list, skills: list) -> list:
     """场景/技能列表 → 页面 briefs（纯计算，供索引与综述）。"""
     briefs = []
     for sc in scenes:
-        briefs.append({"slug": slugify(sc.name), "title": sc.name,
-                       "type": "scene", "description": sc.summary or ""})
+        briefs.append(
+            {
+                "slug": slugify(sc.name),
+                "title": sc.name,
+                "type": "scene",
+                "description": sc.summary or "",
+            }
+        )
     for item in skills:
         st = item.structure or {}
         title = st.get("name") or item.key or "技能"
-        briefs.append({"slug": slugify(title), "title": title,
-                       "type": "skill", "description": (st.get("description") or "").strip()})
+        briefs.append(
+            {
+                "slug": slugify(title),
+                "title": title,
+                "type": "skill",
+                "description": (st.get("description") or "").strip(),
+            }
+        )
     return briefs
 
 
@@ -285,5 +312,4 @@ def read_wiki_page(slug: str) -> dict:
         raise ValueError("slug 解析路径超出 wiki pages 目录")
     if not path.is_file():
         raise FileNotFoundError(f"wiki 页面不存在: {page_slug}.md")
-    return {"slug": page_slug, "path": str(path),
-            "content": path.read_text(encoding="utf-8")}
+    return {"slug": page_slug, "path": str(path), "content": path.read_text(encoding="utf-8")}

@@ -11,8 +11,7 @@ def zero_result_rate(per_query: list[dict]) -> float:
     """零结果查询占比：result_ids 为空的查询数 / 总查询数。"""
     if not per_query:
         return 0.0
-    zeros = sum(1 for q in per_query if q.get("zero_result") is True
-                or not q.get("result_ids"))
+    zeros = sum(1 for q in per_query if q.get("zero_result") is True or not q.get("result_ids"))
     return zeros / len(per_query)
 
 
@@ -47,8 +46,9 @@ def jaccard_overlap(a: list[list[str]], b: list[list[str]]) -> float:
     return total / valid if valid else 0.0
 
 
-def weak_hit_rate(per_query: list[dict], *,
-                  used_ids_map: dict[str, list[str]] | None = None) -> float | None:
+def weak_hit_rate(
+    per_query: list[dict], *, used_ids_map: dict[str, list[str]] | None = None
+) -> float | None:
     """弱命中率：used_ids 在 top-k 结果中的比例。
 
     used_ids_map: {event_id: [used_id, ...]}（来自回填，无生成侧时缺省）
@@ -72,9 +72,12 @@ def weak_hit_rate(per_query: list[dict], *,
     return hits / total if total else None
 
 
-def compute_metrics(per_query: list[dict], *,
-                    baseline_per_query: list[list[str]] | None = None,
-                    used_ids_map: dict[str, list[str]] | None = None) -> dict:
+def compute_metrics(
+    per_query: list[dict],
+    *,
+    baseline_per_query: list[list[str]] | None = None,
+    used_ids_map: dict[str, list[str]] | None = None,
+) -> dict:
     """聚合全部指标。
 
     返回：
@@ -101,12 +104,14 @@ def compute_metrics(per_query: list[dict], *,
         "zero_result_rate": round(zero_result_rate(per_query), 4),
         "avg_result_count": round(avg_result_count(per_query), 4),
         "weak_hit_rate": (
-            round(v, 4) if (v := weak_hit_rate(per_query, used_ids_map=used_ids_map)) is not None
+            round(v, 4)
+            if (v := weak_hit_rate(per_query, used_ids_map=used_ids_map)) is not None
             else None
         ),
         "jaccard_vs_baseline": None,
     }
     if baseline_per_query is not None:
         result["jaccard_vs_baseline"] = round(
-            jaccard_overlap(current_result_ids, baseline_per_query), 4)
+            jaccard_overlap(current_result_ids, baseline_per_query), 4
+        )
     return result

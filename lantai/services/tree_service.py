@@ -5,6 +5,7 @@
 v17 之前 category LIKE 误匹配的坑）。宁 miss 不脏写：父缺失/重名/非法名
 一律 ValueError 不落库。
 """
+
 from sqlmodel import func, select
 
 from lantai.core.ids import new_id
@@ -50,8 +51,7 @@ def compute_attachments(rows: list[tuple[str | None, int]], nodes: list) -> dict
     for node in nodes:
         path = node.node_path
         direct = sum(c for tp, c in rows if tp == path)
-        subtree = sum(c for tp, c in rows
-                      if tp == path or (tp or "").startswith(path + "/"))
+        subtree = sum(c for tp, c in rows if tp == path or (tp or "").startswith(path + "/"))
         result[node.id] = {"direct": direct, "subtree": subtree}
     return result
 
@@ -60,43 +60,62 @@ def get_subtree(session, root_path: str = "/") -> dict:
     """取子树（含根）节点 + 每节点挂载计数；根不存在返回空。"""
     root = normalize_path(root_path)
     prefix = "/%" if root == "/" else root + "/%"
-    nodes = list(session.exec(select(MemoryNode).where(
-        (MemoryNode.node_path == root) | (MemoryNode.node_path.like(prefix))
-    ).order_by(MemoryNode.depth, MemoryNode.name)).all())
-    rows = session.exec(select(MemoryItem.tree_path, func.count()).where(
-        MemoryItem.status == "active",
-        MemoryItem.tree_path.is_not(None),
-    ).group_by(MemoryItem.tree_path)).all()
+    nodes = list(
+        session.exec(
+            select(MemoryNode)
+            .where((MemoryNode.node_path == root) | (MemoryNode.node_path.like(prefix)))
+            .order_by(MemoryNode.depth, MemoryNode.name)
+        ).all()
+    )
+    rows = session.exec(
+        select(MemoryItem.tree_path, func.count())
+        .where(
+            MemoryItem.status == "active",
+            MemoryItem.tree_path.is_not(None),
+        )
+        .group_by(MemoryItem.tree_path)
+    ).all()
     counts = compute_attachments([(r[0], r[1]) for r in rows], nodes)
     return {
         "root": None if not nodes else nodes[0].node_path,
-        "nodes": [{
-            "id": n.id, "parent_id": n.parent_id, "name": n.name,
-            "node_path": n.node_path, "depth": n.depth,
-            "description": n.description,
-            "attachments": counts.get(n.id, {"direct": 0, "subtree": 0}),
-        } for n in nodes],
+        "nodes": [
+            {
+                "id": n.id,
+                "parent_id": n.parent_id,
+                "name": n.name,
+                "node_path": n.node_path,
+                "depth": n.depth,
+                "description": n.description,
+                "attachments": counts.get(n.id, {"direct": 0, "subtree": 0}),
+            }
+            for n in nodes
+        ],
     }
 
 
-def add_node(session, name: str, parent_path: str = "/",
-             description: str = "", namespace: str = "default") -> dict:
+def add_node(
+    session, name: str, parent_path: str = "/", description: str = "", namespace: str = "default"
+) -> dict:
     """新增节点（宁 miss 不脏写）：父缺失/同级重名/非法名 -> ValueError。"""
     node_path, depth = build_node_path(parent_path, name)
-    if session.exec(select(MemoryNode).where(
-            MemoryNode.node_path == node_path)).first():
+    if session.exec(select(MemoryNode).where(MemoryNode.node_path == node_path)).first():
         raise ValueError(f"node already exists: {node_path}")
     parent_id = None
     if normalize_path(parent_path) != "/":
-        parent = session.exec(select(MemoryNode).where(
-            MemoryNode.node_path == normalize_path(parent_path))).first()
+        parent = session.exec(
+            select(MemoryNode).where(MemoryNode.node_path == normalize_path(parent_path))
+        ).first()
         if not parent:
             raise ValueError(f"parent node not found: {parent_path}")
         parent_id = parent.id
     node = MemoryNode(
-        id=new_id("node"), parent_id=parent_id, name=name,
-        node_path=node_path, depth=depth,
-        description=(description or "").strip(), namespace=namespace,
+        id=new_id("node"),
+        parent_id=parent_id,
+        name=name,
+        node_path=node_path,
+        depth=depth,
+        description=(description or "").strip(),
+        namespace=namespace,
     )
     session.add(node)
     session.commit()
@@ -107,8 +126,7 @@ def add_node(session, name: str, parent_path: str = "/",
 def assign_memory(session, memory_id: str, node_path: str) -> dict:
     """把记忆挂到节点（校验节点/记忆均存在；宁 miss 不脏写）。"""
     path = normalize_path(node_path)
-    if not session.exec(select(MemoryNode).where(
-            MemoryNode.node_path == path)).first():
+    if not session.exec(select(MemoryNode).where(MemoryNode.node_path == path)).first():
         raise ValueError(f"node not found: {path}")
     mem = session.get(MemoryItem, memory_id)
     if not mem:
@@ -132,13 +150,13 @@ def unassign_memory(session, memory_id: str) -> dict:
 
 # ── 默认会话包装（供 REST/MCP 调用）────────────────────────
 
+
 def view_tree() -> dict:
     with db.get_session() as s:
         return get_subtree(s, "/")
 
 
-def add_tree_node(name: str, parent_path: str = "/",
-                  description: str = "") -> dict:
+def add_tree_node(name: str, parent_path: str = "/", description: str = "") -> dict:
     with db.get_session() as s:
         return add_node(s, name, parent_path, description)
 

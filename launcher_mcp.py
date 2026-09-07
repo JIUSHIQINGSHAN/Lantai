@@ -4,6 +4,7 @@ Problem: Hermes sets PYTHONPATH to its own venv site-packages, which pollutes su
 The Hermes venv has a broken pydantic install that shadows the project venv's working pydantic.
 Solution: Clear PYTHONPATH entirely and set up the project venv manually.
 """
+
 import os
 import sys
 from pathlib import Path
@@ -35,6 +36,7 @@ os.environ["VIRTUAL_ENV"] = str(ROOT / ".venv-audit")
 # --- Load .env file ---
 try:
     from dotenv import load_dotenv
+
     env_path = ROOT / ".env"
     if env_path.exists():
         load_dotenv(env_path)

@@ -8,6 +8,7 @@
 3. 其余文本——LLM 提取建候选（status=new，走现有 gate 分层）；
    低置信度 / 提取失败（上游 502）→ 候选进待审队列，不丢数据
 """
+
 import hashlib
 import re
 from datetime import timedelta
@@ -32,10 +33,8 @@ from lantai.services.candidate_service import enqueue_rejected
 from lantai.storage import db
 
 # 对话入口的 lane 预判（宽松 search；fastpath 整段 match 语义保持不变）
-_PREFERENCE_RE = re.compile(
-    r"我.{0,8}?(?:喜欢|不喜欢|讨厌|偏爱|偏好)")
-_FACT_RE = re.compile(
-    r"^我是|^我叫|我的(?:名字|生日|年龄|地址|电话|邮箱)|我住在|我来自")
+_PREFERENCE_RE = re.compile(r"我.{0,8}?(?:喜欢|不喜欢|讨厌|偏爱|偏好)")
+_FACT_RE = re.compile(r"^我是|^我叫|我的(?:名字|生日|年龄|地址|电话|邮箱)|我住在|我来自")
 
 
 def _guess_lane(text: str) -> str:
@@ -55,9 +54,9 @@ def _is_chitchat(text: str) -> bool:
     return bool(NO_MEMORY_PATTERNS.match(t))
 
 
-def ingest_dialogue(text: str, *, user_id: str = "default",
-                    source: str = "dialogue",
-                    created_at=None) -> dict:
+def ingest_dialogue(
+    text: str, *, user_id: str = "default", source: str = "dialogue", created_at=None
+) -> dict:
     """对话文本 → 现有提取链。
 
     created_at：冷启动导入时传原始消息时间戳（naive UTC）——RawDocument/
@@ -77,26 +76,45 @@ def ingest_dialogue(text: str, *, user_id: str = "default",
     # 1) fastpath 白名单直通——绕过 LLM 提取
     fp = fastpath_check(text)
     if fp:
-        return _create_candidate(text, lane=fp["lane"], fp_data=fp,
-                                 status="fastpath", user_id=user_id,
-                                 source=source, created_at=created_at)
+        return _create_candidate(
+            text,
+            lane=fp["lane"],
+            fp_data=fp,
+            status="fastpath",
+            user_id=user_id,
+            source=source,
+            created_at=created_at,
+        )
 
     # 2) 闲聊 → 直接 rejected（沙汰，ADR-0026），不进待审队列
     if _is_chitchat(text):
-        return _create_candidate(text, lane="general", fp_data=None,
-                                 status="rejected", user_id=user_id,
-                                 source=source, created_at=created_at)
+        return _create_candidate(
+            text,
+            lane="general",
+            fp_data=None,
+            status="rejected",
+            user_id=user_id,
+            source=source,
+            created_at=created_at,
+        )
 
     # 3) LLM 提取（extract_candidate 自带降级 fallback）→ 走现有 gate 分层
     data = extract_candidate(text[:40], text)
     lane = _guess_lane(text)
-    result = _create_candidate(text, lane=lane, fp_data=data, status="new",
-                               user_id=user_id, source=source,
-                               created_at=created_at)
+    result = _create_candidate(
+        text,
+        lane=lane,
+        fp_data=data,
+        status="new",
+        user_id=user_id,
+        source=source,
+        created_at=created_at,
+    )
     if data["extractor_confidence"] < settings.DIALOGUE_MIN_EXTRACTOR_CONF:
         if data["extractor_confidence"] < settings.CANDIDATE_MIN_CONFIDENCE:
             # 沙汰：低于地板信噪门 → 直接 rejected（ADR-0026）
             from lantai.models.tables import MemoryCandidate
+
             with db.get_session() as s:
                 c = s.get(MemoryCandidate, result["candidate_id"])
                 if c:
@@ -111,9 +129,16 @@ def ingest_dialogue(text: str, *, user_id: str = "default",
     return result
 
 
-def _create_candidate(text: str, *, lane: str, fp_data: dict | None,
-                      status: str, user_id: str, source: str,
-                      created_at=None) -> dict:
+def _create_candidate(
+    text: str,
+    *,
+    lane: str,
+    fp_data: dict | None,
+    status: str,
+    user_id: str,
+    source: str,
+    created_at=None,
+) -> dict:
     """建 rawdocument（content_hash 去重复用）→ memorycandidate。
 
     created_at 非空（冷启动导入）：doc.fetched_at / cand.created_at 用原始
@@ -128,39 +153,51 @@ def _create_candidate(text: str, *, lane: str, fp_data: dict | None,
     if created_at is not None:
         provenance_prompt = PROVENANCE_PROMPT_DIALOGUE_IMPORT
     with db.get_session() as s:
-        doc = s.exec(select(RawDocument)
-                     .where(RawDocument.content_hash == h)).first()
+        doc = s.exec(select(RawDocument).where(RawDocument.content_hash == h)).first()
         if not doc:
             doc_kwargs = dict(
-                id=new_id("doc"), source_type="dialogue", source_id=source,
-                url="", title=text[:40], content=text, content_hash=h,
+                id=new_id("doc"),
+                source_type="dialogue",
+                source_id=source,
+                url="",
+                title=text[:40],
+                content=text,
+                content_hash=h,
                 meta={"user_id": user_id, "source": source},
             )
             if created_at is not None:
                 doc_kwargs["fetched_at"] = created_at
             doc = RawDocument(**doc_kwargs)
-            s.add(doc); s.commit(); s.refresh(doc)
+            s.add(doc)
+            s.commit()
+            s.refresh(doc)
 
         cand_kwargs = dict(
-            id=new_id("cand"), document_id=doc.id,
+            id=new_id("cand"),
+            document_id=doc.id,
             topic=fp_data.get("topic") if fp_data else [],
             summary=(fp_data.get("summary") if fp_data else None) or text[:400],
             claims=fp_data.get("claims", []) if fp_data else [],
             methods=fp_data.get("methods", []) if fp_data else [],
             constraints=fp_data.get("constraints", []) if fp_data else [],
             actions=fp_data.get("actions", []) if fp_data else [],
-            extractor_confidence=(fp_data.get("extractor_confidence", 0.0)
-                                  if fp_data else 0.0),
+            extractor_confidence=(fp_data.get("extractor_confidence", 0.0) if fp_data else 0.0),
             provenance=make_provenance(provenance_prompt),
-            lane=lane, status=status,
+            lane=lane,
+            status=status,
         )
         if created_at is not None:
             cand_kwargs["created_at"] = created_at
         cand = MemoryCandidate(**cand_kwargs)
         if status == "pending_review":
-            cand.review_due_at = utcnow() + timedelta(
-                days=settings.CANDIDATE_TTL_DAYS)
-        s.add(cand); s.commit(); s.refresh(cand)
-        return {"ingested": True, "candidate_id": cand.id,
-                "fastpath": status == "fastpath", "lane": lane,
-                "status": cand.status}
+            cand.review_due_at = utcnow() + timedelta(days=settings.CANDIDATE_TTL_DAYS)
+        s.add(cand)
+        s.commit()
+        s.refresh(cand)
+        return {
+            "ingested": True,
+            "candidate_id": cand.id,
+            "fastpath": status == "fastpath",
+            "lane": lane,
+            "status": cand.status,
+        }

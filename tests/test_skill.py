@@ -3,6 +3,7 @@
 核心纯函数（_is_skill_item / _format_skill_entry）不 mock；
 外部依赖（LLM 提取、embedding、向量存储）按测试纪律允许 mock。
 """
+
 import importlib.util
 import os
 
@@ -13,19 +14,22 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import lantai.storage.db as db_module
 from lantai.models.tables import MemoryCandidate, MemoryItem, MemoryProposal
 
-HOOK_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                         "scripts", "shell_hook.py")
+HOOK_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "shell_hook.py"
+)
 
 
 @pytest.fixture()
 def mem_db():
     """内存 SQLite 真实建表（Skill 全链路测试用）。"""
     import lantai.models.tables  # noqa: F401
-    engine = create_engine("sqlite://",
-                           connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     SQLModel.metadata.create_all(engine)
     from lantai.storage.fts import init_fts
+
     init_fts(engine.raw_connection())
 
     def session_factory() -> Session:
@@ -41,6 +45,7 @@ from contextlib import contextmanager
 @contextmanager
 def db_module_session_patch(session_factory):
     import lantai.storage.db as dbm
+
     original = dbm.get_session
     dbm.get_session = session_factory
     try:
@@ -59,10 +64,15 @@ def _load_hook(monkeypatch):
 
 def _skill_item(**kw):
     defaults = dict(
-        id="mem_skill", memory_type="procedural", key="部署手册",
+        id="mem_skill",
+        memory_type="procedural",
+        key="部署手册",
         content="上线部署流程",
-        structure={"name": "部署手册", "description": "标准上线流程",
-                   "steps": ["备份数据库", "发布代码", "验证健康"]},
+        structure={
+            "name": "部署手册",
+            "description": "标准上线流程",
+            "steps": ["备份数据库", "发布代码", "验证健康"],
+        },
         decay_class="procedural",
     )
     defaults.update(kw)
@@ -85,8 +95,7 @@ def test_is_skill_item_false_without_steps(monkeypatch):
 def test_format_skill_entry_steps_numbered(monkeypatch):
     """纯函数冒烟：Skill 块含名称、描述与编号步骤。"""
     mod = _load_hook(monkeypatch)
-    line, content = mod._format_skill_entry(
-        _skill_item(), 0.92, 500, "suffix")
+    line, content = mod._format_skill_entry(_skill_item(), 0.92, 500, "suffix")
     assert line.startswith("## Skill: 部署手册 (score 0.92)")
     assert "标准上线流程" in line
     assert "1. 备份数据库" in line and "3. 验证健康" in line
@@ -96,8 +105,7 @@ def test_format_skill_entry_steps_numbered(monkeypatch):
 def test_format_skill_entry_truncation(monkeypatch):
     """纯函数冒烟：Skill 块超预算按码点截断并附后缀。"""
     mod = _load_hook(monkeypatch)
-    line, _ = mod._format_skill_entry(
-        _skill_item(), 0.92, 40, mod._RECALL_TRUNCATION_SUFFIX)
+    line, _ = mod._format_skill_entry(_skill_item(), 0.92, 40, mod._RECALL_TRUNCATION_SUFFIX)
     assert line.endswith(mod._RECALL_TRUNCATION_SUFFIX)
     assert len(line) <= 40 + len(mod._RECALL_TRUNCATION_SUFFIX)
 
@@ -107,23 +115,35 @@ def test_propose_from_candidate_persists_structure(mem_db, monkeypatch):
     session_factory, _ = mem_db
     with session_factory() as s:
         cand = MemoryCandidate(
-            id="cand_skill", document_id="doc_1", summary="上线部署步骤",
-            claims=["按步骤部署"], actions=["备份数据库", "发布代码", "验证健康"],
-            lane="general", status="new",
+            id="cand_skill",
+            document_id="doc_1",
+            summary="上线部署步骤",
+            claims=["按步骤部署"],
+            actions=["备份数据库", "发布代码", "验证健康"],
+            lane="general",
+            status="new",
         )
         s.add(cand)
         s.commit()
 
     from unittest.mock import patch
-    with patch("lantai.evolution.proposer.chat_json",
-               return_value={"proposal_type": "add", "target_key": "部署手册",
-                             "new_content": "上线部署步骤", "memory_type": "procedural",
-                             "reason": "skill", "confidence": 0.9}):
+
+    with patch(
+        "lantai.evolution.proposer.chat_json",
+        return_value={
+            "proposal_type": "add",
+            "target_key": "部署手册",
+            "new_content": "上线部署步骤",
+            "memory_type": "procedural",
+            "reason": "skill",
+            "confidence": 0.9,
+        },
+    ):
         from lantai.evolution.proposer import propose_from_candidate
+
         prop = propose_from_candidate("cand_skill", {"decision": "promote_procedural"})
 
-    assert prop.proposed_patch["structure"]["steps"] == [
-        "备份数据库", "发布代码", "验证健康"]
+    assert prop.proposed_patch["structure"]["steps"] == ["备份数据库", "发布代码", "验证健康"]
     assert prop.proposed_patch["structure"]["name"] == "部署手册"
     assert prop.status == "pending"
 
@@ -133,25 +153,34 @@ def test_apply_proposal_persists_structure_and_procedural(mem_db, monkeypatch):
     session_factory, _ = mem_db
     with session_factory() as s:
         prop = MemoryProposal(
-            id="prop_skill", proposal_type="add",
-            evidence_ids=["doc_1"], reason="skill",
+            id="prop_skill",
+            proposal_type="add",
+            evidence_ids=["doc_1"],
+            reason="skill",
             proposed_patch={
-                "memory_type": "procedural", "key": "部署手册",
-                "content": "上线部署步骤", "lane": "general",
-                "structure": {"name": "部署手册",
-                              "steps": ["备份数据库", "发布代码", "验证健康"]},
+                "memory_type": "procedural",
+                "key": "部署手册",
+                "content": "上线部署步骤",
+                "lane": "general",
+                "structure": {"name": "部署手册", "steps": ["备份数据库", "发布代码", "验证健康"]},
             },
-            confidence=0.9, status="pending",
+            confidence=0.9,
+            status="pending",
         )
         s.add(prop)
         s.commit()
 
     from unittest.mock import Mock, patch
-    with patch("lantai.llm.client.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store",
-               return_value=Mock(add=Mock(), delete=Mock())):
+
+    with (
+        patch("lantai.llm.client.embed", return_value=[[0.1] * 8]),
+        patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]),
+        patch(
+            "lantai.retrieval.hybrid.get_vector_store", return_value=Mock(add=Mock(), delete=Mock())
+        ),
+    ):
         from lantai.evolution.promoter import apply_proposal
+
         result = apply_proposal("prop_skill")
 
     assert result["ok"] is True
@@ -170,7 +199,7 @@ def test_build_context_injects_skill_block(mem_db, monkeypatch):
         s.commit()
 
     class _FakeStore:
-        def search(self, qv, top_k=5):
+        def search(self, qv, top_k=5, filters=None):
             return [{"id": "mem_skill", "distance": 0.1}]
 
     monkeypatch.setattr(db_module, "get_session", session_factory)

@@ -1,4 +1,5 @@
 """案牍（WorkItem）控制台投影 DTO。"""
+
 from datetime import datetime
 from typing import Any, Literal
 

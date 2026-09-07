@@ -6,6 +6,7 @@
 - 已迁移库重复启动 → 幂等，user_version 仍为 CURRENT_SCHEMA_VERSION
 - 异常路径（表不存在）不阻断启动
 """
+
 import sqlite3
 
 from lantai.storage.db import CURRENT_SCHEMA_VERSION, apply_migrations
@@ -66,8 +67,9 @@ class TestApplyMigrations:
         """全新库（create_all 已含全部列）→ user_version==CURRENT_SCHEMA_VERSION，列不重复添加。"""
         path = tmp_path / "fresh.db"
         conn = _make_legacy_db(path, with_new_columns=True)
-        before = {t: _columns(conn, t) for t in
-                  ("memoryitem", "retrieval_event", "memorycandidate")}
+        before = {
+            t: _columns(conn, t) for t in ("memoryitem", "retrieval_event", "memorycandidate")
+        }
         apply_migrations(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         for table, cols in before.items():
@@ -95,8 +97,14 @@ class TestApplyMigrations:
         assert conn.execute("SELECT id FROM retrieval_event").fetchall() == [("r1",)]
         assert conn.execute("SELECT id FROM memorycandidate").fetchall() == [("c1",)]
         # 新列默认值生效
-        assert conn.execute("SELECT decay_class FROM memoryitem WHERE id='m1'").fetchone()[0] == "episodic"
-        assert conn.execute("SELECT is_system_noise FROM retrieval_event WHERE id='r1'").fetchone()[0] == 0
+        assert (
+            conn.execute("SELECT decay_class FROM memoryitem WHERE id='m1'").fetchone()[0]
+            == "episodic"
+        )
+        assert (
+            conn.execute("SELECT is_system_noise FROM retrieval_event WHERE id='r1'").fetchone()[0]
+            == 0
+        )
         conn.close()
 
     def test_repeated_run_is_noop(self, tmp_path):

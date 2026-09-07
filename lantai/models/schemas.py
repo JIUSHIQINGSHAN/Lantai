@@ -26,11 +26,13 @@ class AddMemoryReq(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     url: str = ""
     content: str = Field(default="", min_length=0, max_length=50000)
-    media_url: str = Field(default="", max_length=15_000_000)  # 目识（vision）：图片地址/data URI（v0.10，v0.12 截屏放宽至 15MB 字符）
+    media_url: str = Field(
+        default="", max_length=15_000_000
+    )  # 目识（vision）：图片地址/data URI（v0.10，v0.12 截屏放宽至 15MB 字符）
     authors: list[str] = []
     tags: list[str] = []
     lane: str = Field(default="general")  # fact/rule/experience/preference/chat/general
-    domain: str | None = None          # 辨域（ADR-0034）：user/session/agent
+    domain: str | None = None  # 辨域（ADR-0034）：user/session/agent
     metadata: dict = {}  # 附加元数据，落 RawDocument.meta（如 source=pre_compress）
 
     @field_validator("metadata")
@@ -109,7 +111,6 @@ class SourceReq(BaseModel):
     enabled: bool = True
 
 
-
 class RawMemoryReq(BaseModel):
     """原文直存请求（verbatim 记忆）：内容直入 FTS5+向量，零 LLM，不走提取/闸门/演化。"""
 
@@ -123,6 +124,7 @@ class RawMemoryReq(BaseModel):
     @classmethod
     def _check_metadata(cls, v):
         return _validate_metadata_dict(v)
+
 
 class ObsidianSyncReq(BaseModel):
     """Obsidian 笔记同步请求（Ticket 02）：原文直存 + [[双链]] 实体/边沉淀。"""
@@ -141,6 +143,7 @@ class ObsidianSyncReq(BaseModel):
 
 class TreeAddNodeReq(BaseModel):
     """新增分类树节点（v0.7）。"""
+
     name: str
     parent_path: str = "/"
     description: str = ""
@@ -148,17 +151,20 @@ class TreeAddNodeReq(BaseModel):
 
 class TreeAssignReq(BaseModel):
     """把记忆挂到分类树节点。"""
+
     memory_id: str
     node_path: str
 
 
 class TreeUnassignReq(BaseModel):
     """解除记忆挂载。"""
+
     memory_id: str
 
 
 class CrystalDecideReq(BaseModel):
     """技能结晶候选裁决：approve 必须带非空 steps（宁 miss 不脏写）。"""
+
     approve: bool
     steps: list[str] = []
     reason: str = ""
@@ -166,9 +172,9 @@ class CrystalDecideReq(BaseModel):
 
 class SetPersonaReq(BaseModel):
     """设置/更新器识（Persona 人格基座，ADR-0029）。"""
+
     name: str = Field(min_length=1, max_length=100)
     linguistic_style: str = Field(default="", max_length=2000)
     guidelines: str = Field(default="", max_length=2000)
     epistemic_facts: str = Field(default="", max_length=2000)
     is_active: bool = True
-

@@ -5,6 +5,7 @@
 读取侧：scene_navigation 纯函数生成导航块（场景名 + 摘要 + 成员 key），渐进式披露，
 需要详情用 scene_get 下钻。
 """
+
 import math
 
 from sqlmodel import select
@@ -31,8 +32,7 @@ def cosine_sim(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def cluster_scenes(items: list, vectors: list[list[float]],
-                   threshold: float) -> list[list]:
+def cluster_scenes(items: list, vectors: list[list[float]], threshold: float) -> list[list]:
     """确定性贪心聚类（纯函数）：按输入顺序，与既有簇质心余弦 ≥ 阈值则并入，否则开新簇。
 
     返回 [[item, ...], ...]，簇内顺序与输入一致；阈值越高簇越细。
@@ -55,8 +55,8 @@ def cluster_scenes(items: list, vectors: list[list[float]],
             cluster_vecs[best_idx].append(vec)
             n = len(cluster_vecs[best_idx])
             centroids[best_idx] = [
-                sum(v[j] for v in cluster_vecs[best_idx]) / n
-                for j in range(len(vec))]
+                sum(v[j] for v in cluster_vecs[best_idx]) / n for j in range(len(vec))
+            ]
     return clusters
 
 
@@ -68,8 +68,9 @@ def _mean_vector(vectors: list[list[float]]) -> list[float]:
     return [sum(v[j] for v in vectors) / len(vectors) for j in range(dim)]
 
 
-def incremental_cluster(vector: list[float], centroids: list[list[float]],
-                        threshold: float) -> tuple[int | None, float]:
+def incremental_cluster(
+    vector: list[float], centroids: list[list[float]], threshold: float
+) -> tuple[int | None, float]:
     """增量聚类（纯函数）：与既有场景质心余弦 ≥ 阈值返回最优簇下标，否则 (None, best_sim)。
 
     与 cluster_scenes 贪心并入规则一致（并入最相似簇）；未命中不建新场景
@@ -106,8 +107,9 @@ def _name_scenes(clusters: list[list]) -> list[tuple[str, str]]:
         return fallback
     try:
         from lantai.llm.client import chat_json
-        from lantai.services.prompt_service import get_prompt
         from lantai.llm.prompts import SCENE_NAMING_SYS
+        from lantai.services.prompt_service import get_prompt
+
         reps = [(_fallback_name(c) or "无") for c in clusters]
         user = "\n".join(f"{i + 1}. {k}" for i, k in enumerate(reps))
         data = chat_json(SCENE_NAMING_SYS, user)
@@ -120,8 +122,7 @@ def _name_scenes(clusters: list[list]) -> list[tuple[str, str]]:
                 return fallback
             name = (item.get("name") or "").strip()
             summary = (item.get("summary") or "").strip()
-            out.append((name or _fallback_name(cluster),
-                        summary or _fallback_summary(cluster)))
+            out.append((name or _fallback_name(cluster), summary or _fallback_summary(cluster)))
         return out
     except Exception:
         return fallback
@@ -145,6 +146,7 @@ def rebuild_scenes(threshold: float | None = None) -> dict:
             s.commit()
             return {"ok": True, "scene_count": 0, "member_count": 0}
         from lantai.llm.client import embed  # 外部依赖：允许 mock
+
         vectors = embed([m.content for m in items])
         vec_map = {m.id: vec for m, vec in zip(items, vectors, strict=False)}
         clusters = [c for c in cluster_scenes(items, vectors, thr) if len(c) >= 2]
@@ -167,17 +169,20 @@ def rebuild_scenes(threshold: float | None = None) -> dict:
             for m in members:
                 m.scene_id = scene.id
         s.commit()
-        return {"ok": True, "scene_count": scene_count,
-                "member_count": sum(len(c) for c in clusters)}
+        return {
+            "ok": True,
+            "scene_count": scene_count,
+            "member_count": sum(len(c) for c in clusters),
+        }
 
 
 def _refresh_scene_stats(s, scene: MemoryScene) -> None:
     """场景热值重算（零写放大：heat = 成员 use_count 求和，member_count = 成员数）。"""
-    members = s.exec(select(MemoryItem).where(
-        MemoryItem.scene_id == scene.id, MemoryItem.status == "active")).all()
+    members = s.exec(
+        select(MemoryItem).where(MemoryItem.scene_id == scene.id, MemoryItem.status == "active")
+    ).all()
     scene.heat = sum((getattr(m, "use_count", 0) or 0) for m in members)
     scene.member_count = len(members)
-
 
 
 def assign_new_memory(memory_id: str, threshold: float | None = None) -> dict:
@@ -195,9 +200,9 @@ def assign_new_memory(memory_id: str, threshold: float | None = None) -> dict:
         if not scenes:
             return {"ok": True, "assigned": False, "scene_id": None, "best_sim": 0.0}
         from lantai.llm.client import embed  # 外部依赖：允许 mock
+
         vector = embed([m.content])[0]
-        idx, best_sim = incremental_cluster(
-            vector, [sc.centroid or [] for sc in scenes], thr)
+        idx, best_sim = incremental_cluster(vector, [sc.centroid or [] for sc in scenes], thr)
         if idx is None:
             return {"ok": True, "assigned": False, "scene_id": None, "best_sim": best_sim}
         scene = scenes[idx]
@@ -208,7 +213,6 @@ def assign_new_memory(memory_id: str, threshold: float | None = None) -> dict:
         return {"ok": True, "assigned": True, "scene_id": scene.id, "best_sim": best_sim}
 
 
-
 def assign_unassigned(limit: int = 50, threshold: float | None = None) -> dict:
     """补跑增量聚类：扫描无 scene_id 的 active 记忆逐条归属（消化期与手动同源）。
 
@@ -216,9 +220,11 @@ def assign_unassigned(limit: int = 50, threshold: float | None = None) -> dict:
     """
     thr = threshold if threshold is not None else settings.SCENE_CLUSTER_THRESHOLD
     with db.get_session() as s:
-        unassigned = s.exec(select(MemoryItem).where(
-            MemoryItem.status == "active",
-            MemoryItem.scene_id.is_(None)).limit(limit)).all()
+        unassigned = s.exec(
+            select(MemoryItem)
+            .where(MemoryItem.status == "active", MemoryItem.scene_id.is_(None))
+            .limit(limit)
+        ).all()
     assigned, missed = 0, 0
     for m in unassigned:
         r = assign_new_memory(m.id, threshold=thr)
@@ -226,8 +232,7 @@ def assign_unassigned(limit: int = 50, threshold: float | None = None) -> dict:
             assigned += 1
         else:
             missed += 1
-    return {"ok": True, "scanned": len(unassigned), "assigned": assigned,
-            "missed": missed}
+    return {"ok": True, "scanned": len(unassigned), "assigned": assigned, "missed": missed}
 
 
 def get_scene(scene_id: str) -> dict:
@@ -238,19 +243,27 @@ def get_scene(scene_id: str) -> dict:
             raise ValueError("scene not found")
         members = s.exec(
             select(MemoryItem)
-            .where(MemoryItem.scene_id == scene_id,
-                   MemoryItem.status == "active")
+            .where(MemoryItem.scene_id == scene_id, MemoryItem.status == "active")
             .order_by(MemoryItem.use_count.desc())
         ).all()
         return {
             "scene": {
-                "id": scene.id, "name": scene.name, "summary": scene.summary,
-                "heat": scene.heat, "member_count": scene.member_count,
+                "id": scene.id,
+                "name": scene.name,
+                "summary": scene.summary,
+                "heat": scene.heat,
+                "member_count": scene.member_count,
                 "updated_at": scene.updated_at.isoformat(),
             },
             "members": [
-                {"id": m.id, "key": m.key, "content": m.content, "lane": m.lane,
-                 "use_count": m.use_count, "decay_class": m.decay_class}
+                {
+                    "id": m.id,
+                    "key": m.key,
+                    "content": m.content,
+                    "lane": m.lane,
+                    "use_count": m.use_count,
+                    "decay_class": m.decay_class,
+                }
                 for m in members
             ],
         }
@@ -262,18 +275,23 @@ def list_scenes(limit: int = 50) -> dict:
         raise ValueError("limit must be an int in [1, 500]")
     with db.get_session() as s:
         scenes = s.exec(
-            select(MemoryScene)
-            .order_by(MemoryScene.heat.desc(), MemoryScene.member_count.desc())
+            select(MemoryScene).order_by(MemoryScene.heat.desc(), MemoryScene.member_count.desc())
         ).all()
-        return {"scenes": [
-            {"id": sc.id, "name": sc.name, "summary": sc.summary,
-             "heat": sc.heat, "member_count": sc.member_count}
-            for sc in scenes[:limit]
-        ]}
+        return {
+            "scenes": [
+                {
+                    "id": sc.id,
+                    "name": sc.name,
+                    "summary": sc.summary,
+                    "heat": sc.heat,
+                    "member_count": sc.member_count,
+                }
+                for sc in scenes[:limit]
+            ]
+        }
 
 
-def format_scene_block(scene: dict, members: list,
-                       max_chars: int, suffix: str) -> tuple[str, str]:
+def format_scene_block(scene: dict, members: list, max_chars: int, suffix: str) -> tuple[str, str]:
     """单个场景导航块（纯函数）：## Scene: 名称（热度 N，成员 M）+ 摘要 + 成员 key。
 
     返回 (注入行, evidence 内容)——evidence 与注入行同源。
@@ -294,15 +312,15 @@ def format_scene_block(scene: dict, members: list,
     return truncated, truncated
 
 
-def scene_navigation(scene_blocks: list[tuple[str, str]],
-                     max_total_chars: int) -> tuple[list[str], int]:
+def scene_navigation(
+    scene_blocks: list[tuple[str, str]], max_total_chars: int
+) -> tuple[list[str], int]:
     """总预算内按序装入导航块（复用 apply_recall_budget），返回 (lines, dropped)。"""
     lines = [b[0] for b in scene_blocks]
     return apply_recall_budget(lines, max_total_chars)
 
 
-def build_scene_navigation_lines(items: list, per_scene_chars: int,
-                                 suffix: str) -> list[str]:
+def build_scene_navigation_lines(items: list, per_scene_chars: int, suffix: str) -> list[str]:
     """命中记忆按场景分组 → 场景导航块列表（heat 降序）。
 
     渐进式披露：只给导航（场景名 + 摘要 + 成员 key），详情走 scene_get 下钻。
@@ -313,8 +331,7 @@ def build_scene_navigation_lines(items: list, per_scene_chars: int,
         return []
     try:
         with db.get_session() as s:
-            scenes = s.exec(
-                select(MemoryScene).where(MemoryScene.id.in_(scene_ids))).all()
+            scenes = s.exec(select(MemoryScene).where(MemoryScene.id.in_(scene_ids))).all()
         scene_map = {sc.id: sc for sc in scenes}
     except Exception:
         return []
@@ -327,13 +344,21 @@ def build_scene_navigation_lines(items: list, per_scene_chars: int,
     ordered = sorted(
         groups.items(),
         key=lambda kv: (scene_map[kv[0]].heat, scene_map[kv[0]].member_count),
-        reverse=True)
+        reverse=True,
+    )
     lines = []
     for sid, members in ordered:
         sc = scene_map[sid]
         line, _content = format_scene_block(
-            {"name": sc.name, "summary": sc.summary,
-             "heat": sc.heat, "member_count": sc.member_count},
-            members, per_scene_chars, suffix)
+            {
+                "name": sc.name,
+                "summary": sc.summary,
+                "heat": sc.heat,
+                "member_count": sc.member_count,
+            },
+            members,
+            per_scene_chars,
+            suffix,
+        )
         lines.append(line)
     return lines

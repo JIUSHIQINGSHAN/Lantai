@@ -4,10 +4,10 @@ LLM 建议生成器——只提出候选，不直接写 settings / .env / overri
 - 无 fallback：LLM 失败 / 非法输出 / 低置信度 → 不创建建议（宁 miss 不脏写）。
 - 证据引用必须是对应论文正文的真实子串（归一化后），防虚构。
 """
+
 from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.llm.client import chat_json
-from lantai.services.prompt_service import get_prompt
 from lantai.llm.prompts import PARAM_ADVICE_SYS_V2
 from lantai.parameters.registry import (
     GROUP_CONSTRAINTS,
@@ -19,6 +19,7 @@ from lantai.parameters.validation import (
     ParamValidationError,
     validate_batch_advice,
 )
+from lantai.services.prompt_service import get_prompt
 
 
 def _registry_for_llm() -> dict:
@@ -33,8 +34,8 @@ def _registry_for_llm() -> dict:
                 "maximum": str(spec.maximum) if spec.maximum is not None else None,
                 "step": str(spec.step) if spec.step is not None else None,
                 "max_delta_per_apply": (
-                    str(spec.max_delta_per_apply)
-                    if spec.max_delta_per_apply is not None else None),
+                    str(spec.max_delta_per_apply) if spec.max_delta_per_apply is not None else None
+                ),
                 "group": spec.group,
                 "risk_level": spec.risk_level,
             }
@@ -42,8 +43,7 @@ def _registry_for_llm() -> dict:
 
 
 def _group_constraints_for_llm() -> dict:
-    return {g: {k: v for k, v in c.items()}
-            for g, c in GROUP_CONSTRAINTS.items()}
+    return {g: {k: v for k, v in c.items()} for g, c in GROUP_CONSTRAINTS.items()}
 
 
 def render_signal_block(views: dict) -> str:
@@ -59,29 +59,35 @@ def render_signal_block(views: dict) -> str:
             f"[PAPER src_id={sid}] venue_class={v.venue_class} "
             f"evidence_tier={v.evidence_tier} published={v.published_at} "
             f"version=v{v.version} "
-            f"primary_evidence_eligible={str(v.primary_evidence_eligible).lower()}")
+            f"primary_evidence_eligible={str(v.primary_evidence_eligible).lower()}"
+        )
     return "\n".join(lines) + "\n"
 
 
-def build_param_advice_user_prompt(papers: list[dict],
-                                   current_snapshot: dict,
-                                   views: dict | None = None,
-                                   prompt_version: str = "v2") -> str:
+def build_param_advice_user_prompt(
+    papers: list[dict],
+    current_snapshot: dict,
+    views: dict | None = None,
+    prompt_version: str = "v2",
+) -> str:
     """拼接 user context（canonical JSON，键序稳定；V2 附信号块）。"""
     views = views or {}
     papers_block = [
-        {"source_document_id": p["source_document_id"],
-         "title": p["title"], "source_url": p["source_url"],
-         "content": p["content"]}
+        {
+            "source_document_id": p["source_document_id"],
+            "title": p["title"],
+            "source_url": p["source_url"],
+            "content": p["content"],
+        }
         for p in papers
     ]
 
-    prefix = ("Return strict JSON matching the schema in the system prompt.\n"
-              "Only output JSON.\n\n")
+    prefix = "Return strict JSON matching the schema in the system prompt.\nOnly output JSON.\n\n"
     signal_lines = render_signal_block(views)
     if prompt_version == "v2" and signal_lines:
-        prefix += ("SIGNAL BLOCKS (authoritative system metadata, "
-                   "never quote it):\n" + signal_lines + "\n")
+        prefix += (
+            "SIGNAL BLOCKS (authoritative system metadata, never quote it):\n" + signal_lines + "\n"
+        )
     context = {
         "SYSTEM_CONTEXT": {
             "system": "兰台记忆（Lantai）",
@@ -101,11 +107,13 @@ def build_param_advice_user_prompt(papers: list[dict],
     return prefix + canonical_json(context)
 
 
-def generate_param_advice(papers: list[dict],
-                          current_snapshot: dict,
-                          views: dict | None = None,
-                          min_confidence: float | None = None,
-                          max_changes: int | None = None) -> dict:
+def generate_param_advice(
+    papers: list[dict],
+    current_snapshot: dict,
+    views: dict | None = None,
+    min_confidence: float | None = None,
+    max_changes: int | None = None,
+) -> dict:
     """
     调用 LLM（V2 批量）并严格校验。
     返回：
@@ -116,13 +124,14 @@ def generate_param_advice(papers: list[dict],
     if not settings.PARAM_ADVICE_ENABLED:
         return {"ok": False, "error_code": "disabled"}
 
-    min_confidence = min_confidence if min_confidence is not None \
-        else settings.PARAM_ADVICE_MIN_CONFIDENCE
-    max_changes = max_changes if max_changes is not None \
-        else settings.PARAM_ADVICE_MAX_CHANGES
+    min_confidence = (
+        min_confidence if min_confidence is not None else settings.PARAM_ADVICE_MIN_CONFIDENCE
+    )
+    max_changes = max_changes if max_changes is not None else settings.PARAM_ADVICE_MAX_CHANGES
 
-    user = build_param_advice_user_prompt(papers, current_snapshot,
-                                          views=views, prompt_version="v2")
+    user = build_param_advice_user_prompt(
+        papers, current_snapshot, views=views, prompt_version="v2"
+    )
     try:
         raw = chat_json(get_prompt("PARAM_ADVICE_SYS_V2", PARAM_ADVICE_SYS_V2), user)
     except Exception as e:  # chat_json 内部已重试 3 次
@@ -130,9 +139,9 @@ def generate_param_advice(papers: list[dict],
         return {"ok": False, "error_code": "llm_error"}
 
     try:
-        result = validate_batch_advice(raw, current_snapshot, papers,
-                                       views or {},
-                                       min_confidence, max_changes)
+        result = validate_batch_advice(
+            raw, current_snapshot, papers, views or {}, min_confidence, max_changes
+        )
     except (ParamValidationError, Exception) as e:
         if isinstance(e, ParamValidationError):
             logger.info("param advice rejected: %s", e)

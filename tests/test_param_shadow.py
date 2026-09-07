@@ -6,6 +6,7 @@ promote 通过、到期判定、promote 前置检查。
 集成测试（真实 SQLite + mock 外部网络）：表可建、open_shadow 落库、
 check_shadow_due 到期判定、rollback 护栏恢复。
 """
+
 from datetime import timedelta
 from unittest.mock import Mock, patch
 
@@ -24,15 +25,23 @@ from lantai.parameters.shadow import (
 
 
 def _base(**over):
-    m = {"sample_count": 50, "zero_result_rate": 0.10,
-         "avg_result_count": 4.5, "jaccard_vs_baseline": None}
+    m = {
+        "sample_count": 50,
+        "zero_result_rate": 0.10,
+        "avg_result_count": 4.5,
+        "jaccard_vs_baseline": None,
+    }
     m.update(over)
     return m
 
 
 def _shadow(**over):
-    m = {"sample_count": 50, "zero_result_rate": 0.10,
-         "avg_result_count": 4.5, "jaccard_vs_baseline": None}
+    m = {
+        "sample_count": 50,
+        "zero_result_rate": 0.10,
+        "avg_result_count": 4.5,
+        "jaccard_vs_baseline": None,
+    }
     m.update(over)
     return m
 
@@ -107,38 +116,45 @@ class TestShadowIsDue:
 
 class TestDecidePromoteTarget:
     def test_observing_and_due_allows(self):
-        w = Mock(status="observing",
-                 check_deadline=utcnow() - timedelta(days=1),
-                 started_at=utcnow() - timedelta(days=7))
+        w = Mock(
+            status="observing",
+            check_deadline=utcnow() - timedelta(days=1),
+            started_at=utcnow() - timedelta(days=7),
+        )
         assert decide_promote_target(w) is True
 
     def test_not_observing_rejects(self):
-        w = Mock(status="promoted",
-                 check_deadline=utcnow() - timedelta(days=1),
-                 started_at=utcnow() - timedelta(days=7))
+        w = Mock(
+            status="promoted",
+            check_deadline=utcnow() - timedelta(days=1),
+            started_at=utcnow() - timedelta(days=7),
+        )
         assert decide_promote_target(w) is False
 
     def test_not_due_rejects(self):
-        w = Mock(status="observing",
-                 check_deadline=utcnow() + timedelta(days=1),
-                 started_at=utcnow() - timedelta(days=7))
+        w = Mock(
+            status="observing",
+            check_deadline=utcnow() + timedelta(days=1),
+            started_at=utcnow() - timedelta(days=7),
+        )
         assert decide_promote_target(w) is False
 
     def test_min_promote_days_guard(self):
-        w = Mock(status="observing",
-                 check_deadline=utcnow() - timedelta(days=1),
-                 started_at=utcnow() - timedelta(days=2))
+        w = Mock(
+            status="observing",
+            check_deadline=utcnow() - timedelta(days=1),
+            started_at=utcnow() - timedelta(days=2),
+        )
         assert decide_promote_target(w, min_promote_days=7) is False
         assert decide_promote_target(w, min_promote_days=1) is True
 
     def test_no_started_at_rejects_with_min_days(self):
-        w = Mock(status="observing",
-                 check_deadline=utcnow() - timedelta(days=1),
-                 started_at=None)
+        w = Mock(status="observing", check_deadline=utcnow() - timedelta(days=1), started_at=None)
         assert decide_promote_target(w, min_promote_days=1) is False
 
 
 # ── 集成测试（真实 SQLite + mock 外部网络） ─────────────────────────
+
 
 @pytest.fixture(scope="function")
 def shadow_db():
@@ -146,8 +162,10 @@ def shadow_db():
     import lantai.eval.models  # noqa: F401
     import lantai.models.tables  # noqa: F401
     import lantai.parameters.trust_models  # noqa: F401
+
     test_engine = create_engine(
-        "sqlite://", echo=False,
+        "sqlite://",
+        echo=False,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
@@ -156,13 +174,16 @@ def shadow_db():
     def get_test_session():
         return Session(test_engine)
 
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.retrieval.hybrid.get_vector_store") as vs, \
-         patch("lantai.retrieval.hybrid.embed",
-               return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.reranker.rerank", return_value=[]), \
-         patch("lantai.retrieval.hybrid.classify_intent",
-               return_value={"intent": "exploratory", "candidate_n": 10}):
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch("lantai.retrieval.hybrid.get_vector_store") as vs,
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.reranker.rerank", return_value=[]),
+        patch(
+            "lantai.retrieval.hybrid.classify_intent",
+            return_value={"intent": "exploratory", "candidate_n": 10},
+        ),
+    ):
         vs.return_value.search.return_value = [{"id": "mem_1", "distance": 0.1}]
         yield get_test_session
 
@@ -172,29 +193,51 @@ class TestShadowIntegration:
         """造查询集（build_query_set 需要 retrieval_event 源）。"""
         from lantai.eval.query_set import build_query_set
         from lantai.models.tables import MemoryItem, RetrievalEvent
+
         with sf() as s:
             for i in range(2):
-                s.add(RetrievalEvent(
-                    id=f"se_ev_{i}", trace_id="t",
-                    query_text=f"shadow query {i}", query_norm_hash=f"sh{i}",
-                    lane="", param_snapshot_hash="sha256:x",
-                    result_ids=[], result_scores=[], used_ids=[], latency_ms=1,
-                    zero_result=False, is_system_noise=False,
-                    created_at=utcnow() - timedelta(minutes=i)))
-            s.add(MemoryItem(id="mem_1", memory_type="semantic", key="k",
-                             content="影子测试记忆", lane="general",
-                             status="active"))
+                s.add(
+                    RetrievalEvent(
+                        id=f"se_ev_{i}",
+                        trace_id="t",
+                        query_text=f"shadow query {i}",
+                        query_norm_hash=f"sh{i}",
+                        lane="",
+                        param_snapshot_hash="sha256:x",
+                        result_ids=[],
+                        result_scores=[],
+                        used_ids=[],
+                        latency_ms=1,
+                        zero_result=False,
+                        is_system_noise=False,
+                        created_at=utcnow() - timedelta(minutes=i),
+                    )
+                )
+            s.add(
+                MemoryItem(
+                    id="mem_1",
+                    memory_type="semantic",
+                    key="k",
+                    content="影子测试记忆",
+                    lane="general",
+                    status="active",
+                )
+            )
             s.commit()
         build_query_set("dry-run-v1")
 
     def test_table_created(self, shadow_db):
         from lantai.parameters.trust_models import ShadowWindow
+
         sf = shadow_db
         with sf() as s:
-            w = ShadowWindow(id="sw_t1", override_id="rev_1",
-                             param_overrides={"RETRIEVAL_W_VECTOR": 0.7},
-                             base_snapshot={"RETRIEVAL_W_VECTOR": 0.6},
-                             status="observing")
+            w = ShadowWindow(
+                id="sw_t1",
+                override_id="rev_1",
+                param_overrides={"RETRIEVAL_W_VECTOR": 0.7},
+                base_snapshot={"RETRIEVAL_W_VECTOR": 0.6},
+                status="observing",
+            )
             s.add(w)
             s.commit()
             assert s.get(ShadowWindow, "sw_t1").status == "observing"
@@ -202,6 +245,7 @@ class TestShadowIntegration:
     def test_open_shadow_persists(self, shadow_db):
         from lantai.parameters.runtime import open_shadow
         from lantai.parameters.trust_models import ShadowWindow
+
         sf = shadow_db
         self._seed_query_set(sf)
         w = open_shadow("rev_42", {"RETRIEVAL_W_VECTOR": 0.75}, observe_days=1)
@@ -222,6 +266,7 @@ class TestShadowIntegration:
         from lantai.core.settings import settings as _s
         from lantai.parameters.runtime import open_shadow
         from lantai.parameters.trust_models import ShadowWindow
+
         sf = shadow_db
         self._seed_query_set(sf)
         w1 = open_shadow("rev_1", {"RETRIEVAL_W_VECTOR": 0.7}, observe_days=1)
@@ -238,6 +283,7 @@ class TestShadowIntegration:
         """到期窗跑 dry-run 后 promote（mock 向量全命中 → 指标健康）。"""
         from lantai.parameters.runtime import open_shadow
         from lantai.parameters.trust_models import ShadowWindow
+
         sf = shadow_db
         self._seed_query_set(sf)
         w = open_shadow("rev_7", {"RETRIEVAL_W_VECTOR": 0.7}, observe_days=1)
@@ -248,6 +294,7 @@ class TestShadowIntegration:
             s.add(got)
             s.commit()
         from lantai.parameters.runtime import check_shadow_due
+
         results = check_shadow_due()
         assert len(results) == 1
         assert results[0]["window_id"] == w.id
@@ -264,6 +311,7 @@ class TestShadowIntegration:
         """rollback 时写 ParamOverride(operation=rollback) 恢复基线。"""
         from lantai.parameters.runtime import _rollback_snapshot, open_shadow
         from lantai.parameters.trust_models import ShadowWindow
+
         sf = shadow_db
         self._seed_query_set(sf)
         w = open_shadow("rev_9", {"RETRIEVAL_W_VECTOR": 0.7}, observe_days=1)

@@ -2,9 +2,10 @@
 
 静态页零依赖（无 node/打包），公开挂载不改检索语义；只验证可达与内容标记。
 """
+
 from fastapi.testclient import TestClient
 
-from api_server import app
+from lantai.api.app import app
 
 
 def test_recall_console_served():

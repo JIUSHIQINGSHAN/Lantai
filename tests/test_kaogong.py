@@ -6,9 +6,10 @@
 3. 真实 SQLite 数据库考功周期执行（不 mock 冒烟）；
 4. REST 端点 POST /evolution/kaogong 与 MCP kaogong_eval 工具。
 """
+
 from fastapi.testclient import TestClient
 
-from api_server import app
+from lantai.api.app import app
 from lantai.models.tables import MemoryItem
 from lantai.services.kaogong_service import (
     evaluate_memory_item_grade,
@@ -150,6 +151,7 @@ class TestKaogongEndpointsAndMCP:
 
     def test_mcp_kaogong_eval(self, param_env):
         session_factory, _ = param_env
-        from scripts.mcp_server import handle_kaogong_eval
+        from lantai.cli.mcp import handle_kaogong_eval
+
         res = handle_kaogong_eval({})
         assert "evaluated" in res

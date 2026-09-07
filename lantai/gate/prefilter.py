@@ -19,6 +19,7 @@ v0.4 变更：
 - relevance_check 支持注入 cache/now，成为可测的 pure function，同时保持
   _LAST_GATE_DECISION 模块属性以兼容既有测试 fixture。
 """
+
 import logging
 import os
 import re
@@ -31,48 +32,47 @@ logger = logging.getLogger("lantai.gate")
 
 # ── 正则模式 ──
 REFERENCE_PATTERNS = re.compile(
-    r'上次|之前|以前|前面|刚刚|过去|曾经|还记得|'
-    r'上次说的|上回|那.*(事|问题|话题|项目|任务)|'
-    r'上次.*(聊|说|讲|提到|讨论)|'
-    r'继续|接着|再.*(说|讲|聊)|'
-    r'我们.*(决定|说过|定|约)|'
-    r'last time|previously|before|earlier|'
-    r'remember|recall|what.*(we|I).*said|'
-    r'continue|go on|pick up',
-    re.IGNORECASE
+    r"上次|之前|以前|前面|刚刚|过去|曾经|还记得|"
+    r"上次说的|上回|那.*(事|问题|话题|项目|任务)|"
+    r"上次.*(聊|说|讲|提到|讨论)|"
+    r"继续|接着|再.*(说|讲|聊)|"
+    r"我们.*(决定|说过|定|约)|"
+    r"last time|previously|before|earlier|"
+    r"remember|recall|what.*(we|I).*said|"
+    r"continue|go on|pick up",
+    re.IGNORECASE,
 )
 
 EXPLICIT_RECALL = re.compile(
-    r'记得|忘记|忘了|记不|想起来|想不起|回忆|'
-    r'查.*记忆|查.*历史|搜索.*记忆|'
-    r'remember|forgot|forget|recall|search.*memory',
-    re.IGNORECASE
+    r"记得|忘记|忘了|记不|想起来|想不起|回忆|"
+    r"查.*记忆|查.*历史|搜索.*记忆|"
+    r"remember|forgot|forget|recall|search.*memory",
+    re.IGNORECASE,
 )
 
 # 不需要记忆的纯社交结束语
 NO_MEMORY_PATTERNS = re.compile(
-    r'^(?:ok|好|好的|嗯|哦|行|可以|是的|对|收到|了解|明白|知道了|再见|拜拜|谢谢|'
-    r'yes|no|yep|nope|k|kk|okay|thanks|bye|got it|sure|alright|'
-    r'hello|hi|hey|早上好|晚上好|晚安|[!！。. ]){1,15}$',
-    re.IGNORECASE
+    r"^(?:ok|好|好的|嗯|哦|行|可以|是的|对|收到|了解|明白|知道了|再见|拜拜|谢谢|"
+    r"yes|no|yep|nope|k|kk|okay|thanks|bye|got it|sure|alright|"
+    r"hello|hi|hey|早上好|晚上好|晚安|[!！。. ]){1,15}$",
+    re.IGNORECASE,
 )
 
 # 纠错/纠偏
 CORRECTION_PATTERNS = re.compile(
-    r'不对|不是这|你记错|错了|no, |wrong|actually|not really|记错了|你说错',
-    re.IGNORECASE
+    r"不对|不是这|你记错|错了|no, |wrong|actually|not really|记错了|你说错", re.IGNORECASE
 )
 
 # 自我指代基础模式（ADR-0028：收录大哥等项目核心自指）
 _BASE_SELF_REFERENCE = (
-    r'我的|我是|我叫|我.*(名字|生日|年龄|地址|电话|邮箱)|'
-    r'大哥|master|owner|assistant|agent|user|用户'
+    r"我的|我是|我叫|我.*(名字|生日|年龄|地址|电话|邮箱)|"
+    r"大哥|master|owner|assistant|agent|user|用户"
 )
 
 # 技术/领域实体模式（ADR-0028 拾遗：短实词查询放行）
 TECHNICAL_DOMAIN_PATTERNS = re.compile(
-    r'架构|系统|配置|算法|原理|方案|模型|显卡|接口|数据|微服务|容器|集群|驱动|硬件|依赖',
-    re.IGNORECASE
+    r"架构|系统|配置|算法|原理|方案|模型|显卡|接口|数据|微服务|容器|集群|驱动|硬件|依赖",
+    re.IGNORECASE,
 )
 
 # ── 实体词表惰性编译（修 import 时定死）──
@@ -83,9 +83,10 @@ _KEYWORD_WARNED = False
 def _entity_raw() -> str:
     """优先新环境变量名，回退旧名以兼容既有部署。"""
     return (
-        os.environ.get("REMEMBRANCE_ENTITY_KEYWORDS")
-        or os.environ.get("ENTITY_KEYWORDS", "")
-    ).strip().strip("|")
+        (os.environ.get("REMEMBRANCE_ENTITY_KEYWORDS") or os.environ.get("ENTITY_KEYWORDS", ""))
+        .strip()
+        .strip("|")
+    )
 
 
 def _self_reference_pattern() -> re.Pattern:
@@ -133,7 +134,7 @@ def relevance_check(
             cache = _USER_GATE_DECISIONS.setdefault(
                 user_id, {"time": 0.0, "query": "", "needs_memory": False}
             )
-    
+
     now = now if now is not None else time.time()
 
     if not query or len(query.strip()) < 2:
@@ -167,7 +168,9 @@ def relevance_check(
         return _update_cache(cache, now, True, q, "reference", "episode")
 
     # 6. 有实质内容（长文本或含专业/技术领域实词的短查询，ADR-0028）
-    if (len(q) > 15 and _has_content_words(q)) or (len(q) >= 4 and TECHNICAL_DOMAIN_PATTERNS.search(q)):
+    if (len(q) > 15 and _has_content_words(q)) or (
+        len(q) >= 4 and TECHNICAL_DOMAIN_PATTERNS.search(q)
+    ):
         return _update_cache(cache, now, True, q, "content_query", "pinned")
 
     # 7. 默认不需要
@@ -184,13 +187,13 @@ def _update_cache(
 
 def _has_content_words(text: str) -> bool:
     """判断文本是否含实质内容（非纯功能词）"""
-    chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
+    chinese_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
     if chinese_chars >= 5:
         return True
     content_patterns = [
-        r'\b(what|how|why|when|where|who|which|explain|describe|'
-        r'analyze|compare|create|build|fix|debug|deploy|install|'
-        r'config|setup|migrate|upgrade|error|fail|bug|issue|'
-        r'方案|怎么|如何|为什么|帮我|需要|应该|建议|推荐)\b',
+        r"\b(what|how|why|when|where|who|which|explain|describe|"
+        r"analyze|compare|create|build|fix|debug|deploy|install|"
+        r"config|setup|migrate|upgrade|error|fail|bug|issue|"
+        r"方案|怎么|如何|为什么|帮我|需要|应该|建议|推荐)\b",
     ]
     return any(re.search(pat, text, re.IGNORECASE) for pat in content_patterns)

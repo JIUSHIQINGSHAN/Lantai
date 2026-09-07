@@ -1,6 +1,7 @@
 """
 T04-T11: 功能测试——coalesce / fastpath / search_trace / health / dedup
 """
+
 from unittest.mock import Mock, patch
 
 import pytest
@@ -14,7 +15,8 @@ import lantai.storage.db as db_module
 @pytest.fixture(scope="function")
 def client():
     test_engine = create_engine(
-        "sqlite:///:memory:", echo=False,
+        "sqlite:///:memory:",
+        echo=False,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
@@ -23,19 +25,34 @@ def client():
     def get_test_session():
         return Session(test_engine)
 
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("lantai.retrieval.reranker.rerank", return_value=[]), \
-         patch("lantai.storage.vector_store.ChromaVectorStore"), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1]*8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store",
-               return_value=Mock(search=Mock(return_value=[]))), \
-         patch("lantai.parsing.extractor.chat_json",
-               return_value={"summary": "test", "claims": [], "methods": [],
-                             "constraints": [], "actions": [], "topic": [],
-                             "extractor_confidence": 0.5}):
-        from api_server import app
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+        patch("lantai.retrieval.reranker.rerank", return_value=[]),
+        patch("lantai.storage.vector_store.ChromaVectorStore"),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch(
+            "lantai.retrieval.hybrid.get_vector_store",
+            return_value=Mock(search=Mock(return_value=[])),
+        ),
+        patch(
+            "lantai.parsing.extractor.chat_json",
+            return_value={
+                "summary": "test",
+                "claims": [],
+                "methods": [],
+                "constraints": [],
+                "actions": [],
+                "topic": [],
+                "extractor_confidence": 0.5,
+            },
+        ),
+    ):
+        from lantai.api.app import app
+
         with TestClient(app) as c:
             yield c
 
@@ -45,6 +62,7 @@ class TestFastpath:
 
     def test_self_declaration(self):
         from lantai.parsing.fastpath import fastpath_check
+
         result = fastpath_check("我叫张三")
         assert result is not None
         assert result["lane"] == "fact"
@@ -52,23 +70,27 @@ class TestFastpath:
 
     def test_preference(self):
         from lantai.parsing.fastpath import fastpath_check
+
         result = fastpath_check("我喜欢Python")
         assert result is not None
         assert result["lane"] == "preference"
 
     def test_explicit_instruction(self):
         from lantai.parsing.fastpath import fastpath_check
+
         result = fastpath_check("记住：明天开会")
         assert result is not None
         assert result["lane"] == "general"
 
     def test_no_match(self):
         from lantai.parsing.fastpath import fastpath_check
+
         result = fastpath_check("今天天气怎么样")
         assert result is None
 
     def test_too_short(self):
         from lantai.parsing.fastpath import fastpath_check
+
         result = fastpath_check("好")
         assert result is None
 
@@ -78,12 +100,14 @@ class TestCoalesceBuffer:
 
     def test_buffer_add(self):
         from lantai.ingestion.coalesce import CoalesceBuffer
+
         buf = CoalesceBuffer()
         result = buf.add("user1", "general", "hello world")
         assert result.get("buffered") is True
 
     def test_buffer_flush_on_max_parts(self):
         from lantai.ingestion.coalesce import CoalesceBuffer
+
         buf = CoalesceBuffer()
         # max_parts=8 by default
         for i in range(8):
@@ -94,6 +118,7 @@ class TestCoalesceBuffer:
 
     def test_water_level(self):
         from lantai.ingestion.coalesce import CoalesceBuffer
+
         buf = CoalesceBuffer()
         buf.add("user1", "general", "hello")
         level = buf.water_level()
@@ -156,12 +181,17 @@ class TestForgettingArchived:
         with db_mod.get_session() as s:
             old = MemoryItem(
                 id=new_id("mem"),
-                memory_type="general", key="old_working",
-                content="临时事项已完成", lane="working",
-                status="active", importance=0.1, use_count=0,
+                memory_type="general",
+                key="old_working",
+                content="临时事项已完成",
+                lane="working",
+                status="active",
+                importance=0.1,
+                use_count=0,
                 decay_score=0.2,
                 last_used_at=utcnow() - timedelta(days=100),
-                created_at=utcnow() - timedelta(days=100))
+                created_at=utcnow() - timedelta(days=100),
+            )
             s.add(old)
             s.commit()
             s.refresh(old)
@@ -177,5 +207,6 @@ class TestForgettingArchived:
         import inspect
 
         from lantai.retrieval import hybrid
+
         src = inspect.getsource(hybrid)
         assert '.where(MemoryItem.status == "active")' in src

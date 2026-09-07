@@ -1,3 +1,13 @@
+import enum
+
+class CognitiveRole(str, enum.Enum):
+    OBSERVATION = "observation"
+    EXPERIENCE = "experience"
+    BELIEF = "belief"
+    RULE = "rule"
+    PRINCIPLE = "principle"
+    SKILL = "skill"
+
 from datetime import datetime
 
 from sqlmodel import JSON, Column, Field, SQLModel
@@ -7,6 +17,10 @@ from lantai.core.time import utcnow
 
 class RawDocument(SQLModel, table=True):
     id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
+    session_id: str | None = Field(default=None, index=True)
     source_type: str
     source_id: str
     url: str
@@ -22,6 +36,10 @@ class RawDocument(SQLModel, table=True):
 
 class DocumentChunk(SQLModel, table=True):
     id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
+    session_id: str | None = Field(default=None, index=True)
     document_id: str = Field(index=True)
     chunk_index: int
     text: str
@@ -32,6 +50,10 @@ class DocumentChunk(SQLModel, table=True):
 
 class MemoryCandidate(SQLModel, table=True):
     id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
+    session_id: str | None = Field(default=None, index=True)
     document_id: str = Field(index=True)
     topic: list = Field(default_factory=list, sa_column=Column(JSON))
     summary: str = ""
@@ -41,8 +63,12 @@ class MemoryCandidate(SQLModel, table=True):
     actions: list = Field(default_factory=list, sa_column=Column(JSON))
     contradictions: list = Field(default_factory=list, sa_column=Column(JSON))
     extractor_confidence: float = 0.0
-    provenance: dict = Field(default_factory=dict, sa_column=Column(JSON))  # 提取来源（prompt/model/时间，借鉴腾讯 provenance）
+    provenance: dict = Field(
+        default_factory=dict, sa_column=Column(JSON)
+    )  # 提取来源（prompt/model/时间，借鉴腾讯 provenance）
+    role: CognitiveRole = Field(default=CognitiveRole.OBSERVATION, index=True)
     lane: str = Field(default="general")  # 分轨：从 AddMemoryReq 传入
+    domain: str = Field(default="user", index=True)
     status: str = "new"
     review_due_at: datetime | None = None  # 待审队列 TTL 截止（Ticket 02）
     deferred_at: datetime | None = None
@@ -54,20 +80,34 @@ class MemoryCandidate(SQLModel, table=True):
 
 class MemoryItem(SQLModel, table=True):
     id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
+    session_id: str | None = Field(default=None, index=True)
     memory_type: str = Field(default="text", index=True)
     namespace: str = Field(index=True, default="default")
     key: str | None = Field(default="", index=True)
     content: str
     structure: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    provenance: dict = Field(default_factory=dict, sa_column=Column(JSON))  # 提取来源（prompt/model/时间，可溯源）
+    provenance: dict = Field(
+        default_factory=dict, sa_column=Column(JSON)
+    )  # 提取来源（prompt/model/时间，可溯源）
     tags: list = Field(default_factory=list, sa_column=Column(JSON))
     scene_id: str | None = Field(default=None, index=True)  # 场景聚合归属（ADR-0012）
-    tree_path: str | None = Field(default=None, index=True)  # 分类树挂载路径（v0.7，借鉴 TreeMemory）
+    tree_path: str | None = Field(
+        default=None, index=True
+    )  # 分类树挂载路径（v0.7，借鉴 TreeMemory）
     confidence: float = 0.5
+    reason: str = ""
     importance: float = 0.5
     tier: str = "working"
-    lane: str = Field(default="general", index=True)         # 分轨：fact/rule/experience/preference/chat/general
-    domain: str = Field(default="user", index=True)          # 辨域（ADR-0034）：user/session/agent 三维硬隔离
+    role: CognitiveRole = Field(default=CognitiveRole.OBSERVATION, index=True)
+    lane: str = Field(
+        default="general", index=True
+    )  # 分轨：fact/rule/experience/preference/chat/general
+    domain: str = Field(
+        default="user", index=True
+    )  # 辨域（ADR-0034）：user/session/agent 三维硬隔离
     source_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     version: int = 1
     status: str = "active"
@@ -94,7 +134,9 @@ class MemoryScene(SQLModel, table=True):
     summary: str = ""
     heat: int = 0
     member_count: int = 0
-    centroid: list = Field(default_factory=list, sa_column=Column(JSON))  # 场景质心（增量聚类：rebuild/assign 落库）
+    centroid: list = Field(
+        default_factory=list, sa_column=Column(JSON)
+    )  # 场景质心（增量聚类：rebuild/assign 落库）
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -102,10 +144,15 @@ class MemoryScene(SQLModel, table=True):
 
 class MemoryEdge(SQLModel, table=True):
     id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
+    session_id: str | None = Field(default=None, index=True)
     source_memory_id: str = Field(index=True)
     target_memory_id: str = Field(index=True)
     relation: str  # supports / contradicts / refines / supersedes
     confidence: float = 0.5
+    reason: str = ""
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -158,6 +205,10 @@ class CoreMemoryBlock(SQLModel, table=True):
 
 class MemoryProposal(SQLModel, table=True):
     id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
+    session_id: str | None = Field(default=None, index=True)
     proposal_type: str
     target_memory_id: str | None = None
     candidate_id: str | None = None
@@ -169,7 +220,9 @@ class MemoryProposal(SQLModel, table=True):
     status: str = "pending"
     decided_by: str = "auto"
     decision_reason: str = ""  # 裁决原因（用户/自动拒绝理由，反馈回路与回填校准输入）
-    provenance: dict = Field(default_factory=dict, sa_column=Column(JSON))  # 继承候选提取来源（可溯源）
+    provenance: dict = Field(
+        default_factory=dict, sa_column=Column(JSON)
+    )  # 继承候选提取来源（可溯源）
     created_at: datetime = Field(default_factory=utcnow)
     applied_at: datetime | None = None
 
@@ -179,11 +232,11 @@ class ConflictEvent(SQLModel, table=True):
 
     id: str = Field(primary_key=True)
     memory_id: str = Field(index=True)  # 被判定冲突的既有记忆
-    incoming_ref: str = ""             # 触发源：候选 summary / 待写入文本摘要
+    incoming_ref: str = ""  # 触发源：候选 summary / 待写入文本摘要
     rule_name: str = ""
-    kind: str = "mutex"                # mutex（互斥规则） / override（属性覆盖，预留）
+    kind: str = "mutex"  # mutex（互斥规则） / override（属性覆盖，预留）
     detail: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    status: str = "open"               # open / resolved / dismissed
+    status: str = "open"  # open / resolved / dismissed
     resolved_by: str = ""
     created_at: datetime = Field(default_factory=utcnow)
     resolved_at: datetime | None = None
@@ -234,8 +287,10 @@ class IngestJob(SQLModel, table=True):
 
 # ---------------------------------------------------------------- 参数建议（论文驱动优化）
 
+
 class ParamAdviceRun(SQLModel, table=True):
     """一次 LLM 建议生成运行。"""
+
     __tablename__ = "param_advice_run"
 
     id: str = Field(primary_key=True)
@@ -252,11 +307,11 @@ class ParamAdviceRun(SQLModel, table=True):
 
 class ParamAdvicePaper(SQLModel, table=True):
     """论文入队状态机：new|processing|retry|consumed|dead。"""
+
     __tablename__ = "param_advice_paper"
 
     id: str = Field(primary_key=True)
-    raw_document_id: str = Field(
-        index=True, unique=True, foreign_key="rawdocument.id")
+    raw_document_id: str = Field(index=True, unique=True, foreign_key="rawdocument.id")
     state: str = Field(default="new", index=True)
     attempt_count: int = 0
     run_id: str | None = Field(default=None, index=True)
@@ -270,6 +325,7 @@ class ParamAdvicePaper(SQLModel, table=True):
 
 class ParamSuggestion(SQLModel, table=True):
     """参数调整建议（pending → accepted/rejected，禁止反向）。"""
+
     __tablename__ = "param_suggestion"
 
     id: str = Field(primary_key=True)
@@ -294,21 +350,19 @@ class ParamSuggestion(SQLModel, table=True):
     decided_at: datetime | None = None
     decided_by: str | None = None
     decision_note: str | None = None
-    override_id: str | None = Field(
-        default=None, foreign_key="param_override.id")
+    override_id: str | None = Field(default=None, foreign_key="param_override.id")
 
 
 class ParamOverride(SQLModel, table=True):
     """不可变追加式变更事件：apply / rollback。当前有效配置 = max(revision).after_snapshot。"""
+
     __tablename__ = "param_override"
 
     id: str = Field(primary_key=True)
     revision: int = Field(unique=True, index=True)
     operation: str = Field(index=True)  # apply | rollback
-    suggestion_id: str | None = Field(
-        default=None, foreign_key="param_suggestion.id")
-    rollback_of_override_id: str | None = Field(
-        default=None, foreign_key="param_override.id")
+    suggestion_id: str | None = Field(default=None, foreign_key="param_suggestion.id")
+    rollback_of_override_id: str | None = Field(default=None, foreign_key="param_override.id")
     before_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
     after_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
     before_snapshot_hash: str = ""
@@ -322,6 +376,7 @@ class ParamOverride(SQLModel, table=True):
 
 class RetrievalEvent(SQLModel, table=True):
     """检索事件日志（方向二弱标注源）：哪条记忆被召回、当时生效参数、延迟。"""
+
     __tablename__ = "retrieval_event"
 
     id: str = Field(primary_key=True)
@@ -336,14 +391,19 @@ class RetrievalEvent(SQLModel, table=True):
     used_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     latency_ms: int = 0
     zero_result: bool = Field(default=False, index=True)
-    scene_ids: list = Field(default_factory=list, sa_column=Column(JSON))  # 命中记忆所属场景（可观测性）
+    scene_ids: list = Field(
+        default_factory=list, sa_column=Column(JSON)
+    )  # 命中记忆所属场景（可观测性）
     estimated_tokens: int = 0  # 查询 + 注入结果 token 粗估（成本观测）
-    is_system_noise: bool = Field(default=False, index=True)  # 系统注入噪音（技能库维护等），评估统计时排除
+    is_system_noise: bool = Field(
+        default=False, index=True
+    )  # 系统注入噪音（技能库维护等），评估统计时排除
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
 class SchedulerRun(SQLModel, table=True):
     """worker 上次运行时间（观察期保底：/stats 持久化 + 每日任务启动补跑判定）。"""
+
     __tablename__ = "scheduler_run"
 
     name: str = Field(primary_key=True)
@@ -356,22 +416,23 @@ class ReflectRun(SQLModel, table=True):
     与 scheduler_run（时间戳）互补：scheduler_run 回答「跑没跑」，
     reflect_run 回答「跑得怎么样」（空闲/产出/失败，回填校准去噪输入）。
     """
+
     __tablename__ = "reflect_run"
 
     id: str = Field(primary_key=True)
     run_at: datetime = Field(index=True)
-    source: str = "unknown"   # scheduled | manual | unknown（旧记录迁移后保守标 unknown）
+    source: str = "unknown"  # scheduled | manual | unknown（旧记录迁移后保守标 unknown）
     waterline: float = 0.0
-    skipped: str = ""            # "" = 正常执行（含空产出）；"idle" = 空闲跳过
+    skipped: str = ""  # "" = 正常执行（含空产出）；"idle" = 空闲跳过
     curate_failed: bool = False  # curator LLM 调用失败（宁 miss 空降级，但不静默）
-    rejecter_failed: int = 0     # rejecter LLM 调用失败次数（异常按不通过处理，留痕不静默）
+    rejecter_failed: int = 0  # rejecter LLM 调用失败次数（异常按不通过处理，留痕不静默）
     health_before: dict = Field(default_factory=dict, sa_column=Column(JSON))
     health_after: dict = Field(default_factory=dict, sa_column=Column(JSON))
     proposals_created: int = 0
     auto_applied: int = 0
     pending: int = 0
     discarded: int = 0
-    error: str = ""              # 未捕获异常时记录（调度器重试前留痕）
+    error: str = ""  # 未捕获异常时记录（调度器重试前留痕）
 
 
 class SessionCheckpoint(SQLModel, table=True):
@@ -382,10 +443,14 @@ class SessionCheckpoint(SQLModel, table=True):
     注入（inject_checkpoint_context）；陈旧（> CHECKPOINT_STALENESS_DAYS）注入自动标注。
     同一 session 重写即替换（upsert 语义）；保留最近 CHECKPOINT_MAX_SESSIONS 个会话。
     """
+
     __tablename__ = "session_checkpoint"
 
     id: int | None = Field(default=None, primary_key=True)
     session_id: str = Field(index=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
     block_key: str = ""
     content: str = ""
     created_at: datetime = Field(default_factory=utcnow, index=True)
@@ -398,9 +463,14 @@ class PersonaProfile(SQLModel, table=True):
     G (guidelines): 行为准则（宁 miss 不脏写、核心函数不 mock）
     E (epistemic_facts): 认知底色与核心事实（华硕天选三硬件环境、大哥为尊）
     """
+
     __tablename__ = "persona_profile"
 
     id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
+    session_id: str | None = Field(default=None, index=True)
     name: str = Field(index=True, unique=True)
     is_active: bool = Field(default=False, index=True)
     linguistic_style: str = ""
@@ -416,9 +486,13 @@ class SessionScratchpad(SQLModel, table=True):
     借鉴 Letta (MemGPT) 虚拟内存工作区思想，为 Agent 提供在对话中主动
     实时读写的小纸条区域（上限 1000 字符，宁 miss 不脏写截断）。
     """
+
     __tablename__ = "session_scratchpad"
 
     session_id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
     content: str = ""
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

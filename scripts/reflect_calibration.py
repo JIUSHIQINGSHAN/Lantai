@@ -8,6 +8,7 @@
   C. REFLECT_MIN_CONFIDENCE   落库底线
 输出：docs/memory-quality/reflect-calibration-YYYY-MM-DD.md
 """
+
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -18,9 +19,9 @@ _DEFAULT_OUT = _REPO_ROOT / "docs" / "memory-quality"
 # ── A. 水位触发校准（合成周分布）──────────────────────────────
 # 近 7 天新增记忆 importance 累加。分布假设：importance ∈ [0,1]，
 # 高价值记忆（0.7-0.9）约占 1/3（对齐项目 importance 默认 0.5 + 反馈上下调）。
-ACTIVE_WEEK = [0.4, 0.5, 0.5, 0.6, 0.6, 0.7, 0.7, 0.8, 0.8, 0.9]   # 10 条
-NORMAL_WEEK = [0.3, 0.4, 0.5, 0.6, 0.7]                             # 5 条
-QUIET_WEEK = [0.3, 0.4]                                              # 2 条
+ACTIVE_WEEK = [0.4, 0.5, 0.5, 0.6, 0.6, 0.7, 0.7, 0.8, 0.8, 0.9]  # 10 条
+NORMAL_WEEK = [0.3, 0.4, 0.5, 0.6, 0.7]  # 5 条
+QUIET_WEEK = [0.3, 0.4]  # 2 条
 
 # ── B. 自动应用分流校准（合成置信分布 + rejecter 风险分布）────────
 # curator 置信分布假设（100 条提案直方图）：

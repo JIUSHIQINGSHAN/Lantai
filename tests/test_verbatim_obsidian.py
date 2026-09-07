@@ -4,6 +4,7 @@
 extract_wikilinks / sync_obsidian_note 的产品代码（SQLite 写入 / FTS 同步 /
 实体边沉淀 / 幂等去重）真实执行。
 """
+
 from unittest.mock import Mock, patch
 
 import pytest
@@ -19,6 +20,7 @@ from lantai.models.tables import MemoryEdge, MemoryItem
 def obs_env():
     """内存 SQLite 真实建表 + FTS 初始化 + patch 仅外部依赖。"""
     import lantai.models.tables  # noqa: F401
+
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -26,25 +28,31 @@ def obs_env():
     )
     SQLModel.metadata.create_all(engine)
     from lantai.storage.fts import init_fts
+
     init_fts(engine.raw_connection())
 
     def session_factory() -> Session:
         return Session(engine)
 
     vector_store_mock = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
-    with patch.object(db_module, "get_session", session_factory), \
-         patch("lantai.llm.client.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.services.memory_service.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}):
+    with (
+        patch.object(db_module, "get_session", session_factory),
+        patch("lantai.llm.client.embed", return_value=[[0.1] * 8]),
+        patch("lantai.services.memory_service.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+    ):
         yield session_factory, engine, vector_store_mock
 
 
 def test_extract_wikilinks_basic():
     """纯函数冒烟：[[页面]] / [[页面|别名]] 解析，锚点忽略，保序去重。"""
     from lantai.services.obsidian_service import extract_wikilinks
+
     text = "参考 [[部署手册]] 和 [[部署手册|别名版]]，以及 [[#锚点]] 与 [[ ]] 空链。"
     assert extract_wikilinks(text) == ["部署手册"]
     assert extract_wikilinks("无双链纯文本") == []
@@ -55,19 +63,18 @@ def test_sync_obsidian_note_persists_note_entities_edges(obs_env):
     session_factory, engine, _ = obs_env
     from lantai.services.obsidian_service import sync_obsidian_note
 
-    result = sync_obsidian_note(ObsidianSyncReq(
-        title="上线复盘", content="按 [[部署手册]] 执行，注意 [[备份]] 策略。"))
+    result = sync_obsidian_note(
+        ObsidianSyncReq(title="上线复盘", content="按 [[部署手册]] 执行，注意 [[备份]] 策略。")
+    )
     assert result["dedup"] is False
     assert set(result["entities"]) == {"上线复盘", "部署手册", "备份"}
 
     with session_factory() as s:
         note = s.get(MemoryItem, result["note_id"])
         assert note is not None and note.memory_type == "verbatim"
-        ents = s.exec(select(MemoryItem).where(
-            MemoryItem.memory_type == "entity")).all()
+        ents = s.exec(select(MemoryItem).where(MemoryItem.memory_type == "entity")).all()
         assert {e.key for e in ents} == {"上线复盘", "部署手册", "备份"}
-        links = s.exec(select(MemoryEdge).where(
-            MemoryEdge.relation == "links")).all()
+        links = s.exec(select(MemoryEdge).where(MemoryEdge.relation == "links")).all()
         assert len(links) == 3
         assert all(e.source_memory_id == result["note_id"] for e in links)
 
@@ -83,11 +90,9 @@ def test_sync_obsidian_note_idempotent(obs_env):
     assert r1["note_id"] == r2["note_id"]
     assert r2["dedup"] is True
     with session_factory() as s:
-        ents = s.exec(select(MemoryItem).where(
-            MemoryItem.memory_type == "entity")).all()
+        ents = s.exec(select(MemoryItem).where(MemoryItem.memory_type == "entity")).all()
         assert len(ents) == 2  # 运维 + 故障手册，不重复
-        links = s.exec(select(MemoryEdge).where(
-            MemoryEdge.relation == "links")).all()
+        links = s.exec(select(MemoryEdge).where(MemoryEdge.relation == "links")).all()
         assert len(links) == 2
 
 
@@ -102,11 +107,11 @@ def test_verbatim_excluded_from_default_recall(obs_env):
     add_raw_memory(RawMemoryReq(content=content))
 
     default = hybrid_search("mysqldump 备份命令", top_k=5, use_rerank=False)
-    assert all("mysqldump" not in (r.get("memory", {}).get("content", ""))
-               for r in default)
+    assert all("mysqldump" not in (r.get("memory", {}).get("content", "")) for r in default)
 
-    scoped = hybrid_search("mysqldump 备份命令", top_k=5, use_rerank=False,
-                           memory_types=["verbatim"])
+    scoped = hybrid_search(
+        "mysqldump 备份命令", top_k=5, use_rerank=False, memory_types=["verbatim"]
+    )
     texts = [r.get("memory", {}).get("content", "") for r in scoped]
     assert any(content in t for t in texts)
 
@@ -116,11 +121,10 @@ def test_obsidian_route_wiring(obs_env):
     session_factory, engine, _ = obs_env
     from fastapi.testclient import TestClient
 
-    from api_server import app
+    from lantai.api.app import app
 
     with TestClient(app) as c:
-        resp = c.post("/obsidian/sync", json={
-            "title": "复盘", "content": "参考 [[部署手册]]"})
+        resp = c.post("/obsidian/sync", json={"title": "复盘", "content": "参考 [[部署手册]]"})
         assert resp.status_code == 200
         body = resp.json()
         assert body["entities"] == ["复盘", "部署手册"]

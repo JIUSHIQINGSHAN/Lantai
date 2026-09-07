@@ -19,6 +19,7 @@
 - 任何异常绝不抛出（插件不能拖慢/搞崩 Hermes）
 - 会话缓冲有界（条数/总字符上限，防长期会话内存膨胀）
 """
+
 from __future__ import annotations
 
 import json
@@ -169,8 +170,9 @@ def _call_dialogue(text: str) -> None:
         return
     try:
         with _lock:
-            line = (json.dumps({"type": "dialogue", "text": text},
-                               ensure_ascii=False) + "\n").encode("utf-8")
+            line = (
+                json.dumps({"type": "dialogue", "text": text}, ensure_ascii=False) + "\n"
+            ).encode("utf-8")
             assert proc.stdin is not None and proc.stdout is not None
             proc.stdin.write(line)
             proc.stdin.flush()
@@ -196,8 +198,7 @@ def _call_checkpoint() -> str | None:
         return None
     try:
         with _lock:
-            line = (json.dumps({"type": "checkpoint"}, ensure_ascii=False)
-                    + "\n").encode("utf-8")
+            line = (json.dumps({"type": "checkpoint"}, ensure_ascii=False) + "\n").encode("utf-8")
             assert proc.stdin is not None and proc.stdout is not None
             proc.stdin.write(line)
             proc.stdin.flush()
@@ -230,10 +231,13 @@ def _call_checkpoint_write(session_id: str, blocks: dict) -> None:
         return
     try:
         with _lock:
-            line = (json.dumps({"type": "checkpoint_write",
-                                "session_id": session_id,
-                                "blocks": blocks},
-                               ensure_ascii=False) + "\n").encode("utf-8")
+            line = (
+                json.dumps(
+                    {"type": "checkpoint_write", "session_id": session_id, "blocks": blocks},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            ).encode("utf-8")
             assert proc.stdin is not None and proc.stdout is not None
             proc.stdin.write(line)
             proc.stdin.flush()
@@ -275,6 +279,7 @@ def build_session_blocks(messages: list[str]) -> dict:
 
 # ── 会话缓冲（v0.5 对话写通道原料）──────────────────────────────
 
+
 def _buffer_turn(session_id: str, user_message: str) -> None:
     """累积一轮 user_message 到会话缓冲（有界，防长期会话膨胀）。"""
     if not session_id:
@@ -314,13 +319,13 @@ def _on_pre_llm_call(**kwargs) -> dict | None:
         _mark_checkpoint_injected(session_id)
         ck = _call_checkpoint()
     if len(q) < _MIN_QUERY_CHARS:
-        return ({"context": ck} if ck else None)
+        return {"context": ck} if ck else None
     # 短句且无触发词 → 不注入检索（与 gate 语义一致，省子进程开销）
     if len(q) <= 15 and not any(w in q for w in _TRIGGER_WORDS):
-        return ({"context": ck} if ck else None)
+        return {"context": ck} if ck else None
     ctx = _call_hook(q)
     if not ctx:
-        return ({"context": ck} if ck else None)
+        return {"context": ck} if ck else None
     if ck:
         ctx = ck + "\n\n" + ctx
     return {"context": ctx}

@@ -5,6 +5,7 @@
 2. 批量调用 LLM 生成结构化研判建议（action: approve | reject | refine | manual, reason, score）；
 3. 支持一键或批量执行裁决。
 """
+
 from typing import Any
 
 from sqlmodel import Session, select
@@ -62,28 +63,34 @@ def triage_candidates_batch(
         if isinstance(res, dict) and "recommendations" in res:
             recs = res.get("recommendations", [])
             rec_map = {str(r.get("id")): r for r in recs if isinstance(r, dict)}
-            
+
             output = []
             for c in candidates_data:
                 cid = str(c.get("id"))
                 if cid in rec_map:
                     r = rec_map[cid]
-                    output.append({
-                        "id": cid,
-                        "action": str(r.get("action", "manual")),
-                        "confidence_score": float(r.get("confidence_score", c.get("confidence", 0.5))),
-                        "reason": str(r.get("reason", "LLM 建议复核")),
-                    })
+                    output.append(
+                        {
+                            "id": cid,
+                            "action": str(r.get("action", "manual")),
+                            "confidence_score": float(
+                                r.get("confidence_score", c.get("confidence", 0.5))
+                            ),
+                            "reason": str(r.get("reason", "LLM 建议复核")),
+                        }
+                    )
                 else:
                     # 规则启发式保底
                     conf = float(c.get("confidence", 0.5))
                     action = "approve" if conf >= 0.8 else ("reject" if conf < 0.2 else "manual")
-                    output.append({
-                        "id": cid,
-                        "action": action,
-                        "confidence_score": conf,
-                        "reason": f"规则保底判定 (conf={conf:.2f})",
-                    })
+                    output.append(
+                        {
+                            "id": cid,
+                            "action": action,
+                            "confidence_score": conf,
+                            "reason": f"规则保底判定 (conf={conf:.2f})",
+                        }
+                    )
             return output
     except Exception as exc:
         logger.warning("AI 智能预审 LLM 调用异常（降级至启发式规则）: %s", exc)
@@ -94,7 +101,7 @@ def triage_candidates_batch(
         cid = str(c.get("id"))
         conf = float(c.get("confidence", 0.5))
         text = str(c.get("text", "")).strip()
-        
+
         # 简单字数或客套检测
         if len(text) < 4 or any(w in text for w in ["好的", "嗯嗯", "收到", "再见", "哈哈"]):
             action = "reject"
@@ -109,17 +116,20 @@ def triage_candidates_batch(
             action = "reject"
             reason = "低置信度碎片"
 
-        fallback_output.append({
-            "id": cid,
-            "action": action,
-            "confidence_score": conf,
-            "reason": reason,
-        })
+        fallback_output.append(
+            {
+                "id": cid,
+                "action": action,
+                "confidence_score": conf,
+                "reason": reason,
+            }
+        )
     return fallback_output
 
 
 def run_ai_triage(limit: int = 50, session: Session | None = None) -> dict[str, Any]:
     """扫描数据库中所有 pending_review 的候选并生成 AI 预审建议清单。"""
+
     def _run(s: Session) -> dict[str, Any]:
         candidates = s.exec(
             select(MemoryCandidate)
@@ -134,12 +144,14 @@ def run_ai_triage(limit: int = 50, session: Session | None = None) -> dict[str, 
         payload = []
         for c in candidates:
             text = c.summary or (c.claims[0] if c.claims else "")
-            payload.append({
-                "id": c.id,
-                "text": text,
-                "confidence": c.extractor_confidence or 0.5,
-                "lane": c.lane or "general",
-            })
+            payload.append(
+                {
+                    "id": c.id,
+                    "text": text,
+                    "confidence": c.extractor_confidence or 0.5,
+                    "lane": c.lane or "general",
+                }
+            )
 
         recommendations = triage_candidates_batch(payload)
         return {
@@ -157,7 +169,7 @@ def apply_ai_triage_batch(
     actions: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """批量执行用户确认的 AI 预审裁决决策。
-    
+
     actions 格式: [{"id": "cand_1", "action": "approve" | "reject" | "refine", "reason": "..."}]
     """
     applied = {"approved": 0, "rejected": 0, "refined": 0, "failed": 0}
@@ -193,7 +205,7 @@ def run_triage_auto_pilot(
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """「持节」· 智能体案牍巡检官一键自治（Auto-Pilot）：
-    
+
     1. 扫描 pending_review 待审候选；
     2. 执行 LLM 智能研判与置信度评估；
     3. 自动归档低信噪比/闲聊噪音（<= max_reject_conf）；
@@ -203,7 +215,7 @@ def run_triage_auto_pilot(
     """
     triage_result = run_ai_triage(limit=limit)
     recommendations = triage_result.get("recommendations", [])
-    
+
     actions_to_apply = []
     summary = {
         "scanned": len(recommendations),
@@ -234,23 +246,26 @@ def run_triage_auto_pilot(
         else:
             summary["kept_pending"] += 1
 
-        summary["details"].append({
-            "id": cid,
-            "decision": final_act,
-            "score": score,
-            "reason": reason,
-        })
+        summary["details"].append(
+            {
+                "id": cid,
+                "decision": final_act,
+                "score": score,
+                "reason": reason,
+            }
+        )
 
         if final_act in ("approve", "reject", "refine"):
-            actions_to_apply.append({
-                "id": cid,
-                "action": final_act,
-                "reason": f"[持节·AutoPilot] {reason}",
-            })
+            actions_to_apply.append(
+                {
+                    "id": cid,
+                    "action": final_act,
+                    "reason": f"[持节·AutoPilot] {reason}",
+                }
+            )
 
     if not dry_run and actions_to_apply:
         applied_stats = apply_ai_triage_batch(actions_to_apply)
         summary["applied_stats"] = applied_stats
 
     return summary
-

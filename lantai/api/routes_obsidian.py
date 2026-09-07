@@ -3,6 +3,7 @@
 原文直存默认不进混合召回（VERBATIM_IN_RECALL=false），GET /verbatim/search
 为专用通道；POST /obsidian/sync 幂等（content_hash + 实体名去重）。
 """
+
 from fastapi import APIRouter, HTTPException
 
 from lantai.models.schemas import ObsidianSyncReq

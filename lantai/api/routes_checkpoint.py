@@ -6,6 +6,7 @@
 - GET  /checkpoint?session_id=…       底本：指定会话快照
 - POST /checkpoint/cleanup            底本：只保留最近 N 个会话快照
 """
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -26,8 +27,7 @@ class CheckpointWriteReq(BaseModel):
 
 
 @router.get("/checkpoint")
-def list_checkpoints_route(memory_id: str = "", limit: int = 20,
-                           session_id: str = ""):
+def list_checkpoints_route(memory_id: str = "", limit: int = 20, session_id: str = ""):
     if session_id:
         return get_checkpoint(session_id)
     return list_checkpoints(memory_id, limit)

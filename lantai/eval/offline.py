@@ -5,6 +5,7 @@
 与 pytest 端到端测试同构但独立可运行，供 `scripts/run_forgetting_quality.py --check`
 与发布稿复现使用（测试纪律：mock 仅限外部依赖，内部逻辑全真实）。
 """
+
 from __future__ import annotations
 
 import sys
@@ -26,6 +27,7 @@ def _install_otel_stub() -> None:
     """chromadb 的 OTLP exporter 在部分 venv 破损：幂等打桩（同 tests/conftest）。"""
     try:
         import opentelemetry.exporter.otlp.proto.grpc.trace_exporter  # noqa: F401
+
         return
     except ModuleNotFoundError:
         pass
@@ -76,25 +78,30 @@ def run_offline_eval(dataset: dict | None = None, top_k: int = 5) -> dict:
         return Session(engine)
 
     vector_store_mock = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
-    with patch.object(db_module, "get_session", session_factory), \
-         patch("lantai.llm.client.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock), \
-         patch("lantai.retrieval.hybrid.classify_intent",
-               return_value={"intent": _settings.DEFAULT_INTENT,
-                             "candidate_n": _settings.INTENT_CANDIDATE_SIZES
-                             .get(_settings.DEFAULT_INTENT, 10)}):
+    with (
+        patch.object(db_module, "get_session", session_factory),
+        patch("lantai.llm.client.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock),
+        patch(
+            "lantai.retrieval.hybrid.classify_intent",
+            return_value={
+                "intent": _settings.DEFAULT_INTENT,
+                "candidate_n": _settings.INTENT_CANDIDATE_SIZES.get(_settings.DEFAULT_INTENT, 10),
+            },
+        ),
+    ):
         return evaluate_forgetting_quality(ds, search=hybrid_search, top_k=top_k)
 
 
 # 评测集 v1 契约门槛（发布稿同源）：FTS 兜底最严格基准下的确定性底线。
 # 改数据集时同步更新；门槛是「可复现自证」主张，不是可调系统参数（不进 settings）。
 GATES: dict[str, float] = {
-    "stale_hit_rate": 0.0,              # 归档零残留
-    "typo_recall_rate": 1.0,            # 中文错别字全命中（FTS trigram）
-    "fresh_recall_rate": 1.0,           # 对照组管道自检
-    "temporal_order_accuracy": 1.0,     # Chronos 时效排序
-    "superseded_order_accuracy": 1.0,   # supersedes 降权后新值在前
+    "stale_hit_rate": 0.0,  # 归档零残留
+    "typo_recall_rate": 1.0,  # 中文错别字全命中（FTS trigram）
+    "fresh_recall_rate": 1.0,  # 对照组管道自检
+    "temporal_order_accuracy": 1.0,  # Chronos 时效排序
+    "superseded_order_accuracy": 1.0,  # supersedes 降权后新值在前
 }
 
 

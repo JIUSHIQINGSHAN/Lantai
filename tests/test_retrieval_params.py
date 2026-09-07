@@ -5,6 +5,7 @@
 2. hybrid_search 使用 param_overrides 时不修改全局 settings 单例。
 3. 并发查询下不同的 param_overrides 互相隔离，杜绝全局竞态污染。
 """
+
 import threading
 
 import pytest
@@ -15,11 +16,13 @@ from lantai.retrieval.hybrid import RetrievalParams, hybrid_search
 
 def test_retrieval_params_from_overrides():
     """验证 RetrievalParams 支持大写和简写属性，并且是不可变 frozen 对象。"""
-    p = RetrievalParams.from_overrides({
-        "RETRIEVAL_W_VECTOR": 0.8,
-        "w_bm25": 0.1,
-        "custom_key": "val",
-    })
+    p = RetrievalParams.from_overrides(
+        {
+            "RETRIEVAL_W_VECTOR": 0.8,
+            "w_bm25": 0.1,
+            "custom_key": "val",
+        }
+    )
     assert p.w_vector == 0.8
     assert p.w_bm25 == 0.1
     assert p.extra.get("custom_key") == "val"

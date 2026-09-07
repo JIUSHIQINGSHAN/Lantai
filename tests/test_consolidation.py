@@ -6,11 +6,12 @@ r"""沉潜（ADR-0036）：闲时夜梦沉淀与记忆折叠压缩测试。
 3. prune_decayed_synapses 自动修剪极度衰减的边缘噪音（status="archived"）；
 4. REST POST /evolution/consolidate 与 MCP memory_consolidate 工具。
 """
+
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from api_server import app
+from lantai.api.app import app
 from lantai.models.tables import MemoryItem
 from lantai.services.consolidation_service import (
     consolidate_cluster,
@@ -63,11 +64,14 @@ class TestConsolidationDB:
             assert "mem_frag_03" in cluster_ids
 
             # 2. 概念折叠与提纯（mock LLM 输出）
-            with patch("lantai.services.consolidation_service.chat_json", return_value={
-                "consolidated_content": "大哥长期偏好饮用浙江新昌明前大佛龙井茶，冲泡水温偏好85度",
-                "importance": 0.9,
-                "confidence": 0.95,
-            }):
+            with patch(
+                "lantai.services.consolidation_service.chat_json",
+                return_value={
+                    "consolidated_content": "大哥长期偏好饮用浙江新昌明前大佛龙井茶，冲泡水温偏好85度",
+                    "importance": 0.9,
+                    "confidence": 0.95,
+                },
+            ):
                 master = consolidate_cluster(clusters[0], session=s)
                 assert master is not None
                 assert master.status == "active"
@@ -120,12 +124,15 @@ class TestConsolidationEndpointsAndMCP:
 
     def test_rest_evolution_consolidate(self, param_env):
         client = TestClient(app)
-        with patch("lantai.services.consolidation_service.run_consolidation_cycle", return_value={
-            "consolidated_groups": 1,
-            "new_memories": 1,
-            "pruned_count": 2,
-            "status": "success",
-        }):
+        with patch(
+            "lantai.services.consolidation_service.run_consolidation_cycle",
+            return_value={
+                "consolidated_groups": 1,
+                "new_memories": 1,
+                "pruned_count": 2,
+                "status": "success",
+            },
+        ):
             resp = client.post("/evolution/consolidate")
             assert resp.status_code == 200
             data = resp.json()
@@ -133,13 +140,17 @@ class TestConsolidationEndpointsAndMCP:
             assert data["pruned_count"] == 2
 
     def test_mcp_consolidation_tools(self, param_env):
-        from scripts.mcp_server import handle_consolidation_report, handle_memory_consolidate
-        with patch("lantai.services.consolidation_service.run_consolidation_cycle", return_value={
-            "consolidated_groups": 0,
-            "new_memories": 0,
-            "pruned_count": 0,
-            "status": "idle",
-        }):
+        from lantai.cli.mcp import handle_consolidation_report, handle_memory_consolidate
+
+        with patch(
+            "lantai.services.consolidation_service.run_consolidation_cycle",
+            return_value={
+                "consolidated_groups": 0,
+                "new_memories": 0,
+                "pruned_count": 0,
+                "status": "idle",
+            },
+        ):
             res = handle_memory_consolidate({})
             assert res["status"] == "idle"
 

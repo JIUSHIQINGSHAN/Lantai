@@ -4,6 +4,7 @@
 把实际用进回答的记忆 id 写回检索事件，供 dry-run 算 weak_hit_rate。
 失败零侵入（返回 404/400，不抛 500 阻断主链路）。
 """
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -32,6 +33,7 @@ def get_recall_report(days: int | None = None) -> dict:
         return recall_report(days)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
 
 @router.get("/recent-events")
 def get_recent_events(limit: int = 20) -> dict:

@@ -20,11 +20,14 @@ dependencies = [
   "tenacity>=8.5",
   "chromadb>=0.4,<1.0",
   "requests>=2.31",
+  "jieba>=0.42",
+  "psutil>=7.2.2",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
+  "pytest-asyncio>=0.23",
   "pytest-cov>=5.0",
   "ruff>=0.6",
 ]
@@ -34,7 +37,8 @@ wiki = ["markdown>=3.6"]
 all = ["lantai[vision,obsidian,wiki]"]
 
 [project.scripts]
-lantai-mcp = "scripts.mcp_server:main"
+lantai-mcp = "lantai.cli.mcp:main"
+lantai-server = "lantai.api.app:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -57,8 +61,12 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM"]
-ignore = ["E501", "E741", "SIM117", "B017", "E702", "E402", "B905", "B904", "SIM102", "N806", "N818", "B007", "N817", "N999", "F401"]
+ignore = ["E712", "E501", "E741", "SIM117", "B017", "E702", "E402", "B905", "B904", "SIM102", "N806", "N818", "B007", "N817", "N999", "F401"]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "Depends"]

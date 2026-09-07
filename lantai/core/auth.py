@@ -1,4 +1,5 @@
 """API Key 鉴权依赖 + 部署绑定安全检查"""
+
 import hmac
 
 from fastapi import Header, HTTPException
@@ -27,8 +28,7 @@ async def verify_api_key(
     if not x_api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")
 
-    if not hmac.compare_digest(x_api_key.encode("utf-8"),
-                               settings.API_KEY.encode("utf-8")):
+    if not hmac.compare_digest(x_api_key.encode("utf-8"), settings.API_KEY.encode("utf-8")):
         raise HTTPException(status_code=403, detail="Invalid API Key")
 
     return x_api_key
@@ -36,13 +36,31 @@ async def verify_api_key(
 
 import hashlib
 import secrets
+from dataclasses import dataclass
+from typing import Optional
+
+from fastapi import Request
 from pydantic import BaseModel
 from sqlmodel import select
+
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.models.tables import ApiKey
-from fastapi import Request
 from lantai.storage import db as db_module
+
+
+@dataclass(frozen=True)
+class Principal:
+    tenant_id: str | None = None
+    user_id: str | None = None
+    agent_id: str | None = None
+    session_id: str | None = None
+    role: str = "user"
+    allowed_lanes: list[str] | None = None
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role in ("admin", "system")
 
 
 class SecurityContext(BaseModel):
@@ -62,37 +80,56 @@ def create_api_key(user_id: str, allowed_lanes: list[str] = None) -> tuple[str, 
         id=new_id("apikey"),
         key_hash=hash_key(raw_key),
         user_id=user_id,
-        allowed_lanes=allowed_lanes or ["default"]
+        allowed_lanes=allowed_lanes or ["default"],
     )
     return raw_key, api_key
 
 
-def get_current_user(request: Request) -> SecurityContext:
-    """FastAPI dependency to extract and validate the Bearer token."""
+def get_current_user(request: Request) -> Principal:
     auth_header = request.headers.get("Authorization")
-    
+
+    tenant_id = request.headers.get("X-Tenant-Id")
+    agent_id = request.headers.get("X-Agent-Id")
+    session_id = request.headers.get("X-Session-Id")
+
+    def make_principal(user_id: str, lanes: list[str]) -> Principal:
+        request.state.user_id = user_id
+        # Apply strict active bindings if X-Agent-Id is provided
+        from lantai.core.acl import active_bindings
+        from lantai.core.acl import allowed_lanes as acl_allowed_lanes
+
+        if agent_id and active_bindings():
+            if agent_id not in active_bindings():
+                raise HTTPException(status_code=403, detail="Agent not bound (ACL)")
+            lanes = acl_allowed_lanes(agent_id) or []
+
+        return Principal(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            allowed_lanes=lanes,
+        )
+
     if not auth_header:
-        # F13 ADR-0040: Dev fallback mode if no keys exist
         with db_module.get_session() as s:
             if s.exec(select(ApiKey)).first() is None:
-                # DB has no API keys, seed dev mode
                 logger.warning("No API Keys found. Entering DEV MODE with fallback context.")
-                request.state.user_id = "default"
-                return SecurityContext(user_id="default", allowed_lanes=["general", "fact", "rule", "experience", "preference", "chat", "default"])
+                return make_principal(
+                    "default",
+                    ["general", "fact", "rule", "experience", "preference", "chat", "default"],
+                )
         raise HTTPException(status_code=401, detail="Missing Authorization header")
 
     if not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid Authorization header format")
-    
-    raw_key = auth_header[len("Bearer "):]
+
+    raw_key = auth_header[len("Bearer ") :]
     key_hash = hash_key(raw_key)
 
     with db_module.get_session() as s:
         api_key = s.exec(select(ApiKey).where(ApiKey.key_hash == key_hash)).first()
-        
         if not api_key or not api_key.is_active:
             raise HTTPException(status_code=401, detail="Invalid API Key")
-        
-        ctx = SecurityContext(user_id=api_key.user_id, allowed_lanes=api_key.allowed_lanes)
-        request.state.user_id = ctx.user_id
-        return ctx
+
+        return make_principal(api_key.user_id, api_key.allowed_lanes)

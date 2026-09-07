@@ -3,6 +3,7 @@
 长记忆全文落文件 docs/memory-offload/{memory_id}.md，上下文只注入摘要 + 路径，
 需要时经 MCP offload_read 取完整原文。纯函数与文件副作用分离（冒烟可测不 mock）。
 """
+
 from pathlib import Path
 
 from lantai.core.settings import settings
@@ -15,8 +16,9 @@ _DEFAULT_OFFLOAD_DIR = _REPO_ROOT / "docs" / "memory-offload"
 
 def offload_dir() -> Path:
     """卸载全文目录：settings.OFFLOAD_OUTPUT_DIR 为空时默认仓库 docs/memory-offload。"""
-    return Path(settings.OFFLOAD_OUTPUT_DIR) if settings.OFFLOAD_OUTPUT_DIR \
-        else _DEFAULT_OFFLOAD_DIR
+    return (
+        Path(settings.OFFLOAD_OUTPUT_DIR) if settings.OFFLOAD_OUTPUT_DIR else _DEFAULT_OFFLOAD_DIR
+    )
 
 
 def offload_filename(memory_id: str) -> str:
@@ -29,8 +31,9 @@ def offload_filename(memory_id: str) -> str:
     return f"{safe}.md"
 
 
-def build_offload_inject(content: str, score: float, max_chars: int,
-                         suffix: str, path: Path | str) -> tuple[str, str]:
+def build_offload_inject(
+    content: str, score: float, max_chars: int, suffix: str, path: Path | str
+) -> tuple[str, str]:
     """超长记忆 → (注入块, evidence 摘要)：摘要行 + 全文路径行（纯函数）。
 
     注入块与 evidence 同源（都是截断摘要），路径行让 Agent 按需取全文，
@@ -62,5 +65,4 @@ def read_offload_file(memory_id: str) -> dict:
         raise ValueError("memory_id 解析路径超出卸载目录")
     if not path.is_file():
         raise FileNotFoundError(f"offload 文件不存在: {filename}")
-    return {"memory_id": memory_id, "path": str(path),
-            "content": path.read_text(encoding="utf-8")}
+    return {"memory_id": memory_id, "path": str(path), "content": path.read_text(encoding="utf-8")}

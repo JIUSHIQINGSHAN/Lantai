@@ -7,6 +7,7 @@
 - consumed       ：已处理完毕（产出建议 / 合法 abstain / 非法输出，不再重试）
 - dead           ：网络重试耗尽
 """
+
 from datetime import UTC, timedelta
 
 from sqlmodel import select
@@ -38,25 +39,34 @@ def enqueue_paper_for_param_advice(raw_document_id: str) -> bool:
     返回 True 表示新入队。仅在论文成功落库后调用。
     """
     with db.get_session() as s:
-        exists = s.exec(select(ParamAdvicePaper).where(
-            ParamAdvicePaper.raw_document_id == raw_document_id)).first()
+        exists = s.exec(
+            select(ParamAdvicePaper).where(ParamAdvicePaper.raw_document_id == raw_document_id)
+        ).first()
         if exists:
             return False
-        s.add(ParamAdvicePaper(
-            id=new_id("pap"),
-            raw_document_id=raw_document_id,
-            state="new",
-            available_at=utcnow(),
-        ))
+        s.add(
+            ParamAdvicePaper(
+                id=new_id("pap"),
+                raw_document_id=raw_document_id,
+                state="new",
+                available_at=utcnow(),
+            )
+        )
         s.commit()
         return True
 
 
 def _candidate_papers(session) -> list[ParamAdvicePaper]:
-    return list(session.exec(select(ParamAdvicePaper).where(
-        ParamAdvicePaper.state.in_(["new", "retry"]),
-        ParamAdvicePaper.attempt_count < settings.PARAM_ADVICE_MAX_RETRIES,
-    ).order_by(ParamAdvicePaper.available_at.asc())).all())
+    return list(
+        session.exec(
+            select(ParamAdvicePaper)
+            .where(
+                ParamAdvicePaper.state.in_(["new", "retry"]),
+                ParamAdvicePaper.attempt_count < settings.PARAM_ADVICE_MAX_RETRIES,
+            )
+            .order_by(ParamAdvicePaper.available_at.asc())
+        ).all()
+    )
 
 
 def claim_advice_batch() -> dict | None:
@@ -72,12 +82,13 @@ def claim_advice_batch() -> dict | None:
             return None
         now = utcnow()
         enough = len(papers) >= settings.PARAM_ADVICE_MIN_PAPERS
-        oldest_wait = (now - _ensure_aware(papers[0].available_at)).days \
-            >= settings.PARAM_ADVICE_MAX_WAIT_DAYS
+        oldest_wait = (
+            now - _ensure_aware(papers[0].available_at)
+        ).days >= settings.PARAM_ADVICE_MAX_WAIT_DAYS
         if not enough and not oldest_wait:
             return None
 
-        batch = papers[:settings.PARAM_ADVICE_MAX_BATCH_SIZE]
+        batch = papers[: settings.PARAM_ADVICE_MAX_BATCH_SIZE]
         ids = [p.id for p in batch]
         raw_ids = [p.raw_document_id for p in batch]
 
@@ -103,31 +114,35 @@ def claim_advice_batch() -> dict | None:
         s.commit()
 
         # commit 后再取正文，避免长事务
-        docs = s.exec(select(RawDocument).where(
-            RawDocument.id.in_(raw_ids))).all()
+        docs = s.exec(select(RawDocument).where(RawDocument.id.in_(raw_ids))).all()
 
     papers_payload = [
-        {"source_document_id": d.id, "title": d.title,
-         "source_url": d.url, "content": d.content}
+        {"source_document_id": d.id, "title": d.title, "source_url": d.url, "content": d.content}
         for d in docs
     ]
-    logger.info("param advice claimed batch: run=%s papers=%d",
-                run_id, len(papers_payload))
-    return {"run_id": run_id, "papers": papers_payload,
-            "paper_ids": ids, "base_snapshot": base_snapshot}
+    logger.info("param advice claimed batch: run=%s papers=%d", run_id, len(papers_payload))
+    return {
+        "run_id": run_id,
+        "papers": papers_payload,
+        "paper_ids": ids,
+        "base_snapshot": base_snapshot,
+    }
 
 
 def recover_stale_claims() -> int:
     """processing 卡死超时（120 分钟）恢复为 retry。返回恢复数。"""
-    stale_before = utcnow() - timedelta(
-        minutes=settings.PARAM_ADVICE_PROCESSING_STALE_MINUTES)
+    stale_before = utcnow() - timedelta(minutes=settings.PARAM_ADVICE_PROCESSING_STALE_MINUTES)
     recovered = 0
     with db.get_session() as s:
-        stale = list(s.exec(select(ParamAdvicePaper).where(
-            ParamAdvicePaper.state == "processing",
-            ParamAdvicePaper.claimed_at.is_not(None),
-            ParamAdvicePaper.claimed_at < stale_before,
-        )).all())
+        stale = list(
+            s.exec(
+                select(ParamAdvicePaper).where(
+                    ParamAdvicePaper.state == "processing",
+                    ParamAdvicePaper.claimed_at.is_not(None),
+                    ParamAdvicePaper.claimed_at < stale_before,
+                )
+            ).all()
+        )
         for p in stale:
             claimed = _ensure_aware(p.claimed_at)
             if claimed >= stale_before:
@@ -162,8 +177,7 @@ def mark_papers_consumed(paper_ids: list, run_id: str | None) -> None:
         s.commit()
 
 
-def mark_papers_retry(paper_ids: list, run_id: str | None,
-                      error_code: str) -> None:
+def mark_papers_retry(paper_ids: list, run_id: str | None, error_code: str) -> None:
     """网络失败：转 retry（attempt+1）；超限转 dead。"""
     with db.get_session() as s:
         for pid in paper_ids:

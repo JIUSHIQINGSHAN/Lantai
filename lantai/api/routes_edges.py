@@ -1,4 +1,5 @@
 """记忆关系 API——薄 handler，逻辑下沉 edge_service"""
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -16,8 +17,7 @@ class EdgeReq(BaseModel):
 
 @router.post("/edges")
 def create_edge_route(req: EdgeReq):
-    return add_edge(req.source_memory_id, req.target_memory_id,
-                    req.relation, req.confidence)
+    return add_edge(req.source_memory_id, req.target_memory_id, req.relation, req.confidence)
 
 
 @router.get("/edges/{memory_id}")

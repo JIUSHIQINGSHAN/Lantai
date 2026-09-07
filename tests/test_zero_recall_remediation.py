@@ -5,6 +5,7 @@
 2. prefilter.relevance_check 识别「大哥」自指及常见实词短查询，不再被武断拦截。
 3. routes_search 在 force=True 或有效实词短查询时不被盲目阻断。
 """
+
 from datetime import UTC, datetime
 
 import pytest
@@ -68,6 +69,7 @@ class TestHybridSearchShiyiFallback:
             updated_at=datetime.now(UTC),
             decay_score=1.0,
             importance=0.8,
+            user_id="default",
         )
         with session_factory() as s:
             s.add(item)
@@ -104,6 +106,7 @@ class TestHybridSearchShiyiFallback:
             updated_at=datetime.now(UTC),
             decay_score=1.0,
             importance=0.8,
+            user_id="default",
         )
         with session_factory() as s:
             s.add(item)
@@ -111,8 +114,10 @@ class TestHybridSearchShiyiFallback:
             raw_conn = s.connection().connection.driver_connection
             index_fts(raw_conn, item.id, item.content)
 
-        monkeypatch.setattr("lantai.retrieval.hybrid.embed",
-                            lambda texts: (_ for _ in ()).throw(ConnectionError("Network down")))
+        monkeypatch.setattr(
+            "lantai.retrieval.hybrid.embed",
+            lambda texts: (_ for _ in ()).throw(ConnectionError("Network down")),
+        )
 
         results, trace_steps = hybrid_search("古诗词", top_k=5, use_rerank=False, trace=True)
         assert len(results) > 0
@@ -126,7 +131,7 @@ class TestRoutesSearchForce:
     def test_search_with_force_bypasses_gate(self, param_env, monkeypatch):
         from fastapi.testclient import TestClient
 
-        from api_server import app
+        from lantai.api.app import app
 
         session_factory, engine = param_env
         init_fts(engine.raw_connection())
@@ -142,6 +147,7 @@ class TestRoutesSearchForce:
             updated_at=datetime.now(UTC),
             decay_score=1.0,
             importance=0.8,
+            user_id="default",
         )
         with session_factory() as s:
             s.add(item)
@@ -161,4 +167,3 @@ class TestRoutesSearchForce:
         assert resp2.status_code == 200
         assert len(resp2.json()["results"]) > 0
         assert resp2.json()["results"][0]["memory"]["id"] == "mem_force_01"
-

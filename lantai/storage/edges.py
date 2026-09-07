@@ -1,14 +1,17 @@
 """记忆关系（边）管理"""
+
 from sqlmodel import select
 
 from lantai.models.tables import MemoryEdge
 from lantai.storage import db
 
 
-def create_edge(source_memory_id: str, target_memory_id: str,
-               relation: str, confidence: float = 0.5) -> MemoryEdge:
+def create_edge(
+    source_memory_id: str, target_memory_id: str, relation: str, confidence: float = 0.5
+) -> MemoryEdge:
     """创建记忆关系"""
     from lantai.core.ids import new_id
+
     edge = MemoryEdge(
         id=new_id("edge"),
         source_memory_id=source_memory_id,
@@ -23,15 +26,16 @@ def create_edge(source_memory_id: str, target_memory_id: str,
         return edge
 
 
-def get_edges(memory_id: str, relation: str | None = None,
-             as_source: bool = True, as_target: bool = True) -> list[MemoryEdge]:
+def get_edges(
+    memory_id: str, relation: str | None = None, as_source: bool = True, as_target: bool = True
+) -> list[MemoryEdge]:
     """查询记忆关系"""
     with db.get_session() as s:
         stmt = select(MemoryEdge)
         if as_source and as_target:
             stmt = stmt.where(
-                (MemoryEdge.source_memory_id == memory_id) |
-                (MemoryEdge.target_memory_id == memory_id)
+                (MemoryEdge.source_memory_id == memory_id)
+                | (MemoryEdge.target_memory_id == memory_id)
             )
         elif as_source:
             stmt = stmt.where(MemoryEdge.source_memory_id == memory_id)
@@ -63,10 +67,12 @@ def get_supersed_chain(memory_id: str) -> list[dict]:
         edges = get_edges(current, relation="supersedes", as_source=True)
         if not edges:
             break
-        chain.append({
-            "memory_id": current,
-            "superseded_by": edges[0].target_memory_id,
-            "confidence": edges[0].confidence,
-        })
+        chain.append(
+            {
+                "memory_id": current,
+                "superseded_by": edges[0].target_memory_id,
+                "confidence": edges[0].confidence,
+            }
+        )
         current = edges[0].target_memory_id
     return chain

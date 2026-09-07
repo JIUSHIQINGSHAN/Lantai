@@ -46,17 +46,23 @@ def apply_forgetting():
                 days = max(0.0, (now - last).total_seconds() / 86400.0)
                 strength = _lane_strength(m.importance, m.use_count, m.lane)
                 new_decay = math.exp(-days / strength)
-                
+
                 # Ticket 2.4 [DD-06]: 跳过极微小更新
                 if abs(m.decay_score - new_decay) >= 0.001:
                     m.decay_score = new_decay
                     changed = True
 
                 # 自动归档：decay 极低 或 working memory 过期且无用
-                if m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD and m.status != "archived" or (m.tier == "working"
-                      and days > settings.WORKING_MEMORY_TTL_DAYS
-                      and m.helpful_count == 0
-                      and m.status != "archived"):
+                if (
+                    m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD
+                    and m.status != "archived"
+                    or (
+                        m.tier == "working"
+                        and days > settings.WORKING_MEMORY_TTL_DAYS
+                        and m.helpful_count == 0
+                        and m.status != "archived"
+                    )
+                ):
                     m.status = "archived"
                     changed = True
 

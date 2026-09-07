@@ -9,6 +9,7 @@ created_at = 消息时间，provenance.prompt = dialogue-session-import，随演
 - 单行失败不拖停整批（解析失败计数，宁 miss 不脏写）
 - dry_run 只解析不写库（预览统计）
 """
+
 import json
 import time
 from datetime import UTC, datetime
@@ -26,11 +27,9 @@ def normalize_timestamp(value) -> datetime:
         raise ValueError("timestamp must be numeric or ISO string")
     if isinstance(value, (int, float)):
         if value >= 1e11:
-            return datetime.fromtimestamp(value / 1000.0,
-                                          tz=UTC).replace(tzinfo=None)
+            return datetime.fromtimestamp(value / 1000.0, tz=UTC).replace(tzinfo=None)
         if value >= 1e9:
-            return datetime.fromtimestamp(value,
-                                          tz=UTC).replace(tzinfo=None)
+            return datetime.fromtimestamp(value, tz=UTC).replace(tzinfo=None)
         raise ValueError(f"timestamp out of range: {value}")
     if isinstance(value, str):
         s = value.strip()
@@ -80,16 +79,19 @@ def parse_session_line(raw: str) -> dict | None:
     except ValueError:
         return None
     session = data.get("session") or data.get("session_id") or data.get("sessionKey") or ""
-    return {"role": role, "content": content.strip(), "ts": ts,
-            "session": str(session) if session else ""}
+    return {
+        "role": role,
+        "content": content.strip(),
+        "ts": ts,
+        "session": str(session) if session else "",
+    }
 
 
 def _parse_all(path: str, max_lines: int | None) -> tuple[list, dict]:
     """逐行解析 JSONL：返回 (消息列表, 统计)。解析失败不抛。"""
     limit = max_lines if max_lines is not None else settings.IMPORT_MAX_LINES
     messages = []
-    stats = {"lines": 0, "parsed": 0, "errors": 0, "skipped_assistant": 0,
-             "sessions": 0}
+    stats = {"lines": 0, "parsed": 0, "errors": 0, "skipped_assistant": 0, "sessions": 0}
     session_ids = set()
     with open(path, encoding="utf-8") as f:
         for raw in f:
@@ -111,9 +113,9 @@ def _parse_all(path: str, max_lines: int | None) -> tuple[list, dict]:
     return messages, stats
 
 
-def import_session_jsonl(path: str, *, dry_run: bool = False,
-                         user_id: str = "default",
-                         max_lines: int | None = None) -> dict:
+def import_session_jsonl(
+    path: str, *, dry_run: bool = False, user_id: str = "default", max_lines: int | None = None
+) -> dict:
     """批量导入历史会话 JSONL（冷启动，保留原始时间戳）。
 
     - dry_run：只解析不写库（预览统计，零副作用）
@@ -127,11 +129,12 @@ def import_session_jsonl(path: str, *, dry_run: bool = False,
     ingest_errors = 0
     if not dry_run and messages:
         from lantai.ingestion.dialogue import ingest_dialogue
+
         for msg in messages:
             try:
-                res = ingest_dialogue(msg["content"], user_id=user_id,
-                                      source="session_import",
-                                      created_at=msg["ts"])
+                res = ingest_dialogue(
+                    msg["content"], user_id=user_id, source="session_import", created_at=msg["ts"]
+                )
                 statuses[res["status"]] = statuses.get(res["status"], 0) + 1
             except Exception:
                 ingest_errors += 1
@@ -146,7 +149,9 @@ def import_session_jsonl(path: str, *, dry_run: bool = False,
         "skipped_assistant": stats["skipped_assistant"],
         "sessions": stats["sessions"],
         "imported": 0 if dry_run else len(messages) - ingest_errors,
-        "would_import": len(messages),  # 预览口径一致：本批 user 消息目标条数（真实模式不随错误缩水）
+        "would_import": len(
+            messages
+        ),  # 预览口径一致：本批 user 消息目标条数（真实模式不随错误缩水）
         "statuses": statuses,
         "took_ms": int((time.monotonic() - started) * 1000),
     }

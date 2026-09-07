@@ -7,11 +7,14 @@
   undecided ∈ [UPDATE, PRESCREEN)（提取后交结构判别 relation.py）；
   insert < UPDATE。
 """
+
 from lantai.core.settings import settings
 from lantai.models.tables import MemoryItem
 
 
-def find_similar(session, query_results: list[dict], fastpath: bool = False) -> tuple[str, MemoryItem | None, float]:
+def find_similar(
+    session, query_results: list[dict], fastpath: bool = False
+) -> tuple[str, MemoryItem | None, float]:
     """对候选与现有 active 记忆做余弦预判。
 
     返回 (action, target_memory_or_None, best_sim)。
@@ -31,8 +34,7 @@ def find_similar(session, query_results: list[dict], fastpath: bool = False) -> 
     if best_mem is None:
         return "insert", None, 0.0
 
-    merge_t = (settings.DEDUP_MERGE_THRESHOLD if fastpath
-               else settings.DEDUP_PRESCREEN_MERGE)
+    merge_t = settings.DEDUP_MERGE_THRESHOLD if fastpath else settings.DEDUP_PRESCREEN_MERGE
     update_t = settings.DEDUP_UPDATE_THRESHOLD
     if best_sim >= merge_t:
         return "merge", best_mem, best_sim

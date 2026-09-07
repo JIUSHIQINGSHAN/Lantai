@@ -125,8 +125,7 @@ def search_memories(
     query: str,
     top_k: int = 10,
     trace: bool = False,
-) -> SearchResults:
-    ...
+) -> SearchResults: ...
 ```
 
 ### 文档字符串

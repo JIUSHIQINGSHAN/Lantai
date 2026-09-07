@@ -3,6 +3,7 @@
 GET  /conflicts              冲突事件列表（默认 open）
 POST /conflicts/{id}/resolve  人工裁决：resolved / dismissed
 """
+
 from fastapi import APIRouter, HTTPException
 
 from lantai.services import conflict_service

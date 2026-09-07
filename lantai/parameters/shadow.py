@@ -9,10 +9,14 @@
 """
 
 
-def evaluate_window(base: dict, shadow: dict, *,
-                    zero_result_delta: float = 0.05,
-                    avg_result_delta: float = 1.0,
-                    jaccard_floor: float = 0.7) -> dict:
+def evaluate_window(
+    base: dict,
+    shadow: dict,
+    *,
+    zero_result_delta: float = 0.05,
+    avg_result_delta: float = 1.0,
+    jaccard_floor: float = 0.7,
+) -> dict:
     """判定影子观察窗结果。
 
     base/shadow: compute_metrics 输出（含 zero_result_rate / avg_result_count /
@@ -93,6 +97,7 @@ def shadow_is_due(window) -> bool:
     只依赖 window.check_deadline；无 deadline 视为未到期。
     """
     from lantai.core.time import utcnow
+
     deadline = getattr(window, "check_deadline", None)
     if deadline is None:
         return False
@@ -116,6 +121,7 @@ def decide_promote_target(window, *, min_promote_days: int = 0) -> bool:
         from datetime import timedelta
 
         from lantai.core.time import utcnow
+
         started = getattr(window, "started_at", None)
         if started is None:
             return False

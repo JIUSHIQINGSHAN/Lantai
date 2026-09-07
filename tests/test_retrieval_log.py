@@ -1,6 +1,7 @@
 """
 检索事件埋点冒烟测试（方向二弱标注源）——真实 SQLite，不 mock。
 """
+
 from unittest.mock import patch
 
 import pytest
@@ -16,8 +17,10 @@ from lantai.observability.retrieval_log import is_system_noise
 @pytest.fixture(scope="function")
 def client():
     import lantai.models.tables  # noqa: F401
+
     test_engine = create_engine(
-        "sqlite://", echo=False,
+        "sqlite://",
+        echo=False,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
@@ -26,16 +29,20 @@ def client():
     def get_test_session():
         return Session(test_engine)
 
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.storage.vector_store.ChromaVectorStore"), \
-         patch("lantai.retrieval.hybrid.get_vector_store",
-               return_value=__import__("unittest.mock", fromlist=["Mock"])
-               .Mock(search=__import__("unittest.mock", fromlist=["Mock"])
-                     .Mock(return_value=[]))), \
-         patch("lantai.retrieval.reranker.rerank", return_value=[]), \
-         patch("lantai.retrieval.hybrid.embed",
-               return_value=[[0.1] * 8]):
-        from api_server import app
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch("lantai.storage.vector_store.ChromaVectorStore"),
+        patch(
+            "lantai.retrieval.hybrid.get_vector_store",
+            return_value=__import__("unittest.mock", fromlist=["Mock"]).Mock(
+                search=__import__("unittest.mock", fromlist=["Mock"]).Mock(return_value=[])
+            ),
+        ),
+        patch("lantai.retrieval.reranker.rerank", return_value=[]),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+    ):
+        from lantai.api.app import app
+
         with TestClient(app) as c:
             yield c, get_test_session
 
@@ -45,16 +52,20 @@ class TestRetrievalLog:
         c, sf = client
         # 有记忆可召回的场景（否则 vector 空直接返回空）
         with sf() as s:
-            s.add(MemoryItem(
-                id="mem_1", memory_type="semantic", key="k",
-                content="上次讨论的检索方案是混合三路召回",
-                lane="fact", status="active"))
+            s.add(
+                MemoryItem(
+                    id="mem_1",
+                    memory_type="semantic",
+                    key="k",
+                    content="上次讨论的检索方案是混合三路召回",
+                    lane="fact",
+                    status="active",
+                )
+            )
             s.commit()
         with patch("lantai.retrieval.hybrid.get_vector_store") as vs:
-            vs.return_value.search.return_value = [{"id": "mem_1",
-                                                    "distance": 0.1}]
-            r = c.post("/search", json={"query": "上次我们聊的检索方案",
-                                        "top_k": 3})
+            vs.return_value.search.return_value = [{"id": "mem_1", "distance": 0.1}]
+            r = c.post("/search", json={"query": "上次我们聊的检索方案", "top_k": 3})
         assert r.status_code == 200
         with sf() as s:
             events = s.exec(select(RetrievalEvent)).all()
@@ -70,9 +81,13 @@ class TestRetrievalLog:
     def test_system_noise_query_flagged_in_db(self, client):
         """系统注入噪音查询落库时必须打 is_system_noise 标记。"""
         c, sf = client
-        r = c.post("/search", json={"query": "Review the conversation above and "
-                                             "update the skill library. Be ACTIVE",
-                                    "top_k": 3})
+        r = c.post(
+            "/search",
+            json={
+                "query": "Review the conversation above and update the skill library. Be ACTIVE",
+                "top_k": 3,
+            },
+        )
         assert r.status_code == 200
         with sf() as s:
             events = s.exec(select(RetrievalEvent)).all()
@@ -82,8 +97,7 @@ class TestRetrievalLog:
     def test_gate_blocked_logs_zero_result(self, client):
         c, sf = client
         # 纯社交结束语 → 闸门拦截 → 记录 zero_result 事件
-        r = c.post("/search", json={"query": "好的谢谢再见",
-                                    "top_k": 3})
+        r = c.post("/search", json={"query": "好的谢谢再见", "top_k": 3})
         assert r.status_code == 200
         with sf() as s:
             events = s.exec(select(RetrievalEvent)).all()
@@ -93,10 +107,8 @@ class TestRetrievalLog:
     def test_log_failure_non_fatal(self, client):
         """埋点失败绝不影响主链路。"""
         c, sf = client
-        with patch("sqlmodel.Session.commit",
-                   side_effect=RuntimeError("db down")):
-            r = c.post("/search", json={"query": "好的谢谢再见",
-                                        "top_k": 3})
+        with patch("sqlmodel.Session.commit", side_effect=RuntimeError("db down")):
+            r = c.post("/search", json={"query": "好的谢谢再见", "top_k": 3})
         assert r.status_code == 200  # 埋点崩了搜索照常
 
 
@@ -139,18 +151,19 @@ class TestShellHookLog:
         """Shell Hook 独立向量路径也要埋点（真实流量主通道之一）。"""
 
         import scripts.shell_hook as hook
-        with patch("scripts.shell_hook.embed",
-                   return_value=[[0.1] * 8]), \
-             patch("scripts.shell_hook.get_vector_store") as vs, \
-             patch("scripts.shell_hook.db.get_session") as db_sess:
-            vs.return_value.search.return_value = [
-                {"id": "mem_1", "distance": 0.1}]
+
+        with (
+            patch("scripts.shell_hook.embed", return_value=[[0.1] * 8]),
+            patch("scripts.shell_hook.get_vector_store") as vs,
+            patch("scripts.shell_hook.db.get_session") as db_sess,
+        ):
+            vs.return_value.search.return_value = [{"id": "mem_1", "distance": 0.1}]
             # mock db session 返回空 items（避免污染）
-            db_sess.return_value.__enter__.return_value.exec.return_value \
-                .all.return_value = []
+            db_sess.return_value.__enter__.return_value.exec.return_value.all.return_value = []
             result = hook.build_context("上次的检索方案")
             assert isinstance(result, dict)  # 返回 {} 或 context，不抛
 
     def test_shell_hook_empty_query_no_log(self):
         import scripts.shell_hook as hook
+
         assert hook.build_context("") == {}

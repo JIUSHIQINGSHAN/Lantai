@@ -2,6 +2,7 @@
 
 纯函数直调不 mock；落库用真实临时 SQLite（仅 patch db.get_session）。
 """
+
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -18,8 +19,10 @@ from lantai.services import tree_service
 def tree_env():
     """内存 SQLite 真实建表（分类树不涉及外部依赖，仅 patch db.get_session）。"""
     import lantai.models.tables  # noqa: F401
+
     engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False},
+        "sqlite://",
+        connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
@@ -33,15 +36,26 @@ def tree_env():
 
 def _mem(s, mid, content, lane="fact", status="active"):
     now = datetime.now(UTC)
-    s.add(MemoryItem(
-        id=mid, memory_type="semantic", key=f"k-{mid}", content=content,
-        lane=lane, status=status, importance=0.5, decay_score=1.0,
-        decay_class="episodic", use_count=0,
-        created_at=now - timedelta(days=1), updated_at=now,
-    ))
+    s.add(
+        MemoryItem(
+            id=mid,
+            memory_type="semantic",
+            key=f"k-{mid}",
+            content=content,
+            lane=lane,
+            status=status,
+            importance=0.5,
+            decay_score=1.0,
+            decay_class="episodic",
+            use_count=0,
+            created_at=now - timedelta(days=1),
+            updated_at=now,
+        )
+    )
 
 
 # ── 纯函数 ─────────────────────────────────────────────
+
 
 def test_validate_node_name():
     assert tree_service.validate_node_name("  发布  ") == "发布"
@@ -62,8 +76,10 @@ def test_build_node_path():
 
 def test_compute_attachments_prefix_not_substring():
     """/a 不能误匹配 /ab；/a/x 计入 /a 子树。"""
-    nodes = [MemoryNode(id="n1", name="a", node_path="/a", depth=1),
-             MemoryNode(id="n2", name="ab", node_path="/ab", depth=1)]
+    nodes = [
+        MemoryNode(id="n1", name="a", node_path="/a", depth=1),
+        MemoryNode(id="n2", name="ab", node_path="/ab", depth=1),
+    ]
     rows = [("/a", 2), ("/ab", 3), ("/a/x", 1)]
     out = tree_service.compute_attachments(rows, nodes)
     assert out["n1"] == {"direct": 2, "subtree": 3}
@@ -71,6 +87,7 @@ def test_compute_attachments_prefix_not_substring():
 
 
 # ── 落库（真实 SQLite 直调）────────────────────────────
+
 
 def test_add_node_and_subtree(tree_env):
     session_factory, _ = tree_env
@@ -82,8 +99,7 @@ def test_add_node_and_subtree(tree_env):
         assert r2["node"]["node_path"] == "/projects/release"
         assert r2["node"]["depth"] == 2
         view = tree_service.get_subtree(s, "/")
-        assert [n["node_path"] for n in view["nodes"]] == [
-            "/projects", "/projects/release"]
+        assert [n["node_path"] for n in view["nodes"]] == ["/projects", "/projects/release"]
 
 
 def test_add_node_rejects_dup_and_missing_parent(tree_env):

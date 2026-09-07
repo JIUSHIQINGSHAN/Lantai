@@ -6,6 +6,7 @@
     python scripts/run_forgetting_quality.py --top-k 10
     python scripts/run_forgetting_quality.py --check      # 门禁：离线临时库 + 断言指标门槛（CI/发布用）
 """
+
 import argparse
 import json
 import sys
@@ -32,19 +33,25 @@ _METRIC_LABELS = {
 
 def _make_search(intent_mode: str, top_k: int):
     from lantai.retrieval.hybrid import hybrid_search
+
     if intent_mode == "rule":
         from unittest.mock import patch
 
         from lantai.core.settings import settings as s
-        patch("lantai.retrieval.hybrid.classify_intent",
-              return_value={"intent": s.DEFAULT_INTENT,
-                            "candidate_n": s.INTENT_CANDIDATE_SIZES.get(s.DEFAULT_INTENT, 10)}
-              ).start()
+
+        patch(
+            "lantai.retrieval.hybrid.classify_intent",
+            return_value={
+                "intent": s.DEFAULT_INTENT,
+                "candidate_n": s.INTENT_CANDIDATE_SIZES.get(s.DEFAULT_INTENT, 10),
+            },
+        ).start()
 
     def search(query, **kw):
         kw.setdefault("top_k", top_k)
         kw.setdefault("use_rerank", False)
         return hybrid_search(query, **kw)
+
     return search
 
 
@@ -65,29 +72,41 @@ def render_report(result: dict) -> str:
         lines.append(f"| {k} | {metrics.get(k, 0.0)} | {label} |")
     lines += ["", "## 逐条明细", ""]
     for q in result.get("per_query", []):
-        lines.append(f"- [{q['category']}] `{q['query']}` → "
-                     f"命中={bool(q['result_ids'])} ids={q['result_ids'][:5]}")
+        lines.append(
+            f"- [{q['category']}] `{q['query']}` → "
+            f"命中={bool(q['result_ids'])} ids={q['result_ids'][:5]}"
+        )
     lines.append("")
-    lines.append("> 注：陈旧/残留类指标为诚实测量，可能暴露检索层真实缺口，"
-                 "修复遵循「宁 miss 不脏写」由人工闸门裁决，不自动改写。")
+    lines.append(
+        "> 注：陈旧/残留类指标为诚实测量，可能暴露检索层真实缺口，"
+        "修复遵循「宁 miss 不脏写」由人工闸门裁决，不自动改写。"
+    )
     return "\n".join(lines)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="兰台记忆 遗忘质量自测")
-    ap.add_argument("--intent", choices=["llm", "rule"], default="llm",
-                    help="意图分类方式：llm=真实API（慢），rule=规则fallback（快速评估）")
+    ap.add_argument(
+        "--intent",
+        choices=["llm", "rule"],
+        default="llm",
+        help="意图分类方式：llm=真实API（慢），rule=规则fallback（快速评估）",
+    )
     ap.add_argument("--top-k", type=int, default=5)
     ap.add_argument("--out", default=None, help="报告输出目录（默认 docs/memory-quality）")
     ap.add_argument("--json", action="store_true", help="只输出 JSON 指标")
-    ap.add_argument("--check", action="store_true",
-                    help="门禁模式：离线临时库跑评测并断言指标门槛（FAIL 退出码 1）")
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="门禁模式：离线临时库跑评测并断言指标门槛（FAIL 退出码 1）",
+    )
     args = ap.parse_args()
 
     dataset = build_chinese_dataset()
 
     if args.check:
         from lantai.eval.offline import GATES, check_gates, run_offline_eval
+
         result = run_offline_eval(dataset, top_k=args.top_k)
         ok, actual = check_gates(result)
         print(render_report(result))

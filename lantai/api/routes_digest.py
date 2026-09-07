@@ -2,6 +2,7 @@
 
 GET /digest/today   当日盘点报告（未生成则生成一次）
 """
+
 from fastapi import APIRouter
 
 from lantai.workers.digest_worker import load_today_digest

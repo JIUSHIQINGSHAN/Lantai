@@ -1,4 +1,5 @@
 """分类树路由（v0.7，借鉴 aiduMEI TreeMemory 窄版）。"""
+
 from fastapi import APIRouter, HTTPException
 
 from lantai.models.schemas import TreeAddNodeReq, TreeAssignReq, TreeUnassignReq
@@ -18,8 +19,7 @@ def tree_view_route():
 def tree_add_node_route(req: TreeAddNodeReq):
     """新增节点（父缺失/重名/非法名 -> 422，宁 miss 不脏写）。"""
     try:
-        return tree_service.add_tree_node(
-            req.name, req.parent_path, req.description)
+        return tree_service.add_tree_node(req.name, req.parent_path, req.description)
     except ValueError as e:
         raise HTTPException(422, str(e))
 

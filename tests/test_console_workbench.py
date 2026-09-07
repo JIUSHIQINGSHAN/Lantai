@@ -1,7 +1,8 @@
 """新案牍控制台静态资源与旧路由兼容。"""
+
 from fastapi.testclient import TestClient
 
-from api_server import app
+from lantai.api.app import app
 
 
 def test_new_console_and_modules_are_served():
@@ -18,4 +19,3 @@ def test_legacy_console_routes_remain_available():
     with TestClient(app) as client:
         for path in ("/ui/recall", "/ui/evolve", "/ui/pulse", "/ui/vault", "/ui/map"):
             assert client.get(path).status_code == 200
-

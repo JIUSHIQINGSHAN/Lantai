@@ -3,6 +3,7 @@
 测试纪律（AGENTS.md）：核心逻辑不 mock——纯函数直调；DB 操作用内存 SQLite
 真实建表（patch db.engine/get_session，仅隔离存储）。
 """
+
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -35,8 +36,9 @@ _BLOCKS = {
 
 @pytest.fixture()
 def ckpt_env(monkeypatch):
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     SQLModel.metadata.create_all(engine)
 
     def session_factory() -> Session:
@@ -67,9 +69,10 @@ def test_write_get_roundtrip_upsert(ckpt_env):
     cp = get_checkpoint("sess-01")
     assert cp["blocks"]["cp_active_intent"] == _BLOCKS["cp_active_intent"]
     # 重写只带 3 块 → 旧的 5 块被整体替换
-    write_session_checkpoint("sess-01", {"cp_active_intent": "新意图",
-                                         "cp_next_action": "新下一步",
-                                         "cp_open_notes": "新待办"})
+    write_session_checkpoint(
+        "sess-01",
+        {"cp_active_intent": "新意图", "cp_next_action": "新下一步", "cp_open_notes": "新待办"},
+    )
     cp2 = get_checkpoint("sess-01")
     assert len(cp2["blocks"]) == 3
     assert cp2["blocks"]["cp_active_intent"] == "新意图"
@@ -85,11 +88,16 @@ def test_write_validation(ckpt_env):
 
 def test_latest_is_newest_session(ckpt_env):
     write_session_checkpoint("sess-old", _BLOCKS)
-    write_session_checkpoint("sess-new", {"cp_active_intent": "最新会话在做",
-                                          "cp_next_action": "收尾",
-                                          "cp_current_work": "x" * 5,
-                                          "cp_key_decisions": "y" * 5,
-                                          "cp_open_notes": "z" * 5})
+    write_session_checkpoint(
+        "sess-new",
+        {
+            "cp_active_intent": "最新会话在做",
+            "cp_next_action": "收尾",
+            "cp_current_work": "x" * 5,
+            "cp_key_decisions": "y" * 5,
+            "cp_open_notes": "z" * 5,
+        },
+    )
     latest = get_latest_checkpoint()
     assert latest["session_id"] == "sess-new"
     assert latest["blocks"]["cp_active_intent"] == "最新会话在做"
@@ -160,10 +168,15 @@ def test_hook_checkpoint_empty_db_returns_empty(ckpt_env):
 def test_hook_checkpoint_write_persists(ckpt_env):
     """serve 协议：checkpoint_write 落库（同库同语义），读取可验证。"""
     hook = _load_hook()
-    out = hook._handle_one(json.dumps({
-        "type": "checkpoint_write", "session_id": "sess-srv",
-        "blocks": {"cp_active_intent": "serve 通道写入测试", "cp_open_notes": "待办X"},
-    }))
+    out = hook._handle_one(
+        json.dumps(
+            {
+                "type": "checkpoint_write",
+                "session_id": "sess-srv",
+                "blocks": {"cp_active_intent": "serve 通道写入测试", "cp_open_notes": "待办X"},
+            }
+        )
+    )
     assert out.get("blocks_written") == 2
     cp = get_checkpoint("sess-srv")
     assert cp["blocks"]["cp_active_intent"] == "serve 通道写入测试"

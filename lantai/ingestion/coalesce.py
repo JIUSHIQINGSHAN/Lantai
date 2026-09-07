@@ -1,4 +1,5 @@
 """Tidal Coalescing — 短消息异步缓冲合并，减少 LLM 提取调用"""
+
 import hashlib
 import threading
 import time
@@ -35,9 +36,7 @@ class CoalesceBuffer:
         return f"{user_id}:{lane}"
 
     def _profile(self, lane: str) -> dict:
-        return settings.LANE_COALESCE_PROFILES.get(
-            lane, settings.LANE_COALESCE_PROFILES["general"]
-        )
+        return settings.LANE_COALESCE_PROFILES.get(lane, settings.LANE_COALESCE_PROFILES["general"])
 
     @staticmethod
     def job_id(user_id: str, lane: str, content: str) -> str:
@@ -53,9 +52,13 @@ class CoalesceBuffer:
             if key not in self._buffers:
                 self._buffers[key] = []
                 self._first_msg[key] = now
-            self._buffers[key].append({
-                "content": content, "title": title, "ts": now,
-            })
+            self._buffers[key].append(
+                {
+                    "content": content,
+                    "title": title,
+                    "ts": now,
+                }
+            )
             self._timestamps[key] = now
 
             buf = self._buffers[key]
@@ -74,8 +77,7 @@ class CoalesceBuffer:
         # 锁内算好返回值，避免并发下读到已冲刷的空表
         return {"buffered": True, "count": count}
 
-    def add_async(self, user_id: str, lane: str, content: str,
-                  title: str = "") -> dict:
+    def add_async(self, user_id: str, lane: str, content: str, title: str = "") -> dict:
         """异步入队（幂等）：TTL 内相同内容返回同一 job_id，不重复入队。"""
         jid = self.job_id(user_id, lane, content)
         now = time.time()
@@ -123,8 +125,7 @@ class CoalesceBuffer:
         now = time.time()
         with self._lock:
             # 顺带清理过期幂等指纹，防止长跑进程内存单调增长
-            stale = [k for k, ts in self._seen.items()
-                     if (now - ts) >= self.IDEMPOTENT_TTL]
+            stale = [k for k, ts in self._seen.items() if (now - ts) >= self.IDEMPOTENT_TTL]
             for k in stale:
                 del self._seen[k]
             for key in list(self._buffers.keys()):

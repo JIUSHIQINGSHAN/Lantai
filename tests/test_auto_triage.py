@@ -1,4 +1,5 @@
 """AI 智能预审与批处理服务测试（真实 SQLite 数据库冒烟）。"""
+
 import pytest
 from sqlmodel import select
 

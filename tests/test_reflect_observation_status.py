@@ -7,15 +7,16 @@ def _database(tmp_path):
     conn = sqlite3.connect(path)
     conn.execute(
         "CREATE TABLE reflect_run (run_at DATETIME, source TEXT, "
-        "curate_failed INTEGER, rejecter_failed INTEGER, error TEXT)")
+        "curate_failed INTEGER, rejecter_failed INTEGER, error TEXT)"
+    )
     return path, conn
 
 
-def _insert(conn, when, source="scheduled", curate_failed=0, rejecter_failed=0,
-            error=""):
+def _insert(conn, when, source="scheduled", curate_failed=0, rejecter_failed=0, error=""):
     conn.execute(
         "INSERT INTO reflect_run VALUES (?, ?, ?, ?, ?)",
-        (when.isoformat(sep=" "), source, curate_failed, rejecter_failed, error))
+        (when.isoformat(sep=" "), source, curate_failed, rejecter_failed, error),
+    )
 
 
 def test_collect_observation_status_counts_only_consecutive_scheduled_successes(tmp_path):
@@ -30,6 +31,7 @@ def test_collect_observation_status_counts_only_consecutive_scheduled_successes(
     conn.close()
 
     from scripts.reflect_observation_status import collect_observation_status
+
     with sqlite3.connect(path) as db:
         status = collect_observation_status(db, required_runs=7, window_days=14)
 
@@ -50,6 +52,7 @@ def test_collect_observation_status_breaks_on_failure_and_main_check_blocks(tmp_
     conn.close()
 
     from scripts.reflect_observation_status import collect_observation_status, main
+
     with sqlite3.connect(path) as db:
         status = collect_observation_status(db, required_runs=7, window_days=14)
 
@@ -69,10 +72,13 @@ def test_collect_observation_status_respects_reference_date(tmp_path):
     conn.close()
 
     from scripts.reflect_observation_status import collect_observation_status
+
     with sqlite3.connect(path) as db:
         # 以最后一天 2026-08-22 作为 reference_date
         status = collect_observation_status(
-            db, required_runs=7, window_days=14,
+            db,
+            required_runs=7,
+            window_days=14,
             reference_date=hist_start.date() + timedelta(days=6),
         )
 
@@ -86,6 +92,7 @@ def test_collect_observation_status_reports_pre_migration_database(tmp_path):
         conn.execute("CREATE TABLE reflect_run (run_at DATETIME)")
 
     from scripts.reflect_observation_status import collect_observation_status
+
     with sqlite3.connect(path) as db:
         status = collect_observation_status(db)
 

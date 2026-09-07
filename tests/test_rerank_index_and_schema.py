@@ -4,6 +4,7 @@
 2. 验证当有多条 content 相同（不同 id/lane）的候选时，rerank 按 index 正确回填对应 memory 对象，
    避免 doc_to_m = {m.content: m} 正文反查覆盖撞键。
 """
+
 from unittest.mock import MagicMock
 
 from lantai.models.tables import MemoryItem
@@ -47,6 +48,7 @@ def test_rerank_index_backfill_handles_duplicate_content(monkeypatch):
     class FakeVectorStore:
         def search(self, *a, **kw):
             return [{"id": "mem_1", "distance": 0.2}, {"id": "mem_2", "distance": 0.3}]
+
     monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: FakeVectorStore())
 
     class FakeSession:
@@ -54,14 +56,19 @@ def test_rerank_index_backfill_handles_duplicate_content(monkeypatch):
             class _Result:
                 def __init__(self, data):
                     self.data = data
+
                 def all(self):
                     return self.data
+
             stmt_str = str(stmt).lower()
             if "memory_edge" in stmt_str or "memoryedge" in stmt_str:
                 return _Result([])
             return _Result([mem1, mem2])
 
-    monkeypatch.setattr("lantai.storage.db.get_session", lambda: MagicMock(__enter__=lambda s: FakeSession(), __exit__=lambda *a: None))
+    monkeypatch.setattr(
+        "lantai.storage.db.get_session",
+        lambda: MagicMock(__enter__=lambda s: FakeSession(), __exit__=lambda *a: None),
+    )
     monkeypatch.setattr("lantai.retrieval.hybrid.rerank", lambda q, docs, k: fake_rerank_output)
 
     # 显式开启 rerank

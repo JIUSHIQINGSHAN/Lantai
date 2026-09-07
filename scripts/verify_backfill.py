@@ -10,6 +10,7 @@ used_ids 回填通道自检（Hermes 接入验证）。
 
 用法：python scripts/verify_backfill.py
 """
+
 import sys
 from pathlib import Path
 
@@ -47,39 +48,43 @@ def main() -> int:
     # 1) MCP 层：backfill 工具存在 + search 返回 event_id
     try:
         import scripts.mcp_server as mcp
+
         check("MCP server 可导入", True)
         tools = mcp.TOOLS
-        check("backfill 工具已注册", "backfill" in tools,
-              "工具列表: " + ", ".join(tools.keys()))
+        check("backfill 工具已注册", "backfill" in tools, "工具列表: " + ", ".join(tools.keys()))
         from unittest.mock import patch
-        with patch.object(mcp, "relevance_check",
-                          return_value={"needs_memory": False}), \
-             patch("lantai.observability.retrieval_log.log_retrieval",
-                   return_value="rev_selfcheck_mock"):
+
+        with (
+            patch.object(mcp, "relevance_check", return_value={"needs_memory": False}),
+            patch(
+                "lantai.observability.retrieval_log.log_retrieval",
+                return_value="rev_selfcheck_mock",
+            ),
+        ):
             resp = mcp.handle_search({"query": "自检查询", "top_k": 3})
-        check("search 响应带 event_id", resp.get("event_id") == "rev_selfcheck_mock",
-              f"event_id={resp.get('event_id')}")
+        check(
+            "search 响应带 event_id",
+            resp.get("event_id") == "rev_selfcheck_mock",
+            f"event_id={resp.get('event_id')}",
+        )
         with patch("lantai.observability.retrieval_log.backfill_used_ids") as bf:
-            out = mcp.handle_backfill({"event_id": "rev_selfcheck_mock",
-                                       "used_ids": ["mem_x"]})
+            out = mcp.handle_backfill({"event_id": "rev_selfcheck_mock", "used_ids": ["mem_x"]})
             called = bf.called
-        check("backfill 处理器可用", out.get("ok") is True and called,
-              f"返回 {out}")
+        check("backfill 处理器可用", out.get("ok") is True and called, f"返回 {out}")
     except Exception as e:
         check("MCP 层", False, f"{type(e).__name__}: {e}")
 
     # 2) 数据层：表 + 字段（raw connection，避免 SQLModel exec raw SQL 差异）
     from lantai.storage import db
+
     try:
         conn = db.engine.raw_connection()
         try:
-            cols = {r[1] for r in conn.execute(
-                "PRAGMA table_info(retrieval_event)").fetchall()}
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(retrieval_event)").fetchall()}
         finally:
             conn.close()
         check("retrieval_event 表存在", "id" in cols)
-        check("used_ids 字段存在", "used_ids" in cols,
-              f"字段: {sorted(cols)}")
+        check("used_ids 字段存在", "used_ids" in cols, f"字段: {sorted(cols)}")
     except Exception as e:
         check("数据层", False, f"{type(e).__name__}: {e}")
 
@@ -89,17 +94,21 @@ def main() -> int:
     try:
         from lantai.models.tables import RetrievalEvent
         from lantai.observability.retrieval_log import backfill_used_ids, log_retrieval
-        test_eid = log_retrieval("verify_backfill selfcheck", [],
-                                 latency_ms=1, trace_id="verify_backfill")
+
+        test_eid = log_retrieval(
+            "verify_backfill selfcheck", [], latency_ms=1, trace_id="verify_backfill"
+        )
         if not test_eid:
             check("回填链路", False, "log_retrieval 返回 None（落库失败）")
         else:
             backfill_used_ids(test_eid, ["mem_a", "mem_b"])
             with db.get_session() as s:
                 ev = s.get(RetrievalEvent, test_eid)
-            check("backfill_used_ids 真实写读",
-                  ev is not None and ev.used_ids == ["mem_a", "mem_b"],
-                  f"事件 {test_eid} → used_ids={ev.used_ids if ev else None}")
+            check(
+                "backfill_used_ids 真实写读",
+                ev is not None and ev.used_ids == ["mem_a", "mem_b"],
+                f"事件 {test_eid} → used_ids={ev.used_ids if ev else None}",
+            )
     except Exception as e:
         check("回填链路", False, f"{type(e).__name__}: {e}")
 
@@ -107,11 +116,14 @@ def main() -> int:
     if test_eid:
         try:
             from lantai.eval.runner import _load_used_ids_map
+
             per_query = [{"event_id": test_eid, "result_ids": ["mem_a"]}]
             m = _load_used_ids_map(per_query)
-            check("_load_used_ids_map 加载回填",
-                  m.get(test_eid) == ["mem_a", "mem_b"],
-                  f"used_ids_map={m}")
+            check(
+                "_load_used_ids_map 加载回填",
+                m.get(test_eid) == ["mem_a", "mem_b"],
+                f"used_ids_map={m}",
+            )
         except Exception as e:
             check("评估层", False, f"{type(e).__name__}: {e}")
     else:
@@ -121,6 +133,7 @@ def main() -> int:
     if test_eid:
         try:
             from lantai.models.tables import RetrievalEvent
+
             with db.get_session() as s:
                 ev = s.get(RetrievalEvent, test_eid)
                 if ev is not None:
@@ -135,19 +148,20 @@ def main() -> int:
     try:
         conn = db.engine.raw_connection()
         try:
-            total = conn.execute(
-                "SELECT COUNT(*) FROM retrieval_event").fetchone()[0]
+            total = conn.execute("SELECT COUNT(*) FROM retrieval_event").fetchone()[0]
             filled = conn.execute(
                 "SELECT COUNT(*) FROM retrieval_event "
-                "WHERE used_ids IS NOT NULL AND used_ids != '[]'").fetchone()[0]
+                "WHERE used_ids IS NOT NULL AND used_ids != '[]'"
+            ).fetchone()[0]
         finally:
             conn.close()
         pct = (filled / total * 100) if total else 0
-        check("生产回填状态", filled > 0,
-              f"{filled}/{total} 事件已回填 ({pct:.1f}%)")
+        check("生产回填状态", filled > 0, f"{filled}/{total} 事件已回填 ({pct:.1f}%)")
         if filled == 0:
-            print("   └─ 说明: Hermes 尚未回填——通道已就绪，回答用记忆后调 "
-                  "MCP backfill 即可。见 docs/used-ids-backfill-guide.md")
+            print(
+                "   └─ 说明: Hermes 尚未回填——通道已就绪，回答用记忆后调 "
+                "MCP backfill 即可。见 docs/used-ids-backfill-guide.md"
+            )
     except Exception as e:
         check("生产状态", False, f"{type(e).__name__}: {e}")
 

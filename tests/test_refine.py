@@ -6,11 +6,12 @@
 3. 真实 SQLite 数据库候选精炼落库（不 mock 冒烟）；
 4. REST 路由 POST /candidates/{id}/refine 与 MCP candidate_refine 工具。
 """
+
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from api_server import app
+from lantai.api.app import app
 from lantai.models.tables import MemoryCandidate
 from lantai.services.refine_service import (
     batch_refine_candidates,
@@ -127,7 +128,8 @@ class TestRefineEndpointsAndMCP:
 
     def test_mcp_candidate_refine(self, param_env):
         session_factory, _ = param_env
-        from scripts.mcp_server import handle_candidate_refine
+        from lantai.cli.mcp import handle_candidate_refine
+
         cand_id = "cand_test_mcp_refine"
         with session_factory() as s:
             cand = MemoryCandidate(
@@ -182,7 +184,12 @@ class TestRefineEndpointsAndMCP:
         # 模拟 c1 成功精炼，c2 判定为无效闲聊
         def fake_chat(system, user):
             if "模糊候选一" in user:
-                return {"refined_text": "提纯后的高价值事实", "confidence": 0.82, "is_valid": True, "lane": "fact"}
+                return {
+                    "refined_text": "提纯后的高价值事实",
+                    "confidence": 0.82,
+                    "is_valid": True,
+                    "lane": "fact",
+                }
             return {"refined_text": "", "confidence": 0.0, "is_valid": False, "reason": "闲聊废话"}
 
         with patch("lantai.llm.client.chat_json", side_effect=fake_chat):
@@ -199,4 +206,3 @@ class TestRefineEndpointsAndMCP:
 
                 cand2 = s.get(MemoryCandidate, "cand_batch_02")
                 assert cand2.status == "rejected"
-

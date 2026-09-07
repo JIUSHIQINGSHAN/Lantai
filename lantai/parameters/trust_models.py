@@ -4,6 +4,7 @@
 表结构沿项目风格：id 为 str + new_id()，JSON 用 Column(JSON)。
 来源锁：signal_source 固定 "arxiv_atom"，service 写入时断言，其他写入路径不开放。
 """
+
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
@@ -14,11 +15,11 @@ from lantai.core.time import utcnow
 
 class PaperQualitySignal(SQLModel, table=True):
     """arXiv 结构化质量信号（唯一写入口：arxiv 适配器，signal_source 断言）。"""
+
     __tablename__ = "paper_quality_signal"
 
     id: str = Field(primary_key=True)
-    raw_document_id: str = Field(unique=True, index=True,
-                                 foreign_key="rawdocument.id")
+    raw_document_id: str = Field(unique=True, index=True, foreign_key="rawdocument.id")
     arxiv_id: str = Field(index=True)
     version: int = 1
     published_at: datetime | None = None
@@ -30,19 +31,21 @@ class PaperQualitySignal(SQLModel, table=True):
     categories: list = Field(default_factory=list, sa_column=Column(JSON))
     authors: list = Field(default_factory=list, sa_column=Column(JSON))
     author_count: int = 0
-    venue_class: str = "unknown"          # journal|top_conf|other_peer|workshop|preprint|unknown
-    tier: str = "D"                       # A|B|C|D（只降不升）
+    venue_class: str = "unknown"  # journal|top_conf|other_peer|workshop|preprint|unknown
+    tier: str = "D"  # A|B|C|D（只降不升）
     tier_reason: list = Field(default_factory=list, sa_column=Column(JSON))
-    staleness_level: str = "fresh"        # fresh|warn|blocked
-    signal_source: str = "arxiv_atom"     # 来源锁
+    staleness_level: str = "fresh"  # fresh|warn|blocked
+    signal_source: str = "arxiv_atom"  # 来源锁
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
 
 # ---------------------------------------------------------------- 视图模型（只读投影）
 
+
 class QualitySignalView(BaseModel):
     """注入 prompt & 队列详情的只读信号视图。"""
+
     model_config = ConfigDict(extra="forbid")
 
     source_id: str
@@ -59,6 +62,7 @@ class QualitySignalView(BaseModel):
 
 class GatingPolicy(BaseModel):
     """按 tier 解析出的门控策略（LLM 可见 tier 值，权重表永不外露）。"""
+
     model_config = ConfigDict(extra="forbid")
 
     tier: str
@@ -70,6 +74,7 @@ class GatingPolicy(BaseModel):
 
 class QualitySignalRow(BaseModel):
     """signal_service 内部聚合（tier 与 staleness 已合并降级）。"""
+
     model_config = ConfigDict(extra="forbid")
 
     view: QualitySignalView
@@ -78,6 +83,7 @@ class QualitySignalRow(BaseModel):
 
 class ParamContradictionReport(SQLModel, table=True):
     """矛盾报告（方向四）：矛盾参数只能 acknowledge/close，接口层禁止 apply。"""
+
     __tablename__ = "param_contradiction_report"
 
     id: str = Field(primary_key=True)
@@ -99,6 +105,7 @@ class ShadowWindow(SQLModel, table=True):
     DEDUP shadow-only：观察期内影子参数不写 ParamOverride（不参与实时去重/应用），
     只在本表记录；promote 只标记状态，实际应用走 ParamSuggestion 人工闸门。
     """
+
     __tablename__ = "shadow_window"
 
     id: str = Field(primary_key=True)  # new_id("sw")
@@ -106,7 +113,9 @@ class ShadowWindow(SQLModel, table=True):
     base_revision: int = 0  # 观察起点 revision
     param_overrides: dict = Field(default_factory=dict, sa_column=Column(JSON))
     base_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    status: str = Field(default="observing", index=True)  # observing / promoted / rolled_back / cancelled
+    status: str = Field(
+        default="observing", index=True
+    )  # observing / promoted / rolled_back / cancelled
     started_at: datetime = Field(default_factory=utcnow)
     finished_at: datetime | None = None
     check_deadline: datetime = Field(default_factory=utcnow)  # started_at + SHADOW_OBSERVE_DAYS
@@ -123,6 +132,7 @@ class SignalReliabilityStat(SQLModel, table=True):
     只降不升：reliability_score 起始 1.0，验证失败递减，永不回升。
     某类论文反复验证失败 → 该类信号降权（penalty 叠加进 resolve_gating）。
     """
+
     __tablename__ = "signal_reliability_stat"
 
     id: str = Field(primary_key=True)  # new_id("srs")

@@ -3,6 +3,7 @@
 
 全部 extra="forbid"：LLM 或请求体多出任何字段一律拒绝，防幻觉注入。
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -17,11 +18,12 @@ from lantai.models.tables import (
 
 # ---------------------------------------------------------------- LLM 输出
 
+
 class EvidenceItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_document_id: str
-    quote: str          # 必须是对应 RawDocument 内容的真实子串（归一化后）
+    quote: str  # 必须是对应 RawDocument 内容的真实子串（归一化后）
     finding: str
     applicability: str
 
@@ -65,8 +67,10 @@ ParamAdviceResult = Annotated[
 
 # ---------------------------------------------------------------- V2 批量结构（方向四：矛盾显式化）
 
+
 class ContradictionSide(BaseModel):
     """矛盾一侧的证据引用（quote 必须通过真实性校验）。"""
+
     model_config = ConfigDict(extra="forbid")
 
     source_document_id: str
@@ -75,6 +79,7 @@ class ContradictionSide(BaseModel):
 
 class ContradictionItem(BaseModel):
     """两个不同 source 在同一 param_key 上的矛盾证据。"""
+
     model_config = ConfigDict(extra="forbid")
 
     param_key: str
@@ -90,6 +95,7 @@ class BatchParamAdvice(BaseModel):
     V2 批量输出：一次 LLM 调用对一批论文产出多条建议 + 弃权 + 矛盾。
     批量结构使"矛盾按 param_key 分区裁决"成为可能。
     """
+
     model_config = ConfigDict(extra="forbid")
 
     batch_id: str = ""
@@ -99,6 +105,7 @@ class BatchParamAdvice(BaseModel):
 
 
 # ---------------------------------------------------------------- API DTO
+
 
 class SuggestionListItem(BaseModel):
     id: str
@@ -202,34 +209,51 @@ class RuntimeParamsResponse(BaseModel):
 
 # ---------------------------------------------------------------- 表 -> DTO 转换
 
+
 def suggestion_to_detail(s: ParamSuggestion) -> SuggestionDetailResponse:
     return SuggestionDetailResponse(
-        id=s.id, status=s.status, confidence=s.confidence,
-        title=s.title, summary=s.summary, rationale=s.rationale,
-        expected_benefit=s.expected_benefit, risk_notes=s.risk_notes,
+        id=s.id,
+        status=s.status,
+        confidence=s.confidence,
+        title=s.title,
+        summary=s.summary,
+        rationale=s.rationale,
+        expected_benefit=s.expected_benefit,
+        risk_notes=s.risk_notes,
         validation_plan=s.validation_plan,
         evidence=[EvidenceItem(**e) for e in s.evidence],
         changes=[ParamChange(**c) for c in s.changes],
-        before_snapshot=s.before_snapshot, after_snapshot=s.after_snapshot,
+        before_snapshot=s.before_snapshot,
+        after_snapshot=s.after_snapshot,
         base_snapshot_hash=s.base_snapshot_hash,
         registry_version=s.registry_version,
-        created_at=s.created_at, decided_at=s.decided_at,
-        decided_by=s.decided_by, decision_note=s.decision_note,
+        created_at=s.created_at,
+        decided_at=s.decided_at,
+        decided_by=s.decided_by,
+        decision_note=s.decision_note,
     )
 
 
 def suggestion_to_list_item(s: ParamSuggestion) -> SuggestionListItem:
     return SuggestionListItem(
-        id=s.id, status=s.status, title=s.title, confidence=s.confidence,
+        id=s.id,
+        status=s.status,
+        title=s.title,
+        confidence=s.confidence,
         changes=[ParamChange(**c) for c in s.changes],
-        base_snapshot_hash=s.base_snapshot_hash, created_at=s.created_at,
+        base_snapshot_hash=s.base_snapshot_hash,
+        created_at=s.created_at,
     )
 
 
 def override_to_list_item(o: ParamOverride) -> OverrideListItem:
     return OverrideListItem(
-        id=o.id, revision=o.revision, operation=o.operation,
+        id=o.id,
+        revision=o.revision,
+        operation=o.operation,
         suggestion_id=o.suggestion_id,
         rollback_of_override_id=o.rollback_of_override_id,
-        actor=o.actor, note=o.note, created_at=o.created_at,
+        actor=o.actor,
+        note=o.note,
+        created_at=o.created_at,
     )

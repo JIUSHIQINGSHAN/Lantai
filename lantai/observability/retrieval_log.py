@@ -4,6 +4,7 @@
 无标注评估集的现实替代：记录"哪条记忆被召回 + 当时生效参数 + 延迟"，
 后续 dry-run/shadow 用这些事件做相对指标（zero_result / jaccard / 弱命中率）。
 """
+
 import hashlib
 
 from lantai.core.ids import new_id
@@ -46,43 +47,50 @@ def is_system_noise(query: str) -> bool:
     return len(q) > _SYSTEM_NOISE_MAX_LEN
 
 
-def log_retrieval(query: str, results: list[dict], *, latency_ms: int,
-                  gate: dict | None = None, trace_id: str | None = None,
-                  lanes: list[str] | None = None) -> str | None:
+def log_retrieval(
+    query: str,
+    results: list[dict],
+    *,
+    latency_ms: int,
+    gate: dict | None = None,
+    trace_id: str | None = None,
+    lanes: list[str] | None = None,
+) -> str | None:
     """
     在检索出口记录一次事件。失败仅记日志，绝不抛给主链路。
     返回事件 id（供后续回填 used_ids）；失败返回 None。
     """
     try:
         event_id = new_id("rev")
-        result_ids = [r["memory"]["id"] for r in results
-                      if isinstance(r, dict) and "memory" in r]
-        result_scores = [r["score"] for r in results
-                         if isinstance(r, dict) and "score" in r]
+        result_ids = [r["memory"]["id"] for r in results if isinstance(r, dict) and "memory" in r]
+        result_scores = [r["score"] for r in results if isinstance(r, dict) and "score" in r]
         intent = (gate or {}).get("intent") if isinstance(gate, dict) else None
         from lantai.observability.recall_report import (
             _scenes_from_results,
             _tokens_from_results,
             estimate_tokens,
         )
+
         with db.get_session() as s:
-            s.add(RetrievalEvent(
-                id=event_id,
-                trace_id=trace_id or "",
-                query_text=query,
-                query_norm_hash=_norm_hash(query),
-                lane=",".join(lanes) if lanes else "",
-                intent_bucket=intent if isinstance(intent, str) else None,
-                param_snapshot_hash=snapshot_hash(default_snapshot()),
-                result_ids=result_ids,
-                result_scores=result_scores,
-                used_ids=[],
-                latency_ms=int(latency_ms),
-                zero_result=not result_ids,
-                is_system_noise=is_system_noise(query),
-                scene_ids=_scenes_from_results(results),
-                estimated_tokens=(estimate_tokens(query) + _tokens_from_results(results)),
-            ))
+            s.add(
+                RetrievalEvent(
+                    id=event_id,
+                    trace_id=trace_id or "",
+                    query_text=query,
+                    query_norm_hash=_norm_hash(query),
+                    lane=",".join(lanes) if lanes else "",
+                    intent_bucket=intent if isinstance(intent, str) else None,
+                    param_snapshot_hash=snapshot_hash(default_snapshot()),
+                    result_ids=result_ids,
+                    result_scores=result_scores,
+                    used_ids=[],
+                    latency_ms=int(latency_ms),
+                    zero_result=not result_ids,
+                    is_system_noise=is_system_noise(query),
+                    scene_ids=_scenes_from_results(results),
+                    estimated_tokens=(estimate_tokens(query) + _tokens_from_results(results)),
+                )
+            )
             s.commit()
         return event_id
     except Exception:

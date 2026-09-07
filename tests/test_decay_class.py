@@ -1,4 +1,5 @@
 """衰减类测试：推断规则 / 半衰期 / procedural 永不衰减 / set_decay_class / 迁移"""
+
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -53,23 +54,38 @@ class TestMultiplier:
 
 @pytest.fixture
 def engine():
-    e = create_engine("sqlite:///:memory:",
-                      connect_args={"check_same_thread": False},
-                      poolclass=StaticPool)
+    e = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     SQLModel.metadata.create_all(e)
     return e
 
 
-def _add_mem(engine, *, content="测试内容", lane="general",
-             decay_class="episodic", last_used_days_ago=0.0,
-             importance=0.5, use_count=0) -> MemoryItem:
+def _add_mem(
+    engine,
+    *,
+    content="测试内容",
+    lane="general",
+    decay_class="episodic",
+    last_used_days_ago=0.0,
+    importance=0.5,
+    use_count=0,
+) -> MemoryItem:
     mid = new_id("mem")
     m = MemoryItem(
-        id=mid, memory_type="general", key=mid, content=content,
-        lane=lane, status="active", importance=importance, use_count=use_count,
-        decay_score=1.0, decay_class=decay_class,
+        id=mid,
+        memory_type="general",
+        key=mid,
+        content=content,
+        lane=lane,
+        status="active",
+        importance=importance,
+        use_count=use_count,
+        decay_score=1.0,
+        decay_class=decay_class,
         last_used_at=utcnow() - timedelta(days=last_used_days_ago),
-        created_at=utcnow() - timedelta(days=last_used_days_ago))
+        created_at=utcnow() - timedelta(days=last_used_days_ago),
+    )
     with Session(engine) as s:
         s.add(m)
         s.commit()
@@ -83,6 +99,7 @@ class TestApplyForgetting:
         _add_mem(engine, decay_class="procedural", last_used_days_ago=9999.0)
         with patch.object(db_module, "get_session", lambda: Session(engine)):
             from lantai.memory import forgetting
+
             forgetting.apply_forgetting()
         with Session(engine) as s:
             m = s.exec(select(MemoryItem)).first()
@@ -94,6 +111,7 @@ class TestApplyForgetting:
         _add_mem(engine, decay_class="episodic", last_used_days_ago=9999.0)
         with patch.object(db_module, "get_session", lambda: Session(engine)):
             from lantai.memory import forgetting
+
             forgetting.apply_forgetting()
         with Session(engine) as s:
             m = s.exec(select(MemoryItem)).first()
@@ -104,6 +122,7 @@ class TestApplyForgetting:
 class TestSetDecayClass:
     def test_set_and_checkpoint(self, engine):
         from lantai.services import memory_service as ms
+
         m = _add_mem(engine)
         with patch.object(db_module, "get_session", lambda: Session(engine)):
             res = ms.set_decay_class(m.id, "procedural")
@@ -118,6 +137,7 @@ class TestSetDecayClass:
 
     def test_invalid_class_rejected(self, engine):
         from lantai.services import memory_service as ms
+
         m = _add_mem(engine)
         with pytest.raises(ValueError):
             with patch.object(db_module, "get_session", lambda: Session(engine)):
@@ -125,6 +145,7 @@ class TestSetDecayClass:
 
     def test_missing_memory(self, engine):
         from lantai.services import memory_service as ms
+
         with patch.object(db_module, "get_session", lambda: Session(engine)):
             res = ms.set_decay_class("no-such-id", "procedural")
         assert res["ok"] is False
@@ -139,22 +160,28 @@ class TestMigration:
 
         legacy = create_engine("sqlite:///:memory:")
         with legacy.begin() as c:
-            c.execute(text(
-                "CREATE TABLE memoryitem (id TEXT PRIMARY KEY, memory_type TEXT, "
-                "key TEXT, content TEXT, lane TEXT, status TEXT, decay_score FLOAT)"))
+            c.execute(
+                text(
+                    "CREATE TABLE memoryitem (id TEXT PRIMARY KEY, memory_type TEXT, "
+                    "key TEXT, content TEXT, lane TEXT, status TEXT, decay_score FLOAT)"
+                )
+            )
         # 迁移前无 decay_class
-        cols_before = [r[1] for r in legacy.raw_connection()
-                       .execute("PRAGMA table_info(memoryitem)")]
+        cols_before = [
+            r[1] for r in legacy.raw_connection().execute("PRAGMA table_info(memoryitem)")
+        ]
         assert "decay_class" not in cols_before
 
         with _patch.object(db_module, "engine", legacy):
             db_module.init_db()  # 第一次：加列（内存库建表 + FTS）
-        cols_after = [r[1] for r in legacy.raw_connection()
-                      .execute("PRAGMA table_info(memoryitem)")]
+        cols_after = [
+            r[1] for r in legacy.raw_connection().execute("PRAGMA table_info(memoryitem)")
+        ]
         assert "decay_class" in cols_after
 
         with _patch.object(db_module, "engine", legacy):
             db_module.init_db()  # 第二次：duplicate column 被幂等吞掉
-        cols_again = [r[1] for r in legacy.raw_connection()
-                      .execute("PRAGMA table_info(memoryitem)")]
+        cols_again = [
+            r[1] for r in legacy.raw_connection().execute("PRAGMA table_info(memoryitem)")
+        ]
         assert "decay_class" in cols_again

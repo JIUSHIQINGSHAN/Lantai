@@ -6,6 +6,7 @@
 2. validate_param_advice       —— LLM 输出（判别联合 + 引用真实性 + 变化合法性）
 3. apply_validated_changes     —— 从当前快照应用一组已验证的变更
 """
+
 from decimal import Decimal, InvalidOperation
 
 from lantai.parameters.registry import (
@@ -42,8 +43,10 @@ def _finite(v: Decimal) -> bool:
 
 # ---------------------------------------------------------------- 快照校验
 
-def validate_snapshot(snapshot: dict, registry: dict[str, ParamSpec] | None = None,
-                      allow_partial: bool = False) -> dict[str, float]:
+
+def validate_snapshot(
+    snapshot: dict, registry: dict[str, ParamSpec] | None = None, allow_partial: bool = False
+) -> dict[str, float]:
     """
     校验一个参数快照。
     - allow_partial=False：必须是完整白名单快照（生成/批准前用）
@@ -68,25 +71,21 @@ def validate_snapshot(snapshot: dict, registry: dict[str, ParamSpec] | None = No
         if not _finite(val):
             raise ParamValidationError(f"NaN/Infinity 非法: {name}={raw!r}")
         if spec.minimum is not None and val < spec.minimum:
-            raise ParamValidationError(
-                f"{name}={val} 低于最小值 {spec.minimum}")
+            raise ParamValidationError(f"{name}={val} 低于最小值 {spec.minimum}")
         if spec.maximum is not None and val > spec.maximum:
-            raise ParamValidationError(
-                f"{name}={val} 高于最大值 {spec.maximum}")
+            raise ParamValidationError(f"{name}={val} 高于最大值 {spec.maximum}")
         if spec.step is not None:
             base = spec.minimum if spec.minimum is not None else Decimal(0)
             span = (val - base) / spec.step
             if abs(span - span.to_integral_value()) > Decimal("1e-9"):
-                raise ParamValidationError(
-                    f"{name}={val} 不满足步长 {spec.step}")
+                raise ParamValidationError(f"{name}={val} 不满足步长 {spec.step}")
         out[name] = float(val)
 
     _validate_group_constraints(out, registry)
     return out
 
 
-def _validate_group_constraints(snapshot: dict[str, float],
-                                registry: dict[str, ParamSpec]) -> None:
+def _validate_group_constraints(snapshot: dict[str, float], registry: dict[str, ParamSpec]) -> None:
     groups: dict[str, list[str]] = {}
     for name, spec in registry.items():
         if spec.adjustable and name in snapshot:
@@ -103,23 +102,26 @@ def _validate_group_constraints(snapshot: dict[str, float],
             epsilon = _d(c["epsilon"])
             if abs(total - target) > epsilon:
                 raise ParamValidationError(
-                    f"分组 {group} 之和={total}，须等于 {target}"
-                    f"（容差 {epsilon}）")
+                    f"分组 {group} 之和={total}，须等于 {target}（容差 {epsilon}）"
+                )
         elif kind == "ordered_gap":
             higher, lower = c["higher"], c["lower"]
             if higher in snapshot and lower in snapshot:
                 gap = _d(snapshot[higher]) - _d(snapshot[lower])
                 min_gap = _d(c["min_gap"])
                 if gap < min_gap:
-                    raise ParamValidationError(
-                        f"{higher}-{lower}={gap}，须 ≥ {min_gap}")
+                    raise ParamValidationError(f"{higher}-{lower}={gap}，须 ≥ {min_gap}")
 
 
 # ---------------------------------------------------------------- 变更应用
 
-def apply_validated_changes(current: dict, changes: list[ParamChange],
-                            registry: dict[str, ParamSpec] | None = None,
-                            max_changes: int | None = None) -> dict[str, float]:
+
+def apply_validated_changes(
+    current: dict,
+    changes: list[ParamChange],
+    registry: dict[str, ParamSpec] | None = None,
+    max_changes: int | None = None,
+) -> dict[str, float]:
     """
     从 current 快照应用一组已验证变更，返回完整 after 快照。
     先合成再整体校验——保证单项合法但组合非法的场景被拦截。
@@ -127,8 +129,7 @@ def apply_validated_changes(current: dict, changes: list[ParamChange],
     registry = registry or get_param_registry()
 
     if max_changes is not None and len(changes) > max_changes:
-        raise ParamValidationError(
-            f"变更数 {len(changes)} 超过上限 {max_changes}")
+        raise ParamValidationError(f"变更数 {len(changes)} 超过上限 {max_changes}")
 
     seen: set[str] = set()
     merged = dict(current)
@@ -141,16 +142,16 @@ def apply_validated_changes(current: dict, changes: list[ParamChange],
         seen.add(ch.name)
         if ch.before != float(current[ch.name]):
             raise ParamValidationError(
-                f"{ch.name} before={ch.before} 与当前快照 {current[ch.name]} 不符")
+                f"{ch.name} before={ch.before} 与当前快照 {current[ch.name]} 不符"
+            )
         after = _d(ch.after)
         before = _d(ch.before)
         if after == before:
             raise ParamValidationError(f"{ch.name} 变更前后相同")
-        if spec.max_delta_per_apply is not None \
-                and abs(after - before) > spec.max_delta_per_apply:
+        if spec.max_delta_per_apply is not None and abs(after - before) > spec.max_delta_per_apply:
             raise ParamValidationError(
-                f"{ch.name} 单次变化 |{after - before}| 超过上限 "
-                f"{spec.max_delta_per_apply}")
+                f"{ch.name} 单次变化 |{after - before}| 超过上限 {spec.max_delta_per_apply}"
+            )
         merged[ch.name] = float(after)
 
     return validate_snapshot(merged, registry)
@@ -158,28 +159,28 @@ def apply_validated_changes(current: dict, changes: list[ParamChange],
 
 # ---------------------------------------------------------------- LLM 输出校验
 
-def _validate_evidence(evidence: list[EvidenceItem],
-                       papers: list[dict]) -> None:
+
+def _validate_evidence(evidence: list[EvidenceItem], papers: list[dict]) -> None:
     """quote 必须是对应论文内容的真实子串（空白归一化后）；source_id 必须属于本批次。"""
-    doc_contents = {p["source_document_id"]: normalize_text(p["content"])
-                    for p in papers}
+    doc_contents = {p["source_document_id"]: normalize_text(p["content"]) for p in papers}
     doc_ids = set(doc_contents)
     for e in evidence:
         if e.source_document_id not in doc_ids:
-            raise ParamValidationError(
-                f"source_id {e.source_document_id} 不属于本批次")
+            raise ParamValidationError(f"source_id {e.source_document_id} 不属于本批次")
         norm_quote = normalize_text(e.quote)
         if not norm_quote:
             raise ParamValidationError("quote 为空")
         if norm_quote not in doc_contents[e.source_document_id]:
-            raise ParamValidationError(
-                f"quote 非原文子串（可能虚构证据）: {e.quote[:40]!r}")
+            raise ParamValidationError(f"quote 非原文子串（可能虚构证据）: {e.quote[:40]!r}")
 
 
-def validate_param_advice(payload: dict, current_snapshot: dict,
-                          papers: list[dict],
-                          min_confidence: float = 0.85,
-                          max_changes: int = 6) -> SuggestPayload | AbstainPayload:
+def validate_param_advice(
+    payload: dict,
+    current_snapshot: dict,
+    papers: list[dict],
+    min_confidence: float = 0.85,
+    max_changes: int = 6,
+) -> SuggestPayload | AbstainPayload:
     """
     校验 LLM 原始 dict 输出（extra="forbid" 严格解析）：
     - 非法结构 / 幻觉参数 / 虚构证据 / 低置信度 / 约束违反 → 抛 ParamValidationError
@@ -196,14 +197,12 @@ def validate_param_advice(payload: dict, current_snapshot: dict,
 
     sug = SuggestPayload.model_validate(payload)
     if sug.confidence < min_confidence:
-        raise ParamValidationError(
-            f"置信度 {sug.confidence} 低于阈值 {min_confidence}")
+        raise ParamValidationError(f"置信度 {sug.confidence} 低于阈值 {min_confidence}")
 
     _validate_evidence(sug.evidence, papers)
 
     # 应用变更并整体校验（范围/步长/最大变化/分组约束/before 一致）
-    apply_validated_changes(current_snapshot,
-                            sug.changes, registry, max_changes=max_changes)
+    apply_validated_changes(current_snapshot, sug.changes, registry, max_changes=max_changes)
 
     return sug
 
@@ -217,9 +216,17 @@ def snapshot_hash(snapshot: dict) -> str:
 
 # 受保护信号键：LLM 输出中出现即判越界（试图影响 gating）
 PROTECTED_SIGNAL_KEYS: tuple[str, ...] = (
-    "venue_class", "evidence_tier", "peer_reviewed", "journal_ref",
-    "doi", "published_at", "citation_count", "primary_evidence_eligible",
-    "signal_source", "tier_reason", "gating",
+    "venue_class",
+    "evidence_tier",
+    "peer_reviewed",
+    "journal_ref",
+    "doi",
+    "published_at",
+    "citation_count",
+    "primary_evidence_eligible",
+    "signal_source",
+    "tier_reason",
+    "gating",
 )
 
 
@@ -248,7 +255,8 @@ def enforce_quorum(evidence: list, views: dict, quorum_required: int) -> bool:
     if quorum_required <= 1:
         return True
     eligible_ids = {
-        e.source_document_id for e in evidence
+        e.source_document_id
+        for e in evidence
         if views.get(e.source_document_id) is not None
         and views[e.source_document_id].primary_evidence_eligible
     }
@@ -276,63 +284,70 @@ def _max_evidence_tier(evidence: list, views: dict) -> str:
     return best
 
 
-def validate_suggestion_with_signals(sug: SuggestPayload, current_snapshot: dict,
-                                     papers: list[dict], views: dict,
-                                     min_confidence: float,
-                                     max_changes: int) -> dict:
+def validate_suggestion_with_signals(
+    sug: SuggestPayload,
+    current_snapshot: dict,
+    papers: list[dict],
+    views: dict,
+    min_confidence: float,
+    max_changes: int,
+) -> dict:
     """
     批量结构下的单条建议校验：基础校验 + 信号三道锁（资格/quorum/预算缩放）。
     返回 {suggestion, tier, effective_confidence, delta_budget_factor}；
     任一失败抛 ParamValidationError。
     """
     if sug.confidence < min_confidence:
-        raise ParamValidationError(
-            f"置信度 {sug.confidence} 低于阈值 {min_confidence}")
+        raise ParamValidationError(f"置信度 {sug.confidence} 低于阈值 {min_confidence}")
 
     _validate_evidence(sug.evidence, papers)
 
     # 信号锁 1：主证据资格（至少一篇 eligible）
     if not enforce_primary_eligibility(sug.evidence, views):
-        raise ParamValidationError(
-            "建议证据全部来自 ineligible 论文（tier D 或已过期阻断）")
+        raise ParamValidationError("建议证据全部来自 ineligible 论文（tier D 或已过期阻断）")
 
     tier = _max_evidence_tier(sug.evidence, views)
     from lantai.parameters.registry import get_param_registry
     from lantai.parameters.signal_service import resolve_gating
+
     gating = resolve_gating(tier)
 
     # 信号锁 2：quorum 互证
     if not enforce_quorum(sug.evidence, views, gating.quorum_required):
-        raise ParamValidationError(
-            f"tier {tier} 需 {gating.quorum_required} 篇互证，当前不足")
+        raise ParamValidationError(f"tier {tier} 需 {gating.quorum_required} 篇互证，当前不足")
 
     # 信号锁 3：delta 预算按 tier 缩放后仍须满足
     registry = get_param_registry()
     effective_max_delta = {
-        name: scale_delta_budget(spec.max_delta_per_apply,
-                                 gating.delta_budget_factor)
-        for name, spec in registry.items() if spec.adjustable
+        name: scale_delta_budget(spec.max_delta_per_apply, gating.delta_budget_factor)
+        for name, spec in registry.items()
+        if spec.adjustable
     }
     for ch in sug.changes:
         limit = effective_max_delta.get(ch.name)
         if limit is not None and abs(_d(ch.after) - _d(ch.before)) > limit:
-            raise ParamValidationError(
-                f"{ch.name} 变化量超出 tier {tier} 预算 {limit}")
+            raise ParamValidationError(f"{ch.name} 变化量超出 tier {tier} 预算 {limit}")
 
     # 基础变更校验（范围/步长/分组/before 一致）
-    apply_validated_changes(current_snapshot, sug.changes, registry,
-                            max_changes=max_changes)
+    apply_validated_changes(current_snapshot, sug.changes, registry, max_changes=max_changes)
 
     effective_confidence = apply_tier_weight(sug.confidence, gating.tier_weight)
-    return {"suggestion": sug, "tier": tier,
-            "effective_confidence": effective_confidence,
-            "delta_budget_factor": gating.delta_budget_factor}
+    return {
+        "suggestion": sug,
+        "tier": tier,
+        "effective_confidence": effective_confidence,
+        "delta_budget_factor": gating.delta_budget_factor,
+    }
 
 
-def validate_batch_advice(payload: dict, current_snapshot: dict,
-                          papers: list[dict], views: dict,
-                          min_confidence: float = 0.85,
-                          max_changes: int = 6) -> dict:
+def validate_batch_advice(
+    payload: dict,
+    current_snapshot: dict,
+    papers: list[dict],
+    views: dict,
+    min_confidence: float = 0.85,
+    max_changes: int = 6,
+) -> dict:
     """
     V2 批量输出校验：
     - 污染检测（受保护键越界 → 整批丢弃）
@@ -349,25 +364,25 @@ def validate_batch_advice(payload: dict, current_snapshot: dict,
 
     contamination = detect_signal_contamination(payload)
     if contamination:
-        raise ParamValidationError(
-            f"信号污染（提示词越界）: {contamination[:5]}")
+        raise ParamValidationError(f"信号污染（提示词越界）: {contamination[:5]}")
 
     batch = BatchParamAdvice.model_validate(payload)
 
     # 矛盾条目校验（quote 真实性 / source 不同 / param_key 白名单）
-    doc_contents = {p["source_document_id"]: normalize_text(p["content"])
-                    for p in papers}
+    doc_contents = {p["source_document_id"]: normalize_text(p["content"]) for p in papers}
     valid_contradictions: list[ContradictionItem] = []
     for c in batch.contradictions:
-        if c.side_a.source_document_id not in doc_contents \
-                or c.side_b.source_document_id not in doc_contents:
+        if (
+            c.side_a.source_document_id not in doc_contents
+            or c.side_b.source_document_id not in doc_contents
+        ):
             raise ParamValidationError("矛盾条目引用了批外 source_id")
         if c.side_a.source_document_id == c.side_b.source_document_id:
             raise ParamValidationError("矛盾两侧必须是不同论文")
-        if normalize_text(c.side_a.quote) not in \
-                doc_contents[c.side_a.source_document_id] \
-                or normalize_text(c.side_b.quote) not in \
-                doc_contents[c.side_b.source_document_id]:
+        if (
+            normalize_text(c.side_a.quote) not in doc_contents[c.side_a.source_document_id]
+            or normalize_text(c.side_b.quote) not in doc_contents[c.side_b.source_document_id]
+        ):
             raise ParamValidationError("矛盾条目引用了虚构 quote（整批丢弃）")
         valid_contradictions.append(c)
 
@@ -379,8 +394,8 @@ def validate_batch_advice(payload: dict, current_snapshot: dict,
         if any(ch.name in conflicted_keys for ch in sug.changes):
             continue  # 矛盾参数不产建议，转矛盾报告
         result = validate_suggestion_with_signals(
-            sug, current_snapshot, papers, views,
-            min_confidence, max_changes)
+            sug, current_snapshot, papers, views, min_confidence, max_changes
+        )
         validated.append(result)
 
     return {"suggestions": validated, "contradictions": valid_contradictions}

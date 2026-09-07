@@ -1,4 +1,5 @@
 """API Key Authentication and Tenant Isolation Tests"""
+
 from unittest.mock import patch
 
 import pytest
@@ -7,10 +8,11 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
-from api_server import app
+from lantai.api.app import app
+from lantai.core.auth import create_api_key, hash_key
 from lantai.core.settings import settings
 from lantai.models.tables import ApiKey
-from lantai.core.auth import hash_key, create_api_key
+
 
 @pytest.fixture(scope="function")
 def client():
@@ -29,6 +31,7 @@ def client():
     with patch.object(db_module, "get_session", get_test_session), TestClient(app) as c:
         yield c
 
+
 class TestAuthFallback:
     def test_public_endpoint(self, client):
         resp = client.get("/health")
@@ -38,6 +41,7 @@ class TestAuthFallback:
         # When DB has no keys, it should allow fallback (dev mode)
         resp = client.post("/add", json={"title": "test", "content": "test content long enough"})
         assert resp.status_code == 200
+
 
 class TestAuthEnforced:
     @pytest.fixture(autouse=True)
@@ -73,9 +77,11 @@ class TestAuthEnforced:
         resp = client.get("/health")
         assert resp.status_code == 200
 
+
 class TestSecureBinding:
     def test_non_loopback_without_key_rejected(self, monkeypatch):
         from lantai.core.auth import assert_secure_binding
+
         monkeypatch.setattr(settings, "HOST", "0.0.0.0")
         monkeypatch.setattr(settings, "API_KEY", "")
         with pytest.raises(RuntimeError):
@@ -83,12 +89,14 @@ class TestSecureBinding:
 
     def test_non_loopback_with_key_allowed(self, monkeypatch):
         from lantai.core.auth import assert_secure_binding
+
         monkeypatch.setattr(settings, "HOST", "0.0.0.0")
         monkeypatch.setattr(settings, "API_KEY", "k" * 16)
         assert_secure_binding()
 
     def test_loopback_without_key_allowed(self, monkeypatch):
         from lantai.core.auth import assert_secure_binding
+
         monkeypatch.setattr(settings, "HOST", "127.0.0.1")
         monkeypatch.setattr(settings, "API_KEY", "")
         assert_secure_binding()

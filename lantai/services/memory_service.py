@@ -1,4 +1,5 @@
 """记忆写入与 CoreMemory service 层"""
+
 import hashlib
 from datetime import datetime
 
@@ -65,8 +66,9 @@ def _dedup_merge(s, target: MemoryItem, sim: float) -> dict:
     return {"dedup_action": "merge", "target_memory_id": target.id, "similarity": round(sim, 4)}
 
 
-def _create_update_proposal(s, target: MemoryItem, title: str, content: str,
-                            lane: str, sim: float) -> dict:
+def _create_update_proposal(
+    s, target: MemoryItem, title: str, content: str, lane: str, sim: float
+) -> dict:
     """update 提案：待审，可批可拒（知识写入有刹车）。"""
     prop = MemoryProposal(
         id=new_id("prop"),
@@ -79,8 +81,12 @@ def _create_update_proposal(s, target: MemoryItem, title: str, content: str,
     s.add(prop)
     s.commit()
     s.refresh(prop)
-    return {"dedup_action": "update", "target_memory_id": target.id,
-            "proposal_id": prop.id, "similarity": round(sim, 4)}
+    return {
+        "dedup_action": "update",
+        "target_memory_id": target.id,
+        "proposal_id": prop.id,
+        "similarity": round(sim, 4),
+    }
 
 
 def _llm_judge(old: str, new: str) -> str:
@@ -88,15 +94,20 @@ def _llm_judge(old: str, new: str) -> str:
     from lantai.llm.client import chat_json
     from lantai.llm.prompts import DEDUP_RELATION_SYS, DEDUP_RELATION_USER
     from lantai.services.prompt_service import get_prompt
-    out = chat_json(get_prompt("DEDUP_RELATION_SYS", DEDUP_RELATION_SYS), get_prompt("DEDUP_RELATION_USER", DEDUP_RELATION_USER).format(old=old, new=new))
+
+    out = chat_json(
+        get_prompt("DEDUP_RELATION_SYS", DEDUP_RELATION_SYS),
+        get_prompt("DEDUP_RELATION_USER", DEDUP_RELATION_USER).format(old=old, new=new),
+    )
     rel = (out or {}).get("relation")
     if rel not in ("merge", "update", "insert"):
         raise ValueError(f"bad relation: {rel}")
     return rel
 
 
-def _dedup_structural(s, target_id: str, title: str, content: str,
-                      lane: str, sim: float) -> dict | None:
+def _dedup_structural(
+    s, target_id: str, title: str, content: str, lane: str, sim: float
+) -> dict | None:
     """结构判别（ADR-0019 第二相位）：提取后对中带样本判类。
 
     返回 None = insert（继续建候选）；merge → 直合；update → 提案。
@@ -109,6 +120,7 @@ def _dedup_structural(s, target_id: str, title: str, content: str,
         # 关掉结构判别 → 保守走 update 提案（有刹车，不吞内容）
         return _create_update_proposal(s, target, title, content, lane, sim)
     from lantai.gate.relation import classify_relation
+
     judge = _llm_judge if settings.DEDUP_STRUCTURAL_LLM_ENABLED else None
     rel = classify_relation(target.content, content, llm_judge=judge)
     if rel == "merge":
@@ -126,6 +138,7 @@ def add_memory(req: AddMemoryReq, user_id: str = "default") -> dict:
     """
     if (req.media_url or "").strip():
         from lantai.services.vision_service import build_vision_memory, vision_provenance_extra
+
         req = build_vision_memory(req)
         return _create_candidate_with_extraction(
             req,
@@ -141,8 +154,10 @@ def add_memory(req: AddMemoryReq, user_id: str = "default") -> dict:
     if settings.COALESCE_ENABLED:
         buffer = get_coalesce_buffer()
         result = buffer.add(
-            user_id=user_id, lane=req.lane,
-            content=req.content, title=req.title,
+            user_id=user_id,
+            lane=req.lane,
+            content=req.content,
+            title=req.title,
         )
         if result.get("buffered"):
             return {"buffered": True, "count": result.get("count", 0)}
@@ -167,30 +182,42 @@ def _create_candidate_direct(req: AddMemoryReq, fp_data: dict) -> dict:
         if action == "update" and target is not None:
             return _create_update_proposal(s, target, req.title, req.content, req.lane, sim)
         doc = RawDocument(
-            id=new_id("doc"), source_type=req.source_type,
-            source_id=req.url or h[:12], url=req.url,
-            title=req.title, content=req.content, content_hash=h,
+            id=new_id("doc"),
+            source_type=req.source_type,
+            source_id=req.url or h[:12],
+            url=req.url,
+            title=req.title,
+            content=req.content,
+            content_hash=h,
             meta=req.metadata,
         )
-        s.add(doc); s.commit(); s.refresh(doc)
+        s.add(doc)
+        s.commit()
+        s.refresh(doc)
 
         cand = MemoryCandidate(
-            id=new_id("cand"), document_id=doc.id,
+            id=new_id("cand"),
+            document_id=doc.id,
             topic=fp_data["topic"] or req.tags,
             summary=fp_data["summary"],
-            claims=fp_data["claims"], methods=fp_data["methods"],
-            constraints=fp_data["constraints"], actions=fp_data["actions"],
+            claims=fp_data["claims"],
+            methods=fp_data["methods"],
+            constraints=fp_data["constraints"],
+            actions=fp_data["actions"],
             extractor_confidence=fp_data["extractor_confidence"],
             provenance=make_provenance(PROVENANCE_PROMPT_FASTPATH_DIRECT),
             lane=fp_data.get("lane", req.lane),
             status="fastpath",
         )
-        s.add(cand); s.commit(); s.refresh(cand)
+        s.add(cand)
+        s.commit()
+        s.refresh(cand)
         return {"document_id": doc.id, "candidate_id": cand.id, "fastpath": True}
 
 
 def _create_candidate_with_extraction(
-    req: AddMemoryReq, provenance_prompt: str | None = None,
+    req: AddMemoryReq,
+    provenance_prompt: str | None = None,
     provenance_extra: dict | None = None,
 ) -> dict:
     """LLM 提取路径；provenance_prompt 覆盖默认 extract-v1（如 vision-caption）。"""
@@ -207,28 +234,37 @@ def _create_candidate_with_extraction(
     with db.get_session() as s:
         if undecided_target_id is not None:
             structural = _dedup_structural(
-                s, undecided_target_id, req.title, req.content, req.lane, sim)
+                s, undecided_target_id, req.title, req.content, req.lane, sim
+            )
             if structural is not None:
                 return structural
-        existed = s.exec(select(RawDocument)
-                         .where(RawDocument.content_hash == h)).first()
+        existed = s.exec(select(RawDocument).where(RawDocument.content_hash == h)).first()
         if existed:
             doc = existed
         else:
             doc = RawDocument(
-                id=new_id("doc"), source_type=req.source_type,
-                source_id=req.url or h[:12], url=req.url,
-                title=req.title, content=req.content, content_hash=h,
+                id=new_id("doc"),
+                source_type=req.source_type,
+                source_id=req.url or h[:12],
+                url=req.url,
+                title=req.title,
+                content=req.content,
+                content_hash=h,
                 meta=req.metadata,
             )
-            s.add(doc); s.commit(); s.refresh(doc)
+            s.add(doc)
+            s.commit()
+            s.refresh(doc)
 
         cand = MemoryCandidate(
-            id=new_id("cand"), document_id=doc.id,
+            id=new_id("cand"),
+            document_id=doc.id,
             topic=data["topic"] or req.tags,
             summary=data["summary"],
-            claims=data["claims"], methods=data["methods"],
-            constraints=data["constraints"], actions=data["actions"],
+            claims=data["claims"],
+            methods=data["methods"],
+            constraints=data["constraints"],
+            actions=data["actions"],
             extractor_confidence=data["extractor_confidence"],
             provenance=make_provenance(
                 provenance_prompt or PROVENANCE_PROMPT_EXTRACT,
@@ -236,7 +272,9 @@ def _create_candidate_with_extraction(
             ),
             lane=req.lane,
         )
-        s.add(cand); s.commit(); s.refresh(cand)
+        s.add(cand)
+        s.commit()
+        s.refresh(cand)
         return {"document_id": doc.id, "candidate_id": cand.id}
 
 
@@ -249,8 +287,11 @@ def add_memory_async(req: AddMemoryReq, user_id: str = "default") -> dict:
     buffer = get_coalesce_buffer()
     if not settings.COALESCE_ENABLED:
         result = add_memory(req, user_id=user_id)
-        return {"status": "synced", "job_id": buffer.job_id(user_id, req.lane, req.content),
-                **result}
+        return {
+            "status": "synced",
+            "job_id": buffer.job_id(user_id, req.lane, req.content),
+            **result,
+        }
     result = buffer.add_async(user_id, req.lane, req.content, req.title)
     if result.get("status") == "flushed":
         detail = result.get("detail") or {}
@@ -288,8 +329,7 @@ def set_decay_class(memory_id: str, decay_class: str) -> dict:
 def get_core_memory(namespace: str = "default") -> dict:
     """读取 CoreMemoryBlock 列表。"""
     with db.get_session() as s:
-        blocks = s.exec(select(CoreMemoryBlock)
-                        .where(CoreMemoryBlock.namespace == namespace)).all()
+        blocks = s.exec(select(CoreMemoryBlock).where(CoreMemoryBlock.namespace == namespace)).all()
         return {"blocks": [b.model_dump(mode="json") for b in blocks]}
 
 
@@ -298,20 +338,32 @@ def put_core_memory(block: str, content: str, namespace: str = "default") -> dic
     if block not in ("identity", "task", "policy"):
         raise ValueError("invalid block")
     with db.get_session() as s:
-        row = s.exec(select(CoreMemoryBlock)
-                     .where(CoreMemoryBlock.block == block,
-                            CoreMemoryBlock.namespace == namespace)).first()
+        row = s.exec(
+            select(CoreMemoryBlock).where(
+                CoreMemoryBlock.block == block, CoreMemoryBlock.namespace == namespace
+            )
+        ).first()
         if row:
-            row.content = content; row.version += 1
+            row.content = content
+            row.version += 1
         else:
-            row = CoreMemoryBlock(id=new_id("core"), block=block,
-                                  namespace=namespace, content=content)
-        s.add(row); s.commit(); s.refresh(row)
+            row = CoreMemoryBlock(
+                id=new_id("core"), block=block, namespace=namespace, content=content
+            )
+        s.add(row)
+        s.commit()
+        s.refresh(row)
         return row.model_dump(mode="json")
 
-def build_verbatim_item(content: str, lane: str, tags: list | None = None, *,
-                        created_at: datetime | None = None,
-                        updated_at: datetime | None = None) -> MemoryItem:
+
+def build_verbatim_item(
+    content: str,
+    lane: str,
+    tags: list | None = None,
+    *,
+    created_at: datetime | None = None,
+    updated_at: datetime | None = None,
+) -> MemoryItem:
     """verbatim 直存项构造（纯函数）：sha256 幂等 key + 固定语义字段。
 
     add_raw_memory 与冷启动导入（services/import_service.py）共用，消除重复
@@ -344,24 +396,42 @@ def add_raw_memory(req: RawMemoryReq) -> dict:
     h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
     lane = req.lane or settings.RAW_MEMORY_DEFAULT_LANE
     with db.get_session() as s:
-        existing = s.exec(select(MemoryItem)
-                          .where(MemoryItem.memory_type == "verbatim",
-                                 MemoryItem.key == h,
-                                 MemoryItem.status == "active")).first()
+        existing = s.exec(
+            select(MemoryItem).where(
+                MemoryItem.memory_type == "verbatim",
+                MemoryItem.key == h,
+                MemoryItem.status == "active",
+            )
+        ).first()
         if existing:
             return {"memory_id": existing.id, "dedup": True, "verbatim": True}
         emb = embed([req.content])[0]
         mem = build_verbatim_item(req.content, lane, tags=req.tags)
         s.add(mem)
         s.flush()
-        index_memory_item(mem.id, emb, {"key": mem.key, "memory_type": mem.memory_type})
+        index_memory_item(
+            mem.id,
+            emb,
+            {
+                "key": mem.key,
+                "memory_type": mem.memory_type,
+                "lane": getattr(mem, "lane", "general") or "general",
+                "domain": getattr(mem, "domain", "user") or "user",
+                "tenant_id": getattr(mem, "tenant_id", "") or "",
+                "user_id": getattr(mem, "user_id", "") or "",
+                "session_id": getattr(mem, "session_id", "") or "",
+                "agent_id": getattr(mem, "agent_id", "") or "",
+            },
+        )
         sync_fts(s, mem.id, mem.content)
         s.commit()
         return {"memory_id": mem.id, "dedup": False, "verbatim": True}
 
+
 def build_memories_page(
     session,
     lane: str = "",
+    principal=None,
     status: str = "",
     decay_class: str = "",
     memory_type: str = "",
@@ -393,9 +463,21 @@ def build_memories_page(
     if memory_type:
         conds.append(MemoryItem.memory_type == memory_type)
 
-    total = session.exec(
-        select(func.count()).select_from(MemoryItem).where(*conds)
-    ).one()
+    if principal:
+        if getattr(principal, "tenant_id", None):
+            conds.append(MemoryItem.tenant_id == principal.tenant_id)
+        if getattr(principal, "user_id", None):
+            conds.append(MemoryItem.user_id == principal.user_id)
+        if getattr(principal, "session_id", None):
+            conds.append(MemoryItem.session_id == principal.session_id)
+        if getattr(principal, "agent_id", None):
+            conds.append(MemoryItem.agent_id == principal.agent_id)
+        if getattr(principal, "allowed_lanes", None) is not None:
+            from sqlmodel import col
+
+            conds.append(col(MemoryItem.lane).in_(principal.allowed_lanes))
+
+    total = session.exec(select(func.count()).select_from(MemoryItem).where(*conds)).one()
     rows = session.exec(
         select(MemoryItem)
         .where(*conds)
@@ -434,6 +516,7 @@ def build_memories_page(
 
 def list_memories(
     lane: str = "",
+    principal=None,
     status: str = "",
     decay_class: str = "",
     memory_type: str = "",
@@ -444,7 +527,13 @@ def list_memories(
     """打开默认会话执行档案浏览（只读）。"""
     with db.get_session() as s:
         return build_memories_page(
-            s, lane=lane, status=status, decay_class=decay_class,
-            memory_type=memory_type, limit=limit, offset=offset,
+            s,
+            lane=lane,
+            status=status,
+            decay_class=decay_class,
+            memory_type=memory_type,
+            limit=limit,
+            offset=offset,
             content_max=content_max,
+            principal=principal,
         )

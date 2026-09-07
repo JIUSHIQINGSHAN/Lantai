@@ -4,6 +4,7 @@
 - run_digest_once：生成当日盘点报告 docs/memory-digest/YYYY-MM-DD.md（Ticket 03）
   五项统计：新增记忆 / 修改记忆 / 待审数 / 归档数 / 检索统计
 """
+
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
@@ -55,42 +56,71 @@ def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
     应用 1）」自相矛盾。other = 窗口内 created 中非三类状态者（approved/
     rolled_back 等），保证 applied+pending+rejected+other == created。
     """
-    created = s.exec(select(func.count()).select_from(MemoryProposal)
-                     .where(MemoryProposal.decided_by == "reflect",
-                            MemoryProposal.created_at >= start,
-                            MemoryProposal.created_at < end)).one()
-    applied = s.exec(select(func.count()).select_from(MemoryProposal)
-                     .where(MemoryProposal.decided_by == "reflect",
-                            MemoryProposal.status == "applied",
-                            MemoryProposal.created_at >= start,
-                            MemoryProposal.created_at < end)).one()
-    pending = s.exec(select(func.count()).select_from(MemoryProposal)
-                     .where(MemoryProposal.decided_by == "reflect",
-                            MemoryProposal.status == "pending",
-                            MemoryProposal.created_at >= start,
-                            MemoryProposal.created_at < end)).one()
-    rejected = s.exec(select(func.count()).select_from(MemoryProposal)
-                      .where(MemoryProposal.decided_by == "reflect",
-                             MemoryProposal.status == "rejected",
-                             MemoryProposal.created_at >= start,
-                             MemoryProposal.created_at < end)).one()
-    other = s.exec(select(func.count()).select_from(MemoryProposal)
-                   .where(MemoryProposal.decided_by == "reflect",
-                          MemoryProposal.created_at >= start,
-                          MemoryProposal.created_at < end,
-                          MemoryProposal.status.not_in(
-                              ["applied", "pending", "rejected"]))).one()
-    rows = s.exec(select(MemoryProposal.proposal_type,
-                         MemoryProposal.status, func.count())
-                  .where(MemoryProposal.decided_by == "reflect",
-                         MemoryProposal.created_at >= start,
-                         MemoryProposal.created_at < end)
-                  .group_by(MemoryProposal.proposal_type,
-                            MemoryProposal.status)).all()
-    conf_values = s.exec(select(MemoryProposal.confidence)
-                         .where(MemoryProposal.decided_by == "reflect",
-                                MemoryProposal.created_at >= start,
-                                MemoryProposal.created_at < end)).all()
+    created = s.exec(
+        select(func.count())
+        .select_from(MemoryProposal)
+        .where(
+            MemoryProposal.decided_by == "reflect",
+            MemoryProposal.created_at >= start,
+            MemoryProposal.created_at < end,
+        )
+    ).one()
+    applied = s.exec(
+        select(func.count())
+        .select_from(MemoryProposal)
+        .where(
+            MemoryProposal.decided_by == "reflect",
+            MemoryProposal.status == "applied",
+            MemoryProposal.created_at >= start,
+            MemoryProposal.created_at < end,
+        )
+    ).one()
+    pending = s.exec(
+        select(func.count())
+        .select_from(MemoryProposal)
+        .where(
+            MemoryProposal.decided_by == "reflect",
+            MemoryProposal.status == "pending",
+            MemoryProposal.created_at >= start,
+            MemoryProposal.created_at < end,
+        )
+    ).one()
+    rejected = s.exec(
+        select(func.count())
+        .select_from(MemoryProposal)
+        .where(
+            MemoryProposal.decided_by == "reflect",
+            MemoryProposal.status == "rejected",
+            MemoryProposal.created_at >= start,
+            MemoryProposal.created_at < end,
+        )
+    ).one()
+    other = s.exec(
+        select(func.count())
+        .select_from(MemoryProposal)
+        .where(
+            MemoryProposal.decided_by == "reflect",
+            MemoryProposal.created_at >= start,
+            MemoryProposal.created_at < end,
+            MemoryProposal.status.not_in(["applied", "pending", "rejected"]),
+        )
+    ).one()
+    rows = s.exec(
+        select(MemoryProposal.proposal_type, MemoryProposal.status, func.count())
+        .where(
+            MemoryProposal.decided_by == "reflect",
+            MemoryProposal.created_at >= start,
+            MemoryProposal.created_at < end,
+        )
+        .group_by(MemoryProposal.proposal_type, MemoryProposal.status)
+    ).all()
+    conf_values = s.exec(
+        select(MemoryProposal.confidence).where(
+            MemoryProposal.decided_by == "reflect",
+            MemoryProposal.created_at >= start,
+            MemoryProposal.created_at < end,
+        )
+    ).all()
     by_type: dict[str, dict[str, int]] = {}
     for ptype, status, cnt in rows:
         by_type.setdefault(ptype, {})[status] = int(cnt)
@@ -122,10 +152,10 @@ def run_candidate_ttl() -> dict:
 
 # ── Daily Digest（Ticket 03）────────────────────────────────────────
 
+
 def _digest_dir() -> Path:
     """报告输出目录：settings.DIGEST_OUTPUT_DIR 为空时默认仓库 docs/memory-digest。"""
-    return Path(settings.DIGEST_OUTPUT_DIR) if settings.DIGEST_OUTPUT_DIR \
-        else _DEFAULT_DIGEST_DIR
+    return Path(settings.DIGEST_OUTPUT_DIR) if settings.DIGEST_OUTPUT_DIR else _DEFAULT_DIGEST_DIR
 
 
 def _local_day_window_utc(day: date | None = None) -> tuple[datetime, datetime]:
@@ -139,46 +169,82 @@ def _local_day_window_utc(day: date | None = None) -> tuple[datetime, datetime]:
         day = local_now.date()
     local_start = datetime.combine(day, time.min, tzinfo=local_now.tzinfo)
     local_end = local_start + timedelta(days=1)
-    return (local_start.astimezone(UTC).replace(tzinfo=None),
-            local_end.astimezone(UTC).replace(tzinfo=None))
+    return (
+        local_start.astimezone(UTC).replace(tzinfo=None),
+        local_end.astimezone(UTC).replace(tzinfo=None),
+    )
 
 
 def collect_digest_stats(day: date | None = None) -> dict:
     """聚合当日五项统计（真实 DB 查询，不 mock）。"""
     start, end = _local_day_window_utc(day)
     with db.get_session() as s:
-        new_mem = s.exec(select(func.count()).select_from(MemoryItem)
-                         .where(MemoryItem.created_at >= start,
-                                MemoryItem.created_at < end)).one()
-        modified_mem = s.exec(select(func.count()).select_from(MemoryItem)
-                              .where(MemoryItem.updated_at >= start,
-                                     MemoryItem.updated_at < end,
-                                     MemoryItem.updated_at > MemoryItem.created_at)).one()
+        new_mem = s.exec(
+            select(func.count())
+            .select_from(MemoryItem)
+            .where(MemoryItem.created_at >= start, MemoryItem.created_at < end)
+        ).one()
+        modified_mem = s.exec(
+            select(func.count())
+            .select_from(MemoryItem)
+            .where(
+                MemoryItem.updated_at >= start,
+                MemoryItem.updated_at < end,
+                MemoryItem.updated_at > MemoryItem.created_at,
+            )
+        ).one()
         total_mem = s.exec(select(func.count()).select_from(MemoryItem)).one()
-        pending_total = s.exec(select(func.count()).select_from(MemoryCandidate)
-                               .where(MemoryCandidate.status == "pending_review")).one()
-        pending_new = s.exec(select(func.count()).select_from(MemoryCandidate)
-                             .where(MemoryCandidate.status == "pending_review",
-                                    MemoryCandidate.created_at >= start,
-                                    MemoryCandidate.created_at < end)).one()
-        archived_created_today = s.exec(select(func.count()).select_from(MemoryCandidate)
-                                        .where(MemoryCandidate.status == "rejected",
-                                               MemoryCandidate.created_at >= start,
-                                               MemoryCandidate.created_at < end)).one()
-        retr_total = s.exec(select(func.count()).select_from(RetrievalEvent)
-                            .where(RetrievalEvent.created_at >= start,
-                                   RetrievalEvent.created_at < end)).one()
-        retr_zero = s.exec(select(func.count()).select_from(RetrievalEvent)
-                           .where(RetrievalEvent.created_at >= start,
-                                  RetrievalEvent.created_at < end,
-                                  RetrievalEvent.zero_result == True)).one()  # noqa: E712
-        retr_noise = s.exec(select(func.count()).select_from(RetrievalEvent)
-                            .where(RetrievalEvent.created_at >= start,
-                                   RetrievalEvent.created_at < end,
-                                   RetrievalEvent.is_system_noise == True)).one()  # noqa: E712
-        retr_avg_latency = s.exec(select(func.avg(RetrievalEvent.latency_ms))
-                                  .where(RetrievalEvent.created_at >= start,
-                                         RetrievalEvent.created_at < end)).one()
+        pending_total = s.exec(
+            select(func.count())
+            .select_from(MemoryCandidate)
+            .where(MemoryCandidate.status == "pending_review")
+        ).one()
+        pending_new = s.exec(
+            select(func.count())
+            .select_from(MemoryCandidate)
+            .where(
+                MemoryCandidate.status == "pending_review",
+                MemoryCandidate.created_at >= start,
+                MemoryCandidate.created_at < end,
+            )
+        ).one()
+        archived_created_today = s.exec(
+            select(func.count())
+            .select_from(MemoryCandidate)
+            .where(
+                MemoryCandidate.status == "rejected",
+                MemoryCandidate.created_at >= start,
+                MemoryCandidate.created_at < end,
+            )
+        ).one()
+        retr_total = s.exec(
+            select(func.count())
+            .select_from(RetrievalEvent)
+            .where(RetrievalEvent.created_at >= start, RetrievalEvent.created_at < end)
+        ).one()
+        retr_zero = s.exec(
+            select(func.count())
+            .select_from(RetrievalEvent)
+            .where(
+                RetrievalEvent.created_at >= start,
+                RetrievalEvent.created_at < end,
+                RetrievalEvent.zero_result == True,
+            )
+        ).one()  # noqa: E712
+        retr_noise = s.exec(
+            select(func.count())
+            .select_from(RetrievalEvent)
+            .where(
+                RetrievalEvent.created_at >= start,
+                RetrievalEvent.created_at < end,
+                RetrievalEvent.is_system_noise == True,
+            )
+        ).one()  # noqa: E712
+        retr_avg_latency = s.exec(
+            select(func.avg(RetrievalEvent.latency_ms)).where(
+                RetrievalEvent.created_at >= start, RetrievalEvent.created_at < end
+            )
+        ).one()
         refl = _aggregate_reflection(s, start, end)
     return {
         "day": day or datetime.now().astimezone().date(),
@@ -209,9 +275,15 @@ def render_digest_markdown(stats: dict) -> str:
     """报告正文：当日摘要 + 待审候选提醒。"""
     day = stats["day"]
     m, p, a, r = stats["memories"], stats["pending"], stats["archived"], stats["retrieval"]
-    rf = stats.get("reflection") or {"created": 0, "applied": 0, "pending": 0,
-                                     "rejected": 0, "other": 0,
-                                     "by_type": {}, "conf_buckets": {}}
+    rf = stats.get("reflection") or {
+        "created": 0,
+        "applied": 0,
+        "pending": 0,
+        "rejected": 0,
+        "other": 0,
+        "by_type": {},
+        "conf_buckets": {},
+    }
     now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
     lines = [
         f"# 记忆日报 {day}",
@@ -233,17 +305,23 @@ def render_digest_markdown(stats: dict) -> str:
         "",
     ]
     if rf["created"]:
-        lines += ["", "## 反思提案分布（今日新增）", "",
-                  "| 类型 | 自动应用 | 待审 | 拒绝 | 其他 |",
-                  "|---|---|---|---|---|"]
+        lines += [
+            "",
+            "## 反思提案分布（今日新增）",
+            "",
+            "| 类型 | 自动应用 | 待审 | 拒绝 | 其他 |",
+            "|---|---|---|---|---|",
+        ]
         lines += _type_status_rows(rf)
         buckets = rf.get("conf_buckets", {})
         if buckets:
             labels = [b[0] for b in _CONF_BUCKETS]
             labels += [k for k in buckets if k not in labels]
-            lines += ["", "置信桶（今日新增）：" +
-                      " ".join(f"[{label}]×{buckets.get(label, 0)}"
-                               for label in labels)]
+            lines += [
+                "",
+                "置信桶（今日新增）："
+                + " ".join(f"[{label}]×{buckets.get(label, 0)}" for label in labels),
+            ]
     if p["total"]:
         lines += [
             "## 待审候选提醒",
@@ -268,42 +346,53 @@ def collect_calibration_stats(days: int | None = None) -> dict:
     # 窗口边界秒级截断 + 1s 顶边过悬（2026-08-15 竞态修复）：微秒精度下
     # 「写入毫秒前 + 采样 now」可能同秒撞界（run_at < end 字符串比较失败），
     # 秒级边界 + 1s 过悬使窗口对采样时刻免疫
-    end = (datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-           + timedelta(seconds=1))
+    end = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(seconds=1)
     start = end - timedelta(days=days)
     with db.get_session() as s:
         refl = _aggregate_reflection(s, start, end)
-        water = s.exec(select(func.coalesce(func.sum(MemoryItem.importance), 0.0))
-                       .where(MemoryItem.created_at >= start,
-                              MemoryItem.created_at < end)).one()
-        reason_rows = s.exec(select(MemoryProposal.decision_reason, func.count())
-                             .where(MemoryProposal.decided_by == "reflect",
-                                    MemoryProposal.status == "rejected",
-                                    MemoryProposal.decision_reason != "",
-                                    MemoryProposal.created_at >= start,
-                                    MemoryProposal.created_at < end)
-                             .group_by(MemoryProposal.decision_reason)
-                             .order_by(func.count().desc())
-                             .limit(10)).all()
+        water = s.exec(
+            select(func.coalesce(func.sum(MemoryItem.importance), 0.0)).where(
+                MemoryItem.created_at >= start, MemoryItem.created_at < end
+            )
+        ).one()
+        reason_rows = s.exec(
+            select(MemoryProposal.decision_reason, func.count())
+            .where(
+                MemoryProposal.decided_by == "reflect",
+                MemoryProposal.status == "rejected",
+                MemoryProposal.decision_reason != "",
+                MemoryProposal.created_at >= start,
+                MemoryProposal.created_at < end,
+            )
+            .group_by(MemoryProposal.decision_reason)
+            .order_by(func.count().desc())
+            .limit(10)
+        ).all()
         # 反思运行记录：区分 空闲/正常/异常/LLM 失败（观察期去噪）
-        run_rows = s.exec(select(ReflectRun.skipped, ReflectRun.error,
-                                 ReflectRun.curate_failed,
-                                 ReflectRun.rejecter_failed,
-                                 ReflectRun.proposals_created)
-                          .where(ReflectRun.run_at >= start,
-                                 ReflectRun.run_at < end)).all()
+        run_rows = s.exec(
+            select(
+                ReflectRun.skipped,
+                ReflectRun.error,
+                ReflectRun.curate_failed,
+                ReflectRun.rejecter_failed,
+                ReflectRun.proposals_created,
+            ).where(ReflectRun.run_at >= start, ReflectRun.run_at < end)
+        ).all()
     runs = {
         "total": len(run_rows),
         "idle": sum(1 for r in run_rows if r[0] == "idle"),
         "errored": sum(1 for r in run_rows if r[1]),
-        "llm_failed": sum(1 for r in run_rows
-                          if not r[1] and (r[2] or (r[3] or 0) > 0)),
-        "productive": sum(1 for r in run_rows
-                          if r[0] != "idle" and not r[1] and not r[2]
-                          and not (r[3] or 0) and r[4] > 0),
-        "zero_outcome": sum(1 for r in run_rows
-                            if r[0] != "idle" and not r[1] and not r[2]
-                            and not (r[3] or 0) and r[4] == 0),
+        "llm_failed": sum(1 for r in run_rows if not r[1] and (r[2] or (r[3] or 0) > 0)),
+        "productive": sum(
+            1
+            for r in run_rows
+            if r[0] != "idle" and not r[1] and not r[2] and not (r[3] or 0) and r[4] > 0
+        ),
+        "zero_outcome": sum(
+            1
+            for r in run_rows
+            if r[0] != "idle" and not r[1] and not r[2] and not (r[3] or 0) and r[4] == 0
+        ),
     }
     return {
         "window_days": days,
@@ -340,20 +429,35 @@ def render_calibration_markdown(stats: dict) -> str:
         lines += ["", "## 拒绝原因 Top（决策反馈回路）", "", "| 原因 | 次数 |", "|---|---|"]
         for reason, cnt in stats["reason_top"]:
             lines.append(f"| {reason} | {cnt} |")
-    runs = stats.get("runs") or {"total": 0, "idle": 0, "errored": 0,
-                                 "llm_failed": 0, "productive": 0,
-                                 "zero_outcome": 0}
-    lines += ["", "## 反思运行记录（窗口内）", "", "| 指标 | 值 |", "|---|---|",
-              f"| 运行次数 | {runs['total']} |",
-              f"| 空闲（无候选且水位不足） | {runs['idle']} |",
-              f"| 异常中断 | {runs['errored']} |",
-              f"| LLM 失败（宁 miss 空降级） | {runs['llm_failed']} |",
-              f"| 产出提案的运行 | {runs['productive']} |",
-              f"| 正常但零产出 | {runs['zero_outcome']} |"]
-    lines += ["", "## 待回填结论（对标 dry-run 推荐）", "",
-              "- A 水位触发：REFLECT_IMPORTANCE_POOL 是否保持 5.0",
-              "- B 自动应用分流：REFLECT_AUTO_APPLY_CONF 是否保持 0.7",
-              "- C 落库底线：REFLECT_MIN_CONFIDENCE 是否保持 0.5"]
+    runs = stats.get("runs") or {
+        "total": 0,
+        "idle": 0,
+        "errored": 0,
+        "llm_failed": 0,
+        "productive": 0,
+        "zero_outcome": 0,
+    }
+    lines += [
+        "",
+        "## 反思运行记录（窗口内）",
+        "",
+        "| 指标 | 值 |",
+        "|---|---|",
+        f"| 运行次数 | {runs['total']} |",
+        f"| 空闲（无候选且水位不足） | {runs['idle']} |",
+        f"| 异常中断 | {runs['errored']} |",
+        f"| LLM 失败（宁 miss 空降级） | {runs['llm_failed']} |",
+        f"| 产出提案的运行 | {runs['productive']} |",
+        f"| 正常但零产出 | {runs['zero_outcome']} |",
+    ]
+    lines += [
+        "",
+        "## 待回填结论（对标 dry-run 推荐）",
+        "",
+        "- A 水位触发：REFLECT_IMPORTANCE_POOL 是否保持 5.0",
+        "- B 自动应用分流：REFLECT_AUTO_APPLY_CONF 是否保持 0.7",
+        "- C 落库底线：REFLECT_MIN_CONFIDENCE 是否保持 0.5",
+    ]
     return "\n".join(lines) + "\n"
 
 
@@ -373,8 +477,13 @@ def run_digest_once(day: date | None = None) -> dict:
     stats["archived"]["ttl"] = int(ttl.get("archived", 0))
     path = write_digest_report(stats)
     record_run("digest")
-    return {"ok": True, "day": stats["day"].isoformat(), "path": str(path),
-            "content": render_digest_markdown(stats), "stats": stats}
+    return {
+        "ok": True,
+        "day": stats["day"].isoformat(),
+        "path": str(path),
+        "content": render_digest_markdown(stats),
+        "stats": stats,
+    }
 
 
 def load_today_digest() -> dict:
@@ -384,5 +493,10 @@ def load_today_digest() -> dict:
     if not path.exists():
         return run_digest_once(day)
     stats = collect_digest_stats(day)
-    return {"ok": True, "day": day.isoformat(), "path": str(path),
-            "content": path.read_text(encoding="utf-8"), "stats": stats}
+    return {
+        "ok": True,
+        "day": day.isoformat(),
+        "path": str(path),
+        "content": path.read_text(encoding="utf-8"),
+        "stats": stats,
+    }

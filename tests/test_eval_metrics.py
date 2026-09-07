@@ -2,6 +2,7 @@
 
 覆盖边界：空列表、全 zero_result、部分零结果、used_ids 命中/未命中/无数据、jaccard 空集合。
 """
+
 from lantai.eval.metrics import (
     avg_result_count,
     compute_metrics,
@@ -66,7 +67,7 @@ class TestJaccardOverlap:
         b = [["a", "c"], ["d", "e"]]
         # query1: {a,b} vs {a,c} -> inter {a}=1, union {a,b,c}=3 -> 1/3
         # query2: {c,d,e} vs {d,e} -> inter {d,e}=2, union {c,d,e}=3 -> 2/3
-        expected = (1/3 + 2/3) / 2
+        expected = (1 / 3 + 2 / 3) / 2
         assert abs(jaccard_overlap(a, b) - expected) < 1e-9
 
     def test_empty_pair_skipped(self):
@@ -135,8 +136,8 @@ class TestComputeMetrics:
         used = {"e1": ["a"], "e3": ["nope"]}
         m = compute_metrics(qs, used_ids_map=used)
         assert m["sample_count"] == 3
-        assert m["zero_result_rate"] == round(1/3, 4)
-        assert m["avg_result_count"] == round(3/3, 4)  # 2+0+1
+        assert m["zero_result_rate"] == round(1 / 3, 4)
+        assert m["avg_result_count"] == round(3 / 3, 4)  # 2+0+1
         assert m["weak_hit_rate"] == 0.5
         assert m["jaccard_vs_baseline"] is None
 

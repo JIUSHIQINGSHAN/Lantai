@@ -41,6 +41,7 @@ def health_deep():
     # ChromaDB
     try:
         from lantai.storage.vector_store import get_vector_store
+
         get_vector_store()
         checks["chromadb"] = "ok"
     except Exception as e:
@@ -52,6 +53,7 @@ def health_deep():
     else:
         try:
             from lantai.llm.client import _client
+
             _client.models.list()
             checks["llm"] = "ok"
         except Exception as e:
@@ -65,16 +67,17 @@ def health_deep():
 def stats():
     """记忆统计——SQL 聚合，避免全表加载到内存"""
     from sqlmodel import func
+
     with db.get_session() as s:
         total = s.exec(select(func.count()).select_from(MemoryItem)).one()
-        lane_rows = s.exec(select(MemoryItem.lane, func.count())
-                           .group_by(MemoryItem.lane)).all()
-        status_rows = s.exec(select(MemoryItem.status, func.count())
-                             .group_by(MemoryItem.status)).all()
-        tier_rows = s.exec(select(MemoryItem.tier, func.count())
-                           .group_by(MemoryItem.tier)).all()
-        decay_rows = s.exec(select(MemoryItem.decay_class, func.count())
-                             .group_by(MemoryItem.decay_class)).all()
+        lane_rows = s.exec(select(MemoryItem.lane, func.count()).group_by(MemoryItem.lane)).all()
+        status_rows = s.exec(
+            select(MemoryItem.status, func.count()).group_by(MemoryItem.status)
+        ).all()
+        tier_rows = s.exec(select(MemoryItem.tier, func.count()).group_by(MemoryItem.tier)).all()
+        decay_rows = s.exec(
+            select(MemoryItem.decay_class, func.count()).group_by(MemoryItem.decay_class)
+        ).all()
 
     buffer = get_coalesce_buffer().water_level()
     return {
@@ -92,4 +95,5 @@ def stats():
 def usage():
     """最近 7 天每日新增记忆数——单条 GROUP BY，不整表加载；缺日补零。"""
     from lantai.ops.usage import collect_usage
+
     return collect_usage(days=7)

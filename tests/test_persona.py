@@ -7,9 +7,10 @@
 4. REST 路由 (/persona/active, /persona/list, /persona, /persona/{id}/activate) 与 MCP 工具；
 5. 会话首轮基座注入联动（与底本 Checkpoint 协同）。
 """
+
 from fastapi.testclient import TestClient
 
-from api_server import app
+from lantai.api.app import app
 from lantai.services.persona_service import (
     activate_persona,
     ensure_default_persona,
@@ -39,7 +40,7 @@ class TestPersonaModelAndService:
         session_factory, _ = param_env
         with session_factory() as s:
             ensure_default_persona(s)
-            
+
             # 创建新的人格
             p2 = set_persona(
                 name="策论参谋",
@@ -61,7 +62,7 @@ class TestPersonaModelAndService:
             p_default = activate_persona("兰台执笔", session=s)
             assert p_default is not None
             assert p_default.is_active is True
-            
+
             # 重新获取 active
             active_now = get_active_persona(s)
             assert active_now.name == "兰台执笔"
@@ -134,7 +135,7 @@ class TestPersonaMCPAndIntegrations:
 
     def test_mcp_persona_tools(self, param_env):
         """测试 MCP 工具：persona_get 与 persona_set。"""
-        from scripts.mcp_server import handle_persona_get, handle_persona_set
+        from lantai.cli.mcp import handle_persona_get, handle_persona_set
 
         # 测试获取当前激活
         res1 = handle_persona_get({})
@@ -142,13 +143,15 @@ class TestPersonaMCPAndIntegrations:
         assert "器识·人格基座" in res1["context"]
 
         # 测试 MCP 创建新 persona
-        res2 = handle_persona_set({
-            "name": "通儒顾问",
-            "linguistic_style": "引经据典",
-            "guidelines": "恪守典章",
-            "epistemic_facts": "通晓兰台文脉",
-            "is_active": True,
-        })
+        res2 = handle_persona_set(
+            {
+                "name": "通儒顾问",
+                "linguistic_style": "引经据典",
+                "guidelines": "恪守典章",
+                "epistemic_facts": "通晓兰台文脉",
+                "is_active": True,
+            }
+        )
         assert res2["name"] == "通儒顾问"
         assert res2["is_active"] is True
 
@@ -165,10 +168,13 @@ class TestPersonaMCPAndIntegrations:
         )
 
         # 写入一条底本快照
-        write_session_checkpoint("session_test_p", {
-            "cp_active_intent": "测试器识注入",
-            "cp_next_action": "执行全量回归",
-        })
+        write_session_checkpoint(
+            "session_test_p",
+            {
+                "cp_active_intent": "测试器识注入",
+                "cp_next_action": "执行全量回归",
+            },
+        )
 
         # 注入带 persona 的上下文
         ctx = inject_checkpoint_context(include_persona=True)
@@ -176,4 +182,3 @@ class TestPersonaMCPAndIntegrations:
         assert "[Checkpoint · 上次会话]" in ctx
         assert "测试器识注入" in ctx
         assert "执行全量回归" in ctx
-

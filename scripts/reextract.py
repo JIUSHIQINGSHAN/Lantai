@@ -2,6 +2,7 @@
 
 默认 dry-run，--apply 才真正执行
 """
+
 import sys
 
 from sqlmodel import select
@@ -24,8 +25,7 @@ def reextract(apply: bool = False) -> dict:
             try:
                 # 检查是否已有 candidate
                 existing = s.exec(
-                    select(MemoryCandidate)
-                    .where(MemoryCandidate.document_id == doc.id)
+                    select(MemoryCandidate).where(MemoryCandidate.document_id == doc.id)
                 ).first()
 
                 if existing and not apply:
@@ -35,11 +35,14 @@ def reextract(apply: bool = False) -> dict:
                 data = extract_candidate(doc.title, doc.content)
                 if apply:
                     cand = MemoryCandidate(
-                        id=new_id("cand"), document_id=doc.id,
+                        id=new_id("cand"),
+                        document_id=doc.id,
                         topic=data["topic"],
                         summary=data["summary"],
-                        claims=data["claims"], methods=data["methods"],
-                        constraints=data["constraints"], actions=data["actions"],
+                        claims=data["claims"],
+                        methods=data["methods"],
+                        constraints=data["constraints"],
+                        actions=data["actions"],
                         extractor_confidence=data["extractor_confidence"],
                     )
                     s.add(cand)

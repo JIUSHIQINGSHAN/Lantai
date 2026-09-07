@@ -6,9 +6,10 @@
 3. graph_augmented_search 协同初筛与二度联想；
 4. REST POST /search/graph_expand 与 MCP graph_expand_search 工具。
 """
+
 from fastapi.testclient import TestClient
 
-from api_server import app
+from lantai.api.app import app
 from lantai.models.tables import MemoryEdge, MemoryItem
 from lantai.retrieval.graph_retriever import (
     expand_graph_associations,
@@ -26,11 +27,25 @@ class TestGraphRetrieverDB:
             # m1 (天选三) --[contains, conf=0.9]--> m2 (RTX 3050) --[supports, conf=0.85]--> m3 (CUDA 12.0)
             m1 = MemoryItem(id="mem_laptop_01", content="华硕天选三游戏笔记本", decay_score=1.0)
             m2 = MemoryItem(id="mem_gpu_01", content="搭载 NVIDIA RTX 3050 显卡", decay_score=1.0)
-            m3 = MemoryItem(id="mem_cuda_01", content="支持 CUDA 12.0 深度学习加速", decay_score=1.0)
+            m3 = MemoryItem(
+                id="mem_cuda_01", content="支持 CUDA 12.0 深度学习加速", decay_score=1.0
+            )
             s.add_all([m1, m2, m3])
 
-            e1 = MemoryEdge(id="edge_1", source_memory_id="mem_laptop_01", target_memory_id="mem_gpu_01", relation="contains", confidence=0.9)
-            e2 = MemoryEdge(id="edge_2", source_memory_id="mem_gpu_01", target_memory_id="mem_cuda_01", relation="supports", confidence=0.85)
+            e1 = MemoryEdge(
+                id="edge_1",
+                source_memory_id="mem_laptop_01",
+                target_memory_id="mem_gpu_01",
+                relation="contains",
+                confidence=0.9,
+            )
+            e2 = MemoryEdge(
+                id="edge_2",
+                source_memory_id="mem_gpu_01",
+                target_memory_id="mem_cuda_01",
+                relation="supports",
+                confidence=0.85,
+            )
             s.add_all([e1, e2])
             s.commit()
 
@@ -54,7 +69,13 @@ class TestGraphRetrieverDB:
             m1 = MemoryItem(id="mem_a1", content="公开节点", decay_score=1.0, lane="general")
             m2 = MemoryItem(id="mem_a2", content="私密节点", decay_score=1.0, lane="private")
             s.add_all([m1, m2])
-            e1 = MemoryEdge(id="edge_a1", source_memory_id="mem_a1", target_memory_id="mem_a2", relation="contains", confidence=0.9)
+            e1 = MemoryEdge(
+                id="edge_a1",
+                source_memory_id="mem_a1",
+                target_memory_id="mem_a2",
+                relation="contains",
+                confidence=0.9,
+            )
             s.add(e1)
             s.commit()
 
@@ -64,7 +85,7 @@ class TestGraphRetrieverDB:
                 ["mem_a1"], max_hops=1, session=s, allowed_lanes=["general"]
             )
             assert len(exp_filtered) == 0  # 私密节点被过滤
-            
+
             exp_all = expand_graph_associations(
                 ["mem_a1"], max_hops=1, session=s, allowed_lanes=["general", "private"]
             )
@@ -81,25 +102,40 @@ class TestGraphRetrieverEndpointsAndMCP:
             m1 = MemoryItem(id="mem_p1", content="华硕笔记本设备", decay_score=1.0)
             m2 = MemoryItem(id="mem_p2", content="RTX 3050 图形处理器", decay_score=1.0)
             s.add_all([m1, m2])
-            e = MemoryEdge(id="edge_p", source_memory_id="mem_p1", target_memory_id="mem_p2", relation="has_part", confidence=0.9)
+            e = MemoryEdge(
+                id="edge_p",
+                source_memory_id="mem_p1",
+                target_memory_id="mem_p2",
+                relation="has_part",
+                confidence=0.9,
+            )
             s.add(e)
             s.commit()
 
         client = TestClient(app)
-        resp = client.post("/search/graph_expand", json={"query": "华硕笔记本", "top_k": 3, "max_hops": 2})
+        resp = client.post(
+            "/search/graph_expand", json={"query": "华硕笔记本", "top_k": 3, "max_hops": 2}
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert "primary_results" in data
         assert "associated_memories" in data
 
     def test_mcp_graph_expand_tool(self, param_env):
-        from scripts.mcp_server import handle_graph_expand_search
+        from lantai.cli.mcp import handle_graph_expand_search
+
         session_factory, _ = param_env
         with session_factory() as s:
             m1 = MemoryItem(id="mem_mcp_1", content="核心戒律：宁 miss 不脏写", decay_score=1.0)
             m2 = MemoryItem(id="mem_mcp_2", content="测试纪律：核心函数不 mock", decay_score=1.0)
             s.add_all([m1, m2])
-            e = MemoryEdge(id="edge_mcp", source_memory_id="mem_mcp_1", target_memory_id="mem_mcp_2", relation="aligns", confidence=0.95)
+            e = MemoryEdge(
+                id="edge_mcp",
+                source_memory_id="mem_mcp_1",
+                target_memory_id="mem_mcp_2",
+                relation="aligns",
+                confidence=0.95,
+            )
             s.add(e)
             s.commit()
 

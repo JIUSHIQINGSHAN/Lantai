@@ -2,6 +2,7 @@
 
 recent_retrieval_events 真实 DB 直调（不 mock）；页面/端点只验证可达与契约。
 """
+
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -17,8 +18,10 @@ from lantai.models.tables import RetrievalEvent
 def ev_env():
     """内存 SQLite 真实建表 + patch 仅 db.get_session。"""
     import lantai.models.tables  # noqa
+
     engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False},
+        "sqlite://",
+        connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
@@ -32,10 +35,17 @@ def ev_env():
 
 def _event(i, created_at, zero=False, noise=False, lane="general"):
     return RetrievalEvent(
-        id=f"rev_{i}", trace_id=f"t{i}", query_text=f"查询 {i}",
-        query_norm_hash=f"h{i}", lane=lane, intent_bucket="fact_lookup",
-        param_snapshot_hash="p", latency_ms=10 + i,
-        zero_result=zero, is_system_noise=noise, created_at=created_at,
+        id=f"rev_{i}",
+        trace_id=f"t{i}",
+        query_text=f"查询 {i}",
+        query_norm_hash=f"h{i}",
+        lane=lane,
+        intent_bucket="fact_lookup",
+        param_snapshot_hash="p",
+        latency_ms=10 + i,
+        zero_result=zero,
+        is_system_noise=noise,
+        created_at=created_at,
     )
 
 
@@ -44,11 +54,11 @@ def test_recent_retrieval_events_orders_desc(ev_env):
     session_factory, _ = ev_env
     now = datetime.now(UTC)
     with session_factory() as s:
-        for i, dt in [(1, now - timedelta(hours=2)),
-                      (2, now), (3, now - timedelta(hours=1))]:
+        for i, dt in [(1, now - timedelta(hours=2)), (2, now), (3, now - timedelta(hours=1))]:
             s.add(_event(i, dt))
         s.commit()
     from lantai.observability.recall_report import recent_retrieval_events
+
     events = recent_retrieval_events(limit=10)
     assert [e["id"] for e in events] == ["rev_2", "rev_3", "rev_1"]
     assert events[0]["query"] == "查询 2"
@@ -57,6 +67,7 @@ def test_recent_retrieval_events_orders_desc(ev_env):
 
 def test_recent_retrieval_events_limit_validation(ev_env):
     from lantai.observability.recall_report import recent_retrieval_events
+
     with pytest.raises(ValueError):
         recent_retrieval_events(limit=0)
     with pytest.raises(ValueError):
@@ -67,7 +78,8 @@ def test_ui_evolve_served():
     """页面可达：/ui/evolve 200 + 面板标记 + 数据端点引用。"""
     from fastapi.testclient import TestClient
 
-    from api_server import app
+    from lantai.api.app import app
+
     with TestClient(app) as c:
         r = c.get("/ui/evolve")
         assert r.status_code == 200
@@ -87,7 +99,8 @@ def test_recent_events_endpoint(ev_env):
         s.commit()
     from fastapi.testclient import TestClient
 
-    from api_server import app
+    from lantai.api.app import app
+
     with TestClient(app) as c:
         r = c.get("/retrieval/recent-events?limit=5")
         assert r.status_code == 200

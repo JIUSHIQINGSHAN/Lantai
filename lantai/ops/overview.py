@@ -8,6 +8,7 @@
 build_overview(session) 是纯函数（测试直传临时 session，不 mock 内部逻辑）；
 get_overview() 打开默认会话执行。
 """
+
 from datetime import UTC, datetime
 
 from sqlmodel import func, select
@@ -25,27 +26,34 @@ def build_overview(session) -> dict:
     """只读聚合：给定 session 汇总记忆系统现状。"""
     mem_total = session.exec(select(func.count()).select_from(MemoryItem)).one()
     mem_active = session.exec(
-        select(func.count()).select_from(MemoryItem)
-        .where(MemoryItem.status == "active")).one()
+        select(func.count()).select_from(MemoryItem).where(MemoryItem.status == "active")
+    ).one()
     mem_archived = session.exec(
-        select(func.count()).select_from(MemoryItem)
-        .where(MemoryItem.status == "archived")).one()
+        select(func.count()).select_from(MemoryItem).where(MemoryItem.status == "archived")
+    ).one()
 
-    by_lane = {lane: cnt for lane, cnt in session.exec(
-        select(MemoryItem.lane, func.count())
-        .group_by(MemoryItem.lane)).all()}
-    by_decay_class = {cls: cnt for cls, cnt in session.exec(
-        select(MemoryItem.decay_class, func.count())
-        .group_by(MemoryItem.decay_class)).all()}
+    by_lane = {
+        lane: cnt
+        for lane, cnt in session.exec(
+            select(MemoryItem.lane, func.count()).group_by(MemoryItem.lane)
+        ).all()
+    }
+    by_decay_class = {
+        cls: cnt
+        for cls, cnt in session.exec(
+            select(MemoryItem.decay_class, func.count()).group_by(MemoryItem.decay_class)
+        ).all()
+    }
 
     candidates_pending = session.exec(
-        select(func.count()).select_from(MemoryCandidate)
-        .where(MemoryCandidate.status == "pending_review")).one()
-    checkpoints = session.exec(
-        select(func.count()).select_from(MemoryCheckpoint)).one()
+        select(func.count())
+        .select_from(MemoryCandidate)
+        .where(MemoryCandidate.status == "pending_review")
+    ).one()
+    checkpoints = session.exec(select(func.count()).select_from(MemoryCheckpoint)).one()
     proposals_pending = session.exec(
-        select(func.count()).select_from(MemoryProposal)
-        .where(MemoryProposal.status == "pending")).one()
+        select(func.count()).select_from(MemoryProposal).where(MemoryProposal.status == "pending")
+    ).one()
 
     # 提取来源（provenance）分布：按 prompt 分组计数，让"记忆质量变差"可溯源
     provenance_rows = session.exec(select(MemoryItem.provenance)).all()

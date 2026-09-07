@@ -7,6 +7,7 @@
 - 阈值用已有 settings：PENALTY_FAIL_STREAK / PENALTY_FAIL_RATE /
   PENALTY_MIN_SAMPLES / PENALTY_TTL_DAYS（零硬编码）
 """
+
 from sqlmodel import select
 
 from lantai.core.ids import new_id
@@ -17,8 +18,9 @@ from lantai.parameters.trust_models import SignalReliabilityStat
 from lantai.storage import db
 
 
-def record_verification_result(venue_class: str, *, passed: bool,
-                               note: str = "") -> SignalReliabilityStat:
+def record_verification_result(
+    venue_class: str, *, passed: bool, note: str = ""
+) -> SignalReliabilityStat:
     """记录一次人工验证结果，更新可靠性统计。
 
     passed=True  → pass_count+1，streak 清零
@@ -26,11 +28,11 @@ def record_verification_result(venue_class: str, *, passed: bool,
     """
     venue_class = ((venue_class or "").strip() or "unknown").lower()
     with db.get_session() as s:
-        stat = s.exec(select(SignalReliabilityStat).where(
-            SignalReliabilityStat.venue_class == venue_class)).first()
+        stat = s.exec(
+            select(SignalReliabilityStat).where(SignalReliabilityStat.venue_class == venue_class)
+        ).first()
         if stat is None:
-            stat = SignalReliabilityStat(
-                id=new_id("srs"), venue_class=venue_class)
+            stat = SignalReliabilityStat(id=new_id("srs"), venue_class=venue_class)
             s.add(stat)
             s.flush()
 
@@ -44,8 +46,13 @@ def record_verification_result(venue_class: str, *, passed: bool,
         s.add(stat)
         s.commit()
         s.refresh(stat)
-        logger.info("verification recorded: venue=%s passed=%s streak=%d fail=%d",
-                    venue_class, passed, stat.fail_streak, stat.fail_count)
+        logger.info(
+            "verification recorded: venue=%s passed=%s streak=%d fail=%d",
+            venue_class,
+            passed,
+            stat.fail_streak,
+            stat.fail_count,
+        )
         return stat
 
 
@@ -60,8 +67,9 @@ def reliability_penalty(venue_class: str) -> float:
     """
     venue_class = ((venue_class or "").strip() or "unknown").lower()
     with db.get_session() as s:
-        stat = s.exec(select(SignalReliabilityStat).where(
-            SignalReliabilityStat.venue_class == venue_class)).first()
+        stat = s.exec(
+            select(SignalReliabilityStat).where(SignalReliabilityStat.venue_class == venue_class)
+        ).first()
     if stat is None:
         return 1.0
 
@@ -70,6 +78,7 @@ def reliability_penalty(venue_class: str) -> float:
         from datetime import timedelta
 
         from lantai.core.time import utcnow as _now
+
         now = _now()
         last = stat.last_verified_at
         if last.tzinfo is None and now.tzinfo is not None:
@@ -82,8 +91,7 @@ def reliability_penalty(venue_class: str) -> float:
         return 1.0
 
     fail_rate = stat.fail_count / total
-    if (stat.fail_streak >= settings.PENALTY_FAIL_STREAK
-            or fail_rate >= settings.PENALTY_FAIL_RATE):
+    if stat.fail_streak >= settings.PENALTY_FAIL_STREAK or fail_rate >= settings.PENALTY_FAIL_RATE:
         # 只降不升：降权系数 = 1 - fail_rate（下限 0.5 保护，防归零）
         return round(max(1.0 - fail_rate, 0.5), 4)
     return 1.0

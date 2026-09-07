@@ -5,6 +5,7 @@
 - 表类不能用 `from __future__ import annotations`（SQLModel 类型解析崩）
 - 字段名与 docs/dry-run-eval-task-split.md 契约一致
 """
+
 from datetime import datetime
 
 from sqlmodel import JSON, Column, Field, SQLModel
@@ -14,6 +15,7 @@ from lantai.core.time import utcnow
 
 class EvalQuerySet(SQLModel, table=True):
     """评估查询集：从 RetrievalEvent 干净事件构造的可重复评估样本集。"""
+
     __tablename__ = "eval_query_set"
 
     id: str = Field(primary_key=True)  # new_id("eqs")
@@ -28,6 +30,7 @@ class EvalQuerySet(SQLModel, table=True):
 
 class EvalRun(SQLModel, table=True):
     """评估运行：一次 dry-run 的参数快照 + 结果指标。"""
+
     __tablename__ = "eval_run"
 
     id: str = Field(primary_key=True)  # new_id("erun")

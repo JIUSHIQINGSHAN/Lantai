@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from lantai.core.auth import get_current_user, SecurityContext
+from lantai.core.auth import Principal, get_current_user
 from lantai.models.schemas import AddMemoryReq, RawMemoryReq
 from lantai.services.memory_service import (
     add_memory,
@@ -14,15 +14,12 @@ from lantai.services.memory_service import (
 router = APIRouter()
 
 
-def _guard_lane_allowed(agent_id: str, lane: str | None) -> None:
-    """写入侧 ACL 守卫：未绑定 lane → 403（宁 miss 不脏写）。"""
-    if not lane_allowed(agent_id, lane or "general"):
-        raise HTTPException(403, f"lane '{lane or 'general'}' not bound for agent")
 
 
 @router.post("/add")
-def add_memory_route(req: AddMemoryReq, async_mode: bool = False,
-                     ctx: SecurityContext = Depends(get_current_user)):
+def add_memory_route(
+    req: AddMemoryReq, async_mode: bool = False, ctx: Principal = Depends(get_current_user)
+):
     if req.lane not in ctx.allowed_lanes:
         raise HTTPException(status_code=403, detail=f"Lane {req.lane} not allowed for agent")
     if async_mode:
@@ -42,12 +39,14 @@ def put_core_memory_route(block: str, content: str, namespace: str = "default"):
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+
 @router.post("/add/raw")
-def add_raw_memory_route(req: RawMemoryReq, ctx: SecurityContext = Depends(get_current_user)):
+def add_raw_memory_route(req: RawMemoryReq, ctx: Principal = Depends(get_current_user)):
     """原文直存（verbatim）：内容直入 FTS5+向量，零 LLM，不走提取/闸门/演化。"""
     if req.lane not in ctx.allowed_lanes:
         raise HTTPException(status_code=403, detail=f"Lane {req.lane} not allowed for agent")
     return add_raw_memory(req)
+
 
 @router.get("/memories")
 def list_memories_route(
@@ -61,9 +60,12 @@ def list_memories_route(
     """档案浏览（VAULT）：只读分页 + 过滤，受保护。"""
     try:
         return list_memories(
-            lane=lane, status=status, decay_class=decay_class,
-            memory_type=memory_type, limit=limit, offset=offset,
+            lane=lane,
+            status=status,
+            decay_class=decay_class,
+            memory_type=memory_type,
+            limit=limit,
+            offset=offset,
         )
     except ValueError as e:
         raise HTTPException(422, str(e))
-

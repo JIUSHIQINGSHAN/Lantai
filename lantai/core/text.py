@@ -8,7 +8,7 @@ def truncate_codepoints(text: str, max_chars: int, suffix: str) -> str:
         return text
     if max_chars <= len(suffix):
         return "".join(cps[:max_chars])
-    return "".join(cps[:max_chars - len(suffix)]).rstrip() + suffix
+    return "".join(cps[: max_chars - len(suffix)]).rstrip() + suffix
 
 
 def apply_recall_budget(lines: list[str], max_total_chars: int) -> tuple[list[str], int]:

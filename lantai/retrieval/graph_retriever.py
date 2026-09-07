@@ -4,6 +4,7 @@
 1. expand_graph_associations: 从种子记忆出发，沿 MemoryEdge 展开 1~2 度 BFS 关联联想；
 2. graph_augmented_search: 混合检索初筛 + 图拓扑扩召一体化搜索。
 """
+
 from collections import deque
 
 from sqlmodel import Session, or_, select
@@ -66,23 +67,27 @@ def expand_graph_associations(
                 if neighbor_item and neighbor_item.status == "active":
                     if allowed_lanes is not None and neighbor_item.lane not in allowed_lanes:
                         continue
-                    expanded.append({
-                        "memory_id": neighbor_id,
-                        "hop": next_hop,
-                        "via_memory_id": curr_id,
-                        "relation": edge.relation,
-                        "edge_confidence": edge.confidence,
-                        "content": neighbor_item.content,
-                        "lane": neighbor_item.lane,
-                        "domain": getattr(neighbor_item, "domain", "user"),
-                    })
+                    expanded.append(
+                        {
+                            "memory_id": neighbor_id,
+                            "hop": next_hop,
+                            "via_memory_id": curr_id,
+                            "relation": edge.relation,
+                            "edge_confidence": edge.confidence,
+                            "content": neighbor_item.content,
+                            "lane": neighbor_item.lane,
+                            "domain": getattr(neighbor_item, "domain", "user"),
+                        }
+                    )
                     queue.append((neighbor_id, next_hop))
                     if len(expanded) >= max_expanded:
                         break
 
         logger.info(
             "贯珠：从 %d 个种子出发，经 %d 跳展开 %d 条图谱联想记忆",
-            len(seeds), max_hops, len(expanded),
+            len(seeds),
+            max_hops,
+            len(expanded),
         )
         return expanded
 

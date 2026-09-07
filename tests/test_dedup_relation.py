@@ -4,6 +4,7 @@
 单一余弦阈值无法分离 merge/update，判别信号在结构。
 middle 带（锚点比中低）交 LLM judge —— 测试注入桩 judge（仅外部网络属 mock）。
 """
+
 import pytest
 
 from lantai.gate.relation import (
@@ -94,8 +95,7 @@ def test_judge_exception_falls_back_to_insert():
     def boom(o, n):
         raise RuntimeError("llm down")
 
-    assert classify_relation("项目使用Python开发", "项目改用Go语言重写",
-                             llm_judge=boom) == "insert"
+    assert classify_relation("项目使用Python开发", "项目改用Go语言重写", llm_judge=boom) == "insert"
 
 
 def test_anchors_exclude_values():

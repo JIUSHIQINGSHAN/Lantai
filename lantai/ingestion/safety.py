@@ -1,4 +1,5 @@
 """外部抓取安全：URL 校验 + 限长 + 重定向逐跳复验（SSRF 防护）"""
+
 import ipaddress
 import socket
 from urllib.parse import urlparse
@@ -28,8 +29,7 @@ def validate_fetch_url(url: str) -> str:
 
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
-        if (ip.is_private or ip.is_loopback or ip.is_link_local
-                or ip.is_multicast):
+        if not ip.is_global:
             raise ValueError(f"blocked address: {ip} (host={host})")
     return url
 
@@ -62,24 +62,26 @@ def _validate_data_uri(url: str) -> None:
     只放行 png/jpeg/webp/gif（Vision API 位图输入范围；svg 等矢量/其他一律拒绝）。
     """
     import base64 as _b64
+
     if not url.startswith("data:image/") or ";base64," not in url:
         raise ValueError("media_url data URI must be data:image/*;base64,<data>")
     header, _, payload = url.partition(";base64,")
     if not payload:
         raise ValueError("media_url data URI has empty payload")
-    mime = header[len("data:"):]
+    mime = header[len("data:") :]
     if mime not in _DATA_URI_IMAGE_TYPES:
         raise ValueError(
             f"media_url data URI type not allowed: {mime!r} "
-            f"(only {','.join(_DATA_URI_IMAGE_TYPES)})")
+            f"(only {','.join(_DATA_URI_IMAGE_TYPES)})"
+        )
     try:
         raw = _b64.b64decode(payload, validate=True)
     except Exception:
         raise ValueError("media_url data URI payload is not valid base64")
     if len(raw) > settings.MEDIA_DATA_URI_MAX_BYTES:
         raise ValueError(
-            f"media_url data URI too large: {len(raw)} bytes > "
-            f"{settings.MEDIA_DATA_URI_MAX_BYTES}")
+            f"media_url data URI too large: {len(raw)} bytes > {settings.MEDIA_DATA_URI_MAX_BYTES}"
+        )
 
 
 def validate_api_url(url: str) -> str:
@@ -98,23 +100,26 @@ def validate_api_url(url: str) -> str:
     return url
 
 
-def fetch_with_safety(url: str, max_bytes: int | None = None,
-                      timeout: float | None = None,
-                      max_redirects: int | None = None) -> bytes:
+def fetch_with_safety(
+    url: str,
+    max_bytes: int | None = None,
+    timeout: float | None = None,
+    max_redirects: int | None = None,
+) -> bytes:
     """带 SSRF 防护的抓取：逐跳校验 + 响应限长。返回响应体 bytes。
-    
+
     Threat Model 说明 (DD-05)：
     当前使用系统 DNS 解析校验 IP，随后由 httpx 发起连接（重新解析 DNS）。
     理论上存在 DNS Rebinding TOCTOU 窗口。但在 Lantai 的典型场景（低频 RSS、可信信息源抓取）下，
     此风险极低，暂作为已知限制接受。
     """
     from importlib.metadata import version
-    
+
     try:
         app_version = version("lantai")
     except Exception:
         app_version = "0.0.0"
-        
+
     max_bytes = max_bytes or settings.SSRF_MAX_BYTES
     timeout = timeout or settings.RSS_TIMEOUT
     max_redirects = max_redirects or settings.SSRF_MAX_REDIRECTS

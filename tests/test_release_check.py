@@ -1,4 +1,5 @@
 """发布门禁检查测试：纯函数不 mock + 临时 git 仓库真实执行。"""
+
 import importlib.util
 import subprocess
 from pathlib import Path
@@ -13,8 +14,7 @@ _spec.loader.exec_module(RC)
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=repo, check=True,
-                   capture_output=True, text=True)
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
 
 
 @pytest.fixture
@@ -32,11 +32,14 @@ def clean_repo(tmp_path: Path) -> Path:
 def test_collect_refs_real_repo_all_match_pyproject():
     refs = RC.collect_version_refs(RC.REPO_ROOT)
     labels = {label for label, _, _ in refs}
-    assert {"pyproject.toml", "README 版本徽章", "FastAPI /docs 版本",
-           "MCP serverInfo 版本"} <= labels
+    assert {
+        "pyproject.toml",
+        "README 版本徽章",
+        "FastAPI /docs 版本",
+        "MCP serverInfo 版本",
+    } <= labels
     assert any(label.startswith("README Docker 示例") for label in labels)
-    pyproject_version = next(
-        v for label, _, v in refs if label == "pyproject.toml")
+    pyproject_version = next(v for label, _, v in refs if label == "pyproject.toml")
     assert RC.SEMVER_RE.match(pyproject_version)
     for label, _, value in refs:
         assert value == pyproject_version, f"{label} 与 pyproject 不一致"
@@ -50,10 +53,11 @@ def test_changelog_snapshot_parses_latest_release():
 
 
 def test_consistency_reports_mismatch_and_changelog_drift():
-    refs = [("pyproject.toml", "pyproject.toml", "0.3.7"),
-            ("FastAPI /docs 版本", "api_server.py", "0.3.0")]
-    issues = RC.check_version_consistency(
-        "0.3.8", refs, "## [Unreleased]\n\n## [0.3.7]\n")
+    refs = [
+        ("pyproject.toml", "pyproject.toml", "0.3.7"),
+        ("FastAPI /docs 版本", "api_server.py", "0.3.0"),
+    ]
+    issues = RC.check_version_consistency("0.3.8", refs, "## [Unreleased]\n\n## [0.3.7]\n")
     assert any("api_server.py" in i and "0.3.0" in i for i in issues)
     assert any("CHANGELOG 最新发布段" in i for i in issues)
 

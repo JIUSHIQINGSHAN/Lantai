@@ -2,6 +2,7 @@
 
 核心函数 build_query_set——契约见 docs/dry-run-eval-task-split.md。
 """
+
 from sqlmodel import Session, select
 
 from lantai.core.ids import new_id
@@ -11,8 +12,9 @@ from lantai.models.tables import RetrievalEvent
 from lantai.storage import db
 
 
-def build_query_set(name: str, *, noise_excluded: bool = True,
-                    dedup: bool = True, limit: int | None = None) -> EvalQuerySet:
+def build_query_set(
+    name: str, *, noise_excluded: bool = True, dedup: bool = True, limit: int | None = None
+) -> EvalQuerySet:
     """从 retrieval_event 干净事件构造查询集（去重 norm_hash），入库并返回。
 
     参数：
@@ -41,12 +43,14 @@ def build_query_set(name: str, *, noise_excluded: bool = True,
             if norm_hash in seen_hashes:
                 continue
             seen_hashes.add(norm_hash)
-        queries.append({
-            "query": ev.query_text,
-            "event_id": ev.id,
-            "lane": ev.lane or "",
-            "norm_hash": norm_hash,
-        })
+        queries.append(
+            {
+                "query": ev.query_text,
+                "event_id": ev.id,
+                "lane": ev.lane or "",
+                "norm_hash": norm_hash,
+            }
+        )
 
     qs = EvalQuerySet(
         id=new_id("eqs"),
@@ -69,16 +73,23 @@ def build_query_set(name: str, *, noise_excluded: bool = True,
         s.commit()
         s.refresh(qs)
 
-    logger.info("eval query set built: name=%s samples=%d (dedup=%s noise_excluded=%s)",
-                name, len(queries), dedup, noise_excluded)
+    logger.info(
+        "eval query set built: name=%s samples=%d (dedup=%s noise_excluded=%s)",
+        name,
+        len(queries),
+        dedup,
+        noise_excluded,
+    )
     return qs
 
 
 def load_query_set(name: str, session: Session | None = None) -> EvalQuerySet | None:
     """按名加载查询集（供 runner 使用）。"""
+
     def _load(s: Session) -> EvalQuerySet | None:
         rows = s.exec(select(EvalQuerySet).where(EvalQuerySet.name == name)).all()
         return rows[0] if rows else None
+
     if session is not None:
         return _load(session)
     with db.get_session() as s:

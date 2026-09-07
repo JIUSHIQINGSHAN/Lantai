@@ -4,6 +4,7 @@
 输入校验 422。薄路由层不 mock（record_verification_result 真实执行，
 与 test_param_reliability 共用同一套不 mock 纪律）。
 """
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
@@ -28,6 +29,7 @@ def client():
         return Session(engine)
 
     from fastapi import FastAPI
+
     app = FastAPI()
     app.include_router(router)
 
@@ -38,8 +40,7 @@ def client():
 
 
 def test_record_pass_ok(client):
-    r = client.post("/verification",
-                    json={"venue_class": "journal", "passed": True})
+    r = client.post("/verification", json={"venue_class": "journal", "passed": True})
     assert r.status_code == 200
     body = r.json()
     assert body["venue_class"] == "journal"
@@ -52,8 +53,7 @@ def test_record_pass_ok(client):
 def test_record_fail_streak_penalizes(client):
     """连续 3 次失败（≥ PENALTY_FAIL_STREAK=2）→ 降权系数 < 1.0。"""
     for _ in range(3):
-        r = client.post("/verification",
-                        json={"venue_class": "preprint", "passed": False})
+        r = client.post("/verification", json={"venue_class": "preprint", "passed": False})
         assert r.status_code == 200
     body = r.json()
     assert body["fail_streak"] == 3
@@ -62,9 +62,10 @@ def test_record_fail_streak_penalizes(client):
 
 
 def test_record_note_accepted(client):
-    r = client.post("/verification",
-                    json={"venue_class": "workshop", "passed": False,
-                          "note": "重复实验后结论不可靠"})
+    r = client.post(
+        "/verification",
+        json={"venue_class": "workshop", "passed": False, "note": "重复实验后结论不可靠"},
+    )
     assert r.status_code == 200
 
 
@@ -79,8 +80,7 @@ def test_missing_passed_422(client):
 
 
 def test_empty_venue_class_422(client):
-    r = client.post("/verification",
-                    json={"venue_class": "", "passed": True})
+    r = client.post("/verification", json={"venue_class": "", "passed": True})
     assert r.status_code == 422
 
 
@@ -95,4 +95,3 @@ def test_stats_lists_all(client):
     assert rows["journal"]["penalty"] == 1.0
     assert rows["preprint"]["fail_streak"] == 3
     assert rows["preprint"]["penalty"] < 1.0
-

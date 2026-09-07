@@ -8,6 +8,7 @@ media_url（图片地址/data URI）→ Vision API 生成视觉描述 caption �
 - 失败抛 ValueError（路由 422），绝不把「图片解析失败」等失败文本入库
   （作者版会落失败字符串——脏写，违背宁 miss 不脏写）。
 """
+
 from lantai.core.provenance import PROVENANCE_PROMPT_VISION
 from lantai.core.settings import settings
 from lantai.llm.client import vision_caption

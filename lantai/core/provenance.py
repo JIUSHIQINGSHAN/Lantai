@@ -6,14 +6,17 @@ MemoryItem（promoter 落库），最终每条提取类记忆都能回答"这套
 
 未来自定义 prompt 时，prompt 名即版本标识（如 extract-v1 / extract-v2 区分效果）。
 """
+
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 
-PROVENANCE_PROMPT_EXTRACT = "extract-v1"                # lantai/llm/prompts.py EXTRACT_SYS
-PROVENANCE_PROMPT_FASTPATH_DIRECT = "fastpath-direct"   # memory_service fastpath（规则直通，零 LLM）
+PROVENANCE_PROMPT_EXTRACT = "extract-v1"  # lantai/llm/prompts.py EXTRACT_SYS
+PROVENANCE_PROMPT_FASTPATH_DIRECT = "fastpath-direct"  # memory_service fastpath（规则直通，零 LLM）
 PROVENANCE_PROMPT_DIALOGUE_FASTPATH = "dialogue-fastpath"  # dialogue 白名单直通（零 LLM）
 PROVENANCE_PROMPT_DIALOGUE_CHITCHAT = "dialogue-chitchat"  # dialogue 闲聊兜底（零 LLM）
-PROVENANCE_PROMPT_DIALOGUE_IMPORT = "dialogue-session-import"  # 冷启动导入历史会话（保留原始时间戳）
+PROVENANCE_PROMPT_DIALOGUE_IMPORT = (
+    "dialogue-session-import"  # 冷启动导入历史会话（保留原始时间戳）
+)
 PROVENANCE_PROMPT_VISION = "vision-caption"  # 目识（vision）多模态：图片 -> 视觉描述（v0.10）
 
 

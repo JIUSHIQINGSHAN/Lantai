@@ -8,6 +8,7 @@
     python scripts/mark_retrieval_noise.py            # 默认生产库
     python scripts/mark_retrieval_noise.py --dry-run  # 只看不改
 """
+
 import argparse
 import sys
 
@@ -40,7 +41,10 @@ def main(dry_run: bool = False) -> int:
     total = len(events)
     logger.info(
         "noise mark: total=%d noise=%d changed=%d dry_run=%s",
-        total, noise_now, changed, dry_run,
+        total,
+        noise_now,
+        changed,
+        dry_run,
     )
     return changed
 

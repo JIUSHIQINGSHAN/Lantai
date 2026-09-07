@@ -5,6 +5,7 @@
 2. format_probing_context: 格式化 Prompt 注入上下文；
 3. resolve_probe_response: 根据用户次轮自然语言答复自动闭环消解冲突。
 """
+
 import re
 
 import jieba
@@ -19,12 +20,38 @@ from lantai.storage import db
 
 # 肯定与否定词库模式
 _AFFIRMATIVE_PATTERNS = [
-    r"是", r"对", r"没错", r"确实", r"好的", r"更改了", r"已变更", r"变了",
-    r"成了", r"改用", r"换成", r"yes", r"yep", r"correct", r"right", r"true",
+    r"是",
+    r"对",
+    r"没错",
+    r"确实",
+    r"好的",
+    r"更改了",
+    r"已变更",
+    r"变了",
+    r"成了",
+    r"改用",
+    r"换成",
+    r"yes",
+    r"yep",
+    r"correct",
+    r"right",
+    r"true",
 ]
 _NEGATIVE_PATTERNS = [
-    r"不是", r"不对", r"没有", r"写错", r"别改", r"未变", r"还是", r"依然",
-    r"没变", r"保持", r"no", r"nope", r"false", r"wrong",
+    r"不是",
+    r"不对",
+    r"没有",
+    r"写错",
+    r"别改",
+    r"未变",
+    r"还是",
+    r"依然",
+    r"没变",
+    r"保持",
+    r"no",
+    r"nope",
+    r"false",
+    r"wrong",
 ]
 
 
@@ -41,9 +68,7 @@ def detect_memory_probes(
     tokens = set(w.strip() for w in jieba.lcut(clean_q) if len(w.strip()) >= 2)
 
     def _detect(s: Session) -> list[dict]:
-        open_conflicts = s.exec(
-            select(ConflictEvent).where(ConflictEvent.status == "open")
-        ).all()
+        open_conflicts = s.exec(select(ConflictEvent).where(ConflictEvent.status == "open")).all()
 
         probes = []
         for conf in open_conflicts:
@@ -61,14 +86,16 @@ def detect_memory_probes(
                     f"顺便向您求证确认下：关于「{existing_content[:30]}」，"
                     f"目前是否已变更为「{incoming_ref[:30]}」？"
                 )
-                probes.append({
-                    "probe_id": f"probe_{conf.id}",
-                    "conflict_id": conf.id,
-                    "memory_id": conf.memory_id,
-                    "existing_content": existing_content,
-                    "incoming_ref": incoming_ref,
-                    "question": question,
-                })
+                probes.append(
+                    {
+                        "probe_id": f"probe_{conf.id}",
+                        "conflict_id": conf.id,
+                        "memory_id": conf.memory_id,
+                        "existing_content": existing_content,
+                        "incoming_ref": incoming_ref,
+                        "question": question,
+                    }
+                )
 
         logger.info("探颐：针对查询 '%s' 检出 %d 个主动探针", clean_q[:20], len(probes))
         return probes
@@ -152,12 +179,32 @@ def resolve_probe_response(
 
             # 同步更新索引
             try:
-                index_memory_item(item)
+                from lantai.retrieval.embed import embed
+                emb = embed([item.key])[0]
+                index_memory_item(
+                    item.id,
+                    emb,
+                    {
+                        "key": item.key,
+                        "memory_type": item.memory_type,
+                        "lane": getattr(item, "lane", "general") or "general",
+                        "domain": getattr(item, "domain", "user") or "user",
+                        "tenant_id": getattr(item, "tenant_id", "") or "",
+                        "user_id": getattr(item, "user_id", "") or "",
+                        "session_id": getattr(item, "session_id", "") or "",
+                        "agent_id": getattr(item, "agent_id", "") or "",
+                    },
+                )
             except Exception as exc:
                 logger.warning("探颐：索引更新异常（数据已落库）: %s", exc)
 
             logger.info("探颐：用户肯定探针，已成功消解冲突并更新记忆 %s", item.id)
-            return {"status": "resolved", "action": "applied", "conflict_id": conflict_id, "memory_id": item.id}
+            return {
+                "status": "resolved",
+                "action": "applied",
+                "conflict_id": conflict_id,
+                "memory_id": item.id,
+            }
 
         else:
             logger.info("探颐：用户答复未明确表态，保持冲突待审状态")

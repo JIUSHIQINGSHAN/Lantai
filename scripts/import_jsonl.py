@@ -6,6 +6,7 @@
 JSONL 每行一个 JSON 对象：{"content": "...", "created_at": "ISO8601",
 "lane": "fact", "tags": ["a"]}；content 必填，created_at/updated_at 可省略（缺省取当前时间）。
 """
+
 import argparse
 import json
 import sys

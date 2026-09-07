@@ -6,12 +6,13 @@
 3. REST 端点 POST /dialogue/async 与 GET /dialogue/tasks/{task_id}；
 4. MCP 工具 dialogue_add_async 与 dialogue_task_status。
 """
+
 import time
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from api_server import app
+from lantai.api.app import app
 from lantai.services.async_ingest_service import (
     clear_tasks,
     get_task_status,
@@ -84,7 +85,8 @@ class TestAsyncIngestEndpointsAndMCP:
             assert r3.json()["status"] == "completed"
 
     def test_mcp_async_dialogue(self, param_env):
-        from scripts.mcp_server import handle_dialogue_add_async, handle_dialogue_task_status
+        from lantai.cli.mcp import handle_dialogue_add_async, handle_dialogue_task_status
+
         clear_tasks()
 
         mock_res = {"status": "extracted", "memories_created": 1}

@@ -10,6 +10,7 @@ LANTAI_HOME 数据迁移脚本（安全版）。
 
 用法：python scripts/migrate_home.py --target <新目录>
 """
+
 import argparse
 import shutil
 import sqlite3
@@ -78,8 +79,7 @@ def main() -> int:
 
     target.mkdir(parents=True, exist_ok=True)
     if (target / "remembrance.db").exists():
-        print(f"[WARN] 目标目录已存在 DB: {target / 'remembrance.db'}，"
-              f"将覆盖（先备份源）")
+        print(f"[WARN] 目标目录已存在 DB: {target / 'remembrance.db'}，将覆盖（先备份源）")
 
     # 1) 备份 DB（一致性快照）
     new_db = _backup_db(src_db, target)
@@ -105,8 +105,11 @@ def main() -> int:
     env_path = REPO_ROOT / ".env"
     lines = []
     if env_path.exists():
-        lines = [l for l in env_path.read_text(encoding="utf-8").splitlines()
-                 if l.strip() and not l.startswith("LANTAI_HOME=")]
+        lines = [
+            l
+            for l in env_path.read_text(encoding="utf-8").splitlines()
+            if l.strip() and not l.startswith("LANTAI_HOME=")
+        ]
     lines.append(f"LANTAI_HOME={target}")
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"[5/5] 已写入 {env_path}: LANTAI_HOME={target}")

@@ -5,6 +5,7 @@ Mímir 铁律：LLM/规则只能建议，不能直接 commit——检测只产 c
 宁 miss 不脏写：低质量簇不产候选、缺 steps 不批准、噪声 lane 排除。
 检测聚类复用 autodream.cluster_memories（同 lane + 共享关键词，确定性可复现）。
 """
+
 from sqlmodel import select
 
 from lantai.core.ids import new_id
@@ -30,29 +31,35 @@ def build_crystal_candidates(clusters: list[list]) -> list[dict]:
         kws = sorted({w for m in cluster for w in _keywords(m.content)})
         topic = kws[0] if kws else (cluster[0].key or "topic")
         skill_name = f"crystallized-{lane}-{topic}"[:80]
-        candidates.append({
-            "skill_name": skill_name,
-            "trigger_rule": f"当出现与「{topic}」相关的连续需求或重复操作时触发",
-            "procedure": "\n".join(
-                f"- {m.content[:80]}" for m in cluster[:5]),
-            "source_lanes": sorted({m.lane for m in cluster}),
-            "sample_keys": sorted({m.key or m.content[:20] for m in cluster})[:10],
-            "candidate_count": len(cluster),
-        })
+        candidates.append(
+            {
+                "skill_name": skill_name,
+                "trigger_rule": f"当出现与「{topic}」相关的连续需求或重复操作时触发",
+                "procedure": "\n".join(f"- {m.content[:80]}" for m in cluster[:5]),
+                "source_lanes": sorted({m.lane for m in cluster}),
+                "sample_keys": sorted({m.key or m.content[:20] for m in cluster})[:10],
+                "candidate_count": len(cluster),
+            }
+        )
     return candidates
 
 
-def run_crystal_detect_once(namespace: str = "default", *,
-                            dry_run: bool = True,
-                            limit: int | None = None) -> dict:
+def run_crystal_detect_once(
+    namespace: str = "default", *, dry_run: bool = True, limit: int | None = None
+) -> dict:
     """执行一轮结晶检测：聚类 -> 候选（dry_run 不写库）。
 
     返回 {"clusters", "candidates", "created", "updated", "skipped"}；
     候选按 skill_name upsert：存在则 hit_count+1（幂等，不重复堆积）。
     """
     if not settings.CRYSTAL_ENABLED:
-        return {"clusters": 0, "candidates": 0, "created": 0, "updated": 0,
-                "skipped": ["CRYSTAL_ENABLED=false"]}
+        return {
+            "clusters": 0,
+            "candidates": 0,
+            "created": 0,
+            "updated": 0,
+            "skipped": ["CRYSTAL_ENABLED=false"],
+        }
     with db.get_session() as s:
         q = select(MemoryItem).where(
             MemoryItem.status == "active",
@@ -68,9 +75,10 @@ def run_crystal_detect_once(namespace: str = "default", *,
     created = updated = 0
     if not dry_run:
         with db.get_session() as s:
-            for cand in candidates[:settings.CRYSTAL_MAX_DAILY]:
-                existing = s.exec(select(SkillCrystal).where(
-                    SkillCrystal.skill_name == cand["skill_name"])).first()
+            for cand in candidates[: settings.CRYSTAL_MAX_DAILY]:
+                existing = s.exec(
+                    select(SkillCrystal).where(SkillCrystal.skill_name == cand["skill_name"])
+                ).first()
                 if existing:
                     existing.hit_count += 1
                     existing.candidate_count = cand["candidate_count"]
@@ -84,22 +92,30 @@ def run_crystal_detect_once(namespace: str = "default", *,
                     s.add(SkillCrystal(id=new_id("crystal"), **cand))
                     created += 1
             s.commit()
-    return {"clusters": len(clusters), "candidates": len(candidates),
-            "created": created, "updated": updated, "skipped": []}
+    return {
+        "clusters": len(clusters),
+        "candidates": len(candidates),
+        "created": created,
+        "updated": updated,
+        "skipped": [],
+    }
 
 
 def list_crystals(status: str = "candidate", limit: int = 50) -> dict:
     """列出结晶候选项（默认 candidate 待审）。"""
     with db.get_session() as s:
-        rows = s.exec(select(SkillCrystal).where(
-            SkillCrystal.status == status
-        ).order_by(SkillCrystal.updated_at.desc()).limit(limit)).all()
+        rows = s.exec(
+            select(SkillCrystal)
+            .where(SkillCrystal.status == status)
+            .order_by(SkillCrystal.updated_at.desc())
+            .limit(limit)
+        ).all()
         return {"crystals": [r.model_dump(mode="json") for r in rows]}
 
 
-def decide_crystal(crystal_id: str, approve: bool,
-                   steps: list[str] | None = None,
-                   reason: str = "") -> dict:
+def decide_crystal(
+    crystal_id: str, approve: bool, steps: list[str] | None = None, reason: str = ""
+) -> dict:
     """裁决候选：approve 必须带非空 steps -> 落成 Skill 资产 + approved；
     reject -> archived + reason（宁 miss 不脏写）。"""
     with db.get_session() as s:
@@ -115,6 +131,7 @@ def decide_crystal(crystal_id: str, approve: bool,
         if not steps:
             raise ValueError("approve requires non-empty steps (宁 miss 不脏写)")
         from lantai.services.mem_command import create_skill
+
         result = create_skill(name=skill_name, description=trigger_rule, steps=steps)
         if not result.get("ok"):
             raise ValueError(result.get("error", "create_skill failed"))
@@ -131,5 +148,4 @@ def decide_crystal(crystal_id: str, approve: bool,
             crystal.updated_at = utcnow()
             s.add(crystal)
             s.commit()
-    return {"ok": True, "crystal_id": crystal_id,
-            "skill": result if approve else None}
+    return {"ok": True, "crystal_id": crystal_id, "skill": result if approve else None}

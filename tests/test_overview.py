@@ -1,4 +1,5 @@
 """轻量概览冒烟测试：真实临时库 + 真实行，不 mock 聚合逻辑。"""
+
 import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
@@ -32,11 +33,16 @@ def overview_env():
         yield session_factory, engine
 
 
-def _mem(content: str, lane: str, decay_class: str = "episodic",
-         status: str = "active") -> MemoryItem:
+def _mem(
+    content: str, lane: str, decay_class: str = "episodic", status: str = "active"
+) -> MemoryItem:
     return MemoryItem(
-        id=content, memory_type="fact", key=content[:20],
-        content=content, lane=lane, status=status,
+        id=content,
+        memory_type="fact",
+        key=content[:20],
+        content=content,
+        lane=lane,
+        status=status,
         decay_class=decay_class,
     )
 
@@ -48,21 +54,24 @@ def test_overview_counts(overview_env):
         s.add(_mem("服务A 端口 8080", lane="fact", decay_class="semantic"))
         s.add(_mem("用户喜欢咖啡", lane="preference"))
         s.add(_mem("昨日聊天摘要", lane="chat", status="archived"))
-        s.add(MemoryCandidate(id="c1", document_id="d1", status="pending_review",
-                              extractor_confidence=0.3))
+        s.add(
+            MemoryCandidate(
+                id="c1", document_id="d1", status="pending_review", extractor_confidence=0.3
+            )
+        )
         s.add(MemoryCheckpoint(id="ck1", memory_id="m1", version=1))
         s.add(MemoryCheckpoint(id="ck2", memory_id="m1", version=2))
         s.add(MemoryProposal(id="p1", proposal_type="merge", status="pending"))
         s.commit()
 
     from lantai.ops.overview import get_overview
+
     o = get_overview()
 
     assert o["memories"]["total"] == 3
     assert o["memories"]["active"] == 2
     assert o["memories"]["archived"] == 1
-    assert o["memories"]["by_lane"] == {
-        "fact": 1, "preference": 1, "chat": 1}
+    assert o["memories"]["by_lane"] == {"fact": 1, "preference": 1, "chat": 1}
     assert o["memories"]["by_decay_class"] == {"semantic": 1, "episodic": 2}
     assert o["candidates_pending_review"] == 1
     assert o["checkpoints"] == 2
@@ -72,6 +81,7 @@ def test_overview_counts(overview_env):
 def test_overview_empty(overview_env):
     """空库不炸：全 0 + 空分布。"""
     from lantai.ops.overview import get_overview
+
     o = get_overview()
     assert o["memories"]["total"] == 0
     assert o["memories"]["active"] == 0
@@ -90,6 +100,7 @@ def test_build_overview_pure(overview_env):
         s.commit()
 
     from lantai.ops.overview import build_overview
+
     with session_factory() as s:
         o = build_overview(s)
     assert o["memories"]["total"] == 1

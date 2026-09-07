@@ -7,6 +7,7 @@
 - 回滚：仅允许当前 head 且 head 为 apply；expected_revision 复核。
 - 快照/基线过期：建议的 base_snapshot_hash 与当前 head 不符 → 409（由用户选择拒绝或保留）。
 """
+
 from fastapi import HTTPException
 from sqlalchemy import func, update
 from sqlmodel import select
@@ -45,20 +46,24 @@ from lantai.storage import db
 
 # ---------------------------------------------------------------- 查询
 
-def list_suggestions(status: str | None = None, limit: int = 20,
-                     offset: int = 0) -> SuggestionListResponse:
+
+def list_suggestions(
+    status: str | None = None, limit: int = 20, offset: int = 0
+) -> SuggestionListResponse:
     with db.get_session() as s:
         query = select(ParamSuggestion)
         if status:
             query = query.where(ParamSuggestion.status == status)
-        total = s.exec(
-            select(func.count()).select_from(
-                query.subquery())).one()
-        items = s.exec(query.order_by(
-            ParamSuggestion.created_at.desc()).limit(limit).offset(offset)).all()
+        total = s.exec(select(func.count()).select_from(query.subquery())).one()
+        items = s.exec(
+            query.order_by(ParamSuggestion.created_at.desc()).limit(limit).offset(offset)
+        ).all()
         return SuggestionListResponse(
             items=[suggestion_to_list_item(i) for i in items],
-            total=total, limit=limit, offset=offset)
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
 
 
 def get_suggestion(suggestion_id: str) -> SuggestionDetailResponse:
@@ -70,8 +75,7 @@ def get_suggestion(suggestion_id: str) -> SuggestionDetailResponse:
 
 
 def _head_override(session) -> ParamOverride | None:
-    return session.exec(
-        select(ParamOverride).order_by(ParamOverride.revision.desc())).first()
+    return session.exec(select(ParamOverride).order_by(ParamOverride.revision.desc())).first()
 
 
 def _current_snapshot(session) -> dict:
@@ -82,11 +86,15 @@ def _current_snapshot(session) -> dict:
 def list_overrides(limit: int = 20, offset: int = 0) -> OverrideListResponse:
     with db.get_session() as s:
         total = s.exec(select(func.count()).select_from(ParamOverride)).one()
-        items = s.exec(select(ParamOverride).order_by(
-            ParamOverride.revision.desc()).limit(limit).offset(offset)).all()
+        items = s.exec(
+            select(ParamOverride)
+            .order_by(ParamOverride.revision.desc())
+            .limit(limit)
+            .offset(offset)
+        ).all()
         return OverrideListResponse(
-            items=[override_to_list_item(i) for i in items],
-            total=total, limit=limit, offset=offset)
+            items=[override_to_list_item(i) for i in items], total=total, limit=limit, offset=offset
+        )
 
 
 def get_effective_params() -> RuntimeParamsResponse:
@@ -95,19 +103,23 @@ def get_effective_params() -> RuntimeParamsResponse:
         if head is None:
             snap = default_snapshot()
             return RuntimeParamsResponse(
-                snapshot=snap, revision=0,
+                snapshot=snap,
+                revision=0,
                 snapshot_hash=snapshot_hash(snap),
-                registry_version=get_registry_version())
+                registry_version=get_registry_version(),
+            )
         return RuntimeParamsResponse(
-            snapshot=head.after_snapshot, revision=head.revision,
+            snapshot=head.after_snapshot,
+            revision=head.revision,
             snapshot_hash=head.after_snapshot_hash,
-            registry_version=head.registry_version)
+            registry_version=head.registry_version,
+        )
 
 
 # ---------------------------------------------------------------- 审阅决策
 
-def decide_suggestion(suggestion_id: str, req: DecisionRequest,
-                      actor: str) -> DecisionResponse:
+
+def decide_suggestion(suggestion_id: str, req: DecisionRequest, actor: str) -> DecisionResponse:
     with db.get_session() as s:
         sug = s.get(ParamSuggestion, suggestion_id)
         if not sug:
@@ -124,8 +136,7 @@ def decide_suggestion(suggestion_id: str, req: DecisionRequest,
             sug.decision_note = req.note
             s.add(sug)
             s.commit()
-            return DecisionResponse(suggestion_id=suggestion_id,
-                                    status="rejected")
+            return DecisionResponse(suggestion_id=suggestion_id, status="rejected")
 
         # ---- accepted：CAS 校验 + 原子写入 ----
         # 1) 基线复验：建议基于的快照仍须是当前有效配置
@@ -134,12 +145,15 @@ def decide_suggestion(suggestion_id: str, req: DecisionRequest,
         cur_hash = snapshot_hash(cur_snapshot)
         if sug.base_snapshot_hash != cur_hash:
             raise HTTPException(
-                409, "snapshot_conflict: 当前参数基线已变化，建议基于旧快照，请拒绝或重新审阅")
+                409, "snapshot_conflict: 当前参数基线已变化，建议基于旧快照，请拒绝或重新审阅"
+            )
         # 2) revision 复验：请求方以为的 head revision 必须一致
         cur_revision = head.revision if head else 0
-        if req.expected_revision is not None \
-                and req.expected_revision != cur_revision:
-            raise HTTPException(409, f"revision_conflict: expected revision {req.expected_revision}, actual {cur_revision}")
+        if req.expected_revision is not None and req.expected_revision != cur_revision:
+            raise HTTPException(
+                409,
+                f"revision_conflict: expected revision {req.expected_revision}, actual {cur_revision}",
+            )
         # 3) 注册表复验（三次校验中的批准前一次）
         try:
             validate_snapshot(sug.after_snapshot)
@@ -147,11 +161,13 @@ def decide_suggestion(suggestion_id: str, req: DecisionRequest,
             raise HTTPException(422, f"registry_validation_failed: {e}")
 
         # 4) CAS：条件更新保证只有一个批准者成功
-        result = s.exec(update(ParamSuggestion).where(
-            ParamSuggestion.id == suggestion_id,
-            ParamSuggestion.status == "pending").values(
-            status="accepted", decided_at=utcnow(),
-            decided_by=actor, decision_note=req.note))
+        result = s.exec(
+            update(ParamSuggestion)
+            .where(ParamSuggestion.id == suggestion_id, ParamSuggestion.status == "pending")
+            .values(
+                status="accepted", decided_at=utcnow(), decided_by=actor, decision_note=req.note
+            )
+        )
         if result.rowcount != 1:
             raise HTTPException(409, "suggestion_already_decided")
 
@@ -183,29 +199,36 @@ def decide_suggestion(suggestion_id: str, req: DecisionRequest,
 
     # 事务提交后刷新本进程（其他进程由 5s 轮询收敛）
     applied = apply_snapshot_to_settings(after_snapshot)
-    logger.info("param suggestion accepted: %s rev=%d (local applied=%s)",
-                suggestion_id, next_revision, applied)
+    logger.info(
+        "param suggestion accepted: %s rev=%d (local applied=%s)",
+        suggestion_id,
+        next_revision,
+        applied,
+    )
     return DecisionResponse(
-        suggestion_id=suggestion_id, status="accepted",
-        override=OverrideInfo(id=override_id, revision=next_revision,
-                              operation="apply"),
+        suggestion_id=suggestion_id,
+        status="accepted",
+        override=OverrideInfo(id=override_id, revision=next_revision, operation="apply"),
         current_process_applied=applied,
-        other_processes_max_delay_seconds=settings.PARAM_OVERRIDE_REFRESH_SECONDS)
+        other_processes_max_delay_seconds=settings.PARAM_OVERRIDE_REFRESH_SECONDS,
+    )
 
 
 # ---------------------------------------------------------------- 回滚
 
-def rollback_override(override_id: str, req: RollbackRequest,
-                      actor: str) -> RollbackResponse:
+
+def rollback_override(override_id: str, req: RollbackRequest, actor: str) -> RollbackResponse:
     with db.get_session() as s:
         head = _head_override(s)
         if head is None or head.id != override_id:
             raise HTTPException(409, "rollback_conflict: 目标不是当前 head override")
         if head.operation != "apply":
             raise HTTPException(409, "rollback_conflict: head 已是 rollback，不可再回滚旧 apply")
-        if req.expected_revision is not None \
-                and req.expected_revision != head.revision:
-            raise HTTPException(409, f"rollback_conflict: expected revision {req.expected_revision}, actual {head.revision}")
+        if req.expected_revision is not None and req.expected_revision != head.revision:
+            raise HTTPException(
+                409,
+                f"rollback_conflict: expected revision {req.expected_revision}, actual {head.revision}",
+            )
 
         rollback = ParamOverride(
             id=new_id("pov"),
@@ -228,18 +251,24 @@ def rollback_override(override_id: str, req: RollbackRequest,
         effective_snapshot = dict(rollback.after_snapshot)
 
     applied = apply_snapshot_to_settings(effective_snapshot)
-    logger.info("param override rolled back: %s -> rev=%d (local applied=%s)",
-                override_id, rollback_revision, applied)
+    logger.info(
+        "param override rolled back: %s -> rev=%d (local applied=%s)",
+        override_id,
+        rollback_revision,
+        applied,
+    )
     return RollbackResponse(
         rolled_back_override_id=override_id,
-        rollback_override=OverrideInfo(id=rollback_id,
-                                       revision=rollback_revision,
-                                       operation="rollback"),
-                effective_snapshot=effective_snapshot)
+        rollback_override=OverrideInfo(
+            id=rollback_id, revision=rollback_revision, operation="rollback"
+        ),
+        effective_snapshot=effective_snapshot,
+    )
 
 
-def regenerate_suggestion(suggestion_id: str, actor: str,
-                          note: str = "基线已变化，重新生成") -> dict:
+def regenerate_suggestion(
+    suggestion_id: str, actor: str, note: str = "基线已变化，重新生成"
+) -> dict:
     """拒绝旧建议并把其来源论文重新入队；生成由既有 worker 完成。"""
     with db.get_session() as s:
         sug = s.get(ParamSuggestion, suggestion_id)
@@ -253,12 +282,17 @@ def regenerate_suggestion(suggestion_id: str, actor: str,
         now = utcnow()
         queued = 0
         for raw_id in sug.source_document_ids:
-            paper = s.exec(select(ParamAdvicePaper).where(
-                ParamAdvicePaper.raw_document_id == raw_id)).first()
+            paper = s.exec(
+                select(ParamAdvicePaper).where(ParamAdvicePaper.raw_document_id == raw_id)
+            ).first()
             if paper is None:
                 paper = ParamAdvicePaper(
-                    id=new_id("pap"), raw_document_id=raw_id,
-                    state="retry", available_at=now, updated_at=now)
+                    id=new_id("pap"),
+                    raw_document_id=raw_id,
+                    state="retry",
+                    available_at=now,
+                    updated_at=now,
+                )
             else:
                 paper.state = "retry"
                 paper.attempt_count = 0
@@ -276,5 +310,9 @@ def regenerate_suggestion(suggestion_id: str, actor: str,
         sug.decision_note = (note or "").strip() or "基线已变化，重新生成"
         s.add(sug)
         s.commit()
-        return {"ok": True, "suggestion_id": suggestion_id,
-                "status": "rejected", "papers_queued": queued}
+        return {
+            "ok": True,
+            "suggestion_id": suggestion_id,
+            "status": "rejected",
+            "papers_queued": queued,
+        }

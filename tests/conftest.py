@@ -6,6 +6,7 @@
 3. LLM 假 key——lantai.llm.client 模块级实例化 OpenAI client，CI 无真实 key；
    测试全部 mock chat_json/embed，假 key 仅保证 import 不炸，不会真调 API。
 """
+
 import os
 import sys
 import types
@@ -31,6 +32,7 @@ def _install_otel_stub() -> None:
     """chromadb 会 import OTLPSpanExporter；本地环境该依赖破损，测试时打桩。"""
     try:
         import opentelemetry.exporter.otlp.proto.grpc.trace_exporter  # noqa: F401
+
         return  # 环境正常，不干预
     except ModuleNotFoundError:
         pass
@@ -81,6 +83,7 @@ def param_env():
     )
     SQLModel.metadata.create_all(engine)
     from lantai.storage.fts import init_fts
+
     with engine.connect() as conn:
         init_fts(conn.connection.driver_connection)
 
@@ -89,40 +92,58 @@ def param_env():
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(db_module, "get_session", session_factory)
-        
+
         # Mock vector store to avoid hitting network/ChromaDB in all DB tests
         import lantai.retrieval.hybrid as hybrid_module
         import lantai.services.memory_service as memory_service
         import lantai.storage.vector_store as vector_store_module
+
         class DummyVS:
-            def search(self, *args, **kwargs): return []
-            def search_batch(self, *args, **kwargs): return []
-            def add(self, *args, **kwargs): pass
-            def update(self, *args, **kwargs): pass
-            def delete(self, *args, **kwargs): pass
+            def search(self, *args, **kwargs):
+                return []
+
+            def search_batch(self, *args, **kwargs):
+                return []
+
+            def add(self, *args, **kwargs):
+                pass
+
+            def update(self, *args, **kwargs):
+                pass
+
+            def delete(self, *args, **kwargs):
+                pass
+
         dummy_vs = DummyVS()
         mp.setattr(vector_store_module, "get_vector_store", lambda: dummy_vs)
         mp.setattr(hybrid_module, "get_vector_store", lambda: dummy_vs)
         mp.setattr(memory_service, "get_vector_store", lambda: dummy_vs)
-        
+
         import lantai.llm.client as llm_client
+
         mp.setattr(llm_client, "embed", lambda texts: [[0.1] * 1536 for _ in texts])
         mp.setattr(hybrid_module, "embed", lambda texts: [[0.1] * 1536 for _ in texts])
         mp.setattr(llm_client, "chat_json", lambda *args, **kwargs: {"candidate_n": 5, "lanes": []})
         import lantai.retrieval.intent as intent_module
-        mp.setattr(intent_module, "chat_json", lambda *args, **kwargs: {"candidate_n": 5, "lanes": []})
-        
+
+        mp.setattr(
+            intent_module, "chat_json", lambda *args, **kwargs: {"candidate_n": 5, "lanes": []}
+        )
+
         import lantai.retrieval.reranker as reranker_module
+
         def dummy_rerank(q, docs, k):
             return [{"index": i, "score": 0.9, "document": d} for i, d in enumerate(docs)]
+
         mp.setattr(reranker_module, "rerank", dummy_rerank)
         mp.setattr(hybrid_module, "rerank", dummy_rerank)
-        
+
         yield session_factory, engine
 
     # 恢复 settings 白名单参数
     for n, v in saved.items():
         setattr(settings, n, v)
+
 
 @pytest.fixture(autouse=True)
 def _no_background_scheduler(monkeypatch):
@@ -134,5 +155,6 @@ def _no_background_scheduler(monkeypatch):
     线程干扰后续测试——全量顺序偶发失败的主要污染源。测试只验证 HTTP/业务
     行为，不依赖调度器，因此统一置空 start_scheduler。
     """
-    import api_server
+    from lantai.api import app as api_server
+
     monkeypatch.setattr(api_server, "start_scheduler", lambda: None)

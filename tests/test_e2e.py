@@ -1,6 +1,7 @@
 """
 兰台记忆（Lantai）端到端测试
 """
+
 from unittest.mock import patch
 
 import pytest
@@ -8,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.storage.db as db_module
-from api_server import app
+from lantai.api.app import app
 from lantai.core.settings import settings
 
 
@@ -16,6 +17,7 @@ from lantai.core.settings import settings
 def client():
     """创建测试客户端，使用内存数据库"""
     from sqlalchemy.pool import StaticPool
+
     test_engine = create_engine(
         "sqlite:///:memory:",
         echo=False,
@@ -28,21 +30,31 @@ def client():
     def get_test_session():
         return Session(test_engine)
 
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("lantai.parsing.extractor.chat_json",
-               return_value={"summary": "test", "claims": [], "methods": [],
-                             "constraints": [], "actions": [], "topic": [],
-                             "extractor_confidence": 0.8}), \
-         patch("lantai.retrieval.reranker.rerank", return_value=[]), \
-         patch("lantai.gate.scorer.embed",
-               return_value=[[0.1] * 8]), \
-         patch("lantai.evolution.promoter.embed",
-               return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.embed",
-               return_value=[[0.1] * 8]), \
-         patch("lantai.storage.vector_store.ChromaVectorStore"), TestClient(app) as c:
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+        patch(
+            "lantai.parsing.extractor.chat_json",
+            return_value={
+                "summary": "test",
+                "claims": [],
+                "methods": [],
+                "constraints": [],
+                "actions": [],
+                "topic": [],
+                "extractor_confidence": 0.8,
+            },
+        ),
+        patch("lantai.retrieval.reranker.rerank", return_value=[]),
+        patch("lantai.gate.scorer.embed", return_value=[[0.1] * 8]),
+        patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch("lantai.storage.vector_store.ChromaVectorStore"),
+        TestClient(app) as c,
+    ):
         yield c
 
 
@@ -64,10 +76,7 @@ class TestAddMemory:
     """写入记忆测试"""
 
     def test_add_basic(self, client):
-        resp = client.post("/add", json={
-            "title": "Test",
-            "content": "This is a test memory"
-        })
+        resp = client.post("/add", json={"title": "Test", "content": "This is a test memory"})
         assert resp.status_code == 200
         data = resp.json()
         assert "document_id" in data
@@ -76,11 +85,10 @@ class TestAddMemory:
         assert data["candidate_id"].startswith("cand_")
 
     def test_add_with_tags(self, client):
-        resp = client.post("/add", json={
-            "title": "Tagged",
-            "content": "Memory with tags",
-            "tags": ["test", "python"]
-        })
+        resp = client.post(
+            "/add",
+            json={"title": "Tagged", "content": "Memory with tags", "tags": ["test", "python"]},
+        )
         assert resp.status_code == 200
 
     def test_add_duplicate_content(self, client):
@@ -127,19 +135,15 @@ class TestSources:
     """来源管理测试"""
 
     def test_add_source(self, client):
-        resp = client.post("/sources", json={
-            "kind": "rss",
-            "config": {"url": "https://example.com/feed"},
-            "enabled": True
-        })
+        resp = client.post(
+            "/sources",
+            json={"kind": "rss", "config": {"url": "https://example.com/feed"}, "enabled": True},
+        )
         assert resp.status_code == 200
         assert resp.json()["kind"] == "rss"
 
     def test_list_sources(self, client):
-        client.post("/sources", json={
-            "kind": "rss",
-            "config": {"url": "https://example.com/feed"}
-        })
+        client.post("/sources", json={"kind": "rss", "config": {"url": "https://example.com/feed"}})
         resp = client.get("/sources")
         assert resp.status_code == 200
         assert len(resp.json()["sources"]) >= 1
@@ -150,27 +154,33 @@ class TestGate:
 
     def test_add_reject_short_content(self, client):
         """min_length=10 约束：过短内容应返回 422"""
-        resp = client.post("/add", json={
-            "title": "short",
-            "content": "y"
-        })
+        resp = client.post("/add", json={"title": "short", "content": "y"})
         assert resp.status_code == 422
 
     def test_gate_reject_low_confidence(self, client, monkeypatch):
         """低置信度候选应被 Gate 拒绝"""
         # 显式固定阈值，避免被宿主 .env 的 GATE_MIN_EXTRACTOR_CONF 污染
         from unittest.mock import patch as _patch
+
         monkeypatch.setattr(settings, "GATE_MIN_EXTRACTOR_CONF", 0.55)
         # 该用例专门测低置信度路径：提取器 mock 返回兜底 0.3（< 0.55）
-        low_conf = {"summary": "x", "claims": [], "methods": [],
-                    "constraints": [], "actions": [], "topic": [],
-                    "extractor_confidence": 0.3}
-        with _patch("lantai.parsing.extractor.chat_json",
-                    return_value=low_conf):
-            resp = client.post("/add", json={
-                "title": "minimal content",
-                "content": "1234567890"  # 10 字符，刚好通过校验
-            })
+        low_conf = {
+            "summary": "x",
+            "claims": [],
+            "methods": [],
+            "constraints": [],
+            "actions": [],
+            "topic": [],
+            "extractor_confidence": 0.3,
+        }
+        with _patch("lantai.parsing.extractor.chat_json", return_value=low_conf):
+            resp = client.post(
+                "/add",
+                json={
+                    "title": "minimal content",
+                    "content": "1234567890",  # 10 字符，刚好通过校验
+                },
+            )
         assert resp.status_code == 200
         cand_id = resp.json()["candidate_id"]
         resp = client.post("/gate", json={"candidate_id": cand_id})
@@ -196,17 +206,12 @@ class TestFeedback:
     """反馈测试"""
 
     def test_feedback(self, client):
-        resp = client.post("/add", json={
-            "title": "Test",
-            "content": "Feedback test"
-        })
+        resp = client.post("/add", json={"title": "Test", "content": "Feedback test"})
         mem_id = resp.json()["candidate_id"]
-        resp = client.post("/feedback", json={
-            "memory_id": mem_id,
-            "query": "test",
-            "helped": True,
-            "user_accepted": True
-        })
+        resp = client.post(
+            "/feedback",
+            json={"memory_id": mem_id, "query": "test", "helped": True, "user_accepted": True},
+        )
         assert resp.status_code == 200
 
 
@@ -216,10 +221,13 @@ class TestIntegration:
     def test_full_pipeline(self, client):
         """写入 → 搜索 → 反馈完整流程"""
         # 1. 写入
-        resp = client.post("/add", json={
-            "title": "Integration Test",
-            "content": "Full pipeline test with Python and FastAPI"
-        })
+        resp = client.post(
+            "/add",
+            json={
+                "title": "Integration Test",
+                "content": "Full pipeline test with Python and FastAPI",
+            },
+        )
         assert resp.status_code == 200
 
         # 2. 搜索
@@ -232,6 +240,3 @@ class TestIntegration:
 
         resp = client.get("/core-memory")
         assert resp.status_code == 200
-
-
-

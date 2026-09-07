@@ -42,10 +42,12 @@ def smoke_env(tmp_path, monkeypatch):
 
     # 清除 vector_store 全局单例缓存，确保用新路径创建
     import lantai.storage.vector_store as vs_mod
+
     monkeypatch.setattr(vs_mod, "_store", None)
 
     # 重新创建 vector_store 实例并注入到 memory_service
     from lantai.storage.vector_store import get_vector_store
+
     fresh_vs = get_vector_store()
     monkeypatch.setattr("lantai.services.memory_service.get_vector_store", lambda: fresh_vs)
 

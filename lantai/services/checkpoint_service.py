@@ -12,6 +12,7 @@
 宁 miss 不脏写：块内容 < CHECKPOINT_MIN_CONTENT 不落、非法 block_key 拒绝、
 session_id < 3 字符拒绝；同 session 重写即替换（upsert）。
 """
+
 from datetime import UTC, datetime, timedelta
 
 from sqlmodel import delete, select
@@ -38,7 +39,7 @@ def validate_blocks(blocks: dict) -> list[tuple[str, str]]:
     for key, label in BLOCK_LABELS.items():  # noqa: B007 label 保留可读性
         c = blocks.get(key)
         if isinstance(c, str) and len(c.strip()) >= settings.CHECKPOINT_MIN_CONTENT:
-            out.append((key, c.strip()[:settings.CHECKPOINT_MAX_CONTENT]))
+            out.append((key, c.strip()[: settings.CHECKPOINT_MAX_CONTENT]))
     return out
 
 
@@ -50,12 +51,13 @@ def write_session_checkpoint(session_id: str, blocks: dict) -> dict:
     valid = validate_blocks(blocks)
     now = utcnow()
     with db.get_session() as s:
-        s.exec(delete(SessionCheckpoint)
-               .where(SessionCheckpoint.session_id == session_id))
+        s.exec(delete(SessionCheckpoint).where(SessionCheckpoint.session_id == session_id))
         for key, content in valid:
-            s.add(SessionCheckpoint(
-                session_id=session_id, block_key=key,
-                content=content, created_at=now))
+            s.add(
+                SessionCheckpoint(
+                    session_id=session_id, block_key=key, content=content, created_at=now
+                )
+            )
         s.commit()
     return {"session_id": session_id, "blocks_written": len(valid), "status": "ok"}
 
@@ -74,32 +76,36 @@ def _rows_to_checkpoint(rows: list[SessionCheckpoint]) -> dict | None:
 def get_checkpoint(session_id: str) -> dict | None:
     """读取指定会话的快照（无则 None）。"""
     with db.get_session() as s:
-        rows = s.exec(select(SessionCheckpoint)
-                      .where(SessionCheckpoint.session_id == session_id)
-                      .order_by(SessionCheckpoint.id)).all()
+        rows = s.exec(
+            select(SessionCheckpoint)
+            .where(SessionCheckpoint.session_id == session_id)
+            .order_by(SessionCheckpoint.id)
+        ).all()
         return _rows_to_checkpoint(list(rows))
 
 
 def get_latest_checkpoint() -> dict | None:
     """最近一次会话的完整快照（无则 None）。"""
     with db.get_session() as s:
-        last = s.exec(select(SessionCheckpoint)
-                      .order_by(SessionCheckpoint.created_at.desc(),
-                                SessionCheckpoint.id.desc())
-                      .limit(1)).first()
+        last = s.exec(
+            select(SessionCheckpoint)
+            .order_by(SessionCheckpoint.created_at.desc(), SessionCheckpoint.id.desc())
+            .limit(1)
+        ).first()
         if last is None:
             return None
-        rows = s.exec(select(SessionCheckpoint)
-                      .where(SessionCheckpoint.session_id == last.session_id)
-                      .order_by(SessionCheckpoint.id)).all()
+        rows = s.exec(
+            select(SessionCheckpoint)
+            .where(SessionCheckpoint.session_id == last.session_id)
+            .order_by(SessionCheckpoint.id)
+        ).all()
         return _rows_to_checkpoint(list(rows))
 
 
 def cleanup_old_checkpoints(max_sessions: int | None = None) -> dict:
     """只保留最近 max_sessions 个会话的快照，删除更早的（ADR-0005 只降权不删——
     快照是记录，保留最近 N 会话即可，删的是超龄会话快照）。"""
-    max_sessions = (settings.CHECKPOINT_MAX_SESSIONS
-                    if max_sessions is None else max_sessions)
+    max_sessions = settings.CHECKPOINT_MAX_SESSIONS if max_sessions is None else max_sessions
     if max_sessions < 1:
         raise ValueError("max_sessions must be >= 1")
     with db.get_session() as s:
@@ -107,11 +113,12 @@ def cleanup_old_checkpoints(max_sessions: int | None = None) -> dict:
         sessions = list(s.exec(select(SessionCheckpoint.session_id).distinct()).all())
         latest_by: dict[str, tuple[datetime, int]] = {}
         for sid in sessions:
-            latest = s.exec(select(SessionCheckpoint.created_at, SessionCheckpoint.id)
-                        .where(SessionCheckpoint.session_id == sid)
-                        .order_by(SessionCheckpoint.created_at.desc(),
-                                  SessionCheckpoint.id.desc())
-                        .limit(1)).first()
+            latest = s.exec(
+                select(SessionCheckpoint.created_at, SessionCheckpoint.id)
+                .where(SessionCheckpoint.session_id == sid)
+                .order_by(SessionCheckpoint.created_at.desc(), SessionCheckpoint.id.desc())
+                .limit(1)
+            ).first()
             if latest is not None:
                 latest_by[sid] = (latest[0], latest[1])
         ordered = sorted(latest_by, key=lambda sid: latest_by[sid], reverse=True)
@@ -119,8 +126,7 @@ def cleanup_old_checkpoints(max_sessions: int | None = None) -> dict:
         drop = [sid for sid in ordered if sid not in keep]
         deleted = 0
         for sid in drop:
-            r = s.exec(delete(SessionCheckpoint)
-                       .where(SessionCheckpoint.session_id == sid))
+            r = s.exec(delete(SessionCheckpoint).where(SessionCheckpoint.session_id == sid))
             deleted += r.rowcount or 0
         s.commit()
     return {"kept": len(keep), "deleted": deleted, "status": "ok"}
@@ -149,6 +155,7 @@ def inject_checkpoint_context(
     if include_persona:
         try:
             from lantai.services.persona_service import format_persona_context
+
             p_text = format_persona_context()
             if p_text.strip():
                 parts.append(p_text.strip())
@@ -158,6 +165,7 @@ def inject_checkpoint_context(
     if include_scratchpad:
         try:
             from lantai.services.scratchpad_service import format_scratchpad_context
+
             sp_text = format_scratchpad_context(session_id)
             if sp_text.strip():
                 parts.append(sp_text.strip())
@@ -171,14 +179,16 @@ def inject_checkpoint_context(
         created = cp.get("created_at")
         if created:
             try:
-                stale = (now - _parse_naive_utc(created)
-                         > timedelta(days=settings.CHECKPOINT_STALENESS_DAYS))
+                stale = now - _parse_naive_utc(created) > timedelta(
+                    days=settings.CHECKPOINT_STALENESS_DAYS
+                )
             except (ValueError, TypeError):
                 stale = True
         header = "[Checkpoint · 上次会话]"
         if stale:
-            header = (f"[Checkpoint · 上次会话 ⚠️ {settings.CHECKPOINT_STALENESS_DAYS}"
-                      f"天+前，仅供参考]")
+            header = (
+                f"[Checkpoint · 上次会话 ⚠️ {settings.CHECKPOINT_STALENESS_DAYS}天+前，仅供参考]"
+            )
         lines = [header]
         for key, label in BLOCK_LABELS.items():
             content = (cp["blocks"] or {}).get(key, "")
@@ -190,5 +200,3 @@ def inject_checkpoint_context(
             parts.append(cp_body.strip())
 
     return "\n\n".join(parts)
-
-

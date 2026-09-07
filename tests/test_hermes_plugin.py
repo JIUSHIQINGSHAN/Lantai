@@ -3,6 +3,7 @@
 插件源码在仓库 hermes-plugin/lantai-hook/（部署脚本同步到 Hermes home）。
 测试不依赖 Hermes 进程——register(ctx) 用假 ctx；serve 子进程交互全部 mock。
 """
+
 import importlib.util
 from pathlib import Path
 from unittest.mock import patch
@@ -31,7 +32,9 @@ class TestSessionBuffer:
         mod._buffer_turn("sess_1", "记住：明天下午3点开会")
         mod._buffer_turn("sess_1", "我最近喜欢用 Rust 写 CLI")
         assert mod._session_buffers["sess_1"] == [
-            "记住：明天下午3点开会", "我最近喜欢用 Rust 写 CLI"]
+            "记住：明天下午3点开会",
+            "我最近喜欢用 Rust 写 CLI",
+        ]
         with patch.object(mod, "_call_dialogue") as m:
             mod._flush_session("sess_1")
         assert m.call_count == 2
@@ -59,16 +62,19 @@ class TestCallbacks:
     """pre_llm_call 缓冲 + on_session_end flush"""
 
     def test_pre_llm_call_buffers_user_message(self, mod):
-        with patch.object(mod, "_call_hook", return_value=None), \
-             patch.object(mod, "_call_checkpoint", return_value=None):
-            mod._on_pre_llm_call(user_message="我最近在学知识图谱",
-                                 session_id="sess_1")
+        with (
+            patch.object(mod, "_call_hook", return_value=None),
+            patch.object(mod, "_call_checkpoint", return_value=None),
+        ):
+            mod._on_pre_llm_call(user_message="我最近在学知识图谱", session_id="sess_1")
         assert mod._session_buffers["sess_1"] == ["我最近在学知识图谱"]
 
     def test_on_session_end_flushes(self, mod):
         mod._buffer_turn("sess_1", "记住：明天开会")
-        with patch.object(mod, "_call_dialogue") as m, \
-             patch.object(mod, "_call_checkpoint_write") as cw:
+        with (
+            patch.object(mod, "_call_dialogue") as m,
+            patch.object(mod, "_call_checkpoint_write") as cw,
+        ):
             mod._on_session_end(session_id="sess_1", completed=True)
         m.assert_called_once_with("记住：明天开会")
         # ADR-0022：落底本块（在做=末条消息）
@@ -118,12 +124,14 @@ class TestCheckpointInjection:
 
     def test_first_turn_injects_checkpoint_once(self, mod):
         """首轮注入底本并合并检索；同会话第二轮不再注入。"""
-        with patch.object(mod, "_call_checkpoint", return_value="[Checkpoint · 上次会话]\n在做: X") as ck, \
-             patch.object(mod, "_call_hook", return_value="检索上下文") as hk:
-            r1 = mod._on_pre_llm_call(user_message="继续上次的工作",
-                                      session_id="sess_ck")
-            mod._on_pre_llm_call(user_message="继续上次的工作",
-                                      session_id="sess_ck")
+        with (
+            patch.object(
+                mod, "_call_checkpoint", return_value="[Checkpoint · 上次会话]\n在做: X"
+            ) as ck,
+            patch.object(mod, "_call_hook", return_value="检索上下文") as hk,
+        ):
+            r1 = mod._on_pre_llm_call(user_message="继续上次的工作", session_id="sess_ck")
+            mod._on_pre_llm_call(user_message="继续上次的工作", session_id="sess_ck")
         assert r1["context"].startswith("[Checkpoint · 上次会话]")
         assert "检索上下文" in r1["context"]
         assert ck.call_count == 1
@@ -131,8 +139,10 @@ class TestCheckpointInjection:
 
     def test_first_turn_short_query_still_injects_checkpoint(self, mod):
         """首轮短句无触发词：检索跳过，但底本仍注入（会话续接语义）。"""
-        with patch.object(mod, "_call_checkpoint", return_value="[Checkpoint · 上次会话]") as ck, \
-             patch.object(mod, "_call_hook", return_value=None) as hk:
+        with (
+            patch.object(mod, "_call_checkpoint", return_value="[Checkpoint · 上次会话]") as ck,
+            patch.object(mod, "_call_hook", return_value=None) as hk,
+        ):
             r = mod._on_pre_llm_call(user_message="好", session_id="sess_short")
         assert r == {"context": "[Checkpoint · 上次会话]"}
         ck.assert_called_once()
@@ -141,8 +151,7 @@ class TestCheckpointInjection:
     def test_on_session_end_writes_blocks(self, mod):
         """会话结束：五段块（含命中句式）落 checkpoint_write。"""
         mod._buffer_turn("sess_e", "接下来把部署脚本补全")
-        with patch.object(mod, "_call_checkpoint_write") as cw, \
-             patch.object(mod, "_call_dialogue"):
+        with patch.object(mod, "_call_checkpoint_write") as cw, patch.object(mod, "_call_dialogue"):
             mod._on_session_end(session_id="sess_e", completed=True)
         cw.assert_called_once()
         sid, blocks = cw.call_args[0]
@@ -174,14 +183,12 @@ class TestInstallScriptBackup:
         plugins.mkdir(parents=True)
         old = plugins / "lantai-hook"
         old.mkdir()
-        (old / "plugin.yaml").write_text(
-            "name: lantai-hook\nversion: 1.0.0\n", encoding="utf-8")
+        (old / "plugin.yaml").write_text("name: lantai-hook\nversion: 1.0.0\n", encoding="utf-8")
         (old / "__init__.py").write_text("# old\n", encoding="utf-8")
 
         src = tmp_path / "src"
         src.mkdir()
-        (src / "plugin.yaml").write_text(
-            "name: lantai-hook\nversion: 1.1.0\n", encoding="utf-8")
+        (src / "plugin.yaml").write_text("name: lantai-hook\nversion: 1.1.0\n", encoding="utf-8")
         (src / "__init__.py").write_text("# new\n", encoding="utf-8")
 
         inst.deploy(src, plugins, tmp_path / "hermes" / "plugins-backup")
@@ -193,24 +200,26 @@ class TestInstallScriptBackup:
         # 备份内 manifest 失效化，内容保留
         assert not (backup / "plugin.yaml").exists()
         assert (backup / "plugin.yaml.disabled").read_text(encoding="utf-8") == (
-            "name: lantai-hook\nversion: 1.0.0\n")
+            "name: lantai-hook\nversion: 1.0.0\n"
+        )
         assert (backup / "__init__.py").read_text(encoding="utf-8") == "# old\n"
         # 目标目录是新版
         assert (plugins / "lantai-hook" / "plugin.yaml").read_text(
-            encoding="utf-8") == "name: lantai-hook\nversion: 1.1.0\n"
+            encoding="utf-8"
+        ) == "name: lantai-hook\nversion: 1.1.0\n"
         # 自检通过：plugins/ 下同名候选唯一
         assert inst.validate_no_duplicate(plugins)
 
     def test_loader_winner_is_deployed_dir(self, tmp_path):
         """模拟加载器 winners 去重（top-level key=name、sorted 后扫描者覆盖）：胜者为新版。"""
         import re
+
         inst = self._load_script()
         plugins = tmp_path / "plugins"
         plugins.mkdir()
         src = tmp_path / "src"
         src.mkdir()
-        (src / "plugin.yaml").write_text(
-            "name: lantai-hook\nversion: 1.1.0\n", encoding="utf-8")
+        (src / "plugin.yaml").write_text("name: lantai-hook\nversion: 1.1.0\n", encoding="utf-8")
         (src / "__init__.py").write_text("# new\n", encoding="utf-8")
 
         inst.deploy(src, plugins, tmp_path / "plugins-backup")
@@ -221,8 +230,7 @@ class TestInstallScriptBackup:
                 continue
             mf = child / "plugin.yaml"
             if mf.exists():
-                name = re.search(
-                    r"(?m)^name\s*:\s*(\S+)", mf.read_text(encoding="utf-8")).group(1)
+                name = re.search(r"(?m)^name\s*:\s*(\S+)", mf.read_text(encoding="utf-8")).group(1)
                 winners[name] = child
         assert winners["lantai-hook"] == plugins / "lantai-hook"
 
@@ -233,8 +241,10 @@ class TestInstallScriptBackup:
         plugins.mkdir()
         (plugins / "lantai-hook").mkdir()
         (plugins / "lantai-hook" / "plugin.yaml").write_text(
-            "name: lantai-hook\nversion: 1.1.0\n", encoding="utf-8")
+            "name: lantai-hook\nversion: 1.1.0\n", encoding="utf-8"
+        )
         (plugins / "lantai-hook.bak-20260810").mkdir()
         (plugins / "lantai-hook.bak-20260810" / "plugin.yaml").write_text(
-            "name: lantai-hook\nversion: 1.0.0\n", encoding="utf-8")
+            "name: lantai-hook\nversion: 1.0.0\n", encoding="utf-8"
+        )
         assert not inst.validate_no_duplicate(plugins)

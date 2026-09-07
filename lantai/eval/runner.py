@@ -2,6 +2,7 @@
 
 契约见 docs/dry-run-eval-task-split.md。
 """
+
 import time
 
 from sqlmodel import select
@@ -37,9 +38,15 @@ def _load_used_ids_map(per_query: list[dict]) -> dict[str, list[str]]:
     return used_map
 
 
-def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
-                top_k: int = 5, baseline_run_id: str | None = None,
-                use_rerank: bool = True, intent_mode: str = "llm") -> EvalRun:
+def run_dry_run(
+    query_set: EvalQuerySet,
+    *,
+    param_overrides: dict | None = None,
+    top_k: int = 5,
+    baseline_run_id: str | None = None,
+    use_rerank: bool = True,
+    intent_mode: str = "llm",
+) -> EvalRun:
     """遍历查询集调 hybrid_search，算指标，写 EvalRun（status=done）。
 
     单条查询失败不中断：记录该条 error 继续，metrics 带 errors 计数。
@@ -64,24 +71,37 @@ def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
     _intent_patcher = None
     if intent_mode == "rule":
         from lantai.core.settings import settings as _s
+
         _intent_patcher = _patch(
             "lantai.retrieval.hybrid.classify_intent",
-            return_value={"intent": _s.DEFAULT_INTENT,
-                          "candidate_n": _s.INTENT_CANDIDATE_SIZES.get(_s.DEFAULT_INTENT, 10)})
+            return_value={
+                "intent": _s.DEFAULT_INTENT,
+                "candidate_n": _s.INTENT_CANDIDATE_SIZES.get(_s.DEFAULT_INTENT, 10),
+            },
+        )
         _intent_patcher.start()
 
     for i, q in enumerate(queries):
         query_text = (q or {}).get("query", "")
         if not query_text:
             errors += 1
-            per_query.append({"query": "", "event_id": (q or {}).get("event_id", ""),
-                              "result_ids": [], "top_scores": [],
-                              "zero_result": True, "latency_ms": 0, "error": "empty_query"})
+            per_query.append(
+                {
+                    "query": "",
+                    "event_id": (q or {}).get("event_id", ""),
+                    "result_ids": [],
+                    "top_scores": [],
+                    "zero_result": True,
+                    "latency_ms": 0,
+                    "error": "empty_query",
+                }
+            )
             continue
         t0 = time.perf_counter()
         try:
             results = hybrid_search(
-                query_text, top_k=top_k,
+                query_text,
+                top_k=top_k,
                 use_rerank=use_rerank,
                 param_overrides=param_overrides,
             )
@@ -103,21 +123,29 @@ def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
                         ids.append(f"doc:{r['document'][:40]}")
                     if "score" in r:
                         scores.append(round(float(r["score"]), 4))
-            per_query.append({
-                "query": query_text,
-                "event_id": (q or {}).get("event_id", ""),
-                "result_ids": ids,
-                "top_scores": scores,
-                "zero_result": not ids,
-                "latency_ms": latency_ms,
-            })
+            per_query.append(
+                {
+                    "query": query_text,
+                    "event_id": (q or {}).get("event_id", ""),
+                    "result_ids": ids,
+                    "top_scores": scores,
+                    "zero_result": not ids,
+                    "latency_ms": latency_ms,
+                }
+            )
         except Exception as exc:  # noqa: BLE001 —— 单条失败不中断整个 dry-run
             errors += 1
             logger.warning("dry-run query %d failed: %s", i, exc)
-            per_query.append({
-                "query": query_text, "result_ids": [], "top_scores": [],
-                "zero_result": True, "latency_ms": 0, "error": str(exc)[:200],
-            })
+            per_query.append(
+                {
+                    "query": query_text,
+                    "result_ids": [],
+                    "top_scores": [],
+                    "zero_result": True,
+                    "latency_ms": 0,
+                    "error": str(exc)[:200],
+                }
+            )
 
     # 基线 per_query 用于 jaccard（按 queries 顺序对齐）
     baseline_per_query = None
@@ -125,8 +153,7 @@ def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
         with db.get_session() as s:
             base = s.get(EvalRun, baseline_run_id)
             if base and base.per_query:
-                baseline_per_query = [pq.get("result_ids") or []
-                                      for pq in base.per_query]
+                baseline_per_query = [pq.get("result_ids") or [] for pq in base.per_query]
 
     if _intent_patcher is not None:
         _intent_patcher.stop()
@@ -134,8 +161,9 @@ def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
     # used_ids 弱标注回填（方向二）：按 event_id 从 retrieval_event 拉 used_ids，
     # 无回填时 used_ids_map 为空 → weak_hit_rate 诚实标 None（不编造 0）。
     used_ids_map = _load_used_ids_map(per_query)
-    metrics = compute_metrics(per_query, baseline_per_query=baseline_per_query,
-                              used_ids_map=used_ids_map)
+    metrics = compute_metrics(
+        per_query, baseline_per_query=baseline_per_query, used_ids_map=used_ids_map
+    )
     if errors:
         metrics["errors"] = errors
 
@@ -156,8 +184,14 @@ def run_dry_run(query_set: EvalQuerySet, *, param_overrides: dict | None = None,
         s.commit()
         s.refresh(run)
 
-    logger.info("dry-run done: run=%s set=%s samples=%d errors=%d metrics=%s",
-                run_id, query_set.name, len(per_query), errors, metrics)
+    logger.info(
+        "dry-run done: run=%s set=%s samples=%d errors=%d metrics=%s",
+        run_id,
+        query_set.name,
+        len(per_query),
+        errors,
+        metrics,
+    )
     return run
 
 

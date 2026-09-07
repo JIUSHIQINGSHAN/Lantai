@@ -17,9 +17,11 @@ class ArxivAdapter(SourceAdapter):
     def fetch(self, config: dict) -> list[RawDocument]:
         query = config.get("query", "cat:cs.AI")
         max_results = int(config.get("max_results", 10))
-        url = ("http://export.arxiv.org/api/query"
-               f"?search_query={query}&start=0&max_results={max_results}"
-               "&sortBy=submittedDate&sortOrder=descending")
+        url = (
+            "http://export.arxiv.org/api/query"
+            f"?search_query={query}&start=0&max_results={max_results}"
+            "&sortBy=submittedDate&sortOrder=descending"
+        )
         r = httpx.get(url, timeout=30)
         feed = feedparser.parse(r.text)
         out: list[RawDocument] = []
@@ -33,19 +35,21 @@ class ArxivAdapter(SourceAdapter):
                 signal_payload = draft.model_dump(mode="json")
             except Exception:
                 signal_payload = None  # 解析失败 → ingest_worker 落保底 tier D
-            out.append(RawDocument(
-                id=new_id("doc"),
-                source_type="paper",
-                source_id=e.get("id", ""),
-                url=e.get("link", ""),
-                title=e.get("title", "").strip(),
-                authors=[a.name for a in e.get("authors", [])],
-                published_at=datetime(*e.published_parsed[:6], tzinfo=UTC)
-                             if e.get("published_parsed") else None,
-                lang="en",
-                content_hash=h,
-                content=content,
-                meta={"raw": {"arxiv_id": e.get("id")},
-                      "quality_signal": signal_payload},
-            ))
+            out.append(
+                RawDocument(
+                    id=new_id("doc"),
+                    source_type="paper",
+                    source_id=e.get("id", ""),
+                    url=e.get("link", ""),
+                    title=e.get("title", "").strip(),
+                    authors=[a.name for a in e.get("authors", [])],
+                    published_at=datetime(*e.published_parsed[:6], tzinfo=UTC)
+                    if e.get("published_parsed")
+                    else None,
+                    lang="en",
+                    content_hash=h,
+                    content=content,
+                    meta={"raw": {"arxiv_id": e.get("id")}, "quality_signal": signal_payload},
+                )
+            )
         return out

@@ -3,6 +3,7 @@
 零依赖静态页：后端直接托管 HTML（无 node/打包），页内调 POST /search?trace=true
 渲染 意图→向量→衰减→(重排)→最终 的召回漏斗与结果。只读，不改变任何检索语义。
 """
+
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -282,6 +283,7 @@ def ui_asset(asset_name: str):
     if media_type is None:
         raise HTTPException(404, "ui asset not found")
     return FileResponse(_UI_ASSET_DIR / asset_name, media_type=media_type)
+
 
 _EVOLVE_HTML = """<!DOCTYPE html>
 <html lang="zh-CN">

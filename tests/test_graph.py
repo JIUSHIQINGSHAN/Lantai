@@ -3,6 +3,7 @@
 build_graph 纯函数直调不 mock；用真实 SQLite 验证节点入选规则、
 边过滤（跨池边丢弃）与 supersedes 链保留。
 """
+
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -15,8 +16,10 @@ from lantai.models.tables import MemoryEdge, MemoryItem, MemoryScene, RawDocumen
 @pytest.fixture()
 def graph_env():
     import lantai.models.tables  # noqa: F401
+
     engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False},
+        "sqlite://",
+        connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
@@ -27,12 +30,19 @@ def graph_env():
     return session_factory, engine
 
 
-def _m(mid, content, lane="fact", scene_id=None, status="active",
-       updated_days=0):
+def _m(mid, content, lane="fact", scene_id=None, status="active", updated_days=0):
     return MemoryItem(
-        id=mid, memory_type="semantic", key=f"k-{mid}", content=content,
-        lane=lane, scene_id=scene_id, status=status, importance=0.5,
-        decay_score=1.0, decay_class="episodic", use_count=0,
+        id=mid,
+        memory_type="semantic",
+        key=f"k-{mid}",
+        content=content,
+        lane=lane,
+        scene_id=scene_id,
+        status=status,
+        importance=0.5,
+        decay_score=1.0,
+        decay_class="episodic",
+        use_count=0,
         created_at=datetime.now(UTC) - timedelta(days=1),
         updated_at=datetime.now(UTC) - timedelta(days=updated_days),
     )
@@ -40,8 +50,11 @@ def _m(mid, content, lane="fact", scene_id=None, status="active",
 
 def _edge(edge_id, source, target, relation, confidence=0.8):
     return MemoryEdge(
-        id=edge_id, source_memory_id=source, target_memory_id=target,
-        relation=relation, confidence=confidence,
+        id=edge_id,
+        source_memory_id=source,
+        target_memory_id=target,
+        relation=relation,
+        confidence=confidence,
     )
 
 
@@ -51,6 +64,7 @@ def _node(out, mid):
 
 # ── 纯函数：节点入选 / 边过滤 / 统计（真实 SQLite 直调）────────
 
+
 def test_build_graph_pure_shape(graph_env):
     session_factory, _ = graph_env
     with session_factory() as s:
@@ -59,6 +73,7 @@ def test_build_graph_pure_shape(graph_env):
         s.add(_edge("e1", "m1", "m2", "supports"))
         s.commit()
     from lantai.ops.graph import build_graph
+
     out = build_graph(session_factory())
     assert out["stats"]["lane_counts"] == {"fact": 2}
     assert out["stats"]["edge_counts"] == {"supports": 1}
@@ -79,6 +94,7 @@ def test_isolated_memory_excluded_scene_members_included(graph_env):
         s.add(_edge("e1", "m1", "m2", "refines"))
         s.commit()
     from lantai.ops.graph import build_graph
+
     out = build_graph(session_factory())
     ids = {n["id"] for n in out["nodes"]}
     assert ids == {"m1", "m2", "m4"}
@@ -98,6 +114,7 @@ def test_cross_pool_edge_dropped_and_archived_excluded(graph_env):
         s.add(_edge("e1", "m1", "old", "supersedes"))
         s.commit()
     from lantai.ops.graph import build_graph
+
     out = build_graph(session_factory(), limit=2)
     # m1/m2 无有效边且无 scene -> 无节点；归档 old 及其边均不出现
     assert out["nodes"] == []
@@ -116,6 +133,7 @@ def test_supersedes_chain_kept(graph_env):
         s.add(_edge("e2", "v2", "v3", "supersedes"))
         s.commit()
     from lantai.ops.graph import build_graph
+
     out = build_graph(session_factory())
     assert len(out["links"]) == 2
     rels = {(l["source"], l["target"]) for l in out["links"]}
@@ -127,6 +145,7 @@ def test_build_graph_invalid_limit_raises(graph_env):
     """非法 limit（越界/bool/非 int）抛 ValueError，不静默钳制（宁 miss 不脏写）。"""
     session_factory, _ = graph_env
     from lantai.ops.graph import build_graph, validate_graph_limit
+
     with pytest.raises(ValueError):
         validate_graph_limit(0)
     with pytest.raises(ValueError):
@@ -141,6 +160,7 @@ def test_build_graph_invalid_limit_raises(graph_env):
 def test_empty_db_returns_empty_graph(graph_env):
     session_factory, _ = graph_env
     from lantai.ops.graph import build_graph
+
     out = build_graph(session_factory())
     assert out["nodes"] == []
     assert out["links"] == []
@@ -152,12 +172,21 @@ def test_source_document_nodes_included(graph_env):
     session_factory, _ = graph_env
     with session_factory() as s:
         s.add(_m("m1", "发布会记忆"))
-        s.add(RawDocument(id="doc_1", source_type="web", source_id="src1", title="发布会指南",
-                          content="发布会指南全文", content_hash="h1",
-                          url="https://example.com/guide"))
+        s.add(
+            RawDocument(
+                id="doc_1",
+                source_type="web",
+                source_id="src1",
+                title="发布会指南",
+                content="发布会指南全文",
+                content_hash="h1",
+                url="https://example.com/guide",
+            )
+        )
         s.add(_edge("e1", "doc_1", "m1", "supports"))
         s.commit()
     from lantai.ops.graph import build_graph
+
     out = build_graph(session_factory())
     types = {n["id"]: n["node_type"] for n in out["nodes"]}
     assert types == {"m1": "memory", "doc_1": "source"}
@@ -176,11 +205,21 @@ def test_doc_to_archived_memory_edge_dropped(graph_env):
     session_factory, _ = graph_env
     with session_factory() as s:
         s.add(_m("old", "归档记忆", status="archived"))
-        s.add(RawDocument(id="doc_1", source_type="web", source_id="src2", title="旧文档",
-                          content="x", content_hash="h1", url="https://example.com/old"))
+        s.add(
+            RawDocument(
+                id="doc_1",
+                source_type="web",
+                source_id="src2",
+                title="旧文档",
+                content="x",
+                content_hash="h1",
+                url="https://example.com/old",
+            )
+        )
         s.add(_edge("e1", "doc_1", "old", "supports"))
         s.commit()
     from lantai.ops.graph import build_graph
+
     out = build_graph(session_factory())
     assert out["nodes"] == []
     assert out["links"] == []
@@ -198,6 +237,7 @@ def test_limit_respected(graph_env):
         s.add(_edge("e4", "m0", "m4", "supports"))
         s.commit()
     from lantai.ops.graph import build_graph
+
     out = build_graph(session_factory(), limit=2)
     # 池内最新两条 m0(updated 0天前最新) 与 m1 —— 但 m0 与 m1 有边，入选
     ids = {n["id"] for n in out["nodes"]}

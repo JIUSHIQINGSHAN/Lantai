@@ -14,8 +14,9 @@ from lantai.storage import db
 
 def run_evolve_once():
     with db.get_session() as s:
-        cands = s.exec(select(MemoryCandidate)
-                       .where(MemoryCandidate.status.in_(["new", "fastpath"]))).all()
+        cands = s.exec(
+            select(MemoryCandidate).where(MemoryCandidate.status.in_(["new", "fastpath"]))
+        ).all()
 
     for cand in cands:
         result = decide(cand.id)
@@ -39,13 +40,15 @@ def run_evolve_once():
     # 替代"只靠手动 /scenes/rebuild"；SCENE_LAYER_ENABLED 门控，异常不影响演化
     if settings.SCENE_LAYER_ENABLED:
         from lantai.services.scene_service import assign_unassigned
+
         assign_unassigned()
     scheduler_mod.record_run("evolve")
 
 
 def run_pending_proposals():
     with db.get_session() as s:
-        props = s.exec(select(MemoryProposal)
-                       .where(MemoryProposal.status == ProposalStatus.APPROVED)).all()
+        props = s.exec(
+            select(MemoryProposal).where(MemoryProposal.status == ProposalStatus.APPROVED)
+        ).all()
     for p in props:
         apply_proposal(p.id)

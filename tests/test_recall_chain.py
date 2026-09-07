@@ -4,6 +4,7 @@ validate_chain_params / build_recall_chain 直调不 mock 内部计算：检索�
 SQLite+FTS + 本地 ngram 嵌入 + 假向量库（仅替换外部网络 embedding 与向量存储），
 BFS 逐层展开 / 去重 / 自匹配排除 / 总量封顶 全部真实执行。
 """
+
 import os
 import uuid
 from datetime import UTC, datetime
@@ -26,21 +27,22 @@ class LocalEmbedder:
     """本地 bigram 词袋嵌入（测试替身）：确定性、零外部，仅替换 embedding API。"""
 
     def __init__(self, corpus):
-        self.vocab = sorted({t[i:i + 2] for t in corpus for i in range(len(t) - 1)})
+        self.vocab = sorted({t[i : i + 2] for t in corpus for i in range(len(t) - 1)})
         self.dim = max(1, len(self.vocab))
 
     def embed(self, queries):
         vecs = []
         import math
+
         for q in queries:
             v = [0.0] * self.dim
             for i in range(len(q) - 1):
-                g = q[i:i + 2]
+                g = q[i : i + 2]
                 if g in self.vocab:
                     v[self.vocab.index(g)] += 1
             # Return arbitrary vectors that guarantee distance < 0.8 on ANY overlap
             # To do this, we just make non-zero elements large
-            norm = math.sqrt(sum(x*x for x in v)) or 1.0
+            norm = math.sqrt(sum(x * x for x in v)) or 1.0
             vecs.append([x / norm for x in v])
         return vecs
 
@@ -51,9 +53,11 @@ class FakeVectorStore:
     def __init__(self, embedder, rows):
         self._vectors = {mid: embedder.embed([c])[0] for mid, c in rows}
 
-    def search(self, query_embedding, top_k):
-        scored = [(mid, sum(a * b for a, b in zip(query_embedding, v, strict=False)))
-                  for mid, v in self._vectors.items()]
+    def search(self, query_embedding, top_k, filters=None):
+        scored = [
+            (mid, sum(a * b for a, b in zip(query_embedding, v, strict=False)))
+            for mid, v in self._vectors.items()
+        ]
         scored.sort(key=lambda x: -x[1])
         # If there is any overlap (s > 0), make distance < 0.8 so it passes hybrid_search filter
         return [{"id": mid, "distance": 0.5 if s > 0.01 else 1.0} for mid, s in scored[:top_k]]
@@ -71,7 +75,7 @@ class _StoreProxy:
     def __init__(self, harness):
         self._h = harness
 
-    def search(self, query_embedding, top_k):
+    def search(self, query_embedding, top_k, filters=None):
         return self._h.store.search(query_embedding, top_k)
 
     def add(self, *args, **kwargs):
@@ -95,10 +99,17 @@ class ChainHarness:
         with self.session_factory() as s:
             for c in contents:
                 m = MemoryItem(
-                    id=uuid.uuid4().hex, memory_type="general", key=c[:48],
-                    content=c, lane="general", status="active",
-                    decay_class="episodic", decay_score=0.9,
-                    created_at=_utcnow(), updated_at=_utcnow())
+                    id=uuid.uuid4().hex,
+                    memory_type="general",
+                    key=c[:48],
+                    content=c,
+                    lane="general",
+                    status="active",
+                    decay_class="episodic",
+                    decay_score=0.9,
+                    created_at=_utcnow(),
+                    updated_at=_utcnow(),
+                )
                 s.add(m)
                 s.flush()
                 sync_fts(s, m.id, c)
@@ -141,8 +152,10 @@ class ChainHarness:
 @pytest.fixture()
 def chain_env():
     import lantai.models.tables  # noqa: F401
+
     engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False},
+        "sqlite://",
+        connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
@@ -157,12 +170,20 @@ def chain_env():
 
 # ── 纯函数：参数校验（不 mock）────────
 
+
 def test_validate_chain_params_pure():
     from lantai.ops.recall_chain import validate_chain_params
+
     validate_chain_params(3, 3, 0.3, 20)  # 默认值合法
     bad = [
-        (0, 3, 0.3, 20), (6, 3, 0.3, 20), (3, 0, 0.3, 20), (3, 11, 0.3, 20),
-        (3, 3, -0.1, 20), (3, 3, 1.1, 20), (3, 3, 0.3, 0), (3, 3, 0.3, 51),
+        (0, 3, 0.3, 20),
+        (6, 3, 0.3, 20),
+        (3, 0, 0.3, 20),
+        (3, 11, 0.3, 20),
+        (3, 3, -0.1, 20),
+        (3, 3, 1.1, 20),
+        (3, 3, 0.3, 0),
+        (3, 3, 0.3, 51),
     ]
     for args in bad:
         with pytest.raises(ValueError):
@@ -171,14 +192,17 @@ def test_validate_chain_params_pure():
 
 def test_build_recall_chain_empty_seed_rejected():
     from lantai.ops.recall_chain import build_recall_chain
+
     with pytest.raises(ValueError, match="non-empty"):
         build_recall_chain("   ")
 
 
 # ── 全链路（真实 SQLite+FTS + 本地嵌入，BFS 真实执行）────────
 
+
 def test_build_recall_chain_empty_db(chain_env):
     from lantai.ops.recall_chain import build_recall_chain
+
     out = build_recall_chain("苹果水果", max_depth=2)
     assert out["total"] == 0
     assert out["chain"] == []
@@ -188,23 +212,25 @@ def test_build_recall_chain_empty_db(chain_env):
 def test_build_recall_chain_expands_levels(chain_env):
     """多跳传播：seed → 直接相关 → 经内容接力到更远关联；无关记忆不入链。"""
     from lantai.ops.recall_chain import build_recall_chain
-    mids = chain_env.seed([
-        "苹果是一种水果",
-        "水果需要冷藏保存",
-        "冷藏保存延长保质期",
-        "Python 编程语言教程",
-        "烘焙苹果派需要面粉",
-    ])
+
+    mids = chain_env.seed(
+        [
+            "苹果是一种水果",
+            "水果需要冷藏保存",
+            "冷藏保存延长保质期",
+            "Python 编程语言教程",
+            "烘焙苹果派需要面粉",
+        ]
+    )
     m1, m2, m3, m4, m5 = mids
     out = build_recall_chain("苹果", max_depth=3, branch=3, min_score=0.1)
     all_ids = [r["id"] for e in out["chain"] for r in e["results"]]
-    assert m4 not in all_ids                        # 无关记忆不入选
-    assert len(all_ids) == len(set(all_ids))        # 跨层去重
+    assert m4 not in all_ids  # 无关记忆不入选
+    assert len(all_ids) == len(set(all_ids))  # 跨层去重
     assert out["total"] == len(all_ids)
-    level0_ids = [r["id"] for e in out["chain"] if e["depth"] == 0
-                  for r in e["results"]]
-    assert m1 in level0_ids and m5 in level0_ids    # seed 直接相关入选
-    assert m3 in all_ids                            # 多跳：经 m2 内容接力到 m3
+    level0_ids = [r["id"] for e in out["chain"] if e["depth"] == 0 for r in e["results"]]
+    assert m1 in level0_ids and m5 in level0_ids  # seed 直接相关入选
+    assert m3 in all_ids  # 多跳：经 m2 内容接力到 m3
     assert max(e["depth"] for e in out["chain"]) >= 1
     assert all(r["score"] >= 0.05 for e in out["chain"] for r in e["results"])
 
@@ -212,11 +238,14 @@ def test_build_recall_chain_expands_levels(chain_env):
 def test_build_recall_chain_self_match_excluded(chain_env):
     """seed 内容本身就是某条记忆 → 该条不入选（自匹配排除），关联仍入选。"""
     from lantai.ops.recall_chain import build_recall_chain
-    mids = chain_env.seed([
-        "苹果是一种水果",
-        "水果需要冷藏保存",
-        "Python 编程语言教程",
-    ])
+
+    mids = chain_env.seed(
+        [
+            "苹果是一种水果",
+            "水果需要冷藏保存",
+            "Python 编程语言教程",
+        ]
+    )
     m1, m2, m4 = mids
     out = build_recall_chain("苹果是一种水果", max_depth=2, branch=3, min_score=0.1)
     all_ids = [r["id"] for e in out["chain"] for r in e["results"]]
@@ -228,13 +257,15 @@ def test_build_recall_chain_self_match_excluded(chain_env):
 def test_build_recall_chain_total_cap(chain_env):
     """总量封顶：total_max 截断 + truncated 标记。"""
     from lantai.ops.recall_chain import build_recall_chain
-    chain_env.seed([
-        "苹果是一种水果",
-        "水果需要冷藏保存",
-        "冷藏保存延长保质期",
-    ])
-    out = build_recall_chain("苹果", max_depth=3, branch=3,
-                             min_score=0.1, total_max=2)
+
+    chain_env.seed(
+        [
+            "苹果是一种水果",
+            "水果需要冷藏保存",
+            "冷藏保存延长保质期",
+        ]
+    )
+    out = build_recall_chain("苹果", max_depth=3, branch=3, min_score=0.1, total_max=2)
     assert out["total"] == 2
     assert out["truncated"] is True
     assert sum(len(e["results"]) for e in out["chain"]) == 2
@@ -243,10 +274,13 @@ def test_build_recall_chain_total_cap(chain_env):
 def test_build_recall_chain_min_score_filters(chain_env):
     """低相关（分数 < min_score）条目被过滤：0.99 门槛下空链。"""
     from lantai.ops.recall_chain import build_recall_chain
-    chain_env.seed([
-        "苹果是一种水果",
-        "水果需要冷藏保存",
-    ])
+
+    chain_env.seed(
+        [
+            "苹果是一种水果",
+            "水果需要冷藏保存",
+        ]
+    )
     out = build_recall_chain("苹果", max_depth=2, branch=3, min_score=0.99)
     assert out["total"] == 0
     assert out["chain"] == []

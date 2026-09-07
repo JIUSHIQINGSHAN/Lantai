@@ -4,6 +4,7 @@
 （样本不足不动、streak 触发、rate 触发、只降不升、TTL 过期恢复）、
 apply_penalty_to_weight。
 """
+
 import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
@@ -20,8 +21,10 @@ from lantai.parameters.reliability import (
 def rel_db():
     import lantai.models.tables  # noqa: F401
     import lantai.parameters.trust_models  # noqa: F401
+
     test_engine = create_engine(
-        "sqlite://", echo=False,
+        "sqlite://",
+        echo=False,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
@@ -101,6 +104,7 @@ class TestReliabilityPenalty:
         from datetime import timedelta
 
         from lantai.core.time import utcnow
+
         # 制造 3 连败
         for _ in range(3):
             record_verification_result("workshop", passed=False)
@@ -109,10 +113,12 @@ class TestReliabilityPenalty:
         from sqlmodel import select
 
         from lantai.parameters.trust_models import SignalReliabilityStat
+
         sf = rel_db
         with sf() as s:
-            stat = s.exec(select(SignalReliabilityStat).where(
-                SignalReliabilityStat.venue_class == "workshop")).first()
+            stat = s.exec(
+                select(SignalReliabilityStat).where(SignalReliabilityStat.venue_class == "workshop")
+            ).first()
             stat.last_verified_at = utcnow().replace(tzinfo=None) - timedelta(days=200)
             s.add(stat)
             s.commit()

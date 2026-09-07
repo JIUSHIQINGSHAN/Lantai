@@ -2,6 +2,7 @@
 
 /stats 聚合真实 DB 直调（不 mock）；页面只验证可达与契约引用。
 """
+
 from unittest.mock import patch
 
 import pytest
@@ -16,8 +17,10 @@ from lantai.models.tables import MemoryItem
 def pulse_env():
     """内存 SQLite 真实建表 + patch 仅 db.get_session。"""
     import lantai.models.tables  # noqa
+
     engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False},
+        "sqlite://",
+        connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
@@ -30,9 +33,15 @@ def pulse_env():
 
 
 def _mem(i, **kw):
-    base = dict(id=f"mem_{i}", memory_type="semantic", key=f"key_{i}",
-                content=f"内容 {i}", lane="general", status="active",
-                tier="working")
+    base = dict(
+        id=f"mem_{i}",
+        memory_type="semantic",
+        key=f"key_{i}",
+        content=f"内容 {i}",
+        lane="general",
+        status="active",
+        tier="working",
+    )
     base.update(kw)
     return MemoryItem(**base)
 
@@ -41,7 +50,8 @@ def test_ui_pulse_served():
     """页面可达：/ui/pulse 200 + 面板标记 + 三个数据端点引用。"""
     from fastapi.testclient import TestClient
 
-    from api_server import app
+    from lantai.api.app import app
+
     with TestClient(app) as c:
         r = c.get("/ui/pulse")
         assert r.status_code == 200
@@ -62,7 +72,8 @@ def test_stats_endpoint_aggregates(pulse_env):
         s.commit()
     from fastapi.testclient import TestClient
 
-    from api_server import app
+    from lantai.api.app import app
+
     with TestClient(app) as c:
         r = c.get("/stats")
         assert r.status_code == 200
@@ -78,7 +89,8 @@ def test_ui_index_includes_pulse():
     """入口页含三面板链接。"""
     from fastapi.testclient import TestClient
 
-    from api_server import app
+    from lantai.api.app import app
+
     with TestClient(app) as c:
         r = c.get("/ui")
         assert r.status_code == 200

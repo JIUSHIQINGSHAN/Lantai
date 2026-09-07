@@ -6,9 +6,10 @@ r"""探颐（ADR-0037）：记忆主动探针与自然交互消歧测试。
 3. resolve_probe_response 识别用户自然语言肯定/否定并闭环消解冲突；
 4. REST POST /probing/detect, /probing/resolve 与 MCP probe_detect, probe_resolve 工具。
 """
+
 from fastapi.testclient import TestClient
 
-from api_server import app
+from lantai.api.app import app
 from lantai.models.tables import ConflictEvent, MemoryItem
 from lantai.services.probing_service import (
     detect_memory_probes,
@@ -85,7 +86,9 @@ class TestProbingDB:
             s.commit()
 
             # 1. 用户肯定答复
-            res = resolve_probe_response("conf_tech_01", "是的，我们确实已经全面转用 Python 和 Rust 了", session=s)
+            res = resolve_probe_response(
+                "conf_tech_01", "是的，我们确实已经全面转用 Python 和 Rust 了", session=s
+            )
             assert res["status"] == "resolved"
             assert res["action"] == "applied"
 
@@ -114,7 +117,9 @@ class TestProbingDB:
             s.commit()
 
             # 2. 用户否定答复
-            res = resolve_probe_response("conf_neg_01", "不是的，端口没有变，依然是 8080", session=s)
+            res = resolve_probe_response(
+                "conf_neg_01", "不是的，端口没有变，依然是 8080", session=s
+            )
             assert res["status"] == "resolved"
             assert res["action"] == "dismissed"
 
@@ -132,7 +137,8 @@ class TestProbingEndpointsAndMCP:
         assert "probes" in resp.json()
 
     def test_mcp_probing_tools(self, param_env):
-        from scripts.mcp_server import handle_probe_detect, handle_probe_resolve
+        from lantai.cli.mcp import handle_probe_detect, handle_probe_resolve
+
         det = handle_probe_detect({"query": "测试查询"})
         assert "probes" in det
 

@@ -65,7 +65,9 @@ def refine_memory_text(text: str, context: str = "", metadata: dict | None = Non
                 "refined_text": refined_text,
                 "confidence": min(max(confidence, 0.0), 1.0),
                 "is_valid": is_valid,
-                "lane": lane if lane in ("general", "profile", "preference", "rule", "entity", "project") else "general",
+                "lane": lane
+                if lane in ("general", "profile", "preference", "rule", "entity", "project")
+                else "general",
                 "tags": [str(t).strip() for t in tags if str(t).strip()],
                 "reason": reason,
             }
@@ -109,7 +111,12 @@ def refine_candidate_record(candidate_id: str, session: Session | None = None) -
         s.add(cand)
         s.commit()
         s.refresh(cand)
-        logger.info("披沙：候选【%s】精炼完成（status=%s, conf=%.2f）", cand.id, cand.status, cand.extractor_confidence)
+        logger.info(
+            "披沙：候选【%s】精炼完成（status=%s, conf=%.2f）",
+            cand.id,
+            cand.status,
+            cand.extractor_confidence,
+        )
         return cand.model_dump(mode="json")
 
     if session is not None:
@@ -125,6 +132,7 @@ def batch_refine_candidates(
     session: Session | None = None,
 ) -> dict:
     """批量对处于模糊置信度区间的候选执行披沙提纯。"""
+
     def _run(s: Session) -> dict:
         candidates = s.exec(
             select(MemoryCandidate)

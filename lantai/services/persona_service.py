@@ -6,6 +6,7 @@
 3. L/G/E 上下文格式化生成（注入会话首轮）
 4. 检索偏好加权辅助
 """
+
 from datetime import UTC, datetime
 
 from sqlmodel import Session, select
@@ -30,12 +31,15 @@ DEFAULT_EPISTEMIC_FACTS = (
 
 def ensure_default_persona(session: Session | None = None) -> PersonaProfile:
     """确保系统中至少存在一个默认激活的人格基座（兰台执笔）。"""
+
     def _run(s: Session) -> PersonaProfile:
         active = s.exec(select(PersonaProfile).where(PersonaProfile.is_active == True)).first()  # noqa: E712
         if active:
             return active
 
-        default_p = s.exec(select(PersonaProfile).where(PersonaProfile.name == DEFAULT_PERSONA_NAME)).first()
+        default_p = s.exec(
+            select(PersonaProfile).where(PersonaProfile.name == DEFAULT_PERSONA_NAME)
+        ).first()
         if default_p:
             default_p.is_active = True
             default_p.updated_at = datetime.now(UTC)
@@ -68,6 +72,7 @@ def ensure_default_persona(session: Session | None = None) -> PersonaProfile:
 
 def get_active_persona(session: Session | None = None) -> PersonaProfile:
     """获取当前激活的人格基座；若无则自动初始化默认人格。"""
+
     def _run(s: Session) -> PersonaProfile:
         active = s.exec(select(PersonaProfile).where(PersonaProfile.is_active == True)).first()  # noqa: E712
         if active:
@@ -104,7 +109,9 @@ def set_persona(
 
         if is_active:
             # 取消其他所有 active 标记
-            all_active = s.exec(select(PersonaProfile).where(PersonaProfile.is_active == True)).all()  # noqa: E712
+            all_active = s.exec(
+                select(PersonaProfile).where(PersonaProfile.is_active == True)
+            ).all()  # noqa: E712
             for item in all_active:
                 if not existing or item.id != existing.id:
                     item.is_active = False
@@ -146,12 +153,17 @@ def set_persona(
 
 def list_personas(session: Session | None = None) -> list[PersonaProfile]:
     """列出系统内所有人格基座。"""
+
     def _run(s: Session) -> list[PersonaProfile]:
         # 确保至少有默认项
         ensure_default_persona(s)
-        return list(s.exec(
-            select(PersonaProfile).order_by(PersonaProfile.is_active.desc(), PersonaProfile.updated_at.desc())
-        ).all())
+        return list(
+            s.exec(
+                select(PersonaProfile).order_by(
+                    PersonaProfile.is_active.desc(), PersonaProfile.updated_at.desc()
+                )
+            ).all()
+        )
 
     if session is not None:
         return _run(session)
@@ -159,7 +171,9 @@ def list_personas(session: Session | None = None) -> list[PersonaProfile]:
         return _run(s)
 
 
-def activate_persona(persona_id_or_name: str, session: Session | None = None) -> PersonaProfile | None:
+def activate_persona(
+    persona_id_or_name: str, session: Session | None = None
+) -> PersonaProfile | None:
     """根据 ID 或名称激活指定人格基座。"""
     target = (persona_id_or_name or "").strip()
     if not target:

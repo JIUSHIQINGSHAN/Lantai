@@ -11,6 +11,7 @@
 
 命令式 UX 价值：Agent 需要时主动触发维护动作，不依赖自动流程的时机。
 """
+
 import hashlib
 import time
 
@@ -57,15 +58,22 @@ def mem_sync() -> dict:
     if settings.SCENE_LAYER_ENABLED:
         try:
             from lantai.services.scene_service import assign_unassigned
+
             scene_res = assign_unassigned()
         except Exception as exc:
             logger.warning("mem_sync scene 增量聚类失败（继续）: %s", exc)
             scene_res = {"ok": False, "error": str(exc)}
     else:
-        scene_res = {"ok": True, "scanned": 0, "assigned": 0, "missed": 0,
-                     "skipped": "SCENE_LAYER_ENABLED=false"}
+        scene_res = {
+            "ok": True,
+            "scanned": 0,
+            "assigned": 0,
+            "missed": 0,
+            "skipped": "SCENE_LAYER_ENABLED=false",
+        }
     try:
         from lantai.workers.digest_worker import run_digest_once
+
         digest_res = run_digest_once()
     except Exception as exc:
         logger.warning("mem_sync digest 重算失败（继续）: %s", exc)
@@ -74,19 +82,26 @@ def mem_sync() -> dict:
     if settings.WIKI_ENABLED:
         try:
             from lantai.services.wiki_service import run_wiki_update_once
+
             wiki_res = run_wiki_update_once()
         except Exception as exc:
             logger.warning("mem_sync wiki 刷新失败（继续）: %s", exc)
             wiki_res = {"ok": False, "error": str(exc)}
     else:
         wiki_res = {"ok": True, "skipped": "WIKI_ENABLED=false"}
-    return {"ok": True, "command": "mem:sync", "scene": scene_res,
-            "digest": digest_res, "wiki": wiki_res,
-            "took_ms": int((time.monotonic() - started) * 1000)}
+    return {
+        "ok": True,
+        "command": "mem:sync",
+        "scene": scene_res,
+        "digest": digest_res,
+        "wiki": wiki_res,
+        "took_ms": int((time.monotonic() - started) * 1000),
+    }
 
 
-def create_skill(name: str, description: str = "", steps: list[str] | None = None,
-                 tags: list[str] | None = None) -> dict:
+def create_skill(
+    name: str, description: str = "", steps: list[str] | None = None, tags: list[str] | None = None
+) -> dict:
     """显式沉淀 Skill 资产（借鉴腾讯 mem:create-skill）。
 
     结构化直落（零 LLM）：memory_type="skill" + structure{name,description,steps}
@@ -101,14 +116,16 @@ def create_skill(name: str, description: str = "", steps: list[str] | None = Non
     if not steps:
         return {"ok": False, "error": "steps must be a non-empty list"}
     description = (description or "").strip()
-    content = f"{name}\n{description}\n" + "\n".join(
-        f"{i + 1}. {s}" for i, s in enumerate(steps))
+    content = f"{name}\n{description}\n" + "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
     h = hashlib.sha256(content.encode("utf-8")).hexdigest()
     with db.get_session() as s:
-        existing = s.exec(select(MemoryItem).where(
-            MemoryItem.memory_type == "skill",
-            MemoryItem.key == h,
-            MemoryItem.status == "active")).first()
+        existing = s.exec(
+            select(MemoryItem).where(
+                MemoryItem.memory_type == "skill",
+                MemoryItem.key == h,
+                MemoryItem.status == "active",
+            )
+        ).first()
         if existing:
             return {"ok": True, "memory_id": existing.id, "dedup": True}
         emb = embed([content])[0]
@@ -127,7 +144,20 @@ def create_skill(name: str, description: str = "", steps: list[str] | None = Non
         )
         s.add(mem)
         s.flush()
-        index_memory_item(mem.id, emb, {"key": mem.key, "memory_type": mem.memory_type})
+        index_memory_item(
+            mem.id,
+            emb,
+            {
+                "key": mem.key,
+                "memory_type": mem.memory_type,
+                "lane": getattr(mem, "lane", "general") or "general",
+                "domain": getattr(mem, "domain", "user") or "user",
+                "tenant_id": getattr(mem, "tenant_id", "") or "",
+                "user_id": getattr(mem, "user_id", "") or "",
+                "session_id": getattr(mem, "session_id", "") or "",
+                "agent_id": getattr(mem, "agent_id", "") or "",
+            },
+        )
         sync_fts(s, mem.id, mem.content)
         s.commit()
         return {"ok": True, "memory_id": mem.id, "dedup": False}

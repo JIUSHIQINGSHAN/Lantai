@@ -1,4 +1,5 @@
 """/usage 端点测试：最近 7 天 GROUP BY 聚合 + 缺日补零"""
+
 from unittest.mock import patch
 
 import pytest
@@ -14,21 +15,30 @@ from lantai.models.tables import MemoryItem
 
 @pytest.fixture
 def engine():
-    e = create_engine("sqlite:///:memory:",
-                      connect_args={"check_same_thread": False},
-                      poolclass=StaticPool)
+    e = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     SQLModel.metadata.create_all(e)
     return e
 
 
 def _add(engine, days_ago: float = 0.0) -> str:
     from datetime import timedelta
+
     mid = new_id("mem")
     with Session(engine) as s:
-        s.add(MemoryItem(
-            id=mid, memory_type="general", key=mid, content="内容内容内容内容内容",
-            lane="general", status="active", decay_score=1.0,
-            created_at=utcnow() - timedelta(days=days_ago)))
+        s.add(
+            MemoryItem(
+                id=mid,
+                memory_type="general",
+                key=mid,
+                content="内容内容内容内容内容",
+                lane="general",
+                status="active",
+                decay_score=1.0,
+                created_at=utcnow() - timedelta(days=days_ago),
+            )
+        )
         s.commit()
     return mid
 
@@ -43,6 +53,7 @@ def test_usage_returns_seven_days_with_zero_fill(engine):
 
 def test_usage_counts_today(engine):
     from lantai.core.time import utcnow
+
     _add(engine)  # 今天（usage 按 UTC 日期聚合，断言必须与实现一致防时区 flaky）
     with patch.object(db_module, "get_session", lambda: Session(engine)):
         res = usage()

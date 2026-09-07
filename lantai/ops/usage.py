@@ -3,6 +3,7 @@
 REST /usage 与 MCP mem_usage 共用的纯聚合服务：最近 N 天每日新增记忆数，
 单条 GROUP BY 不整表加载，缺日补零（与报告窗口一致）。
 """
+
 from datetime import timedelta
 
 from sqlmodel import func, select

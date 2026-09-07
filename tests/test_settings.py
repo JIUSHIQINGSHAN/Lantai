@@ -7,6 +7,7 @@ T01: P0 修复 + 零硬编码 测试
 - LANTAI_HOME 环境变量 + __file__ 自解析
 - validate_config() 只 warn 不 crash
 """
+
 import warnings
 from pathlib import Path
 

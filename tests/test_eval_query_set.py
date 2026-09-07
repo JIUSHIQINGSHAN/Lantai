@@ -2,6 +2,7 @@
 
 覆盖：表可建、build_query_set 过滤噪音/去重 norm_hash/limit、load_query_set、同名覆盖。
 """
+
 import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -17,8 +18,10 @@ def db_session():
     """内存 SQLite + patch db.get_session。"""
     import lantai.eval.models  # noqa: F401
     import lantai.models.tables  # noqa: F401
+
     test_engine = create_engine(
-        "sqlite://", echo=False,
+        "sqlite://",
+        echo=False,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
@@ -34,13 +37,23 @@ def db_session():
 
 
 def _add_event(s, eid, query, norm_hash, noise=False, lane="", created_at=None):
-    s.add(RetrievalEvent(
-        id=eid, trace_id="t", query_text=query, query_norm_hash=norm_hash,
-        lane=lane, param_snapshot_hash="sha256:x",
-        result_ids=[], result_scores=[], used_ids=[],
-        latency_ms=5, zero_result=False, is_system_noise=noise,
-        created_at=created_at or __import__("datetime").datetime(2026, 8, 1),
-    ))
+    s.add(
+        RetrievalEvent(
+            id=eid,
+            trace_id="t",
+            query_text=query,
+            query_norm_hash=norm_hash,
+            lane=lane,
+            param_snapshot_hash="sha256:x",
+            result_ids=[],
+            result_scores=[],
+            used_ids=[],
+            latency_ms=5,
+            zero_result=False,
+            is_system_noise=noise,
+            created_at=created_at or __import__("datetime").datetime(2026, 8, 1),
+        )
+    )
     s.commit()
 
 
@@ -49,11 +62,13 @@ class TestEvalTables:
         """EvalQuerySet / EvalRun 表可建可写。"""
         sf = db_session
         with sf() as s:
-            qs = EvalQuerySet(id="eqs_test", name="v1", sample_count=3,
-                              queries=[{"query": "hi"}])
-            run = EvalRun(id="erun_test", query_set_id="eqs_test",
-                          query_set_name="v1", status="done")
-            s.add(qs); s.add(run); s.commit()
+            qs = EvalQuerySet(id="eqs_test", name="v1", sample_count=3, queries=[{"query": "hi"}])
+            run = EvalRun(
+                id="erun_test", query_set_id="eqs_test", query_set_name="v1", status="done"
+            )
+            s.add(qs)
+            s.add(run)
+            s.commit()
             assert s.get(EvalQuerySet, "eqs_test").name == "v1"
             assert s.get(EvalRun, "erun_test").status == "done"
 
@@ -72,12 +87,11 @@ class TestBuildQuerySet:
     def test_dedup_by_norm_hash(self, db_session):
         """同 norm_hash 去重，保留最新。"""
         import datetime
+
         sf = db_session
         with sf() as s:
-            _add_event(s, "e1", "old query", "dup_hash",
-                       created_at=datetime.datetime(2026, 8, 1))
-            _add_event(s, "e2", "new query", "dup_hash",
-                       created_at=datetime.datetime(2026, 8, 5))
+            _add_event(s, "e1", "old query", "dup_hash", created_at=datetime.datetime(2026, 8, 1))
+            _add_event(s, "e2", "new query", "dup_hash", created_at=datetime.datetime(2026, 8, 5))
         qs = build_query_set("dedup_test")
         assert qs.sample_count == 1  # 去重后 1 条
         assert qs.queries[0]["query"] == "new query"  # 保留最新
@@ -85,6 +99,7 @@ class TestBuildQuerySet:
     def test_dedup_disabled(self, db_session):
         """dedup=False 保留重复。"""
         import datetime
+
         sf = db_session
         with sf() as s:
             _add_event(s, "e1", "old", "dup", created_at=datetime.datetime(2026, 8, 1))

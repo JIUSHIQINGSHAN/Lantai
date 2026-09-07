@@ -1,4 +1,5 @@
 """Reranker 客户端：调用硅基流 /v1/rerank 做精排"""
+
 import time
 
 import requests
@@ -40,8 +41,7 @@ def rerank(query: str, documents: list[str], top_k: int) -> list[dict]:
 
     # 第一次尝试
     try:
-        resp = requests.post(url, json=payload, headers=headers,
-                            timeout=settings.RERANKER_TIMEOUT)
+        resp = requests.post(url, json=payload, headers=headers, timeout=settings.RERANKER_TIMEOUT)
         resp.raise_for_status()
         return _parse_response(resp.json(), documents, top_k)
     except Exception:
@@ -50,8 +50,7 @@ def rerank(query: str, documents: list[str], top_k: int) -> list[dict]:
     # 重试 1 次
     try:
         time.sleep(settings.RERANKER_RETRY_DELAY)
-        resp = requests.post(url, json=payload, headers=headers,
-                            timeout=settings.RERANKER_TIMEOUT)
+        resp = requests.post(url, json=payload, headers=headers, timeout=settings.RERANKER_TIMEOUT)
         resp.raise_for_status()
         return _parse_response(resp.json(), documents, top_k)
     except Exception:

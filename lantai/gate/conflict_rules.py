@@ -9,6 +9,7 @@ check_antonyms 为纯函数：反义词集（settings.CONFLICT_ANTONYM_RULES，j
 规则/反义词均未命中才回落 LLM check_contradiction（降级不阻断，见 gate/decision.py）。
 账本：命中由调用方在事务内写 ConflictEvent（可溯源、可裁决）。
 """
+
 import jieba
 
 from lantai.core.settings import settings
@@ -33,12 +34,14 @@ def check_rules(new_text: str, existing_text: str) -> list[dict]:
         a_in_old = a in existing_text
         b_in_old = b in existing_text
         if (a_in_new and b_in_old) or (b_in_new and a_in_old):
-            hits.append({
-                "rule_name": rule.get("name", "unnamed"),
-                "kind": "mutex",
-                "new_matched": a if a_in_new else b,
-                "old_matched": b if a_in_new else a,
-            })
+            hits.append(
+                {
+                    "rule_name": rule.get("name", "unnamed"),
+                    "kind": "mutex",
+                    "new_matched": a if a_in_new else b,
+                    "old_matched": b if a_in_new else a,
+                }
+            )
     return hits
 
 
@@ -71,12 +74,14 @@ def check_antonyms(new_text: str, existing_text: str) -> list[dict]:
         a_in_old = a in old_toks
         b_in_old = b in old_toks
         if (a_in_new and b_in_old) or (b_in_new and a_in_old):
-            hits.append({
-                "rule_name": rule.get("name", "unnamed"),
-                "kind": "antonym",
-                "new_matched": a if a_in_new else b,
-                "old_matched": b if a_in_new else a,
-            })
+            hits.append(
+                {
+                    "rule_name": rule.get("name", "unnamed"),
+                    "kind": "antonym",
+                    "new_matched": a if a_in_new else b,
+                    "old_matched": b if a_in_new else a,
+                }
+            )
     return hits
 
 
@@ -103,10 +108,12 @@ def check_negation_pairs(new_text: str, existing_text: str) -> list[dict]:
         a_in_old = any(a in t for t in old_toks)
         b_in_old = any(b in t for t in old_toks)
         if (a_in_new and b_in_old) or (b_in_new and a_in_old):
-            hits.append({
-                "rule_name": rule.get("name", "unnamed"),
-                "kind": "negation_candidate",
-                "new_matched": a if a_in_new else b,
-                "old_matched": b if a_in_new else a,
-            })
+            hits.append(
+                {
+                    "rule_name": rule.get("name", "unnamed"),
+                    "kind": "negation_candidate",
+                    "new_matched": a if a_in_new else b,
+                    "old_matched": b if a_in_new else a,
+                }
+            )
     return hits

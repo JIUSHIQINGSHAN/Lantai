@@ -9,6 +9,7 @@
 
 用法：python scripts/verify_lantai.py
 """
+
 import json
 import os
 import subprocess
@@ -35,11 +36,15 @@ def main() -> int:
     # 1) 数据层
     home = os.environ.get("LANTAI_HOME") or os.environ.get("REMEMBRANCE_HOME", "")
     db = Path(home) / "remembrance.db" if home else REPO_ROOT / "remembrance.db"
-    check("数据目录已设置（LANTAI_HOME/REMEMBRANCE_HOME）", bool(home),
-          f"{home}" if home else "未设置（将用仓库默认目录）")
+    check(
+        "数据目录已设置（LANTAI_HOME/REMEMBRANCE_HOME）",
+        bool(home),
+        f"{home}" if home else "未设置（将用仓库默认目录）",
+    )
     check("SQLite 数据库存在", db.exists(), str(db))
     if db.exists():
         import sqlite3
+
         try:
             conn = sqlite3.connect(str(db))
             row = conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
@@ -47,17 +52,21 @@ def main() -> int:
             check("数据库可读", row and row[0] > 0, f"表对象数={row[0]}")
         except Exception as e:
             check("数据库可读", False, str(e))
-    check("向量库存在", (Path(home) / ".chromadb").exists() if home
-          else (REPO_ROOT / ".chromadb").exists())
+    check(
+        "向量库存在",
+        (Path(home) / ".chromadb").exists() if home else (REPO_ROOT / ".chromadb").exists(),
+    )
 
     # 2) 代码层
     try:
         import scripts.mcp_server  # noqa: F401
+
         check("MCP server 可导入", True)
     except Exception as e:
         check("MCP server 可导入", False, str(e)[:120])
     try:
         import scripts.shell_hook  # noqa: F401
+
         check("Shell Hook 可导入", True)
     except Exception as e:
         check("Shell Hook 可导入", False, str(e)[:120])
@@ -66,12 +75,17 @@ def main() -> int:
     try:
         proc = subprocess.run(
             [sys.executable, str(REPO_ROOT / "scripts" / "shell_hook.py")],
-            input=json.dumps({"query": "自检查询"}), capture_output=True,
-            text=True, timeout=15, env=os.environ.copy())
+            input=json.dumps({"query": "自检查询"}),
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=os.environ.copy(),
+        )
         out = proc.stdout.strip()
         parsed = json.loads(out) if out else {}
-        check("Shell Hook 契约（stdin→stdout JSON）",
-              isinstance(parsed, dict), out[:80] or "(空输出)")
+        check(
+            "Shell Hook 契约（stdin→stdout JSON）", isinstance(parsed, dict), out[:80] or "(空输出)"
+        )
     except subprocess.TimeoutExpired:
         check("Shell Hook 契约", False, "超时")
     except Exception as e:
@@ -80,6 +94,7 @@ def main() -> int:
     # 4) 服务层（若在跑）
     try:
         import httpx
+
         r = httpx.get("http://127.0.0.1:8767/health", timeout=2)
         check("REST /health", r.status_code == 200, f"HTTP {r.status_code}")
     except Exception:

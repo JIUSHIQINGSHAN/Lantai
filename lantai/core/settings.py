@@ -28,7 +28,9 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     LLM_MODEL: str = "gpt-4o-mini"
     VISION_MODEL: str = ""
-    MEDIA_DATA_URI_MAX_BYTES: int = 10 * 1024 * 1024  # 目识截屏：data URI 解码后大小上限（10MB）  # 目识（vision）多模态模型；空 = 回退 LLM_MODEL
+    MEDIA_DATA_URI_MAX_BYTES: int = (
+        10 * 1024 * 1024
+    )  # 目识截屏：data URI 解码后大小上限（10MB）  # 目识（vision）多模态模型；空 = 回退 LLM_MODEL
     EMBED_MODEL: str = "BAAI/bge-m3"
 
     INGEST_CRON_MINUTES: int = 60
@@ -61,17 +63,21 @@ class Settings(BaseSettings):
     # Lane 分轨衰减：每类记忆的基础保留强度与重要性放大系数
     # base_s = 记忆半衰期（天），importance_boost = 重要性加权分数
     LANE_DECAY_PROFILES: dict = {
-        "fact":       {"base_s": 30, "importance_boost": 40},
-        "rule":       {"base_s": 60, "importance_boost": 30},
+        "fact": {"base_s": 30, "importance_boost": 40},
+        "rule": {"base_s": 60, "importance_boost": 30},
         "experience": {"base_s": 10, "importance_boost": 15},
         "preference": {"base_s": 15, "importance_boost": 20},
-        "chat":       {"base_s": 3,  "importance_boost": 5},
-        "general":   {"base_s": 10, "importance_boost": 15},
+        "chat": {"base_s": 3, "importance_boost": 5},
+        "general": {"base_s": 10, "importance_boost": 15},
     }
     # 检索时 lane 权重提升系数
     LANE_RETRIEVAL_BOOST: dict = {
-        "fact": 1.3, "rule": 1.2, "experience": 1.0,
-        "preference": 1.1, "chat": 0.7, "general": 1.0,
+        "fact": 1.3,
+        "rule": 1.2,
+        "experience": 1.0,
+        "preference": 1.1,
+        "chat": 0.7,
+        "general": 1.0,
     }
     # 默认 lane（修 P0: promoter.py AttributeError）
     DEFAULT_LANE: str = "general"
@@ -109,7 +115,7 @@ class Settings(BaseSettings):
     CONFLICT_CHECK_TOP_K: int = 10
     # 新颖度判定参数（ADR-0002 零硬编码）
     GATE_NOVELTY_THRESHOLD: float = 0.15  # 语义高度重叠阈值
-    GATE_NOVELTY_SAMPLE_SIZE: int = 50    # 新颖度计算最大样本数
+    GATE_NOVELTY_SAMPLE_SIZE: int = 50  # 新颖度计算最大样本数
     # 单字否定对候选探测（ADR-0024）：token 级子串命中 → 候选，交 LLM 裁决（不落硬规则）
     CONFLICT_NEGATION_ENABLED: bool = True
     CONFLICT_NEGATION_PAIRS: list = [
@@ -157,12 +163,12 @@ class Settings(BaseSettings):
     # Coalesce 潮波合并配置
     COALESCE_ENABLED: bool = False  # 默认 false 向后兼容
     LANE_COALESCE_PROFILES: dict = {
-        "fact":       {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
-        "rule":       {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
+        "fact": {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
+        "rule": {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
         "experience": {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
         "preference": {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
-        "chat":       {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
-        "general":    {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
+        "chat": {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
+        "general": {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
     }
 
     # 遗忘配置
@@ -206,11 +212,11 @@ class Settings(BaseSettings):
     # 记忆 Wiki（借鉴 TencentDB Agent Memory LLM-Wiki）：场景/技能 → 持续维护的页面
     # docs/memory-wiki/{index.md, overview.md, pages/}；overview 综述 + [[wikilink]] 下钻
     WIKI_ENABLED: bool = True
-    WIKI_OUTPUT_DIR: str = ""          # 为空时 = 仓库根 docs/memory-wiki
-    WIKI_OVERVIEW_LLM: bool = True     # overview 优先 LLM 综述；失败/关闭 → 确定性综述
-    WIKI_PAGE_MAX_MEMBERS: int = 50    # 场景页最多列出的成员数
-    WIKI_MEMBER_CHARS: int = 120       # 成员摘要截断字符数
-    WIKI_RELATED_TOP: int = 3        # 场景页"相关场景"数量（按质心余弦）
+    WIKI_OUTPUT_DIR: str = ""  # 为空时 = 仓库根 docs/memory-wiki
+    WIKI_OVERVIEW_LLM: bool = True  # overview 优先 LLM 综述；失败/关闭 → 确定性综述
+    WIKI_PAGE_MAX_MEMBERS: int = 50  # 场景页最多列出的成员数
+    WIKI_MEMBER_CHARS: int = 120  # 成员摘要截断字符数
+    WIKI_RELATED_TOP: int = 3  # 场景页"相关场景"数量（按质心余弦）
 
     # lane 级 ACL（借鉴 TencentDB Memory Hub Fixed Binding 窄版）：agent_id → lane 白名单；空 = 不启用
     AGENT_LANE_BINDINGS: dict[str, list[str]] = {}
@@ -219,12 +225,12 @@ class Settings(BaseSettings):
     IMPORT_MAX_LINES: int = 5000  # 单次导入最大行数（防误喂超大文件）
 
     # scene 聚合层（ADR-0012，借鉴 TencentDB Agent Memory L2 场景层）
-    SCENE_LAYER_ENABLED: bool = False      # 默认关：rebuild 后开启
+    SCENE_LAYER_ENABLED: bool = False  # 默认关：rebuild 后开启
     SCENE_CLUSTER_THRESHOLD: float = 0.78  # embedding 余弦相似度聚类阈值（越高簇越细）
     SCENE_REBUILD_LLM_NAMING: bool = True  # rebuild 时 LLM 批量命名/摘要；失败降级代表 key
     SHELL_HOOK_MAX_CHARS_PER_SCENE: int = 400  # 单个场景导航块预算
-    SCENE_MAX_MEMBERS_SHOWN: int = 8       # 导航块最多列出的成员 key 数
-    RECALL_MONITOR_WINDOW_DAYS: int = 7     # 零召回率监控默认窗口（天）
+    SCENE_MAX_MEMBERS_SHOWN: int = 8  # 导航块最多列出的成员 key 数
+    RECALL_MONITOR_WINDOW_DAYS: int = 7  # 零召回率监控默认窗口（天）
 
     # SSRF 防护
     SSRF_ALLOWED_SCHEMES: tuple = ("http", "https")
@@ -262,19 +268,19 @@ class Settings(BaseSettings):
 
     # 参数建议系统（论文驱动优化·辅助模式）——自身不可被论文建议修改
     PARAM_ADVICE_ENABLED: bool = True
-    PARAM_ADVICE_CRON_MINUTES: int = 30          # advice worker 兜底调度间隔
-    PARAM_ADVICE_MIN_PAPERS: int = 5             # 批量窗口：未处理论文数阈值
-    PARAM_ADVICE_MAX_WAIT_DAYS: int = 7          # 批量窗口：最老论文最大等待天数
-    PARAM_ADVICE_MAX_BATCH_SIZE: int = 10        # 单批最多论文数
-    PARAM_ADVICE_MIN_CONFIDENCE: float = 0.85    # 建议置信度阈值
-    PARAM_ADVICE_MAX_CHANGES: int = 6            # 单条建议最大变更数
-    PARAM_ADVICE_MAX_RETRIES: int = 3            # 网络失败重试上限（论文级）
+    PARAM_ADVICE_CRON_MINUTES: int = 30  # advice worker 兜底调度间隔
+    PARAM_ADVICE_MIN_PAPERS: int = 5  # 批量窗口：未处理论文数阈值
+    PARAM_ADVICE_MAX_WAIT_DAYS: int = 7  # 批量窗口：最老论文最大等待天数
+    PARAM_ADVICE_MAX_BATCH_SIZE: int = 10  # 单批最多论文数
+    PARAM_ADVICE_MIN_CONFIDENCE: float = 0.85  # 建议置信度阈值
+    PARAM_ADVICE_MAX_CHANGES: int = 6  # 单条建议最大变更数
+    PARAM_ADVICE_MAX_RETRIES: int = 3  # 网络失败重试上限（论文级）
     PARAM_ADVICE_PROCESSING_STALE_MINUTES: int = 120  # 卡死 claim 恢复阈值
     PARAM_OVERRIDE_REFRESH_SECONDS: float = 5.0  # 跨进程参数刷新轮询间隔
 
     # 论文质量信号（可信度体系 L0，方向一）
     PAPER_SIGNAL_ENABLED: bool = True
-    PAPER_SEASONED_DAYS: int = 60                # v1 预印本存活过初筛的天数阈值
+    PAPER_SEASONED_DAYS: int = 60  # v1 预印本存活过初筛的天数阈值
     TIER_WEIGHT: dict = {"A": 1.00, "B": 0.97, "C": 0.93, "D": 0.00}
     QUORUM_BY_TIER: dict = {"A": 1, "B": 1, "C": 2}
     DELTA_BUDGET_FACTOR: dict = {"A": 1.0, "B": 0.7, "C": 0.5}
@@ -305,28 +311,35 @@ class Settings(BaseSettings):
     PENALTY_TTL_DAYS: int = 180
 
     # ── Reflection 反思/蒸馏（spec: docs/plans/reflection-module-spec.md）──
-    REFLECT_ENABLED: bool = True             # 观察期开启（2026-08-11 起；8/15 校准数据不足，延长观察至有 7 个完整运行日）
-    REFLECT_CRON_HOUR: int = 22              # UTC；与 digest 同小时错 1 分钟
-    REFLECT_MAX_BATCH: int = 20              # 单次蒸馏候选上限（LLM 成本防护）
+    REFLECT_ENABLED: bool = (
+        True  # 观察期开启（2026-08-11 起；8/15 校准数据不足，延长观察至有 7 个完整运行日）
+    )
+    REFLECT_CRON_HOUR: int = 22  # UTC；与 digest 同小时错 1 分钟
+    REFLECT_MAX_BATCH: int = 20  # 单次蒸馏候选上限（LLM 成本防护）
     # 察窗：观察期滑动窗口口径（ADR-0027）。从连续改为窗口内计数。
-    REFLECT_OBSERVATION_WINDOW_DAYS: int = 14   # 滑动窗口大小（天）
+    REFLECT_OBSERVATION_WINDOW_DAYS: int = 14  # 滑动窗口大小（天）
     REFLECT_OBSERVATION_REQUIRED_RUNS: int = 7  # 窗口内合格运行天数门槛
-    REFLECT_IMPORTANCE_POOL: float = 5.0     # 水位触发阈值（dry-run 推荐值维持；校准报告 2026-08-15：样本不足不下调）
+    REFLECT_IMPORTANCE_POOL: float = (
+        5.0  # 水位触发阈值（dry-run 推荐值维持；校准报告 2026-08-15：样本不足不下调）
+    )
     REFLECT_IMPORTANCE_WINDOW_DAYS: int = 7  # 水位窗口（近似「自上次反思以来」，零新表）
-    REFLECT_AUTO_APPLY_CONF: float = 0.7     # 与 evolve 自动应用阈值一致（维持）
-    REFLECT_MIN_CONFIDENCE: float = 0.5      # 低于此置信的提案不落库（维持）
-    REFLECT_MIN_USE_COUNT: int = 3           # R4 低帮助率规则
-    REFLECT_LOW_HELPFUL_RATIO: float = 0.3   # R4 低帮助率规则
-    REFLECT_STALE_AGE_DAYS: int = 30         # R5 低价值陈旧规则
-    REFLECT_STALE_IMPORTANCE: float = 0.4    # R5 低价值陈旧规则
-    REFLECT_STALE_SCAN_ENABLED: bool = False # R4/R5 默认关（误报风险，保守起步）
+    REFLECT_AUTO_APPLY_CONF: float = 0.7  # 与 evolve 自动应用阈值一致（维持）
+    REFLECT_MIN_CONFIDENCE: float = 0.5  # 低于此置信的提案不落库（维持）
+    REFLECT_MIN_USE_COUNT: int = 3  # R4 低帮助率规则
+    REFLECT_LOW_HELPFUL_RATIO: float = 0.3  # R4 低帮助率规则
+    REFLECT_STALE_AGE_DAYS: int = 30  # R5 低价值陈旧规则
+    REFLECT_STALE_IMPORTANCE: float = 0.4  # R5 低价值陈旧规则
+    REFLECT_STALE_SCAN_ENABLED: bool = False  # R4/R5 默认关（误报风险，保守起步）
 
     # digest 反思置信桶（回填校准报告区间；ADR-0002 零硬编码，见 docs/memory-quality/reflect-calibration-2026-08-11.md）
     DIGEST_CONF_BUCKETS: list[tuple] = [
-        ("0.5-0.6", 0.5, 0.6), ("0.6-0.7", 0.6, 0.7),
-        ("0.7-0.8", 0.7, 0.8), ("0.8-0.9", 0.8, 0.9),
+        ("0.5-0.6", 0.5, 0.6),
+        ("0.6-0.7", 0.6, 0.7),
+        ("0.7-0.8", 0.7, 0.8),
+        ("0.8-0.9", 0.8, 0.9),
         ("0.9-1.0", 0.9, 1.0),
     ]
+
     def model_post_init(self, __context):
         """DATABASE_URL / CHROMADB_PATH 未显式设置时从 LANTAI_HOME 推导（兼容旧 REMEMBRANCE_HOME）。"""
         if not self.LANTAI_HOME and self.REMEMBRANCE_HOME:
@@ -347,13 +360,10 @@ class Settings(BaseSettings):
             )
         if not self.API_KEY:
             logger.warning("API_KEY 为空：API 将以无鉴权模式运行（仅建议本机开发）")
-        if not (os.environ.get("REMEMBRANCE_ENTITY_KEYWORDS")
-                or os.environ.get("ENTITY_KEYWORDS")):
+        if not (os.environ.get("REMEMBRANCE_ENTITY_KEYWORDS") or os.environ.get("ENTITY_KEYWORDS")):
             logger.warning(
-                "REMEMBRANCE_ENTITY_KEYWORDS 未配置：闸门仅识别通用自指模式，"
-                "专有名词查询可能零召回"
+                "REMEMBRANCE_ENTITY_KEYWORDS 未配置：闸门仅识别通用自指模式，专有名词查询可能零召回"
             )
 
 
 settings = Settings()
-

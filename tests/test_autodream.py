@@ -1,4 +1,5 @@
 """autodream 蒸馏测试：聚类 / 规划纯函数 + 端到端待审落库（不 mock 内部逻辑）。"""
+
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -21,7 +22,8 @@ from lantai.models.tables import MemoryItem, MemoryProposal
 @pytest.fixture()
 def autodream_env():
     engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False},
+        "sqlite://",
+        connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
@@ -36,9 +38,15 @@ def autodream_env():
 def _mem(content: str, lane: str = "fact", days: int = 0) -> MemoryItem:
     now = utcnow()
     return MemoryItem(
-        id=new_id("mem"), memory_type="semantic", namespace="default",
-        key=content[:20], content=content, lane=lane, status="active",
-        importance=0.5, decay_score=1.0,
+        id=new_id("mem"),
+        memory_type="semantic",
+        namespace="default",
+        key=content[:20],
+        content=content,
+        lane=lane,
+        status="active",
+        importance=0.5,
+        decay_score=1.0,
         created_at=now - timedelta(days=days),
         updated_at=now - timedelta(days=days),
         last_used_at=now - timedelta(days=days),
@@ -50,7 +58,7 @@ def test_cluster_memories_pure():
     items = [
         _mem("服务A 端口 8080", lane="fact"),
         _mem("服务A 端口 9090", lane="fact"),
-        _mem("服务A 端口 9090", lane="rule"),   # 同关键词但不同 lane → 不混
+        _mem("服务A 端口 9090", lane="rule"),  # 同关键词但不同 lane → 不混
         _mem("用户喜欢咖啡", lane="preference"),
         _mem("咖啡是每日习惯", lane="preference"),
         _mem("独条记忆没有同伴", lane="fact"),
@@ -68,7 +76,7 @@ def test_plan_distillation_pure():
     """纯函数：新值在前、去重、evidence 溯源、置信度随簇大小递增。"""
     cluster = [
         _mem("公司域名是 example.com", days=60),
-        _mem("公司域名是 example.com", days=30),   # 重复内容 → 去重
+        _mem("公司域名是 example.com", days=30),  # 重复内容 → 去重
         _mem("公司域名改为 new-example.com", days=0),
     ]
     plan = plan_distillation(cluster)
@@ -76,8 +84,8 @@ def test_plan_distillation_pure():
     assert plan["evidence_ids"] == [m.id for m in cluster]
     content = plan["proposed_patch"]["content"]
     assert content.index("new-example.com") < content.index("example.com")  # 新值在前
-    assert content.count("example.com") == 2   # 重复的一条被去重
-    assert plan["confidence"] == 0.8           # 0.5 + 0.15 * (3-1)
+    assert content.count("example.com") == 2  # 重复的一条被去重
+    assert plan["confidence"] == 0.8  # 0.5 + 0.15 * (3-1)
     assert plan["proposed_patch"]["lane"] == "fact"
 
 
@@ -119,19 +127,25 @@ def test_scheduled_worker_creates_pending_and_records_run(autodream_env):
     """
     session_factory, engine = autodream_env
     with session_factory() as s:
-        s.add_all([
-            _mem("服务A 端口 8080", days=3),
-            _mem("服务A 端口 9090", days=2),
-            _mem("服务A 端口 9090 再次确认", days=1),
-        ])
+        s.add_all(
+            [
+                _mem("服务A 端口 8080", days=3),
+                _mem("服务A 端口 9090", days=2),
+                _mem("服务A 端口 9090 再次确认", days=1),
+            ]
+        )
         s.commit()
     from lantai.workers.autodream_worker import run_autodream_scheduled
+
     out = run_autodream_scheduled()
     assert out["created"] >= 1
     with session_factory() as s:
-        props = s.exec(select(MemoryProposal).where(
-            MemoryProposal.decided_by == "autodream",
-            MemoryProposal.status == "pending")).all()
+        props = s.exec(
+            select(MemoryProposal).where(
+                MemoryProposal.decided_by == "autodream", MemoryProposal.status == "pending"
+            )
+        ).all()
         assert props
     from lantai.core.scheduler import get_last_run
+
     assert get_last_run("autodream") is not None

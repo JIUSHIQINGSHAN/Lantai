@@ -4,6 +4,7 @@
 - evaluate_forgetting_quality 端到端：内存 SQLite + FTS 真实建表，mock 仅外部依赖
   （embedding / 向量存储 / 意图 LLM）——种子、遗忘、检索、指标、清理全真实执行
 """
+
 from unittest.mock import Mock, patch
 
 import pytest
@@ -19,6 +20,7 @@ from lantai.storage.fts import init_fts
 def fq_env():
     """内存 SQLite 真实建表 + FTS + patch 仅外部依赖。"""
     import lantai.models.tables  # noqa: F401
+
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -31,12 +33,16 @@ def fq_env():
         return Session(engine)
 
     vector_store_mock = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
-    with patch.object(db_module, "get_session", session_factory), \
-         patch("lantai.llm.client.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}):
+    with (
+        patch.object(db_module, "get_session", session_factory),
+        patch("lantai.llm.client.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+    ):
         yield session_factory, engine
 
 
@@ -45,42 +51,96 @@ def test_compute_metrics_pure():
     from lantai.eval.forgetting_quality import compute_forgetting_metrics
 
     per_query = [
-        {"category": "stale", "query": "q1", "result_ids": ["archived_1"],
-         "target_id": None, "forbidden_ids": ["archived_1"],
-         "preferred_id": None, "peer_id": None},
-        {"category": "stale", "query": "q2", "result_ids": [],
-         "target_id": None, "forbidden_ids": ["archived_2"],
-         "preferred_id": None, "peer_id": None},
-        {"category": "typo", "query": "q3", "result_ids": ["m1"],
-         "target_id": "m1", "forbidden_ids": [],
-         "preferred_id": None, "peer_id": None},
-        {"category": "fresh", "query": "q4", "result_ids": ["m2"],
-         "target_id": "m2", "forbidden_ids": [],
-         "preferred_id": None, "peer_id": None},
-        {"category": "temporal", "query": "q5", "result_ids": ["new1"],
-         "target_id": None, "forbidden_ids": [],
-         "preferred_id": "new1", "peer_id": "old1"},
-        {"category": "temporal", "query": "q6", "result_ids": ["new2", "old2"],
-         "target_id": None, "forbidden_ids": [],
-         "preferred_id": "new2", "peer_id": "old2"},
-        {"category": "temporal", "query": "q7", "result_ids": ["old3"],
-         "target_id": None, "forbidden_ids": [],
-         "preferred_id": "new3", "peer_id": "old3"},
-        {"category": "superseded", "query": "q8", "result_ids": ["new4", "old4"],
-         "target_id": "new4", "forbidden_ids": [],
-         "preferred_id": "new4", "peer_id": "old4"},
-        {"category": "superseded", "query": "q9", "result_ids": ["old5"],
-         "target_id": "new5", "forbidden_ids": [],
-         "preferred_id": "new5", "peer_id": "old5"},
+        {
+            "category": "stale",
+            "query": "q1",
+            "result_ids": ["archived_1"],
+            "target_id": None,
+            "forbidden_ids": ["archived_1"],
+            "preferred_id": None,
+            "peer_id": None,
+        },
+        {
+            "category": "stale",
+            "query": "q2",
+            "result_ids": [],
+            "target_id": None,
+            "forbidden_ids": ["archived_2"],
+            "preferred_id": None,
+            "peer_id": None,
+        },
+        {
+            "category": "typo",
+            "query": "q3",
+            "result_ids": ["m1"],
+            "target_id": "m1",
+            "forbidden_ids": [],
+            "preferred_id": None,
+            "peer_id": None,
+        },
+        {
+            "category": "fresh",
+            "query": "q4",
+            "result_ids": ["m2"],
+            "target_id": "m2",
+            "forbidden_ids": [],
+            "preferred_id": None,
+            "peer_id": None,
+        },
+        {
+            "category": "temporal",
+            "query": "q5",
+            "result_ids": ["new1"],
+            "target_id": None,
+            "forbidden_ids": [],
+            "preferred_id": "new1",
+            "peer_id": "old1",
+        },
+        {
+            "category": "temporal",
+            "query": "q6",
+            "result_ids": ["new2", "old2"],
+            "target_id": None,
+            "forbidden_ids": [],
+            "preferred_id": "new2",
+            "peer_id": "old2",
+        },
+        {
+            "category": "temporal",
+            "query": "q7",
+            "result_ids": ["old3"],
+            "target_id": None,
+            "forbidden_ids": [],
+            "preferred_id": "new3",
+            "peer_id": "old3",
+        },
+        {
+            "category": "superseded",
+            "query": "q8",
+            "result_ids": ["new4", "old4"],
+            "target_id": "new4",
+            "forbidden_ids": [],
+            "preferred_id": "new4",
+            "peer_id": "old4",
+        },
+        {
+            "category": "superseded",
+            "query": "q9",
+            "result_ids": ["old5"],
+            "target_id": "new5",
+            "forbidden_ids": [],
+            "preferred_id": "new5",
+            "peer_id": "old5",
+        },
     ]
     m = compute_forgetting_metrics(per_query)
     assert m["sample_count"] == 9
-    assert m["stale_hit_rate"] == 0.5            # 1/2 残留
-    assert m["typo_recall_rate"] == 1.0          # 1/1
-    assert m["fresh_recall_rate"] == 1.0         # 1/1
+    assert m["stale_hit_rate"] == 0.5  # 1/2 残留
+    assert m["typo_recall_rate"] == 1.0  # 1/1
+    assert m["fresh_recall_rate"] == 1.0  # 1/1
     assert m["temporal_order_accuracy"] == round(2 / 3, 4)  # q5(peer缺省算优)/q6优/q7劣
     assert m["superseded_order_accuracy"] == 0.5  # q8 优 / q9 劣
-    assert m["superseded_residual_rate"] == 1.0   # 两条均残留旧值
+    assert m["superseded_residual_rate"] == 1.0  # 两条均残留旧值
 
 
 def test_dataset_queries_fts_hittable():
@@ -101,8 +161,8 @@ def test_dataset_queries_fts_hittable():
     for case in ds["cases"]:
         q = case["query"]
         rows = conn.execute(
-            "SELECT rowid FROM t WHERE content MATCH ?",
-            ('"' + q.replace('"', '""') + '"',)).fetchall()
+            "SELECT rowid FROM t WHERE content MATCH ?", ('"' + q.replace('"', '""') + '"',)
+        ).fetchall()
         target = case.get("target")
         if target is not None:
             assert rows, f"query {q!r} 应 FTS 命中 target seed {target}"
@@ -137,14 +197,14 @@ def test_evaluate_end_to_end(fq_env):
 
     # 清理断言：种子全部删除，不留孤儿边（边两端必须指向仍存在的记忆）
     with session_factory() as s:
-        left = s.exec(select(MemoryItem)
-                      .where(MemoryItem.namespace == "eval_fq")).all()
+        left = s.exec(select(MemoryItem).where(MemoryItem.namespace == "eval_fq")).all()
         assert left == []
         edges = s.exec(select(MemoryEdge)).all()
         existing_ids = {m.id for m in s.exec(select(MemoryItem)).all()}
         for e in edges:
             assert e.source_memory_id in existing_ids, f"orphan edge {e.id}"
             assert e.target_memory_id in existing_ids, f"orphan edge {e.id}"
+
 
 def test_offline_eval_gates_pass():
     """离线门禁：临时库 + 仅外部依赖 mock，六维指标确定性达标（CI/发布用）。"""

@@ -1,4 +1,5 @@
 """升级前检查：版本、数据目录、DB 表结构、向量库路径。退出码 0=可升级，1=有问题。"""
+
 import os
 import sqlite3
 import sys
@@ -9,9 +10,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lantai.core.settings import settings
 
 REQUIRED_TABLES = [
-    "rawdocument", "memorycandidate", "memoryitem", "memoryedge",
-    "memoryproposal", "memorycheckpoint", "ingestsource",
-    "evolutionfeedback", "documentchunk",
+    "rawdocument",
+    "memorycandidate",
+    "memoryitem",
+    "memoryedge",
+    "memoryproposal",
+    "memorycheckpoint",
+    "ingestsource",
+    "evolutionfeedback",
+    "documentchunk",
 ]
 
 
@@ -27,8 +34,7 @@ def main() -> int:
     db_path = db_url.replace("sqlite:///", "")
     if os.path.exists(db_path):
         conn = sqlite3.connect(db_path)
-        existing = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'")}
+        existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         conn.close()
         missing = [t for t in REQUIRED_TABLES if t not in existing]
         if missing:

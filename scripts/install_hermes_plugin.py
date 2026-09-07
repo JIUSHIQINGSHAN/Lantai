@@ -12,6 +12,7 @@
   3. 自检：plugins/ 下声明同名插件的候选唯一且为目标目录
   4. 提示重启 Hermes 生效
 """
+
 import argparse
 import datetime
 import re
@@ -67,7 +68,8 @@ def deploy(plugin_src: Path, plugins_dir: Path, backups_dir: Path) -> Path | Non
 def validate_no_duplicate(plugins_dir: Path) -> bool:
     """自检：plugins/ 下声明同名插件的候选必须唯一且为目标目录。"""
     candidates = [
-        child for child in sorted(plugins_dir.iterdir())
+        child
+        for child in sorted(plugins_dir.iterdir())
         if child.is_dir() and _manifest_name(child) == PLUGIN_NAME
     ]
     if len(candidates) != 1 or candidates[0].name != PLUGIN_NAME:
@@ -92,8 +94,10 @@ def main() -> int:
     hermes_home = args.hermes_home
     plugins_dir = hermes_home / "plugins"
     if not plugins_dir.is_dir():
-        print(f"[ERR] Hermes plugins 目录不存在: {plugins_dir}（确认 Hermes home 路径）",
-              file=sys.stderr)
+        print(
+            f"[ERR] Hermes plugins 目录不存在: {plugins_dir}（确认 Hermes home 路径）",
+            file=sys.stderr,
+        )
         return 1
 
     deploy(PLUGIN_SRC, plugins_dir, hermes_home / "plugins-backup")

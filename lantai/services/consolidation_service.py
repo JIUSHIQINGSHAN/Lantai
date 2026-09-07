@@ -6,6 +6,7 @@
 3. prune_decayed_synapses: 自动修剪极度衰减的边缘碎片（status="archived"）；
 4. run_consolidation_cycle: 调度执行完整沉潜周期。
 """
+
 from collections import defaultdict
 
 import jieba.analyse
@@ -32,9 +33,7 @@ def find_consolidation_clusters(
     session: Session, min_cluster_size: int = 3
 ) -> list[list[MemoryItem]]:
     """扫描活跃记忆，按 domain/lane 与主题聚类出可折叠的碎片记忆集。"""
-    active_items = session.exec(
-        select(MemoryItem).where(MemoryItem.status == "active")
-    ).all()
+    active_items = session.exec(select(MemoryItem).where(MemoryItem.status == "active")).all()
 
     # 1. 按 (domain, lane) 分组
     group_map = defaultdict(list)
@@ -112,9 +111,7 @@ def consolidate_cluster(
         return None
 
     def _execute(s: Session) -> MemoryItem | None:
-        sources_text = "\n".join(
-            f"- [ID: {m.id}] {m.content}" for m in cluster_items
-        )
+        sources_text = "\n".join(f"- [ID: {m.id}] {m.content}" for m in cluster_items)
         sys_prompt = (
             "你是一个专业的认知记忆综合提纯专家。请将以下多条碎片化的日常记忆/偏好/事实，"
             "提纯归纳为 1 条高阶概括性、准确且简练的主记忆。\n"
@@ -146,7 +143,6 @@ def consolidate_cluster(
 
         importance = float(res.get("importance", 0.8))
         confidence = float(res.get("confidence", 0.9))
-
 
         dom = getattr(cluster_items[0], "domain", "user")
         lane = cluster_items[0].lane
@@ -194,15 +190,29 @@ def consolidate_cluster(
         # 4. 同步更新向量库与 FTS 索引
         try:
             from lantai.llm.client import embed
+
             embeddings = embed([master.content])
             if embeddings:
-                index_memory_item(master.id, embeddings[0], {"lane": master.lane, "domain": master.domain})
+                index_memory_item(
+                    master.id,
+                    embeddings[0],
+                    {
+                        "lane": getattr(master, "lane", "general") or "general",
+                        "domain": getattr(master, "domain", "user") or "user",
+                        "tenant_id": getattr(master, "tenant_id", "") or "",
+                        "user_id": getattr(master, "user_id", "") or "",
+                        "session_id": getattr(master, "session_id", "") or "",
+                        "agent_id": getattr(master, "agent_id", "") or "",
+                    },
+                )
         except Exception as exc:
             logger.warning("沉潜：主记忆向量索引同步异常（已落库）: %s", exc)
 
         logger.info(
             "沉潜：成功将 %d 条碎片折叠为主记忆 %s: %s",
-            len(cluster_items), master.id, content[:30],
+            len(cluster_items),
+            master.id,
+            content[:30],
         )
         return master
 
@@ -212,10 +222,9 @@ def consolidate_cluster(
         return _execute(s)
 
 
-def prune_decayed_synapses(
-    threshold: float = 0.05, session: Session | None = None
-) -> int:
+def prune_decayed_synapses(threshold: float = 0.05, session: Session | None = None) -> int:
     """自动修剪极度衰减的边缘碎片（转为 archived 休眠）。"""
+
     def _prune(s: Session) -> int:
         decayed_items = s.exec(
             select(MemoryItem)
@@ -244,6 +253,7 @@ def prune_decayed_synapses(
 
 def run_consolidation_cycle(session: Session | None = None) -> dict:
     """运行一次完整的沉潜夜梦沉淀周期。"""
+
     def _run(s: Session) -> dict:
         global _LAST_CONSOLIDATION_REPORT
         clusters = find_consolidation_clusters(s, min_cluster_size=3)

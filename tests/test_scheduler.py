@@ -4,6 +4,7 @@
 record_run/get_last_run 用内存 SQLite 真实建表（patch db.engine，仅隔离存储）。
 仅允许 mock 外部副作用：BackgroundScheduler（外部调度器对象）。
 """
+
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -24,9 +25,10 @@ def _utc(dt: datetime) -> datetime:
 def sched_db(monkeypatch):
     """内存 SQLite 真实建表（含 scheduler_run）+ patch db.engine。"""
     import lantai.models.tables  # noqa: F401
-    engine = create_engine("sqlite://",
-                           connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
     monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
@@ -38,10 +40,13 @@ def sched_db(monkeypatch):
 def _seed_run(engine, name: str, last_run_utc: str) -> None:
     with engine.begin() as conn:
         conn.execute(
-            text("INSERT INTO scheduler_run(name, last_run_utc) "
-                 "VALUES(:n, :t) ON CONFLICT(name) "
-                 "DO UPDATE SET last_run_utc=:t"),
-            {"n": name, "t": last_run_utc})
+            text(
+                "INSERT INTO scheduler_run(name, last_run_utc) "
+                "VALUES(:n, :t) ON CONFLICT(name) "
+                "DO UPDATE SET last_run_utc=:t"
+            ),
+            {"n": name, "t": last_run_utc},
+        )
 
 
 class TestShouldCatchUp:
@@ -55,21 +60,22 @@ class TestShouldCatchUp:
 
     def test_run_after_most_recent_fire_skips(self):
         # 今天 06:00:30 已跑（> 今天 06:00 调度点）→ 不补
-        last = (self.NOW.replace(hour=6, minute=0, second=30, microsecond=0)
-                .isoformat())
+        last = self.NOW.replace(hour=6, minute=0, second=30, microsecond=0).isoformat()
         assert not should_catch_up("digest", 22, 0, now=self.NOW, last_run=last)
 
     def test_run_before_most_recent_fire_catches_up(self):
         # 上次运行是昨天 06:01，今天的 06:00 调度点已错过 → 补
-        last = ((self.NOW - timedelta(days=1))
-                .replace(hour=6, minute=1, second=0, microsecond=0)
-                .isoformat())
+        last = (
+            (self.NOW - timedelta(days=1))
+            .replace(hour=6, minute=1, second=0, microsecond=0)
+            .isoformat()
+        )
         assert should_catch_up("digest", 22, 0, now=self.NOW, last_run=last)
 
     def test_before_todays_fire_with_todays_run_skips(self):
         # 10:00 UTC（未到今天 22:00 调度点），今早 06:01 已跑过 → 不补（避免双跑）
         now = datetime(2026, 8, 11, 10, 0, 0, tzinfo=UTC)
-        last = (datetime(2026, 8, 11, 6, 1, 0, tzinfo=UTC).isoformat())
+        last = datetime(2026, 8, 11, 6, 1, 0, tzinfo=UTC).isoformat()
         assert not should_catch_up("digest", 22, 0, now=now, last_run=last)
 
     def test_unparseable_last_run_catches_up(self):
@@ -88,8 +94,8 @@ class TestRecordRunPersistence:
         assert got is not None
         # 与写入时间一致（秒级）
         from lantai.core.time import utcnow
-        assert abs((_utc(datetime.fromisoformat(got)) - utcnow())
-                   .total_seconds()) < 5
+
+        assert abs((_utc(datetime.fromisoformat(got)) - utcnow()).total_seconds()) < 5
 
     def test_record_run_updates_existing(self, sched_db):
         record_run("digest")
@@ -116,22 +122,22 @@ class TestStartSchedulerCatchup:
     @pytest.fixture()
     def fake_scheduler(self, monkeypatch, sched_db):
         fake = self._FakeScheduler()
-        monkeypatch.setattr(scheduler_mod, "BackgroundScheduler",
-                            lambda **kw: fake)
+        monkeypatch.setattr(scheduler_mod, "BackgroundScheduler", lambda **kw: fake)
         monkeypatch.setattr(scheduler_mod, "_scheduler", fake)
         monkeypatch.setattr(scheduler_mod.settings, "PARAM_ADVICE_ENABLED", False)
         return fake
 
     def test_stale_last_run_adds_catchup_jobs(self, fake_scheduler, sched_db):
-        old = (datetime(2026, 8, 10, 6, 1, 0, tzinfo=UTC).isoformat())
+        old = datetime(2026, 8, 10, 6, 1, 0, tzinfo=UTC).isoformat()
         _seed_run(sched_db, "digest", old)
         _seed_run(sched_db, "reflect", old)
         scheduler_mod.start_scheduler()
         ids = [j["id"] for j in fake_scheduler.jobs]
         assert "digest_catchup" in ids
         assert "reflect_catchup" in ids
-        assert any(j["id"] == "digest_catchup" and j["trigger"] == "date"
-                   for j in fake_scheduler.jobs)
+        assert any(
+            j["id"] == "digest_catchup" and j["trigger"] == "date" for j in fake_scheduler.jobs
+        )
 
     def test_fresh_last_run_skips_catchup(self, fake_scheduler, sched_db):
         fresh = datetime.now(UTC).isoformat()
@@ -159,8 +165,7 @@ class TestAutodreamScheduling:
     @pytest.fixture()
     def fake_scheduler(self, monkeypatch, sched_db):
         fake = self._FakeScheduler()
-        monkeypatch.setattr(scheduler_mod, "BackgroundScheduler",
-                            lambda **kw: fake)
+        monkeypatch.setattr(scheduler_mod, "BackgroundScheduler", lambda **kw: fake)
         monkeypatch.setattr(scheduler_mod, "_scheduler", fake)
         monkeypatch.setattr(scheduler_mod.settings, "PARAM_ADVICE_ENABLED", False)
         monkeypatch.setattr(scheduler_mod.settings, "DIGEST_ENABLED", False)
@@ -186,20 +191,21 @@ class TestMigrationsV8ToV15:
 
     def test_v7_to_v15_creates_tables_and_reflect_source(self, tmp_path):
         import sqlite3
+
         conn = sqlite3.connect(str(tmp_path / "v7.db"))
         conn.execute("PRAGMA user_version = 7")
         conn.commit()
         from lantai.storage.db import apply_migrations
+
         apply_migrations(conn)
-        tables = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'")}
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "scheduler_run" in tables
         assert "reflect_run" in tables
         assert "session_checkpoint" in tables  # ADR-0021 底本
-        assert "persona_profile" in tables     # ADR-0029 器识
+        assert "persona_profile" in tables  # ADR-0029 器识
         assert "session_scratchpad" in tables  # ADR-0032 札记
         cols = {r[1] for r in conn.execute("PRAGMA table_info(reflect_run)")}
         assert "rejecter_failed" in cols
         assert "source" in cols
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 17
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 18
         conn.close()

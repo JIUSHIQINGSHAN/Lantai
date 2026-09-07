@@ -4,6 +4,7 @@
 流程：recover stale → claim batch → generate（无 fallback）→ 入库 pending 建议
       → 网络失败转 retry（≤3 次）→ 非法输出/abstain 标记 consumed（不重试）
 """
+
 import hashlib
 
 from sqlmodel import select
@@ -28,11 +29,11 @@ from lantai.parameters.validation import apply_validated_changes, snapshot_hash
 from lantai.storage import db
 
 
-def _fingerprint(source_ids: list[str], base_hash: str,
-                 after_hash: str) -> str:
+def _fingerprint(source_ids: list[str], base_hash: str, after_hash: str) -> str:
     digest = hashlib.sha256(
         canonical_json(sorted(source_ids)).encode("utf-8")
-        + base_hash.encode("utf-8") + after_hash.encode("utf-8")
+        + base_hash.encode("utf-8")
+        + after_hash.encode("utf-8")
     ).hexdigest()
     return f"sha256:{digest}"
 
@@ -40,23 +41,26 @@ def _fingerprint(source_ids: list[str], base_hash: str,
 def _create_contradiction_report(run_id: str, item) -> None:
     """矛盾条目落库（方向四）：只可 acknowledge/close，禁止 apply。"""
     from lantai.parameters.trust_models import ParamContradictionReport
+
     with db.get_session() as s:
-        s.add(ParamContradictionReport(
-            id=new_id("pcr"),
-            run_id=run_id,
-            param_key=item.param_key,
-            nature=item.nature,
-            side_a=item.side_a.model_dump(),
-            side_b=item.side_b.model_dump(),
-            scope_note=item.scope_note,
-            status="open",
-        ))
+        s.add(
+            ParamContradictionReport(
+                id=new_id("pcr"),
+                run_id=run_id,
+                param_key=item.param_key,
+                nature=item.nature,
+                side_a=item.side_a.model_dump(),
+                side_b=item.side_b.model_dump(),
+                scope_note=item.scope_note,
+                status="open",
+            )
+        )
         s.commit()
 
 
-def create_suggestion_record(run_id: str, payload: SuggestPayload,
-                             base_snapshot: dict,
-                             source_ids: list[str]) -> bool:
+def create_suggestion_record(
+    run_id: str, payload: SuggestPayload, base_snapshot: dict, source_ids: list[str]
+) -> bool:
     """校验通过的建议入库（pending）。fingerprint 去重，重复则跳过。"""
     after = apply_validated_changes(base_snapshot, payload.changes)
     base_hash = snapshot_hash(base_snapshot)
@@ -64,31 +68,32 @@ def create_suggestion_record(run_id: str, payload: SuggestPayload,
     fp = _fingerprint(source_ids, base_hash, after_hash)
 
     with db.get_session() as s:
-        dup = s.exec(select(ParamSuggestion).where(
-            ParamSuggestion.fingerprint == fp)).first()
+        dup = s.exec(select(ParamSuggestion).where(ParamSuggestion.fingerprint == fp)).first()
         if dup:
             logger.info("duplicate param suggestion skipped: %s", fp[:16])
             return False
-        s.add(ParamSuggestion(
-            id=new_id("psg"),
-            run_id=run_id,
-            status="pending",
-            confidence=payload.confidence,
-            title=payload.title,
-            summary=payload.summary,
-            rationale=payload.rationale,
-            expected_benefit=payload.expected_benefit,
-            risk_notes=payload.risk_notes,
-            validation_plan=payload.validation_plan,
-            source_document_ids=source_ids,
-            evidence=[e.model_dump() for e in payload.evidence],
-            changes=[c.model_dump() for c in payload.changes],
-            before_snapshot=base_snapshot,
-            after_snapshot=after,
-            base_snapshot_hash=base_hash,
-            registry_version=get_registry_version(),
-            fingerprint=fp,
-        ))
+        s.add(
+            ParamSuggestion(
+                id=new_id("psg"),
+                run_id=run_id,
+                status="pending",
+                confidence=payload.confidence,
+                title=payload.title,
+                summary=payload.summary,
+                rationale=payload.rationale,
+                expected_benefit=payload.expected_benefit,
+                risk_notes=payload.risk_notes,
+                validation_plan=payload.validation_plan,
+                source_document_ids=source_ids,
+                evidence=[e.model_dump() for e in payload.evidence],
+                changes=[c.model_dump() for c in payload.changes],
+                before_snapshot=base_snapshot,
+                after_snapshot=after,
+                base_snapshot_hash=base_hash,
+                registry_version=get_registry_version(),
+                fingerprint=fp,
+            )
+        )
         s.commit()
         return True
 
@@ -111,11 +116,11 @@ def run_param_advice_once() -> None:
 
     # 加载质量信号（方向一）：缺失论文按无信号处理（校验时按 ineligible）
     from lantai.parameters.signal_service import load_signal_views
+
     source_ids = [p["source_document_id"] for p in papers]
     signal_views = load_signal_views(source_ids)
 
-    result = generate_param_advice(papers, base_snapshot,
-                                   views=signal_views)
+    result = generate_param_advice(papers, base_snapshot, views=signal_views)
     if not result["ok"]:
         code = result["error_code"]
         if code == "llm_error":
@@ -140,10 +145,9 @@ def run_param_advice_once() -> None:
     created = 0
     for item in payload.get("suggestions", []):
         try:
-            if create_suggestion_record(run_id, item["suggestion"],
-                                        base_snapshot,
-                                        [p["source_document_id"]
-                                         for p in papers]):
+            if create_suggestion_record(
+                run_id, item["suggestion"], base_snapshot, [p["source_document_id"] for p in papers]
+            ):
                 created += 1
         except Exception:
             logger.exception("create suggestion record failed, skip")
@@ -153,6 +157,9 @@ def run_param_advice_once() -> None:
         finish_run_suggested(run_id)
     else:
         finish_run_abstained(run_id)
-    logger.info("param advice batch done: suggestions=%d contradictions=%d",
-                created, len(payload.get("contradictions", [])))
+    logger.info(
+        "param advice batch done: suggestions=%d contradictions=%d",
+        created,
+        len(payload.get("contradictions", [])),
+    )
     scheduler_mod.record_run("param_advice")

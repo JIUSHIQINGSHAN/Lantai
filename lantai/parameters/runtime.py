@@ -6,6 +6,7 @@
 - 启动时加载 DB head；跨进程用 revision 轮询（PARAM_OVERRIDE_REFRESH_SECONDS）。
 - 损坏的 DB 快照不应用（校验失败即拒绝，保持上一有效配置）。
 """
+
 from sqlmodel import select
 
 from lantai.core.ids import new_id
@@ -28,9 +29,7 @@ _last_applied_revision: int = -1
 
 
 def _head_override(session) -> ParamOverride | None:
-    return session.exec(
-        select(ParamOverride).order_by(ParamOverride.revision.desc())
-    ).first()
+    return session.exec(select(ParamOverride).order_by(ParamOverride.revision.desc())).first()
 
 
 def get_effective_param_snapshot(session) -> dict:
@@ -51,16 +50,23 @@ def get_effective_state(session) -> dict:
     head = _head_override(session)
     if head is None:
         snap = default_snapshot()
-        return {"snapshot": snap, "revision": 0,
-                "snapshot_hash": _hash(snap),
-                "registry_version": get_registry_version()}
-    return {"snapshot": head.after_snapshot, "revision": head.revision,
-            "snapshot_hash": head.after_snapshot_hash,
-            "registry_version": head.registry_version}
+        return {
+            "snapshot": snap,
+            "revision": 0,
+            "snapshot_hash": _hash(snap),
+            "registry_version": get_registry_version(),
+        }
+    return {
+        "snapshot": head.after_snapshot,
+        "revision": head.revision,
+        "snapshot_hash": head.after_snapshot_hash,
+        "registry_version": head.registry_version,
+    }
 
 
 def _hash(snapshot: dict) -> str:
     from lantai.parameters.validation import snapshot_hash
+
     return snapshot_hash(snapshot)
 
 
@@ -70,8 +76,8 @@ def apply_snapshot_to_settings(snapshot: dict) -> bool:
     返回是否有实际变化。
     """
     from lantai.parameters.registry import get_param_registry
-    validated = validate_snapshot(snapshot, get_param_registry(),
-                                  allow_partial=True)
+
+    validated = validate_snapshot(snapshot, get_param_registry(), allow_partial=True)
     changed = False
     for name, value in validated.items():
         if getattr(settings, name) != value:
@@ -97,8 +103,7 @@ def refresh_runtime_params() -> dict:
         try:
             applied = apply_snapshot_to_settings(snapshot)
             _last_applied_revision = revision
-            logger.info("runtime params refreshed: revision=%d applied=%s",
-                        revision, applied)
+            logger.info("runtime params refreshed: revision=%d applied=%s", revision, applied)
         except ParamValidationError as e:
             logger.error("runtime refresh rejected (keep previous config): %s", e)
             _last_applied_revision = revision  # 防刷屏，保持上一配置
@@ -118,13 +123,13 @@ def load_runtime_params_at_startup() -> None:
     if applied:
         logger.info("startup: loaded param override revision=%d", head.revision)
 
+
 # ── Step 7 影子观察期 ────────────────────────────────────────────────
 # DEDUP shadow-only：影子参数不写 ParamOverride，只存 ShadowWindow 表；
 # promote 只标记状态，实际应用走 ParamSuggestion 人工闸门（绝不自动应用）。
 
 
-def open_shadow(override_id: str, param_overrides: dict, *,
-                observe_days: int | None = None):
+def open_shadow(override_id: str, param_overrides: dict, *, observe_days: int | None = None):
     """建议批准后打开观察窗（status=observing）。
 
     影子参数仅记录在本窗，不写入 ParamOverride（DEDUP shadow-only）。
@@ -137,9 +142,7 @@ def open_shadow(override_id: str, param_overrides: dict, *,
     days = observe_days or _s.SHADOW_OBSERVE_DAYS
     with db.get_session() as s:
         # MAX_ACTIVE_SHADOW_WINDOWS 护栏：超过上限先取消最旧的 observing
-        active = s.exec(
-            select(ShadowWindow).where(ShadowWindow.status == "observing")
-        ).all()
+        active = s.exec(select(ShadowWindow).where(ShadowWindow.status == "observing")).all()
         if len(active) >= _s.MAX_ACTIVE_SHADOW_WINDOWS:
             oldest = min(active, key=lambda w: w.started_at)
             oldest.status = "cancelled"
@@ -173,8 +176,7 @@ def check_shadow_due() -> list:
 
     results: list = []
     with db.get_session() as s:
-        windows = s.exec(select(ShadowWindow).where(
-            ShadowWindow.status == "observing")).all()
+        windows = s.exec(select(ShadowWindow).where(ShadowWindow.status == "observing")).all()
         due = [w for w in windows if shadow_is_due(w)]
 
     for w in due:
@@ -203,8 +205,7 @@ def _evaluate_one_window(window, *, auto_rollback: bool = True) -> dict:
 
         verdict = evaluate_window(
             base_metrics,
-            {**shadow_metrics,
-             "jaccard_vs_baseline": shadow_metrics.get("jaccard_vs_baseline")},
+            {**shadow_metrics, "jaccard_vs_baseline": shadow_metrics.get("jaccard_vs_baseline")},
         )
         v = verdict["verdict"]
         w.verdict_reason = verdict["reason"]
@@ -222,8 +223,12 @@ def _evaluate_one_window(window, *, auto_rollback: bool = True) -> dict:
         s.add(w)
         s.commit()
 
-    return {"window_id": window.id, "verdict": v, "reason": verdict["reason"],
-            "metrics": {"base": base_metrics, "shadow": shadow_metrics}}
+    return {
+        "window_id": window.id,
+        "verdict": v,
+        "reason": verdict["reason"],
+        "metrics": {"base": base_metrics, "shadow": shadow_metrics},
+    }
 
 
 def _run_shadow_dry_run(session, window, *, base: bool) -> dict:

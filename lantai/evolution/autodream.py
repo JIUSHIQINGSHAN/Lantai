@@ -8,6 +8,7 @@ MemoryProposal(status=pending, decided_by="autodream") 交人工闸门裁决—�
 宁 miss 不脏写：只建提案，绝不自动应用；低置信度入 skipped 报告（不静默丢弃）。
 LLM 精炼总结留作后续增强（当前为确定性、可复现的规则蒸馏）。
 """
+
 import jieba
 from sqlmodel import select
 
@@ -17,19 +18,58 @@ from lantai.models.enums import ProposalStatus
 from lantai.models.tables import MemoryItem, MemoryProposal
 from lantai.storage import db
 
-_STOP = {"的", "了", "是", "在", "和", "与", "我", "你", "他", "她", "它", "有",
-         "对", "把", "被", "这", "那", "也", "就", "都", "要", "会", "很", "等",
-         "用", "为", "于", "到", "从", "及", "并", "或", "一个", "我们", "你们",
-         "他们", "进行", "可以", "这个", "那个", "以及", "什么", "怎么"}
+_STOP = {
+    "的",
+    "了",
+    "是",
+    "在",
+    "和",
+    "与",
+    "我",
+    "你",
+    "他",
+    "她",
+    "它",
+    "有",
+    "对",
+    "把",
+    "被",
+    "这",
+    "那",
+    "也",
+    "就",
+    "都",
+    "要",
+    "会",
+    "很",
+    "等",
+    "用",
+    "为",
+    "于",
+    "到",
+    "从",
+    "及",
+    "并",
+    "或",
+    "一个",
+    "我们",
+    "你们",
+    "他们",
+    "进行",
+    "可以",
+    "这个",
+    "那个",
+    "以及",
+    "什么",
+    "怎么",
+}
 
 
 def _keywords(content: str) -> list[str]:
-    return [w for w in jieba.lcut(content)
-            if len(w) >= 2 and w.strip() and w not in _STOP]
+    return [w for w in jieba.lcut(content) if len(w) >= 2 and w.strip() and w not in _STOP]
 
 
-def cluster_memories(items: list[MemoryItem],
-                     min_size: int = 2) -> list[list[MemoryItem]]:
+def cluster_memories(items: list[MemoryItem], min_size: int = 2) -> list[list[MemoryItem]]:
     """确定性聚类：同一 lane 且共享 ≥1 关键词的记忆归为一簇。
 
     贪心 + 按 (created_at, id) 排序保证可复现；簇 < min_size 丢弃。
@@ -78,7 +118,7 @@ def plan_distillation(cluster: list[MemoryItem]) -> dict:
         "proposal_type": "add",
         "evidence_ids": [m.id for m in ordered],
         "reason": f"autodream 蒸馏：{cluster[0].lane} 簇 {n} 条记忆聚合"
-                  f"（去重 {n - len(lines)} 条）",
+        f"（去重 {n - len(lines)} 条）",
         "proposed_patch": {
             "memory_type": "semantic",
             "key": newest.key or newest.content[:60],
@@ -90,17 +130,16 @@ def plan_distillation(cluster: list[MemoryItem]) -> dict:
     }
 
 
-def run_autodream_once(namespace: str = "default", *,
-                       dry_run: bool = True,
-                       limit: int | None = None) -> dict:
+def run_autodream_once(
+    namespace: str = "default", *, dry_run: bool = True, limit: int | None = None
+) -> dict:
     """执行一轮蒸馏：聚类 → 规划 → 落 pending 提案（dry_run 不写库）。
 
     返回 {"clusters", "plans", "created", "skipped"}；低置信度不静默丢弃，
     进 skipped 报告（宁 miss 不脏写）。
     """
     if not settings.AUTODREAM_ENABLED:
-        return {"clusters": 0, "plans": 0, "created": 0,
-                "skipped": ["AUTODREAM_ENABLED=false"]}
+        return {"clusters": 0, "plans": 0, "created": 0, "skipped": ["AUTODREAM_ENABLED=false"]}
     with db.get_session() as s:
         q = select(MemoryItem).where(
             MemoryItem.status == "active",
@@ -115,21 +154,22 @@ def run_autodream_once(namespace: str = "default", *,
     skipped: list[str] = []
     if not dry_run:
         with db.get_session() as s:
-            for p in plans[:settings.AUTODREAM_MAX_DAILY]:
+            for p in plans[: settings.AUTODREAM_MAX_DAILY]:
                 if p["confidence"] < settings.AUTODREAM_MIN_CONFIDENCE:
                     skipped.append(f"low-conf:{p['confidence']}")
                     continue
-                s.add(MemoryProposal(
-                    id=new_id("prop"),
-                    proposal_type=p["proposal_type"],
-                    evidence_ids=p["evidence_ids"],
-                    reason=p["reason"],
-                    proposed_patch=p["proposed_patch"],
-                    confidence=p["confidence"],
-                    status=ProposalStatus.PENDING,
-                    decided_by="autodream",
-                ))
+                s.add(
+                    MemoryProposal(
+                        id=new_id("prop"),
+                        proposal_type=p["proposal_type"],
+                        evidence_ids=p["evidence_ids"],
+                        reason=p["reason"],
+                        proposed_patch=p["proposed_patch"],
+                        confidence=p["confidence"],
+                        status=ProposalStatus.PENDING,
+                        decided_by="autodream",
+                    )
+                )
                 created += 1
             s.commit()
-    return {"clusters": len(clusters), "plans": len(plans),
-            "created": created, "skipped": skipped}
+    return {"clusters": len(clusters), "plans": len(plans), "created": created, "skipped": skipped}

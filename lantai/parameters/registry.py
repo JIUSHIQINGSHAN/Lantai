@@ -6,6 +6,7 @@
 - 安全参数（凭据 / 网络 / 绑定 / 数据库路径）物理排除，永不进入白名单。
 - 所有数值校验用 Decimal(str(value))，避免浮点步长误差。
 """
+
 import hashlib
 import json
 from decimal import Decimal
@@ -22,12 +23,13 @@ _Num = Decimal
 
 class ParamSpec(BaseModel):
     """单个可调参数的完整规格。"""
+
     model_config = ConfigDict(frozen=True)
 
     name: str
     value_type: Literal["float", "int"]
     description: str
-    source_attr: str              # settings 上的属性名（通常与 name 一致）
+    source_attr: str  # settings 上的属性名（通常与 name 一致）
     group: str
     adjustable: bool = False
     minimum: _Num | None = None
@@ -40,60 +42,115 @@ class ParamSpec(BaseModel):
 
 # ---------------------------------------------------------------- 白名单规格
 
+
 def _d(v: float) -> _Num:
     return Decimal(str(v))
 
 
 ADJUSTABLE_SPECS: list[ParamSpec] = [
     ParamSpec(
-        name="RETRIEVAL_W_VECTOR", value_type="float", group="retrieval_weights",
-        description="向量语义检索权重", source_attr="RETRIEVAL_W_VECTOR",
-        adjustable=True, minimum=_d(0.30), maximum=_d(0.80), step=_d(0.05),
-        max_delta_per_apply=_d(0.10), risk_level="low",
+        name="RETRIEVAL_W_VECTOR",
+        value_type="float",
+        group="retrieval_weights",
+        description="向量语义检索权重",
+        source_attr="RETRIEVAL_W_VECTOR",
+        adjustable=True,
+        minimum=_d(0.30),
+        maximum=_d(0.80),
+        step=_d(0.05),
+        max_delta_per_apply=_d(0.10),
+        risk_level="low",
     ),
     ParamSpec(
-        name="RETRIEVAL_W_BM25", value_type="float", group="retrieval_weights",
-        description="jieba BM25 权重", source_attr="RETRIEVAL_W_BM25",
-        adjustable=True, minimum=_d(0.10), maximum=_d(0.50), step=_d(0.05),
-        max_delta_per_apply=_d(0.10), risk_level="low",
+        name="RETRIEVAL_W_BM25",
+        value_type="float",
+        group="retrieval_weights",
+        description="jieba BM25 权重",
+        source_attr="RETRIEVAL_W_BM25",
+        adjustable=True,
+        minimum=_d(0.10),
+        maximum=_d(0.50),
+        step=_d(0.05),
+        max_delta_per_apply=_d(0.10),
+        risk_level="low",
     ),
     ParamSpec(
-        name="RETRIEVAL_W_FTS", value_type="float", group="retrieval_weights",
-        description="FTS5 trigram 权重", source_attr="RETRIEVAL_W_FTS",
-        adjustable=True, minimum=_d(0.00), maximum=_d(0.20), step=_d(0.05),
-        max_delta_per_apply=_d(0.05), risk_level="low",
+        name="RETRIEVAL_W_FTS",
+        value_type="float",
+        group="retrieval_weights",
+        description="FTS5 trigram 权重",
+        source_attr="RETRIEVAL_W_FTS",
+        adjustable=True,
+        minimum=_d(0.00),
+        maximum=_d(0.20),
+        step=_d(0.05),
+        max_delta_per_apply=_d(0.05),
+        risk_level="low",
     ),
     ParamSpec(
-        name="RETRIEVAL_W_DECAY", value_type="float", group="retrieval_weights",
-        description="时效衰减权重", source_attr="RETRIEVAL_W_DECAY",
-        adjustable=True, minimum=_d(0.00), maximum=_d(0.25), step=_d(0.05),
-        max_delta_per_apply=_d(0.05), risk_level="low",
+        name="RETRIEVAL_W_DECAY",
+        value_type="float",
+        group="retrieval_weights",
+        description="时效衰减权重",
+        source_attr="RETRIEVAL_W_DECAY",
+        adjustable=True,
+        minimum=_d(0.00),
+        maximum=_d(0.25),
+        step=_d(0.05),
+        max_delta_per_apply=_d(0.05),
+        risk_level="low",
     ),
     ParamSpec(
-        name="DEDUP_MERGE_THRESHOLD", value_type="float", group="dedup_thresholds",
+        name="DEDUP_MERGE_THRESHOLD",
+        value_type="float",
+        group="dedup_thresholds",
         description="fastpath 路径余弦相似度高于此值合并记忆（提取路径见 DEDUP_PRESCREEN_MERGE）",
         source_attr="DEDUP_MERGE_THRESHOLD",
-        adjustable=True, minimum=_d(0.75), maximum=_d(0.95), step=_d(0.01),
-        max_delta_per_apply=_d(0.05), risk_level="medium",
+        adjustable=True,
+        minimum=_d(0.75),
+        maximum=_d(0.95),
+        step=_d(0.01),
+        max_delta_per_apply=_d(0.05),
+        risk_level="medium",
     ),
     ParamSpec(
-        name="DEDUP_UPDATE_THRESHOLD", value_type="float", group="dedup_thresholds",
-        description="余弦相似度高于此值更新记忆", source_attr="DEDUP_UPDATE_THRESHOLD",
-        adjustable=True, minimum=_d(0.50), maximum=_d(0.75), step=_d(0.01),
-        max_delta_per_apply=_d(0.05), risk_level="medium",
+        name="DEDUP_UPDATE_THRESHOLD",
+        value_type="float",
+        group="dedup_thresholds",
+        description="余弦相似度高于此值更新记忆",
+        source_attr="DEDUP_UPDATE_THRESHOLD",
+        adjustable=True,
+        minimum=_d(0.50),
+        maximum=_d(0.75),
+        step=_d(0.01),
+        max_delta_per_apply=_d(0.05),
+        risk_level="medium",
     ),
 ]
 
 # ---------------------------------------------------------------- 物理排除清单
 
 PHYSICALLY_EXCLUDED: tuple[str, ...] = (
-    "API_KEY", "HOST", "PORT", "DATABASE_URL",
-    "OPENAI_API_KEY", "OPENAI_BASE_URL", "EMBED_MODEL",
-    "RERANKER_MODEL", "RERANKER_BASE_URL", "RERANKER_ENABLED",
-    "RERANKER_API_KEY", "RERANKER_TIMEOUT", "RERANKER_RETRY_DELAY",
+    "API_KEY",
+    "HOST",
+    "PORT",
+    "DATABASE_URL",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "EMBED_MODEL",
+    "RERANKER_MODEL",
+    "RERANKER_BASE_URL",
+    "RERANKER_ENABLED",
+    "RERANKER_API_KEY",
+    "RERANKER_TIMEOUT",
+    "RERANKER_RETRY_DELAY",
     "RERANKER_CANDIDATE_MULTIPLIER",
-    "SSRF_ALLOWED_SCHEMES", "SSRF_MAX_REDIRECTS", "SSRF_MAX_BYTES",
-    "ALLOWED_API_HOSTS", "BACKUP_MANIFEST_VERSION", "CHROMADB_PATH",
+    "SSRF_ALLOWED_SCHEMES",
+    "SSRF_MAX_REDIRECTS",
+    "SSRF_MAX_BYTES",
+    "ALLOWED_API_HOSTS",
+    "BACKUP_MANIFEST_VERSION",
+    "CHROMADB_PATH",
 )
 
 # ---------------------------------------------------------------- 分组约束
@@ -101,12 +158,16 @@ PHYSICALLY_EXCLUDED: tuple[str, ...] = (
 GROUP_CONSTRAINTS: dict[str, dict] = {
     # 检索权重四路之和必须等于 1.0（容差 1e-6）；任一权重变化必须带补偿变化
     "retrieval_weights": {
-        "kind": "sum_equals", "target": "1.0", "epsilon": "1e-6",
+        "kind": "sum_equals",
+        "target": "1.0",
+        "epsilon": "1e-6",
     },
     # merge 阈值必须比 update 阈值高至少 0.10
     "dedup_thresholds": {
-        "kind": "ordered_gap", "higher": "DEDUP_MERGE_THRESHOLD",
-        "lower": "DEDUP_UPDATE_THRESHOLD", "min_gap": "0.10",
+        "kind": "ordered_gap",
+        "higher": "DEDUP_MERGE_THRESHOLD",
+        "lower": "DEDUP_UPDATE_THRESHOLD",
+        "min_gap": "0.10",
     },
 }
 
@@ -125,6 +186,7 @@ def get_group_constraints() -> dict[str, dict]:
 
 
 # ---------------------------------------------------------------- 快照与版本
+
 
 def default_snapshot() -> dict[str, float]:
     """静态 settings 当前值快照（仅白名单参数）。"""

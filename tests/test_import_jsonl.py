@@ -3,6 +3,7 @@
 parse_import_lines 纯函数直调不 mock；落库用真实临时 SQLite（仅 mock
 embedding/向量存储两个外部依赖）；REST 冒烟。
 """
+
 from datetime import datetime
 from unittest.mock import Mock, patch
 
@@ -20,8 +21,10 @@ from lantai.storage.fts import init_fts
 def imp_env():
     """内存 SQLite 真实建表 + FTS + patch 仅外部依赖。"""
     import lantai.models.tables  # noqa: F401
+
     engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False},
+        "sqlite://",
+        connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
@@ -31,13 +34,16 @@ def imp_env():
         return Session(engine)
 
     vector_store_mock = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
-    with patch.object(db_module, "get_session", session_factory), \
-         patch("lantai.llm.client.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock):
+    with (
+        patch.object(db_module, "get_session", session_factory),
+        patch("lantai.llm.client.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock),
+    ):
         yield session_factory, engine
 
 
 # ── 纯函数：解析 ──────────────────────────────────────────────
+
 
 def test_parse_ok():
     text = (
@@ -61,7 +67,7 @@ def test_parse_invalid_reports_reasons():
         '{"content": "好行"}\n'
         '{"content": ""}\n'
         '{"content": "时间坏", "created_at": "not-a-date"}\n'
-        'not json at all\n'
+        "not json at all\n"
         '{"lane": 5, "content": "lane坏"}\n'
         '{"content": "tags坏", "tags": [1, 2]}\n'
     )
@@ -84,6 +90,7 @@ def test_parse_blank_lines_skipped_not_invalid():
 
 # ── 落库（真实 SQLite，仅 mock 外部依赖）──────────────────────
 
+
 def test_import_preserves_timestamps_and_dedups(imp_env):
     session_factory, engine = imp_env
     text = (
@@ -92,6 +99,7 @@ def test_import_preserves_timestamps_and_dedups(imp_env):
         '{"content": "历史记录乙", "created_at": "2025-12-31T23:59:00"}\n'
     )
     from lantai.services.import_service import run_jsonl_import
+
     report = run_jsonl_import(text)
     assert report["ok"] is True
     assert report["imported"] == 2 and report["duplicates"] == 0
@@ -122,6 +130,7 @@ def test_import_normalizes_tz_to_naive_utc(imp_env):
     session_factory, _ = imp_env
     text = '{"content": "时区记录", "created_at": "2026-01-02T03:04:05+08:00"}\n'
     from lantai.services.import_service import run_jsonl_import
+
     report = run_jsonl_import(text)
     assert report["imported"] == 1
     with session_factory() as s:
@@ -134,6 +143,7 @@ def test_import_normalizes_tz_to_naive_utc(imp_env):
 def test_import_respects_agent_lane_bindings(imp_env, monkeypatch):
     """ACL 启用：越界 lane 行记 errors 不落库（宁 miss 不脏写）；未启用全量导入。"""
     from lantai.core.settings import settings
+
     session_factory, _ = imp_env
     monkeypatch.setattr(settings, "AGENT_LANE_BINDINGS", {"agent-a": ["fact"]})
     text = (
@@ -141,6 +151,7 @@ def test_import_respects_agent_lane_bindings(imp_env, monkeypatch):
         '{"content": "这是一条很长的越界规则用于测试", "lane": "rule"}\n'
     )
     from lantai.services.import_service import run_jsonl_import
+
     report = run_jsonl_import(text, allowed_lanes=["fact"])
     assert report["imported"] == 1
     assert len(report["errors"]) == 1
@@ -157,12 +168,9 @@ def test_import_respects_agent_lane_bindings(imp_env, monkeypatch):
 
 def test_import_invalid_lines_not_imported(imp_env):
     session_factory, _ = imp_env
-    text = (
-        '{"content": "合法行"}\n'
-        '{"content": ""}\n'
-        'bad json\n'
-    )
+    text = '{"content": "合法行"}\n{"content": ""}\nbad json\n'
     from lantai.services.import_service import run_jsonl_import
+
     report = run_jsonl_import(text)
     assert report["imported"] == 1
     assert len(report["invalid"]) == 2
@@ -173,10 +181,12 @@ def test_import_invalid_lines_not_imported(imp_env):
 
 # ── REST 冒烟 ────────────────────────────────────────────────
 
+
 def test_import_endpoint(imp_env):
     from fastapi.testclient import TestClient
 
-    from api_server import app
+    from lantai.api.app import app
+
     with TestClient(app) as c:
         r = c.post("/import/jsonl", json={"text": '{"content": "端点导入"}\n'})
         assert r.status_code == 200

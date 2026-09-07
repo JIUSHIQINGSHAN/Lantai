@@ -4,25 +4,32 @@ from lantai.models.tables import MemoryItem, MemoryUsageFeedback
 from lantai.storage import db
 
 
-def record_feedback(memory_id: str, query: str,
-                    helped: bool, user_accepted: bool,
-                    hallucination_risk: float) -> dict:
+def record_feedback(
+    memory_id: str, query: str, helped: bool, user_accepted: bool, hallucination_risk: float
+) -> dict:
     with db.get_session() as s:
         mem = s.get(MemoryItem, memory_id)
         if not mem:
             return {"ok": False}
-        delta = (0.1 if helped else -0.05) + (0.1 if user_accepted else 0) \
-                - 0.2 * hallucination_risk
+        delta = (
+            (0.1 if helped else -0.05) + (0.1 if user_accepted else 0) - 0.2 * hallucination_risk
+        )
         mem.use_count += 1
         mem.helpful_count += int(helped)
         mem.importance = max(0.0, min(1.0, mem.importance + delta))
         mem.last_used_at = utcnow()
         s.add(mem)
-        s.add(MemoryUsageFeedback(
-            id=new_id("fb"), memory_id=memory_id, query=query,
-            helped=helped, user_accepted=user_accepted,
-            hallucination_risk=hallucination_risk, score_delta=delta,
-        ))
+        s.add(
+            MemoryUsageFeedback(
+                id=new_id("fb"),
+                memory_id=memory_id,
+                query=query,
+                helped=helped,
+                user_accepted=user_accepted,
+                hallucination_risk=hallucination_risk,
+                score_delta=delta,
+            )
+        )
         s.commit()
         return {"ok": True, "importance": mem.importance}
 
@@ -36,10 +43,10 @@ from lantai.core.logger import logger
 from lantai.core.scheduler import record_run
 from lantai.core.settings import settings
 from lantai.llm.client import chat_json
-from lantai.services.prompt_service import get_prompt
 from lantai.llm.prompts import REFLECT_CURATOR_SYS, REFLECT_REJECTER_SYS
 from lantai.models.enums import ProposalStatus
 from lantai.models.tables import ConflictEvent, MemoryEdge, MemoryProposal
+from lantai.services.prompt_service import get_prompt
 
 _VALID_TYPES = {"add", "update", "merge", "deprecate"}
 
@@ -51,8 +58,14 @@ def _as_utc(dt):
 
 
 def _cand(mem: MemoryItem, signal: str, extra: dict | None = None) -> dict:
-    c = {"memory_id": mem.id, "key": mem.key, "content": mem.content,
-         "lane": mem.lane, "importance": mem.importance, "signal": signal}
+    c = {
+        "memory_id": mem.id,
+        "key": mem.key,
+        "content": mem.content,
+        "lane": mem.lane,
+        "importance": mem.importance,
+        "signal": signal,
+    }
     if extra:
         c.update(extra)
     return c
@@ -67,42 +80,41 @@ def health_scan(session) -> dict:
     """
     now = utcnow()
     superseded_by: dict[str, str] = {}
-    for e in session.exec(select(MemoryEdge)
-                          .where(MemoryEdge.relation == "supersedes")).all():
+    for e in session.exec(select(MemoryEdge).where(MemoryEdge.relation == "supersedes")).all():
         superseded_by.setdefault(e.target_memory_id, e.source_memory_id)
 
     candidates: list[dict] = []
-    for m in session.exec(select(MemoryItem)
-                          .where(MemoryItem.status == "active")).all():
+    for m in session.exec(select(MemoryItem).where(MemoryItem.status == "active")).all():
         if m.id in superseded_by:
-            candidates.append(_cand(m, "superseded",
-                                    {"superseded_by": superseded_by[m.id]}))
+            candidates.append(_cand(m, "superseded", {"superseded_by": superseded_by[m.id]}))
             continue
         vt = _as_utc(m.valid_to)
         if vt is not None and vt < now and m.decay_class != "procedural":
             candidates.append(_cand(m, "expired"))
             continue
         if settings.REFLECT_STALE_SCAN_ENABLED:
-            if (m.use_count >= settings.REFLECT_MIN_USE_COUNT
-                    and m.helpful_count / m.use_count
-                    <= settings.REFLECT_LOW_HELPFUL_RATIO):
+            if (
+                m.use_count >= settings.REFLECT_MIN_USE_COUNT
+                and m.helpful_count / m.use_count <= settings.REFLECT_LOW_HELPFUL_RATIO
+            ):
                 candidates.append(_cand(m, "low_helpful"))
                 continue
             last = _as_utc(m.last_used_at or m.created_at)
             age_days = max(0.0, (now - last).total_seconds() / 86400.0)
-            if (age_days >= settings.REFLECT_STALE_AGE_DAYS
-                    and m.use_count == 0
-                    and m.importance < settings.REFLECT_STALE_IMPORTANCE
-                    and m.decay_class != "procedural"):
+            if (
+                age_days >= settings.REFLECT_STALE_AGE_DAYS
+                and m.use_count == 0
+                and m.importance < settings.REFLECT_STALE_IMPORTANCE
+                and m.decay_class != "procedural"
+            ):
                 candidates.append(_cand(m, "stale_low_value"))
 
-    for ev in session.exec(select(ConflictEvent)
-                           .where(ConflictEvent.status == "open")).all():
+    for ev in session.exec(select(ConflictEvent).where(ConflictEvent.status == "open")).all():
         m = session.get(MemoryItem, ev.memory_id)
         if m:
-            candidates.append(_cand(m, "open_conflict",
-                                    {"conflict_event_id": ev.id,
-                                     "detail": ev.detail}))
+            candidates.append(
+                _cand(m, "open_conflict", {"conflict_event_id": ev.id, "detail": ev.detail})
+            )
 
     seen: set[str] = set()
     batch: list[dict] = []
@@ -147,9 +159,12 @@ def _curate(candidates: list[dict], related_texts: str) -> dict:
     batch_text = "\n".join(
         f"- [{c['memory_id']}] lane={c['lane']} importance={c['importance']:.2f} "
         f"signal={c['signal']} {c['key']}: {c['content'][:200]}"
-        for c in candidates)
-    user = (f"FLAGGED MEMORIES:\n{batch_text}\n\n"
-            f"RELATED EXISTING MEMORIES:\n{related_texts or '(none)'}")
+        for c in candidates
+    )
+    user = (
+        f"FLAGGED MEMORIES:\n{batch_text}\n\n"
+        f"RELATED EXISTING MEMORIES:\n{related_texts or '(none)'}"
+    )
     try:
         return chat_json(get_prompt("REFLECT_CURATOR_SYS", REFLECT_CURATOR_SYS), user)
     except Exception:
@@ -161,18 +176,23 @@ def _reject(prop: MemoryProposal, evidence_texts: str) -> dict:
     if not evidence_texts.strip():
         return {"accept": False, "risk": "high", "reason": "no evidence text"}
     patch = prop.proposed_patch or {}
-    user = (f"PROPOSAL:\ntype={prop.proposal_type} "
-            f"target={prop.target_memory_id}\ncontent={patch.get('content', '')}\n"
-            f"reason={prop.reason}\n\nEVIDENCE:\n{evidence_texts}")
+    user = (
+        f"PROPOSAL:\ntype={prop.proposal_type} "
+        f"target={prop.target_memory_id}\ncontent={patch.get('content', '')}\n"
+        f"reason={prop.reason}\n\nEVIDENCE:\n{evidence_texts}"
+    )
     try:
         return chat_json(get_prompt("REFLECT_REJECTER_SYS", REFLECT_REJECTER_SYS), user)
     except Exception:
-        return {"accept": False, "risk": "high", "reason": "rejecter unavailable",
-                "unavailable": True}
+        return {
+            "accept": False,
+            "risk": "high",
+            "reason": "rejecter unavailable",
+            "unavailable": True,
+        }
 
 
-def propose_from_reflection(session, candidates: list[dict],
-                            curated: dict) -> list[MemoryProposal]:
+def propose_from_reflection(session, candidates: list[dict], curated: dict) -> list[MemoryProposal]:
     """curator 输出 → MemoryProposal（证据存在性校验 + 置信过滤）。
 
     证据校验：evidence_ids 必须指向库中真实存在的 MemoryItem（防编造 id）；
@@ -187,8 +207,9 @@ def propose_from_reflection(session, candidates: list[dict],
         conf = float(p.get("confidence", 0.0))
         if conf < settings.REFLECT_MIN_CONFIDENCE:
             continue
-        evidence = [e for e in (p.get("evidence_ids") or [])
-                    if session.get(MemoryItem, e) is not None]
+        evidence = [
+            e for e in (p.get("evidence_ids") or []) if session.get(MemoryItem, e) is not None
+        ]
         if ptype != "add" and not evidence:
             continue
         target = p.get("target_memory_id") or ""
@@ -212,8 +233,8 @@ def propose_from_reflection(session, candidates: list[dict],
                 "memory_type": p.get("memory_type", "semantic"),
                 "key": (target_mem.key if target_mem else content[:60]),
                 "content": content,
-                "lane": p.get("lane") or (candidates[0]["lane"] if candidates
-                                          else settings.DEFAULT_LANE),
+                "lane": p.get("lane")
+                or (candidates[0]["lane"] if candidates else settings.DEFAULT_LANE),
             },
             confidence=conf,
             conflict_ids=[],
@@ -237,13 +258,12 @@ def _record_reflect_run(run_at=None, **fields) -> None:
     """反思运行结论落库（reflect_run 表；失败不阻断运行，宁 miss 不静默）。"""
     try:
         from lantai.models.tables import ReflectRun
+
         with db.get_session() as s:
-            s.add(ReflectRun(id=new_id("run"),
-                             run_at=run_at or utcnow(), **fields))
+            s.add(ReflectRun(id=new_id("run"), run_at=run_at or utcnow(), **fields))
             s.commit()
     except Exception as exc:
-        logger.warning("reflect_run 落库失败（审计留痕不静默）: %s", exc,
-                       exc_info=True)
+        logger.warning("reflect_run 落库失败（审计留痕不静默）: %s", exc, exc_info=True)
 
 
 def _safe_waterline() -> float:
@@ -276,19 +296,20 @@ def _run_reflect_once(source: str) -> dict:
     with db.get_session() as s:
         scan = health_scan(s)
         waterline = _importance_waterline(s)
-        related = s.exec(select(MemoryItem)
-                         .where(MemoryItem.status == "active")).all()
-        related_texts = "\n".join(
-            f"- ({m.memory_type}) {m.key}: {m.content}" for m in related[:20])
+        related = s.exec(select(MemoryItem).where(MemoryItem.status == "active")).all()
+        related_texts = "\n".join(f"- ({m.memory_type}) {m.key}: {m.content}" for m in related[:20])
 
     candidates = scan["candidates"]
     theme_triggered = waterline >= settings.REFLECT_IMPORTANCE_POOL
     if not candidates and not theme_triggered:
         record_run("reflect")
-        _record_reflect_run(source=source, waterline=round(waterline, 2),
-                            skipped="idle")
-        return {"ok": True, "skipped": "idle",
-                "health": scan["snapshot"], "waterline": round(waterline, 2)}
+        _record_reflect_run(source=source, waterline=round(waterline, 2), skipped="idle")
+        return {
+            "ok": True,
+            "skipped": "idle",
+            "health": scan["snapshot"],
+            "waterline": round(waterline, 2),
+        }
 
     if theme_triggered:
         start = utcnow() - timedelta(days=settings.REFLECT_IMPORTANCE_WINDOW_DAYS)
@@ -312,8 +333,8 @@ def _run_reflect_once(source: str) -> dict:
     for prop in props:
         with db.get_session() as s:
             evidence_texts = "\n".join(
-                m.content for eid in prop.evidence_ids
-                if (m := s.get(MemoryItem, eid)) is not None)
+                m.content for eid in prop.evidence_ids if (m := s.get(MemoryItem, eid)) is not None
+            )
         verdict = _reject(prop, evidence_texts)
         if verdict.get("unavailable"):
             rejecter_failed += 1
@@ -326,9 +347,9 @@ def _run_reflect_once(source: str) -> dict:
                 s.commit()
             discarded += 1
             continue
-        if (prop.confidence >= settings.REFLECT_AUTO_APPLY_CONF
-                and verdict.get("risk") == "low"):
+        if prop.confidence >= settings.REFLECT_AUTO_APPLY_CONF and verdict.get("risk") == "low":
             from lantai.evolution.promoter import apply_proposal
+
             res = apply_proposal(prop.id)
             if res.get("ok"):
                 auto_applied += 1
@@ -336,9 +357,10 @@ def _run_reflect_once(source: str) -> dict:
                 if src and src.get("conflict_event_id"):
                     try:
                         from lantai.services.conflict_service import resolve_conflict_event
-                        resolve_conflict_event(src["conflict_event_id"],
-                                               "resolved",
-                                               "reflection proposal applied")
+
+                        resolve_conflict_event(
+                            src["conflict_event_id"], "resolved", "reflection proposal applied"
+                        )
                     except Exception:
                         pass
         else:
@@ -353,15 +375,22 @@ def _run_reflect_once(source: str) -> dict:
         waterline=round(waterline, 2),
         health_before=scan["snapshot"],
         health_after=scan_after["snapshot"],
-        proposals_created=len(props), auto_applied=auto_applied,
-        pending=pending, discarded=discarded,
+        proposals_created=len(props),
+        auto_applied=auto_applied,
+        pending=pending,
+        discarded=discarded,
         curate_failed=bool(curated.get("curate_failed")),
-        rejecter_failed=rejecter_failed)
+        rejecter_failed=rejecter_failed,
+    )
     return {
-        "ok": True, "skipped": False,
-        "health_before": scan["snapshot"], "health_after": scan_after["snapshot"],
-        "proposals_created": len(props), "auto_applied": auto_applied,
-        "pending": pending, "discarded": discarded,
+        "ok": True,
+        "skipped": False,
+        "health_before": scan["snapshot"],
+        "health_after": scan_after["snapshot"],
+        "proposals_created": len(props),
+        "auto_applied": auto_applied,
+        "pending": pending,
+        "discarded": discarded,
         "rejecter_failed": rejecter_failed,
         "waterline": round(waterline, 2),
     }

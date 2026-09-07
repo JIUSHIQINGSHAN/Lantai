@@ -8,9 +8,15 @@ def extract_candidate(title: str, content: str) -> dict:
     try:
         data = chat_json(get_prompt("EXTRACT_SYS", EXTRACT_SYS), user)
     except Exception:
-        return {"summary": content[:400], "claims": [], "methods": [],
-                "constraints": [], "actions": [], "topic": [],
-                "extractor_confidence": 0.3}
+        return {
+            "summary": content[:400],
+            "claims": [],
+            "methods": [],
+            "constraints": [],
+            "actions": [],
+            "topic": [],
+            "extractor_confidence": 0.3,
+        }
     data.setdefault("summary", "")
     for k in ["claims", "methods", "constraints", "actions", "topic"]:
         data.setdefault(k, [])

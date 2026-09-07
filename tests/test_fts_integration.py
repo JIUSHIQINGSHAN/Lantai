@@ -1,4 +1,5 @@
 """FTS5 集成测试：同事务同步 + 检索融合 + 追加召回 + BM25 缓存"""
+
 from unittest.mock import Mock, patch
 
 import pytest
@@ -14,9 +15,9 @@ from lantai.storage.fts import init_fts, search_fts, sync_fts
 
 @pytest.fixture
 def engine():
-    e = create_engine("sqlite:///:memory:",
-                      connect_args={"check_same_thread": False},
-                      poolclass=StaticPool)
+    e = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     SQLModel.metadata.create_all(e)
     init_fts(e.raw_connection())
     return e
@@ -25,10 +26,21 @@ def engine():
 def _add_mem(engine, content: str) -> str:
     mid = new_id("mem")
     with Session(engine) as s:
-        s.add(MemoryItem(
-            id=mid, memory_type="general", key=mid, content=content,
-            lane="general", status="active", importance=0.5, use_count=0,
-            decay_score=1.0, last_used_at=utcnow(), created_at=utcnow()))
+        s.add(
+            MemoryItem(
+                id=mid,
+                memory_type="general",
+                key=mid,
+                content=content,
+                lane="general",
+                status="active",
+                importance=0.5,
+                use_count=0,
+                decay_score=1.0,
+                last_used_at=utcnow(),
+                created_at=utcnow(),
+            )
+        )
         s.commit()
     return mid
 
@@ -37,10 +49,21 @@ def test_sync_fts_same_transaction(engine):
     """sync_fts 与记忆写入同事务：commit 后 FTS 可见"""
     mid = new_id("mem")
     with Session(engine) as s:
-        s.add(MemoryItem(
-            id=mid, memory_type="general", key=mid, content="用户喜欢喝咖啡",
-            lane="general", status="active", importance=0.5, use_count=0,
-            decay_score=1.0, last_used_at=utcnow(), created_at=utcnow()))
+        s.add(
+            MemoryItem(
+                id=mid,
+                memory_type="general",
+                key=mid,
+                content="用户喜欢喝咖啡",
+                lane="general",
+                status="active",
+                importance=0.5,
+                use_count=0,
+                decay_score=1.0,
+                last_used_at=utcnow(),
+                created_at=utcnow(),
+            )
+        )
         sync_fts(s, mid, "用户喜欢喝咖啡")
         s.commit()
     with engine.connect() as conn:
@@ -87,6 +110,7 @@ def test_short_token_does_not_poison_and(engine):
         c = conn.connection.driver_connection
         assert mid in search_fts(c, "API 密钥")
 
+
 def test_supersedes_demotes_old_below_new(engine):
     """supersedes 边降权：被取代旧值在新值同在候选集时排到新值之后。
 
@@ -94,29 +118,45 @@ def test_supersedes_demotes_old_below_new(engine):
     降权后必须新值（环境变量注入）在前——宁 miss 不脏写：旧值不删、仍在结果中。
     """
     from lantai.core.ids import new_id
+
     old = _add_mem(engine, "API 密钥存储在 config.py")
     new = _add_mem(engine, "API 密钥改为环境变量注入")
     with Session(engine) as s:
         sync_fts(s, old, "API 密钥存储在 config.py")
         sync_fts(s, new, "API 密钥改为环境变量注入")
-        s.add(MemoryEdge(id=new_id("edge"), source_memory_id=new,
-                         target_memory_id=old, relation="supersedes", confidence=1.0))
+        s.add(
+            MemoryEdge(
+                id=new_id("edge"),
+                source_memory_id=new,
+                target_memory_id=old,
+                relation="supersedes",
+                confidence=1.0,
+            )
+        )
         s.commit()
 
     def get_test_session():
         return Session(engine)
 
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store",
-               return_value=Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())):
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch(
+            "lantai.retrieval.hybrid.get_vector_store",
+            return_value=Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock()),
+        ),
+    ):
         from lantai.retrieval import hybrid
+
         results = hybrid.hybrid_search("API 密钥", top_k=5, use_rerank=False)
     ids = [r["memory"]["id"] for r in results]
-    assert old in ids and new in ids          # 不删旧值（宁 miss 不脏写）
-    assert ids.index(new) < ids.index(old)    # 新值必须在前
+    assert old in ids and new in ids  # 不删旧值（宁 miss 不脏写）
+    assert ids.index(new) < ids.index(old)  # 新值必须在前
+
 
 def test_query_symbols_only_does_not_crash(engine):
     """纯符号/碎片查询不抛异常，返回空列表而非降级日志刷屏"""
@@ -136,6 +176,7 @@ def test_query_embedded_quotes_escaped(engine):
     with engine.connect() as conn:
         c = conn.connection.driver_connection
         assert mid in search_fts(c, '"明天见"')
+
 
 def test_sync_fts_delete(engine):
     """content=None 删除索引"""
@@ -163,15 +204,19 @@ def test_hybrid_fts_extra_recall(engine):
         return Session(engine)
 
     def fake_store(ids):
-        return Mock(search=Mock(return_value=[
-            {"id": i, "distance": 0.3, "metadata": {}} for i in ids]))
+        return Mock(
+            search=Mock(return_value=[{"id": i, "distance": 0.3, "metadata": {}} for i in ids])
+        )
 
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store",
-               return_value=fake_store([vec_hit_id])):
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.hybrid.get_vector_store", return_value=fake_store([vec_hit_id])),
+    ):
         results = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=False)
     ids = {r["memory"]["id"] for r in results}
     assert vec_hit_id in ids
@@ -181,22 +226,40 @@ def test_hybrid_fts_extra_recall(engine):
 def test_supersedes_explain_marks_demotion(engine):
     """检索透明：supersedes 降权在 explain 里标注 superseded_by + demoted（可审计）。"""
     from lantai.core.ids import new_id
+
     old = _add_mem(engine, "API 密钥存储在 config.py")
     new = _add_mem(engine, "API 密钥改为环境变量注入")
     with Session(engine) as s:
         sync_fts(s, old, "API 密钥存储在 config.py")
         sync_fts(s, new, "API 密钥改为环境变量注入")
-        s.add(MemoryEdge(id=new_id("edge"), source_memory_id=new,
-                         target_memory_id=old, relation="supersedes", confidence=1.0))
+        s.add(
+            MemoryEdge(
+                id=new_id("edge"),
+                source_memory_id=new,
+                target_memory_id=old,
+                relation="supersedes",
+                confidence=1.0,
+            )
+        )
         s.commit()
 
     def get_test_session():
         return Session(engine)
 
-    with patch.object(db_module, "get_session", get_test_session),          patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}),          patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),          patch("lantai.retrieval.hybrid.get_vector_store",
-               return_value=Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())):
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch(
+            "lantai.retrieval.hybrid.get_vector_store",
+            return_value=Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock()),
+        ),
+    ):
         from lantai.retrieval import hybrid
+
         results = hybrid.hybrid_search("API 密钥", top_k=5, use_rerank=False, explain=True)
     by_id = {r["memory"]["id"]: r for r in results}
     assert by_id[old]["explain"].get("demoted") is True
@@ -217,12 +280,18 @@ def test_hybrid_vector_empty_falls_back_to_fts(engine):
     def get_test_session():
         return Session(engine)
 
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store",
-               return_value=Mock(search=Mock(return_value=[]))):  # 向量空
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch(
+            "lantai.retrieval.hybrid.get_vector_store",
+            return_value=Mock(search=Mock(return_value=[])),
+        ),
+    ):  # 向量空
         results = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=False)
     assert results, "向量为空时不应零召回"
     ids = {r["memory"]["id"] for r in results}
@@ -241,14 +310,19 @@ def test_hybrid_vector_empty_trace_marks_fallback(engine):
     def get_test_session():
         return Session(engine)
 
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store",
-               return_value=Mock(search=Mock(return_value=[]))):
-        results, trace_steps = hybrid.hybrid_search("咖啡因", top_k=5,
-                                                    use_rerank=False, trace=True)
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch(
+            "lantai.retrieval.hybrid.get_vector_store",
+            return_value=Mock(search=Mock(return_value=[])),
+        ),
+    ):
+        results, trace_steps = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=False, trace=True)
     assert any(s["step"] == "fallback_fts" for s in trace_steps)
     assert fts_id in {r["memory"]["id"] for r in results}
 
@@ -265,19 +339,33 @@ def test_hybrid_explain_breakdown(engine):
     def get_test_session():
         return Session(engine)
 
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store",
-               return_value=Mock(search=Mock(return_value=[
-                   {"id": vec_hit_id, "distance": 0.3, "metadata": {}}]))):
-        results = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=False,
-                                       explain=True)
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch(
+            "lantai.retrieval.hybrid.get_vector_store",
+            return_value=Mock(
+                search=Mock(return_value=[{"id": vec_hit_id, "distance": 0.3, "metadata": {}}])
+            ),
+        ),
+    ):
+        results = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=False, explain=True)
     assert results
     expl = results[0]["explain"]
-    for key in ("vector", "bm25", "fts", "decay", "lane_boost",
-                "final", "decay_class", "decay_multiplier"):
+    for key in (
+        "vector",
+        "bm25",
+        "fts",
+        "decay",
+        "lane_boost",
+        "final",
+        "decay_class",
+        "decay_multiplier",
+    ):
         assert key in expl, f"missing explain key: {key}"
     assert expl["decay_class"] == "episodic"
     assert expl["decay_multiplier"] == 1.0  # 刚写入，未老化
@@ -295,19 +383,24 @@ def test_hybrid_explain_rerank_keeps_breakdown(engine):
     def get_test_session():
         return Session(engine)
 
-    fake_rerank = Mock(return_value=[
-        {"score": 0.9, "document": "咖啡因摄入记录"}])
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store",
-               return_value=Mock(search=Mock(return_value=[
-                   {"id": vec_hit_id, "distance": 0.3, "metadata": {}}]))), \
-         patch.object(hybrid.settings, "RERANKER_ENABLED", True), \
-         patch("lantai.retrieval.hybrid.rerank", fake_rerank):
-        results = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=True,
-                                       explain=True)
+    fake_rerank = Mock(return_value=[{"score": 0.9, "document": "咖啡因摄入记录"}])
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch(
+            "lantai.retrieval.hybrid.get_vector_store",
+            return_value=Mock(
+                search=Mock(return_value=[{"id": vec_hit_id, "distance": 0.3, "metadata": {}}])
+            ),
+        ),
+        patch.object(hybrid.settings, "RERANKER_ENABLED", True),
+        patch("lantai.retrieval.hybrid.rerank", fake_rerank),
+    ):
+        results = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=True, explain=True)
     assert results
     assert "document" in results[0]
     assert results[0]["explain"] is not None
@@ -327,14 +420,19 @@ def test_hybrid_explain_fallback(engine):
     def get_test_session():
         return Session(engine)
 
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store",
-               return_value=Mock(search=Mock(return_value=[]))):
-        results = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=False,
-                                       explain=True)
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch(
+            "lantai.retrieval.hybrid.get_vector_store",
+            return_value=Mock(search=Mock(return_value=[])),
+        ),
+    ):
+        results = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=False, explain=True)
     assert results
     expl = results[0]["explain"]
     assert expl["vector"] == 0.0
@@ -349,15 +447,17 @@ def test_hybrid_vector_empty_no_candidates_returns_empty(engine):
     def get_test_session():
         return Session(engine)
 
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store",
-               return_value=Mock(search=Mock(return_value=[]))):
-        results = hybrid.hybrid_search("完全不存在的记忆关键词xyz", top_k=5,
-                                       use_rerank=False)
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch(
+            "lantai.retrieval.hybrid.get_vector_store",
+            return_value=Mock(search=Mock(return_value=[])),
+        ),
+    ):
+        results = hybrid.hybrid_search("完全不存在的记忆关键词xyz", top_k=5, use_rerank=False)
     assert results == []
-
-
-

@@ -5,6 +5,7 @@
 内容 sha256 幂等去重，created_at/updated_at 保留原值。
 parse_import_lines 为纯函数（测试直调不 mock）。
 """
+
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -67,10 +68,14 @@ def parse_import_lines(text: str) -> tuple[list[dict], list[dict]]:
         try:
             created_at = (
                 _parse_dt(obj["created_at"], "created_at")
-                if obj.get("created_at") is not None else None)
+                if obj.get("created_at") is not None
+                else None
+            )
             updated_at = (
                 _parse_dt(obj["updated_at"], "updated_at")
-                if obj.get("updated_at") is not None else None)
+                if obj.get("updated_at") is not None
+                else None
+            )
         except ValueError as e:
             invalid.append({"line": idx, "reason": str(e)})
             continue
@@ -82,13 +87,15 @@ def parse_import_lines(text: str) -> tuple[list[dict], list[dict]]:
         if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
             invalid.append({"line": idx, "reason": "tags 必须为字符串数组"})
             continue
-        valid.append({
-            "content": content.strip(),
-            "created_at": created_at,
-            "updated_at": updated_at,
-            "lane": lane.strip() if lane else settings.RAW_MEMORY_DEFAULT_LANE,
-            "tags": tags,
-        })
+        valid.append(
+            {
+                "content": content.strip(),
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "lane": lane.strip() if lane else settings.RAW_MEMORY_DEFAULT_LANE,
+                "tags": tags,
+            }
+        )
     return valid, invalid
 
 
@@ -101,21 +108,34 @@ def _store_imported_memory(s, content, created_at, updated_at, lane, tags) -> st
     """
     h = hashlib.sha256(content.encode("utf-8")).hexdigest()
     existing = s.exec(
-        select(MemoryItem)
-        .where(MemoryItem.memory_type == "verbatim",
-               MemoryItem.key == h,
-               MemoryItem.status == "active")).first()
+        select(MemoryItem).where(
+            MemoryItem.memory_type == "verbatim", MemoryItem.key == h, MemoryItem.status == "active"
+        )
+    ).first()
     if existing:
         return "duplicate"
-    mem = build_verbatim_item(content, lane, tags,
-                              created_at=created_at, updated_at=updated_at)
+    mem = build_verbatim_item(content, lane, tags, created_at=created_at, updated_at=updated_at)
     s.add(mem)
     s.flush()
     try:
         from lantai.llm.client import embed
         from lantai.retrieval.hybrid import index_memory_item
+
         emb = embed([content])[0]
-        index_memory_item(mem.id, emb, {"key": mem.key, "memory_type": mem.memory_type})
+        index_memory_item(
+            mem.id,
+            emb,
+            {
+                "key": mem.key,
+                "memory_type": mem.memory_type,
+                "lane": getattr(mem, "lane", "general") or "general",
+                "domain": getattr(mem, "domain", "user") or "user",
+                "tenant_id": getattr(mem, "tenant_id", "") or "",
+                "user_id": getattr(mem, "user_id", "") or "",
+                "session_id": getattr(mem, "session_id", "") or "",
+                "agent_id": getattr(mem, "agent_id", "") or "",
+            },
+        )
     except Exception:
         pass  # 向量索引失败不阻断落库（FTS 仍可检索）
     sync_fts(s, mem.id, content)
@@ -133,18 +153,24 @@ def import_memory_lines(lines: list[dict], allowed_lanes: list[str] | None = Non
     with db.get_session() as s:
         for line in lines:
             if allowed_lanes is not None and line["lane"] not in allowed_lanes:
-                report["errors"].append({
-                    "content": line["content"][:60],
-                    "reason": f"lane {line['lane']!r} 不在允许集（ACL）",
-                })
+                report["errors"].append(
+                    {
+                        "content": line["content"][:60],
+                        "reason": f"lane {line['lane']!r} 不在允许集（ACL）",
+                    }
+                )
                 continue
             try:
                 result = _store_imported_memory(
-                    s, line["content"], line["created_at"],
-                    line["updated_at"], line["lane"], line["tags"])
+                    s,
+                    line["content"],
+                    line["created_at"],
+                    line["updated_at"],
+                    line["lane"],
+                    line["tags"],
+                )
             except Exception as e:  # noqa: BLE001 —— 单行失败只记报告
-                report["errors"].append({
-                    "content": line["content"][:60], "reason": str(e)})
+                report["errors"].append({"content": line["content"][:60], "reason": str(e)})
                 continue
             if result == "imported":
                 report["imported"] += 1

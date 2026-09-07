@@ -6,6 +6,7 @@ v0.3.2 重写：
 - Chronos 改为 mock embed/vector_store 后直接调 hybrid_search
 - 修复 resp.json 缺括号的 TypeError
 """
+
 import sqlite3
 from datetime import timedelta
 from unittest.mock import Mock, patch
@@ -25,6 +26,21 @@ from lantai.storage.fts import index_fts, init_fts, search_fts
 def fts_conn():
     conn = sqlite3.connect(":memory:")
     init_fts(conn)
+    conn.execute("""
+        CREATE TABLE memoryitem (
+            id TEXT PRIMARY KEY,
+            lane TEXT,
+            domain TEXT,
+            tenant_id TEXT,
+            user_id TEXT,
+            session_id TEXT,
+            agent_id TEXT
+        )
+    """)
+    conn.execute("INSERT INTO memoryitem (id, lane, domain) VALUES ('mem_1', 'general', 'user')")
+    conn.execute("INSERT INTO memoryitem (id, lane, domain) VALUES ('mem_2', 'general', 'user')")
+    conn.execute("INSERT INTO memoryitem (id, lane, domain) VALUES ('mem_3', 'general', 'user')")
+    conn.execute("INSERT INTO memoryitem (id, lane, domain) VALUES ('mem_4', 'general', 'user')")
     yield conn
     conn.close()
 
@@ -58,36 +74,51 @@ class TestFTS5:
 @pytest.fixture
 def search_env():
     """内存库 + mock 检索外部依赖，直接测 hybrid_search"""
-    engine = create_engine("sqlite:///:memory:",
-                           connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     SQLModel.metadata.create_all(engine)
 
     def get_test_session():
         return Session(engine)
 
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]):
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+    ):
         yield engine
 
 
 def _seed(engine, content: str, valid_from=None, valid_to=None) -> str:
     mid = new_id("mem")
     with Session(engine) as s:
-        s.add(MemoryItem(
-            id=mid, memory_type="general", key=mid, content=content,
-            lane="general", status="active", importance=0.5, use_count=0,
-            decay_score=1.0, last_used_at=utcnow(), created_at=utcnow(),
-            valid_from=valid_from, valid_to=valid_to))
+        s.add(
+            MemoryItem(
+                id=mid,
+                memory_type="general",
+                key=mid,
+                content=content,
+                lane="general",
+                status="active",
+                importance=0.5,
+                use_count=0,
+                decay_score=1.0,
+                last_used_at=utcnow(),
+                created_at=utcnow(),
+                valid_from=valid_from,
+                valid_to=valid_to,
+            )
+        )
         s.commit()
     return mid
 
 
 def _mock_store(ids):
-    return Mock(search=Mock(return_value=[
-        {"id": i, "distance": 0.1, "metadata": {}} for i in ids]))
+    return Mock(search=Mock(return_value=[{"id": i, "distance": 0.1, "metadata": {}} for i in ids]))
 
 
 class TestChronos:
@@ -96,12 +127,13 @@ class TestChronos:
     def test_valid_from_future_filtered(self, search_env):
         """未生效记忆应被过滤"""
         from lantai.retrieval import hybrid
+
         now = utcnow()
         ok_id = _seed(search_env, "当前生效的记忆内容")
-        future_id = _seed(search_env, "三十天后才生效的记忆",
-                          valid_from=now + timedelta(days=30))
-        with patch("lantai.retrieval.hybrid.get_vector_store",
-                   return_value=_mock_store([ok_id, future_id])):
+        future_id = _seed(search_env, "三十天后才生效的记忆", valid_from=now + timedelta(days=30))
+        with patch(
+            "lantai.retrieval.hybrid.get_vector_store", return_value=_mock_store([ok_id, future_id])
+        ):
             results = hybrid.hybrid_search("记忆", top_k=5, use_rerank=False)
         ids = [r["memory"]["id"] for r in results]
         assert ok_id in ids
@@ -110,12 +142,14 @@ class TestChronos:
     def test_expired_memory_downweighted(self, search_env):
         """过期记忆降权但保留"""
         from lantai.retrieval import hybrid
+
         now = utcnow()
         fresh_id = _seed(search_env, "未过期记忆")
-        expired_id = _seed(search_env, "已过期记忆",
-                           valid_to=now - timedelta(days=1))
-        with patch("lantai.retrieval.hybrid.get_vector_store",
-                   return_value=_mock_store([fresh_id, expired_id])):
+        expired_id = _seed(search_env, "已过期记忆", valid_to=now - timedelta(days=1))
+        with patch(
+            "lantai.retrieval.hybrid.get_vector_store",
+            return_value=_mock_store([fresh_id, expired_id]),
+        ):
             results = hybrid.hybrid_search("记忆", top_k=5, use_rerank=False)
         ids = [r["memory"]["id"] for r in results]
         assert expired_id in ids
@@ -123,8 +157,8 @@ class TestChronos:
     def test_integration_seed_and_search(self, search_env):
         """写入 → 检索 全链路（mock 向量层）"""
         from lantai.retrieval import hybrid
+
         mid = _seed(search_env, "Full pipeline with FTS5 and Chronos")
-        with patch("lantai.retrieval.hybrid.get_vector_store",
-                   return_value=_mock_store([mid])):
+        with patch("lantai.retrieval.hybrid.get_vector_store", return_value=_mock_store([mid])):
             results = hybrid.hybrid_search("pipeline", top_k=5, use_rerank=False)
         assert any(r["memory"]["id"] == mid for r in results)

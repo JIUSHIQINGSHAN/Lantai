@@ -7,6 +7,7 @@
   source=pre_compress 标记经 AddMemoryReq.metadata 落入 RawDocument.meta。
 - lane="chat" 刻意选择：3 天半衰期，抢救内容不长期污染检索。
 """
+
 import logging
 import threading
 
@@ -44,12 +45,14 @@ def flush_before_compress(messages: list[dict], n: int = _DEFAULT_N) -> dict:
 
     def _worker() -> None:
         try:
-            add_memory(AddMemoryReq(
-                title="压缩前会话快照",
-                content=text,
-                lane="chat",
-                metadata={"source": "pre_compress"},
-            ))
+            add_memory(
+                AddMemoryReq(
+                    title="压缩前会话快照",
+                    content=text,
+                    lane="chat",
+                    metadata={"source": "pre_compress"},
+                )
+            )
         except Exception:
             # 抢救失败绝不影响压缩主流程；只记日志
             logger.exception("pre_compress flush failed")

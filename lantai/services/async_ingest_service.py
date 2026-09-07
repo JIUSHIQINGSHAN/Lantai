@@ -5,6 +5,7 @@
 2. get_task_status: 查询任务状态 (queued/processing/completed/failed) 与提取结果；
 3. clear_tasks: 任务注册表清理（供测试使用）。
 """
+
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -25,6 +26,7 @@ def _execute_dialogue_task(task_id: str, text: str, user_id: str, source: str) -
 
         # 调用同步核心摄取函数
         from lantai.ingestion.dialogue import ingest_dialogue
+
         res = ingest_dialogue(text=text, user_id=user_id, source=source)
 
         _TASKS[task_id]["status"] = "completed"

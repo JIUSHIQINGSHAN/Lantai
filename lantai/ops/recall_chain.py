@@ -6,6 +6,7 @@
 只读、零 DB 写入、零 LLM 生成（仅复用检索自身的 embedding）；单条搜索失败只
 缺该层（宁 miss 不脏写：缺的层如实缺席，不编造关联）。
 """
+
 import math
 
 import jieba
@@ -28,8 +29,11 @@ def validate_chain_params(max_depth, branch, min_score, total_max) -> None:
         raise ValueError("max_depth must be an int in [1, 5]")
     if not isinstance(branch, int) or isinstance(branch, bool) or not (1 <= branch <= 10):
         raise ValueError("branch must be an int in [1, 10]")
-    if (not isinstance(min_score, (int, float)) or isinstance(min_score, bool)
-            or not (0.0 <= min_score <= 1.0)):
+    if (
+        not isinstance(min_score, (int, float))
+        or isinstance(min_score, bool)
+        or not (0.0 <= min_score <= 1.0)
+    ):
         raise ValueError("min_score must be a float in [0.0, 1.0]")
     if not isinstance(total_max, int) or isinstance(total_max, bool) or not (1 <= total_max <= 50):
         raise ValueError("total_max must be an int in [1, 50]")
@@ -57,9 +61,14 @@ def _is_self_match(mem_text: str, seed: str) -> bool:
     return _text_sim(mem_text, seed) >= SELF_MATCH_THRESHOLD
 
 
-def build_recall_chain(seed_text: str, max_depth: int = MAX_CHAIN_DEPTH,
-                       branch: int = CHAIN_BRANCH, min_score: float = CHAIN_MIN_SCORE,
-                       total_max: int = CHAIN_TOTAL_MAX) -> dict:
+def build_recall_chain(
+    seed_text: str,
+    max_depth: int = MAX_CHAIN_DEPTH,
+    branch: int = CHAIN_BRANCH,
+    min_score: float = CHAIN_MIN_SCORE,
+    total_max: int = CHAIN_TOTAL_MAX,
+    principal=None,
+) -> dict:
     """从 seed 出发逐层发现关联记忆，形成广播链（只读，不落库）。
 
     - 每层：以当前 seed 集逐条调 hybrid_search(top_k=branch*3, use_rerank=False)，
@@ -89,7 +98,9 @@ def build_recall_chain(seed_text: str, max_depth: int = MAX_CHAIN_DEPTH,
             if depth > 0 and len(seed) < 3:
                 continue
             try:
-                results = hybrid_search(seed, top_k=branch * 3, use_rerank=False)
+                results = hybrid_search(
+                    seed, top_k=branch * 3, use_rerank=False, principal=principal
+                )
             except Exception:
                 continue  # 单条搜索失败不阻断整链（宁 miss：缺层如实缺席）
             # hybrid 非重排路径返回顺序依赖 DB 行序：链内先按分数降序再取 branch
@@ -114,12 +125,14 @@ def build_recall_chain(seed_text: str, max_depth: int = MAX_CHAIN_DEPTH,
                 total += 1
                 added += 1
                 level_any = True
-                entry_results.append({
-                    "id": mid,
-                    "memory": text,
-                    "score": round(score, 4),
-                    "lane": mem.get("lane"),
-                })
+                entry_results.append(
+                    {
+                        "id": mid,
+                        "memory": text,
+                        "score": round(score, 4),
+                        "lane": mem.get("lane"),
+                    }
+                )
                 next_seeds.append(text)
                 if total >= total_max:
                     break
@@ -135,7 +148,11 @@ def build_recall_chain(seed_text: str, max_depth: int = MAX_CHAIN_DEPTH,
         "seed": seed_text,
         "chain": chain,
         "total": total,
-        "params": {"max_depth": max_depth, "branch": branch,
-                   "min_score": min_score, "total_max": total_max},
+        "params": {
+            "max_depth": max_depth,
+            "branch": branch,
+            "min_score": min_score,
+            "total_max": total_max,
+        },
         "truncated": total >= total_max,
     }

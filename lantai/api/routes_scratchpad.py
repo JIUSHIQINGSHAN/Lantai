@@ -3,6 +3,7 @@
 GET  /scratchpad/{session_id}  读取札记
 POST /scratchpad/{session_id}  更新札记
 """
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -33,4 +34,3 @@ def scratchpad_write_route(req: WriteScratchpadReq, session_id: str = None):
         return write_scratchpad(sid, req.content)
     except Exception as e:
         raise HTTPException(422, str(e)) from e
-

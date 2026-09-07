@@ -8,6 +8,7 @@
 JSONL 每行一条消息（腾讯 L0 同款）：{"role": "user"|"assistant",
 "content": "...", "timestamp": <epoch 毫秒|秒|ISO 字符串>[, "session": "id"]}
 """
+
 import argparse
 import json
 import sys
@@ -22,23 +23,24 @@ def main() -> int:
     ap.add_argument("--file", required=True, help="会话 JSONL 文件路径")
     ap.add_argument("--dry-run", action="store_true", help="只解析不写库（预览）")
     ap.add_argument("--user-id", default="default")
-    ap.add_argument("--limit", type=int, default=None,
-                    help="最多处理行数（默认 IMPORT_MAX_LINES）")
+    ap.add_argument("--limit", type=int, default=None, help="最多处理行数（默认 IMPORT_MAX_LINES）")
     ap.add_argument("--json", action="store_true", help="只输出 JSON 汇总")
     args = ap.parse_args()
 
-    result = import_session_jsonl(args.file, dry_run=args.dry_run,
-                                  user_id=args.user_id, max_lines=args.limit)
+    result = import_session_jsonl(
+        args.file, dry_run=args.dry_run, user_id=args.user_id, max_lines=args.limit
+    )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 
     mode = "dry-run 预览" if result["dry_run"] else "导入"
     print(f"会话导入（{mode}）: {result['path']}")
-    print(f"行 {result['lines']}（解析 {result['parsed']} / 失败 {result['errors']}，"
-          f"assistant 跳过 {result['skipped_assistant']}，会话 {result['sessions']}）")
-    outcome = "（dry-run 不写库）" if result["dry_run"] else \
-        f"导入 {result['imported']} 条"
+    print(
+        f"行 {result['lines']}（解析 {result['parsed']} / 失败 {result['errors']}，"
+        f"assistant 跳过 {result['skipped_assistant']}，会话 {result['sessions']}）"
+    )
+    outcome = "（dry-run 不写库）" if result["dry_run"] else f"导入 {result['imported']} 条"
     print(f"user 消息 {result['would_import']} 条 → {outcome}")
     if result["statuses"]:
         print("按状态:", ", ".join(f"{k}={v}" for k, v in result["statuses"].items()))

@@ -3,6 +3,7 @@
 测试纪律：mock 仅用于外部依赖（embedding 网络、向量存储、意图 LLM）；
 add_raw_memory 的产品代码（SQLite 写入 / FTS 同步 / 幂等去重）真实执行。
 """
+
 from unittest.mock import Mock, patch
 
 import pytest
@@ -19,6 +20,7 @@ from lantai.storage.fts import init_fts
 def raw_env():
     """内存 SQLite 真实建表 + FTS 初始化 + patch 仅外部依赖。"""
     import lantai.models.tables  # noqa: F401  注册全部表
+
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -31,21 +33,28 @@ def raw_env():
         return Session(engine)
 
     vector_store_mock = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
-    with patch.object(db_module, "get_session", session_factory), \
-         patch("lantai.llm.client.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.services.memory_service.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}):
+    with (
+        patch.object(db_module, "get_session", session_factory),
+        patch("lantai.llm.client.embed", return_value=[[0.1] * 8]),
+        patch("lantai.services.memory_service.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+    ):
         yield session_factory, engine, vector_store_mock
 
 
 def _count_fts(engine, memory_id: str) -> int:
     conn = engine.raw_connection()
     try:
-        return len(conn.execute(
-            "SELECT memory_id FROM memory_fts WHERE memory_id = ?", (memory_id,)).fetchall())
+        return len(
+            conn.execute(
+                "SELECT memory_id FROM memory_fts WHERE memory_id = ?", (memory_id,)
+            ).fetchall()
+        )
     finally:
         conn.close()
 
@@ -57,7 +66,9 @@ def test_build_verbatim_item_smoke():
     from lantai.services.memory_service import build_verbatim_item
 
     item = build_verbatim_item(
-        "配置备份脚本 backup.sh", "fact", ["旧"],
+        "配置备份脚本 backup.sh",
+        "fact",
+        ["旧"],
         created_at=datetime(2026, 1, 2, 3, 4, 5),
     )
     assert item.memory_type == "verbatim"
@@ -71,6 +82,7 @@ def test_build_verbatim_item_smoke():
     assert build_verbatim_item("配置备份脚本 backup.sh", "fact").key == item.key
     # 缺省时间戳路径不炸（utcnow）
     assert build_verbatim_item("x", "general").created_at is not None
+
 
 def test_add_raw_writes_verbatim_and_indexes(raw_env):
     """真实 DB 写入：memory_type=verbatim + FTS 索引行存在 + 检索命中。"""
@@ -103,9 +115,7 @@ def test_add_raw_dedup_idempotent(raw_env):
     assert r1["memory_id"] == r2["memory_id"]
     assert r2["dedup"] is True
     with session_factory() as s:
-        rows = s.exec(
-            select(MemoryItem)
-            .where(MemoryItem.memory_type == "verbatim")).all()
+        rows = s.exec(select(MemoryItem).where(MemoryItem.memory_type == "verbatim")).all()
         assert len(rows) == 1
 
 
@@ -114,8 +124,10 @@ def test_add_raw_zero_llm(raw_env):
     session_factory, engine, _ = raw_env
     from lantai.services.memory_service import add_raw_memory
 
-    with patch("lantai.services.memory_service.extract_candidate",
-               side_effect=AssertionError("LLM extractor must not run for verbatim")):
+    with patch(
+        "lantai.services.memory_service.extract_candidate",
+        side_effect=AssertionError("LLM extractor must not run for verbatim"),
+    ):
         result = add_raw_memory(RawMemoryReq(content="长日志片段 <error code=500> stacktrace"))
     assert result["memory_id"]
 
@@ -129,7 +141,8 @@ def test_add_raw_searchable_via_fts_fallback(raw_env):
     content = "系统部署手册：备份命令 mysqldump -u root db > backup.sql"
     add_raw_memory(RawMemoryReq(content=content))
 
-    results = hybrid_search("mysqldump 备份命令", top_k=5, use_rerank=False,
-                            memory_types=["verbatim"])
+    results = hybrid_search(
+        "mysqldump 备份命令", top_k=5, use_rerank=False, memory_types=["verbatim"]
+    )
     texts = [r.get("memory", {}).get("content", "") for r in results]
     assert any(content in t for t in texts)

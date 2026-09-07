@@ -1,4 +1,5 @@
 """备份脚本——SQLite online backup + ChromaDB 拷贝 + manifest 校验信息"""
+
 import argparse
 import hashlib
 import json
@@ -45,7 +46,8 @@ def backup(dest: str = "", dry_run: bool = False) -> str:
             rel = str(f.relative_to(dest_dir)).replace("\\", "/")
             manifest["files"][rel] = hashlib.sha256(f.read_bytes()).hexdigest()
     (dest_dir / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     print(f"Backup completed: {dest_dir}")
     return str(dest_dir)

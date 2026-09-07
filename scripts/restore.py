@@ -1,4 +1,5 @@
 """恢复脚本——停服确认(fail-closed) → 路径限定 → manifest 校验 → 原子换入"""
+
 import argparse
 import hashlib
 import json

@@ -12,6 +12,7 @@ run_reflect_once 自动应用 → 旧值 archived → 残留率归零。
   hybrid_search 的 active 过滤在 lantai/retrieval/hybrid.py L161/L239/L379，
   旧值退出候选集是 WHERE status='active' 的直接推论。
 """
+
 import sys
 from contextlib import contextmanager
 from datetime import timedelta
@@ -70,13 +71,15 @@ def _seed_superseded(s, case, now):
         sync_fts(s, mem.id, mem.content)
         mapping[str(i)] = mem.id
     for edge in case.get("edges", []):
-        s.add(MemoryEdge(
-            id=new_id("edge"),
-            source_memory_id=mapping[str(edge["source"])],
-            target_memory_id=mapping[str(edge["target"])],
-            relation="supersedes",
-            confidence=1.0,
-        ))
+        s.add(
+            MemoryEdge(
+                id=new_id("edge"),
+                source_memory_id=mapping[str(edge["source"])],
+                target_memory_id=mapping[str(edge["target"])],
+                relation="supersedes",
+                confidence=1.0,
+            )
+        )
     return mapping
 
 
@@ -106,27 +109,31 @@ def _run_reflection(case_maps):
     proposals = []
     for entry in case_maps:
         m = entry["mapping"]
-        proposals.append({
-            "proposal_type": "deprecate",
-            "target_memory_id": m["0"],
-            "evidence_ids": [m["1"], m["0"]],
-            "new_content": "",
-            "reason": "旧值已被新值取代（supersedes 边），继续 active 会污染检索",
-            "confidence": 0.9,
-        })
+        proposals.append(
+            {
+                "proposal_type": "deprecate",
+                "target_memory_id": m["0"],
+                "evidence_ids": [m["1"], m["0"]],
+                "new_content": "",
+                "reason": "旧值已被新值取代（supersedes 边），继续 active 会污染检索",
+                "confidence": 0.9,
+            }
+        )
 
     def fake_chat_json(sys_prompt, user):
         if "FLAGGED MEMORIES" in user:
             return {"proposals": proposals}
         return {"accept": True, "risk": "low", "reason": "证据核验通过"}
 
-    with patch("lantai.evolution.reflector.chat_json",
-               side_effect=fake_chat_json), \
-            patch("lantai.evolution.promoter.embed",
-                  return_value=[[0.1] * 8]), \
-            patch("lantai.retrieval.hybrid.get_vector_store",
-                  return_value=Mock(add=Mock(), delete=Mock())):
+    with (
+        patch("lantai.evolution.reflector.chat_json", side_effect=fake_chat_json),
+        patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]),
+        patch(
+            "lantai.retrieval.hybrid.get_vector_store", return_value=Mock(add=Mock(), delete=Mock())
+        ),
+    ):
         from lantai.evolution.reflector import run_reflect_once
+
         return run_reflect_once()
 
 
@@ -138,29 +145,36 @@ def _asserts(session_factory, result, case_maps, before, after) -> list[str]:
             issues.append(msg)
 
     _check(result.get("ok") is True, f"run_reflect_once 未成功: {result}")
-    _check(result.get("auto_applied") == 2,
-           f"auto_applied 应为 2，实际 {result.get('auto_applied')}")
-    _check(result["health_before"]["superseded_active"] == 2,
-           f"扫描前 superseded_active 应为 2，实际 {result['health_before']}")
-    _check(result["health_after"]["superseded_active"] == 0,
-           f"扫描后 superseded_active 应为 0，实际 {result['health_after']}")
-    _check(before["superseded_residual_rate"] == 1.0,
-           "基线残留率应为 1.0")
-    _check(after["superseded_residual_rate"] == 0.0,
-           "反思后残留率应归零")
+    _check(
+        result.get("auto_applied") == 2, f"auto_applied 应为 2，实际 {result.get('auto_applied')}"
+    )
+    _check(
+        result["health_before"]["superseded_active"] == 2,
+        f"扫描前 superseded_active 应为 2，实际 {result['health_before']}",
+    )
+    _check(
+        result["health_after"]["superseded_active"] == 0,
+        f"扫描后 superseded_active 应为 0，实际 {result['health_after']}",
+    )
+    _check(before["superseded_residual_rate"] == 1.0, "基线残留率应为 1.0")
+    _check(after["superseded_residual_rate"] == 0.0, "反思后残留率应归零")
     with session_factory() as s:
         for entry in case_maps:
             m = entry["mapping"]
             old = s.get(MemoryItem, m["0"])
             new = s.get(MemoryItem, m["1"])
-            _check(old is not None and old.status == "archived",
-                   f"旧值 {m['0']} 应 archived，实际 {old.status if old else None}")
-            _check(new is not None and new.status == "active",
-                   f"新值 {m['1']} 应保持 active")
-            edge = s.exec(select(MemoryEdge).where(
-                MemoryEdge.relation == "supersedes",
-                MemoryEdge.source_memory_id == m["1"],
-                MemoryEdge.target_memory_id == m["0"])).first()
+            _check(
+                old is not None and old.status == "archived",
+                f"旧值 {m['0']} 应 archived，实际 {old.status if old else None}",
+            )
+            _check(new is not None and new.status == "active", f"新值 {m['1']} 应保持 active")
+            edge = s.exec(
+                select(MemoryEdge).where(
+                    MemoryEdge.relation == "supersedes",
+                    MemoryEdge.source_memory_id == m["1"],
+                    MemoryEdge.target_memory_id == m["0"],
+                )
+            ).first()
             _check(edge is not None, "supersedes 边应保留")
     return issues
 
@@ -168,8 +182,10 @@ def _asserts(session_factory, result, case_maps, before, after) -> list[str]:
 def _render(case_maps, result, before, after, issues) -> str:
     rows = []
     for entry in case_maps:
-        rows.append(f"| {entry['case']['query']} | 0.9(deprecate) | "
-                    f"{entry['case']['seeds'][0]['content']} | archived |")
+        rows.append(
+            f"| {entry['case']['query']} | 0.9(deprecate) | "
+            f"{entry['case']['seeds'][0]['content']} | archived |"
+        )
     lines = [
         "# 反思模块效果验证报告（superseded 残留率归零）",
         "",
@@ -206,9 +222,11 @@ def _render(case_maps, result, before, after, issues) -> str:
         "",
     ]
     if not issues:
-        lines.append("**通过**：反思自动应用 deprecate 后，被取代旧值退出 active 集合，"
-                     "残留率从 1.0 归零；新值保持 active，supersedes 边保留，"
-                     "健康快照 superseded_active 2 → 0（闭环自证）。")
+        lines.append(
+            "**通过**：反思自动应用 deprecate 后，被取代旧值退出 active 集合，"
+            "残留率从 1.0 归零；新值保持 active，supersedes 边保留，"
+            "健康快照 superseded_active 2 → 0（闭环自证）。"
+        )
     else:
         lines.append("**未通过**：")
         for msg in issues:
@@ -224,9 +242,10 @@ def _render(case_maps, result, before, after, issues) -> str:
 
 def main() -> int:
     import lantai.models.tables  # noqa: F401
-    engine = create_engine("sqlite://",
-                           connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     SQLModel.metadata.create_all(engine)
     init_fts(engine.raw_connection())
 
@@ -241,16 +260,14 @@ def main() -> int:
         with session_factory() as s:
             case_maps = []
             for case in superseded:
-                case_maps.append({"case": case,
-                                  "mapping": _seed_superseded(s, case, now)})
+                case_maps.append({"case": case, "mapping": _seed_superseded(s, case, now)})
             s.commit()
 
         per_query_before, per_query_after = _build_queries(case_maps)
         metrics_before = compute_forgetting_metrics(per_query_before)
         result = _run_reflection(case_maps)
         metrics_after = compute_forgetting_metrics(per_query_after)
-        issues = _asserts(session_factory, result, case_maps,
-                          metrics_before, metrics_after)
+        issues = _asserts(session_factory, result, case_maps, metrics_before, metrics_after)
 
         report = _render(case_maps, result, metrics_before, metrics_after, issues)
         print(report)

@@ -5,6 +5,7 @@
 2. run_kaogong_cycle: 遍历全库 active 记忆，批量执行升降级并落库；
 3. get_kaogong_report: 获取最新考功评定审计报告。
 """
+
 from typing import Any
 
 from sqlmodel import Session, select
@@ -73,9 +74,7 @@ def run_kaogong_cycle(session: Session | None = None) -> dict:
     global _LATEST_KAOGONG_REPORT
 
     def _run(s: Session) -> dict:
-        items = s.exec(
-            select(MemoryItem).where(MemoryItem.status == "active")
-        ).all()
+        items = s.exec(select(MemoryItem).where(MemoryItem.status == "active")).all()
 
         promoted_count = 0
         demoted_count = 0

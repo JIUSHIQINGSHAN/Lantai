@@ -5,6 +5,7 @@ decay_class 与 tier（working/long_term 三级生命周期）正交——不动
 与淘汰逻辑，仅补充一个「衰减速率」维度。检索结果附带 decay_class 与
 decay_multiplier 供调试。
 """
+
 import re
 
 # 半衰期（天）；None = 永不衰减

@@ -5,6 +5,7 @@
       解析异常/字段缺失 → 保底 tier D 记录（缺失一律按最低档，绝不能因缺失升档）。
 读取：load_signal_views 供建议链路取只读投影。
 """
+
 from datetime import UTC
 
 from sqlmodel import select
@@ -43,9 +44,9 @@ def _apply_staleness_degrade(tier: str, staleness_level: str) -> str:
     return tier
 
 
-def upsert_from_draft(raw_document_id: str,
-                      draft: QualitySignalDraft,
-                      *, now=None) -> PaperQualitySignal:
+def upsert_from_draft(
+    raw_document_id: str, draft: QualitySignalDraft, *, now=None
+) -> PaperQualitySignal:
     """
     从解析草稿写入/更新质量信号（幂等，raw_document_id 唯一）。
     任何异常 → 保底 tier D 记录，绝不静默跳过也不升级。
@@ -53,15 +54,17 @@ def upsert_from_draft(raw_document_id: str,
     now = now or utcnow()
     try:
         venue = classify_venue(draft.comment_raw, draft.journal_ref, draft.doi)
-        tier_dec = classify_tier(draft, now=now,
-                                 seasoned_days=settings.PAPER_SEASONED_DAYS)
+        tier_dec = classify_tier(draft, now=now, seasoned_days=settings.PAPER_SEASONED_DAYS)
         stale_dec = compute_staleness(
-            _ensure_aware(draft.published_at), now=now,
+            _ensure_aware(draft.published_at),
+            now=now,
             warn_months=settings.PAPER_STALE_WARN_MONTHS,
-            block_months=settings.PAPER_STALE_BLOCK_MONTHS)
+            block_months=settings.PAPER_STALE_BLOCK_MONTHS,
+        )
     except Exception as e:  # 解析失败：保底 D，不升级
-        logger.warning("quality signal parse failed for %s: %s; fallback tier D",
-                       raw_document_id, e)
+        logger.warning(
+            "quality signal parse failed for %s: %s; fallback tier D", raw_document_id, e
+        )
         venue_class, tier, reason = "unknown", "D", [f"parse_error={e}"]
         stale_level = "fresh"
     else:
@@ -71,8 +74,9 @@ def upsert_from_draft(raw_document_id: str,
         stale_level = stale_dec.level
 
     with db.get_session() as s:
-        existing = s.exec(select(PaperQualitySignal).where(
-            PaperQualitySignal.raw_document_id == raw_document_id)).first()
+        existing = s.exec(
+            select(PaperQualitySignal).where(PaperQualitySignal.raw_document_id == raw_document_id)
+        ).first()
         if existing is None:
             sig = PaperQualitySignal(
                 id=new_id("psig"),
@@ -115,8 +119,8 @@ def upsert_from_draft(raw_document_id: str,
             s.add(existing)
         s.commit()
         result = existing or sig
-        s.refresh(result)   # commit 后属性已过期，重新加载
-        s.expunge(result)   # 脱离 session，属性已加载，调用方可安全读取
+        s.refresh(result)  # commit 后属性已过期，重新加载
+        s.expunge(result)  # 脱离 session，属性已加载，调用方可安全读取
         return result
 
 
@@ -126,10 +130,12 @@ def load_signal_views(raw_document_ids: list[str], *, now=None) -> dict[str, Qua
         return {}
     now = now or utcnow()
     with db.get_session() as s:
-        rows = s.exec(select(PaperQualitySignal).where(
-            PaperQualitySignal.raw_document_id.in_(raw_document_ids))).all()
-        docs = s.exec(select(RawDocument).where(
-            RawDocument.id.in_(raw_document_ids))).all()
+        rows = s.exec(
+            select(PaperQualitySignal).where(
+                PaperQualitySignal.raw_document_id.in_(raw_document_ids)
+            )
+        ).all()
+        docs = s.exec(select(RawDocument).where(RawDocument.id.in_(raw_document_ids))).all()
     {d.id: d.fetched_at for d in docs}
     out: dict[str, QualitySignalView] = {}
     for r in rows:
@@ -152,9 +158,13 @@ def load_signal_views(raw_document_ids: list[str], *, now=None) -> dict[str, Qua
     return out
 
 
-def resolve_gating(tier: str, *, staleness_level: str = "fresh",
-                   observation_override: int | None = None,
-                   venue_class: str | None = None) -> GatingPolicy:
+def resolve_gating(
+    tier: str,
+    *,
+    staleness_level: str = "fresh",
+    observation_override: int | None = None,
+    venue_class: str | None = None,
+) -> GatingPolicy:
     """tier → 门控策略（权重/互证数/步长预算/观察期）。
 
     venue_class 提供时叠加方向五可靠性降权（只降不升）；缺省不动（旧调用兼容）。
@@ -165,8 +175,12 @@ def resolve_gating(tier: str, *, staleness_level: str = "fresh",
     days = observation_override or settings.OBSERVATION_DAYS_BY_TIER.get(tier, 5)
     if venue_class:
         from lantai.parameters.reliability import apply_penalty_to_weight
+
         weight = apply_penalty_to_weight(weight, venue_class)
-    return GatingPolicy(tier=tier, tier_weight=weight,
-                        quorum_required=quorum,
-                        delta_budget_factor=factor,
-                        observation_days=days)
+    return GatingPolicy(
+        tier=tier,
+        tier_weight=weight,
+        quorum_required=quorum,
+        delta_budget_factor=factor,
+        observation_days=days,
+    )

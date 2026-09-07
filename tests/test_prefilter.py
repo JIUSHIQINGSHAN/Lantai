@@ -1,6 +1,7 @@
 """
 测试启发式相关性闸门
 """
+
 import pytest
 
 from lantai.gate.prefilter import relevance_check
@@ -13,8 +14,10 @@ def _reset_gate_cache(monkeypatch):
     注意：prefilter._update_cache 用 global 重新赋值 dict，必须 patch 模块属性本身。
     """
     import lantai.gate.prefilter as pf
-    monkeypatch.setattr(pf, "_LAST_GATE_DECISION",
-                        {"time": 0.0, "query": "", "needs_memory": False})
+
+    monkeypatch.setattr(
+        pf, "_LAST_GATE_DECISION", {"time": 0.0, "query": "", "needs_memory": False}
+    )
     yield
 
 
@@ -140,6 +143,7 @@ class TestEntityKeywordsLazy:
     @pytest.fixture(autouse=True)
     def _reset_pattern_state(self, monkeypatch):
         import lantai.gate.prefilter as pf
+
         monkeypatch.setattr(pf, "_PATTERN_CACHE", {"key": None, "pattern": None})
         monkeypatch.setattr(pf, "_KEYWORD_WARNED", False)
 
@@ -164,6 +168,7 @@ class TestEntityKeywordsLazy:
 
     def test_recompile_when_env_changes(self, monkeypatch):
         import lantai.gate.prefilter as pf
+
         relevance_check("你好世界")  # 无实体词表，编译 base 模式
         p_before = pf._self_reference_pattern()
         monkeypatch.setenv("REMEMBRANCE_ENTITY_KEYWORDS", "旺财")
@@ -175,6 +180,7 @@ class TestEntityKeywordsLazy:
 
     def test_cached_pattern_reused(self):
         import lantai.gate.prefilter as pf
+
         p1 = pf._self_reference_pattern()
         p2 = pf._self_reference_pattern()
         assert p1 is p2  # 缓存命中，零重编译
@@ -185,8 +191,11 @@ class TestEntityKeywordsLazy:
         with caplog.at_level(logging.WARNING, logger="lantai.gate"):
             relevance_check("你好世界")
             relevance_check("你好世界")
-        warn_msgs = [r.getMessage() for r in caplog.records
-                     if "REMEMBRANCE_ENTITY_KEYWORDS" in r.getMessage()]
+        warn_msgs = [
+            r.getMessage()
+            for r in caplog.records
+            if "REMEMBRANCE_ENTITY_KEYWORDS" in r.getMessage()
+        ]
         assert len(warn_msgs) == 1  # 只告警一次，不重复刷屏
         err = capsys.readouterr().err
         assert "REMEMBRANCE_ENTITY_KEYWORDS" in err  # 不静默
@@ -207,18 +216,23 @@ class TestGateCacheInjectable:
 
     def test_now_controls_ttl_expiry(self):
         import lantai.core.settings as s
+
         c = {"time": 0.0, "query": "", "needs_memory": False}
         relevance_check("上次我们聊的项目", cache=c, now=0.0)
         res = relevance_check("然后呢", cache=c, now=s.settings.GATE_CACHE_TTL + 1.0)
         assert res["reason"] != "session_followup_hot"
 
+
 class TestGateUserIsolation:
     """Ticket 2.2 [DD-07]: Gate 15s hot cache must be isolated by user."""
+
     def test_user_isolation(self):
         # 模拟用户A在前一秒发了一个长句（触发热缓存）
-        res_a1 = relevance_check("这是一个非常长的句子，包含很多实词，比如架构、系统、微服务等", user_id="userA", now=1.0)
+        res_a1 = relevance_check(
+            "这是一个非常长的句子，包含很多实词，比如架构、系统、微服务等", user_id="userA", now=1.0
+        )
         assert res_a1["needs_memory"] is True
-        
+
         # 用户B在后一秒发了一个短句，不应该受用户A的热缓存影响
         res_b = relevance_check("这是啥", user_id="userB", now=2.0)
         assert res_b["needs_memory"] is False  # 没有受 userA 热缓存影响

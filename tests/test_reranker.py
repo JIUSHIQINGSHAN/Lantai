@@ -1,4 +1,5 @@
 """Reranker 和意图分类单元测试"""
+
 from unittest.mock import MagicMock, patch
 
 from lantai.retrieval.intent import classify_intent
@@ -17,7 +18,7 @@ class TestRerank:
             "results": [
                 {"index": 1, "score": 0.95, "document": "banana"},
                 {"index": 0, "score": 0.87, "document": "apple"},
-            ]
+            ],
         }
         mock_resp.raise_for_status = MagicMock()
         mock_post.return_value = mock_resp

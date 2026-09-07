@@ -4,6 +4,7 @@
 所有信号来自 arXiv Atom 结构化字段，纯规则解析，零 LLM 参与。
 NEGATIVE_PATTERNS 优先于正向匹配——防止 "Submitted to NeurIPS 2026" 被误判为已接收。
 """
+
 from __future__ import annotations
 
 import re
@@ -16,31 +17,51 @@ from pydantic import BaseModel, ConfigDict
 VENUE_PATTERNS: dict[str, tuple[str, ...]] = {
     # 顶会正会（白名单，保守匹配，宁可漏判为 B）
     "top_conf": (
-        r"\bNeurIPS\b", r"\bICML\b", r"\bICLR\b", r"\bACL\b", r"\bEMNLP\b",
-        r"\bNAACL\b", r"\bSIGIR\b", r"\bKDD\b", r"\bWWW\b", r"\bWSDM\b",
-        r"\bAAAI\b", r"\bIJCAI\b", r"\bCIKM\b", r"\bCVPR\b", r"\bICCV\b",
+        r"\bNeurIPS\b",
+        r"\bICML\b",
+        r"\bICLR\b",
+        r"\bACL\b",
+        r"\bEMNLP\b",
+        r"\bNAACL\b",
+        r"\bSIGIR\b",
+        r"\bKDD\b",
+        r"\bWWW\b",
+        r"\bWSDM\b",
+        r"\bAAAI\b",
+        r"\bIJCAI\b",
+        r"\bCIKM\b",
+        r"\bCVPR\b",
+        r"\bICCV\b",
     ),
     "other_peer": (
-        r"\baccepted\b", r"\bto appear\b", r"\bcamera[- ]ready\b",
+        r"\baccepted\b",
+        r"\bto appear\b",
+        r"\bcamera[- ]ready\b",
         r"\bproceedings of\b",
     ),
     "workshop": (r"\bworkshop\b", r"\bWS\b@"),
 }
 # 强制判为 preprint 的负面信号（优先级最高）
 NEGATIVE_PATTERNS: tuple[str, ...] = (
-    r"\bunder review\b", r"\bsubmitted to\b", r"\bpreprint\b",
-    r"\bwork in progress\b", r"\btechnical report\b", r"\brejected\b",
+    r"\bunder review\b",
+    r"\bsubmitted to\b",
+    r"\bpreprint\b",
+    r"\bwork in progress\b",
+    r"\btechnical report\b",
+    r"\brejected\b",
 )
 
 VenueClass = str  # journal | top_conf | other_peer | workshop | preprint | unknown
-Tier = str        # A | B | C | D
+Tier = str  # A | B | C | D
 StalenessLevel = str  # fresh | warn | blocked
 
 
 # ---------------------------------------------------------------- 解析模型
 
+
 class QualitySignalDraft(BaseModel):
     """从 arXiv Atom entry 解析出的结构化信号草稿（纯解析，未分类）。"""
+
     model_config = ConfigDict(extra="ignore")
 
     arxiv_id: str = ""
@@ -60,7 +81,7 @@ class QualitySignalDraft(BaseModel):
 
 class VenueDecision(BaseModel):
     venue_class: VenueClass
-    matched_pattern: str | None = None   # 命中的原始片段（tier_reason，可审计）
+    matched_pattern: str | None = None  # 命中的原始片段（tier_reason，可审计）
 
 
 class TierDecision(BaseModel):
@@ -93,6 +114,7 @@ def _arxiv_id_from_entry_id(entry_id: str) -> tuple[str, int]:
 
 # ---------------------------------------------------------------- 纯解析函数
 
+
 def extract_quality_signals(entry, *, fetched_at: datetime) -> QualitySignalDraft:
     """
     从 feedparser 解析出的 arXiv Atom entry 提取信号。
@@ -102,13 +124,10 @@ def extract_quality_signals(entry, *, fetched_at: datetime) -> QualitySignalDraf
     """
     entry_id = _first(entry, "id", "link")
     arxiv_id, version = _arxiv_id_from_entry_id(entry_id)
-    authors = [a.get("name", "") for a in (entry.get("authors") or [])
-               if isinstance(a, dict)]
+    authors = [a.get("name", "") for a in (entry.get("authors") or []) if isinstance(a, dict)]
     links = entry.get("links") or []
-    pdf_url = next((l.get("href") for l in links
-                    if l.get("type") == "application/pdf"), None)
-    abs_url = next((l.get("href") for l in links
-                    if l.get("type") == "text/html"), None)
+    pdf_url = next((l.get("href") for l in links if l.get("type") == "application/pdf"), None)
+    abs_url = next((l.get("href") for l in links if l.get("type") == "text/html"), None)
 
     # feedparser 对 arxiv:primary_category 解析为 {'term': 'cs.IR'} 的 dict
     pc = _first(entry, "arxiv_primary_category", "primary_category")
@@ -118,16 +137,13 @@ def extract_quality_signals(entry, *, fetched_at: datetime) -> QualitySignalDraf
     return QualitySignalDraft(
         arxiv_id=arxiv_id,
         version=version,
-        published_at=entry.get("published_parsed")
-        and datetime(*entry["published_parsed"][:6]),
-        updated_at=entry.get("updated_parsed")
-        and datetime(*entry["updated_parsed"][:6]),
+        published_at=entry.get("published_parsed") and datetime(*entry["published_parsed"][:6]),
+        updated_at=entry.get("updated_parsed") and datetime(*entry["updated_parsed"][:6]),
         comment_raw=_first(entry, "arxiv_comment", "comment"),
         journal_ref=_first(entry, "arxiv_journal_ref", "journal_ref"),
         doi=_first(entry, "arxiv_doi", "doi"),
         primary_category=pc or "",
-        categories=[t.get("term", "") for t in (entry.get("tags") or [])
-                    if isinstance(t, dict)],
+        categories=[t.get("term", "") for t in (entry.get("tags") or []) if isinstance(t, dict)],
         authors=authors,
         author_count=len(authors),
         pdf_url=pdf_url,
@@ -135,15 +151,15 @@ def extract_quality_signals(entry, *, fetched_at: datetime) -> QualitySignalDraf
     )
 
 
-def classify_venue(comment_raw: str | None, journal_ref: str | None,
-                   doi: str | None) -> VenueDecision:
+def classify_venue(
+    comment_raw: str | None, journal_ref: str | None, doi: str | None
+) -> VenueDecision:
     """venue_class 判定。规则优先级：
     journal_ref/doi 非空 > NEGATIVE 命中(强制 preprint) > top_conf > other_peer > workshop > preprint。
     NEGATIVE 优先于正向匹配是唯一红线：'Submitted to ICLR 2026' 必须判 preprint。
     """
     if journal_ref:
-        return VenueDecision(venue_class="journal",
-                             matched_pattern=journal_ref[:80])
+        return VenueDecision(venue_class="journal", matched_pattern=journal_ref[:80])
     if doi:
         return VenueDecision(venue_class="journal", matched_pattern=doi[:80])
 
@@ -154,20 +170,19 @@ def classify_venue(comment_raw: str | None, journal_ref: str | None,
     for pat in NEGATIVE_PATTERNS:
         m = re.search(pat, text, re.IGNORECASE)
         if m:
-            return VenueDecision(venue_class="preprint",
-                                 matched_pattern=m.group(0))
+            return VenueDecision(venue_class="preprint", matched_pattern=m.group(0))
 
     for vc, pats in VENUE_PATTERNS.items():
         for pat in pats:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
-                return VenueDecision(venue_class=vc,
-                                     matched_pattern=m.group(0))
+                return VenueDecision(venue_class=vc, matched_pattern=m.group(0))
     return VenueDecision(venue_class="preprint", matched_pattern=None)
 
 
-def classify_tier(sig: QualitySignalDraft, *, now: datetime,
-                  seasoned_days: int = 60) -> TierDecision:
+def classify_tier(
+    sig: QualitySignalDraft, *, now: datetime, seasoned_days: int = 60
+) -> TierDecision:
     """
     A/B/C/D 四档：
       A: journal_ref 或 doi 非空，或 venue_class == top_conf
@@ -200,9 +215,9 @@ def classify_tier(sig: QualitySignalDraft, *, now: datetime,
     return TierDecision(tier=tier, reason=reason)
 
 
-def compute_staleness(published_at: datetime | None, *, now: datetime,
-                      warn_months: int = 18,
-                      block_months: int = 36) -> StalenessDecision:
+def compute_staleness(
+    published_at: datetime | None, *, now: datetime, warn_months: int = 18, block_months: int = 36
+) -> StalenessDecision:
     """按论文发表时间判定时效等级：fresh / warn / blocked。"""
     if published_at is None:
         return StalenessDecision(level="fresh", reason="no_published_at")
@@ -214,9 +229,7 @@ def compute_staleness(published_at: datetime | None, *, now: datetime,
     except TypeError:
         return StalenessDecision(level="fresh", reason="naive_utc")
     if months >= block_months:
-        return StalenessDecision(
-            level="blocked", reason=f"age_months={months:.0f}>={block_months}")
+        return StalenessDecision(level="blocked", reason=f"age_months={months:.0f}>={block_months}")
     if months >= warn_months:
-        return StalenessDecision(
-            level="warn", reason=f"age_months={months:.0f}>={warn_months}")
+        return StalenessDecision(level="warn", reason=f"age_months={months:.0f}>={warn_months}")
     return StalenessDecision(level="fresh", reason=f"age_months={months:.0f}")

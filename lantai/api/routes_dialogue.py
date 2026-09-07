@@ -2,9 +2,11 @@
 
 POST /dialogue   对话文本写入（fastpath 直通 / 提取建候选 / 闲聊入待审队列）
 """
-from fastapi import APIRouter, HTTPException
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from lantai.core.auth import Principal, get_current_user
 from lantai.ingestion.dialogue import ingest_dialogue
 
 router = APIRouter(tags=["dialogue"])
@@ -17,7 +19,8 @@ class DialogueIngestReq(BaseModel):
 
 
 @router.post("/dialogue")
-def dialogue_route(req: DialogueIngestReq):
+def dialogue_route(req: DialogueIngestReq, ctx: Principal = Depends(get_current_user)):
+    req.user_id = ctx.user_id or req.user_id
     try:
         return ingest_dialogue(req.text, user_id=req.user_id, source=req.source)
     except ValueError as e:
@@ -25,10 +28,12 @@ def dialogue_route(req: DialogueIngestReq):
 
 
 @router.post("/dialogue/async")
-def dialogue_async_route(req: DialogueIngestReq):
+def dialogue_async_route(req: DialogueIngestReq, ctx: Principal = Depends(get_current_user)):
+    req.user_id = ctx.user_id or req.user_id
     """潜移（ADR-0033）：异步提交对话进行提纯摄取，立即返回 task_id。"""
     try:
         from lantai.services.async_ingest_service import submit_async_dialogue
+
         return submit_async_dialogue(req.text, user_id=req.user_id, source=req.source)
     except ValueError as e:
         raise HTTPException(422, str(e))
@@ -38,8 +43,8 @@ def dialogue_async_route(req: DialogueIngestReq):
 def dialogue_task_status_route(task_id: str):
     """潜移（ADR-0033）：查询异步对话摄取任务的状态与结果。"""
     from lantai.services.async_ingest_service import get_task_status
+
     res = get_task_status(task_id)
     if res.get("status") == "not_found":
         raise HTTPException(404, "任务未找到")
     return res
-

@@ -6,6 +6,7 @@
   实体是图谱节点，不参与召回），笔记↔实体建 MemoryEdge(relation="links")，
   重复推送靠 content_hash + 实体名去重（宁 miss 不脏写，全程无 LLM）。
 """
+
 import re
 
 from sqlmodel import select
@@ -39,11 +40,14 @@ def extract_wikilinks(text: str) -> list[str]:
 
 
 def _get_or_create_entity(s, name: str) -> MemoryItem:
-    ent = s.exec(select(MemoryItem)
-                 .where(MemoryItem.memory_type == "entity",
-                        MemoryItem.namespace == "entity",
-                        MemoryItem.key == name,
-                        MemoryItem.status == "active")).first()
+    ent = s.exec(
+        select(MemoryItem).where(
+            MemoryItem.memory_type == "entity",
+            MemoryItem.namespace == "entity",
+            MemoryItem.key == name,
+            MemoryItem.status == "active",
+        )
+    ).first()
     if ent:
         return ent
     ent = MemoryItem(
@@ -64,15 +68,24 @@ def _get_or_create_entity(s, name: str) -> MemoryItem:
 
 
 def _link(s, source_id: str, target_id: str) -> bool:
-    dup = s.exec(select(MemoryEdge)
-                 .where(MemoryEdge.source_memory_id == source_id,
-                        MemoryEdge.target_memory_id == target_id,
-                        MemoryEdge.relation == "links")).first()
+    dup = s.exec(
+        select(MemoryEdge).where(
+            MemoryEdge.source_memory_id == source_id,
+            MemoryEdge.target_memory_id == target_id,
+            MemoryEdge.relation == "links",
+        )
+    ).first()
     if dup:
         return False
-    s.add(MemoryEdge(id=new_id("edge"), source_memory_id=source_id,
-                     target_memory_id=target_id, relation="links",
-                     confidence=1.0))
+    s.add(
+        MemoryEdge(
+            id=new_id("edge"),
+            source_memory_id=source_id,
+            target_memory_id=target_id,
+            relation="links",
+            confidence=1.0,
+        )
+    )
     return True
 
 
@@ -82,10 +95,15 @@ def sync_obsidian_note(req: ObsidianSyncReq) -> dict:
     if len(note_content) > _VERBATIM_MAX_CHARS:
         raise ValueError("note content too long (verbatim max 200000 chars)")
 
-    raw = add_raw_memory(RawMemoryReq(
-        content=note_content, title=req.title, lane=req.lane,
-        tags=req.tags, metadata=req.metadata,
-    ))
+    raw = add_raw_memory(
+        RawMemoryReq(
+            content=note_content,
+            title=req.title,
+            lane=req.lane,
+            tags=req.tags,
+            metadata=req.metadata,
+        )
+    )
     note_id = raw["memory_id"]
 
     names = extract_wikilinks(req.content)

@@ -1,12 +1,14 @@
 """Shell Hook 契约测试：超时与静默降级。"""
+
 import importlib.util
 import io
 import json
 import os
 import time
 
-HOOK_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                         "scripts", "shell_hook.py")
+HOOK_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "shell_hook.py"
+)
 
 
 def _load_hook(monkeypatch, embed_delay=0.0, timeout=0.2):
@@ -20,6 +22,7 @@ def _load_hook(monkeypatch, embed_delay=0.0, timeout=0.2):
     # Patch os._exit to raise SystemExit (so pytest can catch it)
     def fake_exit(code=0):
         raise SystemExit(code)
+
     monkeypatch.setattr(mod.os, "_exit", fake_exit)
 
     def slow_embed(texts):
@@ -53,6 +56,7 @@ def test_stdin_forced_utf8_reconfigure(monkeypatch):
     修复背景：Hermes 按 UTF-8 写 JSON（含中文 query），Python 默认按 GBK 解码
     →「你好」变「浣犲ソ」→ 检索零命中、注入静默失效。reconfigure 必须在读 stdin 前执行。
     """
+
     class FakeStream:
         def __init__(self):
             self.encoding = "gbk"
@@ -93,21 +97,27 @@ def test_build_context_has_evidence(monkeypatch):
     mod = _load_hook(monkeypatch)
     from sqlalchemy.pool import StaticPool
     from sqlmodel import Session, SQLModel, create_engine
-    engine = create_engine("sqlite:///:memory:",
-                           connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as s:
         from lantai.models.tables import MemoryItem
-        s.add(MemoryItem(id="mem_1", memory_type="semantic", key="k",
-                         content="用户喜欢 Python 和 Rust"))
+
+        s.add(
+            MemoryItem(
+                id="mem_1", memory_type="semantic", key="k", content="用户喜欢 Python 和 Rust"
+            )
+        )
         s.commit()
 
     class _FakeStore:
-        def search(self, qv, top_k=5):
+        def search(self, qv, top_k=5, filters=None):
             return [{"id": "mem_1", "distance": 0.1}]
 
     import lantai.storage.db as db_module
+
     monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
     monkeypatch.setattr(mod, "get_vector_store", lambda: _FakeStore())
 
@@ -124,7 +134,7 @@ def test_build_context_no_hits_no_evidence(monkeypatch):
     mod = _load_hook(monkeypatch)
 
     class _EmptyStore:
-        def search(self, qv, top_k=5):
+        def search(self, qv, top_k=5, filters=None):
             return []
 
     monkeypatch.setattr(mod, "get_vector_store", lambda: _EmptyStore())
@@ -136,10 +146,17 @@ def test_handle_dialogue_channel(monkeypatch):
     """serve 协议扩展（v0.5）：{"type":"dialogue"} 走对话写入通道。"""
     mod = _load_hook(monkeypatch)
     from unittest.mock import patch
-    with patch("lantai.ingestion.dialogue.ingest_dialogue",
-               return_value={"ingested": True, "candidate_id": "cand_1",
-                             "fastpath": True, "lane": "general",
-                             "status": "fastpath"}) as m:
+
+    with patch(
+        "lantai.ingestion.dialogue.ingest_dialogue",
+        return_value={
+            "ingested": True,
+            "candidate_id": "cand_1",
+            "fastpath": True,
+            "lane": "general",
+            "status": "fastpath",
+        },
+    ) as m:
         out = mod._handle_one('{"type":"dialogue","text":"记住：明天下午3点开会"}')
     assert out["ok"] is True
     assert out["candidate_id"] == "cand_1"
@@ -150,6 +167,7 @@ def test_handle_dialogue_empty_text(monkeypatch):
     """dialogue 通道空文本 → {}，不调 ingest。"""
     mod = _load_hook(monkeypatch)
     from unittest.mock import patch
+
     with patch("lantai.ingestion.dialogue.ingest_dialogue") as m:
         out = mod._handle_one('{"type":"dialogue","text":"   "}')
     assert out == {}
@@ -160,12 +178,14 @@ def test_handle_dialogue_failure_silent(monkeypatch):
     """dialogue 通道异常 → {} 零侵入。"""
     mod = _load_hook(monkeypatch)
     from unittest.mock import patch
-    with patch("lantai.ingestion.dialogue.ingest_dialogue",
-               side_effect=RuntimeError("boom")):
+
+    with patch("lantai.ingestion.dialogue.ingest_dialogue", side_effect=RuntimeError("boom")):
         out = mod._handle_one('{"type":"dialogue","text":"记住：明天开会"}')
     assert out == {}
 
+
 # ── 召回预算 + 记忆工具指南（借鉴 TencentDB Agent Memory auto-recall）────────
+
 
 def test_truncate_codepoints_applies_suffix(monkeypatch):
     """纯函数冒烟：超长截断并附后缀；短文本原样返回。"""
@@ -232,22 +252,31 @@ def test_build_context_budget_and_guide(monkeypatch):
     mod = _load_hook(monkeypatch)
     from sqlalchemy.pool import StaticPool
     from sqlmodel import Session, SQLModel, create_engine
-    engine = create_engine("sqlite:///:memory:",
-                           connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as s:
         from lantai.models.tables import MemoryItem
+
         for i in range(5):
-            s.add(MemoryItem(id=f"mem_{i}", memory_type="semantic", key=f"k{i}",
-                             content=f"记忆{i}：" + "很长的事实内容" * 20))
+            s.add(
+                MemoryItem(
+                    id=f"mem_{i}",
+                    memory_type="semantic",
+                    key=f"k{i}",
+                    content=f"记忆{i}：" + "很长的事实内容" * 20,
+                )
+            )
         s.commit()
 
     class _FakeStore:
-        def search(self, qv, top_k=5):
+        def search(self, qv, top_k=5, filters=None):
             return [{"id": f"mem_{i}", "distance": 0.1 + i * 0.1} for i in range(5)]
 
     import lantai.storage.db as db_module
+
     monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
     monkeypatch.setattr(mod, "get_vector_store", lambda: _FakeStore())
     monkeypatch.setattr(mod.settings, "SHELL_HOOK_MAX_CHARS_PER_MEMORY", 50)

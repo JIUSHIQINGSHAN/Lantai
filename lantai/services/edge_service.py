@@ -1,4 +1,5 @@
 """记忆关系（边）service 层——从路由 handler 下沉"""
+
 from lantai.storage.edges import create_edge, delete_edge, get_edges, get_supersed_chain
 
 
@@ -11,16 +12,18 @@ def add_edge(source_id: str, target_id: str, relation: str, confidence: float = 
 def list_edges(memory_id: str, relation: str | None = None) -> dict:
     """查询记忆关系。"""
     edges = get_edges(memory_id, relation=relation)
-    return {"edges": [
-        {
-            "id": e.id,
-            "source": e.source_memory_id,
-            "target": e.target_memory_id,
-            "relation": e.relation,
-            "confidence": e.confidence,
-        }
-        for e in edges
-    ]}
+    return {
+        "edges": [
+            {
+                "id": e.id,
+                "source": e.source_memory_id,
+                "target": e.target_memory_id,
+                "relation": e.relation,
+                "confidence": e.confidence,
+            }
+            for e in edges
+        ]
+    }
 
 
 def get_chain(memory_id: str) -> dict:

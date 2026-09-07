@@ -5,9 +5,10 @@ r"""悬镜（ADR-0038）：兰台可视化管理控制台（Lantai Studio）测�
 2. GET /ui/assets/styles.css 与 GET /ui/assets/app.js 正常响应；
 3. Studio 联动接口连通性（/persona, /scratchpad, /evolution/consolidate, /probing/detect）。
 """
+
 from fastapi.testclient import TestClient
 
-from api_server import app
+from lantai.api.app import app
 
 
 class TestStudioUI:

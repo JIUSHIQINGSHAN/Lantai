@@ -8,6 +8,7 @@
 - 低置信度提取 → pending_review
 - REST：POST /dialogue
 """
+
 from unittest.mock import patch
 
 import pytest
@@ -26,8 +27,11 @@ class TestDialogueIngest:
         """'记住：X' → fastpath 直通（绕过 LLM 提取）"""
         session_factory, _ = param_env
         from lantai.ingestion.dialogue import ingest_dialogue
-        with patch("lantai.parsing.extractor.chat_json",
-                   side_effect=AssertionError("fastpath 不应触发 LLM 提取")):
+
+        with patch(
+            "lantai.parsing.extractor.chat_json",
+            side_effect=AssertionError("fastpath 不应触发 LLM 提取"),
+        ):
             result = ingest_dialogue("记住：明天下午3点开会")
         assert result["ingested"] is True
         assert result["fastpath"] is True
@@ -41,8 +45,11 @@ class TestDialogueIngest:
         """'我是后端工程师' → fastpath，lane=fact"""
         session_factory, _ = param_env
         from lantai.ingestion.dialogue import ingest_dialogue
-        with patch("lantai.parsing.extractor.chat_json",
-                   side_effect=AssertionError("fastpath 不应触发 LLM 提取")):
+
+        with patch(
+            "lantai.parsing.extractor.chat_json",
+            side_effect=AssertionError("fastpath 不应触发 LLM 提取"),
+        ):
             result = ingest_dialogue("我是后端工程师")
         assert result["fastpath"] is True
         with session_factory() as s:
@@ -54,11 +61,19 @@ class TestDialogueIngest:
         """含偏好表达的长文本 → LLM 提取，lane=preference"""
         session_factory, _ = param_env
         from lantai.ingestion.dialogue import ingest_dialogue
-        with patch("lantai.parsing.extractor.chat_json",
-                   return_value={"summary": "用户偏好 Rust", "claims": [],
-                                 "methods": [], "constraints": [],
-                                 "actions": [], "topic": ["rust"],
-                                 "extractor_confidence": 0.8}):
+
+        with patch(
+            "lantai.parsing.extractor.chat_json",
+            return_value={
+                "summary": "用户偏好 Rust",
+                "claims": [],
+                "methods": [],
+                "constraints": [],
+                "actions": [],
+                "topic": ["rust"],
+                "extractor_confidence": 0.8,
+            },
+        ):
             result = ingest_dialogue("我最近特别喜欢用 Rust 写 CLI 工具，感觉很顺手")
         assert result["ingested"] is True
         assert result["fastpath"] is False
@@ -71,8 +86,11 @@ class TestDialogueIngest:
         """闲聊（短文本/社交结束语）→ 沙汰直接 rejected，不落库为记忆（ADR-0026）"""
         session_factory, _ = param_env
         from lantai.ingestion.dialogue import ingest_dialogue
-        with patch("lantai.parsing.extractor.chat_json",
-                   side_effect=AssertionError("闲聊不应触发 LLM 提取")):
+
+        with patch(
+            "lantai.parsing.extractor.chat_json",
+            side_effect=AssertionError("闲聊不应触发 LLM 提取"),
+        ):
             result = ingest_dialogue("哈哈，好的")
         assert result["ingested"] is True
         assert result["status"] == "rejected"
@@ -85,8 +103,8 @@ class TestDialogueIngest:
         """LLM 提取抛异常 → 兜底候选进 pending_review，不抛错"""
         session_factory, _ = param_env
         from lantai.ingestion.dialogue import ingest_dialogue
-        with patch("lantai.parsing.extractor.chat_json",
-                   side_effect=RuntimeError("upstream 502")):
+
+        with patch("lantai.parsing.extractor.chat_json", side_effect=RuntimeError("upstream 502")):
             result = ingest_dialogue("我在研究知识图谱的记忆架构，感觉很有意思")
         assert result["ingested"] is True
         assert result["status"] == "pending_review"
@@ -98,11 +116,19 @@ class TestDialogueIngest:
         """提取置信度过低 → 待审队列（不静默丢弃）"""
         session_factory, _ = param_env
         from lantai.ingestion.dialogue import ingest_dialogue
-        with patch("lantai.parsing.extractor.chat_json",
-                   return_value={"summary": "杂音", "claims": [],
-                                 "methods": [], "constraints": [],
-                                 "actions": [], "topic": [],
-                                 "extractor_confidence": 0.2}):
+
+        with patch(
+            "lantai.parsing.extractor.chat_json",
+            return_value={
+                "summary": "杂音",
+                "claims": [],
+                "methods": [],
+                "constraints": [],
+                "actions": [],
+                "topic": [],
+                "extractor_confidence": 0.2,
+            },
+        ):
             result = ingest_dialogue("今天天气不错，不过也没什么特别的")
         assert result["status"] == "pending_review"
         with session_factory() as s:
@@ -113,12 +139,20 @@ class TestDialogueIngest:
         """对话来源与用户 id 落 RawDocument.meta / source_type"""
         session_factory, _ = param_env
         from lantai.ingestion.dialogue import ingest_dialogue
-        with patch("lantai.parsing.extractor.chat_json",
-                   return_value={"summary": "s", "claims": [], "methods": [],
-                                 "constraints": [], "actions": [], "topic": [],
-                                 "extractor_confidence": 0.8}):
-            result = ingest_dialogue("我喜欢在早上写代码", user_id="u_42",
-                                     source="hermes")
+
+        with patch(
+            "lantai.parsing.extractor.chat_json",
+            return_value={
+                "summary": "s",
+                "claims": [],
+                "methods": [],
+                "constraints": [],
+                "actions": [],
+                "topic": [],
+                "extractor_confidence": 0.8,
+            },
+        ):
+            result = ingest_dialogue("我喜欢在早上写代码", user_id="u_42", source="hermes")
         with session_factory() as s:
             cand = s.get(MemoryCandidate, result["candidate_id"])
             doc = s.get(RawDocument, cand.document_id)
@@ -128,16 +162,19 @@ class TestDialogueIngest:
 
     def test_empty_text_rejected(self, param_env):
         from lantai.ingestion.dialogue import ingest_dialogue
+
         with pytest.raises(ValueError):
             ingest_dialogue("   ")
 
 
 # ── REST 路由测试 ──────────────────────────────────────────────
 
+
 @pytest.fixture(scope="function")
 def client():
     test_engine = create_engine(
-        "sqlite:///:memory:", echo=False,
+        "sqlite:///:memory:",
+        echo=False,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
@@ -146,19 +183,32 @@ def client():
     def get_test_session():
         return Session(test_engine)
 
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.retrieval.intent.chat_json",
-               return_value={"intent": "fact_lookup", "reason": "test"}), \
-         patch("lantai.parsing.extractor.chat_json",
-               return_value={"summary": "test", "claims": [], "methods": [],
-                             "constraints": [], "actions": [], "topic": [],
-                             "extractor_confidence": 0.8}), \
-         patch("lantai.retrieval.reranker.rerank", return_value=[]), \
-         patch("lantai.gate.scorer.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.hybrid.get_vector_store"), \
-         patch("lantai.storage.vector_store.ChromaVectorStore"):
-        from api_server import app
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch(
+            "lantai.retrieval.intent.chat_json",
+            return_value={"intent": "fact_lookup", "reason": "test"},
+        ),
+        patch(
+            "lantai.parsing.extractor.chat_json",
+            return_value={
+                "summary": "test",
+                "claims": [],
+                "methods": [],
+                "constraints": [],
+                "actions": [],
+                "topic": [],
+                "extractor_confidence": 0.8,
+            },
+        ),
+        patch("lantai.retrieval.reranker.rerank", return_value=[]),
+        patch("lantai.gate.scorer.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.hybrid.get_vector_store"),
+        patch("lantai.storage.vector_store.ChromaVectorStore"),
+    ):
+        from lantai.api.app import app
+
         with TestClient(app) as c:
             yield c
 

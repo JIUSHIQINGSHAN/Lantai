@@ -6,6 +6,7 @@ RetrievalEvent 只追加事件 → recall_report 按窗口聚合：
 - 场景维度（SCENE_LAYER_ENABLED 时命中场景成员的比例，scene_ids）
 - token 成本粗估（查询 + 注入结果，零依赖）
 """
+
 from datetime import timedelta
 
 from sqlmodel import select
@@ -54,8 +55,7 @@ def recall_report(days: int | None = None) -> dict:
         raise ValueError("days must be an int in [1, 365]")
     start = utcnow() - timedelta(days=window)
     with db.get_session() as s:
-        events = s.exec(
-            select(RetrievalEvent).where(RetrievalEvent.created_at >= start)).all()
+        events = s.exec(select(RetrievalEvent).where(RetrievalEvent.created_at >= start)).all()
     total = len(events)
     noise = sum(1 for e in events if e.is_system_noise)
     real = [e for e in events if not e.is_system_noise]
@@ -115,16 +115,19 @@ def recent_retrieval_events(limit: int = 20) -> list[dict]:
         raise ValueError("limit must be an int in [1, 100]")
     with db.get_session() as s:
         events = s.exec(
-            select(RetrievalEvent).order_by(RetrievalEvent.created_at.desc())
-            .limit(limit)).all()
-    return [{
-        "id": e.id,
-        "query": (e.query_text or "")[:120],
-        "lane": e.lane or "unknown",
-        "intent": e.intent_bucket or "unknown",
-        "latency_ms": e.latency_ms,
-        "zero_result": e.zero_result,
-        "is_system_noise": e.is_system_noise,
-        "estimated_tokens": e.estimated_tokens,
-        "created_at": e.created_at.isoformat() if e.created_at else None,
-    } for e in events]
+            select(RetrievalEvent).order_by(RetrievalEvent.created_at.desc()).limit(limit)
+        ).all()
+    return [
+        {
+            "id": e.id,
+            "query": (e.query_text or "")[:120],
+            "lane": e.lane or "unknown",
+            "intent": e.intent_bucket or "unknown",
+            "latency_ms": e.latency_ms,
+            "zero_result": e.zero_result,
+            "is_system_noise": e.is_system_noise,
+            "estimated_tokens": e.estimated_tokens,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in events
+    ]

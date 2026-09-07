@@ -9,9 +9,11 @@ class MemoryType(StrEnum):
     TASK = "task"
     POLICY = "policy"
 
+
 class MemoryTier(StrEnum):
     WORKING = "working"
     LONG_TERM = "long_term"
+
 
 class GateDecision(StrEnum):
     REJECT = "reject"
@@ -20,12 +22,14 @@ class GateDecision(StrEnum):
     PROMOTE_PROCEDURAL = "promote_procedural"
     ARCHIVE_CONFLICT = "archive_conflict"
 
+
 class ProposalType(StrEnum):
     ADD = "add"
     UPDATE = "update"
     MERGE = "merge"
     DEPRECATE = "deprecate"
     ROLLBACK = "rollback"
+
 
 class ProposalStatus(StrEnum):
     PENDING = "pending"

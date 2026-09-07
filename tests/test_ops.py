@@ -1,4 +1,5 @@
 """备份/恢复加固测试（只测判定函数，不真实覆盖数据）"""
+
 import importlib.util
 import json
 import urllib.error
@@ -48,8 +49,9 @@ def test_verify_manifest_hash_mismatch(tmp_path):
     src.mkdir()
     f = src / "remembrance.db"
     f.write_bytes(b"data")
-    (src / "manifest.json").write_text(json.dumps(
-        {"version": "0.3.3", "files": {"remembrance.db": "0" * 64}}), encoding="utf-8")
+    (src / "manifest.json").write_text(
+        json.dumps({"version": "0.3.3", "files": {"remembrance.db": "0" * 64}}), encoding="utf-8"
+    )
     with pytest.raises(ValueError):
         R.verify_manifest(src)
 

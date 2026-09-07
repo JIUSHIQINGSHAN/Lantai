@@ -1,4 +1,5 @@
 """案牍控制台聚合路由。"""
+
 from fastapi import APIRouter, HTTPException, Query
 
 from lantai.models.work_items import (
@@ -22,15 +23,20 @@ router = APIRouter(tags=["work-items"])
 
 @router.get("/work-items", response_model=WorkItemListResponse)
 def list_work_items_route(
-    section: str = Query("", pattern="^(|immediate_action|pending_decisions|organization_needed|runtime_status)$"),
-    kind: str = Query("", pattern="^(|candidate|proposal|conflict|parameter|crystal|memory|worker)$"),
+    section: str = Query(
+        "", pattern="^(|immediate_action|pending_decisions|organization_needed|runtime_status)$"
+    ),
+    kind: str = Query(
+        "", pattern="^(|candidate|proposal|conflict|parameter|crystal|memory|worker)$"
+    ),
     risk: str = Query("", pattern="^(|critical|high|medium|low)$"),
     q: str = Query("", max_length=200),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
     return list_work_items(
-        section=section, kind=kind, risk=risk, query=q, limit=limit, offset=offset)
+        section=section, kind=kind, risk=risk, query=q, limit=limit, offset=offset
+    )
 
 
 @router.get("/work-items/detail/{kind}/{source_id}", response_model=WorkItemDetailResponse)

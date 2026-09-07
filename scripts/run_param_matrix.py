@@ -15,6 +15,7 @@ jaccard 用 set 比较，忽略排序变化。本脚本补位置敏感指标：
 top1 一致率 / top3 集合一致率 / 平均位置漂移。
 见 docs/param-matrix-report.md 实证：W_VECTOR 0.6->0.75 时 14/179 条 top1 改变。
 """
+
 import argparse
 import sys
 import time
@@ -37,7 +38,7 @@ DEFAULT_WEIGHTS = {
 }
 
 MATRIX = [
-    ("base", {}),                                   # 默认权重基线
+    ("base", {}),  # 默认权重基线
     ("vec+", {"RETRIEVAL_W_VECTOR": 0.75, "RETRIEVAL_W_BM25": 0.15}),
     ("vec++", {"RETRIEVAL_W_VECTOR": 0.85, "RETRIEVAL_W_BM25": 0.05}),
     ("bm25+", {"RETRIEVAL_W_BM25": 0.45, "RETRIEVAL_W_VECTOR": 0.40}),
@@ -88,6 +89,7 @@ def position_sensitive_metrics(default_pq: list[dict], ov_pq: list[dict]) -> dic
 
 def _pearson(x: list[float], y: list[float]) -> float:
     import math
+
     n = len(x)
     mx, my = sum(x) / n, sum(y) / n
     cov = sum((a - mx) * (b - my) for a, b in zip(x, y, strict=False))
@@ -114,11 +116,13 @@ def main() -> int:
         print(f"查询集不存在: {args.query_set}（先用 build_query_set 创建）", file=sys.stderr)
         return 1
     if args.limit and 0 < args.limit < len(qs.queries or []):
-        qs.queries = (qs.queries or [])[:args.limit]
+        qs.queries = (qs.queries or [])[: args.limit]
         qs.sample_count = len(qs.queries)
 
-    print(f"=== 调参对比矩阵: {qs.name}（{qs.sample_count} 样本, top_k={args.top_k}, "
-          f"rerank={not args.no_rerank}, intent={args.intent}）===\n")
+    print(
+        f"=== 调参对比矩阵: {qs.name}（{qs.sample_count} 样本, top_k={args.top_k}, "
+        f"rerank={not args.no_rerank}, intent={args.intent}）===\n"
+    )
 
     results = []
     base_run_id = args.baseline
@@ -134,24 +138,29 @@ def main() -> int:
         )
         elapsed = time.perf_counter() - t0
         m = run.metrics
-        results.append({
-            "label": label,
-            "run_id": run.id,
-            "overrides": delta or "default",
-            "zero": m.get("zero_result_rate"),
-            "avg": m.get("avg_result_count"),
-            "jaccard": m.get("jaccard_vs_baseline"),
-            "elapsed_s": round(elapsed, 1),
-        })
+        results.append(
+            {
+                "label": label,
+                "run_id": run.id,
+                "overrides": delta or "default",
+                "zero": m.get("zero_result_rate"),
+                "avg": m.get("avg_result_count"),
+                "jaccard": m.get("jaccard_vs_baseline"),
+                "elapsed_s": round(elapsed, 1),
+            }
+        )
         if label == "base":
             base_run_id = run.id  # 后续组以此基线比 jaccard
-        print(f"[{label:>6}] run={run.id[:18]} zero={results[-1]['zero']} "
-              f"avg={results[-1]['avg']} jaccard={results[-1]['jaccard']} "
-              f"({results[-1]['elapsed_s']}s)")
+        print(
+            f"[{label:>6}] run={run.id[:18]} zero={results[-1]['zero']} "
+            f"avg={results[-1]['avg']} jaccard={results[-1]['jaccard']} "
+            f"({results[-1]['elapsed_s']}s)"
+        )
 
     # —— 位置敏感对比：base vs 每组 ——
     from lantai.eval.models import EvalRun
     from lantai.storage import db
+
     base_pq = None
     with db.get_session() as s:
         base_row = s.get(EvalRun, results[0]["run_id"])
@@ -167,9 +176,11 @@ def main() -> int:
                     continue
             ps = position_sensitive_metrics(base_pq, ov_row.per_query)
             r.update(ps)
-            print(f"{r['label']:>6} | {ps['top1_consistency']:>6} | "
-                  f"{ps['top3_set_consistency']:>6} | {ps['avg_pos_drift']:>8} | "
-                  f"{ps['score_corr']:>9}")
+            print(
+                f"{r['label']:>6} | {ps['top1_consistency']:>6} | "
+                f"{ps['top3_set_consistency']:>6} | {ps['avg_pos_drift']:>8} | "
+                f"{ps['score_corr']:>9}"
+            )
     else:
         print("（无基线 per_query，跳过位置敏感对比）")
 
@@ -195,7 +206,8 @@ def _write_report(qs, results, base_pq, args):
     for r in results:
         lines.append(
             f"| {r['label']} | `{r['overrides']}` | {r['zero']} | {r['avg']} "
-            f"| {r['jaccard']} | {r['elapsed_s']}s |")
+            f"| {r['jaccard']} | {r['elapsed_s']}s |"
+        )
     lines += [
         "",
         "## 二、位置敏感对比（vs 基线轮，Jaccard 盲区补充）",
@@ -209,7 +221,8 @@ def _write_report(qs, results, base_pq, args):
                 continue
             lines.append(
                 f"| {r['label']} | {r['top1_consistency']} | {r['top3_set_consistency']} "
-                f"| {r['avg_pos_drift']} | {r['score_corr']} |")
+                f"| {r['avg_pos_drift']} | {r['score_corr']} |"
+            )
     lines += [
         "",
         "## 三、解读",

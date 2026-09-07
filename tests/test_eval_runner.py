@@ -3,6 +3,7 @@
 覆盖：run_dry_run 落库、metrics 有值、单条失败不中断、param_overrides 生效、
 baseline jaccard、load/list。
 """
+
 from unittest.mock import patch
 
 import pytest
@@ -21,8 +22,10 @@ def db_session():
     """内存 SQLite + patch db.get_session + 外部网络 mock。"""
     import lantai.eval.models  # noqa: F401
     import lantai.models.tables  # noqa: F401
+
     test_engine = create_engine(
-        "sqlite://", echo=False,
+        "sqlite://",
+        echo=False,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
@@ -31,13 +34,16 @@ def db_session():
     def get_test_session():
         return Session(test_engine)
 
-    with patch.object(db_module, "get_session", get_test_session), \
-         patch("lantai.retrieval.hybrid.get_vector_store") as vs, \
-         patch("lantai.retrieval.hybrid.embed",
-               return_value=[[0.1] * 8]), \
-         patch("lantai.retrieval.reranker.rerank", return_value=[]), \
-         patch("lantai.retrieval.hybrid.classify_intent",
-               return_value={"intent": "exploratory", "candidate_n": 10}):
+    with (
+        patch.object(db_module, "get_session", get_test_session),
+        patch("lantai.retrieval.hybrid.get_vector_store") as vs,
+        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+        patch("lantai.retrieval.reranker.rerank", return_value=[]),
+        patch(
+            "lantai.retrieval.hybrid.classify_intent",
+            return_value={"intent": "exploratory", "candidate_n": 10},
+        ),
+    ):
         vs.return_value.search.return_value = [{"id": "mem_1", "distance": 0.1}]
         yield get_test_session
 
@@ -47,18 +53,37 @@ def _seed(db_session, events=2):
     import datetime
 
     from lantai.core.time import utcnow
+
     with db_session() as s:
         base = utcnow() - datetime.timedelta(minutes=events)
         for i in range(events):
-            s.add(RetrievalEvent(
-                id=f"ev_{i}", trace_id="t", query_text=f"query number {i}",
-                query_norm_hash=f"h{i}", lane="", param_snapshot_hash="sha256:x",
-                result_ids=[], result_scores=[], used_ids=[], latency_ms=1,
-                zero_result=False, is_system_noise=False,
-                created_at=base + datetime.timedelta(minutes=i)))
-        s.add(MemoryItem(
-            id="mem_1", memory_type="semantic", key="k",
-            content="测试记忆内容", lane="general", status="active"))
+            s.add(
+                RetrievalEvent(
+                    id=f"ev_{i}",
+                    trace_id="t",
+                    query_text=f"query number {i}",
+                    query_norm_hash=f"h{i}",
+                    lane="",
+                    param_snapshot_hash="sha256:x",
+                    result_ids=[],
+                    result_scores=[],
+                    used_ids=[],
+                    latency_ms=1,
+                    zero_result=False,
+                    is_system_noise=False,
+                    created_at=base + datetime.timedelta(minutes=i),
+                )
+            )
+        s.add(
+            MemoryItem(
+                id="mem_1",
+                memory_type="semantic",
+                key="k",
+                content="测试记忆内容",
+                lane="general",
+                status="active",
+            )
+        )
         s.commit()
     return build_query_set("dry-run-test")
 
@@ -98,8 +123,9 @@ class TestRunDryRun:
     def test_single_query_failure_not_fatal(self, db_session):
         """单条查询抛错不中断，metrics.errors 计数。"""
         qs = _seed(db_session)
-        with patch("lantai.eval.runner.hybrid_search",
-                   side_effect=[RuntimeError("embed timeout"), []]):
+        with patch(
+            "lantai.eval.runner.hybrid_search", side_effect=[RuntimeError("embed timeout"), []]
+        ):
             run = run_dry_run(qs, top_k=3)
         assert run.status == "done"
         assert run.metrics["errors"] == 1
@@ -144,6 +170,7 @@ class TestParamOverrideContext:
         """param_overrides 调用后 settings 恢复原值（不污染全局）。"""
         from lantai.core.settings import settings
         from lantai.retrieval.hybrid import _param_override
+
         original = settings.RETRIEVAL_W_VECTOR
         with _param_override({"RETRIEVAL_W_VECTOR": 0.99}):
             assert settings.RETRIEVAL_W_VECTOR == 0.99
@@ -151,5 +178,6 @@ class TestParamOverrideContext:
 
     def test_none_override_noop(self):
         from lantai.retrieval.hybrid import _param_override
+
         with _param_override(None):
             pass  # 不抛即通过

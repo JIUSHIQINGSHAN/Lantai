@@ -1,18 +1,22 @@
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from lantai.core.auth import get_current_user, SecurityContext
 from lantai.core.acl import filter_results_by_lanes
+from lantai.core.auth import Principal, get_current_user
 from lantai.gate.prefilter import relevance_check
 from lantai.models.schemas import SearchReq
 from lantai.retrieval.hybrid import hybrid_search
 
 router = APIRouter()
 
+
 @router.post("/search")
-def search(req: SearchReq, trace: bool = False, explain: bool = False,
-          ctx: SecurityContext = Depends(get_current_user)):
+def search(
+    req: SearchReq,
+    trace: bool = False,
+    explain: bool = False,
+    ctx: Principal = Depends(get_current_user),
+):
     # Step 1: 启发式闸门预过滤（拾遗 ADR-0028：支持 req.force 透传放行）
     gate = relevance_check(req.query, user_id=ctx.user_id)
     if not req.force and not gate["needs_memory"]:
@@ -22,10 +26,19 @@ def search(req: SearchReq, trace: bool = False, explain: bool = False,
 
     # Step 2: 混合检索
     import time
+
     t0 = time.perf_counter()
-    result = hybrid_search(req.query, req.top_k, req.memory_types,
-                           req.lanes, req.use_rerank, trace=trace,
-                           explain=explain, domain=req.domain)
+    result = hybrid_search(
+        req.query,
+        req.top_k,
+        req.memory_types,
+        req.lanes,
+        req.use_rerank,
+        trace=trace,
+        explain=explain,
+        domain=req.domain,
+        principal=ctx,
+    )
     latency_ms = int((time.perf_counter() - t0) * 1000)
     if trace and isinstance(result, tuple):
         results, trace_steps = result
@@ -35,12 +48,17 @@ def search(req: SearchReq, trace: bool = False, explain: bool = False,
     results = filter_results_by_lanes(results, ctx.allowed_lanes)
     event_id = _try_log(req, results, latency_ms, gate)
     from lantai.retrieval.evidence import build_evidence
+
     evidence = build_evidence(results)
     if trace and isinstance(result, tuple):
-        return {"results": results, "gate": gate, "trace": trace_steps,
-                "event_id": event_id, "evidence": evidence}
-    return {"results": results, "gate": gate, "event_id": event_id,
-            "evidence": evidence}
+        return {
+            "results": results,
+            "gate": gate,
+            "trace": trace_steps,
+            "event_id": event_id,
+            "evidence": evidence,
+        }
+    return {"results": results, "gate": gate, "event_id": event_id, "evidence": evidence}
 
 
 class GraphExpandReq(BaseModel):
@@ -52,25 +70,25 @@ class GraphExpandReq(BaseModel):
 
 
 @router.post("/search/graph_expand")
-def search_graph_expand(req: GraphExpandReq, ctx: SecurityContext = Depends(get_current_user)):
+def search_graph_expand(req: GraphExpandReq, ctx: Principal = Depends(get_current_user)):
     """贯珠（ADR-0035）：图增强混合检索。"""
     from lantai.retrieval.graph_retriever import graph_augmented_search
+
     return graph_augmented_search(
         query=req.query,
         top_k=req.top_k,
         max_hops=req.max_hops,
         min_edge_conf=req.min_edge_conf,
         domain=req.domain,
-        allowed_lanes=ctx.allowed_lanes
+        allowed_lanes=ctx.allowed_lanes,
     )
-
 
 
 def _try_log(req, results: list, latency_ms: int, gate: dict) -> str | None:
     """检索事件埋点（方向二）：失败不影响主链路。返回 event_id 供生成侧回填。"""
     try:
         from lantai.observability.retrieval_log import log_retrieval
-        return log_retrieval(req.query, results, latency_ms=latency_ms,
-                             gate=gate, lanes=req.lanes)
+
+        return log_retrieval(req.query, results, latency_ms=latency_ms, gate=gate, lanes=req.lanes)
     except Exception:
         return None  # 埋点必须零侵入
