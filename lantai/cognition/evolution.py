@@ -94,7 +94,7 @@ class EvolutionEngine:
             patterns.append(pat)
         return patterns
 
-    def propose_beliefs(self, patterns: list[CognitivePattern], mock_score: float = 0.0) -> list[MemoryItem]:
+    def propose_beliefs(self, patterns: list[CognitivePattern], mock_score: float = 0.0, promotion_threshold: float = 0.70) -> list[MemoryItem]:
         from lantai.models.tables import Evidence
 
         proposals = []
@@ -123,7 +123,19 @@ class EvolutionEngine:
                     recurrence=recurrence,
                 )
 
-            if score >= 0.70:
+            if score >= promotion_threshold:
+                trace = {
+                    "score": round(score, 4),
+                    "components": {
+                        "confidence": round(pat.confidence, 4),
+                        "evidence_quality": round(evidence_quality, 4),
+                        "independent_support": round(independent_support, 4),
+                        "recurrence": round(recurrence, 4),
+                    },
+                    "promoted_from": "pattern",
+                    "promoted_at": utcnow().isoformat(),
+                    "reason": f"{pat.occurrence_count} recurrences, evidence_quality={evidence_quality:.2f}",
+                }
                 belief = MemoryItem(
                     id=new_id("mem"),
                     content=pat.description,
@@ -131,6 +143,7 @@ class EvolutionEngine:
                     confidence=score,
                     status="candidate",  # Must be candidate
                     source_ids=pat.source_ids,
+                    promotion_trace=trace,
                 )
                 proposals.append(belief)
         return proposals
@@ -141,12 +154,14 @@ class EvolutionEngine:
 
         proposals = []
         for b in beliefs:
+            # 默认值（mock_score 路径也能取到）
+            evidence_quality = 0.7
+            independent_support = 0.7
+            usefulness = min(1.0, (b.helpful_count or 0) / max(1, b.use_count or 1))
             if mock_score:
                 score = mock_score
             else:
                 # 动态根据支撑证据与反思用量计算稳定性与有效性
-                evidence_quality = 0.7
-                independent_support = 0.7
                 if self.db is not None and b.source_ids:
                     rows = self.db.exec(
                         select(Evidence).where(Evidence.source_memory_id.in_(b.source_ids))
@@ -155,7 +170,6 @@ class EvolutionEngine:
                         evidence_quality = sum(r.reliability * r.independence for r in rows) / len(rows)
                         independent_support = sum(r.independence for r in rows) / len(rows)
 
-                usefulness = min(1.0, (b.helpful_count or 0) / max(1, b.use_count or 1))
                 score = self.calculate_promotion_score(
                     confidence=b.confidence or 0.5,
                     evidence_quality=evidence_quality,
@@ -166,6 +180,18 @@ class EvolutionEngine:
                 )
 
             if score >= 0.80:
+                trace = {
+                    "score": round(score, 4),
+                    "components": {
+                        "confidence": round(b.confidence or 0.5, 4),
+                        "evidence_quality": round(evidence_quality, 4),
+                        "independent_support": round(independent_support, 4),
+                        "usefulness": round(usefulness, 4),
+                    },
+                    "promoted_from": "belief",
+                    "promoted_at": utcnow().isoformat(),
+                    "reason": f"usefulness={usefulness:.2f}, evidence_quality={evidence_quality:.2f}",
+                }
                 rule = MemoryItem(
                     id=new_id("mem"),
                     content=b.content,
@@ -173,6 +199,7 @@ class EvolutionEngine:
                     confidence=score,
                     status="candidate",
                     source_ids=[b.id] + (b.source_ids or []),
+                    promotion_trace=trace,
                 )
                 proposals.append(rule)
         return proposals
@@ -180,10 +207,10 @@ class EvolutionEngine:
     def propose_principles(self, rules: list[MemoryItem], mock_score: float = 0.0) -> list[MemoryItem]:
         proposals = []
         for r in rules:
+            usefulness = min(1.0, (r.helpful_count or 0) / max(1, r.use_count or 1)) if r.use_count else 0.8
             if mock_score:
                 score = mock_score
             else:
-                usefulness = min(1.0, (r.helpful_count or 0) / max(1, r.use_count or 1)) if r.use_count else 0.8
                 score = self.calculate_promotion_score(
                     confidence=r.confidence or 0.5,
                     evidence_quality=0.9,
@@ -194,6 +221,18 @@ class EvolutionEngine:
                 )
 
             if score >= 0.90:
+                trace = {
+                    "score": round(score, 4),
+                    "components": {
+                        "confidence": round(r.confidence or 0.5, 4),
+                        "evidence_quality": 0.9,
+                        "independent_support": 0.9,
+                        "usefulness": round(usefulness, 4),
+                    },
+                    "promoted_from": "rule",
+                    "promoted_at": utcnow().isoformat(),
+                    "reason": f"usefulness={usefulness:.2f}, stable rule promoted to principle",
+                }
                 prin = MemoryItem(
                     id=new_id("mem"),
                     content=r.content,
@@ -208,6 +247,7 @@ class EvolutionEngine:
                             "exceptions": [],
                         }
                     },
+                    promotion_trace=trace,
                 )
                 proposals.append(prin)
         return proposals

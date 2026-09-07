@@ -120,6 +120,9 @@ class MemoryItem(SQLModel, table=True):
     valid_to: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+    promotion_trace: dict = Field(
+        default_factory=dict, sa_column=Column(JSON)
+    )  # 晋升追踪（v0.3）：每次知识晋升的分项评分快照，回答「为什么被晋升为 BELIEF/RULE/PRINCIPLE」
 
 
 class MemoryScene(SQLModel, table=True):

@@ -68,6 +68,9 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **探颐**（Tanyi，记忆主动探针与消歧） | 记忆主动探针与自然消歧正式名（ADR-0013 意象池「探颐」= 《易·系辞上》「探赜索隐，钩深致远」）：改变记忆系统被动查询现状，在检索命中冲突账本（ConflictEvent）或模糊事实时，主动生成自然探针并注入回复引导区；当次轮用户给出肯定答复时自动闭环解决冲突、更新记忆与快照，实现自然对话中的自纠错。见 [ADR-0037](docs/adr/0037-proactive-memory-probing.md) |
 | **悬镜**（Xuanjing，可视化管理控制台） | 可视化管理中台正式名（ADR-0013 意象池「悬镜」= 宝镜高悬、洞烛幽微）：为人类管理者提供现代化的单页 Web 控制台（Lantai Studio），一站式集成案牍审阅大厅、器识/札记在线编辑器、沉潜夜梦沉淀面板、四路检索与探针演练场、拓扑星图与全景档案，彻底打破纯 MCP 命令行运维壁垒。见 [ADR-0038](docs/adr/0038-visual-management-studio.md) |
 | **持节**（Chijie，智能体案牍巡检官与自主审批） | 智能体记忆审批自治正式名（ADR-0013 典籍意象「持节」= 汉唐天子特使持符节巡行天下、决断刑政）：通过标准化 MCP 协议（`triage_analyze` / `triage_apply` / `triage_auto_pilot`）赋予外部 AI 智能体（如 Hermes、Antigravity、Claude Code）自主治理与审批记忆库的特权；支持自动化待审巡检、结构化置信度研判、噪音剔除与确凿事实批准，实现人机协同与无人值守自治的双模闭环。见 [ADR-0039](docs/adr/0039-agent-autonomous-triage.md) |
+| **认知闭环**（Cognitive Loop） | v0.3 核心主线机制：Task → ActionOutcome → FailureRecord → ReflectionEngine → CognitivePattern → BELIEF/RULE → CognitiveContext → 下次 Task；Agent 第一次犯错后 Lantai 学到经验，第二次遇到类似情况时认知上下文发生可验证的改变。见 `docs/benchmarks/behavioral-learning-benchmark.md` |
+| **晋升追踪**（promotion_trace） | 每次知识晋升的分项评分快照，存 `MemoryItem.promotion_trace`（JSON 字段，v0.3 新增）；内容为 `{score, components:{confidence/evidence_quality/independent_support/recurrence}, promoted_from, promoted_at, reason}`，回答「为什么这条记忆被晋升为 BELIEF/RULE/PRINCIPLE」；Candidate ≠ Knowledge 的可解释性保障。见 ADR-0044 |
+| **失败模式**（failure_pattern） | 从 FailureRecord 归纳的 CognitivePattern（`pattern_type="failure_pattern"`）；由 `ReflectionEngine._failures_to_observations()` 将 lesson/cause 转化为临时 OBSERVATION 后聚类产出；晋升阈值 0.55（低于通用 0.70），单次失败即可触发预警级别的 BELIEF candidate；与「宁 miss 不脏写」并行——失败经验只产 candidate，不自动提升为 active Knowledge。见 v0.3 Ticket-01 |
 
 
 
