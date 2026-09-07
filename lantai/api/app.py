@@ -4,6 +4,7 @@ from fastapi import Depends, FastAPI
 
 from lantai.api import (
     routes_admin_router,
+    routes_cognitive_router,
     routes_candidates_router,
     routes_checkpoint_router,
     routes_conflicts_router,
@@ -79,6 +80,7 @@ app.include_router(routes_admin_router)
 
 # 业务端点（需要 API Key 鉴权）
 CORE_ROUTERS = [
+    routes_cognitive_router,
     routes_memory_router,
     routes_search_router,
     routes_gate_router,

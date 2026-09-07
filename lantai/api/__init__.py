@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from .routes_admin import router as routes_admin_router
+from .routes_cognitive import router as routes_cognitive_router
 from .routes_candidates import router as routes_candidates_router
 from .routes_checkpoint import router as routes_checkpoint_router
 from .routes_conflicts import router as routes_conflicts_router
@@ -33,6 +34,7 @@ from .routes_verification import router as routes_verification_router
 from .routes_work_items import router as routes_work_items_router
 
 __all__ = [
+    "routes_cognitive_router",
     "routes_health_router",
     "routes_health_protected_router",
     "routes_memory_router",
