@@ -16,6 +16,7 @@ from .routes_health import protected_router as routes_health_protected_router
 from .routes_health import router as routes_health_router
 from .routes_import import router as routes_import_router
 from .routes_memory import router as routes_memory_router
+from .routes_monitor import router as routes_monitor_router
 from .routes_obsidian import router as routes_obsidian_router
 from .routes_param_advice import router as routes_param_advice_router
 from .routes_persona import router as routes_persona_router
@@ -38,6 +39,7 @@ __all__ = [
     "routes_health_router",
     "routes_health_protected_router",
     "routes_memory_router",
+    "routes_monitor_router",
     "routes_search_router",
     "routes_gate_router",
     "routes_checkpoint_router",

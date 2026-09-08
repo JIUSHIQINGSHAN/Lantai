@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **司天（后台运行监控面板，ADR-0044）**:
+  - 采集层 `observability/metrics.py`：进程内 `MetricsCollector`（最近请求环形缓冲 + 分钟级聚合桶），
+    零第三方依赖采集 uptime/RSS/线程/CPU/fd，`normalize_route` 把 `/memory/mem_01J8…` 归一成
+    `/memory/{id}` 杜绝高基数打散统计；
+  - 遥测层 `observability/telemetry.py`：纯 ASGI `TelemetryMiddleware` + 采样落库器，
+    补齐 ADR-0040 建表以来从未写入的 `OperationLog`（4xx/5xx 与慢请求必留，正常请求 1/N 采样，
+    后台批量写 + 按 `MONITOR_RETENTION_DAYS` 清理），杜绝每请求一次 SQLite 写的写放大；
+  - 聚合层 `ops/monitor.py`：`build_monitor_snapshot` 一次装配进程/存储/记忆/管道/调度/请求/
+    安全/依赖八域事实，`evaluate_alerts` 13 条规则告警，`render_prometheus` 同快照文本出口，
+    `safe_settings_view` 生效配置只读（密钥打码、DB 路径只留文件名）；未匹配路由的 404
+    在指标中并为 `(unmatched 404)` 一桶（防扫描器打散端点排行），落库仍留真实路径；
+  - 接口面 `api/routes_monitor.py`：`GET /monitor/overview|series|logs|config|prometheus` +
+    `POST /monitor/workers/{name}/run`（复用 `worker_operation_service` 同名互斥）；
+  - 前端 `ui/monitor.js`：悬镜工作台新增「司天监控」视图（指标卡 / 告警 / 服务与依赖 /
+    纯 SVG 请求趋势 / 端点耗时排行 / 记忆管道水位 / 调度器与 worker 一键补跑 / 问题请求 /
+    运行配置），零构建原生 ES Module，10 秒自动刷新且页面隐藏即暂停；侧边栏告警徽标走
+    `?quality=false` 轻量轮询；
+  - 口径统一：worker 逾期判定上收为 `core.scheduler.worker_staleness` 纯函数，
+    案牍 `project_work_items` 改为调用同一实现（行为不变），杜绝两处规则漂移；
+  - 命名正式登记：在 `CONTEXT.md` 登记「司天」（Sitian，出自司天监观天象察灾异），归档 ADR-0044。
+
+### Fixed
+- **控制台初始化中断**：`ui/app.js` 绑定了 index.html 中并不存在的 `#systemRefresh`，
+  `bindEvents()` 在该行抛 TypeError，导致其后的器识/札记/演练场/档案库事件与全局快捷键
+  全部未绑定、`loadQueue()` 也不执行——控制台打开即空转。补上该按钮并新增
+  `tests/test_monitor_ui.py::test_every_dom_selector_exists_in_index_html` 静态契约测试
+  （JS 里每个 `$('#id')` 必须在 index.html 或 JS 动态创建中存在）防回归；
+- **服务重启即崩（P0）**：`start_scheduler()` 里 `ingest` / `evolve` / `forget` 三个
+  `add_job` 漏了 `replace_existing=True`，而 jobstore 是持久化在同一个 SQLite 库的
+  `SQLAlchemyJobStore`——首次启动正常，**之后每次启动都在 `start()` 抛
+  `ConflictingIdError: 'Job identifier (ingest) conflicts with an existing job'`，
+  服务对已存在的库再也起不来**（只能删库或手工清 `apscheduler_jobs` 表）。已补参数，
+  并加 `tests/test_scheduler.py::TestSchedulerRestart`（真实调度器 + 真实文件 jobstore，
+  连启两次）防回归；
+- **退出路径连带崩**：`stop_scheduler()` 在调度器已停止时抛 `SchedulerNotRunningError`，
+  改为幂等（未启动/已停止均静默返回）；
+- **依赖缺失**：`jieba` 与 `rank-bm25` 是四路混合检索的词级通道，却从未写进
+  `pyproject.toml`（`uv.lock` 亦无），干净环境 `pip install -e .` 后
+  `import lantai.gate.conflict_rules` 直接 `ModuleNotFoundError`；已补声明。
+
 ## [0.21.0] - 2026-08-31 - 悬镜（Xuanjing · 兰台可视化管理控制台 Lantai Studio）
 
 ### Added

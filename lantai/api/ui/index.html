@@ -23,6 +23,7 @@
         <button class="nav-item" data-view="studio"><span>认知进化</span></button>
         <button class="nav-item" data-view="playground"><span>检索演练</span></button>
         <button class="nav-item" data-view="terminal"><span>认知终端</span></button>
+        <button class="nav-item" data-view="monitor"><span>司天监控</span><b id="navMonitorCount">0</b></button>
         <button class="nav-item" data-view="system"><span>系统脉搏</span><b id="navSystemCount">0</b></button>
       </nav>
       <div class="sidebar-footer">
@@ -327,10 +328,89 @@
         </div>
       </section>
 
-      <!-- 7. 系统脉搏与质量 (System & Pulse) -->
+      <!-- 8. 司天监控 (Ops Monitor · ADR-0044) -->
+      <section class="view" id="monitorView">
+        <header class="topbar">
+          <div><h1>司天 · 运行监控</h1><p id="monitorSubtitle">进程 / 存储 / 调度 / 请求 / 告警——一屏看清系统此刻的状态</p></div>
+          <div class="top-actions">
+            <label class="check-field inline monitor-autorefresh"><input id="monitorAutoRefresh" type="checkbox" checked><span>自动刷新</span></label>
+            <a class="secondary-button monitor-link" href="/monitor/prometheus" target="_blank" rel="noopener">Prometheus ↗</a>
+            <button class="primary-btn" id="monitorRefreshBtn">↻ 立即刷新</button>
+          </div>
+        </header>
+        <div class="view-content monitor-body">
+          <div class="metrics-grid" id="monitorMetrics"></div>
+
+          <div class="monitor-grid">
+            <div class="panel-card">
+              <h3>🚨 规则告警 <b id="monitorAlertCount" class="panel-count">0</b></h3>
+              <div id="monitorAlerts" class="alert-list"><div class="inspector-empty">正在读取告警…</div></div>
+            </div>
+            <div class="panel-card">
+              <h3>🩺 服务与依赖</h3>
+              <div id="monitorDeps" class="dep-grid"></div>
+            </div>
+          </div>
+
+          <div class="panel-card">
+            <h3>📈 请求趋势 <span class="panel-hint" id="monitorChartHint">近 60 分钟</span></h3>
+            <div id="monitorChart" class="monitor-chart"></div>
+            <div class="chart-legend">
+              <span><i class="lg lg-req"></i>请求/分钟</span>
+              <span><i class="lg lg-err"></i>5xx/分钟</span>
+              <span><i class="lg lg-lat"></i>平均延迟(ms)</span>
+            </div>
+          </div>
+
+          <div class="monitor-grid">
+            <div class="panel-card">
+              <h3>⏱ 端点耗时排行 <span class="panel-hint" id="monitorWindowHint">窗口 15 分钟</span></h3>
+              <div class="table-wrap">
+                <table class="monitor-table" id="monitorEndpoints">
+                  <thead><tr><th>路由</th><th class="num">次数</th><th class="num">均耗时</th><th class="num">p95</th><th class="num">5xx</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="panel-card">
+              <h3>🗂 记忆管道</h3>
+              <div id="monitorPipeline" class="pipeline-box"></div>
+            </div>
+          </div>
+
+          <div class="panel-card">
+            <h3>⚙️ 调度器与 Worker <span class="panel-hint" id="monitorSchedulerHint">—</span></h3>
+            <div class="table-wrap">
+              <table class="monitor-table" id="monitorWorkers">
+                <thead><tr><th>Worker</th><th>周期</th><th>上次完成</th><th>距今</th><th>状态</th><th class="num">操作</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="monitor-grid">
+            <div class="panel-card">
+              <h3>🧾 最近问题请求 <span class="panel-hint">4xx/5xx 与慢请求</span></h3>
+              <div id="monitorLogs" class="log-list"></div>
+            </div>
+            <div class="panel-card">
+              <h3>🔧 运行配置 <span class="panel-hint">密钥已打码</span></h3>
+              <div id="monitorConfig" class="config-box"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 9. 系统脉搏与质量 (System & Pulse) -->
       <section class="view tools-view" id="systemView">
-        <header class="topbar"><div><h1>系统脉搏与质量</h1><p>存储健康度、Worker 调度与监控报告</p></div></header>
+        <header class="topbar">
+          <div><h1>系统脉搏与质量</h1><p>存储健康度、Worker 调度与监控报告</p></div>
+          <div class="top-actions">
+            <button class="primary-btn" id="systemRefresh">↻ 刷新案牍</button>
+          </div>
+        </header>
         <div class="tool-list">
+          <a class="quick-link" href="/monitor/prometheus" target="_blank" rel="noopener"><span><b>司天监控面板</b><small>进程 / 存储 / 调度 / 请求遥测与规则告警（本工作台内嵌视图见「司天监控」）</small></span><i>→</i></a>
           <a href="/ui/vault"><span><b>全景档案库</b><small>独立档案库管理与多维浏览</small></span><i>→</i></a>
           <a href="/ui/map"><span><b>知识星图</b><small>关系、实体双链与拓扑场景</small></span><i>→</i></a>
           <a href="/ui/recall"><span><b>追忆漏斗</b><small>逐步查看检索漏斗与各层召回</small></span><i>→</i></a>
@@ -360,6 +440,7 @@
     <button data-view="vault">档案</button>
     <button data-view="studio">进化</button>
     <button data-view="playground">演练</button>
+    <button data-view="monitor">监控</button>
     <button data-view="system">系统</button>
   </nav>
 

@@ -71,6 +71,7 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **认知闭环**（Cognitive Loop） | v0.3 核心主线机制：Task → ActionOutcome → FailureRecord → ReflectionEngine → CognitivePattern → BELIEF/RULE → CognitiveContext → 下次 Task；Agent 第一次犯错后 Lantai 学到经验，第二次遇到类似情况时认知上下文发生可验证的改变。见 `docs/benchmarks/behavioral-learning-benchmark.md` |
 | **晋升追踪**（promotion_trace） | 每次知识晋升的分项评分快照，存 `MemoryItem.promotion_trace`（JSON 字段，v0.3 新增）；内容为 `{score, components:{confidence/evidence_quality/independent_support/recurrence}, promoted_from, promoted_at, reason}`，回答「为什么这条记忆被晋升为 BELIEF/RULE/PRINCIPLE」；Candidate ≠ Knowledge 的可解释性保障。见 ADR-0044 |
 | **失败模式**（failure_pattern） | 从 FailureRecord 归纳的 CognitivePattern（`pattern_type="failure_pattern"`）；由 `ReflectionEngine._failures_to_observations()` 将 lesson/cause 转化为临时 OBSERVATION 后聚类产出；晋升阈值 0.55（低于通用 0.70），单次失败即可触发预警级别的 BELIEF candidate；与「宁 miss 不脏写」并行——失败经验只产 candidate，不自动提升为 active Knowledge。见 v0.3 Ticket-01 |
+| **司天**（Sitian，后台运行监控面板） | 运行监控面板正式名（ADR-0013 典籍意象「司天」= 司天监掌观天象、察灾异、报异常）：把散落的运行事实拼成一张可判断的快照——进程（uptime/RSS/线程）、存储（SQLite/WAL/FTS5/向量库体积与行数）、记忆管道（待审积压/冲突/潮波水位/24h 归档）、调度器（APScheduler 作业下次触发 + worker 逾期，口径与案牍同源）、请求遥测（环形缓冲 + 采样落 `operation_logs`，补齐 ADR-0040 死表）与安全绑定态；配 `evaluate_alerts` 规则告警与 `/monitor/prometheus` 文本出口，三处消费同一快照（悬镜「司天监控」视图 / REST / Prometheus）。只读、零第三方依赖、密钥打码。见 [ADR-0044](docs/adr/0045-sitian-ops-monitor-panel.md) |
 
 
 

@@ -1,6 +1,9 @@
 import {api, clearApiKey, getApiKey, saveApiKey} from './api.js';
 
 import { initTerminal, activateTerminalView } from './terminal.js';
+import {
+  activateMonitorView, deactivateMonitor, initMonitor, refreshMonitorBadge,
+} from './monitor.js';
 
 // Init Terminal on load
 document.addEventListener('DOMContentLoaded', () => {
@@ -79,8 +82,11 @@ function setView(view) {
   const targetView = $(`#${view}View`);
   if (targetView) targetView.classList.add('active');
   if (view !== 'tasks') closeInspector();
+  if (view !== 'monitor') deactivateMonitor();
 
-  if (view === 'overview') {
+  if (view === 'monitor') {
+    activateMonitorView();
+  } else if (view === 'overview') {
     loadOverview();
   } else if (view === 'vault') {
     loadVault();
@@ -972,8 +978,15 @@ function initTheme() {
 }
 
 async function init() {
-  initTheme(); updateConnection(); bindEvents(); await loadQueue();
-  refreshTimer = setInterval(() => { if (!document.hidden && state.view === 'tasks') loadQueue({silent: true}); }, 30000);
+  initTheme(); updateConnection(); bindEvents();
+  initMonitor({notify: message => showToast(message)});
+  await loadQueue();
+  refreshMonitorBadge();
+  refreshTimer = setInterval(() => {
+    if (document.hidden) return;
+    if (state.view === 'tasks') loadQueue({silent: true});
+    refreshMonitorBadge();
+  }, 30000);
 }
 
 window.addEventListener('beforeunload', () => clearInterval(refreshTimer));

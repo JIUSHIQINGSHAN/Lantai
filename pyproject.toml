@@ -22,6 +22,7 @@ dependencies = [
   "requests>=2.31",
   "jieba>=0.42",
   "psutil>=7.2.2",
+  "rank-bm25>=0.2.2",
 ]
 
 [project.optional-dependencies]
