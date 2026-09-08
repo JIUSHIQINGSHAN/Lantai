@@ -32,10 +32,11 @@ def test_tools_list():
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
     assert (
-        len(resp["result"]["tools"]) == 58
-    )  # 第十六波：持节 triage_analyze/triage_apply/triage_auto_pilot
+        len(resp["result"]["tools"]) == 59
+    )  # 包含 cognitive_context 心斋认知切面
     assert "persona_get" in names
     assert "persona_set" in names
+    assert "cognitive_context" in names
     assert "candidate_refine" in names
     assert "triage_analyze" in names
     assert "triage_apply" in names

@@ -134,3 +134,56 @@ def cognitive_context_prompt(
     builder = CognitiveContextBuilder(db)
     ctx = builder.build(task=task, top_k=top_k)
     return {"task": ctx.task, "prompt": ctx.to_prompt()}
+
+
+@router.get("/summary")
+def cognitive_summary(
+    task: str = "",
+    max_rules: int = 2,
+    max_failures: int = 1,
+    db: Session = Depends(get_session),
+) -> dict:
+    """
+    轻量认知摘要（v0.4 Cognitive Middleware）：返回给定 task 最相关的 Rule 和 Failure。
+
+    比完整 /context 更轻量，供 MCP 自动注入和快速 Agent 查询使用。
+    响应格式：
+    {
+      "task": "...",
+      "rules": [{"id": "...", "content": "...", "confidence": 0.85}],
+      "failures": [{"id": "...", "lesson": "...", "severity": 0.7}],
+      "summary": "相关规则: ... | 已知失败: ..."
+    }
+    """
+    builder = CognitiveContextBuilder(db)
+    ctx = builder.build(task=task, top_k=max(max_rules, max_failures) + 2)
+
+    rules_out = [
+        {"id": r.id, "content": r.content[:200], "confidence": r.confidence}
+        for r in (ctx.rules or [])[:max_rules]
+    ]
+    failures_out = [
+        {
+            "id": f.id,
+            "lesson": getattr(f, "lesson", ""),
+            "severity": getattr(f, "severity", 0.5),
+        }
+        for f in (ctx.failures or [])[:max_failures]
+    ]
+
+    # 生成纯文本摘要
+    parts = []
+    if rules_out:
+        parts.append("相关规则: " + "; ".join(r["content"][:80] for r in rules_out))
+    if failures_out:
+        lesson = failures_out[0].get("lesson", "")
+        if lesson:
+            parts.append(f"已知失败: {lesson[:80]}")
+    summary_text = " | ".join(parts)
+
+    return {
+        "task": task,
+        "rules": rules_out,
+        "failures": failures_out,
+        "summary": summary_text,
+    }

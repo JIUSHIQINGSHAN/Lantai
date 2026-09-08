@@ -16,7 +16,7 @@ engine = create_engine(settings.DATABASE_URL, echo=False, connect_args={"timeout
 # PRAGMA user_version 记录数据库结构版本；未版本化库（全新库或 v0.5 及以前
 # 老库）自动基线为 v1，增量补丁按版本号依次执行。ALTER TABLE ADD COLUMN 为
 # 毫秒级操作，代码更新与数据重构解耦，异常只记日志不阻断启动（降级而非崩溃）。
-CURRENT_SCHEMA_VERSION = 18
+CURRENT_SCHEMA_VERSION = 20
 
 
 def _ensure_column(conn, table: str, column: str, ddl: str) -> None:
@@ -263,7 +263,33 @@ def apply_migrations(conn) -> None:
             conn.commit()
             logger.info("Migrated v18: Added ownership fields")
 
-            logger.info("数据库增量迁移 v17 完成（辨域 MemoryItem domain 列与索引）")
+        # v18 -> v19: 认知底层字段 (memorycandidate.role, memoryitem.promotion_trace)
+        if user_version < 19:
+            _ensure_column(conn, "memorycandidate", "role", "TEXT DEFAULT 'observation'")
+            _ensure_column(conn, "memoryitem", "promotion_trace", "TEXT DEFAULT '{}'")
+            conn.execute("PRAGMA user_version = 19")
+            conn.commit()
+            logger.info("Migrated v19: Cognitive fields (role, promotion_trace)")
+
+        # v19 -> v20: Knowledge Lifecycle 状态机字段 (v0.4)
+        if user_version < 20:
+            _ensure_column(conn, "memoryitem", "lifecycle_status", "TEXT NOT NULL DEFAULT 'active'")
+            _ensure_column(conn, "memoryitem", "superseded_by", "TEXT")
+            _ensure_column(conn, "memoryitem", "weakened_at", "DATETIME")
+            _ensure_column(conn, "memoryitem", "superseded_at", "DATETIME")
+            _ensure_column(conn, "memoryitem", "retired_at", "DATETIME")
+            try:
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_memoryitem_lifecycle_status ON memoryitem(lifecycle_status)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_memoryitem_superseded_by ON memoryitem(superseded_by)"
+                )
+            except Exception:
+                pass
+            conn.execute("PRAGMA user_version = 20")
+            conn.commit()
+            logger.info("Migrated v20: Knowledge Lifecycle fields")
 
     except Exception as exc:
         logger.error("数据库增量迁移异常（服务继续启动）: %s", exc)

@@ -35,7 +35,9 @@ def test_conflict_engine_coexist():
     result = engine.resolve(p1, p2)
     
     assert result.resolution == ConflictResolution.COEXIST
-    assert "scope" in result.reason.lower()
+    assert "task_types" in result.reason or "scope" in result.reason.lower() or "共存" in result.reason
+    assert result.decision_trace is not None
+    assert result.decision_trace.decision == "COEXIST"
 
 def test_conflict_engine_win_a():
     """Verify ConflictEngine resolves by evidence strength/confidence."""

@@ -8,6 +8,24 @@ class CognitiveRole(str, enum.Enum):
     PRINCIPLE = "principle"
     SKILL = "skill"
 
+class LifecycleStatus(str, enum.Enum):
+    """知识生命周期状态（v0.4）。
+    
+    与 MemoryItem.status（active/candidate/archived）正交：
+    - status 描述记忆的管道状态（是否通过闸门、是否归档）
+    - lifecycle_status 描述知识本身的认识论状态（是否被取代、是否已退役）
+    
+    转移规则：
+    Active → Weakened（confidence 跌破 WEAKENED_THRESHOLD=0.5）
+    Active/Weakened → Superseded（被更强 Belief/Rule 显式取代）
+    Weakened/Superseded → Retired（TTL 超期或 decay_score 极低）
+    candidate → Active（经 EvolutionEngine 晋升，promotion_trace 非空）
+    """
+    ACTIVE = "active"
+    WEAKENED = "weakened"       # confidence 下降到 [0.3, 0.5)，仍参与检索但权重降低
+    SUPERSEDED = "superseded"   # 被更新版本或更强 Rule 取代，退出检索
+    RETIRED = "retired"         # 超过 TTL 且 decay_score 极低，等同于 archived
+
 from datetime import datetime
 
 from sqlmodel import JSON, Column, Field, SQLModel
@@ -123,6 +141,18 @@ class MemoryItem(SQLModel, table=True):
     promotion_trace: dict = Field(
         default_factory=dict, sa_column=Column(JSON)
     )  # 晋升追踪（v0.3）：每次知识晋升的分项评分快照，回答「为什么被晋升为 BELIEF/RULE/PRINCIPLE」
+
+    # Knowledge Lifecycle（v0.4）：与 status 正交，描述知识本身的认识论状态
+    lifecycle_status: str = Field(
+        default=LifecycleStatus.ACTIVE,
+        index=True,
+    )  # "active" / "weakened" / "superseded" / "retired"（LifecycleStatus 枚举）
+    superseded_by: str | None = Field(
+        default=None, index=True
+    )  # 指向取代本记忆的 MemoryItem.id（当 lifecycle_status="superseded" 时非空）
+    weakened_at: datetime | None = None    # 首次跌破 confidence 阈值的时间
+    superseded_at: datetime | None = None  # 被取代的时间
+    retired_at: datetime | None = None     # 正式退役的时间
 
 
 class MemoryScene(SQLModel, table=True):

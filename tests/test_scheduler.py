@@ -195,7 +195,7 @@ class TestMigrationsV8ToV15:
         conn = sqlite3.connect(str(tmp_path / "v7.db"))
         conn.execute("PRAGMA user_version = 7")
         conn.commit()
-        from lantai.storage.db import apply_migrations
+        from lantai.storage.db import apply_migrations, CURRENT_SCHEMA_VERSION
 
         apply_migrations(conn)
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -207,7 +207,7 @@ class TestMigrationsV8ToV15:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(reflect_run)")}
         assert "rejecter_failed" in cols
         assert "source" in cols
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         conn.close()
 
 

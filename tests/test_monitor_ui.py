@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from api_server import app
+from lantai.api.app import app
 
 UI_DIR = Path(__file__).resolve().parent.parent / "lantai" / "api" / "ui"
 INDEX_HTML = (UI_DIR / "index.html").read_text(encoding="utf-8")

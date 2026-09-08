@@ -54,12 +54,22 @@ def handle_search(params: dict) -> dict:
     # Ticket 04: 检索透明——命中来源说明（id + 摘要 + 分数）
     from lantai.retrieval.evidence import build_evidence
 
-    return {
+    ret = {
         "results": results,
         "gate": gate,
         "event_id": event_id,
         "evidence": build_evidence(results),
     }
+    # v0.4 Cognitive Middleware: 自动注入认知上下文摘要（无需 Agent 显式调用心斋）
+    try:
+        from lantai.runtime.middleware import build_cognitive_summary
+        task_desc = params.get("task") or query
+        cog_summary = build_cognitive_summary(task_desc)
+        if cog_summary:
+            ret["cognitive_summary"] = cog_summary
+    except Exception:
+        pass
+    return ret
 
 
 def _try_log(query: str, results: list, latency_ms: int, gate: dict) -> str | None:

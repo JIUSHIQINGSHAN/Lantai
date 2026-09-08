@@ -281,7 +281,7 @@ def test_render_prometheus_exposes_snapshot(monitor_env):
 def test_monitor_routes_and_telemetry_roundtrip(monitor_env):
     from fastapi.testclient import TestClient
 
-    from api_server import app
+    from lantai.api.app import app
 
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
@@ -326,7 +326,7 @@ def test_unmatched_404s_collapse_in_metrics_but_keep_path_in_logs(monitor_env):
     """扫描器打来的随机 404 不能把端点排行打散；落库仍留真实路径供取证。"""
     from fastapi.testclient import TestClient
 
-    from api_server import app
+    from lantai.api.app import app
 
     with TestClient(app) as client:
         for i in range(3):
