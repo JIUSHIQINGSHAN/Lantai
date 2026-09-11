@@ -158,18 +158,35 @@ def cognitive_summary(
     builder = CognitiveContextBuilder(db)
     ctx = builder.build(task=task, top_k=max(max_rules, max_failures) + 2)
 
-    rules_out = [
-        {"id": r.id, "content": r.content[:200], "confidence": r.confidence}
-        for r in (ctx.rules or [])[:max_rules]
-    ]
-    failures_out = [
-        {
-            "id": f.id,
-            "lesson": getattr(f, "lesson", ""),
-            "severity": getattr(f, "severity", 0.5),
-        }
-        for f in (ctx.failures or [])[:max_failures]
-    ]
+    rules_out = []
+    for r in (ctx.rules or [])[:max_rules]:
+        if isinstance(r, dict):
+            rules_out.append({
+                "id": r.get("id", ""),
+                "content": (r.get("content") or "")[:200],
+                "confidence": r.get("confidence", 0.5),
+            })
+        else:
+            rules_out.append({
+                "id": getattr(r, "id", ""),
+                "content": (getattr(r, "content", "") or "")[:200],
+                "confidence": getattr(r, "confidence", 0.5),
+            })
+
+    failures_out = []
+    for f in (ctx.failures or [])[:max_failures]:
+        if isinstance(f, dict):
+            failures_out.append({
+                "id": f.get("id", ""),
+                "lesson": f.get("content") or f.get("lesson") or "",
+                "severity": f.get("severity", 0.5),
+            })
+        else:
+            failures_out.append({
+                "id": getattr(f, "id", ""),
+                "lesson": getattr(f, "lesson", None) or getattr(f, "content", ""),
+                "severity": getattr(f, "severity", 0.5),
+            })
 
     # 生成纯文本摘要
     parts = []

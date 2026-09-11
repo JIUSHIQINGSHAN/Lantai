@@ -35,11 +35,19 @@ def build_cognitive_summary(task: str, max_rules: int = 2, max_failures: int = 1
 
         parts = []
         if ctx.rules:
-            rules_text = "; ".join(r.content[:80] for r in ctx.rules[:max_rules])
-            parts.append(f"相关规则: {rules_text}")
+            rules_texts = []
+            for r in ctx.rules[:max_rules]:
+                c = r.get("content") if isinstance(r, dict) else getattr(r, "content", "")
+                if c:
+                    rules_texts.append(c[:80])
+            if rules_texts:
+                parts.append(f"相关规则: {'; '.join(rules_texts)}")
         if ctx.failures:
             f = ctx.failures[0]
-            lesson = getattr(f, "lesson", None) or getattr(f, "content", "")
+            if isinstance(f, dict):
+                lesson = f.get("content") or f.get("lesson") or ""
+            else:
+                lesson = getattr(f, "lesson", None) or getattr(f, "content", "")
             if lesson:
                 parts.append(f"已知失败: {lesson[:80]}")
 
