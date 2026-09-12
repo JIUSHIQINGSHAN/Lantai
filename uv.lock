@@ -1374,7 +1374,7 @@ requires-dist = [
     { name = "python-ulid", specifier = ">=2.7" },
     { name = "rank-bm25", specifier = ">=0.2.2" },
     { name = "requests", specifier = ">=2.31" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.16.0,<0.17.0" },
     { name = "scikit-learn", specifier = ">=1.5" },
     { name = "sqlmodel", specifier = ">=0.0.22" },
     { name = "tenacity", specifier = ">=8.5" },
