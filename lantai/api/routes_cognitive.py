@@ -28,6 +28,7 @@ router = APIRouter(prefix="/cognitive", tags=["cognitive"])
 # Request / Response Schemas
 # ─────────────────────────────────────────────
 
+
 class ObserveReq(BaseModel):
     content: str = Field(min_length=1, description="观测内容")
     evidence_type: str = Field(default="observation", description="证据类型")
@@ -39,6 +40,7 @@ class ObserveReq(BaseModel):
 # ─────────────────────────────────────────────
 # Endpoints
 # ─────────────────────────────────────────────
+
 
 @router.post("/observe")
 def cognitive_observe(req: ObserveReq, db: Session = Depends(get_session)) -> dict:
@@ -161,32 +163,40 @@ def cognitive_summary(
     rules_out = []
     for r in (ctx.rules or [])[:max_rules]:
         if isinstance(r, dict):
-            rules_out.append({
-                "id": r.get("id", ""),
-                "content": (r.get("content") or "")[:200],
-                "confidence": r.get("confidence", 0.5),
-            })
+            rules_out.append(
+                {
+                    "id": r.get("id", ""),
+                    "content": (r.get("content") or "")[:200],
+                    "confidence": r.get("confidence", 0.5),
+                }
+            )
         else:
-            rules_out.append({
-                "id": getattr(r, "id", ""),
-                "content": (getattr(r, "content", "") or "")[:200],
-                "confidence": getattr(r, "confidence", 0.5),
-            })
+            rules_out.append(
+                {
+                    "id": getattr(r, "id", ""),
+                    "content": (getattr(r, "content", "") or "")[:200],
+                    "confidence": getattr(r, "confidence", 0.5),
+                }
+            )
 
     failures_out = []
     for f in (ctx.failures or [])[:max_failures]:
         if isinstance(f, dict):
-            failures_out.append({
-                "id": f.get("id", ""),
-                "lesson": f.get("content") or f.get("lesson") or "",
-                "severity": f.get("severity", 0.5),
-            })
+            failures_out.append(
+                {
+                    "id": f.get("id", ""),
+                    "lesson": f.get("content") or f.get("lesson") or "",
+                    "severity": f.get("severity", 0.5),
+                }
+            )
         else:
-            failures_out.append({
-                "id": getattr(f, "id", ""),
-                "lesson": getattr(f, "lesson", None) or getattr(f, "content", ""),
-                "severity": getattr(f, "severity", 0.5),
-            })
+            failures_out.append(
+                {
+                    "id": getattr(f, "id", ""),
+                    "lesson": getattr(f, "lesson", None) or getattr(f, "content", ""),
+                    "severity": getattr(f, "severity", 0.5),
+                }
+            )
 
     # 生成纯文本摘要
     parts = []

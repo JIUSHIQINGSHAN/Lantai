@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from lantai.models.tables import MemoryItem
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from sqlmodel import Session
 
 
-class ConflictResolution(str, Enum):
+class ConflictResolution(StrEnum):
     WIN_A = "WIN_A"
     WIN_B = "WIN_B"
     COEXIST = "COEXIST"
@@ -22,6 +22,7 @@ class ConflictResolution(str, Enum):
 @dataclass
 class DecisionTrace:
     """Decision Trace（v0.4）：冲突裁决可解释记录。回答「为什么 A 胜过 B？」"""
+
     item_a_score: float
     item_b_score: float
     score_delta: float
@@ -55,7 +56,7 @@ class ConflictEngine:
             return item.structure["scope"]
         return {}
 
-    def _evidence_stats(self, item: MemoryItem, session: "Session | None") -> tuple[float, float]:
+    def _evidence_stats(self, item: MemoryItem, session: Session | None) -> tuple[float, float]:
         """Return (evidence_strength, independence_mean) for item from Evidence table.
 
         evidence_strength = mean(reliability × independence) over all active Evidence rows.
@@ -66,11 +67,10 @@ class ConflictEngine:
             return 0.5, 0.5
 
         from sqlmodel import select
+
         from lantai.models.tables import Evidence
 
-        rows = session.exec(
-            select(Evidence).where(Evidence.source_memory_id == item.id)
-        ).all()
+        rows = session.exec(select(Evidence).where(Evidence.source_memory_id == item.id)).all()
 
         if not rows:
             return 0.5, 0.5
@@ -80,7 +80,7 @@ class ConflictEngine:
         return strength, independence
 
     def _score_with_components(
-        self, item: MemoryItem, session: "Session | None"
+        self, item: MemoryItem, session: Session | None
     ) -> tuple[float, dict]:
         """Compute 6-dim ConflictScore, return (score, components_dict)."""
         ev_strength, ev_independence = self._evidence_stats(item, session)
@@ -117,7 +117,7 @@ class ConflictEngine:
         }
         return score, components
 
-    def _score(self, item: MemoryItem, session: "Session | None") -> float:
+    def _score(self, item: MemoryItem, session: Session | None) -> float:
         """Compute 6-dimensional ConflictScore for *item*."""
         # --- evidence_strength & independence (from DB) ---
         ev_strength, ev_independence = self._evidence_stats(item, session)
@@ -176,9 +176,12 @@ class ConflictEngine:
         diffs = {k: round(winner_comps.get(k, 0) - loser_comps.get(k, 0), 3) for k in winner_comps}
         top_dim, top_diff = max(diffs.items(), key=lambda kv: kv[1])
         dim_labels = {
-            "evidence_strength": "证据强度", "confidence": "置信度",
-            "provenance_quality": "溯源质量", "recency": "时效性",
-            "independence": "证据独立性", "contextual_fit": "上下文契合度",
+            "evidence_strength": "证据强度",
+            "confidence": "置信度",
+            "provenance_quality": "溯源质量",
+            "recency": "时效性",
+            "independence": "证据独立性",
+            "contextual_fit": "上下文契合度",
         }
         dim_name = dim_labels.get(top_dim, top_dim)
         w_score = score_a if winner_label == "A" else score_b
@@ -190,7 +193,8 @@ class ConflictEngine:
             f"{loser_label}={loser_comps.get(top_dim, 0):.3f}，差距 +{top_diff:.3f}）。",
         ]
         secondary = [
-            (k, v) for k, v in sorted(diffs.items(), key=lambda x: -x[1])
+            (k, v)
+            for k, v in sorted(diffs.items(), key=lambda x: -x[1])
             if v > 0.05 and k != top_dim
         ][:2]
         for dim, diff in secondary:
@@ -201,7 +205,7 @@ class ConflictEngine:
         self,
         item_a: MemoryItem,
         item_b: MemoryItem,
-        session: "Session | None" = None,
+        session: Session | None = None,
     ) -> ConflictResult:
         # --- COEXIST: mutually exclusive task_types (original logic preserved) ---
         scope_a = self._extract_scope(item_a)
@@ -212,13 +216,17 @@ class ConflictEngine:
             tasks_b = set(scope_b.get("task_types", []))
             if tasks_a and tasks_b and tasks_a.isdisjoint(tasks_b):
                 trace = DecisionTrace(
-                    item_a_score=0.0, item_b_score=0.0, score_delta=0.0,
+                    item_a_score=0.0,
+                    item_b_score=0.0,
+                    score_delta=0.0,
                     decision="COEXIST",
                     reason="两者适用范围互斥（task_types 不相交），可共存。",
                 )
                 return ConflictResult(
-                    resolution=ConflictResolution.COEXIST, winner_id=None,
-                    reason=trace.reason, decision_trace=trace,
+                    resolution=ConflictResolution.COEXIST,
+                    winner_id=None,
+                    reason=trace.reason,
+                    decision_trace=trace,
                 )
 
         # --- 6-dim scoring (or simplified confidence-only when no session) ---
@@ -245,11 +253,17 @@ class ConflictEngine:
 
         reason = self._generate_reason(score_a, score_b, comps_a, comps_b, resolution)
         trace = DecisionTrace(
-            item_a_score=round(score_a, 4), item_b_score=round(score_b, 4),
+            item_a_score=round(score_a, 4),
+            item_b_score=round(score_b, 4),
             score_delta=round(diff, 4),
-            score_components_a=comps_a, score_components_b=comps_b,
-            decision=resolution.value, reason=reason,
+            score_components_a=comps_a,
+            score_components_b=comps_b,
+            decision=resolution.value,
+            reason=reason,
         )
         return ConflictResult(
-            resolution=resolution, winner_id=winner_id, reason=reason, decision_trace=trace,
+            resolution=resolution,
+            winner_id=winner_id,
+            reason=reason,
+            decision_trace=trace,
         )

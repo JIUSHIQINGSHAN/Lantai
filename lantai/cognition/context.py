@@ -1,26 +1,26 @@
 from dataclasses import dataclass, field
+
 from sqlmodel import Session, select
 
-from lantai.models.tables import MemoryItem, CognitiveRole, FailureRecord
-
+from lantai.models.tables import CognitiveRole, FailureRecord, MemoryItem
 
 _ROLE_TO_SECTION = {
-    CognitiveRole.OBSERVATION:  "facts",
-    CognitiveRole.EXPERIENCE:   "experience",
-    CognitiveRole.BELIEF:       "beliefs",
-    CognitiveRole.RULE:         "rules",
-    CognitiveRole.PRINCIPLE:    "principles",
-    CognitiveRole.SKILL:        "rules",   # Skill flows into rules section
+    CognitiveRole.OBSERVATION: "facts",
+    CognitiveRole.EXPERIENCE: "experience",
+    CognitiveRole.BELIEF: "beliefs",
+    CognitiveRole.RULE: "rules",
+    CognitiveRole.PRINCIPLE: "principles",
+    CognitiveRole.SKILL: "rules",  # Skill flows into rules section
 }
 
 _SECTION_HEADINGS = {
-    "facts":      "## Relevant Facts",
+    "facts": "## Relevant Facts",
     "experience": "## Relevant Experience",
-    "beliefs":    "## Applicable Beliefs",
-    "rules":      "## Governing Rules",
+    "beliefs": "## Applicable Beliefs",
+    "rules": "## Governing Rules",
     "principles": "## Principles",
-    "failures":   "## Known Failures",
-    "conflicts":  "## Active Conflicts",
+    "failures": "## Known Failures",
+    "conflicts": "## Active Conflicts",
 }
 
 
@@ -122,16 +122,17 @@ class CognitiveContextBuilder:
         # 3. 拉取 FailureRecord
         failures = self.db.exec(select(FailureRecord)).all()
         for f in failures[:top_k]:
-            ctx.failures.append({
-                "id": f.id,
-                "task": f.task,
-                "action": f.action,
-                "content": f.lesson or f.actual,
-                "severity": f.severity,
-            })
+            ctx.failures.append(
+                {
+                    "id": f.id,
+                    "task": f.task,
+                    "action": f.action,
+                    "content": f.lesson or f.actual,
+                    "severity": f.severity,
+                }
+            )
 
         # 4. conflicts 预留（后续接入 ConflictEngine 实时检测）
         ctx.conflicts = []
 
         return ctx
-

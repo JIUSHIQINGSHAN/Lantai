@@ -11,15 +11,14 @@ tests/cognitive/test_evolution_benchmark.py
 - Rule Stability (成功应用后置信度上升)
 - Evidence Attribution Accuracy
 """
-import pytest
-from sqlmodel import Session, SQLModel, create_engine, StaticPool
 
-from lantai.models.tables import (
-    MemoryItem, CognitiveRole, CognitivePattern, Evidence, MemoryEdge
-)
+import pytest
+from sqlmodel import Session, SQLModel, StaticPool, create_engine
+
 from lantai.cognition.evolution import EvolutionEngine
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
+from lantai.models.tables import CognitivePattern, CognitiveRole, Evidence, MemoryEdge, MemoryItem
 
 
 @pytest.fixture
@@ -41,15 +40,17 @@ def test_promotion_precision_high_quality(db):
     """高质量 Pattern (带有真实独立的 Evidence 支撑) 应该通过真实计算被成功提拔为 Belief 候选。"""
     # 真实插入 3 条高质量独立 Evidence
     for i in range(3):
-        db.add(Evidence(
-            id=f"ev_hq_{i}",
-            evidence_type="benchmark_run",
-            source_memory_id=f"exp_{i}",
-            content=f"Measured speedup trial {i}: WAL mode 2.8x faster",
-            reliability=0.9,
-            independence=1.0,
-            created_at=utcnow(),
-        ))
+        db.add(
+            Evidence(
+                id=f"ev_hq_{i}",
+                evidence_type="benchmark_run",
+                source_memory_id=f"exp_{i}",
+                content=f"Measured speedup trial {i}: WAL mode 2.8x faster",
+                reliability=0.9,
+                independence=1.0,
+                created_at=utcnow(),
+            )
+        )
     db.commit()
 
     eng = EvolutionEngine(db)
@@ -84,9 +85,9 @@ def test_false_promotion_rejected(db):
         id="pat_weak",
         pattern_type="recurrence",
         description="Vague heuristic with no real evidence",
-        source_ids=["exp_same", "exp_same"],   # 同源重复！
+        source_ids=["exp_same", "exp_same"],  # 同源重复！
         occurrence_count=2,
-        independent_source_count=1,            # 非独立
+        independent_source_count=1,  # 非独立
         confidence=0.3,
         status="candidate",
         updated_at=utcnow(),
@@ -106,8 +107,12 @@ def test_belief_stability_after_cascade_decay(db):
     from lantai.services.evolution import cascade_decay
 
     # 建立 DAG: obs → (supports) → belief
-    obs = MemoryItem(id="obs_decay", content="hypothesis X", role=CognitiveRole.OBSERVATION, confidence=0.8)
-    belief = MemoryItem(id="bel_decay", content="belief from X", role=CognitiveRole.BELIEF, confidence=0.8)
+    obs = MemoryItem(
+        id="obs_decay", content="hypothesis X", role=CognitiveRole.OBSERVATION, confidence=0.8
+    )
+    belief = MemoryItem(
+        id="bel_decay", content="belief from X", role=CognitiveRole.BELIEF, confidence=0.8
+    )
     # The source is the observation supporting the target belief
     edge = MemoryEdge(
         id="edge_1",
@@ -133,7 +138,9 @@ def test_evidence_attribution(db):
     写入 Evidence 后，该 Evidence 的 source_memory_id 应正确指向对应 MemoryItem。
     验证证据溯源的准确性。
     """
-    mem = MemoryItem(id="mem_attr", content="Python asyncio is non-blocking", role=CognitiveRole.OBSERVATION)
+    mem = MemoryItem(
+        id="mem_attr", content="Python asyncio is non-blocking", role=CognitiveRole.OBSERVATION
+    )
     ev = Evidence(
         id="ev_attr",
         evidence_type="execution_result",
@@ -195,16 +202,20 @@ def test_promotion_recall_observations_to_patterns(db):
         "For SQLite, WAL mode improves read concurrency for workloads",
     ]
     for i, p in enumerate(phrasings):
-        db.add(MemoryItem(
-            id=f"obs_recall_{i}",
-            content=p,
-            role=CognitiveRole.OBSERVATION,
-            source_ids=[f"src_obs_{i}"],
-        ))
+        db.add(
+            MemoryItem(
+                id=f"obs_recall_{i}",
+                content=p,
+                role=CognitiveRole.OBSERVATION,
+                source_ids=[f"src_obs_{i}"],
+            )
+        )
     db.commit()
 
     engine = ReflectionEngine(db)
     report = engine.run_reflection()
 
-    assert report.new_patterns >= 1, "语义相近但带自然语言扰动的 Observation 应当被召回并聚类为 Pattern"
+    assert report.new_patterns >= 1, (
+        "语义相近但带自然语言扰动的 Observation 应当被召回并聚类为 Pattern"
+    )
     assert report.proposed_patterns[0].occurrence_count >= 2

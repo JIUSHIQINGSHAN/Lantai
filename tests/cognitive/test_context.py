@@ -2,10 +2,8 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 try:
-    from lantai.cognition.context import CognitiveContextBuilder, CognitiveContext
-    from lantai.models.tables import (
-        MemoryItem, CognitiveRole, FailureRecord, CognitivePattern
-    )
+    from lantai.cognition.context import CognitiveContext, CognitiveContextBuilder
+    from lantai.models.tables import CognitivePattern, CognitiveRole, FailureRecord, MemoryItem
 except ImportError:
     CognitiveContextBuilder = None
     CognitiveContext = None
@@ -47,11 +45,38 @@ def test_cognitive_context_segregation(test_db):
     assert MemoryItem is not None
 
     # 插入各角色的 MemoryItem
-    test_db.add(MemoryItem(id="obs1", content="Python GIL limits CPU parallelism", role=CognitiveRole.OBSERVATION))
-    test_db.add(MemoryItem(id="exp1", content="Tried threading for CPU tasks, was slow", role=CognitiveRole.EXPERIENCE))
-    test_db.add(MemoryItem(id="bel1", content="Threading is unsuitable for CPU-bound tasks", role=CognitiveRole.BELIEF))
-    test_db.add(MemoryItem(id="rul1", content="Use multiprocessing for CPU-bound tasks", role=CognitiveRole.RULE))
-    test_db.add(MemoryItem(id="pri1", content="Match concurrency model to task type", role=CognitiveRole.PRINCIPLE, structure={"scope": {"domain": "python"}}))
+    test_db.add(
+        MemoryItem(
+            id="obs1", content="Python GIL limits CPU parallelism", role=CognitiveRole.OBSERVATION
+        )
+    )
+    test_db.add(
+        MemoryItem(
+            id="exp1",
+            content="Tried threading for CPU tasks, was slow",
+            role=CognitiveRole.EXPERIENCE,
+        )
+    )
+    test_db.add(
+        MemoryItem(
+            id="bel1",
+            content="Threading is unsuitable for CPU-bound tasks",
+            role=CognitiveRole.BELIEF,
+        )
+    )
+    test_db.add(
+        MemoryItem(
+            id="rul1", content="Use multiprocessing for CPU-bound tasks", role=CognitiveRole.RULE
+        )
+    )
+    test_db.add(
+        MemoryItem(
+            id="pri1",
+            content="Match concurrency model to task type",
+            role=CognitiveRole.PRINCIPLE,
+            structure={"scope": {"domain": "python"}},
+        )
+    )
     test_db.commit()
 
     builder = CognitiveContextBuilder(test_db)
@@ -75,16 +100,18 @@ def test_cognitive_context_includes_failures(test_db):
     """Failures 切面必须包含 FailureRecord 条目。"""
     assert FailureRecord is not None
 
-    test_db.add(FailureRecord(
-        id="f1",
-        task="deploy",
-        action="4_workers",
-        expected="stable",
-        actual="crash",
-        severity=0.8,
-        recurrence_count=1,
-        source_ids=[],
-    ))
+    test_db.add(
+        FailureRecord(
+            id="f1",
+            task="deploy",
+            action="4_workers",
+            expected="stable",
+            actual="crash",
+            severity=0.8,
+            recurrence_count=1,
+            source_ids=[],
+        )
+    )
     test_db.commit()
 
     builder = CognitiveContextBuilder(test_db)
@@ -98,7 +125,9 @@ def test_cognitive_context_to_prompt(test_db):
     """CognitiveContext 能够生成供 Agent 使用的结构化 Markdown 提示。"""
     assert CognitiveContextBuilder is not None
 
-    test_db.add(MemoryItem(id="r1", content="Don't share SQLite across threads", role=CognitiveRole.RULE))
+    test_db.add(
+        MemoryItem(id="r1", content="Don't share SQLite across threads", role=CognitiveRole.RULE)
+    )
     test_db.commit()
 
     builder = CognitiveContextBuilder(test_db)
@@ -115,19 +144,23 @@ def test_context_task_relevance_sorting(test_db):
     assert MemoryItem is not None
 
     # rule_sqlite: 与 task 'sqlite database optimization' 高度相关，但 confidence 较低
-    test_db.add(MemoryItem(
-        id="rule_sqlite",
-        content="always use SQLite WAL mode for database optimization",
-        role=CognitiveRole.RULE,
-        confidence=0.7,
-    ))
+    test_db.add(
+        MemoryItem(
+            id="rule_sqlite",
+            content="always use SQLite WAL mode for database optimization",
+            role=CognitiveRole.RULE,
+            confidence=0.7,
+        )
+    )
     # rule_ui: 与 task 无关，但 confidence 更高
-    test_db.add(MemoryItem(
-        id="rule_ui",
-        content="use dark mode UI theme",
-        role=CognitiveRole.RULE,
-        confidence=0.9,
-    ))
+    test_db.add(
+        MemoryItem(
+            id="rule_ui",
+            content="use dark mode UI theme",
+            role=CognitiveRole.RULE,
+            confidence=0.9,
+        )
+    )
     test_db.commit()
 
     builder = CognitiveContextBuilder(test_db)

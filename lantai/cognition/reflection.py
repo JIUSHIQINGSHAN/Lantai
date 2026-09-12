@@ -1,12 +1,11 @@
-from dataclasses import dataclass, field
 from collections import Counter
+from dataclasses import dataclass, field
+
 from sqlmodel import Session, select
 
-from lantai.models.tables import (
-    MemoryItem, CognitiveRole, CognitivePattern, FailureRecord
-)
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
+from lantai.models.tables import CognitivePattern, CognitiveRole, FailureRecord, MemoryItem
 
 
 @dataclass
@@ -34,7 +33,7 @@ class ReflectionEngine:
     5. 晋升 Pattern→Belief，Belief→Rule（failure_pattern 用低阈值 0.55）
     """
 
-    REPETITION_THRESHOLD = 2   # 达到此次数才视为"重复模式"
+    REPETITION_THRESHOLD = 2  # 达到此次数才视为"重复模式"
     FAILURE_PROMOTION_THRESHOLD = 0.55  # failure_pattern 低阈值（单次失败即预警）
 
     def __init__(self, db: Session):
@@ -49,21 +48,25 @@ class ReflectionEngine:
         obs = []
         for f in failures:
             if f.lesson and f.lesson.strip():
-                obs.append(MemoryItem(
-                    id=f"lesson_{f.id}",
-                    content=f.lesson.strip(),
-                    role=CognitiveRole.OBSERVATION,
-                    source_ids=[f.id],
-                    status="active",
-                ))
+                obs.append(
+                    MemoryItem(
+                        id=f"lesson_{f.id}",
+                        content=f.lesson.strip(),
+                        role=CognitiveRole.OBSERVATION,
+                        source_ids=[f.id],
+                        status="active",
+                    )
+                )
             if f.cause and f.cause.strip():
-                obs.append(MemoryItem(
-                    id=f"cause_{f.id}",
-                    content=f.cause.strip(),
-                    role=CognitiveRole.OBSERVATION,
-                    source_ids=[f.id],
-                    status="active",
-                ))
+                obs.append(
+                    MemoryItem(
+                        id=f"cause_{f.id}",
+                        content=f.cause.strip(),
+                        role=CognitiveRole.OBSERVATION,
+                        source_ids=[f.id],
+                        status="active",
+                    )
+                )
         return obs
 
     def run_reflection(self) -> ReflectionReport:
@@ -78,6 +81,7 @@ class ReflectionEngine:
             failure_obs = self._failures_to_observations(failures)
             if failure_obs:
                 from lantai.cognition.evolution import EvolutionEngine
+
                 evo = EvolutionEngine(self.db)
                 # failure_pattern 不写入 DB（内存聚类），仅用于晋升
                 failure_patterns = evo.detect_patterns(failure_obs)
@@ -107,6 +111,7 @@ class ReflectionEngine:
         ).all()
 
         from lantai.cognition.evolution import EvolutionEngine
+
         evo = EvolutionEngine(self.db)
         patterns = evo.detect_patterns(observations)
         report.proposed_patterns = patterns
@@ -121,9 +126,7 @@ class ReflectionEngine:
                 report.principles_under_review += 1
 
         # 步骤 4：检查 Rule 是否置信度下降
-        rules = self.db.exec(
-            select(MemoryItem).where(MemoryItem.role == CognitiveRole.RULE)
-        ).all()
+        rules = self.db.exec(select(MemoryItem).where(MemoryItem.role == CognitiveRole.RULE)).all()
         for r in rules:
             if r.confidence < 0.5:
                 report.rules_weakened += 1
@@ -131,6 +134,7 @@ class ReflectionEngine:
         # 步骤 5：使用 EvolutionEngine 从发现的 Pattern 候选晋升 Belief 候选，从 Belief 晋升 Rule 候选
         if report.proposed_patterns:
             from lantai.cognition.evolution import EvolutionEngine
+
             evo = EvolutionEngine(self.db)
             b_cands = evo.propose_beliefs(report.proposed_patterns)
             report.belief_candidates = len(b_cands)

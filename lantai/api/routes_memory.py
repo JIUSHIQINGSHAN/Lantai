@@ -14,8 +14,6 @@ from lantai.services.memory_service import (
 router = APIRouter()
 
 
-
-
 @router.post("/add")
 def add_memory_route(
     req: AddMemoryReq, async_mode: bool = False, ctx: Principal = Depends(get_current_user)

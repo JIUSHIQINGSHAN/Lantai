@@ -8,12 +8,13 @@ LC-03: Superseded → Retired（decay_score 极低触发退役）
 LC-04: candidate → Active（promote，Candidate != Knowledge）
 LC-05: lifecycle_status 过滤（Retired 不参与活跃检索）
 """
-import pytest
-from sqlmodel import SQLModel, Session, create_engine, select
 
-from lantai.models.tables import MemoryItem, CognitiveRole, LifecycleStatus
+import pytest
+from sqlmodel import Session, SQLModel, create_engine, select
+
 from lantai.cognition.lifecycle import KnowledgeLifecycleManager, LifecycleTransitionError
 from lantai.core.ids import new_id
+from lantai.models.tables import CognitiveRole, LifecycleStatus, MemoryItem
 
 
 @pytest.fixture(name="engine")
@@ -29,8 +30,9 @@ def session_fixture(engine):
         yield s
 
 
-def _make_belief(content: str, confidence: float = 0.8, status: str = "active",
-                 decay_score: float = 1.0) -> MemoryItem:
+def _make_belief(
+    content: str, confidence: float = 0.8, status: str = "active", decay_score: float = 1.0
+) -> MemoryItem:
     return MemoryItem(
         id=new_id("mem"),
         content=content,
@@ -94,7 +96,9 @@ def test_superseded_to_retired(session: Session):
 
 def test_promotion_candidate_to_active(session: Session):
     """LC-04: candidate 记忆经 promote() 晋升为 Active（Candidate != Knowledge）"""
-    candidate = _make_belief("候选信念：持续集成比手动部署更可靠", confidence=0.7, status="candidate")
+    candidate = _make_belief(
+        "候选信念：持续集成比手动部署更可靠", confidence=0.7, status="candidate"
+    )
     session.add(candidate)
     session.commit()
 

@@ -125,6 +125,7 @@ def _apply_supersedes_order(
     except Exception:
         return scored
     from lantai.memory.policies import resolve_conflict
+
     id_to_item = {m.id: m for _, m in scored}
     for e in edges:
         if e.relation == "supersedes":
@@ -417,9 +418,11 @@ def _hybrid_search_impl(
 
     for m in items:
         from lantai.memory.policies import get_cognitive_policy
+
         policy = get_cognitive_policy(getattr(m, "role", "observation"))
         lane_boost = policy.base_boost
         decay_class_name = policy.decay_class
+        lane = getattr(m, "lane", "general") or "general"
         persona_boost = 1.05 if lane in ("preference", "rule") else 1.0
         fts_hit = 1.0 if m.id in fts_hits else 0.0
 
@@ -569,6 +572,7 @@ def _age_multiplier(m) -> float:
         last = last.replace(tzinfo=UTC)
     days = max(0.0, (_utcnow() - last).total_seconds() / 86400.0)
     from lantai.memory.policies import get_cognitive_policy
+
     policy = get_cognitive_policy(getattr(m, "role", "observation"))
     return _dm(policy.decay_class, days)
 
@@ -708,6 +712,7 @@ def _keyword_fallback(
     breakdowns: dict[str, dict] = {}
     for m in items:
         from lantai.memory.policies import get_cognitive_policy
+
         policy = get_cognitive_policy(getattr(m, "role", "observation"))
         lane_boost = policy.base_boost
         decay_class_name = policy.decay_class
@@ -717,9 +722,7 @@ def _keyword_fallback(
         fts_hit = 1.0 if m.id in fts_hits else 0.0
 
         actual_decay = m.decay_score * _age_multiplier(m)
-        score = (
-            (bm25_score + p.w_fts * fts_hit + p.w_decay * actual_decay) / total_w
-        ) * lane_boost
+        score = ((bm25_score + p.w_fts * fts_hit + p.w_decay * actual_decay) / total_w) * lane_boost
         scored.append((score, m))
         if explain:
             breakdowns[m.id] = {

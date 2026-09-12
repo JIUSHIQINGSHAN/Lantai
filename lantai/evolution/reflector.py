@@ -31,7 +31,7 @@ def record_feedback(
         s.add(fb)
 
         # 闭环：当用户明确拒绝、未帮助或存在高幻觉风险时，生成 ActionOutcome 与 FailureRecord
-        if (not helped or not user_accepted or hallucination_risk >= 0.5):
+        if not helped or not user_accepted or hallucination_risk >= 0.5:
             from lantai.models.tables import ActionOutcome, FailureRecord
 
             act_id = new_id("out")

@@ -4,6 +4,7 @@
 handler 只做参数校验与序列化。所有端点走 `get_current_user` 鉴权
 （在 `api_server.CORE_ROUTERS` 注册），密钥类配置永不回传明文。
 """
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
@@ -26,8 +27,9 @@ def monitor_overview(
     quality_days: int = Query(None, ge=1, le=365, description="检索质量窗口（天）"),
 ):
     """运行监控总览：进程/存储/记忆/管道/调度/请求/安全 + 规则告警。"""
-    return get_monitor_snapshot(window_seconds=window, include_quality=quality,
-                                quality_window_days=quality_days)
+    return get_monitor_snapshot(
+        window_seconds=window, include_quality=quality, quality_window_days=quality_days
+    )
 
 
 @router.get("/monitor/series")

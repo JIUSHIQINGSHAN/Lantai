@@ -1,21 +1,24 @@
 from collections import Counter
+
 from sqlmodel import Session
-from lantai.models.tables import MemoryItem, CognitiveRole, CognitivePattern
+
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
+from lantai.models.tables import CognitivePattern, CognitiveRole, MemoryItem
+
 
 class EvolutionEngine:
     def __init__(self, db: Session | None = None):
         self.db = db
 
     def calculate_promotion_score(
-        self, 
-        confidence: float, 
-        evidence_quality: float, 
-        independent_support: float, 
+        self,
+        confidence: float,
+        evidence_quality: float,
+        independent_support: float,
         recurrence: float,
         usefulness: float = 0.5,
-        stability: float = 0.5
+        stability: float = 0.5,
     ) -> float:
         """
         P = 0.25 × confidence
@@ -26,12 +29,12 @@ class EvolutionEngine:
           + 0.10 × stability
         """
         p = (
-            0.25 * confidence +
-            0.20 * evidence_quality +
-            0.20 * independent_support +
-            0.15 * recurrence +
-            0.10 * usefulness +
-            0.10 * stability
+            0.25 * confidence
+            + 0.20 * evidence_quality
+            + 0.20 * independent_support
+            + 0.15 * recurrence
+            + 0.10 * usefulness
+            + 0.10 * stability
         )
         return p
 
@@ -44,8 +47,32 @@ class EvolutionEngine:
         import re
 
         _STOPWORDS = {
-            "the", "a", "an", "is", "are", "was", "were", "and", "or", "in", "on", "at",
-            "to", "for", "with", "by", "of", "it", "this", "that", "的", "了", "在", "是", "和", "与"
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "and",
+            "or",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "with",
+            "by",
+            "of",
+            "it",
+            "this",
+            "that",
+            "的",
+            "了",
+            "在",
+            "是",
+            "和",
+            "与",
         }
 
         def _get_signature(text: str) -> tuple[str, str]:
@@ -94,7 +121,12 @@ class EvolutionEngine:
             patterns.append(pat)
         return patterns
 
-    def propose_beliefs(self, patterns: list[CognitivePattern], mock_score: float = 0.0, promotion_threshold: float = 0.70) -> list[MemoryItem]:
+    def propose_beliefs(
+        self,
+        patterns: list[CognitivePattern],
+        mock_score: float = 0.0,
+        promotion_threshold: float = 0.70,
+    ) -> list[MemoryItem]:
         from lantai.models.tables import Evidence
 
         proposals = []
@@ -104,16 +136,21 @@ class EvolutionEngine:
             else:
                 # 真实认识论评分：从关联的 source_ids 查询真实 Evidence 表计算证据质量与独立性
                 evidence_quality = 0.6
-                independent_support = min(1.0, pat.independent_source_count / max(1, pat.occurrence_count))
+                independent_support = min(
+                    1.0, pat.independent_source_count / max(1, pat.occurrence_count)
+                )
                 recurrence = min(1.0, pat.occurrence_count / 3.0)
 
                 if self.db is not None and pat.source_ids:
                     from sqlmodel import select
+
                     rows = self.db.exec(
                         select(Evidence).where(Evidence.source_memory_id.in_(pat.source_ids))
                     ).all()
                     if rows:
-                        evidence_quality = sum(r.reliability * r.independence for r in rows) / len(rows)
+                        evidence_quality = sum(r.reliability * r.independence for r in rows) / len(
+                            rows
+                        )
                         independent_support = sum(r.independence for r in rows) / len(rows)
 
                 score = self.calculate_promotion_score(
@@ -150,6 +187,7 @@ class EvolutionEngine:
 
     def propose_rules(self, beliefs: list[MemoryItem], mock_score: float = 0.0) -> list[MemoryItem]:
         from sqlmodel import select
+
         from lantai.models.tables import Evidence
 
         proposals = []
@@ -167,7 +205,9 @@ class EvolutionEngine:
                         select(Evidence).where(Evidence.source_memory_id.in_(b.source_ids))
                     ).all()
                     if rows:
-                        evidence_quality = sum(r.reliability * r.independence for r in rows) / len(rows)
+                        evidence_quality = sum(r.reliability * r.independence for r in rows) / len(
+                            rows
+                        )
                         independent_support = sum(r.independence for r in rows) / len(rows)
 
                 score = self.calculate_promotion_score(
@@ -204,10 +244,14 @@ class EvolutionEngine:
                 proposals.append(rule)
         return proposals
 
-    def propose_principles(self, rules: list[MemoryItem], mock_score: float = 0.0) -> list[MemoryItem]:
+    def propose_principles(
+        self, rules: list[MemoryItem], mock_score: float = 0.0
+    ) -> list[MemoryItem]:
         proposals = []
         for r in rules:
-            usefulness = min(1.0, (r.helpful_count or 0) / max(1, r.use_count or 1)) if r.use_count else 0.8
+            usefulness = (
+                min(1.0, (r.helpful_count or 0) / max(1, r.use_count or 1)) if r.use_count else 0.8
+            )
             if mock_score:
                 score = mock_score
             else:

@@ -129,24 +129,24 @@ class Settings(BaseSettings):
     # ── 司天（Sitian，后台运行监控面板，ADR-0044）──
     # 进程内请求遥测 + 运行指标聚合：内存环形缓冲为主，落库只采样慢请求/错误，
     # 避免每请求写 SQLite 造成写放大（ADR-0002 零硬编码：阈值全部可配）。
-    MONITOR_ENABLED: bool = True            # 关闭后遥测中间件零开销直通
-    MONITOR_REQUEST_BUFFER: int = 5000      # 进程内最近请求环形缓冲条数
-    MONITOR_BUCKET_MINUTES: int = 720       # 分钟级聚合桶保留时长（12h 趋势）
+    MONITOR_ENABLED: bool = True  # 关闭后遥测中间件零开销直通
+    MONITOR_REQUEST_BUFFER: int = 5000  # 进程内最近请求环形缓冲条数
+    MONITOR_BUCKET_MINUTES: int = 720  # 分钟级聚合桶保留时长（12h 趋势）
     MONITOR_PERSIST_SLOW_MS: float = 800.0  # 超过此延迟的请求必落库（慢请求取证）
-    MONITOR_PERSIST_SAMPLE: int = 20        # 正常请求落库采样率 1/N（0 = 只留错误与慢请求）
-    MONITOR_RETENTION_DAYS: int = 7         # operation_logs 保留天数（每次落库顺带清理）
-    MONITOR_FLUSH_SECONDS: float = 5.0      # 遥测批量落库间隔（秒）
-    MONITOR_WINDOW_SECONDS: int = 900       # 监控面板默认统计窗口（15 分钟）
-    MONITOR_SERIES_MINUTES: int = 60        # 趋势曲线默认跨度（分钟）
+    MONITOR_PERSIST_SAMPLE: int = 20  # 正常请求落库采样率 1/N（0 = 只留错误与慢请求）
+    MONITOR_RETENTION_DAYS: int = 7  # operation_logs 保留天数（每次落库顺带清理）
+    MONITOR_FLUSH_SECONDS: float = 5.0  # 遥测批量落库间隔（秒）
+    MONITOR_WINDOW_SECONDS: int = 900  # 监控面板默认统计窗口（15 分钟）
+    MONITOR_SERIES_MINUTES: int = 60  # 趋势曲线默认跨度（分钟）
     MONITOR_EXCLUDE_PATHS: tuple = ("/ui/assets", "/favicon.ico")  # 静态资源不计入遥测
     # 告警阈值（司天告警规则，evaluate_alerts）
-    MONITOR_ALERT_ERROR_RATE: float = 0.05        # 窗口内 5xx 比例
-    MONITOR_ALERT_P95_MS: float = 3000.0          # 窗口内 p95 延迟（毫秒）
+    MONITOR_ALERT_ERROR_RATE: float = 0.05  # 窗口内 5xx 比例
+    MONITOR_ALERT_P95_MS: float = 3000.0  # 窗口内 p95 延迟（毫秒）
     MONITOR_ALERT_ZERO_RECALL_RATE: float = 0.35  # 零召回率（recall_report 窗口）
-    MONITOR_ALERT_BACKLOG: int = 200              # 待审候选积压条数
-    MONITOR_ALERT_DB_MB: float = 1024.0           # SQLite 主库体积（MB）
-    MONITOR_WORKER_GRACE_FACTOR: float = 0.25     # worker 逾期宽限（周期的比例，与案牍同口径）
-    MONITOR_WORKER_CRITICAL_FACTOR: float = 2.0   # 超过 N 个完整周期 = critical
+    MONITOR_ALERT_BACKLOG: int = 200  # 待审候选积压条数
+    MONITOR_ALERT_DB_MB: float = 1024.0  # SQLite 主库体积（MB）
+    MONITOR_WORKER_GRACE_FACTOR: float = 0.25  # worker 逾期宽限（周期的比例，与案牍同口径）
+    MONITOR_WORKER_CRITICAL_FACTOR: float = 2.0  # 超过 N 个完整周期 = critical
 
     # 安全
     API_KEY: str = ""

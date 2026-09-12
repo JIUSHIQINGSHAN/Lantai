@@ -11,6 +11,7 @@ Agent 无需显式调用 cognitive_context 工具。
 - 只注入最相关的 1-2 条 Rule + 1 条 Failure（≤ 300 字符）
 - 无 LLM 调用（纯数据库检索）
 """
+
 from __future__ import annotations
 
 import base64
@@ -27,8 +28,9 @@ def build_cognitive_summary(task: str, max_rules: int = 2, max_failures: int = 1
     不阻塞调用者：内部捕获所有异常。
     """
     try:
-        from lantai.storage import db as db_module
         from lantai.cognition.context import CognitiveContextBuilder
+        from lantai.storage import db as db_module
+
         with db_module.get_session() as session:
             builder = CognitiveContextBuilder(db=session)
             ctx = builder.build(task=task, top_k=max_rules + max_failures)
@@ -90,9 +92,7 @@ class CognitiveMiddleware:
                     if message["type"] == "http.response.start" and encoded:
                         # 追加 X-Cognitive-Context header
                         headers_list = list(message.get("headers", []))
-                        headers_list.append(
-                            (b"x-cognitive-context", encoded.encode("ascii"))
-                        )
+                        headers_list.append((b"x-cognitive-context", encoded.encode("ascii")))
                         message = {**message, "headers": headers_list}
                     await send(message)
 

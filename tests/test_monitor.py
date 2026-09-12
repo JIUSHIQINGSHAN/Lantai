@@ -6,6 +6,7 @@
 - `build_monitor_snapshot` 直传真实建表的内存 SQLite session，聚合走真 SQL；
 - 中间件与路由用 TestClient 打真实 HTTP 链路（只 mock 外部网络，不 mock 被测逻辑）。
 """
+
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -39,8 +40,9 @@ def monitor_env():
     """内存 SQLite 真实建表 + 全新指标收集器 + 独立遥测落库器。"""
     import lantai.models.tables  # noqa: F401  注册全部表
 
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     SQLModel.metadata.create_all(engine)
 
     def session_factory() -> Session:
@@ -56,8 +58,15 @@ def monitor_env():
 
 
 def _mem(i, **kw):
-    base = dict(id=f"mem_{i}", memory_type="semantic", key=f"key_{i}",
-                content=f"内容 {i}", lane="general", status="active", tier="working")
+    base = dict(
+        id=f"mem_{i}",
+        memory_type="semantic",
+        key=f"key_{i}",
+        content=f"内容 {i}",
+        lane="general",
+        status="active",
+        tier="working",
+    )
     base.update(kw)
     return MemoryItem(**base)
 
@@ -81,32 +90,40 @@ def test_percentile_is_pure():
 
 
 def test_should_persist_sampling_rules():
-    assert should_persist(500, 1.0, seen=1) is True          # 5xx 必留
-    assert should_persist(404, 1.0, seen=2) is True          # 4xx 必留
-    assert should_persist(200, 5000.0, seen=3) is True       # 慢请求必留
-    assert should_persist(200, 1.0, seen=20, sample=20) is True   # 1/20 采样命中
+    assert should_persist(500, 1.0, seen=1) is True  # 5xx 必留
+    assert should_persist(404, 1.0, seen=2) is True  # 4xx 必留
+    assert should_persist(200, 5000.0, seen=3) is True  # 慢请求必留
+    assert should_persist(200, 1.0, seen=20, sample=20) is True  # 1/20 采样命中
     assert should_persist(200, 1.0, seen=21, sample=20) is False
-    assert should_persist(200, 1.0, seen=20, sample=0) is False   # 采样关闭
+    assert should_persist(200, 1.0, seen=20, sample=0) is False  # 采样关闭
 
 
 def test_worker_staleness_thresholds():
     now = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
-    fresh = worker_staleness("ingest", period_seconds=3600,
-                             last_run=now - timedelta(minutes=10), now=now)
+    fresh = worker_staleness(
+        "ingest", period_seconds=3600, last_run=now - timedelta(minutes=10), now=now
+    )
     assert fresh["status"] == "ok" and fresh["overdue"] is False
 
-    never = worker_staleness("digest", period_seconds=86400, last_run=None, now=now,
-                             process_started_at=now - timedelta(minutes=1))
+    never = worker_staleness(
+        "digest",
+        period_seconds=86400,
+        last_run=None,
+        now=now,
+        process_started_at=now - timedelta(minutes=1),
+    )
     assert never["status"] == "never" and never["overdue"] is False
 
     # 周期 1h + 宽限 15min：2 小时前跑过 → 逾期但不到 critical（2 个周期）
-    late = worker_staleness("evolve", period_seconds=3600,
-                            last_run=now - timedelta(hours=2), now=now)
+    late = worker_staleness(
+        "evolve", period_seconds=3600, last_run=now - timedelta(hours=2), now=now
+    )
     assert late["overdue"] is True and late["critical"] is False
     assert late["status"] == "overdue"
 
-    dead = worker_staleness("evolve", period_seconds=3600,
-                            last_run=now - timedelta(hours=5), now=now)
+    dead = worker_staleness(
+        "evolve", period_seconds=3600, last_run=now - timedelta(hours=5), now=now
+    )
     assert dead["critical"] is True and dead["status"] == "critical"
 
     unknown = worker_staleness("reflect", period_seconds=86400, last_run=None, now=now)
@@ -118,8 +135,9 @@ def test_collector_window_endpoints_and_series():
     collector = MetricsCollector(buffer=100, bucket_minutes=10)
     now = 1_800_000_000.0
     for i in range(10):
-        collector.record(method="POST", route="/add", status=200,
-                         latency_ms=10.0 + i, ts=now - (10 - i))
+        collector.record(
+            method="POST", route="/add", status=200, latency_ms=10.0 + i, ts=now - (10 - i)
+        )
     collector.record(method="POST", route="/add", status=500, latency_ms=900.0, ts=now - 1)
     collector.record(method="GET", route="/memory/{id}", status=404, latency_ms=3.0, ts=now - 1)
 
@@ -140,8 +158,8 @@ def test_collector_window_endpoints_and_series():
 
     series = collector.series(5, now=now)
     assert len(series) == 5
-    assert sum(row["count"] for row in series) == 12   # 缺分钟补零但总数守恒
-    assert max(row["count"] for row in series) == 12   # 全部落在同一分钟桶
+    assert sum(row["count"] for row in series) == 12  # 缺分钟补零但总数守恒
+    assert max(row["count"] for row in series) == 12  # 全部落在同一分钟桶
     assert [row["minute"] for row in series] == sorted(row["minute"] for row in series)
 
     totals = collector.totals()
@@ -166,8 +184,11 @@ def test_build_monitor_snapshot_aggregates_real_db(monitor_env):
         s.add(_mem(1, lane="fact", status="active"))
         s.add(_mem(2, lane="fact", status="archived"))
         s.add(_mem(3, lane="chat", status="active"))
-        s.add(MemoryCandidate(id="cand_1", document_id="doc_1", summary="待审",
-                              status="pending_review"))
+        s.add(
+            MemoryCandidate(
+                id="cand_1", document_id="doc_1", summary="待审", status="pending_review"
+            )
+        )
         s.add(SchedulerRun(name="ingest", last_run_utc=(now - timedelta(hours=5)).isoformat()))
         s.commit()
 
@@ -190,7 +211,7 @@ def test_build_monitor_snapshot_aggregates_real_db(monitor_env):
 
     workers = {w["name"]: w for w in snapshot["scheduler"]["workers"]}
     assert workers["ingest"]["last_run"] is not None
-    assert workers["ingest"]["overdue"] is True          # 5 小时前跑过、周期 1h
+    assert workers["ingest"]["overdue"] is True  # 5 小时前跑过、周期 1h
     assert workers["ingest"]["critical"] is True
     assert workers["digest"]["status"] == "never"
 
@@ -203,8 +224,10 @@ def test_build_monitor_snapshot_aggregates_real_db(monitor_env):
 def test_evaluate_alerts_is_a_pure_rule_set():
     healthy = {
         "scheduler": {"configured": True, "running": True, "workers": []},
-        "requests": {"window_seconds": 900,
-                     "window": {"count": 100, "errors": 0, "error_rate": 0.0, "p95_ms": 40.0}},
+        "requests": {
+            "window_seconds": 900,
+            "window": {"count": 100, "errors": 0, "error_rate": 0.0, "p95_ms": 40.0},
+        },
         "storage": {"database": {"mb": 10.0}},
         "pipeline": {"candidates_pending_review": 3},
         "security": {"loopback": True, "api_key_configured": True, "api_keys_total": 1},
@@ -215,26 +238,46 @@ def test_evaluate_alerts_is_a_pure_rule_set():
 
     broken = {
         **healthy,
-        "scheduler": {"configured": True, "running": False, "workers": [
-            {"name": "forgetting", "overdue": True, "critical": True,
-             "period_seconds": 86400, "last_run_age_seconds": 400000.0,
-             "last_run": "2026-09-01T00:00:00+00:00"},
-        ]},
-        "requests": {"window_seconds": 900,
-                     "window": {"count": 100, "errors": 30, "error_rate": 0.3,
-                                "p95_ms": 9000.0}},
-        "pipeline": {"candidates_pending_review": 500,
-                     "candidates_pending_over_24h": 400,
-                     "latest_reflect_run": {"id": "r1", "error": "LLM timeout"}},
+        "scheduler": {
+            "configured": True,
+            "running": False,
+            "workers": [
+                {
+                    "name": "forgetting",
+                    "overdue": True,
+                    "critical": True,
+                    "period_seconds": 86400,
+                    "last_run_age_seconds": 400000.0,
+                    "last_run": "2026-09-01T00:00:00+00:00",
+                },
+            ],
+        },
+        "requests": {
+            "window_seconds": 900,
+            "window": {"count": 100, "errors": 30, "error_rate": 0.3, "p95_ms": 9000.0},
+        },
+        "pipeline": {
+            "candidates_pending_review": 500,
+            "candidates_pending_over_24h": 400,
+            "latest_reflect_run": {"id": "r1", "error": "LLM timeout"},
+        },
         "security": {"loopback": False, "api_key_configured": False, "api_keys_total": 0},
         "dependency": {"llm": {"configured": False}},
         "quality": {"zero_recall_rate": 0.8, "real": 50, "zero": 40, "window_days": 7},
     }
     alerts = evaluate_alerts(broken)
     ids = {alert["id"] for alert in alerts}
-    assert {"scheduler_not_running", "worker_overdue:forgetting", "reflect_failed",
-            "high_error_rate", "slow_p95", "high_zero_recall", "candidate_backlog",
-            "insecure_binding", "llm_key_missing"} <= ids
+    assert {
+        "scheduler_not_running",
+        "worker_overdue:forgetting",
+        "reflect_failed",
+        "high_error_rate",
+        "slow_p95",
+        "high_zero_recall",
+        "candidate_backlog",
+        "insecure_binding",
+        "llm_key_missing",
+    } <= ids
     # 严重项排在最前
     assert alerts[0]["severity"] == "critical"
 
@@ -246,16 +289,22 @@ def test_evaluate_alerts_flags_dev_fallback_auth():
         "requests": {"window_seconds": 900, "window": {"count": 0}},
         "storage": {"database": {"mb": 1.0}},
         "pipeline": {"candidates_pending_review": 0},
-        "security": {"loopback": False, "api_key_configured": True, "api_keys_total": 0,
-                     "effective_auth": "dev_fallback"},
+        "security": {
+            "loopback": False,
+            "api_key_configured": True,
+            "api_keys_total": 0,
+            "effective_auth": "dev_fallback",
+        },
         "dependency": {"llm": {"configured": True}},
         "quality": {},
     }
     ids = {alert["id"] for alert in evaluate_alerts(base)}
     assert "auth_dev_fallback" in ids
 
-    signed = {**base, "security": {**base["security"], "api_keys_total": 2,
-                                   "effective_auth": "bearer_table"}}
+    signed = {
+        **base,
+        "security": {**base["security"], "api_keys_total": 2, "effective_auth": "bearer_table"},
+    }
     assert "auth_dev_fallback" not in {alert["id"] for alert in evaluate_alerts(signed)}
 
 
@@ -291,8 +340,18 @@ def test_monitor_routes_and_telemetry_roundtrip(monitor_env):
         overview = client.get("/monitor/overview?quality=false")
         assert overview.status_code == 200
         payload = overview.json()
-        assert {"process", "storage", "memories", "pipeline", "scheduler",
-                "requests", "security", "dependency", "alerts", "summary"} <= set(payload)
+        assert {
+            "process",
+            "storage",
+            "memories",
+            "pipeline",
+            "scheduler",
+            "requests",
+            "security",
+            "dependency",
+            "alerts",
+            "summary",
+        } <= set(payload)
         # 中间件确实记到了内存指标（含 404）
         assert payload["requests"]["totals"]["requests_total"] >= 3
         assert payload["requests"]["window"]["client_errors"] >= 1
@@ -338,8 +397,7 @@ def test_unmatched_404s_collapse_in_metrics_but_keep_path_in_logs(monitor_env):
 
         flush_telemetry()
         logs = client.get("/monitor/logs?only_problems=true").json()["items"]
-        assert {f"GET /scanner-probe-{i}" for i in range(3)} <= {
-            row["endpoint"] for row in logs}
+        assert {f"GET /scanner-probe-{i}" for i in range(3)} <= {row["endpoint"] for row in logs}
 
 
 def test_list_operation_logs_validates_limit(monitor_env):

@@ -4,7 +4,11 @@ from sqlmodel import Session, SQLModel, create_engine
 try:
     from lantai.cognition.reflection import ReflectionEngine, ReflectionReport
     from lantai.models.tables import (
-        MemoryItem, CognitiveRole, CognitivePattern, FailureRecord, Evidence
+        CognitivePattern,
+        CognitiveRole,
+        Evidence,
+        FailureRecord,
+        MemoryItem,
     )
 except ImportError:
     ReflectionEngine = None
@@ -47,26 +51,30 @@ def test_reflection_detects_failure_lessons(test_db):
     assert ReflectionEngine is not None
 
     # 写入两条失败记录
-    test_db.add(FailureRecord(
-        id="f1",
-        task="deploy",
-        action="4_workers",
-        expected="ok",
-        actual="crash",
-        severity=0.8,
-        recurrence_count=1,
-        source_ids=[],
-    ))
-    test_db.add(FailureRecord(
-        id="f2",
-        task="query",
-        action="parallel_fts",
-        expected="results",
-        actual="deadlock",
-        severity=0.6,
-        recurrence_count=1,
-        source_ids=[],
-    ))
+    test_db.add(
+        FailureRecord(
+            id="f1",
+            task="deploy",
+            action="4_workers",
+            expected="ok",
+            actual="crash",
+            severity=0.8,
+            recurrence_count=1,
+            source_ids=[],
+        )
+    )
+    test_db.add(
+        FailureRecord(
+            id="f2",
+            task="query",
+            action="parallel_fts",
+            expected="results",
+            actual="deadlock",
+            severity=0.6,
+            recurrence_count=1,
+            source_ids=[],
+        )
+    )
     test_db.commit()
 
     engine = ReflectionEngine(test_db)
@@ -82,11 +90,13 @@ def test_reflection_detects_repeated_observations(test_db):
 
     # 写入 3 条同类 Observation
     for i in range(3):
-        test_db.add(MemoryItem(
-            id=f"obs_{i}",
-            content="SQLite WAL mode improves read concurrency",
-            role=CognitiveRole.OBSERVATION,
-        ))
+        test_db.add(
+            MemoryItem(
+                id=f"obs_{i}",
+                content="SQLite WAL mode improves read concurrency",
+                role=CognitiveRole.OBSERVATION,
+            )
+        )
     test_db.commit()
 
     engine = ReflectionEngine(test_db)

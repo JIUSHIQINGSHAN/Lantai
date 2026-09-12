@@ -11,6 +11,7 @@
   `MONITOR_RETENTION_DAYS` 清理过期行；
 - 任何异常只记日志，绝不冒泡到请求链路（宁 miss 不脏写）。
 """
+
 from __future__ import annotations
 
 import threading
@@ -23,13 +24,18 @@ from lantai.core.time import utcnow
 from lantai.observability.metrics import get_collector, is_excluded, normalize_route
 from lantai.storage import db
 
-
 # 未匹配路由的 404 在内存指标中的归并桶名
 UNMATCHED_ROUTE = "(unmatched 404)"
 
 
-def should_persist(status: int, latency_ms: float, *, seen: int,
-                   slow_ms: float | None = None, sample: int | None = None) -> bool:
+def should_persist(
+    status: int,
+    latency_ms: float,
+    *,
+    seen: int,
+    slow_ms: float | None = None,
+    sample: int | None = None,
+) -> bool:
     """落库采样判定（纯函数，可单测）：错误/慢请求必留，其余 1/N 采样。"""
     slow = float(settings.MONITOR_PERSIST_SLOW_MS if slow_ms is None else slow_ms)
     rate = int(settings.MONITOR_PERSIST_SAMPLE if sample is None else sample)
@@ -54,8 +60,9 @@ class TelemetryWriter:
         self._stop = threading.Event()
 
     # ── 写入侧 ────────────────────────────────────────────────────────
-    def offer(self, *, method: str, route: str, status: int,
-              latency_ms: float, user_id: str = "") -> bool:
+    def offer(
+        self, *, method: str, route: str, status: int, latency_ms: float, user_id: str = ""
+    ) -> bool:
         """按采样规则决定是否落库；返回 True 表示已入缓冲。"""
         try:
             with self._lock:
@@ -63,10 +70,15 @@ class TelemetryWriter:
                 seen = self._seen
                 keep = should_persist(status, latency_ms, seen=seen)
                 if keep:
-                    self._pending.append({
-                        "method": method, "route": route, "status": int(status),
-                        "latency_ms": round(float(latency_ms), 3), "user_id": user_id or "",
-                    })
+                    self._pending.append(
+                        {
+                            "method": method,
+                            "route": route,
+                            "status": int(status),
+                            "latency_ms": round(float(latency_ms), 3),
+                            "user_id": user_id or "",
+                        }
+                    )
                 return keep
         except Exception:
             logger.exception("telemetry offer failed (non-fatal)")
@@ -85,14 +97,16 @@ class TelemetryWriter:
             now = utcnow()
             with db.get_session() as s:
                 for row in batch:
-                    s.add(OperationLog(
-                        id=new_id("oplog"),
-                        user_id=row["user_id"] or "anonymous",
-                        endpoint=f"{row['method']} {row['route']}",
-                        latency_ms=row["latency_ms"],
-                        status_code=row["status"],
-                        created_at=now,
-                    ))
+                    s.add(
+                        OperationLog(
+                            id=new_id("oplog"),
+                            user_id=row["user_id"] or "anonymous",
+                            endpoint=f"{row['method']} {row['route']}",
+                            latency_ms=row["latency_ms"],
+                            status_code=row["status"],
+                            created_at=now,
+                        )
+                    )
                 s.commit()
             self._written += len(batch)
             self.prune()
@@ -118,7 +132,8 @@ class TelemetryWriter:
             with db.get_session() as s:
                 result = s.exec(
                     text("DELETE FROM operation_logs WHERE created_at < :cutoff"),
-                    params={"cutoff": cutoff})
+                    params={"cutoff": cutoff},
+                )
                 s.commit()
                 return int(getattr(result, "rowcount", 0) or 0)
         except Exception:
@@ -148,8 +163,7 @@ class TelemetryWriter:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._loop, name="lantai-telemetry", daemon=True)
+        self._thread = threading.Thread(target=self._loop, name="lantai-telemetry", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -223,15 +237,23 @@ class TelemetryMiddleware:
                 user_id = _user_id(scope)
                 # 未匹配任何路由的 404（扫描器/错拼路径）在指标里并成一桶，
                 # 防止无界路径把端点排行打散；落库仍留真实路径供取证。
-                metric_route = (UNMATCHED_ROUTE
-                                if scope.get("route") is None and status == 404
-                                else route)
+                metric_route = (
+                    UNMATCHED_ROUTE if scope.get("route") is None and status == 404 else route
+                )
                 get_collector().record(
-                    method=scope.get("method", "GET"), route=metric_route,
-                    status=status, latency_ms=latency_ms, user_id=user_id)
+                    method=scope.get("method", "GET"),
+                    route=metric_route,
+                    status=status,
+                    latency_ms=latency_ms,
+                    user_id=user_id,
+                )
                 get_writer().offer(
-                    method=scope.get("method", "GET"), route=route,
-                    status=status, latency_ms=latency_ms, user_id=user_id)
+                    method=scope.get("method", "GET"),
+                    route=route,
+                    status=status,
+                    latency_ms=latency_ms,
+                    user_id=user_id,
+                )
             except Exception:
                 logger.exception("telemetry middleware failed (non-fatal)")
 

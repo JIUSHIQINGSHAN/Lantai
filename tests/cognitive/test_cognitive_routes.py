@@ -2,11 +2,12 @@
 tests/cognitive/test_cognitive_routes.py
 认知 API 端点集成测试（不 Mock 业务逻辑）
 """
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine, StaticPool
+from sqlmodel import Session, SQLModel, StaticPool, create_engine
 
-from lantai.models.tables import MemoryItem, CognitiveRole, FailureRecord
+from lantai.models.tables import CognitiveRole, FailureRecord, MemoryItem
 
 
 # ──────────────────────────────────────────────
@@ -16,6 +17,7 @@ from lantai.models.tables import MemoryItem, CognitiveRole, FailureRecord
 def client():
     """构造带有内存 DB 的轻量 FastAPI 测试客户端。"""
     from fastapi import FastAPI
+
     from lantai.api.routes_cognitive import router
 
     app = FastAPI()
@@ -33,23 +35,39 @@ def client():
         with Session(engine) as session:
             # 预置测试数据
             if not session.get(MemoryItem, "rule_t1"):
-                session.add(MemoryItem(
-                    id="rule_t1", content="Use single SQLite process in production.",
-                    role=CognitiveRole.RULE, confidence=0.9
-                ))
-                session.add(MemoryItem(
-                    id="obs_t1", content="SQLite WAL mode improves read speed.",
-                    role=CognitiveRole.OBSERVATION, confidence=0.7
-                ))
-                session.add(FailureRecord(
-                    id="fail_t1", task="deploy", action="4_workers",
-                    expected="stable", actual="crash",
-                    severity=0.8, recurrence_count=1, source_ids=[]
-                ))
+                session.add(
+                    MemoryItem(
+                        id="rule_t1",
+                        content="Use single SQLite process in production.",
+                        role=CognitiveRole.RULE,
+                        confidence=0.9,
+                    )
+                )
+                session.add(
+                    MemoryItem(
+                        id="obs_t1",
+                        content="SQLite WAL mode improves read speed.",
+                        role=CognitiveRole.OBSERVATION,
+                        confidence=0.7,
+                    )
+                )
+                session.add(
+                    FailureRecord(
+                        id="fail_t1",
+                        task="deploy",
+                        action="4_workers",
+                        expected="stable",
+                        actual="crash",
+                        severity=0.8,
+                        recurrence_count=1,
+                        source_ids=[],
+                    )
+                )
                 session.commit()
             yield session
 
     from lantai.storage.db import get_session
+
     app.dependency_overrides[get_session] = _override_session
 
     with TestClient(app) as c:
@@ -95,19 +113,22 @@ def test_cognitive_reflect_endpoint(client):
     assert resp.status_code == 200
     data = resp.json()
     assert "failures" in data
-    assert data["failures"] >= 1   # 预置了 1 条 FailureRecord
+    assert data["failures"] >= 1  # 预置了 1 条 FailureRecord
     assert "new_patterns" in data
     assert "summary" in data
 
 
 def test_cognitive_observe_endpoint(client):
     """POST /cognitive/observe 写入新的 Observation。"""
-    resp = client.post("/cognitive/observe", json={
-        "content": "Python asyncio improves IO throughput",
-        "evidence_type": "observation",
-        "reliability": 0.8,
-        "independence": 1.0,
-    })
+    resp = client.post(
+        "/cognitive/observe",
+        json={
+            "content": "Python asyncio improves IO throughput",
+            "evidence_type": "observation",
+            "reliability": 0.8,
+            "independence": 1.0,
+        },
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert data["ok"] is True

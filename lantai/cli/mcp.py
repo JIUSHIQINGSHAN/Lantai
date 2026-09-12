@@ -63,6 +63,7 @@ def handle_search(params: dict) -> dict:
     # v0.4 Cognitive Middleware: 自动注入认知上下文摘要（无需 Agent 显式调用心斋）
     try:
         from lantai.runtime.middleware import build_cognitive_summary
+
         task_desc = params.get("task") or query
         cog_summary = build_cognitive_summary(task_desc)
         if cog_summary:
@@ -1419,8 +1420,16 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "task": {"type": "string", "default": "", "description": "当前任务描述或目标"},
-                "top_k": {"type": "integer", "default": 10, "description": "各切面返回最大条目数 [1, 50]"},
-                "as_prompt": {"type": "boolean", "default": True, "description": "是否附带渲染好的 Markdown Prompt"},
+                "top_k": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "各切面返回最大条目数 [1, 50]",
+                },
+                "as_prompt": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "是否附带渲染好的 Markdown Prompt",
+                },
             },
         },
     },

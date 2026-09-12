@@ -2,14 +2,16 @@
 迁移脚本：将 MemoryItem 的 lane 迁移为 CognitiveRole
 """
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlmodel import Session, select
-from lantai.models.tables import MemoryItem, CognitiveRole
+
+from lantai.models.tables import CognitiveRole, MemoryItem
 from lantai.storage.db import engine
+
 
 def map_lane_to_role(lane: str) -> CognitiveRole:
     lane_map = {
@@ -22,6 +24,7 @@ def map_lane_to_role(lane: str) -> CognitiveRole:
         "chat": CognitiveRole.OBSERVATION,
     }
     return lane_map.get(lane, CognitiveRole.OBSERVATION)
+
 
 def main():
     print("开始迁移 MemoryItem 的 lane -> role ...")
@@ -37,6 +40,7 @@ def main():
                 count += 1
         session.commit()
         print(f"成功迁移 {count} 条记忆项。")
+
 
 if __name__ == "__main__":
     main()

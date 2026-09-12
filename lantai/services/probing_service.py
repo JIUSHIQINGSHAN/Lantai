@@ -180,6 +180,7 @@ def resolve_probe_response(
             # 同步更新索引
             try:
                 from lantai.retrieval.embed import embed
+
                 emb = embed([item.key])[0]
                 index_memory_item(
                     item.id,

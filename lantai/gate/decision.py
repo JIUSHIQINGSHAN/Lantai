@@ -155,6 +155,7 @@ def decide(candidate_id: str) -> dict:
         if conflicts and any(c["severity"] == "high" for c in conflicts):
             # 引入 ConflictEngine 仲裁：检验候选与冲突现有记忆是否能 COEXIST（例如适用场景/任务边界互斥）
             from lantai.cognition.conflicts import ConflictEngine, ConflictResolution
+
             engine = ConflictEngine()
             cand_dummy = MemoryItem(
                 id="cand_probe",

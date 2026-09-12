@@ -10,6 +10,7 @@
   测试直调（AGENTS.md 测试纪律：核心函数必须有不 mock 的冒烟测试）。
 - **失败不影响主链路**：`record()` 全程不抛异常（宁 miss 不脏写）。
 """
+
 from __future__ import annotations
 
 import os
@@ -69,7 +70,7 @@ def percentile(values: list[float], q: float) -> float:
 class RequestRecord:
     """一次 HTTP 请求的运行指标（内存态，只读）。"""
 
-    ts: float                      # time.time()（与 created_at 对齐）
+    ts: float  # time.time()（与 created_at 对齐）
     method: str
     route: str
     status: int
@@ -96,9 +97,16 @@ def aggregate(records: list[RequestRecord], *, elapsed_seconds: float) -> dict:
     total = len(records)
     if not total:
         return {
-            "count": 0, "errors": 0, "client_errors": 0, "error_rate": 0.0,
-            "requests_per_minute": 0.0, "avg_ms": 0.0,
-            "p50_ms": 0.0, "p95_ms": 0.0, "p99_ms": 0.0, "max_ms": 0.0,
+            "count": 0,
+            "errors": 0,
+            "client_errors": 0,
+            "error_rate": 0.0,
+            "requests_per_minute": 0.0,
+            "avg_ms": 0.0,
+            "p50_ms": 0.0,
+            "p95_ms": 0.0,
+            "p99_ms": 0.0,
+            "max_ms": 0.0,
             "status_classes": {},
         }
     latencies = [r.latency_ms for r in records]
@@ -136,15 +144,28 @@ class MetricsCollector:
         self._server_errors = 0
 
     # ── 写入 ──────────────────────────────────────────────────────────
-    def record(self, *, method: str, route: str, status: int,
-               latency_ms: float, user_id: str = "", ts: float | None = None) -> None:
+    def record(
+        self,
+        *,
+        method: str,
+        route: str,
+        status: int,
+        latency_ms: float,
+        user_id: str = "",
+        ts: float | None = None,
+    ) -> None:
         """记录一次请求。任何异常只记日志（宁 miss 不脏写）。"""
         try:
             stamp = float(ts if ts is not None else time.time())
             latency = max(0.0, float(latency_ms))
-            record = RequestRecord(ts=stamp, method=(method or "GET").upper(),
-                                   route=route or "/", status=int(status),
-                                   latency_ms=round(latency, 3), user_id=user_id or "")
+            record = RequestRecord(
+                ts=stamp,
+                method=(method or "GET").upper(),
+                route=route or "/",
+                status=int(status),
+                latency_ms=round(latency, 3),
+                user_id=user_id or "",
+            )
             minute = int(stamp // 60)
             with self._lock:
                 self._total += 1
@@ -193,8 +214,7 @@ class MetricsCollector:
         records = self._window_records(seconds, now)
         return aggregate(records, elapsed_seconds=seconds)
 
-    def endpoints(self, seconds: float, limit: int = 20,
-                  now: float | None = None) -> list[dict]:
+    def endpoints(self, seconds: float, limit: int = 20, now: float | None = None) -> list[dict]:
         """窗口内按路由聚合的耗时排行（按请求数降序，其次按 p95 降序）。"""
         records = self._window_records(seconds, now)
         grouped: dict[str, list[RequestRecord]] = {}
@@ -203,17 +223,19 @@ class MetricsCollector:
         rows = []
         for route, items in grouped.items():
             stat = aggregate(items, elapsed_seconds=seconds)
-            rows.append({
-                "route": route,
-                "count": stat["count"],
-                "errors": stat["errors"],
-                "client_errors": stat["client_errors"],
-                "avg_ms": stat["avg_ms"],
-                "p95_ms": stat["p95_ms"],
-                "max_ms": stat["max_ms"],
-            })
+            rows.append(
+                {
+                    "route": route,
+                    "count": stat["count"],
+                    "errors": stat["errors"],
+                    "client_errors": stat["client_errors"],
+                    "avg_ms": stat["avg_ms"],
+                    "p95_ms": stat["p95_ms"],
+                    "max_ms": stat["max_ms"],
+                }
+            )
         rows.sort(key=lambda row: (-row["count"], -row["p95_ms"], row["route"]))
-        return rows[:max(1, int(limit))]
+        return rows[: max(1, int(limit))]
 
     def recent(self, limit: int = 50, *, only_problems: bool = False) -> list[dict]:
         """最近请求（新→旧），可只看错误/慢请求。"""
@@ -241,14 +263,16 @@ class MetricsCollector:
             bucket = buckets.get(minute)
             count = bucket.count if bucket else 0
             latency_sum = bucket.latency_sum if bucket else 0.0
-            rows.append({
-                "minute": minute,
-                "ts": minute * 60,
-                "count": count,
-                "errors": bucket.errors if bucket else 0,
-                "avg_ms": round(latency_sum / count, 3) if count else 0.0,
-                "max_ms": round(bucket.latency_max, 3) if bucket else 0.0,
-            })
+            rows.append(
+                {
+                    "minute": minute,
+                    "ts": minute * 60,
+                    "count": count,
+                    "errors": bucket.errors if bucket else 0,
+                    "avg_ms": round(latency_sum / count, 3) if count else 0.0,
+                    "max_ms": round(bucket.latency_max, 3) if bucket else 0.0,
+                }
+            )
         return rows
 
     def snapshot(self, seconds: float | None = None, now: float | None = None) -> dict:

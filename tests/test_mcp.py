@@ -31,9 +31,7 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert (
-        len(resp["result"]["tools"]) == 59
-    )  # 包含 cognitive_context 心斋认知切面
+    assert len(resp["result"]["tools"]) == 59  # 包含 cognitive_context 心斋认知切面
     assert "persona_get" in names
     assert "persona_set" in names
     assert "cognitive_context" in names

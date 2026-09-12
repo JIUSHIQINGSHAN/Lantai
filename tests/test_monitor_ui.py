@@ -6,6 +6,7 @@
 - 所有 `$('#id')` 选择器在 index.html 中真实存在——这条正是为了防住
   app.js 曾引用不存在的 `#systemRefresh` 导致 `init()` 抛错、整个控制台失效的回归。
 """
+
 import re
 from pathlib import Path
 
@@ -34,15 +35,26 @@ def test_ui_serves_monitor_view():
 
 def test_monitor_js_references_real_endpoints():
     source = (UI_DIR / "monitor.js").read_text(encoding="utf-8")
-    for path in ("/monitor/overview", "/monitor/series", "/monitor/logs",
-                 "/monitor/config", "/monitor/workers/"):
+    for path in (
+        "/monitor/overview",
+        "/monitor/series",
+        "/monitor/logs",
+        "/monitor/config",
+        "/monitor/workers/",
+    ):
         assert path in source, f"monitor.js 未引用 {path}"
 
     from lantai.api.routes_monitor import router
 
     exposed = {route.path for route in router.routes}
-    assert {"/monitor/overview", "/monitor/series", "/monitor/logs", "/monitor/config",
-            "/monitor/prometheus", "/monitor/workers/{worker_name}/run"} <= exposed
+    assert {
+        "/monitor/overview",
+        "/monitor/series",
+        "/monitor/logs",
+        "/monitor/config",
+        "/monitor/prometheus",
+        "/monitor/workers/{worker_name}/run",
+    } <= exposed
 
 
 def test_every_dom_selector_exists_in_index_html():
@@ -65,8 +77,17 @@ def test_every_dom_selector_exists_in_index_html():
 
 
 def test_monitor_view_panels_present():
-    for marker in ('id="monitorMetrics"', 'id="monitorAlerts"', 'id="monitorDeps"',
-                   'id="monitorChart"', 'id="monitorEndpoints"', 'id="monitorWorkers"',
-                   'id="monitorPipeline"', 'id="monitorLogs"', 'id="monitorConfig"',
-                   'id="monitorRefreshBtn"', 'id="monitorAutoRefresh"'):
+    for marker in (
+        'id="monitorMetrics"',
+        'id="monitorAlerts"',
+        'id="monitorDeps"',
+        'id="monitorChart"',
+        'id="monitorEndpoints"',
+        'id="monitorWorkers"',
+        'id="monitorPipeline"',
+        'id="monitorLogs"',
+        'id="monitorConfig"',
+        'id="monitorRefreshBtn"',
+        'id="monitorAutoRefresh"',
+    ):
         assert marker in INDEX_HTML, f"监控面板缺少 {marker}"

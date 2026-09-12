@@ -6,15 +6,14 @@ CM-01: GET /cognitive/summary?task=... 返回 rules + failures + summary
 CM-02: 空 task 时 summary 为空字符串（不报错）
 CM-03: build_cognitive_summary 失败时静默返回空字符串（宁 miss 不脏写）
 """
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import SQLModel, Session, create_engine
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine
 
 from lantai.cognition.blb import compute_blb_report
 from lantai.runtime.middleware import build_cognitive_summary, encode_cognitive_header
-
-
-from sqlalchemy.pool import StaticPool
 from lantai.storage.db import get_session
 
 
@@ -43,6 +42,7 @@ def client_fixture():
 # CM-01: /cognitive/summary 端点
 # ──────────────────────────────────────────────────────
 
+
 def test_cognitive_summary_endpoint_exists(client: TestClient):
     """CM-01: GET /cognitive/summary 端点存在且返回 200"""
     resp = client.get("/cognitive/summary?task=数据库部署", headers={"X-API-Key": "dev"})
@@ -67,6 +67,7 @@ def test_cognitive_summary_schema(client: TestClient):
 # CM-02: build_cognitive_summary 空 task
 # ──────────────────────────────────────────────────────
 
+
 def test_build_cognitive_summary_empty_task():
     """CM-02: 空 task 时不报错，返回字符串（可以是空）"""
     result = build_cognitive_summary(task="")
@@ -77,8 +78,10 @@ def test_build_cognitive_summary_empty_task():
 # CM-03: 静默失败（宁 miss 不脏写）
 # ──────────────────────────────────────────────────────
 
+
 def test_build_cognitive_summary_silent_fail(monkeypatch):
     """CM-03: 内部异常时静默返回空字符串，不向上冒泡"""
+
     def boom(*args, **kwargs):
         raise RuntimeError("模拟 DB 连接失败")
 
@@ -95,9 +98,11 @@ def test_build_cognitive_summary_silent_fail(monkeypatch):
 # CM-04: encode_cognitive_header
 # ──────────────────────────────────────────────────────
 
+
 def test_encode_cognitive_header_roundtrip():
     """CM-04: Base64 编码可以被解码还原"""
     import base64
+
     original = "相关规则: 执行前备份 | 已知失败: 未备份导致数据丢失"
     encoded = encode_cognitive_header(original)
     assert encoded, "非空 summary 应编码为非空字符串"

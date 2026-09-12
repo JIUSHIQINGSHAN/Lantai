@@ -1,6 +1,7 @@
-import enum
+from enum import StrEnum
 
-class CognitiveRole(str, enum.Enum):
+
+class CognitiveRole(StrEnum):
     OBSERVATION = "observation"
     EXPERIENCE = "experience"
     BELIEF = "belief"
@@ -8,23 +9,26 @@ class CognitiveRole(str, enum.Enum):
     PRINCIPLE = "principle"
     SKILL = "skill"
 
-class LifecycleStatus(str, enum.Enum):
+
+class LifecycleStatus(StrEnum):
     """知识生命周期状态（v0.4）。
-    
+
     与 MemoryItem.status（active/candidate/archived）正交：
     - status 描述记忆的管道状态（是否通过闸门、是否归档）
     - lifecycle_status 描述知识本身的认识论状态（是否被取代、是否已退役）
-    
+
     转移规则：
     Active → Weakened（confidence 跌破 WEAKENED_THRESHOLD=0.5）
     Active/Weakened → Superseded（被更强 Belief/Rule 显式取代）
     Weakened/Superseded → Retired（TTL 超期或 decay_score 极低）
     candidate → Active（经 EvolutionEngine 晋升，promotion_trace 非空）
     """
+
     ACTIVE = "active"
-    WEAKENED = "weakened"       # confidence 下降到 [0.3, 0.5)，仍参与检索但权重降低
-    SUPERSEDED = "superseded"   # 被更新版本或更强 Rule 取代，退出检索
-    RETIRED = "retired"         # 超过 TTL 且 decay_score 极低，等同于 archived
+    WEAKENED = "weakened"  # confidence 下降到 [0.3, 0.5)，仍参与检索但权重降低
+    SUPERSEDED = "superseded"  # 被更新版本或更强 Rule 取代，退出检索
+    RETIRED = "retired"  # 超过 TTL 且 decay_score 极低，等同于 archived
+
 
 from datetime import datetime
 
@@ -150,9 +154,9 @@ class MemoryItem(SQLModel, table=True):
     superseded_by: str | None = Field(
         default=None, index=True
     )  # 指向取代本记忆的 MemoryItem.id（当 lifecycle_status="superseded" 时非空）
-    weakened_at: datetime | None = None    # 首次跌破 confidence 阈值的时间
+    weakened_at: datetime | None = None  # 首次跌破 confidence 阈值的时间
     superseded_at: datetime | None = None  # 被取代的时间
-    retired_at: datetime | None = None     # 正式退役的时间
+    retired_at: datetime | None = None  # 正式退役的时间
 
 
 class MemoryScene(SQLModel, table=True):
@@ -175,44 +179,43 @@ class MemoryScene(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
-
 class Evidence(SQLModel, table=True):
     id: str = Field(primary_key=True)
     tenant_id: str | None = Field(default=None, index=True)
     user_id: str | None = Field(default=None, index=True)
     agent_id: str | None = Field(default=None, index=True)
     session_id: str | None = Field(default=None, index=True)
-    
+
     evidence_type: str
     source_memory_id: str | None = Field(default=None, index=True)
-    
+
     content: str
     reliability: float = 0.5
     independence: float = 1.0
-    
+
     observed_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)
-    
+
     provenance: dict = Field(default_factory=dict, sa_column=Column(JSON))
     status: str = "active"
 
 
 class CognitivePattern(SQLModel, table=True):
     id: str = Field(primary_key=True)
-    
+
     pattern_type: str
     description: str
-    
+
     source_ids: list = Field(default_factory=list, sa_column=Column(JSON))
-    
+
     occurrence_count: int = 0
     independent_source_count: int = 0
-    
+
     confidence: float = 0.0
     novelty: float = 0.0
-    
+
     status: str = "candidate"
-    
+
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -251,6 +254,7 @@ class ActionOutcome(SQLModel, table=True):
     feedback: dict = Field(default_factory=dict, sa_column=Column(JSON))
 
     created_at: datetime = Field(default_factory=utcnow)
+
 
 class MemoryEdge(SQLModel, table=True):
     id: str = Field(primary_key=True)

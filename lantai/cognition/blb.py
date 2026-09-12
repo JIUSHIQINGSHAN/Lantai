@@ -4,23 +4,26 @@ Behavioral Learning Benchmark 计算器（v0.4）
 
 提供 4 个量化指标：
 - learning_rate: 成功避免历史错误的任务数 / 可利用历史经验的任务总数
-- error_recurrence_rate: 同类错误再次出现次数 / 遇到同类任务次数  
+- error_recurrence_rate: 同类错误再次出现次数 / 遇到同类任务次数
 - rule_adoption_rate: Rule 出现在认知上下文中次数 / Rule 被创建次数
 - regression_rate: 已学会行为后来退化的比例
 
 全部纯函数，无 LLM 调用，供测试和 /cognitive/blb-report 端点使用。
 """
+
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 
 
 @dataclass
 class BLBReport:
     """BLB 4 项指标报告。"""
-    learning_rate: float = 0.0          # [0, 1]，越高越好
+
+    learning_rate: float = 0.0  # [0, 1]，越高越好
     error_recurrence_rate: float = 0.0  # [0, 1]，越低越好
-    rule_adoption_rate: float = 0.0     # [0, 1]，越高越好
-    regression_rate: float = 0.0        # [0, 1]，越低越好
+    rule_adoption_rate: float = 0.0  # [0, 1]，越高越好
+    regression_rate: float = 0.0  # [0, 1]，越低越好
     details: dict = field(default_factory=dict)
     summary: str = ""
 

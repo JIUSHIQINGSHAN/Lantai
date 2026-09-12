@@ -258,6 +258,7 @@ def _run_with_timeout(func, timeout, *args):
 
         def run(self):
             import contextlib
+
             with contextlib.suppress(Exception):
                 self.result = func(*args)
 

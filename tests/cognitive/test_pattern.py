@@ -1,13 +1,15 @@
-import pytest
 from datetime import datetime
+
+import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
 try:
-    from lantai.models.tables import CognitivePattern, MemoryItem, CognitiveRole
+    from lantai.models.tables import CognitivePattern, CognitiveRole, MemoryItem
 except ImportError:
     CognitivePattern = None
     MemoryItem = None
     CognitiveRole = None
+
 
 @pytest.fixture
 def test_db():
@@ -16,10 +18,11 @@ def test_db():
     with Session(engine) as session:
         yield session
 
+
 def test_cognitive_pattern_creation(test_db):
     """Verify CognitivePattern can be instantiated and saved."""
     assert CognitivePattern is not None, "CognitivePattern model is missing!"
-    
+
     # Simulate a pattern that emerged from multiple experiences
     pattern = CognitivePattern(
         id="pat_1",
@@ -30,11 +33,11 @@ def test_cognitive_pattern_creation(test_db):
         independent_source_count=2,
         confidence=0.85,
         novelty=0.4,
-        status="candidate"
+        status="candidate",
     )
     test_db.add(pattern)
     test_db.commit()
-    
+
     fetched = test_db.exec(select(CognitivePattern).where(CognitivePattern.id == "pat_1")).first()
     assert fetched is not None
     assert fetched.pattern_type == "causal"

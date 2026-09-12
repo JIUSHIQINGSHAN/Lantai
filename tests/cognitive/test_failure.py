@@ -1,9 +1,10 @@
-import pytest
-from sqlmodel import Session, SQLModel, create_engine, select
 from datetime import datetime
 
+import pytest
+from sqlmodel import Session, SQLModel, create_engine, select
+
 try:
-    from lantai.models.tables import FailureRecord, ActionOutcome, MemoryItem, CognitiveRole
+    from lantai.models.tables import ActionOutcome, CognitiveRole, FailureRecord, MemoryItem
 except ImportError:
     FailureRecord = None
     ActionOutcome = None
@@ -83,6 +84,7 @@ def test_record_feedback_creates_failure_and_outcome(test_db, monkeypatch):
     class DummySessionCtx:
         def __enter__(self):
             return test_db
+
         def __exit__(self, exc_type, exc_val, exc_tb):
             pass
 

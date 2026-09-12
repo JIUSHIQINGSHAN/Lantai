@@ -4,9 +4,9 @@ from fastapi import Depends, FastAPI
 
 from lantai.api import (
     routes_admin_router,
-    routes_cognitive_router,
     routes_candidates_router,
     routes_checkpoint_router,
+    routes_cognitive_router,
     routes_conflicts_router,
     routes_crystals_router,
     routes_dialogue_router,

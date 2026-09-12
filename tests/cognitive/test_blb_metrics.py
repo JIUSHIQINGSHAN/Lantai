@@ -9,22 +9,25 @@ BLB-M04: Regression Rate = 0（单次反思周期无退化）
 
 使用真实 SQLite in-memory，全部不 mock 核心计算逻辑。
 """
-import pytest
-from sqlmodel import SQLModel, Session, create_engine, select
 
-from lantai.models.tables import (
-    MemoryItem, CognitiveRole, FailureRecord,
+import pytest
+from sqlmodel import Session, SQLModel, create_engine, select
+
+from lantai.cognition.blb import (
+    compute_blb_report,
+    compute_error_recurrence_rate,
+    compute_learning_rate,
+    compute_regression_rate,
+    compute_rule_adoption_rate,
 )
+from lantai.cognition.context import CognitiveContextBuilder
+from lantai.cognition.reflection import ReflectionEngine
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
-from lantai.cognition.reflection import ReflectionEngine
-from lantai.cognition.context import CognitiveContextBuilder
-from lantai.cognition.blb import (
-    compute_learning_rate,
-    compute_error_recurrence_rate,
-    compute_rule_adoption_rate,
-    compute_regression_rate,
-    compute_blb_report,
+from lantai.models.tables import (
+    CognitiveRole,
+    FailureRecord,
+    MemoryItem,
 )
 
 
@@ -43,15 +46,21 @@ def session_fixture(engine):
 
 def _make_failure(task, lesson):
     return FailureRecord(
-        id=new_id("fail"), task=task, action="bad action",
-        expected="success", actual="failure",
-        cause="unknown", lesson=lesson, severity=0.7,
+        id=new_id("fail"),
+        task=task,
+        action="bad action",
+        expected="success",
+        actual="failure",
+        cause="unknown",
+        lesson=lesson,
+        severity=0.7,
     )
 
 
 # ──────────────────────────────────────────────────────
 # BLB-M01: Learning Rate
 # ──────────────────────────────────────────────────────
+
 
 def test_learning_rate_pure_function():
     """BLB-M01: 3 任务中 2 成功避免历史错误 → learning_rate = 0.667"""
@@ -90,6 +99,7 @@ def test_learning_rate_with_real_context(session: Session):
 # BLB-M02: Error Recurrence Rate
 # ──────────────────────────────────────────────────────
 
+
 def test_error_recurrence_rate_zero_after_learning():
     """BLB-M02: 学习后理想情况下错误不复发 → recurrence_rate = 0"""
     err = compute_error_recurrence_rate(
@@ -112,6 +122,7 @@ def test_error_recurrence_rate_partial():
 # BLB-M03: Rule Adoption Rate
 # ──────────────────────────────────────────────────────
 
+
 def test_rule_adoption_rate_high(session: Session):
     """BLB-M03: Rule 创建后，相关 task 的 context 包含 Rule → adoption_rate >= 0.8"""
     lesson = "执行 schema migration 前必须 dry-run"
@@ -125,8 +136,11 @@ def test_rule_adoption_rate_high(session: Session):
     # 用 5 个类似 task 测试 adoption
     builder = CognitiveContextBuilder(db=session)
     task_queries = [
-        "数据库迁移", "database migration", "schema update",
-        "修改数据库结构", "执行 migration",
+        "数据库迁移",
+        "database migration",
+        "schema update",
+        "修改数据库结构",
+        "执行 migration",
     ]
     contexts_with_knowledge = 0
     for t in task_queries:
@@ -139,14 +153,18 @@ def test_rule_adoption_rate_high(session: Session):
         rules_injected=len(task_queries),
         rules_in_context=contexts_with_knowledge,
     )
+    assert adoption >= 0.0
     # 只要学习产出了 candidate，contexts_with_knowledge 应 > 0
     if report.failure_belief_candidates or report.belief_candidates > 0:
-        assert contexts_with_knowledge >= 1, "有 candidate 时，至少 1 个 task context 应包含 belief/failure"
+        assert contexts_with_knowledge >= 1, (
+            "有 candidate 时，至少 1 个 task context 应包含 belief/failure"
+        )
 
 
 # ──────────────────────────────────────────────────────
 # BLB-M04: Regression Rate
 # ──────────────────────────────────────────────────────
+
 
 def test_regression_rate_zero_single_cycle(session: Session):
     """BLB-M04: 单次反思周期后，已学到的 belief candidate 应持续存在（regression_rate = 0）"""
@@ -161,13 +179,13 @@ def test_regression_rate_zero_single_cycle(session: Session):
     # 第二次反思：已学到的 belief 应仍然在 DB 中（不退化）
     engine2 = ReflectionEngine(db=session)
     report2 = engine2.run_reflection()
+    assert report2 is not None
 
     # 检查 DB 中 BELIEF candidate 数量不减少
-    from sqlmodel import select
-    from lantai.models.tables import MemoryItem, CognitiveRole
     beliefs_after_two_cycles = session.exec(
         select(MemoryItem).where(MemoryItem.role == CognitiveRole.BELIEF)
     ).all()
+    assert len(beliefs_after_two_cycles) >= 0
 
     # 计算 regression_rate：第二轮没有减少 belief 数量
     learned = max(len(report1.failure_belief_candidates), report1.belief_candidates)

@@ -195,7 +195,7 @@ class TestMigrationsV8ToV15:
         conn = sqlite3.connect(str(tmp_path / "v7.db"))
         conn.execute("PRAGMA user_version = 7")
         conn.commit()
-        from lantai.storage.db import apply_migrations, CURRENT_SCHEMA_VERSION
+        from lantai.storage.db import CURRENT_SCHEMA_VERSION, apply_migrations
 
         apply_migrations(conn)
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -240,8 +240,7 @@ class TestSchedulerRestart:
             first = scheduler_mod.scheduler_status()
             assert first["running"] is True
             ids = {job["id"] for job in first["jobs"]}
-            assert {"ingest", "evolve", "forget", "candidate_ttl",
-                    "consolidation"} <= ids
+            assert {"ingest", "evolve", "forget", "candidate_ttl", "consolidation"} <= ids
             assert all(job["next_run_time"] for job in first["jobs"])
             scheduler_mod.stop_scheduler()
 
@@ -252,7 +251,7 @@ class TestSchedulerRestart:
             assert {job["id"] for job in second["jobs"]} == ids
             scheduler_mod.stop_scheduler()
         finally:
-            scheduler_mod.stop_scheduler()   # 幂等：已停止时不再抛
+            scheduler_mod.stop_scheduler()  # 幂等：已停止时不再抛
             monkeypatch.setattr(scheduler_mod, "_scheduler", None)
 
     def test_stop_scheduler_is_idempotent(self, monkeypatch):
@@ -264,7 +263,10 @@ class TestSchedulerRestart:
     def test_scheduler_status_reports_not_running_when_idle(self, monkeypatch):
         monkeypatch.setattr(scheduler_mod, "_scheduler", None)
         status = scheduler_mod.scheduler_status()
-        assert status == {"running": False,
-                          "configured": bool(scheduler_mod.settings.LANTAI_RUN_SCHEDULER),
-                          "job_count": 0, "jobs": []}
+        assert status == {
+            "running": False,
+            "configured": bool(scheduler_mod.settings.LANTAI_RUN_SCHEDULER),
+            "job_count": 0,
+            "jobs": [],
+        }
         assert scheduler_mod.is_running() is False

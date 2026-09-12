@@ -2,8 +2,11 @@
 lantai/cognition/lifecycle.py
 Knowledge Lifecycle Manager（v0.4）
 """
+
 from __future__ import annotations
+
 from sqlmodel import Session
+
 from lantai.core.time import utcnow
 from lantai.models.tables import LifecycleStatus, MemoryItem
 
@@ -100,13 +103,16 @@ class KnowledgeLifecycleManager:
                 weakened.append(item)
         return weakened
 
-    def scan_and_retire(self, items: list[MemoryItem], decay_threshold: float = RETIRED_DECAY_THRESHOLD) -> list[MemoryItem]:
+    def scan_and_retire(
+        self, items: list[MemoryItem], decay_threshold: float = RETIRED_DECAY_THRESHOLD
+    ) -> list[MemoryItem]:
         """批量扫描：Weakened/Superseded 且 decay_score 极低的记忆自动退役"""
         retired = []
         for item in items:
-            if item.lifecycle_status in (
-                LifecycleStatus.WEAKENED, LifecycleStatus.SUPERSEDED
-            ) and (item.decay_score or 1.0) < decay_threshold:
+            if (
+                item.lifecycle_status in (LifecycleStatus.WEAKENED, LifecycleStatus.SUPERSEDED)
+                and (item.decay_score or 1.0) < decay_threshold
+            ):
                 self.retire(item)
                 retired.append(item)
         return retired

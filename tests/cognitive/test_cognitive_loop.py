@@ -10,22 +10,26 @@ BL-05: Task B 的 rule 切面 >= Task A（学习后认知上下文更丰富）
 
 全部不 mock 核心计算逻辑，使用真实 SQLite in-memory + SQLModel。
 """
-import pytest
-from sqlmodel import SQLModel, Session, create_engine, select
 
-from lantai.models.tables import (
-    MemoryItem, CognitiveRole, CognitivePattern,
-    FailureRecord, ActionOutcome,
-)
+import pytest
+from sqlmodel import Session, SQLModel, create_engine, select
+
+from lantai.cognition.context import CognitiveContextBuilder
+from lantai.cognition.reflection import ReflectionEngine
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
-from lantai.cognition.reflection import ReflectionEngine
-from lantai.cognition.context import CognitiveContextBuilder
-
+from lantai.models.tables import (
+    ActionOutcome,
+    CognitivePattern,
+    CognitiveRole,
+    FailureRecord,
+    MemoryItem,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(name="engine")
 def engine_fixture():
@@ -56,6 +60,7 @@ def _make_failure(task: str, action: str, cause: str, lesson: str) -> FailureRec
 # ---------------------------------------------------------------------------
 # BL-01: FailureRecord → CognitivePattern（failure_pattern）
 # ---------------------------------------------------------------------------
+
 
 def test_failure_to_pattern(session: Session):
     """
@@ -100,6 +105,7 @@ def test_failure_to_pattern(session: Session):
 # BL-02: failure_pattern → BELIEF candidate（promotion_trace 非空）
 # ---------------------------------------------------------------------------
 
+
 def test_pattern_to_belief(session: Session):
     """
     BL-02：失败归纳的 failure_pattern 应以低阈值（0.55）晋升为 BELIEF candidate，
@@ -108,12 +114,14 @@ def test_pattern_to_belief(session: Session):
     # 需要 >= 2 条 lesson 相似的失败才能形成 pattern
     lesson = "不能跳过测试直接合并主分支"
     for i in range(3):
-        session.add(_make_failure(
-            task=f"merge PR-{i}",
-            action="force merge without CI",
-            cause="CI skipped",
-            lesson=lesson,
-        ))
+        session.add(
+            _make_failure(
+                task=f"merge PR-{i}",
+                action="force merge without CI",
+                cause="CI skipped",
+                lesson=lesson,
+            )
+        )
     session.commit()
 
     engine = ReflectionEngine(db=session)
@@ -139,18 +147,21 @@ def test_pattern_to_belief(session: Session):
 # BL-03: BELIEF candidate 持久化
 # ---------------------------------------------------------------------------
 
+
 def test_belief_persists(session: Session):
     """
     BL-03：run_reflection 晋升的 BELIEF candidate 在 commit 后仍持久化。
     """
     lesson = "代码审查不能跳过，即使紧急修复"
     for _ in range(2):
-        session.add(_make_failure(
-            task="emergency fix",
-            action="skip code review",
-            cause="time pressure",
-            lesson=lesson,
-        ))
+        session.add(
+            _make_failure(
+                task="emergency fix",
+                action="skip code review",
+                cause="time pressure",
+                lesson=lesson,
+            )
+        )
     session.commit()
 
     engine = ReflectionEngine(db=session)
@@ -167,14 +178,13 @@ def test_belief_persists(session: Session):
         )
     ).all()
 
-    assert len(beliefs_in_db) >= 1, (
-        "BELIEF candidate 应在 DB 中持久化，但查不到"
-    )
+    assert len(beliefs_in_db) >= 1, "BELIEF candidate 应在 DB 中持久化，但查不到"
 
 
 # ---------------------------------------------------------------------------
 # BL-04: Task B cognitive_context 含 Task A lesson 关键词
 # ---------------------------------------------------------------------------
+
 
 def test_context_contains_lesson(session: Session):
     """
@@ -186,12 +196,14 @@ def test_context_contains_lesson(session: Session):
 
     # Task A：失败
     for _ in range(2):
-        session.add(_make_failure(
-            task="prod DB migration",
-            action="ALTER TABLE without backup",
-            cause="forgot backup",
-            lesson=lesson,
-        ))
+        session.add(
+            _make_failure(
+                task="prod DB migration",
+                action="ALTER TABLE without backup",
+                cause="forgot backup",
+                lesson=lesson,
+            )
+        )
     session.commit()
 
     # 执行反思（产出 failure pattern → BELIEF candidate）
@@ -214,6 +226,7 @@ def test_context_contains_lesson(session: Session):
 # BL-05: Task B 的认知上下文比 Task A 更丰富（学习后 belief/failure 切面增加）
 # ---------------------------------------------------------------------------
 
+
 def test_behavior_change(session: Session):
     """
     BL-05：Task A 之前的 cognitive_context 与 Task A 犯错+学习后的 cognitive_context 对比，
@@ -228,12 +241,14 @@ def test_behavior_change(session: Session):
     # Task A：犯错，记录 FailureRecord
     lesson = "执行 DROP TABLE 前必须验证环境是 dev 而非 prod"
     for _ in range(2):
-        session.add(_make_failure(
-            task="cleanup task",
-            action="DROP TABLE on prod",
-            cause="wrong environment",
-            lesson=lesson,
-        ))
+        session.add(
+            _make_failure(
+                task="cleanup task",
+                action="DROP TABLE on prod",
+                cause="wrong environment",
+                lesson=lesson,
+            )
+        )
     session.commit()
 
     # Reflect：学习
