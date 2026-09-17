@@ -283,15 +283,15 @@ def test_evaluate_alerts_is_a_pure_rule_set():
 
 
 def test_evaluate_alerts_flags_dev_fallback_auth():
-    """配了 API_KEY 但 api_keys 表为空 = 实际无鉴权（dev 回退放行），必须报出来。"""
+    """仅本机 DEV MODE（回环 + 无 API_KEY + 空库）提示；已配 API_KEY 不再误报。"""
     base = {
         "scheduler": {"configured": True, "running": True, "workers": []},
         "requests": {"window_seconds": 900, "window": {"count": 0}},
         "storage": {"database": {"mb": 1.0}},
         "pipeline": {"candidates_pending_review": 0},
         "security": {
-            "loopback": False,
-            "api_key_configured": True,
+            "loopback": True,
+            "api_key_configured": False,
             "api_keys_total": 0,
             "effective_auth": "dev_fallback",
         },
@@ -301,11 +301,44 @@ def test_evaluate_alerts_flags_dev_fallback_auth():
     ids = {alert["id"] for alert in evaluate_alerts(base)}
     assert "auth_dev_fallback" in ids
 
+    # 已配置环境 API_KEY（X-API-Key 生效）→ 不再报 dev fallback
+    env_keyed = {
+        **base,
+        "security": {
+            **base["security"],
+            "loopback": False,
+            "api_key_configured": True,
+            "effective_auth": "x_api_key",
+        },
+    }
+    assert "auth_dev_fallback" not in {alert["id"] for alert in evaluate_alerts(env_keyed)}
+
     signed = {
         **base,
         "security": {**base["security"], "api_keys_total": 2, "effective_auth": "bearer_table"},
     }
     assert "auth_dev_fallback" not in {alert["id"] for alert in evaluate_alerts(signed)}
+
+
+def test_effective_auth_label_dual_track():
+    from lantai.ops.monitor import _effective_auth_label
+
+    assert _effective_auth_label(loopback=True, api_key_configured=True, keys_total=0) == "x_api_key"
+    assert (
+        _effective_auth_label(loopback=True, api_key_configured=True, keys_total=1)
+        == "x_api_key+bearer_table"
+    )
+    assert (
+        _effective_auth_label(loopback=False, api_key_configured=False, keys_total=1)
+        == "bearer_table"
+    )
+    assert (
+        _effective_auth_label(loopback=True, api_key_configured=False, keys_total=0)
+        == "dev_fallback"
+    )
+    assert (
+        _effective_auth_label(loopback=False, api_key_configured=False, keys_total=0) == "none"
+    )
 
 
 def test_render_prometheus_exposes_snapshot(monitor_env):

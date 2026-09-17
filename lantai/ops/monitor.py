@@ -369,13 +369,26 @@ def collect_security_view(session) -> dict:
         "api_keys_total": keys_total,
         "api_keys_active": keys_active,
         "acl_bindings": len(settings.AGENT_LANE_BINDINGS or {}),
-        # 实际生效的鉴权口径：api_keys 表有记录 = Bearer 校验；否则无 Authorization
-        # 头的请求走 get_current_user 的 dev 回退（等于放行）
-        "effective_auth": (
-            "bearer_table" if keys_total else ("dev_fallback" if settings.API_KEY else "none")
+        # 与 get_current_user 双轨口径一致：x_api_key（环境 API_KEY）与 bearer_table（库内 key）并存；
+        # 仅回环且两者皆无时才是 dev_fallback。
+        "effective_auth": _effective_auth_label(
+            loopback=loopback,
+            api_key_configured=bool(settings.API_KEY),
+            keys_total=keys_total,
         ),
         "telemetry": get_writer().stats(),
     }
+
+
+def _effective_auth_label(*, loopback: bool, api_key_configured: bool, keys_total: int) -> str:
+    modes: list[str] = []
+    if api_key_configured:
+        modes.append("x_api_key")
+    if keys_total:
+        modes.append("bearer_table")
+    if not modes and loopback:
+        modes.append("dev_fallback")
+    return "+".join(modes) if modes else "none"
 
 
 def collect_dependency_view() -> dict:
@@ -583,16 +596,18 @@ def evaluate_alerts(snapshot: dict) -> list[dict]:
             )
         )
 
-    if security.get("api_key_configured") and not security.get("api_keys_total"):
+    if security.get("loopback") and not security.get("api_key_configured") and not security.get(
+        "api_keys_total"
+    ):
         alerts.append(
             _alert(
                 "auth_dev_fallback",
-                "high",
-                "鉴权实际未生效（dev 回退放行）",
-                "已配置 API_KEY，但 api_keys 表无任何记录：无 Authorization 头的请求会走 "
-                "get_current_user 的 dev 回退直接放行；前端发送的 X-API-Key 头当前也没有依赖在校验。",
-                "用 lantai.core.auth.create_api_key 签发 Bearer key 并让客户端改用 "
-                "Authorization: Bearer <key>；或保持仅回环（127.0.0.1）部署。",
+                "medium",
+                "本机 DEV MODE 放行（开发向）",
+                "回环绑定且未配置 API_KEY、api_keys 表为空：无凭证请求走 get_current_user 的 "
+                "DEV MODE。仅建议本机开发；生产请注入 API_KEY（X-API-Key）或签发库内 Bearer key。",
+                "设置 API_KEY，或用 lantai.core.auth.create_api_key 签发 Bearer key；"
+                "非回环部署必须同时配置 API_KEY。",
                 {"effective_auth": security.get("effective_auth")},
             )
         )
