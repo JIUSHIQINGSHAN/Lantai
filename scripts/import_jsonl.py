@@ -5,13 +5,17 @@
 
 JSONL 每行一个 JSON 对象：{"content": "...", "created_at": "ISO8601",
 "lane": "fact", "tags": ["a"]}；content 必填，created_at/updated_at 可省略（缺省取当前时间）。
+
+安全边界：HTTP 请求原语与 SSRF 边界校验统一复用 scripts/check_ingest_wiring.py
+的 `_request` / `_validate_target`（默认仅回环目标，`--allow-remote` 显式放行；
+单一真源，避免每个脚本各留一份边界检查）。
 """
 
 import argparse
 import json
 import sys
-import urllib.error
-import urllib.request
+
+from check_ingest_wiring import _request, _validate_target
 
 
 def main() -> int:
@@ -20,27 +24,29 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default="8767")
     parser.add_argument("--key", default="", help="X-API-Key（服务配置了 API_KEY 时必填）")
+    parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="显式放行非回环目标（默认仅允许回环，SSRF 纪律）",
+    )
     args = parser.parse_args()
+
+    try:
+        _validate_target("http://" + args.host + ":" + str(args.port), args.allow_remote)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     with open(args.file, encoding="utf-8") as fh:
         text = fh.read()
 
-    req = urllib.request.Request(
-        f"http://{args.host}:{args.port}/import/jsonl",
-        data=json.dumps({"text": text}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    if args.key:
-        req.add_header("X-API-Key", args.key)
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            report = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        print(f"HTTP {e.code}: {e.read().decode('utf-8')}", file=sys.stderr)
+    url = "http://" + args.host + ":" + str(args.port) + "/import/jsonl"
+    status, report = _request(url, args.key, "POST", {"text": text})
+    if status == 0:
+        print("请求失败：连不上服务", file=sys.stderr)
         return 1
-    except Exception as e:  # noqa: BLE001 —— CLI 边界
-        print(f"请求失败: {e}", file=sys.stderr)
+    if status != 200:
+        print(f"HTTP {status}: {report}", file=sys.stderr)
         return 1
 
     print(json.dumps(report, ensure_ascii=False, indent=2))

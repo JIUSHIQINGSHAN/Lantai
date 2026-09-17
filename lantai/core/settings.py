@@ -69,6 +69,10 @@ class Settings(BaseSettings):
         "preference": {"base_s": 15, "importance_boost": 20},
         "chat": {"base_s": 3, "importance_boost": 5},
         "general": {"base_s": 10, "importance_boost": 15},
+        # 咀华（session distill，v022 票据 04）：慢衰减泳道——精华是「这一程
+        # 最值得记住的」，忘得比普通事实快是荒谬的；也不用 preference 的
+        # 永不衰减语义（每会话一条，久则淹没检索）
+        "distill": {"base_s": 30, "importance_boost": 15},
     }
     # 检索时 lane 权重提升系数
     LANE_RETRIEVAL_BOOST: dict = {
@@ -78,6 +82,7 @@ class Settings(BaseSettings):
         "preference": 1.1,
         "chat": 0.7,
         "general": 1.0,
+        "distill": 1.0,
     }
     # 默认 lane（修 P0: promoter.py AttributeError）
     DEFAULT_LANE: str = "general"
@@ -271,6 +276,19 @@ class Settings(BaseSettings):
     # supersedes 边感知排序（一年内档评测回归）：被取代旧值在新值同候选集时降权到新值之下
     SUPERSEDES_ORDERING_ENABLED: bool = True
     SUPERSEDES_DEMOTE_EPSILON: float = 1e-6  # 旧值压到新值之下的最小分差
+    # ── v022 上游吸收（aiduMEI v21.2，见 .scratch/v022-upstream-v212-adopt/）──
+    # 回声抑制（M2）：检索时滤掉本会话刚写入的自写候选；默认关——
+    # 兰台 session 域检索本就按 session_id 圈定，默认开会清空会话内召回
+    ECHO_SUPPRESS_ENABLED: bool = False
+    # MMR 多样性（M4）：λ·相关 −(1−λ)·冗余，截断前去近义重复；默认关（零回归）
+    MMR_ENABLED: bool = False
+    MMR_LAMBDA: float = 0.7  # 0~1；越大越偏向相关性
+    # 错误签名通道（M6）：查询含报错标识符时，正文精确命中同签名的候选加有界 bonus；0=关闭
+    ERRSIG_BONUS: float = 0.10
+    # 会话精华萃取（session distill）：最少带 session 写入数；精华泳道慢衰减
+    DISTILL_MIN_MEMORIES: int = 3
+    DISTILL_MAX_SOURCE: int = 24
+    DISTILL_ENABLED: bool = True
     # autodream 蒸馏（一年内档提前）：后台记忆合成 → 待审提案（宁 miss 不脏写）
     AUTODREAM_ENABLED: bool = True
     AUTODREAM_MIN_CLUSTER: int = 2

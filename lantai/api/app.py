@@ -59,6 +59,11 @@ async def lifespan(app: FastAPI):
     assert_secure_binding()
     settings.validate_config()
     init_db()
+    # v022 吸收补充迁移（票据 05）：retrieval_event.session_id（写线活性判据）
+    from lantai.storage.db import engine as _db_engine
+    from lantai.storage.migrations_v022 import apply_v022_migrations
+
+    apply_v022_migrations(_db_engine)
     # 启动时加载 DB 参数 override（论文驱动优化的当前生效配置）
     from lantai.parameters.runtime import load_runtime_params_at_startup
 

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from lantai.models.schemas import FeedbackReq, ProposalDecisionReq
 from lantai.services.evolution_service import (
@@ -73,3 +74,43 @@ def consolidate_report_route():
     from lantai.services.consolidation_service import get_consolidation_report
 
     return get_consolidation_report()
+
+
+class EpisodeFeedbackReq(BaseModel):
+    """轨迹级奖励回传（v022 票据 06，最小切片：只登记不接权重）。"""
+
+    session_id: str = Field(min_length=1, max_length=128)
+    outcome: str = "neutral"  # success / failure / neutral
+    steps: list[dict]  # [{"memory_id": str, "rank": int|None}, ...] 按时间序
+    lam: float = 0.5
+    gamma: float = 0.9
+    user_id: str | None = None
+
+
+@router.post("/evolve/episode/feedback")
+def episode_feedback_route(req: EpisodeFeedbackReq):
+    """轨迹信用登记（上游 aiduMEI v21.2 M1 同名端点语义）：按位置回传并聚合。
+
+    只写 episode 侧表，不碰记忆正文；credit 不进入检索打分（察窗纪律）。"""
+    from lantai.services.episode_service import record_episode
+
+    try:
+        return record_episode(
+            session_id=req.session_id,
+            outcome=req.outcome,
+            steps=req.steps,
+            lam=req.lam,
+            gamma=req.gamma,
+            user_id=req.user_id,
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@router.get("/evolve/episode/credits")
+def episode_credits_route(memory_ids: str | None = None):
+    """聚合各记忆累计信用（只读视图；检索打分不读它）。"""
+    from lantai.services.episode_service import episode_credit_map
+
+    ids = [m.strip() for m in memory_ids.split(",") if m.strip()] if memory_ids else None
+    return {"credits": episode_credit_map(ids)}

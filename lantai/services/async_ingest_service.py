@@ -18,7 +18,14 @@ _TASKS: dict[str, dict[str, Any]] = {}
 _EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="qianyi_ingest_")
 
 
-def _execute_dialogue_task(task_id: str, text: str, user_id: str, source: str) -> None:
+def _execute_dialogue_task(
+    task_id: str,
+    text: str,
+    user_id: str,
+    source: str,
+    session_id: str = "",
+    turn: int | None = None,
+) -> None:
     """后台线程执行完整摄取流水线。"""
     try:
         _TASKS[task_id]["status"] = "processing"
@@ -27,7 +34,13 @@ def _execute_dialogue_task(task_id: str, text: str, user_id: str, source: str) -
         # 调用同步核心摄取函数
         from lantai.ingestion.dialogue import ingest_dialogue
 
-        res = ingest_dialogue(text=text, user_id=user_id, source=source)
+        res = ingest_dialogue(
+            text=text,
+            user_id=user_id,
+            source=source,
+            session_id=session_id,
+            turn=turn,
+        )
 
         _TASKS[task_id]["status"] = "completed"
         _TASKS[task_id]["result"] = res
@@ -44,6 +57,8 @@ def submit_async_dialogue(
     text: str,
     user_id: str = "default",
     source: str = "dialogue",
+    session_id: str = "",
+    turn: int | None = None,
 ) -> dict:
     """提交对话文本进行异步提纯摄取（毫秒级非阻塞返回）。"""
     raw_text = (text or "").strip()
@@ -56,6 +71,7 @@ def submit_async_dialogue(
         "status": "queued",
         "user_id": user_id,
         "source": source,
+        "session_id": session_id or None,
         "submitted_at": utcnow().isoformat(),
         "result": None,
         "error": None,
@@ -63,7 +79,7 @@ def submit_async_dialogue(
     _TASKS[task_id] = task_info
 
     # 提交至后台线程池
-    _EXECUTOR.submit(_execute_dialogue_task, task_id, raw_text, user_id, source)
+    _EXECUTOR.submit(_execute_dialogue_task, task_id, raw_text, user_id, source, session_id, turn)
     logger.info("潜移：已分发异步对话摄取任务【%s】", task_id)
     return {"task_id": task_id, "status": "queued"}
 

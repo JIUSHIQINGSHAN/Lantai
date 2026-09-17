@@ -55,13 +55,24 @@ def _is_chitchat(text: str) -> bool:
 
 
 def ingest_dialogue(
-    text: str, *, user_id: str = "default", source: str = "dialogue", created_at=None
+    text: str,
+    *,
+    user_id: str = "default",
+    source: str = "dialogue",
+    created_at=None,
+    session_id: str = "",
+    turn: int | None = None,
 ) -> dict:
     """对话文本 → 现有提取链。
 
     created_at：冷启动导入时传原始消息时间戳（naive UTC）——RawDocument/
     MemoryCandidate 用该时间，provenance.prompt=dialogue-session-import，
     随演化链继承到 MemoryItem（时间线不压平）。
+
+    session_id / turn：来源链显式透传（v022 票据 01，上游 aiduMEI v21.2
+    教训：隐式通道靠不住，出身必须由写入方显式落列）——落
+    MemoryCandidate.session_id 列与 provenance.origin_*，随
+    proposal → MemoryItem 全链继承；不传则如实留空（NULL），不猜测。
 
     返回 {"ingested", "candidate_id", "fastpath", "lane", "status"}
     status：fastpath（直通）/ new（待 evolve gate 分层）/
@@ -84,6 +95,8 @@ def ingest_dialogue(
             user_id=user_id,
             source=source,
             created_at=created_at,
+            session_id=session_id,
+            turn=turn,
         )
 
     # 2) 闲聊 → 直接 rejected（沙汰，ADR-0026），不进待审队列
@@ -96,6 +109,8 @@ def ingest_dialogue(
             user_id=user_id,
             source=source,
             created_at=created_at,
+            session_id=session_id,
+            turn=turn,
         )
 
     # 3) LLM 提取（extract_candidate 自带降级 fallback）→ 走现有 gate 分层
@@ -109,6 +124,8 @@ def ingest_dialogue(
         user_id=user_id,
         source=source,
         created_at=created_at,
+        session_id=session_id,
+        turn=turn,
     )
     if data["extractor_confidence"] < settings.DIALOGUE_MIN_EXTRACTOR_CONF:
         if data["extractor_confidence"] < settings.CANDIDATE_MIN_CONFIDENCE:
@@ -138,11 +155,16 @@ def _create_candidate(
     user_id: str,
     source: str,
     created_at=None,
+    session_id: str = "",
+    turn: int | None = None,
 ) -> dict:
     """建 rawdocument（content_hash 去重复用）→ memorycandidate。
 
     created_at 非空（冷启动导入）：doc.fetched_at / cand.created_at 用原始
     时间戳，provenance.prompt = dialogue-session-import（演化链据此继承）。
+
+    session_id / turn 非空：cand.session_id 落列 + provenance.origin_*
+    落 dict，随 proposal → MemoryItem 全链继承（票据 01）。
     """
     h = hashlib.sha256(text.encode("utf-8")).hexdigest()
     provenance_prompt = {
@@ -152,6 +174,13 @@ def _create_candidate(
     }.get(status, PROVENANCE_PROMPT_EXTRACT)
     if created_at is not None:
         provenance_prompt = PROVENANCE_PROMPT_DIALOGUE_IMPORT
+    origin_extra: dict = {}
+    if (session_id or "").strip():
+        origin_extra["origin_session_id"] = session_id.strip()
+    if turn is not None:
+        origin_extra["origin_turn"] = int(turn)
+    if origin_extra:
+        origin_extra["origin_source"] = source
     with db.get_session() as s:
         doc = s.exec(select(RawDocument).where(RawDocument.content_hash == h)).first()
         if not doc:
@@ -174,6 +203,8 @@ def _create_candidate(
 
         cand_kwargs = dict(
             id=new_id("cand"),
+            user_id=user_id or None,
+            session_id=(session_id or "").strip() or None,
             document_id=doc.id,
             topic=fp_data.get("topic") if fp_data else [],
             summary=(fp_data.get("summary") if fp_data else None) or text[:400],
@@ -182,7 +213,7 @@ def _create_candidate(
             constraints=fp_data.get("constraints", []) if fp_data else [],
             actions=fp_data.get("actions", []) if fp_data else [],
             extractor_confidence=(fp_data.get("extractor_confidence", 0.0) if fp_data else 0.0),
-            provenance=make_provenance(provenance_prompt),
+            provenance=make_provenance(provenance_prompt, extra=origin_extra or None),
             lane=lane,
             status=status,
         )

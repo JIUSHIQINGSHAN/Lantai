@@ -7,6 +7,9 @@
 
 from unittest.mock import MagicMock
 
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine
+
 from lantai.models.tables import MemoryItem
 from lantai.retrieval.hybrid import RetrievalParams, hybrid_search
 from lantai.retrieval.reranker import _parse_response
@@ -51,24 +54,16 @@ def test_rerank_index_backfill_handles_duplicate_content(monkeypatch):
 
     monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: FakeVectorStore())
 
-    class FakeSession:
-        def exec(self, stmt, *a, **kw):
-            class _Result:
-                def __init__(self, data):
-                    self.data = data
-
-                def all(self):
-                    return self.data
-
-            stmt_str = str(stmt).lower()
-            if "memory_edge" in stmt_str or "memoryedge" in stmt_str:
-                return _Result([])
-            return _Result([mem1, mem2])
-
-    monkeypatch.setattr(
-        "lantai.storage.db.get_session",
-        lambda: MagicMock(__enter__=lambda s: FakeSession(), __exit__=lambda *a: None),
+    # 真实内存 SQLite：记忆与 supersedes 边查询都走真库（无会话替身）
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as s:
+        s.add(mem1)
+        s.add(mem2)
+        s.commit()
+    monkeypatch.setattr("lantai.storage.db.get_session", lambda: Session(engine))
     monkeypatch.setattr("lantai.retrieval.hybrid.rerank", lambda q, docs, k: fake_rerank_output)
 
     # 显式开启 rerank

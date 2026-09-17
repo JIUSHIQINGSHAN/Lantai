@@ -1,0 +1,175 @@
+"""咀华（Juhua，会话精华萃取）测试——v022 吸收票据 04（上游 session distill）。
+
+不 mock 冒烟：真实内存 SQLite + 真实 MemoryItem/add_memory 管线，仅 mock
+外部 LLM chat_json。验收（票据 DoD）：
+- 3 条带 session 记忆 → 产出精华；2 条 → skipped/too_short（带原因）
+- LLM 不可用 → fallback 产出非空且标 distill_mode=fallback
+- 落库走完整闸门管线：store=true 后 evolve 链可产生候选/记忆
+"""
+
+from unittest.mock import Mock, patch
+
+import pytest
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine, select
+
+import lantai.storage.db as db_module
+from lantai.core.ids import new_id
+from lantai.core.time import utcnow
+from lantai.models.tables import MemoryCandidate, MemoryItem
+from lantai.storage.fts import init_fts, sync_fts
+
+
+@pytest.fixture
+def engine():
+    e = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(e)
+    init_fts(e.raw_connection())
+    return e
+
+
+def _add_session_mem(engine, session_id: str, content: str) -> str:
+    mid = new_id("mem")
+    with Session(engine) as s:
+        mem = MemoryItem(
+            id=mid,
+            memory_type="general",
+            key=mid,
+            content=content,
+            lane="general",
+            status="active",
+            importance=0.5,
+            use_count=0,
+            decay_score=1.0,
+            last_used_at=utcnow(),
+            created_at=utcnow(),
+            session_id=session_id,
+        )
+        s.add(mem)
+        s.commit()
+        sync_fts(s, mid, content)
+    return mid
+
+
+def _distill(engine, session_id, *, store=False, llm_side_effect=None, llm_return=None):
+    def gts():
+        return Session(engine)
+
+    ctx = patch.object(db_module, "get_session", gts)
+    llm = patch(
+        "lantai.services.distill_service.chat_json",
+        return_value=llm_return,
+        side_effect=llm_side_effect,
+    )
+    with ctx, llm:
+        from lantai.services.distill_service import distill_session
+
+        return distill_session(session_id, store=store)
+
+
+class TestDistill:
+    def test_too_short_reports_reason(self, engine):
+        """2 条 < 最少 3 条：skipped/too_short 且带原因（「怎么没精华」可查）。"""
+        _add_session_mem(engine, "s1", "第一句话")
+        _add_session_mem(engine, "s1", "第二句话")
+        res = _distill(engine, "s1")
+        assert res["status"] == "skipped"
+        assert res["reason"] == "too_short"
+        assert res["source_count"] == 2
+        assert res["min_required"] == 3
+
+    def test_llm_mode_summary(self, engine):
+        """LLM 可用：产出提炼且 mode=llm。"""
+        _add_session_mem(engine, "s2", "一起排查了文件系统软链接的权限问题")
+        _add_session_mem(engine, "s2", "最终决定把日志目录挂到独立磁盘")
+        _add_session_mem(engine, "s2", "用户确认下周回归测试")
+        res = _distill(engine, "s2", llm_return={"summary": "与用户一起定位软链接权限问题并决定日志独立磁盘，下周回归。"})
+        assert res["status"] == "ok"
+        assert res["mode"] == "llm"
+        assert "软链接" in res["summary"]
+        assert res["source_count"] == 3
+
+    def test_fallback_deterministic_when_llm_down(self, engine):
+        """LLM 挂：确定性降级（最长两条拼接），产出非空、mode=fallback。"""
+        _add_session_mem(engine, "s3", "短句")
+        _add_session_mem(engine, "s3", "这一段比较长的会话内容记录了完整排查过程与结论")
+        _add_session_mem(engine, "s3", "另一条中等长度的会话记录")
+        res = _distill(engine, "s3", llm_side_effect=RuntimeError("llm down"))
+        assert res["status"] == "ok"
+        assert res["mode"] == "fallback"
+        assert res["summary"]
+        # 可复现：两次降级产出一致（长度是代理指标）
+        res2 = _distill(engine, "s3", llm_side_effect=RuntimeError("llm down"))
+        assert res2["summary"] == res["summary"]
+
+    def test_emotion_hits_bounded_salience(self, engine):
+        """情绪词命中数 → 初始显著性有界加成（0.60~0.85）。"""
+        _add_session_mem(engine, "s4", "今天很开心，一起解决了大问题，特别激动")
+        _add_session_mem(engine, "s4", "用户表示非常感谢")
+        _add_session_mem(engine, "s4", "下次继续保持这种满意的合作状态")
+        res = _distill(engine, "s4", llm_side_effect=RuntimeError("down"))
+        assert res["status"] == "ok"
+        assert res["emotion_hits"] > 0
+        assert 0.60 <= res["initial_salience"] <= 0.85
+
+    def test_store_goes_through_full_pipeline(self, engine):
+        """store=true：精华经 add_memory 建候选（lane=distill），可被 gate 链消费。"""
+        _add_session_mem(engine, "s5", "和团队约定了新的发布流程")
+        _add_session_mem(engine, "s5", "发布流程改为先跑全量测试再打包")
+        _add_session_mem(engine, "s5", "下周一开始执行新流程")
+        res = _distill(engine, "s5", store=True, llm_side_effect=RuntimeError("down"))
+        assert res["status"] == "ok"
+        assert res["store"]["candidate_id"]
+        with Session(engine) as s:
+            cand = s.get(MemoryCandidate, res["store"]["candidate_id"])
+            assert cand.lane == "distill"
+            assert cand.session_id == "s5"
+            meta = cand.provenance
+            assert meta  # provenance 已构造
+
+    def test_empty_session_returns_skipped(self, engine):
+        _add_session_mem(engine, "other", "别的会话的记忆")
+        res = _distill(engine, "nosuch")
+        assert res["status"] == "skipped"
+
+
+class TestDistillRoute:
+    """REST POST /session/distill"""
+
+    @pytest.fixture()
+    def client(self, engine):
+        def gts():
+            return Session(engine)
+
+        with (
+            patch.object(db_module, "get_session", gts),
+            patch("lantai.retrieval.intent.chat_json", return_value={"intent": "fact_lookup"}),
+            patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+            patch("lantai.retrieval.reranker.rerank", return_value=[]),
+            patch("lantai.gate.scorer.embed", return_value=[[0.1] * 8]),
+            patch("lantai.retrieval.hybrid.get_vector_store"),
+            patch("lantai.storage.vector_store.ChromaVectorStore"),
+            patch("lantai.services.distill_service.chat_json", return_value={"summary": "精华一句话"}),
+        ):
+            from lantai.api.app import app
+
+            from fastapi.testclient import TestClient
+
+            with TestClient(app) as c:
+                yield c
+
+    def test_route_preview_only(self, client, engine):
+        for i in range(3):
+            _add_session_mem(engine, "sess_http", f"会话要点{i}：部署配置已确认")
+        resp = client.post("/session/distill", json={"session_id": "sess_http"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["mode"] == "llm"
+        assert "store" not in data
+
+    def test_route_empty_session_id_422(self, client):
+        resp = client.post("/session/distill", json={"session_id": ""})
+        assert resp.status_code == 422

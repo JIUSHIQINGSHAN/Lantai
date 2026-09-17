@@ -162,11 +162,13 @@ def add_memory(req: AddMemoryReq, user_id: str = "default") -> dict:
         )
         if result.get("buffered"):
             return {"buffered": True, "count": result.get("count", 0)}
-        # 缓冲冲刷——批量提取
+        # 缓冲冲刷——批量提取；合并内容可能跨多个 session，
+        # 出身宁可留空也不错误归属（宁 miss 不脏写）
         if result.get("flushed"):
             combined = result.get("combined_content", req.content)
             req_copy = req.model_copy()
             req_copy.content = combined
+            req_copy.session_id = ""
             return _create_candidate_with_extraction(req_copy)
 
     # 默认同步路径
@@ -198,6 +200,7 @@ def _create_candidate_direct(req: AddMemoryReq, fp_data: dict) -> dict:
 
         cand = MemoryCandidate(
             id=new_id("cand"),
+            session_id=(getattr(req, "session_id", "") or "").strip() or None,
             document_id=doc.id,
             topic=fp_data["topic"] or req.tags,
             summary=fp_data["summary"],
@@ -259,6 +262,7 @@ def _create_candidate_with_extraction(
 
         cand = MemoryCandidate(
             id=new_id("cand"),
+            session_id=(getattr(req, "session_id", "") or "").strip() or None,
             document_id=doc.id,
             topic=data["topic"] or req.tags,
             summary=data["summary"],
@@ -408,6 +412,9 @@ def add_raw_memory(req: RawMemoryReq) -> dict:
             return {"memory_id": existing.id, "dedup": True, "verbatim": True}
         emb = embed([req.content])[0]
         mem = build_verbatim_item(req.content, lane, tags=req.tags)
+        # 来源链（v022 票据 01）：直存也带 session 出身；空则 NULL
+        if (getattr(req, "session_id", "") or "").strip():
+            mem.session_id = req.session_id.strip()
         s.add(mem)
         s.flush()
         index_memory_item(

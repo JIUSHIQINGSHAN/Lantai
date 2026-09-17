@@ -218,7 +218,11 @@ def test_migration_v6_adds_provenance_columns(tmp_path):
     apply_migrations(conn)
     assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
     for table in ("memorycandidate", "memoryproposal", "memoryitem"):
-        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        # table-valued PRAGMA 走参数绑定（防注入纪律，与 db.py 一致）
+        cols = {
+            r[0]
+            for r in conn.execute("SELECT name FROM pragma_table_info(?)", (table,)).fetchall()
+        }
         assert "provenance" in cols
     assert (
         conn.execute("SELECT summary FROM memorycandidate WHERE id='c1'").fetchone()[0] == "老候选"
@@ -262,3 +266,112 @@ def test_overview_reports_provenance_by_prompt(mem_db):
         s.commit()
     out = build_overview(session_factory())
     assert out["provenance_by_prompt"] == {"extract-v1": 2}
+
+
+# ── v022 吸收票据 01：来源链贯通（candidate → proposal → MemoryItem）──────
+
+
+def test_chain_inherits_session_to_memory(mem_db):
+    """候选带 session_id → 提案继承 → MemoryItem.session_id 落值。"""
+    session_factory, _ = mem_db
+    with session_factory() as s:
+        s.add(
+            MemoryCandidate(
+                id="cand_sess",
+                document_id="doc_1",
+                user_id="u_9",
+                session_id="sess_chain",
+                summary="链路结论",
+                claims=[],
+                actions=[],
+                lane="general",
+                status="new",
+                provenance={
+                    "prompt": "extract-v1",
+                    "origin_session_id": "sess_chain",
+                    "origin_turn": 2,
+                },
+            )
+        )
+        s.commit()
+    with (
+        patch(
+            "lantai.evolution.proposer.chat_json",
+            return_value={
+                "proposal_type": "add",
+                "target_key": "链路键",
+                "new_content": "链路结论",
+                "memory_type": "semantic",
+                "reason": "r",
+                "confidence": 0.9,
+            },
+        ),
+        patch("lantai.llm.client.embed", return_value=[[0.1] * 8]),
+        patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]),
+        patch(
+            "lantai.retrieval.hybrid.get_vector_store", return_value=Mock(add=Mock(), delete=Mock())
+        ),
+    ):
+        from lantai.evolution.proposer import propose_from_candidate
+
+        prop = propose_from_candidate("cand_sess", {"decision": "promote_semantic"})
+        from lantai.evolution.promoter import apply_proposal
+
+        result = apply_proposal(prop.id)
+    assert result["ok"] is True
+    with session_factory() as s:
+        prop2 = s.get(MemoryProposal, prop.id)
+        assert prop2.session_id == "sess_chain"
+        assert prop2.user_id == "u_9"
+        mem = s.exec(select(MemoryItem).where(MemoryItem.key == "链路键")).one()
+        assert mem.session_id == "sess_chain"
+        assert mem.user_id == "u_9"
+        assert mem.provenance.get("origin_session_id") == "sess_chain"
+        assert mem.provenance.get("origin_turn") == 2
+
+
+def test_proposal_without_session_stays_null(mem_db):
+    """无 session 候选 → 提案/MemoryItem 如实 NULL（宁 miss 不脏写）。"""
+    session_factory, _ = mem_db
+    with session_factory() as s:
+        s.add(
+            MemoryCandidate(
+                id="cand_nosess",
+                document_id="doc_2",
+                summary="无源结论",
+                claims=[],
+                actions=[],
+                lane="general",
+                status="new",
+                provenance={"prompt": "extract-v1"},
+            )
+        )
+        s.commit()
+    with (
+        patch(
+            "lantai.evolution.proposer.chat_json",
+            return_value={
+                "proposal_type": "add",
+                "target_key": "无源键",
+                "new_content": "无源结论",
+                "memory_type": "semantic",
+                "reason": "r",
+                "confidence": 0.9,
+            },
+        ),
+        patch("lantai.llm.client.embed", return_value=[[0.1] * 8]),
+        patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]),
+        patch(
+            "lantai.retrieval.hybrid.get_vector_store", return_value=Mock(add=Mock(), delete=Mock())
+        ),
+    ):
+        from lantai.evolution.proposer import propose_from_candidate
+
+        prop = propose_from_candidate("cand_nosess", {"decision": "promote_semantic"})
+        from lantai.evolution.promoter import apply_proposal
+
+        assert apply_proposal(prop.id)["ok"] is True
+    with session_factory() as s:
+        mem = s.exec(select(MemoryItem).where(MemoryItem.key == "无源键")).one()
+        assert mem.session_id is None
+        assert "origin_session_id" not in mem.provenance

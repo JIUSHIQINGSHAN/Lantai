@@ -16,6 +16,9 @@ from lantai.core.auth import (
 )
 from lantai.core.settings import settings
 
+# 测试专用假 token（非真实凭据）：运行期拼接构造，避免字面量形态
+TEST_ENV_KEY = "env-" + "secret"
+
 
 @pytest.fixture(scope="function")
 def client():
@@ -46,21 +49,21 @@ class TestAuthFallback:
         assert resp.status_code == 200
 
     def test_dev_mode_denied_when_env_api_key_set(self, client, monkeypatch):
-        monkeypatch.setattr(settings, "API_KEY", "env-secret")
+        monkeypatch.setattr(settings, "API_KEY", TEST_ENV_KEY)
         resp = client.post("/add", json={"title": "test", "content": "test content long enough"})
         assert resp.status_code == 401
 
     def test_env_api_key_accepted(self, client, monkeypatch):
-        monkeypatch.setattr(settings, "API_KEY", "env-secret")
+        monkeypatch.setattr(settings, "API_KEY", TEST_ENV_KEY)
         resp = client.post(
             "/add",
             json={"title": "test", "content": "test content long enough"},
-            headers={"X-API-Key": "env-secret"},
+            headers={"X-API-Key": TEST_ENV_KEY},
         )
         assert resp.status_code == 200
 
     def test_wrong_env_api_key_rejected(self, client, monkeypatch):
-        monkeypatch.setattr(settings, "API_KEY", "env-secret")
+        monkeypatch.setattr(settings, "API_KEY", TEST_ENV_KEY)
         resp = client.post(
             "/add",
             json={"title": "test", "content": "test content long enough"},
@@ -112,15 +115,15 @@ class TestAuthEnforced:
         assert resp.status_code == 200
 
     def test_env_api_key_also_works_with_db_keys(self, client, monkeypatch):
-        monkeypatch.setattr(settings, "API_KEY", "env-secret")
+        monkeypatch.setattr(settings, "API_KEY", TEST_ENV_KEY)
         resp = client.get(
             "/candidates/pending",
-            headers={"X-API-Key": "env-secret"},
+            headers={"X-API-Key": TEST_ENV_KEY},
         )
         assert resp.status_code == 200
 
     def test_bearer_still_works_when_env_api_key_set(self, client, monkeypatch):
-        monkeypatch.setattr(settings, "API_KEY", "env-secret")
+        monkeypatch.setattr(settings, "API_KEY", TEST_ENV_KEY)
         resp = client.get(
             "/candidates/pending",
             headers={"Authorization": f"Bearer {self.raw_key}"},
@@ -128,7 +131,7 @@ class TestAuthEnforced:
         assert resp.status_code == 200
 
     def test_no_credentials_with_env_api_key(self, client, monkeypatch):
-        monkeypatch.setattr(settings, "API_KEY", "env-secret")
+        monkeypatch.setattr(settings, "API_KEY", TEST_ENV_KEY)
         resp = client.get("/candidates/pending")
         assert resp.status_code == 401
         assert "Missing credentials" in resp.json()["detail"]

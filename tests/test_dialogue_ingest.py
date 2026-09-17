@@ -167,6 +167,98 @@ class TestDialogueIngest:
             ingest_dialogue("   ")
 
 
+class TestSessionOriginChain:
+    """v022 吸收票据 01：来源链贯通——session_id / origin_turn 显式落写入路径。
+
+    上游 aiduMEI v21.2 教训：写入路径不透传 session，回声抑制/会话萃取/
+    轨迹登记三个功能上线即空转而探针全绿。"""
+
+
+    def test_session_and_turn_recorded_on_candidate(self, param_env):
+        """带 session_id/turn 的对话摄取 → 候选列与 provenance 双落值"""
+        session_factory, _ = param_env
+        from lantai.ingestion.dialogue import ingest_dialogue
+
+        with patch(
+            "lantai.parsing.extractor.chat_json",
+            side_effect=AssertionError("fastpath 不应触发 LLM 提取"),
+        ):
+            result = ingest_dialogue(
+                "记住：明天下午3点开会",
+                user_id="u_7",
+                session_id="sess_abc",
+                turn=3,
+            )
+        assert result["ingested"] is True
+        with session_factory() as s:
+            cand = s.get(MemoryCandidate, result["candidate_id"])
+            assert cand.session_id == "sess_abc"
+            assert cand.user_id == "u_7"
+            assert cand.provenance.get("origin_session_id") == "sess_abc"
+            assert cand.provenance.get("origin_turn") == 3
+            assert cand.provenance.get("origin_source") == "dialogue"
+
+
+    def test_no_session_stays_null(self, param_env):
+        """无 session 的写入如实留空（NULL），不猜测、不编造"""
+        session_factory, _ = param_env
+        from lantai.ingestion.dialogue import ingest_dialogue
+
+        with patch(
+            "lantai.parsing.extractor.chat_json",
+            side_effect=AssertionError("fastpath 不应触发 LLM 提取"),
+        ):
+            result = ingest_dialogue("记住：后天上午10点体检")
+        with session_factory() as s:
+            cand = s.get(MemoryCandidate, result["candidate_id"])
+            assert cand.session_id is None
+            assert "origin_session_id" not in cand.provenance
+            assert "origin_turn" not in cand.provenance
+
+
+    def test_session_recorded_on_extraction_path(self, param_env):
+        """LLM 提取路径同样落 session（非 fastpath 专用）"""
+        session_factory, _ = param_env
+        from lantai.ingestion.dialogue import ingest_dialogue
+
+        with patch(
+            "lantai.parsing.extractor.chat_json",
+            return_value={
+                "summary": "s",
+                "claims": [],
+                "methods": [],
+                "constraints": [],
+                "actions": [],
+                "topic": [],
+                "extractor_confidence": 0.9,
+            },
+        ):
+            result = ingest_dialogue(
+                "我们团队决定下周开始全面转向新架构", user_id="u_7", session_id="sess_ext"
+            )
+        assert result["fastpath"] is False
+        with session_factory() as s:
+            cand = s.get(MemoryCandidate, result["candidate_id"])
+            assert cand.session_id == "sess_ext"
+            assert cand.provenance.get("origin_session_id") == "sess_ext"
+
+
+    def test_dialogue_route_passes_session(self, client):
+        """REST POST /dialogue 透传 session_id / turn"""
+        import lantai.storage.db as db_mod
+
+        resp = client.post(
+            "/dialogue",
+            json={"text": "记住：周五下午发布新版", "session_id": "sess_http", "turn": 5},
+        )
+        assert resp.status_code == 200
+        cand_id = resp.json()["candidate_id"]
+        with db_mod.get_session() as s:
+            cand = s.get(MemoryCandidate, cand_id)
+            assert cand.session_id == "sess_http"
+            assert cand.provenance.get("origin_turn") == 5
+
+
 # ── REST 路由测试 ──────────────────────────────────────────────
 
 

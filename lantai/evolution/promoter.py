@@ -164,10 +164,17 @@ def apply_proposal(proposal_id: str) -> dict:
             )
             # 冷启动导入（dialogue-session-import）：候选原始时间戳继承到
             # MemoryItem.created_at——历史会话时间线不压平到导入时刻
+            src_cand = s.get(MemoryCandidate, prop.candidate_id) if prop.candidate_id else None
             if prop.provenance.get("prompt") == PROVENANCE_PROMPT_DIALOGUE_IMPORT:
-                src_cand = s.get(MemoryCandidate, prop.candidate_id)
                 if src_cand and src_cand.created_at:
                     mem_kwargs["created_at"] = src_cand.created_at
+            # 来源链继承（v022 票据 01）：出身由写入方显式声明，随
+            # candidate → proposal → MemoryItem 落值；空则如实 NULL
+            if src_cand is not None:
+                if src_cand.session_id:
+                    mem_kwargs["session_id"] = src_cand.session_id
+                if src_cand.user_id:
+                    mem_kwargs["user_id"] = src_cand.user_id
             mem = MemoryItem(**mem_kwargs)
             # Skill 资产化：提案携带步骤结构 → 视为技能（procedural 永不衰减）
             if structure.get("steps"):

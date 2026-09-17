@@ -35,6 +35,7 @@ from lantai.models.tables import (
     OperationLog,
     ParamAdviceRun,
     ReflectRun,
+    RetrievalEvent,
     SchedulerRun,
 )
 from lantai.observability import metrics as metrics_module
@@ -429,6 +430,64 @@ def collect_dependency_view() -> dict:
     }
 
 
+def collect_ingest_liveness(session, *, now: datetime | None = None) -> dict:
+    """写线活性（v022 吸收票据 05，上游事故产物）：你在读，那你在写吗？
+
+    读线（检索注入）漏几分钟就发现，写线（落库）漏几周都发现不了——
+    库里的旧记忆确实健康，检索有结果、/health 全绿、指标好看，
+    唯一症状「新记忆再也没进来」没有任何探针在问。
+
+    判据纪律（上游教训逐条落实）：
+    - 读数用 `ingest_conv_reads_24h`（带 session 的真实会话检索）——
+      后台巡检读到的全是自己的心跳，拿它当证据一天没聊必误报；
+    - 写数分 `writes_session`（带 session 的写入）与 `writes_background`
+      （cron/反思类），分子分母构成一并报出，避免读数的人误解；
+    - 零会话检索 = 样本不足 = **无判据**：既不判红也不判绿，如实报告
+      「本探针没有射程」——刚装好就断线的系统不能从门禁一路绿过去。
+    """
+    now = now or utcnow()
+    start = now - timedelta(hours=24)
+    reads_conv = session.exec(
+        select(func.count(RetrievalEvent.id)).where(
+            RetrievalEvent.created_at >= start,
+            RetrievalEvent.session_id.is_not(None),
+            RetrievalEvent.is_system_noise == False,  # noqa: E712
+        )
+    ).one()
+    writes_session = session.exec(
+        select(func.count(MemoryItem.id)).where(
+            MemoryItem.created_at >= start,
+            MemoryItem.session_id.is_not(None),
+        )
+    ).one()
+    writes_background = session.exec(
+        select(func.count(MemoryItem.id)).where(
+            MemoryItem.created_at >= start,
+            MemoryItem.session_id.is_(None),
+        )
+    ).one()
+    reads_conv, writes_session, writes_background = (
+        int(reads_conv),
+        int(writes_session),
+        int(writes_background),
+    )
+    if reads_conv <= 0:
+        judgment = "no_evidence"  # 样本不足：不判红不判绿
+    elif writes_session == 0 and writes_background == 0:
+        judgment = "broken"  # 有会话读而零写入：写线疑似断裂
+    elif writes_session == 0:
+        judgment = "background_only"  # 只有后台在写：宿主写线疑似未接
+    else:
+        judgment = "ok"
+    return {
+        "window_hours": 24,
+        "ingest_conv_reads_24h": reads_conv,
+        "writes_session_24h": writes_session,
+        "writes_background_24h": writes_background,
+        "judgment": judgment,
+    }
+
+
 # ── 告警规则 ───────────────────────────────────────────────────────────
 def _alert(
     alert_id: str,
@@ -487,6 +546,36 @@ def evaluate_alerts(snapshot: dict) -> list[dict]:
                     {"worker": worker["name"], "last_run": worker.get("last_run")},
                 )
             )
+
+    # 写线活性（v022 票据 05）：读线漏几分钟就发现，写线漏几周都发现不了
+    liveness = snapshot.get("ingest_liveness", {})
+    if liveness.get("judgment") == "broken":
+        alerts.append(
+            _alert(
+                "ingest_wiring_broken",
+                "critical",
+                "写线疑似断裂（有会话检索而零写入）",
+                f"24h 内 {liveness.get('ingest_conv_reads_24h')} 次带 session 的真实会话检索，"
+                "但零条新记忆落库——你说的每句新话都在看完即丢。",
+                "检查宿主写线钩子是否挂上（读线正常不代表写线在写）；"
+                "跑 scripts/check_ingest_wiring.py 做写读回环自查。",
+                {"ingest_liveness": liveness},
+            )
+        )
+    elif liveness.get("judgment") == "background_only":
+        alerts.append(
+            _alert(
+                "ingest_background_only",
+                "high",
+                "只有后台任务在写，宿主写线疑似未接",
+                f"24h 内 {liveness.get('ingest_conv_reads_24h')} 次会话检索；"
+                f"写入全部来自后台（{liveness.get('writes_background_24h')} 条），"
+                "没有任何带 session 的会话写入。",
+                "检查对话写入通道（POST /dialogue）与宿主钩子透传的 session_id。",
+                {"ingest_liveness": liveness},
+            )
+        )
+    # judgment == no_evidence：样本不足，如实不告警（探针没有射程，不装绿）
 
     latest_reflect = pipeline.get("latest_reflect_run") or {}
     if latest_reflect.get("error"):
@@ -680,6 +769,7 @@ def build_monitor_snapshot(
         "scheduler": collect_scheduler_metrics(session, now=now),
         "requests": collector.snapshot(window, now=now.timestamp()),
         "quality": quality,
+        "ingest_liveness": collect_ingest_liveness(session, now=now),
         "security": collect_security_view(session),
         "dependency": collect_dependency_view(),
     }

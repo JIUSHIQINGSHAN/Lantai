@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **v022 上游吸收（aiduMEI v21.2 Memmy 融改，调研 `docs/research/upstream-v212-gap-analysis.md`，票据 `.scratch/v022-upstream-v212-adopt/`）**:
+  - **来源链贯通（票据 01）**：`session_id` / `origin_turn` 显式透传——对话摄取（`POST /dialogue[/async]`）、手动写入（`AddMemoryReq`）、原文直存（`RawMemoryReq`）落 `MemoryCandidate.session_id` 与 `provenance.origin_*`，随 `proposer → promoter` 全链继承到 `MemoryItem`；无来源如实 NULL（上游教训：出身必须显式传递，隐式通道上线即空转）。Coalesce 冲刷合并内容跨会话，出身宁留空不错误归属。
+  - **回声抑制（票据 01 检索半，上游 M2）**：`hybrid.py` 打分前滤掉本会话自写候选；`ECHO_SUPPRESS_ENABLED` 默认关（兰台 session 域检索本就按 session 圈定，默认开会清空会话内召回）；空 session 一律不过滤。
+  - **MMR 多样性截断（票据 02，上游 M4）**：`mmr_select`（λ·相关 −(1−λ)·jieba token 冗余，λ 默认 0.7 fail-closed 夹取）；`MMR_ENABLED` 默认关，关闭时逐条退回按分截断（零回归）；选择结果进 explain 域。
+  - **错误签名通道 errsig（票据 03，上游 M6）**：`lantai/retrieval/errsig.py` 单一真源正则（CamelCase + Error/Exception/Warning），写入与检索两侧共用 import 杜绝拷贝漂移；查询含报错签名时正文精确命中候选加有界 bonus（`ERRSIG_BONUS` 默认 0.10，0=关闭）。
+  - **咀华（Juhua，会话精华萃取，票据 04，上游 session distill；命名登记 CONTEXT.md，韩愈《进学解》「含英咀华」）**：`POST /session/distill`（只提炼不落库可安全重跑；`store=true` 经 `add_memory` 完整闸门管线进向量库）；新泳道 `distill` 慢衰减（base_s=30）；LLM 不可用确定性降级（取该会话最长两条拼接）并标 `distill_mode=fallback`；情绪词表有界显著性 0.60~0.85；`DISTILL_ENABLED` / `DISTILL_MIN_MEMORIES`（默认 3）。
+  - **写线活性探针（票据 05，上游写线断裂事故产物）**：司天新增 `ingest_liveness` 域——`ingest_conv_reads_24h`（带 session 的真实会话检索，后台巡检不算数）+ 24h 写入分列（会话/后台）；三态判据 `broken`→critical、`background_only`→high、`no_evidence` 如实不告警（刚装好就断线不能一路绿过去）；`retrieval_event` 补 `session_id`（schema v21 增量迁移）；新增 `scripts/check_ingest_wiring.py` 写读回环自查（只看 /add 返 200 不算数；SSRF 纪律：默认仅回环目标，`--allow-remote` 显式放行）。
+  - **轨迹级奖励信用（票据 06 最小切片，上游 M1）**：`EpisodeRecord` / `EpisodeStep` 表 + `POST /evolve/episode/feedback` 按位置回传 + `episode_credit_weights` 纯函数（λ·均匀 + (1−λ)·归一化 γ 递减，和恒为 1）；**只登记不接检索权重**（上游默认权重 0 同款纪律，察窗攒数据再开）。
+  - 新增测试 71 例（`test_v022_retrieval.py` / `test_distill.py` / `test_episode_credit.py` / `TestSessionOriginChain` / `TestIngestLiveness` 等），带开关特性一律开+关对照冒烟。
+
 ### Fixed
 - **鉴权双轨断裂（P0）**：业务路由原先只走库内 Bearer / DEV MODE，环境变量 `API_KEY` 与 `X-API-Key` 从未生效；空库 + 非回环可零鉴权写记忆。现 `get_current_user` 统一为：`X-API-Key`（命中即 admin）→ 库内 Bearer → **仅回环且无 API_KEY 且空库**才 DEV MODE。
 - **启动入口缺失（P0）**：`lantai-server`（`lantai.api.app:main`）此前无 `main()`；Dockerfile/README 引用不存在的 `api_server.py`。已补 `main()` 与薄 shim，Docker `CMD` 改为 `lantai-server`。

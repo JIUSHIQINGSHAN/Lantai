@@ -213,6 +213,115 @@ def test_build_monitor_snapshot_aggregates_real_db(monitor_env):
     assert workers["ingest"]["last_run"] is not None
     assert workers["ingest"]["overdue"] is True  # 5 小时前跑过、周期 1h
     assert workers["ingest"]["critical"] is True
+
+
+# ── v022 吸收票据 05：写线活性探针（上游写线断裂事故产物）────────────────
+
+
+def _retrieval_event(i, *, session_id, with_session=True, noise=False, now=None):
+    from lantai.models.tables import RetrievalEvent
+
+    return RetrievalEvent(
+        id=f"rev_{i}",
+        trace_id=f"trace_{i}",
+        query_text=f"q{i}",
+        query_norm_hash=f"h{i}",
+        lane="",
+        session_id=session_id if with_session else None,
+        param_snapshot_hash="snap",
+        created_at=now or utcnow(),
+        is_system_noise=noise,
+    )
+
+
+class TestIngestLiveness:
+    """你在读，那你在写吗？——三态判据（上游教训逐条落实）。"""
+
+    def test_broken_when_conv_reads_without_writes(self, monitor_env):
+        """有会话读而零写入 → broken → critical 告警。"""
+        session_factory, _, _ = monitor_env
+        now = utcnow()
+        with session_factory() as s:
+            for i in range(3):
+                s.add(_retrieval_event(i, session_id="sess_a", now=now))
+            s.commit()
+        with session_factory() as s:
+            snap = build_monitor_snapshot(s, now=now, include_quality=False)
+        live = snap["ingest_liveness"]
+        assert live["ingest_conv_reads_24h"] == 3
+        assert live["judgment"] == "broken"
+        assert any(a["id"] == "ingest_wiring_broken" for a in snap["alerts"])
+        assert any(a["severity"] == "critical" for a in snap["alerts"])
+
+    def test_ok_when_session_writes_present(self, monitor_env):
+        """有会话读 + 带 session 写入 → ok，无告警。"""
+        session_factory, _, _ = monitor_env
+        now = utcnow()
+        with session_factory() as s:
+            s.add(_retrieval_event(1, session_id="sess_a", now=now))
+            s.add(_mem(10, session_id="sess_a"))
+            s.commit()
+        with session_factory() as s:
+            snap = build_monitor_snapshot(s, now=now, include_quality=False)
+        assert snap["ingest_liveness"]["judgment"] == "ok"
+        assert not any(
+            a["id"].startswith("ingest_") for a in snap["alerts"]
+        )
+
+    def test_background_only_judged_not_ok(self, monitor_env):
+        """只有后台（cron/反思，session 为空）在写 → background_only → high 告警。
+
+        分子分母分列：后台写入不算「有人在用写线」。"""
+        session_factory, _, _ = monitor_env
+        now = utcnow()
+        with session_factory() as s:
+            s.add(_retrieval_event(1, session_id="sess_a", now=now))
+            s.add(_mem(10, session_id=None))  # 反思/蒸馏类后台写入
+            s.commit()
+        with session_factory() as s:
+            snap = build_monitor_snapshot(s, now=now, include_quality=False)
+        live = snap["ingest_liveness"]
+        assert live["judgment"] == "background_only"
+        assert live["writes_background_24h"] == 1
+        assert live["writes_session_24h"] == 0
+        assert any(a["id"] == "ingest_background_only" for a in snap["alerts"])
+
+    def test_no_evidence_third_state(self, monitor_env):
+        """零会话检索 = 样本不足 = 无判据：不判红不判绿（上游 --require-judgment 三态）。"""
+        session_factory, _, _ = monitor_env
+        now = utcnow()
+        with session_factory() as s:
+            s.commit()
+        with session_factory() as s:
+            snap = build_monitor_snapshot(s, now=now, include_quality=False)
+        assert snap["ingest_liveness"]["judgment"] == "no_evidence"
+        assert not any(a["id"].startswith("ingest_") for a in snap["alerts"])
+
+    def test_noise_and_stale_reads_excluded(self, monitor_env):
+        """系统噪音与 24h 窗口外的事件不计入读数。"""
+        session_factory, _, _ = monitor_env
+        now = utcnow()
+        stale = now - timedelta(hours=30)
+        with session_factory() as s:
+            s.add(_retrieval_event(1, session_id="sess_a", now=stale))  # 窗口外
+            s.add(_retrieval_event(2, session_id="sess_a", noise=True, now=now))  # 噪音
+            s.add(_retrieval_event(3, session_id="sess_a", with_session=False, now=now))  # 无 session
+            s.commit()
+        with session_factory() as s:
+            live = build_monitor_snapshot(s, now=now, include_quality=False)["ingest_liveness"]
+        assert live["ingest_conv_reads_24h"] == 0
+        assert live["judgment"] == "no_evidence"
+
+
+def test_snapshot_alerts_worker_overdue(monitor_env):
+    session_factory, _engine, collector = monitor_env
+    now = utcnow()
+    with session_factory() as s:
+        s.add(SchedulerRun(name="ingest", last_run_utc=(now - timedelta(hours=5)).isoformat()))
+        s.commit()
+    with session_factory() as s:
+        snapshot = build_monitor_snapshot(s, now=now, include_quality=False)
+    workers = {w["name"]: w for w in snapshot["scheduler"]["workers"]}
     assert workers["digest"]["status"] == "never"
 
     ids = {alert["id"] for alert in snapshot["alerts"]}

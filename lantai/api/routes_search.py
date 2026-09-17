@@ -21,7 +21,7 @@ def search(
     gate = relevance_check(req.query, user_id=ctx.user_id)
     if not req.force and not gate["needs_memory"]:
         # 闸门拦截也算一次观测（zero_result=True 的意义之一）
-        event_id = _try_log(req, [], 0, gate)
+        event_id = _try_log(req, [], 0, gate, session_id=ctx.session_id)
         return {"results": [], "gate": gate, "event_id": event_id}
 
     # Step 2: 混合检索
@@ -46,7 +46,7 @@ def search(
         results = result
     # ACL：检索结果按绑定 lane 集收窄（宁 miss 不放行未绑定 lane）
     results = filter_results_by_lanes(results, ctx.allowed_lanes)
-    event_id = _try_log(req, results, latency_ms, gate)
+    event_id = _try_log(req, results, latency_ms, gate, session_id=ctx.session_id)
     from lantai.retrieval.evidence import build_evidence
 
     evidence = build_evidence(results)
@@ -84,11 +84,21 @@ def search_graph_expand(req: GraphExpandReq, ctx: Principal = Depends(get_curren
     )
 
 
-def _try_log(req, results: list, latency_ms: int, gate: dict) -> str | None:
-    """检索事件埋点（方向二）：失败不影响主链路。返回 event_id 供生成侧回填。"""
+def _try_log(req, results: list, latency_ms: int, gate: dict, *, session_id: str | None = None) -> str | None:
+    """检索事件埋点（方向二）：失败不影响主链路。返回 event_id 供生成侧回填。
+
+    session_id 透传（v022 票据 05）：写活性判据用「带 session 的真实会话读」，
+    不能拿后台巡检量凑数——探针读到的是自己的心跳（上游事故）。"""
     try:
         from lantai.observability.retrieval_log import log_retrieval
 
-        return log_retrieval(req.query, results, latency_ms=latency_ms, gate=gate, lanes=req.lanes)
+        return log_retrieval(
+            req.query,
+            results,
+            latency_ms=latency_ms,
+            gate=gate,
+            lanes=req.lanes,
+            session_id=session_id,
+        )
     except Exception:
         return None  # 埋点必须零侵入

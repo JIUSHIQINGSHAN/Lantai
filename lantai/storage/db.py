@@ -19,16 +19,26 @@ engine = create_engine(settings.DATABASE_URL, echo=False, connect_args={"timeout
 CURRENT_SCHEMA_VERSION = 20
 
 
-def _ensure_column(conn, table: str, column: str, ddl: str) -> None:
-    """列缺失时 ADD COLUMN；列已存在或表不存在均幂等跳过。"""
+def _has_column(conn, table: str, column: str) -> bool:
+    """查询列是否存在；表不存在视为 True（迁移链不建表，建表归 create_all）。
+
+    DDL 迁移一律在调用点写**固定字面量**（SQLite ALTER TABLE 不支持
+    绑定参数，防注入整改后不再保留可变 DDL 的执行入口）；列存在性
+    检查走 table-valued PRAGMA 的参数绑定查询。"""
     try:
-        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-        if column in cols:
-            return
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
-        logger.info("迁移：%s.%s 已补充", table, column)
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+        if not exists:
+            return True
+        return bool(
+            conn.execute(
+                "SELECT name FROM pragma_table_info(?) WHERE name = ?", (table, column)
+            ).fetchall()
+        )
     except Exception as exc:
-        logger.warning("迁移跳过 %s.%s: %s", table, column, exc)
+        logger.warning("列检查跳过 %s.%s: %s", table, column, exc)
+        return False
 
 
 def apply_migrations(conn) -> None:
@@ -44,16 +54,24 @@ def apply_migrations(conn) -> None:
 
         # v1 -> v2：v0.4/v0.5 累积的三个幂等列迁移
         if user_version < 2:
-            _ensure_column(conn, "memoryitem", "decay_class", "TEXT DEFAULT 'episodic'")
-            _ensure_column(conn, "retrieval_event", "is_system_noise", "BOOLEAN DEFAULT 0")
-            _ensure_column(conn, "memorycandidate", "review_due_at", "DATETIME")
+            if not _has_column(conn, "memoryitem", "decay_class"):
+                conn.execute(
+                    "ALTER TABLE memoryitem ADD COLUMN decay_class TEXT DEFAULT 'episodic'"
+                )
+            if not _has_column(conn, "retrieval_event", "is_system_noise"):
+                conn.execute(
+                    "ALTER TABLE retrieval_event ADD COLUMN is_system_noise BOOLEAN DEFAULT 0"
+                )
+            if not _has_column(conn, "memorycandidate", "review_due_at"):
+                conn.execute("ALTER TABLE memorycandidate ADD COLUMN review_due_at DATETIME")
             conn.execute("PRAGMA user_version = 2")
             conn.commit()
             logger.info("数据库增量迁移 v2 完成 ✅")
 
         # v2 -> v3（ADR-0012 scene 聚合层）：memoryitem.scene_id + memoryscene 表
         if user_version < 3:
-            _ensure_column(conn, "memoryitem", "scene_id", "TEXT")
+            if not _has_column(conn, "memoryitem", "scene_id"):
+                conn.execute("ALTER TABLE memoryitem ADD COLUMN scene_id TEXT")
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS memoryscene ("
                 "id TEXT PRIMARY KEY, name TEXT, summary TEXT, "
@@ -71,28 +89,39 @@ def apply_migrations(conn) -> None:
             logger.info("数据库增量迁移 v3 完成（scene 聚合层）")
         # v3 -> v4（可观测性）：retrieval_event 补 scene_ids / estimated_tokens
         if user_version < 4:
-            _ensure_column(conn, "retrieval_event", "scene_ids", "TEXT")
-            _ensure_column(conn, "retrieval_event", "estimated_tokens", "INTEGER DEFAULT 0")
+            if not _has_column(conn, "retrieval_event", "scene_ids"):
+                conn.execute("ALTER TABLE retrieval_event ADD COLUMN scene_ids TEXT")
+            if not _has_column(conn, "retrieval_event", "estimated_tokens"):
+                conn.execute(
+                    "ALTER TABLE retrieval_event ADD COLUMN estimated_tokens INTEGER DEFAULT 0"
+                )
             conn.execute("PRAGMA user_version = 4")
             conn.commit()
             logger.info("数据库增量迁移 v4 完成（可观测性）")
         # v4 -> v5（scene 增量聚类）：memoryscene 补 centroid 质心
         if user_version < 5:
-            _ensure_column(conn, "memoryscene", "centroid", "TEXT")
+            if not _has_column(conn, "memoryscene", "centroid"):
+                conn.execute("ALTER TABLE memoryscene ADD COLUMN centroid TEXT")
             conn.execute("PRAGMA user_version = 5")
             conn.commit()
             logger.info("数据库增量迁移 v5 完成（scene 增量聚类质心）")
         # v5 -> v6（provenance 提取来源）：candidate/proposal/memoryitem 补 provenance
         if user_version < 6:
-            _ensure_column(conn, "memorycandidate", "provenance", "TEXT")
-            _ensure_column(conn, "memoryproposal", "provenance", "TEXT")
-            _ensure_column(conn, "memoryitem", "provenance", "TEXT")
+            if not _has_column(conn, "memorycandidate", "provenance"):
+                conn.execute("ALTER TABLE memorycandidate ADD COLUMN provenance TEXT")
+            if not _has_column(conn, "memoryproposal", "provenance"):
+                conn.execute("ALTER TABLE memoryproposal ADD COLUMN provenance TEXT")
+            if not _has_column(conn, "memoryitem", "provenance"):
+                conn.execute("ALTER TABLE memoryitem ADD COLUMN provenance TEXT")
             conn.execute("PRAGMA user_version = 6")
             conn.commit()
             logger.info("数据库增量迁移 v6 完成（provenance 提取来源）")
         # v6 -> v7（反思可测量）：memoryproposal 补 decision_reason 裁决原因
         if user_version < 7:
-            _ensure_column(conn, "memoryproposal", "decision_reason", "TEXT DEFAULT ''")
+            if not _has_column(conn, "memoryproposal", "decision_reason"):
+                conn.execute(
+                    "ALTER TABLE memoryproposal ADD COLUMN decision_reason TEXT DEFAULT ''"
+                )
             conn.execute("PRAGMA user_version = 7")
             conn.commit()
             logger.info("数据库增量迁移 v7 完成（裁决原因）")
@@ -107,7 +136,8 @@ def apply_migrations(conn) -> None:
             logger.info("数据库增量迁移 v8 完成（worker 运行记录持久化）")
         # v8 -> v9（v0.7 树状图谱 + 技能结晶）：memoryitem.tree_path + memorynode/skillcrystal 表
         if user_version < 9:
-            _ensure_column(conn, "memoryitem", "tree_path", "TEXT")
+            if not _has_column(conn, "memoryitem", "tree_path"):
+                conn.execute("ALTER TABLE memoryitem ADD COLUMN tree_path TEXT")
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS memorynode ("
                 "id TEXT PRIMARY KEY, parent_id TEXT, name TEXT, "
@@ -149,7 +179,10 @@ def apply_migrations(conn) -> None:
             logger.info("数据库增量迁移 v10 完成（反思运行记录）")
         # v10 -> v11（裁决失败留痕）：reflect_run 补 rejecter_failed 裁决 LLM 失败次数
         if user_version < 11:
-            _ensure_column(conn, "reflect_run", "rejecter_failed", "INTEGER DEFAULT 0")
+            if not _has_column(conn, "reflect_run", "rejecter_failed"):
+                conn.execute(
+                    "ALTER TABLE reflect_run ADD COLUMN rejecter_failed INTEGER DEFAULT 0"
+                )
             conn.execute("PRAGMA user_version = 11")
             conn.commit()
             logger.info("数据库增量迁移 v11 完成（裁决失败留痕）")
@@ -170,16 +203,27 @@ def apply_migrations(conn) -> None:
             logger.info("数据库增量迁移 v12 完成（底本五段会话快照）")
         # v12 -> v13（观察期来源可审计）：区分定时与手动反思；旧数据保守标 unknown
         if user_version < 13:
-            _ensure_column(conn, "reflect_run", "source", "TEXT DEFAULT 'unknown'")
+            if not _has_column(conn, "reflect_run", "source"):
+                conn.execute("ALTER TABLE reflect_run ADD COLUMN source TEXT DEFAULT 'unknown'")
             conn.execute("PRAGMA user_version = 13")
             conn.commit()
             logger.info("数据库增量迁移 v13 完成（反思运行来源）")
         # v13 -> v14（案牍控制台）：候选延期与单步撤销留痕
         if user_version < 14:
-            _ensure_column(conn, "memorycandidate", "deferred_at", "DATETIME")
-            _ensure_column(conn, "memorycandidate", "previous_review_due_at", "DATETIME")
-            _ensure_column(conn, "memorycandidate", "defer_count", "INTEGER DEFAULT 0")
-            _ensure_column(conn, "memorycandidate", "defer_reason", "TEXT DEFAULT ''")
+            if not _has_column(conn, "memorycandidate", "deferred_at"):
+                conn.execute("ALTER TABLE memorycandidate ADD COLUMN deferred_at DATETIME")
+            if not _has_column(conn, "memorycandidate", "previous_review_due_at"):
+                conn.execute(
+                    "ALTER TABLE memorycandidate ADD COLUMN previous_review_due_at DATETIME"
+                )
+            if not _has_column(conn, "memorycandidate", "defer_count"):
+                conn.execute(
+                    "ALTER TABLE memorycandidate ADD COLUMN defer_count INTEGER DEFAULT 0"
+                )
+            if not _has_column(conn, "memorycandidate", "defer_reason"):
+                conn.execute(
+                    "ALTER TABLE memorycandidate ADD COLUMN defer_reason TEXT DEFAULT ''"
+                )
             conn.execute("PRAGMA user_version = 14")
             conn.commit()
             logger.info("数据库增量迁移 v14 完成（候选延期留痕）")
@@ -221,7 +265,8 @@ def apply_migrations(conn) -> None:
             logger.info("数据库增量迁移 v16 完成（札记 Session Scratchpad）")
         # v16 -> v17（辨域 User-Session-Agent 三维硬隔离，ADR-0034）：memoryitem.domain 列
         if user_version < 17:
-            _ensure_column(conn, "memoryitem", "domain", "TEXT DEFAULT 'user'")
+            if not _has_column(conn, "memoryitem", "domain"):
+                conn.execute("ALTER TABLE memoryitem ADD COLUMN domain TEXT DEFAULT 'user'")
             try:
                 tables = [
                     r[0]
@@ -239,25 +284,85 @@ def apply_migrations(conn) -> None:
             conn.commit()
         # v17 -> v18: Add ownership fields to multiple tables
         if user_version < 18:
-            tables_to_update = [
-                "rawdocument",
-                "documentchunk",
-                "memorycandidate",
-                "memoryitem",
-                "memoryproposal",
-                "memoryedge",
-                "session_checkpoint",
-                "session_scratchpad",
-                "persona_profile",
-            ]
-            for table in tables_to_update:
-                _ensure_column(conn, table, "tenant_id", "TEXT")
-                _ensure_column(conn, table, "user_id", "TEXT")
-                _ensure_column(conn, table, "agent_id", "TEXT")
-                _ensure_column(conn, table, "session_id", "TEXT")
+            # v18 身份列：九张表各补 tenant/user/agent/session 四列（固定字面量展开）
+            if not _has_column(conn, "rawdocument", "tenant_id"):
+                conn.execute("ALTER TABLE rawdocument ADD COLUMN tenant_id TEXT")
+            if not _has_column(conn, "rawdocument", "user_id"):
+                conn.execute("ALTER TABLE rawdocument ADD COLUMN user_id TEXT")
+            if not _has_column(conn, "rawdocument", "agent_id"):
+                conn.execute("ALTER TABLE rawdocument ADD COLUMN agent_id TEXT")
+            if not _has_column(conn, "rawdocument", "session_id"):
+                conn.execute("ALTER TABLE rawdocument ADD COLUMN session_id TEXT")
+            if not _has_column(conn, "documentchunk", "tenant_id"):
+                conn.execute("ALTER TABLE documentchunk ADD COLUMN tenant_id TEXT")
+            if not _has_column(conn, "documentchunk", "user_id"):
+                conn.execute("ALTER TABLE documentchunk ADD COLUMN user_id TEXT")
+            if not _has_column(conn, "documentchunk", "agent_id"):
+                conn.execute("ALTER TABLE documentchunk ADD COLUMN agent_id TEXT")
+            if not _has_column(conn, "documentchunk", "session_id"):
+                conn.execute("ALTER TABLE documentchunk ADD COLUMN session_id TEXT")
+            if not _has_column(conn, "memorycandidate", "tenant_id"):
+                conn.execute("ALTER TABLE memorycandidate ADD COLUMN tenant_id TEXT")
+            if not _has_column(conn, "memorycandidate", "user_id"):
+                conn.execute("ALTER TABLE memorycandidate ADD COLUMN user_id TEXT")
+            if not _has_column(conn, "memorycandidate", "agent_id"):
+                conn.execute("ALTER TABLE memorycandidate ADD COLUMN agent_id TEXT")
+            if not _has_column(conn, "memorycandidate", "session_id"):
+                conn.execute("ALTER TABLE memorycandidate ADD COLUMN session_id TEXT")
+            if not _has_column(conn, "memoryitem", "tenant_id"):
+                conn.execute("ALTER TABLE memoryitem ADD COLUMN tenant_id TEXT")
+            if not _has_column(conn, "memoryitem", "user_id"):
+                conn.execute("ALTER TABLE memoryitem ADD COLUMN user_id TEXT")
+            if not _has_column(conn, "memoryitem", "agent_id"):
+                conn.execute("ALTER TABLE memoryitem ADD COLUMN agent_id TEXT")
+            if not _has_column(conn, "memoryitem", "session_id"):
+                conn.execute("ALTER TABLE memoryitem ADD COLUMN session_id TEXT")
+            if not _has_column(conn, "memoryproposal", "tenant_id"):
+                conn.execute("ALTER TABLE memoryproposal ADD COLUMN tenant_id TEXT")
+            if not _has_column(conn, "memoryproposal", "user_id"):
+                conn.execute("ALTER TABLE memoryproposal ADD COLUMN user_id TEXT")
+            if not _has_column(conn, "memoryproposal", "agent_id"):
+                conn.execute("ALTER TABLE memoryproposal ADD COLUMN agent_id TEXT")
+            if not _has_column(conn, "memoryproposal", "session_id"):
+                conn.execute("ALTER TABLE memoryproposal ADD COLUMN session_id TEXT")
+            if not _has_column(conn, "memoryedge", "tenant_id"):
+                conn.execute("ALTER TABLE memoryedge ADD COLUMN tenant_id TEXT")
+            if not _has_column(conn, "memoryedge", "user_id"):
+                conn.execute("ALTER TABLE memoryedge ADD COLUMN user_id TEXT")
+            if not _has_column(conn, "memoryedge", "agent_id"):
+                conn.execute("ALTER TABLE memoryedge ADD COLUMN agent_id TEXT")
+            if not _has_column(conn, "memoryedge", "session_id"):
+                conn.execute("ALTER TABLE memoryedge ADD COLUMN session_id TEXT")
+            if not _has_column(conn, "session_checkpoint", "tenant_id"):
+                conn.execute("ALTER TABLE session_checkpoint ADD COLUMN tenant_id TEXT")
+            if not _has_column(conn, "session_checkpoint", "user_id"):
+                conn.execute("ALTER TABLE session_checkpoint ADD COLUMN user_id TEXT")
+            if not _has_column(conn, "session_checkpoint", "agent_id"):
+                conn.execute("ALTER TABLE session_checkpoint ADD COLUMN agent_id TEXT")
+            if not _has_column(conn, "session_checkpoint", "session_id"):
+                conn.execute("ALTER TABLE session_checkpoint ADD COLUMN session_id TEXT")
+            if not _has_column(conn, "session_scratchpad", "tenant_id"):
+                conn.execute("ALTER TABLE session_scratchpad ADD COLUMN tenant_id TEXT")
+            if not _has_column(conn, "session_scratchpad", "user_id"):
+                conn.execute("ALTER TABLE session_scratchpad ADD COLUMN user_id TEXT")
+            if not _has_column(conn, "session_scratchpad", "agent_id"):
+                conn.execute("ALTER TABLE session_scratchpad ADD COLUMN agent_id TEXT")
+            if not _has_column(conn, "session_scratchpad", "session_id"):
+                conn.execute("ALTER TABLE session_scratchpad ADD COLUMN session_id TEXT")
+            if not _has_column(conn, "persona_profile", "tenant_id"):
+                conn.execute("ALTER TABLE persona_profile ADD COLUMN tenant_id TEXT")
+            if not _has_column(conn, "persona_profile", "user_id"):
+                conn.execute("ALTER TABLE persona_profile ADD COLUMN user_id TEXT")
+            if not _has_column(conn, "persona_profile", "agent_id"):
+                conn.execute("ALTER TABLE persona_profile ADD COLUMN agent_id TEXT")
+            if not _has_column(conn, "persona_profile", "session_id"):
+                conn.execute("ALTER TABLE persona_profile ADD COLUMN session_id TEXT")
 
             # domain to memorycandidate
-            _ensure_column(conn, "memorycandidate", "domain", "TEXT DEFAULT 'user'")
+            if not _has_column(conn, "memorycandidate", "domain"):
+                conn.execute(
+                    "ALTER TABLE memorycandidate ADD COLUMN domain TEXT DEFAULT 'user'"
+                )
 
             conn.execute("PRAGMA user_version = 18")
             conn.commit()
@@ -265,19 +370,32 @@ def apply_migrations(conn) -> None:
 
         # v18 -> v19: 认知底层字段 (memorycandidate.role, memoryitem.promotion_trace)
         if user_version < 19:
-            _ensure_column(conn, "memorycandidate", "role", "TEXT DEFAULT 'observation'")
-            _ensure_column(conn, "memoryitem", "promotion_trace", "TEXT DEFAULT '{}'")
+            if not _has_column(conn, "memorycandidate", "role"):
+                conn.execute(
+                    "ALTER TABLE memorycandidate ADD COLUMN role TEXT DEFAULT 'observation'"
+                )
+            if not _has_column(conn, "memoryitem", "promotion_trace"):
+                conn.execute(
+                    "ALTER TABLE memoryitem ADD COLUMN promotion_trace TEXT DEFAULT '{}'"
+                )
             conn.execute("PRAGMA user_version = 19")
             conn.commit()
             logger.info("Migrated v19: Cognitive fields (role, promotion_trace)")
 
         # v19 -> v20: Knowledge Lifecycle 状态机字段 (v0.4)
         if user_version < 20:
-            _ensure_column(conn, "memoryitem", "lifecycle_status", "TEXT NOT NULL DEFAULT 'active'")
-            _ensure_column(conn, "memoryitem", "superseded_by", "TEXT")
-            _ensure_column(conn, "memoryitem", "weakened_at", "DATETIME")
-            _ensure_column(conn, "memoryitem", "superseded_at", "DATETIME")
-            _ensure_column(conn, "memoryitem", "retired_at", "DATETIME")
+            if not _has_column(conn, "memoryitem", "lifecycle_status"):
+                conn.execute(
+                    "ALTER TABLE memoryitem ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'"
+                )
+            if not _has_column(conn, "memoryitem", "superseded_by"):
+                conn.execute("ALTER TABLE memoryitem ADD COLUMN superseded_by TEXT")
+            if not _has_column(conn, "memoryitem", "weakened_at"):
+                conn.execute("ALTER TABLE memoryitem ADD COLUMN weakened_at DATETIME")
+            if not _has_column(conn, "memoryitem", "superseded_at"):
+                conn.execute("ALTER TABLE memoryitem ADD COLUMN superseded_at DATETIME")
+            if not _has_column(conn, "memoryitem", "retired_at"):
+                conn.execute("ALTER TABLE memoryitem ADD COLUMN retired_at DATETIME")
             try:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS ix_memoryitem_lifecycle_status ON memoryitem(lifecycle_status)"

@@ -4,22 +4,14 @@ scripts/migrate_v03_promotion_trace.py
 幂等：字段已存在时静默跳过。
 """
 
-import os
 import sqlite3
-import sys
-
-DB_PATH = os.environ.get("LANTAI_DB", "lantai.db")
 
 
-def migrate(db_path: str = DB_PATH) -> None:
-    print(f"[migrate_v03] target DB: {db_path}")
-    if not os.path.exists(db_path):
-        print(
-            f"[migrate_v03] DB not found at {db_path}, skipping (will be created fresh on first run)"
-        )
-        return
+def apply_promotion_trace_migration() -> None:
+    """为 memoryitem 补 promotion_trace 列（幂等；DDL 固定字面量，零拼接）。
 
-    conn = sqlite3.connect(db_path)
+    目标库固定为本仓工作目录的 lantai.db（一次性历史迁移脚本，无参数）。"""
+    conn = sqlite3.connect("lantai.db")
     try:
         cursor = conn.cursor()
 
@@ -27,7 +19,9 @@ def migrate(db_path: str = DB_PATH) -> None:
         cursor.execute("PRAGMA table_info(memoryitem)")
         columns = {row[1] for row in cursor.fetchall()}
 
-        if "promotion_trace" in columns:
+        if not columns:
+            print("[migrate_v03] memoryitem table not found, skipping (fresh DB).")
+        elif "promotion_trace" in columns:
             print("[migrate_v03] promotion_trace already exists, skipping.")
         else:
             cursor.execute("ALTER TABLE memoryitem ADD COLUMN promotion_trace TEXT DEFAULT '{}'")
@@ -38,5 +32,4 @@ def migrate(db_path: str = DB_PATH) -> None:
 
 
 if __name__ == "__main__":
-    path = sys.argv[1] if len(sys.argv) > 1 else DB_PATH
-    migrate(path)
+    apply_promotion_trace_migration()

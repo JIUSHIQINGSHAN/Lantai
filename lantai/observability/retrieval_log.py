@@ -55,10 +55,14 @@ def log_retrieval(
     gate: dict | None = None,
     trace_id: str | None = None,
     lanes: list[str] | None = None,
+    session_id: str | None = None,
 ) -> str | None:
     """
     在检索出口记录一次事件。失败仅记日志，绝不抛给主链路。
     返回事件 id（供后续回填 used_ids）；失败返回 None。
+
+    session_id：来源链（v022 票据 05）——带 session 的检索才算「真实会话
+    读」，写活性判据此计数；不透传则留空（如实 NULL，不猜测）。
     """
     try:
         event_id = new_id("rev")
@@ -79,6 +83,7 @@ def log_retrieval(
                     query_text=query,
                     query_norm_hash=_norm_hash(query),
                     lane=",".join(lanes) if lanes else "",
+                    session_id=(session_id or "").strip() or None,
                     intent_bucket=intent if isinstance(intent, str) else None,
                     param_snapshot_hash=snapshot_hash(default_snapshot()),
                     result_ids=result_ids,

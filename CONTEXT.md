@@ -60,6 +60,7 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **持节**（Chijie，智能体自主审批） | 赋予受信任的外部 AI 智能体自主治理记忆库的协议规范；支持智能体自动巡检、批量审批候选与清理噪音。 | 命名：汉唐典制天子特使「持节」巡行决断；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0039](docs/adr/0039-agent-autonomous-triage.md) |
 | **认知闭环**（Cognitive Loop） | 从任务失败记录中归纳经验、沉淀出新信念与规则，并在后续类似任务中自动生效的自主学习机制。 | 命名：认知心理学与 Agent 学习机制命名；设计：见 `docs/benchmarks/behavioral-learning-benchmark.md` |
 | **司天**（Sitian，运行监控面板） | 系统后台健康度与性能的统一监测大盘；集中掌控进程状态、存储容量、记忆吞吐、任务调度及告警事件。 | 命名：古代观测天象、预报灾异的官署「司天监」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0045](docs/adr/0045-sitian-ops-monitor-panel.md) |
+| **咀华**（Juhua，会话精华萃取） | 会话结束时把「这一程最值得记住的事」提炼成一两句话，单独成条入 `distill` 慢衰减泳道；LLM 不可用时确定性降级（取该会话最长的两条原文拼接）并在 metadata 如实标注。 | 命名：韩愈《进学解》「沉浸醲郁，含英咀华」，细品精华之义；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[上游吸收调研](docs/research/upstream-v212-gap-analysis.md)、`lantai/services/distill_service.py` |
 | **知命**（Zhiming，知识生命状态机） | 知识生命周期演进模型；追踪知识从活跃、衰减弱化、被新知识取代到最终退役的全流程。 | 命名：《论语》「不知命，无以为君子也」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 及 [v0.4 规范](docs/plans/v0.4-lifecycle-middleware.md) |
 | **直断**（Zhiduan，裁决理由追踪） | 冲突消解引擎在仲裁新旧矛盾时生成的结构化裁决依据；清晰记录胜出方的核心评分优势与判定原因。 | 命名：直截明断、断狱有据之意；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 及 `lantai/cognition/conflicts.py` |
 | **润物**（Runwu，自适应认知中间件） | 无需 Agent 手动调工具查询、在处理链路中透明为当前请求自动装载相关规则与历史教训的注入技术。 | 命名：杜甫《春夜喜雨》「随风潜入夜，润物细无声」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 及 `lantai/runtime/middleware.py` |

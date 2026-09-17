@@ -33,6 +33,7 @@ class AddMemoryReq(BaseModel):
     tags: list[str] = []
     lane: str = Field(default="general")  # fact/rule/experience/preference/chat/general
     domain: str | None = None  # 辨域（ADR-0034）：user/session/agent
+    session_id: str = Field(default="", max_length=128)  # 来源链显式透传（v022 票据 01）
     metadata: dict = {}  # 附加元数据，落 RawDocument.meta（如 source=pre_compress）
 
     @field_validator("metadata")
@@ -118,6 +119,7 @@ class RawMemoryReq(BaseModel):
     content: str = Field(min_length=1, max_length=200_000)
     lane: str = Field(default="general")  # 默认取 settings.RAW_MEMORY_DEFAULT_LANE
     tags: list[str] = []
+    session_id: str = Field(default="", max_length=128)  # 来源链显式透传（v022 票据 01）
     metadata: dict = {}
 
     @field_validator("metadata")

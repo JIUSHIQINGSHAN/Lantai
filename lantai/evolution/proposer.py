@@ -48,6 +48,9 @@ def propose_from_candidate(candidate_id: str, gate_result: dict) -> MemoryPropos
             proposal_type=data.get("proposal_type", "add"),
             candidate_id=candidate_id,
             evidence_ids=[cand.document_id],
+            # 来源链继承（v022 票据 01）：出身随候选显式流动，不靠隐式通道
+            user_id=getattr(cand, "user_id", None),
+            session_id=getattr(cand, "session_id", None),
             reason=data.get("reason", ""),
             proposed_patch={
                 "memory_type": data.get("memory_type", "semantic"),

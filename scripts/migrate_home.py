@@ -94,10 +94,12 @@ def main() -> int:
     probe.unlink()
 
     # 4) 配置用户级环境变量（setx；Windows）
-    env_cmd = f'setx LANTAI_HOME "{target}"'
+    # 参数走列表形式、不开 shell（防命令注入：target 由 --home 参数提供）
     print(f"[4/5] 写入用户环境变量: LANTAI_HOME={target}")
     try:
-        subprocess.run(env_cmd, shell=True, check=True, capture_output=True)
+        subprocess.run(
+            ["setx", "LANTAI_HOME", str(target)], check=True, capture_output=True, shell=False
+        )
     except subprocess.CalledProcessError as e:
         _fail(f"setx 失败（需管理员？）: {e.stderr.decode(errors='ignore')}")
 

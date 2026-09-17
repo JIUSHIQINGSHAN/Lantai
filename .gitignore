@@ -51,3 +51,4 @@ docs/memory-quality/*.md
 !docs/memory-quality/chinese-memory-v1.md
 
 .uv-cache/
+.mimosa/

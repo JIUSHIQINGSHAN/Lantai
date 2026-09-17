@@ -9,6 +9,7 @@ from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.llm.client import embed
 from lantai.models.tables import MemoryEdge, MemoryItem
+from lantai.retrieval.errsig import extract_error_signatures, signature_bonus
 from lantai.retrieval.intent import classify_intent
 from lantai.retrieval.reranker import rerank
 from lantai.storage import db
@@ -37,6 +38,12 @@ class RetrievalParams:
     supersedes_demote_epsilon: float = field(
         default_factory=lambda: float(settings.SUPERSEDES_DEMOTE_EPSILON)
     )
+    echo_suppress_enabled: bool = field(
+        default_factory=lambda: bool(settings.ECHO_SUPPRESS_ENABLED)
+    )
+    mmr_enabled: bool = field(default_factory=lambda: bool(settings.MMR_ENABLED))
+    mmr_lambda: float = field(default_factory=lambda: float(settings.MMR_LAMBDA))
+    errsig_bonus: float = field(default_factory=lambda: float(settings.ERRSIG_BONUS))
     extra: dict = field(default_factory=dict)
 
     @classmethod
@@ -56,6 +63,10 @@ class RetrievalParams:
             "FTS_RECALL_TOP_K": "fts_recall_top_k",
             "SUPERSEDES_ORDERING_ENABLED": "supersedes_enabled",
             "SUPERSEDES_DEMOTE_EPSILON": "supersedes_demote_epsilon",
+            "ECHO_SUPPRESS_ENABLED": "echo_suppress_enabled",
+            "MMR_ENABLED": "mmr_enabled",
+            "MMR_LAMBDA": "mmr_lambda",
+            "ERRSIG_BONUS": "errsig_bonus",
         }
         known = {}
         extra = {}
@@ -80,6 +91,10 @@ class RetrievalParams:
             "FTS_RECALL_TOP_K": "fts_recall_top_k",
             "SUPERSEDES_ORDERING_ENABLED": "supersedes_enabled",
             "SUPERSEDES_DEMOTE_EPSILON": "supersedes_demote_epsilon",
+            "ECHO_SUPPRESS_ENABLED": "echo_suppress_enabled",
+            "MMR_ENABLED": "mmr_enabled",
+            "MMR_LAMBDA": "mmr_lambda",
+            "ERRSIG_BONUS": "errsig_bonus",
         }
         attr = mapping.get(key, key)
         if hasattr(self, attr):
@@ -87,8 +102,70 @@ class RetrievalParams:
         return self.extra.get(key, getattr(settings, key, default))
 
 
-def _apply_supersedes_order(
-    scored: list,
+def _token_set(text: str) -> set:
+    """jieba 分词 token 集（MMR 冗余度量用；jieba 缺失退字符 bigram）。"""
+    if not text:
+        return set()
+    try:
+        import jieba
+
+        return {t.strip() for t in jieba.cut_for_search(text) if t.strip()}
+    except Exception:
+        t = "".join(ch for ch in text.lower() if ch.isalnum())
+        return {t[i : i + 2] for i in range(max(0, len(t) - 1))} if t else set()
+
+
+def _redundancy(content: str, chosen_contents: list) -> float:
+    """候选与已选集合的冗余度 = 与已选各条的最大 token 重叠（Jaccard）。
+
+    纯本地计算零 LLM：统一用到处都在的 token 重叠弱信号，
+    而不是一半候选上缺失的向量距离强信号（上游 M4 同款取舍）。"""
+    if not chosen_contents or not content:
+        return 0.0
+    tokens = _token_set(content)
+    if not tokens:
+        return 0.0
+    worst = 0.0
+    for other in chosen_contents:
+        ot = _token_set(other)
+        if not ot:
+            continue
+        union = tokens | ot
+        sim = len(tokens & ot) / len(union) if union else 0.0
+        if sim > worst:
+            worst = sim
+    return worst
+
+
+def mmr_select(scored: list, limit: int, *, lam: float = 0.7) -> list:
+    """MMR 多样性选择（v022 吸收票据 02）：mmr = λ·relevance − (1−λ)·redundancy。
+
+    λ 语义照抄上游 Memmy 融改（0.7 默认），实现独立。候选不足或 limit
+    非正时逐条退回按分截断，与改前一字不差（零回归铁律）。"""
+    if limit <= 0:
+        return []
+    if len(scored) <= limit:
+        return scored[:limit]
+    lam = min(max(float(lam), 0.0), 1.0)
+    pool = list(scored)
+    chosen: list = []
+    chosen_texts: list = []
+    while pool and len(chosen) < limit:
+        best_idx = None
+        best_val = None
+        for i, (rel, m) in enumerate(pool):
+            red = _redundancy(m.content, chosen_texts)
+            val = lam * rel - (1.0 - lam) * red
+            if best_val is None or val > best_val:
+                best_idx = i
+                best_val = val
+        rel, m = pool.pop(best_idx)
+        chosen.append((rel, m))
+        chosen_texts.append(m.content)
+    return chosen
+
+
+def _apply_supersedes_order(    scored: list,
     breakdowns: dict | None = None,
     params: RetrievalParams | None = None,
     session: Any = None,
@@ -412,11 +489,28 @@ def _hybrid_search_impl(
     vector_ranks = {r["id"]: idx for idx, r in enumerate(vector_results)}
     bm25_ranks = {r[0]: idx for idx, r in enumerate(fts_bm25_results)}
 
+    # 回声抑制（v022 吸收 M2，上游 EchoMind/Memmy 融改；默认关）：本会话
+    # 自写的候选不回捞。开关与出身都显式——空 session 不过滤（上游纪律）。
+    echo_session = None
+    if (
+        p.echo_suppress_enabled
+        and principal is not None
+        and getattr(principal, "session_id", None)
+    ):
+        echo_session = principal.session_id
+
+    # 错误签名通道（v022 吸收 M6）：查询里的报错签名抽出一次，打分时
+    # 正文精确命中同一签名的候选加有界 bonus；识别不到则整条规则不参与。
+    query_signatures = extract_error_signatures(query) if p.errsig_bonus > 0 else ()
+
     scored_items = []
     breakdowns: dict[str, dict] = {}
     rrf_k = 60
 
     for m in items:
+        if echo_session and getattr(m, "session_id", None) == echo_session:
+            continue
+
         from lantai.memory.policies import get_cognitive_policy
 
         policy = get_cognitive_policy(getattr(m, "role", "observation"))
@@ -442,6 +536,13 @@ def _hybrid_search_impl(
             * persona_boost
         )
 
+        # 错误签名 bonus（M6）：正文精确包含查询中的报错签名 → 有界加分
+        errsig_hit_value = 0.0
+        if query_signatures:
+            errsig_hit_value = signature_bonus(m.content, query_signatures, p.errsig_bonus)
+            if errsig_hit_value:
+                score += errsig_hit_value
+
         scored_items.append((score, m))
         if explain:
             breakdowns[m.id] = {
@@ -451,6 +552,7 @@ def _hybrid_search_impl(
                 "decay": round(p.w_decay * actual_decay, 4),
                 "lane_boost": lane_boost,
                 "persona_boost": persona_boost,
+                "errsig_bonus": round(errsig_hit_value, 4),
                 "final": round(score, 4),
                 "decay_class": decay_class_name,
                 "decay_multiplier": round(_age_multiplier(m), 4),
@@ -460,6 +562,14 @@ def _hybrid_search_impl(
     scored_items.sort(key=lambda x: x[0], reverse=True)
 
     scored_items = _apply_supersedes_order(scored_items, breakdowns, params=p, session=session)
+    # MMR 多样性选择（v022 吸收 M4，默认关）：mmr = λ·相关 −(1−λ)·冗余。
+    # 关闭/候选不足时逐条退回按分截断，与改前一字不差（零回归铁律）。
+    if p.mmr_enabled and len(scored_items) > fetch_n:
+        scored_items = mmr_select(scored_items, fetch_n, lam=p.mmr_lambda)
+        if explain:
+            for sc, mm in scored_items:
+                if mm.id in breakdowns:
+                    breakdowns[mm.id]["mmr_selected"] = True
     candidates = scored_items[:fetch_n]
 
     # Step 5: Reranker（可选）

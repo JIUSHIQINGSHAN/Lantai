@@ -13,7 +13,11 @@ from lantai.storage.db import CURRENT_SCHEMA_VERSION, apply_migrations
 
 
 def _columns(conn, table: str) -> set:
-    return {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    # table-valued PRAGMA 走参数绑定（防注入纪律，与 db.py 一致）
+    return {
+        r[0]
+        for r in conn.execute("SELECT name FROM pragma_table_info(?)", (table,)).fetchall()
+    }
 
 
 def _make_legacy_db(path, with_new_columns: bool) -> sqlite3.Connection:

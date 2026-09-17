@@ -367,6 +367,35 @@ class MemoryCheckpoint(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+class EpisodeRecord(SQLModel, table=True):
+    """轨迹级奖励（v022 吸收票据 06）：一次会话多步检索-使用的成败登记。
+
+    最小切片：只登记不接权重——察窗攒够数据再决定是否进入检索打分。"""
+
+    __tablename__ = "episode_record"
+
+    id: str = Field(primary_key=True)
+    user_id: str | None = Field(default=None, index=True)
+    session_id: str = Field(index=True)
+    outcome: str = "neutral"  # success / failure / neutral
+    step_count: int = 0
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class EpisodeStep(SQLModel, table=True):
+    """轨迹内单步：被召回的记忆 + 位置信用权重（越靠近结果越重）。"""
+
+    __tablename__ = "episode_step"
+
+    id: str = Field(primary_key=True)
+    episode_id: str = Field(index=True)
+    position: int = 0  # 1 = 最早
+    memory_id: str = Field(default="", index=True)
+    rank: int | None = None  # 该步检索结果中的名次（可选）
+    credit: float = 0.0  # w_i（和恒为 1，本步分得）
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class MemoryUsageFeedback(SQLModel, table=True):
     id: str = Field(primary_key=True)
     memory_id: str = Field(index=True)
@@ -498,6 +527,9 @@ class RetrievalEvent(SQLModel, table=True):
     query_text: str = ""
     query_norm_hash: str = Field(index=True)
     lane: str = ""
+    session_id: str | None = Field(
+        default=None, index=True
+    )  # 来源链（v022 票据 05）：带 session 的检索才算真实会话读
     intent_bucket: str | None = Field(default=None, index=True)
     param_snapshot_hash: str = Field(index=True)  # 当时生效参数快照 hash
     result_ids: list = Field(default_factory=list, sa_column=Column(JSON))

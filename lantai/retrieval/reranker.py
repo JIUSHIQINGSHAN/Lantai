@@ -1,12 +1,17 @@
 """Reranker 客户端：调用硅基流 /v1/rerank 做精排"""
 
 import time
+from urllib.parse import urlparse
 
 import requests
 
 from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.ingestion.safety import validate_api_url
+
+# SSRF 防线（双保险之二）：host 白名单为模块级固定字面量，
+# 与 settings.ALLOWED_API_HOSTS 同口径；不在名单即拒绝出网
+_ALLOWED_RERANKER_HOSTS = frozenset({"api.siliconflow.cn", "api.openai.com"})
 
 
 def rerank(query: str, documents: list[str], top_k: int) -> list[dict]:
@@ -22,6 +27,11 @@ def rerank(query: str, documents: list[str], top_k: int) -> list[dict]:
         validate_api_url(settings.RERANKER_BASE_URL)
     except ValueError as e:
         logger.warning("RERANKER_BASE_URL rejected: %s", e)
+        return []
+    # SSRF 防线：解析后 host 必须命中固定白名单（防 base_url 指向内网/元数据）
+    host = (urlparse(settings.RERANKER_BASE_URL).hostname or "").lower()
+    if host not in _ALLOWED_RERANKER_HOSTS:
+        logger.warning("RERANKER_BASE_URL host not allowed: %s", host)
         return []
 
     url = f"{settings.RERANKER_BASE_URL}/rerank"
@@ -39,22 +49,19 @@ def rerank(query: str, documents: list[str], top_k: int) -> list[dict]:
         "return_documents": True,
     }
 
-    # 第一次尝试
-    try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=settings.RERANKER_TIMEOUT)
-        resp.raise_for_status()
-        return _parse_response(resp.json(), documents, top_k)
-    except Exception:
-        pass
-
-    # 重试 1 次
-    try:
-        time.sleep(settings.RERANKER_RETRY_DELAY)
-        resp = requests.post(url, json=payload, headers=headers, timeout=settings.RERANKER_TIMEOUT)
-        resp.raise_for_status()
-        return _parse_response(resp.json(), documents, top_k)
-    except Exception:
-        return []
+    # 首次 + 重试 1 次（单调用点循环；失败返回空列表由调用方降级）
+    for attempt in range(2):
+        try:
+            resp = requests.post(
+                url, json=payload, headers=headers, timeout=settings.RERANKER_TIMEOUT
+            )
+            resp.raise_for_status()
+            return _parse_response(resp.json(), documents, top_k)
+        except Exception:
+            if attempt == 0:
+                time.sleep(settings.RERANKER_RETRY_DELAY)
+                continue
+            return []
 
 
 def _parse_response(data: dict, original_docs: list[str], top_k: int) -> list[dict]:
