@@ -6,83 +6,71 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 
 ## 词汇表
 
-| 术语 | 定义 |
-|------|------|
-| **兰台（Lantai）** | 项目中文名。取自汉代皇家档案馆「兰台」——为 AI 保存、检索、演化、遗忘长期记忆的档案库。英文代号 Lantai |
-| **锦囊（Jinnang）** | `pending_review` 待审候选队列的别名，取自「锦囊妙计」——待拆的锦囊交用户裁决 |
-| **案牍（Andu）** | 控制台统一待办项：把候选、提案、冲突、参数建议、技能结晶、待整理记忆与运行异常投影为可排序、可检查、可处置的只读工作视图；案牍不替代各来源记录。取自刘禹锡《陋室铭》「无案牍之劳形」，本义为官府文书与待办公务 |
-| **lane**（分轨） | 记忆类型分轨：fact / rule / experience / preference / chat / general。每轨有独立的衰减参数和检索权重 |
-| **tier**（层级） | 记忆层级：working（工作记忆） / long_term（长期记忆）。working 超过 TTL 且无帮助时归档 |
-| **gate**（闸门） | 记忆准入控制：置信度阈值 + 新颖度评分 + 矛盾检测 → 五档决策（reject / working_only / promote_semantic / promote_procedural / archive_conflict） |
-| **coalesce**（潮波合并） | 短消息异步缓冲合并，减少 LLM 提取调用次数。缓冲键 = `user_id + lane`，按 lane 分档定义冲刷参数（`LANE_COALESCE_PROFILES`）。`/add` 开关切换（`COALESCE_ENABLED`），一个入口自动分流。见 [ADR-0003](docs/adr/0003-coalesce-buffer-key.md) |
-| **fastpath**（白名单直写） | 特定句型绕过 LLM 提取直接写入，原则「宁 miss 不脏写」。三类句型：自我声明/偏好表达/显式指令。正则匹配放 `parsing/fastpath.py`。命中直接返回 `fastpath_candidate`，不入缓冲 |
-| **candidate**（候选记忆） | 从 RawDocument 经 LLM 提取的结构化知识，尚未通过闸门。状态值：`new`（LLM 提取）/ `fastpath`（白名单直写）/ `rejected`。去重（余弦相似度）在 candidate 创建时、gate 之前执行 |
-| **proposal**（提案） | 候选记忆通过闸门后生成的变更提案（add/update/merge/deprecate），待应用或拒绝 |
-| **checkpoint**（检查点） | 记忆变更前后的快照，用于回滚 |
-| **decay_score**（衰减分） | 记忆保持强度，按 lane profile 指数衰减。降到极低时自动转 archived |
-| **facade rule**（门面铁律） | 重构约束：只搬家不改语义，旧 import 全绿。见 [ADR-0001](docs/adr/0001-facade-rule.md) |
-| **service layer**（service 层） | 路由 handler 下沉的业务逻辑层。handler 只做 HTTP 解析/返回，业务逻辑在 service |
-| **archived**（归档记忆） | decay_score 极低后自动转换的记忆状态，不参与检索（`WHERE status='active'`），但物理不删 |
-| **Shell Hook** | 零依赖 CLI 注入路径：stdin 收 JSON，stdout 返回 Markdown 上下文。2s 超时返回空。见 [ADR-0006](docs/adr/0006-shell-hook-contract.md) |
-| **search_trace** | `/search?trace=true` 返回的每步诊断数组：`{step, elapsed_ms, candidate_count, score_range}`。overhead < 1ms |
-| **water_level**（水位） | coalesce 缓冲水位指标（active_keys + total_messages），由 `/stats` 暴露，用于监控写入节流状态 |
-| **verbatim**（原文直存） | `memory_type="verbatim"` 的记忆：内容零 LLM 直入 FTS5+向量（`POST /add/raw`），内容 sha256 作 key 幂等去重，不走提取/闸门/演化。见 [ADR-0009](docs/adr/0009-raw-drawer-verbatim.md) |
-| **conflict_event**（冲突账本） | 冲突消解确定性层（规则命中）的审计账本：memory_id / rule_name / detail / status（open→resolved/dismissed），人工裁决不改记忆状态。见 [ADR-0010](docs/adr/0010-conflict-resolution-layer.md) |
-| **Skill 资产**（可注入技能） | `structure.steps` 非空的 procedural 记忆：以 `## Skill: 名称` + 描述 + 编号步骤注入上下文，Agent 可照步骤执行。沉淀链路 proposer → promoter（提案落库带 structure），见 [ADR-0011](docs/adr/0011-skill-asset.md) |
-| **scene**（场景聚合） | 一组相关记忆的导航实体（`MemoryScene` 表）：embedding 聚类构建，检索命中时导航块优先注入（`## Scene: 名称` + 摘要 + 成员 key），详情用 `scene_get` 下钻——渐进式披露。heat = 成员 `use_count` 求和。见 [ADR-0012](docs/adr/0012-scene-layer.md) |
-| **provenance**（提取来源） | 记忆的出生证明：`{prompt, model, extracted_at}`，从候选（提取时）经提案（继承）到 MemoryItem（落库）全程同源，回答"这套记忆是谁产出的"；prompt 名即版本（extract-v1 / fastpath-direct / dialogue-fastpath / dialogue-chitchat）。见 [ADR-0015](docs/adr/0015-provenance.md) |
-| **ACL**（访问收窄） | 按 agent_id 绑定 lane 集：`AGENT_LANE_BINDINGS` 配置后，绑定 agent 只能检索/写入自己 lane 集内的记忆（`X-Agent-Id` header，缺失/未绑定 403，检索结果宁 miss 不放行）；空配置 = 不启用。见 [ADR-0013](docs/adr/0013-naming-system.md) 命名登记 |
-| **冷启动导入**（冷启动导入） | 历史数据一次性导入双通道：① verbatim 直存——JSONL 逐行原文零 LLM 落库，created_at/updated_at 保留原始时间戳，内容 sha256 幂等去重，`POST /import/jsonl` + `scripts/import_jsonl.py`；② 对话链导入——L0 会话 JSONL（{role, content, timestamp}）喂既有摄取链，时间戳经 provenance 继承到记忆，`scripts/run_import.py --dry-run` 预览。非法行记报告不静默修正（宁 miss 不脏写） |
-| **vault**（档案） | 记忆档案只读浏览：`GET /memories` 分页 + lane/status/decay_class 过滤，`/ui/vault` 控制台同时展示锦囊待审队列与衰减概览——「存了什么、待裁什么」一眼可见。见 [ADR-0013](docs/adr/0013-naming-system.md) 命名登记 |
-| **offload**（上下文卸载） | 超长记忆全文落 `docs/memory-offload/{memory_id}.md`，Shell Hook 上下文只注入摘要 + 路径，需要时经 MCP `offload_read` 取回全文——上下文不随单条记忆长度增长。见 [ADR-0016](docs/adr/0016-offload.md) |
-| **记忆 Wiki**（持续维护知识库） | 场景/技能 → `docs/memory-wiki/` 页面 + `index.md`（先看目录）+ `overview.md` 综述（LLM 优先，失败确定性兜底），`[[wikilink]]` 下钻经 MCP `wiki_read`；`mem_sync` 三件套（scene+digest+wiki）刷新。见 [ADR-0017](docs/adr/0017-wiki.md) |
-| **tree**（记忆分类树） | 显式父子层级（`MemoryNode` 表）+ `node_path` 唯一路径（/projects/release）+ depth 前缀查询；记忆经 `memoryitem.tree_path` 显式挂载（assign），统计区分 direct（直接挂载）与 subtree（含子树）——「按主题组织记忆全景」。见 v0.7 票据 01 |
-| **crystal**（技能结晶） | 高频重复记忆自动聚类 → `SkillCrystal` candidate 候选项（Mímir 铁律：规则只能建议不能 commit）；人工裁决 approve 必须带非空 steps 才落成 Skill 资产，reject 归档记 reason。见 v0.7 票据 02 |
-| **mem: 命令**（命令式维护） | MCP 命令式维护工具：`mem_help`（帮助）/ `mem_sync`（scene 增量聚类补跑 + 今日 digest 重算）/ `mem_create_skill`（结构化沉淀 Skill 资产，procedural 永不衰减）。Agent 显式触发，不依赖自动流程时机。见 [ADR-0014](docs/adr/0014-mem-command.md) |
-| **graph**（记忆星图） | 记忆关系只读聚合（`GET /graph` + MCP `graph_view` + `/ui/map` SVG 面板）：记忆节点 = active MemoryItem（仅参与 MemoryEdge 或属 scene 入选），来源节点 = 参与边的 RawDocument（doc_*，外环矩形，点击开原文 URL），链接 = MemoryEdge（supports/refines/contradicts/supersedes 按关系配色），跨池边/指向 archived 端点丢弃——「谁支撑谁、出处可溯」一眼可见。见 v0.9 票据 01 |
-| **目识**（Vision 多模态） | 图片感知写入通道：`/add` 与 MCP `add` 支持 `media_url`（仅 http/https/data，`validate_media_url` 白名单校验；兰台不直接 fetch 图片，零 SSRF 面），复用单一 LLM 网关的 OpenAI 兼容 Vision 调用生成 caption——content 为空时 caption 作正文，非空时存 `metadata.vision`；失败抛 ValueError 不落失败文本（宁 miss 不脏写）；配套 `scripts/screenshot_memory.ps1` 截屏入忆（剪贴板/文件 → data URI，v0.12）。见 v0.10 票据 01 |
-| **烽燧**（recall_chain 记忆广播链） | 只读关联链：从一条 seed 记忆出发，以它为 query 走既有混合检索，命中结果再作下一层 seed——BFS 逐层传播（max_depth/branch/min_score/total_max 参数化，分数降序取 branch，自匹配锚点整链排除，跨层去重），呈现「记忆如何触发关联记忆」；零写入，单条搜索失败只缺层不阻断（宁 miss 不脏写）。入口 `GET /recall/chain` + MCP `recall_chain`。见 v0.11 票据 01 |
-| **digest**（每日盘点） | 每日清晨生成 `docs/memory-digest/YYYY-MM-DD.md`：新增/修改/总量/待审/归档/检索五项统计，Hermes 经 MCP `get_digest` 或 `GET /digest/today` 读取。见 [docs/daily-digest.md](docs/daily-digest.md) |
-| **命名体系** | 中文命名的方向与规则：按对象层级（项目/子系统/机制/数据/版本代号）从传统意象取材，2–4 字、有出处、先登记后使用；见 [ADR-0013](docs/adr/0013-naming-system.md) |
-| **反思**（reflect/蒸馏） | 每日健康扫描 + 水位触发蒸馏 + 提案裁决的自我审视回环（「吾日三省吾身」）：健康候选与水位触发 → curator 提炼 → rejecter 复核 → 自动应用/待审/丢弃（宁 miss）。入口 `run_reflect_once`，spec 见 [docs/plans/reflection-module-spec.md](docs/plans/reflection-module-spec.md) |
-| **观察期**（回填校准窗口） | 反思阈值定标前的真实数据收集期：2026-08-15 curator 修复后重新计数；`reflect_run.source` 区分 scheduled/manual/unknown，只认 **14 天内 7 次合格 scheduled** 记录（滑动窗口，不限连续），旧记录 unknown 不计入。期满后用真实分布回填校准阈值 |
-| **回填校准**（反思阈值回填校准） | 观察期满后用真实分布对标 dry-run 推荐，二次校准 `REFLECT_IMPORTANCE_POOL`/`REFLECT_AUTO_APPLY_CONF`/`REFLECT_MIN_CONFIDENCE`；入口 `scripts/calibrate_reflection.py` + `collect_calibration_stats` |
-| **置信桶**（置信区间分组） | 提案置信度分桶统计（边界走 `DIGEST_CONF_BUCKETS`，ADR-0002 零硬编码），日报与回填校准报告展示分布；桶外置信计「其他」不静默 |
-| **吉金**（Jijin，UI 主题） | v0.14 全局皮肤（默认）：青铜彝器旧称（《墨子》等古籍「吉金」指铸器铜料），取金石厚重、铭文传久——玄青拓片底 `#1c2430` / 铜绿 `#3e7a6b` / 鎏金 `#b08a3e` / 朱砂 `#a33b2e`，签名元素为云雷纹饰带。见 [ADR-0013](docs/adr/0013-naming-system.md) 命名登记 |
-| **漏窗**（Louchuang，UI 主题） | v0.14 全局皮肤（可切换）：苏州园林漏窗借景，「移步换景、借景成画」——绢黄底 `#e9dfc6` / 黛青 `#2f4f4f` / 石绿 `#4e8d7c` / 竹青 `#6f9e8a`，签名元素为回纹画框 + 月洞门形卡片。见 [ADR-0013](docs/adr/0013-naming-system.md) 命名登记 |
-| **缥缃**（Piaoxiang，版本代号） | v0.14.0 版本代号：丝帛书衣，代指书卷——贴合兰台档案/书卷定位。见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
-| **绳墨**（Shengmo，版本代号） | v0.15.2 版本代号：《礼记·经解》「绳墨之于曲直」，以准绳定曲直——贴合反思校准、测试门禁与发布收口。见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
-| **沙汰**（候选入队信噪分离） | 候选入队前的地板信噪门：CANDIDATE_MIN_CONFIDENCE（默认 0.0）以下的候选直接 status=rejected（不入待审队列），信噪分离；闲聊（conf=0.0）一律不排队。取自《世说新语》「沙汰」= 淘洗淘汰。见 [ADR-0026](docs/adr/0026-candidate-admission-triage.md) |
-| **察窗**（观察期滑动窗口） | 反思观察期口径——从「连续」改为「滑动窗口内计数」：REFLECT_OBSERVATION_WINDOW_DAYS（默认 14）天内至少 REFLECT_OBSERVATION_REQUIRED_RUNS（默认 7）天有合格 scheduled 运行。见 [ADR-0027](docs/adr/0027-observation-window-counting.md) |
-| **校雠**（三态去重） | 去重机制正式名（ADR-0013 候选意象升格，刘向《别录》校雠订误）：**余弦预筛 + 结构判别**（ADR-0019）——提取路径 sim ≥ `DEDUP_PRESCREEN_MERGE`(0.95) 直合（真重复零 LLM）、中带 [0.65, 0.95) 提取后交 `gate/relation.py::classify_relation`：锚点词比（jieba 内容词，滤值/停用）+ 归一化值差异（日期/邮箱/域名/数字/地点）判 merge/update/insert，中带 LLM 兜底、judge 失败降级 insert（宁 miss 不脏写）；fastpath 路径纯余弦（merge ≥ 0.90）。此处「锚点/锚点词」= 内容词集（与 recall_chain 的锚点自匹配语义不同域，勿混）。见 [ADR-0019](docs/adr/0019-dedup-structural-relation.md) |
-| **底本**（Diben，session checkpoint） | 会话级快照正式名（ADR-0013 意象池「底本」= 校勘所据定本）：**五段会话快照**（ADR-0021，移植 aiduMEM checkpoint.py 窄版）——在做/下一步/工作区/决策/待办五块，上下文压缩时 `write_session_checkpoint` 写入、下次会话启动 `inject_checkpoint_context` 注入；> 30 天注入自动标注陈旧；保留最近 `CHECKPOINT_MAX_SESSIONS`(5) 个会话；块 < 3 字符不落、> 600 截断（宁 miss 不脏写）。与逐记忆回滚的 MemoryCheckpoint（检查点）语义区分。见 [ADR-0021](docs/adr/0021-session-checkpoint.md) |
-| **拾遗**（Shiyi，检索韧性与降级召回） | 检索找回与多级降级正式名（ADR-0013 意象池「拾遗」= 捡拾遗漏之物，唐代谏官官职，取「拾遗补阙、失落必还」）：当外部向量检索异常（网络中断、Token 401、超时）时，平滑降级至本地 FTS5 + BM25 关键词检索；校准前置相关性闸门（prefilter），支持短实体查询（>=3 字符实词与默认自指）与显式检索透传，从根本上杜绝零召回。见 [ADR-0028](docs/adr/0028-zero-recall-remediation.md) |
-| **器识**（Qishi，Persona 人格基座） | 人格基座正式名（ADR-0013 典籍意象「器识」= 《新唐书·裴行俭传》「士之致远，先器识而后文艺」）：大模型长程交互立身之本，分 L/G/E 三层（言语风格 L、行事准则 G、认知底色 E）；常量级不衰减（decay_score 恒 1.0），会话首轮注入、检索偏好加权（Persona Boost）与反思演化防漂移。见 [ADR-0029](docs/adr/0029-persona-base.md) |
-| **披沙**（Pisha，候选递归精炼） | 候选精炼正式名（ADR-0013 意象池「披沙」= 《世说新语·德行》「披沙拣金，往往见宝」）：针对反思与会话提取出的中低置信度候选记忆（0.2~0.6），进行二次消歧与事实提纯（消除口语废话、消除代词指代歧义、原子化事实收敛），重新评定置信度，使模糊事实升格为高置信度候选（>=0.7），无价值闲聊自动沙汰。见 [ADR-0030](docs/adr/0030-candidate-refine.md) |
-| **考功**（Kaogong，价值演化与升降考评） | 记忆价值演化正式名（ADR-0013 意象池「考功」= 唐代吏部考功司，掌官吏功过品级考评）：基于用户使用反馈（MemoryUsageFeedback）、检索回填（backfill）与人工裁决历史，对全库记忆进行功过考评；高频高采纳记忆晋升长期语义层（tier=longterm / decay_class=semantic），高频低效/幻觉记忆自动降权或废弃，形成自适应负反馈闭环。见 [ADR-0031](docs/adr/0031-kaogong-weight-evolution.md) |
-| **札记**（Zhaji，Working Memory Scratchpad） | 核心工作区暂存夹正式名（ADR-0013 意象池「札记」= 古代读书摘记要点之木简便签）：借鉴 Letta (MemGPT) 虚拟内存思想，为 Agent 提供主动实时读写的小纸条区域（上限 1000 字符，宁 miss 不脏写）；会话首轮自动注入 Prompt 顶部，提供 `scratchpad_get` / `scratchpad_write` 工具，使 Agent 在多轮复杂对话中具备主动上下文控制力。见 [ADR-0032](docs/adr/0032-session-scratchpad.md) |
-| **潜移**（Qianyi，异步摄取管道） | 异步记忆摄取管道正式名（ADR-0013 意象池「潜移」= 《文心雕龙》「潜移暗引，莫之能知」）：借鉴 Zep 事件驱动架构，为对话摄取与记忆提纯提供后台非阻塞线程池调度；提交对话毫秒级响应 `task_id`，后台静默执行提取、提纯（披沙）与去重入库，消除大模型调用带来的网络阻塞与超时风险。见 [ADR-0033](docs/adr/0033-async-ingest-pipeline.md) |
-| **辨域**（Bianyu，三维硬隔离与域分治） | 用户/会话/智能体三维隔离正式名（ADR-0013 意象池「辨域」= 《周礼·春官·宗伯》「以辨天地四时之域」）：借鉴 Mem0 架构，将全库记忆严格划分为 User（用户常驻画像/偏好）、Session（会话临时上下文）、Agent（智能体行为规范与准则）三维空间；支持精确域检索、跨会话隔离保护与自适应 Lane-Domain 智能映射。见 [ADR-0034](docs/adr/0034-domain-isolation.md) |
-| **贯珠**（Guanzhu，图谱二度联想检索） | 图谱二度语义联想与多跳召回正式名（ADR-0013 意象池「贯珠」= 《汉书·景十三王传》「如贯珠焉」）：借鉴 Cognee 架构，基于 MemoryEdge 拓扑进行 1~2 度 BFS 图关系扩散；从混合检索初筛种子中顺藤摸瓜联想出强关联隐式记忆（如天选三 -> RTX 3050），打破单条字面检索孤岛。见 [ADR-0035](docs/adr/0035-graph-association-retriever.md) |
-| **沉潜**（Chenqian，夜梦沉淀与折叠压缩） | 闲时记忆沉淀与折叠压缩正式名（ADR-0013 意象池「沉潜」= 《荀子》「沉潜以思」）：借鉴人脑睡眠记忆巩固机制，在闲时/夜间对同场景、同主题高密度的碎片琐碎记忆进行聚类归纳与折叠（Synthesis），生成高阶概括性主记忆并建立父子回溯链接，同时安全归档深度衰减的边缘噪音，防止记忆库膨胀退化。见 [ADR-0036](docs/adr/0036-sleep-memory-consolidation.md) |
-| **探颐**（Tanyi，记忆主动探针与消歧） | 记忆主动探针与自然消歧正式名（ADR-0013 意象池「探颐」= 《易·系辞上》「探赜索隐，钩深致远」）：改变记忆系统被动查询现状，在检索命中冲突账本（ConflictEvent）或模糊事实时，主动生成自然探针并注入回复引导区；当次轮用户给出肯定答复时自动闭环解决冲突、更新记忆与快照，实现自然对话中的自纠错。见 [ADR-0037](docs/adr/0037-proactive-memory-probing.md) |
-| **悬镜**（Xuanjing，可视化管理控制台） | 可视化管理中台正式名（ADR-0013 意象池「悬镜」= 宝镜高悬、洞烛幽微）：为人类管理者提供现代化的单页 Web 控制台（Lantai Studio），一站式集成案牍审阅大厅、器识/札记在线编辑器、沉潜夜梦沉淀面板、四路检索与探针演练场、拓扑星图与全景档案，彻底打破纯 MCP 命令行运维壁垒。见 [ADR-0038](docs/adr/0038-visual-management-studio.md) |
-| **持节**（Chijie，智能体案牍巡检官与自主审批） | 智能体记忆审批自治正式名（ADR-0013 典籍意象「持节」= 汉唐天子特使持符节巡行天下、决断刑政）：通过标准化 MCP 协议（`triage_analyze` / `triage_apply` / `triage_auto_pilot`）赋予外部 AI 智能体（如 Hermes、Antigravity、Claude Code）自主治理与审批记忆库的特权；支持自动化待审巡检、结构化置信度研判、噪音剔除与确凿事实批准，实现人机协同与无人值守自治的双模闭环。见 [ADR-0039](docs/adr/0039-agent-autonomous-triage.md) |
-| **认知闭环**（Cognitive Loop） | v0.3 核心主线机制：Task → ActionOutcome → FailureRecord → ReflectionEngine → CognitivePattern → BELIEF/RULE → CognitiveContext → 下次 Task；Agent 第一次犯错后 Lantai 学到经验，第二次遇到类似情况时认知上下文发生可验证的改变。见 `docs/benchmarks/behavioral-learning-benchmark.md` |
-| **晋升追踪**（promotion_trace） | 每次知识晋升的分项评分快照，存 `MemoryItem.promotion_trace`（JSON 字段，v0.3 新增）；内容为 `{score, components:{confidence/evidence_quality/independent_support/recurrence}, promoted_from, promoted_at, reason}`，回答「为什么这条记忆被晋升为 BELIEF/RULE/PRINCIPLE」；Candidate ≠ Knowledge 的可解释性保障。见 ADR-0044 |
-| **失败模式**（failure_pattern） | 从 FailureRecord 归纳的 CognitivePattern（`pattern_type="failure_pattern"`）；由 `ReflectionEngine._failures_to_observations()` 将 lesson/cause 转化为临时 OBSERVATION 后聚类产出；晋升阈值 0.55（低于通用 0.70），单次失败即可触发预警级别的 BELIEF candidate；与「宁 miss 不脏写」并行——失败经验只产 candidate，不自动提升为 active Knowledge。见 v0.3 Ticket-01 |
-| **司天**（Sitian，后台运行监控面板） | 运行监控面板正式名（ADR-0013 典籍意象「司天」= 司天监掌观天象、察灾异、报异常）：把散落的运行事实拼成一张可判断的快照——进程（uptime/RSS/线程）、存储（SQLite/WAL/FTS5/向量库体积与行数）、记忆管道（待审积压/冲突/潮波水位/24h 归档）、调度器（APScheduler 作业下次触发 + worker 逾期，口径与案牍同源）、请求遥测（环形缓冲 + 采样落 `operation_logs`，补齐 ADR-0040 死表）与安全绑定态；配 `evaluate_alerts` 规则告警与 `/monitor/prometheus` 文本出口，三处消费同一快照（悬镜「司天监控」视图 / REST / Prometheus）。只读、零第三方依赖、密钥打码。见 [ADR-0045](docs/adr/0045-sitian-ops-monitor-panel.md) |
-| **知命**（Zhiming，知识生命周期状态机） | 知识生命周期状态机正式名（ADR-0013 典籍意象「知命」= 《论语》「不知命，无以为君子也」）：知识拥有生命周期状态（Active → Weakened → Superseded → Retired），与存储状态（active/candidate/archived）正交；置信度下降跌破阈值进入 Weakened，新信念显式取代旧信念进入 Superseded 并记录 `superseded_by`，极度衰减后正式 Retired 退出检索。见 [v0.4 规范](docs/plans/v0.4-lifecycle-middleware.md) |
-| **直断**（Zhiduan，可解释冲突裁决追踪） | 冲突裁决追踪正式名（ADR-0013 意象「直断」= 直截明断、断狱有据）：在 ConflictEngine 仲裁中克制无限堆叠评分维度，转而生成可解释的 Decision Trace；结构化记录 A/B 得分分项、分差及自动模板生成的自然语言裁决理由，明确指出胜出方的核心维度优势。见 `lantai/cognition/conflicts.py` |
-| **润物**（Runwu，认知中间件自适应注入） | 认知自适应中间件正式名（意象「随风潜入夜，润物细无声」）：打破 Agent 必须主动调用 MCP 工具查询记忆的被动范式；在 MCP 处理层与 HTTP 中间件层根据任务意图自动挂载轻量规则与失败教训（`cognitive_summary` / `X-Cognitive-Context`），实现透明的认知态干预与行为引导。见 `lantai/runtime/middleware.py` |
+> **阅读规则**：本表供人类读者与 Agent 理解领域语言。每个条目均含“通俗解释”（它解决什么问题、读者何时遇到它）与“来源”（“命名”说明文化或内部命名依据，“设计”链接实现决策或代码/规范入口）。纯底层实现字段仅在具有可观察价值时以技术字段形式保留。
 
-
-
-
-
-
-
-
-
-
-
+| 术语 | 通俗解释 | 来源 |
+|------|----------|------|
+| **兰台（Lantai）** | 项目主系统名；为 AI Agent 保存、检索、演化与安全遗忘长期记忆的档案库。 | 命名：汉代皇家档案馆「兰台」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) |
+| **锦囊（Jinnang）** | 待审候选队列；当系统提取出的事实置信度不足或存在潜在冲突时，暂存此处等待人工或特权 Agent 裁决。 | 命名：成语「锦囊妙计」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0026](docs/adr/0026-candidate-admission-triage.md)（代码 `pending_review` 队列） |
+| **案牍（Andu）** | 控制台统一待办工作台；把待审候选、演化提案、冲突事件、参数建议等散落事项汇总为一张可排序、可处置的只读清单。 | 命名：刘禹锡《陋室铭》「无案牍之劳形」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)（控制台 `work_item_service`） |
+| **lane**（分轨） | 记忆的类型通道（如事实、规则、偏好、经验、闲聊）；不同通道拥有独立的遗忘速度与检索权重。 | 命名：项目内部技术命名（分轨）；设计：见 [ADR-0003](docs/adr/0003-coalesce-buffer-key.md) |
+| **tier**（层级） | 记忆的生命周期深度，区分为临时的“工作记忆”与长期的“长期记忆”，超时未被强化的临时记忆会自动归档。 | 命名：项目内部技术命名（层级）；设计：见 `lantai/models/tables.py`（`MemoryItem.tier`） |
+| **gate**（闸门） | 新记忆进入系统的第一道质检门；综合新颖度、置信度与矛盾检测做出放行、拒绝或转入待审的裁决。 | 命名：意象取材「水闸控流」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、`lantai/gate/decision.py` |
+| **coalesce**（潮波合并） | 连续短消息的异步缓冲机制；将相近对话合并后再调用大模型提炼，避免高频细碎调用消耗资源。 | 命名：意象取材「潮水成波、批量冲刷」；设计：见 [ADR-0003](docs/adr/0003-coalesce-buffer-key.md) |
+| **fastpath**（白名单直写） | 常见确定性句式（如用户自我声明、明确指令）绕过大模型直接安全存入记忆库的高速通道。 | 命名：项目内部技术名（ADR-0013 候选意象「直书」）；设计：见 `parsing/fastpath.py` 与 [ADR-0013](docs/adr/0013-naming-system.md) |
+| **candidate**（候选记忆） | 从原始输入中提取出的结构化知识半成品，必须通过闸门检验后才能正式转化为系统记忆。 | 命名：项目内部技术命名（候选）；设计：见 `lantai/models/tables.py`（`MemoryCandidate`）与 [ADR-0026](docs/adr/0026-candidate-admission-triage.md) |
+| **proposal**（提案） | 候选记忆过闸后生成的变更申请（如新增、合并、更新或废弃旧记忆），经确认后才会落库生效。 | 命名：项目内部技术名（ADR-0013 候选意象「拟议」）；设计：见 `lantai/models/tables.py`（`MemoryProposal`） |
+| **checkpoint**（检查点） | 记忆单项变更前后的对比快照，专门用于误操作或异常变更时的精确版本回滚。 | 命名：项目内部技术命名（快照）；设计：见 `lantai/models/tables.py`（`MemoryCheckpoint`） |
+| **archived**（归档记忆） | 因久未使用或严重衰减而退出常规检索的历史记忆，保留原始数据但不再干扰日常对话。 | 命名：项目内部技术名（ADR-0013 候选意象「尘封」）；设计：见 [ADR-0005](docs/adr/0005-forgetting-semantics.md) |
+| **Shell Hook** | 终端环境下的零依赖记忆注入通道；命令行工具以此在毫秒级内获取当前会话相关的记忆上下文。 | 命名：项目内部技术命名；设计：见 [ADR-0006](docs/adr/0006-shell-hook-contract.md) |
+| **verbatim**（原文直存） | 对长代码、系统日志或精密配置等不宜提炼的内容进行原文完整存储的模式，以哈希去重并保留原始字句。 | 命名：项目内部技术命名（原文直存）；设计：见 [ADR-0009](docs/adr/0009-raw-drawer-verbatim.md) |
+| **conflict_event**（冲突账本） | 记录新旧记忆在规则或事实层发生矛盾的审计账簿，记录冲突双方与裁决历史，供人工或探针排解。 | 命名：项目内部技术名（ADR-0013 候选意象「参商」）；设计：见 [ADR-0010](docs/adr/0010-conflict-resolution-layer.md) |
+| **Skill 资产**（可注入技能） | 包含明确步骤与执行逻辑的程序性记忆；检索命中时以规范步骤块呈现，供 Agent 照章执行。 | 命名：项目内部命名（ADR-0013 候选意象「法门」）；设计：见 [ADR-0011](docs/adr/0011-skill-asset.md) |
+| **scene**（场景聚合） | 将同一任务或主题下的多条相关记忆自动聚类形成的场景单元；检索时先展示场景概要，按需下钻详情。 | 命名：项目内部技术名（ADR-0013 候选意象「卷宗」）；设计：见 [ADR-0012](docs/adr/0012-scene-layer.md) |
+| **provenance**（提取来源） | 记录记忆是由哪套提示词、哪个模型及何时提取的血统证明，用于追溯记忆质量变化的根因。 | 命名：项目内部技术命名（溯源）；设计：见 [ADR-0015](docs/adr/0015-provenance.md) |
+| **ACL**（访问收窄） | 多智能体权限隔离机制；根据 Agent 标识限定其可检索和写入的记忆分轨，防止跨角色信息越权。 | 命名：项目内部技术命名（权限控制）；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 命名登记 |
+| **冷启动导入** | 系统初次搭建时批量载入历史资料的双通道机制；支持无损原文直存与对话链模拟摄取。 | 命名：项目内部业务命名；设计：见 [ADR-0018](docs/adr/0018-import.md) 及 `scripts/import_jsonl.py` |
+| **vault**（档案） | 记忆库的只读浏览视图；供维护者分页查看全部存量记忆状态、衰减情况与待审列表。 | 命名：项目内部命名（档案库）；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 命名登记与 `/ui/vault` 路由 |
+| **offload**（上下文卸载） | 超长记忆落盘为离线文件、会话中仅注入摘要和路径的技术；避免单条超长记忆挤占模型上下文。 | 命名：项目内部技术命名（上下文卸载）；设计：见 [ADR-0016](docs/adr/0016-offload.md) |
+| **记忆 Wiki** | 将零散场景与技能聚合生成的持续维护知识库；支持目录导览、主题综述与双向链接下钻。 | 命名：项目内部命名；设计：见 [ADR-0017](docs/adr/0017-wiki.md) |
+| **tree**（记忆分类树） | 按业务或项目主题层级构建的父子节点树；支持记忆按树状目录归类与整树统计。 | 命名：项目内部技术命名（分类树）；设计：见开发票据 `v0.7 票据 01` 与 `MemoryNode` 实体 |
+| **crystal**（技能结晶） | 将高频共现的重复记忆聚类转化为可复用技能的推荐机制；经人工或审批通过后固化为系统技能。 | 命名：项目内部命名（技能结晶）；设计：见开发票据 `v0.7 票据 02` 与 `SkillCrystal` 实体 |
+| **mem: 命令** | 供维护者或 Agent 在对话中主动发起记忆维护的指令集（如同步索引、手动沉淀技能）。 | 命名：借鉴 TencentDB Agent Memory 命令体系；设计：见 [ADR-0014](docs/adr/0014-mem-command.md) |
+| **graph**（记忆星图） | 以网状图谱可视化展示记忆与原始文档之间的支撑、细化或矛盾关系，理清知识脉络。 | 命名：意象取材「观星定位之星图」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 及 `GET /graph` 路由 |
+| **目识**（Vision 多模态） | 图片感知与截屏摄取通道；解析图像并生成结构化描述，使多模态视觉信息能作为记忆持久留存。 | 命名：《说文解字》「目」与「识」，以目认知；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 及 `scripts/screenshot_memory.ps1` |
+| **烽燧**（recall_chain 广播链） | 以一条种子记忆为引子，通过多跳关联检索逐层扩散召回隐式上下文的广播检索机制。 | 命名：贾谊《治安策》「斥候望烽燧」，接力传警；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 及 `GET /recall/chain` 路由 |
+| **digest**（每日盘点） | 系统每日清晨自动生成的知识简报，盘点过去一天的记忆增减、待审积压与检索活跃度。 | 命名：项目内部技术名（ADR-0013 候选意象「起居注」）；设计：见 [docs/daily-digest.md](docs/daily-digest.md) |
+| **命名体系** | 规范系统各模块、机制及版本代号的命名准则；要求取材传统文化意象，做到名实相副、有据可查。 | 命名：项目治理规范；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) |
+| **反思**（reflect/蒸馏） | 每日后台自动执行的记忆自我审视回环；根据健康指标提炼新认知、发现潜在矛盾并提交优化提案。 | 命名：《论语》「吾日三省吾身」；设计：见 [docs/plans/reflection-module-spec.md](docs/plans/reflection-module-spec.md) |
+| **观察期**（察窗） | 反思阈值调整前的真实运行数据收集窗口；需在滑动窗口内积累足够合格运行样本后才触发校准。 | 命名：项目内部命名，规则名「察窗」；设计：见 [ADR-0027](docs/adr/0027-observation-window-counting.md) |
+| **沙汰**（候选入队信噪分离） | 在候选进入人工待审队列前筛除纯闲聊等无价值噪音的地板过滤机制，避免无效候选项堆积。 | 命名：《世说新语》「沙汰」，淘洗淘汰之意；设计：见 [ADR-0026](docs/adr/0026-candidate-admission-triage.md) |
+| **校雠**（三态去重） | 综合余弦相似度预筛与语义结构判别的智能去重机制；精准区分“近义合并”、“同主体更新”与“新事实插入”。 | 命名：刘向《别录》校雠订误；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0019](docs/adr/0019-dedup-structural-relation.md) |
+| **底本**（Diben，会话快照） | 在会话结束或上下文压缩时记录的现场快照，涵盖在做、下一步、决策等五大要素，供下次会话无缝继承。 | 命名：版本学意象，校勘所据之定本；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0021](docs/adr/0021-session-checkpoint.md) |
+| **拾遗**（Shiyi，检索韧性降级） | 当外部向量检索服务超时或异常时，平滑降级为本地关键词与全文检索的多级容灾保障，杜绝检索击穿。 | 命名：唐代谏官官职「拾遗」，取拾遗补阙之义；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0028](docs/adr/0028-zero-recall-remediation.md) |
+| **器识**（Qishi，人格基座） | Agent 保持稳定角色与原则的底座；确立长期不变的语言风格、行为戒律与认知底色，且不随时间遗忘衰减。 | 命名：《新唐书·裴行俭传》「士之致远，先器识而后文艺」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0029](docs/adr/0029-persona-base.md) |
+| **披沙**（Pisha，候选精炼） | 对处于置信度模糊带的候选记忆进行二次结构化提纯，消除代词指代歧义与口语废话，提升记忆质量。 | 命名：《世说新语·德行》「披沙拣金，往往见宝」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0030](docs/adr/0030-candidate-refine.md) |
+| **考功**（Kaogong，价值演化） | 根据记忆在实际交互中的被采纳率与用户反馈，对全库记忆进行功过评定；晋升高频有益记忆，淘汰劣质记忆。 | 命名：唐代吏部「考功司」，掌官吏功过品级考评；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0031](docs/adr/0031-kaogong-weight-evolution.md) |
+| **札记**（Zhaji，工作区暂存便签） | 供 Agent 在复杂多轮交互中主动读写的临时工作便签，辅助记录多步骤推理中的阶段性要点。 | 命名：古代读书摘记要点之木简便签；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0032](docs/adr/0032-session-scratchpad.md) |
+| **潜移**（Qianyi，异步摄取管道） | 将对话提炼与入库流水线转入后台非阻塞线程池的异步架构；使对话端毫秒级返回，彻底杜绝大模型调用阻塞。 | 命名：《文心雕龙》「潜移暗引，莫之能知」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0033](docs/adr/0033-async-ingest-pipeline.md) |
+| **辨域**（Bianyu，三维硬隔离） | 将记忆按“用户偏好”、“会话临时上下文”与“智能体准则”三个维度严格切分的隔离机制，杜绝跨场景交叉污染。 | 命名：《周礼·春官·宗伯》「以辨天地四时之域」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0034](docs/adr/0034-domain-isolation.md) |
+| **贯珠**（Guanzhu，图谱二度联想） | 沿着实体关系图谱展开一至两步跳跃扩散的联想检索；能跨越字面局限，顺藤摸瓜检索出隐藏的关联知识。 | 命名：《汉书·景十三王传》「如贯珠焉」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0035](docs/adr/0035-graph-association-retriever.md) |
+| **沉潜**（Chenqian，闲时折叠压缩） | 模仿人脑睡眠巩固机制；在闲时对同场景的高密度碎片记忆进行归纳折叠生成总括记忆，并修剪深度衰减噪音。 | 命名：《荀子》「沉潜以思」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0036](docs/adr/0036-sleep-memory-consolidation.md) |
+| **探颐**（Tanyi，主动探针） | 当检测到记忆存在模糊或冲突时，在对话回复中主动发起自然提问向用户求证，并在次轮自动闭环解决冲突。 | 命名：《易·系辞上》「探赜索隐，钩深致远」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0037](docs/adr/0037-proactive-memory-probing.md) |
+| **悬镜**（Xuanjing，可视化控制台） | 兰台系统的全功能单页 Web 管理中台（Lantai Studio），提供待办审批、人格编辑、检索演练与星图总览。 | 命名：宝镜高悬、洞烛幽微之意；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0038](docs/adr/0038-visual-management-studio.md) |
+| **持节**（Chijie，智能体自主审批） | 赋予受信任的外部 AI 智能体自主治理记忆库的协议规范；支持智能体自动巡检、批量审批候选与清理噪音。 | 命名：汉唐典制天子特使「持节」巡行决断；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0039](docs/adr/0039-agent-autonomous-triage.md) |
+| **认知闭环**（Cognitive Loop） | 从任务失败记录中归纳经验、沉淀出新信念与规则，并在后续类似任务中自动生效的自主学习机制。 | 命名：认知心理学与 Agent 学习机制命名；设计：见 `docs/benchmarks/behavioral-learning-benchmark.md` |
+| **司天**（Sitian，运行监控面板） | 系统后台健康度与性能的统一监测大盘；集中掌控进程状态、存储容量、记忆吞吐、任务调度及告警事件。 | 命名：古代观测天象、预报灾异的官署「司天监」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0045](docs/adr/0045-sitian-ops-monitor-panel.md) |
+| **知命**（Zhiming，知识生命状态机） | 知识生命周期演进模型；追踪知识从活跃、衰减弱化、被新知识取代到最终退役的全流程。 | 命名：《论语》「不知命，无以为君子也」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 及 [v0.4 规范](docs/plans/v0.4-lifecycle-middleware.md) |
+| **直断**（Zhiduan，裁决理由追踪） | 冲突消解引擎在仲裁新旧矛盾时生成的结构化裁决依据；清晰记录胜出方的核心评分优势与判定原因。 | 命名：直截明断、断狱有据之意；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 及 `lantai/cognition/conflicts.py` |
+| **润物**（Runwu，自适应认知中间件） | 无需 Agent 手动调工具查询、在处理链路中透明为当前请求自动装载相关规则与历史教训的注入技术。 | 命名：杜甫《春夜喜雨》「随风潜入夜，润物细无声」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 及 `lantai/runtime/middleware.py` |
+| **吉金**（Jijin，UI 主题） | 悬镜控制台默认深色皮肤；以青铜器拓片质感为底色，点缀铜绿与鎏金纹理，体现沉稳厚重的历史感。 | 命名：古籍中对青铜彝器的尊称（《墨子》等）；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0038](docs/adr/0038-visual-management-studio.md) |
+| **漏窗**（Louchuang，UI 主题） | 悬镜控制台浅色皮肤；汲取苏州园林漏窗移步换景的意境，采用绢黄底色与月洞门造型卡片。 | 命名：苏州园林建筑构件「漏窗」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0038](docs/adr/0038-visual-management-studio.md) |
+| **缥缃**（Piaoxiang，版本代号） | v0.14.0 发行版本代号；象征古籍书卷，契合兰台为 AI 守护长期记忆档案的系统定位。 | 命名：古人对淡青与淡黄色丝帛书衣的称谓，借指书卷；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
+| **绳墨**（Shengmo，版本代号） | v0.15.2 发行版本代号；寓意以严谨准绳定曲直，对应反思校准、测试门禁与发布纪律收口。 | 命名：《礼记·经解》「绳墨之于曲直」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
+| *decay_score*（技术字段） | 记忆保持强度分值（0.0~1.0）；随时间指数衰减，跌破极低阈值后触发休眠归档。 | 命名：项目内部技术字段；设计：见 `lantai/models/tables.py` 及 [ADR-0005](docs/adr/0005-forgetting-semantics.md) |
+| *search_trace*（技术字段） | 检索诊断调试数组；开启后记录检索执行各步骤的耗时、候选条数与得分分布。 | 命名：项目内部技术字段；设计：见 `lantai/retrieval/hybrid.py` 诊断输出 |
+| *water_level*（技术字段） | 潮波合并缓冲区的水位指标；实时反映未冲刷的消息堆积量与活跃会话数，用于写入节流监控。 | 命名：项目内部技术字段；设计：见 [ADR-0003](docs/adr/0003-coalesce-buffer-key.md) 及 `/stats` 路由 |
+| *promotion_trace*（技术字段） | 知识晋升评分快照（JSON 格式）；记录单条记忆被升格为高阶信念或规则时的多维度打分依据。 | 命名：项目内部技术字段；设计：见 `lantai/models/tables.py` 及 [ADR-0044](docs/adr/0044-cognition-evolution-boundary.md) |
+| *failure_pattern*（技术字段） | 从失败记录中抽象出的认知模式标识；用于预警同类操作风险，防止 Agent 重蹈覆辙。 | 命名：项目内部技术字段；设计：见 `lantai/cognition/reflection.py` 及 [ADR-0044](docs/adr/0044-cognition-evolution-boundary.md) |
+| *facade rule*（工程规范） | 系统重构纪律：只搬迁模块位置、不更改业务语义与接口调用路径，保证旧 import 全绿。 | 命名：经典设计模式（外观模式 Facade）；设计：见 [ADR-0001](docs/adr/0001-facade-rule.md) |
+| *service layer*（工程规范） | 架构分层约定：接口层仅负责网络请求协议解析，所有核心业务逻辑统一沉淀在 service 服务层。 | 命名：经典企业应用架构模式（服务层）；设计：见 [ADR-0001](docs/adr/0001-facade-rule.md) |
