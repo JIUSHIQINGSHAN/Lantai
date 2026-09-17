@@ -42,8 +42,8 @@ class RetrievalParams:
         default_factory=lambda: bool(settings.ECHO_SUPPRESS_ENABLED)
     )
     mmr_enabled: bool = field(default_factory=lambda: bool(settings.MMR_ENABLED))
-    mmr_lambda: float = field(default_factory=lambda: float(settings.MMR_LAMBDA))
-    errsig_bonus: float = field(default_factory=lambda: float(settings.ERRSIG_BONUS))
+    mmr_lambda: float = field(default_factory=lambda: _fail_closed(settings.MMR_LAMBDA, 0.7))
+    errsig_bonus: float = field(default_factory=lambda: _fail_closed(settings.ERRSIG_BONUS, 0.10))
     extra: dict = field(default_factory=dict)
 
     @classmethod
@@ -102,6 +102,15 @@ class RetrievalParams:
         return self.extra.get(key, getattr(settings, key, default))
 
 
+def _fail_closed(value: float, default: float) -> float:
+    """0~1 边界校验，非法值 fail-closed 回默认（上游 MMR/errsig 同纪律）。"""
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return default
+    return val if 0.0 <= val <= 1.0 else default
+
+
 def _token_set(text: str) -> set:
     """jieba 分词 token 集（MMR 冗余度量用；jieba 缺失退字符 bigram）。"""
     if not text:
@@ -141,7 +150,8 @@ def mmr_select(scored: list, limit: int, *, lam: float = 0.7) -> list:
     """MMR 多样性选择（v022 吸收票据 02）：mmr = λ·relevance − (1−λ)·redundancy。
 
     λ 语义照抄上游 Memmy 融改（0.7 默认），实现独立。候选不足或 limit
-    非正时逐条退回按分截断，与改前一字不差（零回归铁律）。"""
+    非正时逐条退回按分截断，与改前一字不差（零回归铁律）。
+    被 supersedes 边置顶的新值条目（_supersedes_pinned）豁免冗余惩罚。"""
     if limit <= 0:
         return []
     if len(scored) <= limit:
@@ -154,7 +164,9 @@ def mmr_select(scored: list, limit: int, *, lam: float = 0.7) -> list:
         best_idx = None
         best_val = None
         for i, (rel, m) in enumerate(pool):
-            red = _redundancy(m.content, chosen_texts)
+            red = 0.0 if getattr(m, "_supersedes_pinned", False) else _redundancy(
+                m.content, chosen_texts
+            )
             val = lam * rel - (1.0 - lam) * red
             if best_val is None or val > best_val:
                 best_idx = i
@@ -165,7 +177,8 @@ def mmr_select(scored: list, limit: int, *, lam: float = 0.7) -> list:
     return chosen
 
 
-def _apply_supersedes_order(    scored: list,
+def _apply_supersedes_order(
+    scored: list,
     breakdowns: dict | None = None,
     params: RetrievalParams | None = None,
     session: Any = None,
@@ -229,6 +242,13 @@ def _apply_supersedes_order(    scored: list,
             if breakdowns is not None and m.id in breakdowns:
                 breakdowns[m.id]["superseded_by"] = superseder_ids
                 breakdowns[m.id]["demoted"] = True
+            # 置顶条目登记（票据 02 MMR 豁免）：被取代旧值压到新值之下时，
+            # 新值（superseder）豁免 MMR 冗余惩罚——「不因近义被淘汰」，
+            # 不是「压过所有人」（冗余惩罚豁免，排序照常竞争）
+            for n in superseder_ids:
+                pinned_item = id_to_item.get(n)
+                if pinned_item is not None:
+                    setattr(pinned_item, "_supersedes_pinned", True)
         out.append((sc, m))
     out.sort(key=lambda x: -x[0])
     return out
@@ -567,9 +587,14 @@ def _hybrid_search_impl(
     if p.mmr_enabled and len(scored_items) > fetch_n:
         scored_items = mmr_select(scored_items, fetch_n, lam=p.mmr_lambda)
         if explain:
+            prior_texts: list = []
             for sc, mm in scored_items:
                 if mm.id in breakdowns:
                     breakdowns[mm.id]["mmr_selected"] = True
+                    breakdowns[mm.id]["mmr_redundancy"] = round(
+                        _redundancy(mm.content, prior_texts), 4
+                    )
+                prior_texts.append(mm.content)
     candidates = scored_items[:fetch_n]
 
     # Step 5: Reranker（可选）

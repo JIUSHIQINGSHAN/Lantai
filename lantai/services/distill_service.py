@@ -151,6 +151,7 @@ def distill_session(session_id: str, *, store: bool = False) -> dict:
                     "distill_source_count": len(rows),
                     "distill_emotion_hits": emo,
                     "distill_initial_salience": initial,
+                    "origin_agent": "session-distill",
                 },
             )
         )

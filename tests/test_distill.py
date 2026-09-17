@@ -134,6 +134,66 @@ class TestDistill:
         res = _distill(engine, "nosuch")
         assert res["status"] == "skipped"
 
+    def test_stored_distill_recallable_via_hybrid_search(self, engine):
+        """票据 04 DoD：落库走完整管线 → hybrid_search 可召回（走闸门的证明）。"""
+        _add_session_mem(engine, "s6", "和团队约定了新的发布流程")
+        _add_session_mem(engine, "s6", "发布流程改为先跑全量测试再打包")
+        _add_session_mem(engine, "s6", "下周一开始执行新流程")
+        res = _distill(
+            engine, "s6", store=True, llm_return={"summary": "团队约定发布流程先全量测试再打包"}
+        )
+        assert res["store"]["candidate_id"]
+
+        def gts():
+            return Session(engine)
+
+        with (
+            patch.object(db_module, "get_session", gts),
+            patch(
+                "lantai.evolution.proposer.chat_json",
+                return_value={
+                    "proposal_type": "add",
+                    "target_key": "发布流程约定",
+                    "new_content": "团队约定发布流程先全量测试再打包",
+                    "memory_type": "semantic",
+                    "reason": "r",
+                    "confidence": 0.9,
+                },
+            ),
+            patch("lantai.llm.client.embed", side_effect=lambda texts: [[0.1] * 8 for _ in texts]),
+            patch(
+                "lantai.evolution.promoter.embed",
+                side_effect=lambda texts: [[0.1] * 8 for _ in texts],
+            ),
+            patch(
+                "lantai.services.memory_service.embed",
+                side_effect=lambda texts: [[0.1] * 8 for _ in texts],
+            ),
+            patch("lantai.gate.scorer.embed", side_effect=lambda texts: [[0.1] * 8 for _ in texts]),
+            patch(
+                "lantai.retrieval.hybrid.get_vector_store",
+                return_value=Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock()),
+            ),
+        ):
+            from lantai.workers.evolve_worker import run_evolve_once
+
+            run_evolve_once()
+
+        # 召回走 keyword 腿（向量 store 空）：精华正文真出现
+        with (
+            patch.object(db_module, "get_session", gts),
+            patch("lantai.retrieval.intent.chat_json", return_value={"intent": "fact_lookup"}),
+            patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+            patch(
+                "lantai.retrieval.hybrid.get_vector_store",
+                return_value=Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock()),
+            ),
+        ):
+            from lantai.retrieval import hybrid
+
+            hits = hybrid.hybrid_search("发布流程 全量测试", top_k=5, use_rerank=False)
+        assert any("全量测试" in h["document"] for h in hits)
+
 
 class TestDistillRoute:
     """REST POST /session/distill"""

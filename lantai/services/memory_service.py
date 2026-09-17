@@ -260,6 +260,15 @@ def _create_candidate_with_extraction(
             s.commit()
             s.refresh(doc)
 
+        # errsig 写侧登记（票据 03，与检索侧共用单一真源正则）：
+        # 报错签名记入 provenance，供审计与优先级参考
+        from lantai.retrieval.errsig import extract_error_signatures
+
+        errsig_hits = list(extract_error_signatures(req.content))
+        prov_extra = dict(provenance_extra or {})
+        if errsig_hits:
+            prov_extra["errsig"] = errsig_hits
+
         cand = MemoryCandidate(
             id=new_id("cand"),
             session_id=(getattr(req, "session_id", "") or "").strip() or None,
@@ -273,7 +282,7 @@ def _create_candidate_with_extraction(
             extractor_confidence=data["extractor_confidence"],
             provenance=make_provenance(
                 provenance_prompt or PROVENANCE_PROMPT_EXTRACT,
-                extra=provenance_extra,
+                extra=prov_extra,
             ),
             lane=req.lane,
         )
