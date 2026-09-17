@@ -137,7 +137,12 @@ for name, (enabled, r) in EXT_ROUTERS.items():
         app.include_router(r, dependencies=AUTH, tags=[f"ext:{name}"])
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """`lantai-server` console script entrypoint."""
     import uvicorn
 
     uvicorn.run(app, host=settings.HOST, port=settings.PORT)
+
+
+if __name__ == "__main__":
+    main()

@@ -45,4 +45,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 EXPOSE 8767
 
-CMD ["python", "api_server.py"]
+# console script 与 api_server.py 等价；优先 lantai-server（wheel 已声明 entry point）
+CMD ["lantai-server"]

@@ -86,7 +86,8 @@ cp .env.example .env
 
 # 5. 初始化并启动
 python scripts/init_db.py
-python api_server.py
+lantai-server
+# 等价：python api_server.py
 # API 运行在 http://127.0.0.1:8767
 ```
 
@@ -101,7 +102,7 @@ docker run -d -p 8767:8767 \
   lantai:0.21.0
 ```
 
-> 容器默认 `HOST=0.0.0.0` 对外暴露，**必须注入 `API_KEY`**——启动守卫（`assert_secure_binding`）会在非回环地址且无密钥时拒绝运行。
+> 容器默认 `HOST=0.0.0.0` 对外暴露，**必须注入 `API_KEY`**——启动守卫（`assert_secure_binding`）会在非回环地址且无密钥时拒绝运行；请求路径也会校验 `X-API-Key`（或库内 Bearer key），非回环不再回退 DEV MODE。
 > 
 > ⚠️ **部署约束（单进程部署）**：当前版本的后台定时任务调度器（APScheduler）与嵌入式底座（SQLite WAL + 内嵌 ChromaDB）按单进程架构设计。请在部署时保持单进程运行（`--workers 1`，默认行为）；多 Worker 运行会导致遗忘与蒸馏任务重复触发及向量库写锁争用。
 
@@ -235,7 +236,7 @@ critical）、反思/参数建议任务失败、5xx 错误率、p95 延迟、零
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `HOST` / `PORT` | `127.0.0.1` / `8767` | 监听地址；非回环必须配 API_KEY |
-| `API_KEY` | 空 | REST 鉴权（空 = 本机无鉴权模式） |
+| `API_KEY` | 空 | 环境变量密钥（请求头 `X-API-Key`）；非回环必填，命中后 principal=api_key/admin；与库内 Bearer 并存 |
 | `OPENAI_API_KEY` | 空 | LLM 提取 + Embedding |
 | `OPENAI_BASE_URL` / `LLM_MODEL` | openai / gpt-4o-mini | OpenAI 兼容端点 |
 | `EMBED_MODEL` | `BAAI/bge-m3` | Embedding 模型 |
