@@ -65,6 +65,21 @@ def handle_search(params: dict) -> dict:
         "event_id": event_id,
         "evidence": build_evidence(results),
     }
+    # 樊篱（P0 票03）：正文是数据不是指令——主结果与 evidence 各自围栏
+    #（evidence 独立包裹，避免先包裹再截断切开闭合标记）
+    from lantai.llm.fence import wrap_as_data
+
+    for r in results:
+        mem = r.get("memory") if isinstance(r, dict) else None
+        if isinstance(mem, dict) and mem.get("content"):
+            mem["content"] = wrap_as_data(
+                str(mem["content"]), item_id=mem.get("id"), score=r.get("score")
+            )
+    for e in ret.get("evidence") or []:
+        if isinstance(e, dict) and e.get("content"):
+            e["content"] = wrap_as_data(
+                str(e["content"]), item_id=e.get("id"), score=e.get("score")
+            )
     # v0.4 Cognitive Middleware: 自动注入认知上下文摘要（无需 Agent 显式调用心斋）
     try:
         from lantai.runtime.middleware import build_cognitive_summary

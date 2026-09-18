@@ -17,6 +17,13 @@ from __future__ import annotations
 import base64
 
 
+def _rid(item) -> str | None:
+    """取记录 id（dict 或 ORM 对象皆可），无则 None（围栏元数据用）。"""
+    if isinstance(item, dict):
+        return item.get("id")
+    return getattr(item, "id", None)
+
+
 def build_cognitive_summary(task: str, max_rules: int = 2, max_failures: int = 1) -> str:
     """
     根据 task 描述生成认知摘要字符串（纯文本）。
@@ -37,21 +44,25 @@ def build_cognitive_summary(task: str, max_rules: int = 2, max_failures: int = 1
 
         parts = []
         if ctx.rules:
+            from lantai.llm.fence import wrap_as_data
+
             rules_texts = []
             for r in ctx.rules[:max_rules]:
                 c = r.get("content") if isinstance(r, dict) else getattr(r, "content", "")
                 if c:
-                    rules_texts.append(c[:80])
+                    rules_texts.append(wrap_as_data(str(c)[:80], item_id=_rid(r)))
             if rules_texts:
                 parts.append(f"相关规则: {'; '.join(rules_texts)}")
         if ctx.failures:
+            from lantai.llm.fence import wrap_as_data
+
             f = ctx.failures[0]
             if isinstance(f, dict):
                 lesson = f.get("content") or f.get("lesson") or ""
             else:
                 lesson = getattr(f, "lesson", None) or getattr(f, "content", "")
             if lesson:
-                parts.append(f"已知失败: {lesson[:80]}")
+                parts.append(f"已知失败: {wrap_as_data(str(lesson)[:80], item_id=_rid(f))}")
 
         return " | ".join(parts) if parts else ""
     except Exception:

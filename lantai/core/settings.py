@@ -236,6 +236,10 @@ class Settings(BaseSettings):
     SHELL_HOOK_OFFLOAD_CHARS: int = 2000  # 记忆内容超过此长度 → 落文件 + 摘要注入
     OFFLOAD_OUTPUT_DIR: str = ""  # 为空时 = 仓库根 docs/memory-offload
 
+    # 樊篱（P0 票03）：记忆正文注入提示前包 <memory_data> 数据围栏 + 「非指令」
+    # 声明（OWASP LLM01 纵深防御）。默认开；关 = 行为退回无围栏（off 对照测试锚定）
+    DATA_FENCE_ENABLED: bool = True
+
     # 记忆 Wiki（借鉴 TencentDB Agent Memory LLM-Wiki）：场景/技能 → 持续维护的页面
     # docs/memory-wiki/{index.md, overview.md, pages/}；overview 综述 + [[wikilink]] 下钻
     WIKI_ENABLED: bool = True

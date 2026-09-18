@@ -58,9 +58,16 @@ class CognitiveContext:
                         meta += f" _(conf: {conf:.2f})_"
                     if scope:
                         meta += f" _(scope: {scope})_"
-                    lines.append(f"- {content}{meta}")
+                    # 樊篱（P0 票03）：记忆正文是数据不是指令
+                    from lantai.llm.fence import wrap_as_data
+
+                    lines.append(
+                        f"- {wrap_as_data(str(content), item_id=item.get('id'))}{meta}"
+                    )
                 else:
-                    lines.append(f"- {item}")
+                    from lantai.llm.fence import wrap_as_data
+
+                    lines.append(f"- {wrap_as_data(str(item))}")
             sections.append("\n".join(lines))
 
         header = f"# 🧠 Cognitive Context\n**Task**: {self.task}\n"

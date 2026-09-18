@@ -25,6 +25,7 @@ from lantai.core.settings import settings
 from lantai.core.text import apply_recall_budget as _apply_recall_budget
 from lantai.core.text import truncate_codepoints as _truncate_codepoints
 from lantai.llm.client import embed
+from lantai.llm.fence import fence_declaration, wrap_as_data
 from lantai.models.tables import MemoryItem
 from lantai.services.offload_service import build_offload_inject, write_offload_file
 from lantai.storage import db
@@ -181,13 +182,17 @@ def build_context(query: str, session_id: str | None = None) -> dict:
         )
         out = {}
         if lines:
-            memory_block = "\n".join(lines)
+            # 樊篱（P0 票03）：注入给宿主 LLM 的记忆正文是数据不是指令——
+            # 依据段与记忆段各自围栏，正文逃逸标记已中性化
+            memory_block = wrap_as_data("\n".join(lines))
             out["context"] = memory_block
             if evidence:
                 out["context"] = (
                     "【本次依据】\n"
-                    + "\n".join(
-                        f"- ({e['id']}, score {e['score']}) {e['content']}" for e in evidence
+                    + wrap_as_data(
+                        "\n".join(
+                            f"- ({e['id']}, score {e['score']}) {e['content']}" for e in evidence
+                        )
                     )
                     + "\n\n【相关记忆】\n"
                     + memory_block
@@ -200,6 +205,9 @@ def build_context(query: str, session_id: str | None = None) -> dict:
                     for e in evidence
                 )
                 out["context"] += "\n\n" + _build_tools_guide(truncated)
+            decl = fence_declaration()
+            if decl:
+                out["context"] = decl + "\n" + out["context"]
         if event_id:
             out["event_id"] = event_id
         return out

@@ -194,14 +194,18 @@ def _curate(candidates: list[dict], related_texts: str) -> dict:
     """阶段 1：curator 蒸馏提案（strict JSON；异常降级为空，宁 miss）。"""
     if not candidates:
         return {"proposals": []}
+    from lantai.llm.fence import wrap_as_data
+
     batch_text = "\n".join(
         f"- [{c['memory_id']}] lane={c['lane']} importance={c['importance']:.2f} "
-        f"signal={c['signal']} {c['key']}: {c['content'][:200]}"
+        f"signal={c['signal']} {c['key']}: "
+        f"{wrap_as_data(str(c['content'])[:200], item_id=c['memory_id'])}"
         for c in candidates
     )
     user = (
         f"FLAGGED MEMORIES:\n{batch_text}\n\n"
-        f"RELATED EXISTING MEMORIES:\n{related_texts or '(none)'}"
+        f"RELATED EXISTING MEMORIES:\n"
+        f"{wrap_as_data(related_texts) if related_texts else '(none)'}"
     )
     try:
         return chat_json(get_prompt("REFLECT_CURATOR_SYS", REFLECT_CURATOR_SYS), user)
@@ -213,11 +217,14 @@ def _reject(prop: MemoryProposal, evidence_texts: str) -> dict:
     """阶段 2：rejecter 复核（防幻觉蒸馏；异常按不通过处理，宁 miss）。"""
     if not evidence_texts.strip():
         return {"accept": False, "risk": "high", "reason": "no evidence text"}
+    from lantai.llm.fence import wrap_as_data
+
     patch = prop.proposed_patch or {}
     user = (
         f"PROPOSAL:\ntype={prop.proposal_type} "
-        f"target={prop.target_memory_id}\ncontent={patch.get('content', '')}\n"
-        f"reason={prop.reason}\n\nEVIDENCE:\n{evidence_texts}"
+        f"target={prop.target_memory_id}\n"
+        f"content={wrap_as_data(str(patch.get('content', '')))}\n"
+        f"reason={prop.reason}\n\nEVIDENCE:\n{wrap_as_data(evidence_texts)}"
     )
     try:
         return chat_json(get_prompt("REFLECT_REJECTER_SYS", REFLECT_REJECTER_SYS), user)
