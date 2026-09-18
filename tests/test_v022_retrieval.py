@@ -240,3 +240,40 @@ class TestErrSigUnit:
 
         assert errsig._ERRSIG_RE.pattern == errsig._ERRSIG_RE.pattern
         # future: gate 侧 import 该 re，测试在 gate 接入后补
+
+
+class TestParamsFailClosed:
+    """整改票 02：参数校验必须覆盖所有构造路径——from_overrides 显式覆盖
+    不得绕过 default_factory 的 fail-closed 校验（λ/bonus 越界直通评分）。"""
+
+    def test_overrides_lambda_out_of_range_fails_closed(self):
+        from lantai.retrieval.hybrid import RetrievalParams
+
+        p = RetrievalParams.from_overrides({"MMR_LAMBDA": 99.0})
+        assert p.mmr_lambda == 0.7
+
+    def test_overrides_bonus_invalid_type_fails_closed(self):
+        from lantai.retrieval.hybrid import RetrievalParams
+
+        p = RetrievalParams.from_overrides({"ERRSIG_BONUS": "abc"})
+        assert p.errsig_bonus == 0.10
+
+    def test_overrides_nan_and_negative_fails_closed(self):
+        from lantai.retrieval.hybrid import RetrievalParams
+
+        p = RetrievalParams.from_overrides({"MMR_LAMBDA": float("nan"), "ERRSIG_BONUS": -1.0})
+        assert p.mmr_lambda == 0.7
+        assert p.errsig_bonus == 0.10
+
+    def test_valid_overrides_pass_through(self):
+        from lantai.retrieval.hybrid import RetrievalParams
+
+        p = RetrievalParams.from_overrides({"MMR_LAMBDA": 0.8, "ERRSIG_BONUS": 0.2})
+        assert p.mmr_lambda == 0.8
+        assert p.errsig_bonus == 0.2
+
+    def test_default_construction_still_reads_settings(self, monkeypatch):
+        from lantai.retrieval.hybrid import RetrievalParams
+
+        monkeypatch.setattr(settings, "MMR_LAMBDA", 0.6)
+        assert RetrievalParams().mmr_lambda == 0.6

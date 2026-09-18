@@ -42,9 +42,15 @@ class RetrievalParams:
         default_factory=lambda: bool(settings.ECHO_SUPPRESS_ENABLED)
     )
     mmr_enabled: bool = field(default_factory=lambda: bool(settings.MMR_ENABLED))
-    mmr_lambda: float = field(default_factory=lambda: _fail_closed(settings.MMR_LAMBDA, 0.7))
-    errsig_bonus: float = field(default_factory=lambda: _fail_closed(settings.ERRSIG_BONUS, 0.10))
+    mmr_lambda: float = field(default_factory=lambda: settings.MMR_LAMBDA)
+    errsig_bonus: float = field(default_factory=lambda: settings.ERRSIG_BONUS)
     extra: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # fail-closed 校验的唯一入口：默认构造与 from_overrides 覆盖构造
+        # 都经过这里，显式覆盖值无法绕过（整改票 02）。
+        object.__setattr__(self, "mmr_lambda", _fail_closed(self.mmr_lambda, 0.7))
+        object.__setattr__(self, "errsig_bonus", _fail_closed(self.errsig_bonus, 0.10))
 
     @classmethod
     def from_overrides(cls, overrides: dict | None = None) -> "RetrievalParams":
