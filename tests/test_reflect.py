@@ -5,7 +5,6 @@
 FTS5 真实建表（init_fts），DB 用内存 SQLite 真实建表。
 """
 
-from contextlib import contextmanager
 from datetime import timedelta
 from unittest.mock import Mock, patch
 
@@ -27,18 +26,8 @@ from lantai.models.tables import (
 from lantai.storage.fts import init_fts, search_fts, sync_fts
 
 
-@contextmanager
-def _patch_session(session_factory):
-    original = db_module.get_session
-    db_module.get_session = session_factory
-    try:
-        yield
-    finally:
-        db_module.get_session = original
-
-
 @pytest.fixture()
-def reflect_env():
+def reflect_env(monkeypatch):
     """内存 SQLite 真实建表 + FTS5 + patch db.get_session。"""
     import lantai.models.tables  # noqa: F401
 
@@ -51,8 +40,9 @@ def reflect_env():
     def session_factory() -> Session:
         return Session(engine)
 
-    with _patch_session(session_factory):
-        yield session_factory, engine
+    # 统一走 pytest monkeypatch（同一栈 LIFO 还原），防撕卸顺序泄漏
+    monkeypatch.setattr(db_module, "get_session", session_factory)
+    yield session_factory, engine
 
 
 def _mem(**kw):

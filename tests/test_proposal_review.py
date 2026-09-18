@@ -4,10 +4,10 @@
 仅允许 mock LLM（chat_json/embed）与向量存储副作用（get_vector_store）。
 """
 
-from contextlib import contextmanager
 from unittest.mock import Mock, patch
 
 import pytest
+
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -18,18 +18,8 @@ from lantai.models.tables import MemoryEdge, MemoryItem, MemoryProposal
 from lantai.storage.fts import init_fts
 
 
-@contextmanager
-def _patch_session(session_factory):
-    original = db_module.get_session
-    db_module.get_session = session_factory
-    try:
-        yield
-    finally:
-        db_module.get_session = original
-
-
 @pytest.fixture()
-def review_env():
+def review_env(monkeypatch):
     """内存 SQLite 真实建表 + FTS5 + patch db.get_session。"""
     import lantai.models.tables  # noqa: F401
 
@@ -42,8 +32,9 @@ def review_env():
     def session_factory() -> Session:
         return Session(engine)
 
-    with _patch_session(session_factory):
-        yield session_factory
+    # 统一走 pytest monkeypatch（同一栈 LIFO 还原），防撕卸顺序泄漏
+    monkeypatch.setattr(db_module, "get_session", session_factory)
+    yield session_factory
 
 
 def _proposal(**kw):

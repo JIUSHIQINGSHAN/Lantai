@@ -16,7 +16,7 @@ from lantai.models.tables import MemoryCandidate, MemoryItem, MemoryProposal
 
 
 @pytest.fixture()
-def mem_db():
+def mem_db(monkeypatch):
     """内存 SQLite 真实建表（provenance 全链路测试用）。"""
     import lantai.models.tables  # noqa: F401
 
@@ -31,21 +31,11 @@ def mem_db():
     def session_factory() -> Session:
         return Session(engine)
 
-    from contextlib import contextmanager
+    # 统一走 pytest monkeypatch（同一栈 LIFO 还原），防撕卸顺序泄漏
+    import lantai.storage.db as dbm
 
-    @contextmanager
-    def _patch_session(session_factory):
-        import lantai.storage.db as dbm
-
-        original = dbm.get_session
-        dbm.get_session = session_factory
-        try:
-            yield
-        finally:
-            dbm.get_session = original
-
-    with _patch_session(session_factory):
-        yield session_factory, engine
+    monkeypatch.setattr(dbm, "get_session", session_factory)
+    yield session_factory, engine
 
 
 def _fp_data(**kw):

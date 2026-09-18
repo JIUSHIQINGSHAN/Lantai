@@ -145,6 +145,44 @@ def param_env():
         setattr(settings, n, v)
 
 
+# ── 模块级状态绊线（常驻护栏）──────────────────────────────────
+# 背景：db.get_session 曾被测试"还原"成 None（episode_credit finally 置 None）、
+# 多个 fixture 手写 try/finally 与测试内 monkeypatch 叠加时因撕卸顺序把陈旧值
+# 回写泄漏（test_scene 实证，139 例连坐）——均造成下游测试 TypeError 顺序污染。
+# 本绊线在每个测试 setup 时校验 lantai.storage.db 模块级 get_session/engine 身份，
+# 被改脏则在下一个测试点名前置测试。hook 时机在全部 fixture 撕卸之后，无顺序竞争。
+_ORIG_GET_SESSION = None
+_ORIG_ENGINE = None
+_PREV_TEST = {"id": ""}
+
+
+def pytest_configure(config):
+    global _ORIG_GET_SESSION, _ORIG_ENGINE
+    import lantai.storage.db as dbm
+
+    _ORIG_GET_SESSION = dbm.get_session
+    _ORIG_ENGINE = dbm.engine
+
+
+def pytest_runtest_setup(item):
+    import lantai.storage.db as dbm
+
+    if dbm.get_session is not _ORIG_GET_SESSION:
+        raise AssertionError(
+            f"前置测试 {_PREV_TEST['id']} 污染了 lantai.storage.db.get_session"
+            f"（未还原：{_ORIG_GET_SESSION!r} → {dbm.get_session!r}）"
+        )
+    if dbm.engine is not _ORIG_ENGINE:
+        raise AssertionError(
+            f"前置测试 {_PREV_TEST['id']} 污染了 lantai.storage.db.engine"
+            f"（未还原：{_ORIG_ENGINE!r} → {dbm.engine!r}）"
+        )
+
+
+def pytest_runtest_teardown(item, nextitem):
+    _PREV_TEST["id"] = item.nodeid
+
+
 @pytest.fixture(autouse=True)
 def _no_background_scheduler(monkeypatch):
     """全量顺序污染防护：测试进程内关闭真实后台调度器。

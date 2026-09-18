@@ -22,7 +22,7 @@ MCP_PATH = REPO_ROOT / "lantai" / "cli" / "mcp.py"
 
 
 @pytest.fixture()
-def mem_db():
+def mem_db(monkeypatch):
     """内存 SQLite 真实建表（wiki 全链路测试用）。"""
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
@@ -32,21 +32,11 @@ def mem_db():
 
     init_fts(engine.raw_connection())
 
-    from contextlib import contextmanager
+    # 统一走 pytest monkeypatch（同一栈 LIFO 还原），防撕卸顺序泄漏
+    import lantai.storage.db as dbm
 
-    @contextmanager
-    def _patch_session(session_factory):
-        import lantai.storage.db as dbm
-
-        original = dbm.get_session
-        dbm.get_session = session_factory
-        try:
-            yield
-        finally:
-            dbm.get_session = original
-
-    with _patch_session(lambda: Session(engine)):
-        yield lambda: Session(engine), engine
+    monkeypatch.setattr(dbm, "get_session", lambda: Session(engine))
+    yield lambda: Session(engine), engine
 
 
 def test_slugify():

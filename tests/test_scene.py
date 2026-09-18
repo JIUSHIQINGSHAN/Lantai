@@ -31,7 +31,7 @@ def _item(i, use_count=0, importance=0.5):
 
 
 @pytest.fixture()
-def mem_db():
+def mem_db(monkeypatch):
     """内存 SQLite 真实建表（scene 全链路测试用）。"""
     import lantai.models.tables  # noqa: F401
 
@@ -46,21 +46,10 @@ def mem_db():
     def session_factory() -> Session:
         return Session(engine)
 
-    from contextlib import contextmanager
-
-    @contextmanager
-    def _patch_session(session_factory):
-        import lantai.storage.db as dbm
-
-        original = dbm.get_session
-        dbm.get_session = session_factory
-        try:
-            yield
-        finally:
-            dbm.get_session = original
-
-    with _patch_session(session_factory):
-        yield session_factory, engine
+    # 统一走 pytest monkeypatch：与测试内 monkeypatch 同栈 LIFO 还原，
+    # 不会因 fixture 撕卸顺序把陈旧值回写泄漏（手写 try/finally 的已知隐患）。
+    monkeypatch.setattr(db_module, "get_session", session_factory)
+    yield session_factory, engine
 
 
 def _load_hook(monkeypatch):

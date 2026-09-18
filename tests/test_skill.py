@@ -20,7 +20,7 @@ HOOK_PATH = os.path.join(
 
 
 @pytest.fixture()
-def mem_db():
+def mem_db(monkeypatch):
     """内存 SQLite 真实建表（Skill 全链路测试用）。"""
     import lantai.models.tables  # noqa: F401
 
@@ -35,23 +35,11 @@ def mem_db():
     def session_factory() -> Session:
         return Session(engine)
 
-    with db_module_session_patch(session_factory):
-        yield session_factory, engine
-
-
-from contextlib import contextmanager
-
-
-@contextmanager
-def db_module_session_patch(session_factory):
+    # 统一走 pytest monkeypatch（同一栈 LIFO 还原），防撕卸顺序泄漏
     import lantai.storage.db as dbm
 
-    original = dbm.get_session
-    dbm.get_session = session_factory
-    try:
-        yield
-    finally:
-        dbm.get_session = original
+    monkeypatch.setattr(dbm, "get_session", session_factory)
+    yield session_factory, engine
 
 
 def _load_hook(monkeypatch):

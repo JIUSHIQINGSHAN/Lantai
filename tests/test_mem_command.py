@@ -14,7 +14,7 @@ from lantai.models.tables import MemoryItem, MemoryScene
 
 
 @pytest.fixture()
-def mem_db():
+def mem_db(monkeypatch):
     """内存 SQLite 真实建表（mem 命令全链路测试用）。"""
     import lantai.models.tables  # noqa: F401
 
@@ -29,21 +29,11 @@ def mem_db():
     def session_factory() -> Session:
         return Session(engine)
 
-    from contextlib import contextmanager
+    # 统一走 pytest monkeypatch（同一栈 LIFO 还原），防撕卸顺序泄漏
+    import lantai.storage.db as dbm
 
-    @contextmanager
-    def _patch_session(session_factory):
-        import lantai.storage.db as dbm
-
-        original = dbm.get_session
-        dbm.get_session = session_factory
-        try:
-            yield
-        finally:
-            dbm.get_session = original
-
-    with _patch_session(session_factory):
-        yield session_factory, engine
+    monkeypatch.setattr(dbm, "get_session", session_factory)
+    yield session_factory, engine
 
 
 class _FakeVectorStore:
@@ -80,7 +70,9 @@ def test_create_skill_persists_and_dedups(mem_db, monkeypatch):
     monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: fake_store)
     from lantai.services.mem_command import create_skill
 
-    with patch("lantai.llm.client.embed", return_value=[[0.1] * 8]):
+    # mem_command 模块级静态绑定 embed（from lantai.llm.client import embed），
+    # patch 必须打在实际调用绑定上，否则真调 API（401）
+    with patch("lantai.services.mem_command.embed", return_value=[[0.1] * 8]):
         r1 = create_skill(
             name="数据库迁移",
             description="迁移步骤与踩坑",
@@ -156,6 +148,7 @@ def test_mem_sync_runs_scene_and_digest(mem_db, monkeypatch, tmp_path):
     monkeypatch.setattr(mc.settings, "WIKI_OVERVIEW_LLM", False)
     from lantai.services.mem_command import mem_sync
 
+    # scene/digest/wiki 内部是函数内延迟导入 embed（动态解析），patch 源头模块即生效
     with patch("lantai.llm.client.embed", return_value=[[0.99, 0.0, 0.0]]):
         out = mem_sync()
     assert out["ok"] is True
