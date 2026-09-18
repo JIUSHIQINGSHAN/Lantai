@@ -1,11 +1,12 @@
 import time
 from dataclasses import dataclass, field
-from datetime import UTC
+from datetime import UTC, timedelta
 from typing import Any
 
 from sqlmodel import select
 
 from lantai.core.logger import logger
+from lantai.core.time import utcnow
 from lantai.core.settings import settings
 from lantai.llm.client import embed
 from lantai.models.tables import MemoryEdge, MemoryItem
@@ -41,6 +42,9 @@ class RetrievalParams:
     echo_suppress_enabled: bool = field(
         default_factory=lambda: bool(settings.ECHO_SUPPRESS_ENABLED)
     )
+    echo_suppress_window: float = field(
+        default_factory=lambda: settings.ECHO_SUPPRESS_WINDOW_SECONDS
+    )
     mmr_enabled: bool = field(default_factory=lambda: bool(settings.MMR_ENABLED))
     mmr_lambda: float = field(default_factory=lambda: settings.MMR_LAMBDA)
     errsig_bonus: float = field(default_factory=lambda: settings.ERRSIG_BONUS)
@@ -51,6 +55,11 @@ class RetrievalParams:
         # 都经过这里，显式覆盖值无法绕过（整改票 02）。
         object.__setattr__(self, "mmr_lambda", _fail_closed(self.mmr_lambda, 0.7))
         object.__setattr__(self, "errsig_bonus", _fail_closed(self.errsig_bonus, 0.10))
+        object.__setattr__(
+            self,
+            "echo_suppress_window",
+            _fail_closed_positive(self.echo_suppress_window, 900.0),
+        )
 
     @classmethod
     def from_overrides(cls, overrides: dict | None = None) -> "RetrievalParams":
@@ -70,6 +79,7 @@ class RetrievalParams:
             "SUPERSEDES_ORDERING_ENABLED": "supersedes_enabled",
             "SUPERSEDES_DEMOTE_EPSILON": "supersedes_demote_epsilon",
             "ECHO_SUPPRESS_ENABLED": "echo_suppress_enabled",
+            "ECHO_SUPPRESS_WINDOW_SECONDS": "echo_suppress_window",
             "MMR_ENABLED": "mmr_enabled",
             "MMR_LAMBDA": "mmr_lambda",
             "ERRSIG_BONUS": "errsig_bonus",
@@ -98,6 +108,7 @@ class RetrievalParams:
             "SUPERSEDES_ORDERING_ENABLED": "supersedes_enabled",
             "SUPERSEDES_DEMOTE_EPSILON": "supersedes_demote_epsilon",
             "ECHO_SUPPRESS_ENABLED": "echo_suppress_enabled",
+            "ECHO_SUPPRESS_WINDOW_SECONDS": "echo_suppress_window",
             "MMR_ENABLED": "mmr_enabled",
             "MMR_LAMBDA": "mmr_lambda",
             "ERRSIG_BONUS": "errsig_bonus",
@@ -115,6 +126,17 @@ def _fail_closed(value: float, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return val if 0.0 <= val <= 1.0 else default
+
+
+def _fail_closed_positive(value: float, default: float) -> float:
+    """正数校验，非法值（非正/NaN/Inf/不可转换）fail-closed 回默认。"""
+    import math
+
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return default
+    return val if math.isfinite(val) and val > 0 else default
 
 
 def _token_set(text: str) -> set:
@@ -515,15 +537,19 @@ def _hybrid_search_impl(
     vector_ranks = {r["id"]: idx for idx, r in enumerate(vector_results)}
     bm25_ranks = {r[0]: idx for idx, r in enumerate(fts_bm25_results)}
 
-    # 回声抑制（v022 吸收 M2，上游 EchoMind/Memmy 融改；默认关）：本会话
-    # 自写的候选不回捞。开关与出身都显式——空 session 不过滤（上游纪律）。
+    # 回声抑制（v022 吸收 M2，ADR-0046 时间窗语义；默认关）：仅抑制本会话
+    # 窗口期内新写入的回声，窗口外同会话记忆照常召回（session 域检索本就
+    # 按 session 圈定候选池，删光同 session 会清空会话内召回）。
+    # 开关与出身都显式——空 session 不过滤（上游纪律）。
     echo_session = None
+    echo_cutoff = None
     if (
         p.echo_suppress_enabled
         and principal is not None
         and getattr(principal, "session_id", None)
     ):
         echo_session = principal.session_id
+        echo_cutoff = utcnow() - timedelta(seconds=p.echo_suppress_window)
 
     # 错误签名通道（v022 吸收 M6）：查询里的报错签名抽出一次，打分时
     # 正文精确命中同一签名的候选加有界 bonus；识别不到则整条规则不参与。
@@ -535,7 +561,12 @@ def _hybrid_search_impl(
 
     for m in items:
         if echo_session and getattr(m, "session_id", None) == echo_session:
-            continue
+            created = getattr(m, "created_at", None)
+            if created is not None:
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=UTC)
+                if created >= echo_cutoff:
+                    continue  # 窗口内本会话新写入 → 回声；窗口外照常召回
 
         from lantai.memory.policies import get_cognitive_policy
 

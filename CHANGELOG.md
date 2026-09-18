@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **鉴权双轨断裂（P0）**：业务路由原先只走库内 Bearer / DEV MODE，环境变量 `API_KEY` 与 `X-API-Key` 从未生效；空库 + 非回环可零鉴权写记忆。现 `get_current_user` 统一为：`X-API-Key`（命中即 admin）→ 库内 Bearer → **仅回环且无 API_KEY 且空库**才 DEV MODE。
 - **启动入口缺失（P0）**：`lantai-server`（`lantai.api.app:main`）此前无 `main()`；Dockerfile/README 引用不存在的 `api_server.py`。已补 `main()` 与薄 shim，Docker `CMD` 改为 `lantai-server`。
+- **回声抑制语义修正（ADR-0046，整改票 04）**：旧「删光同 session 候选」与 session 域检索叠加，开启即清空会话内召回；改时间窗语义——仅抑制本会话 `ECHO_SUPPRESS_WINDOW_SECONDS`（默认 900，正数 fail-closed）内新写入的回声，窗口外同会话记忆照常召回；`created_at` 缺失不抑制（宁 miss 不脏写）。
+- **RetrievalParams 覆盖路径统一 fail-closed（整改票 02）**：校验下沉 `__post_init__` 单一真源，`from_overrides` 显式覆盖越界/非法/非有限 λ、bonus、窗口参数一律回默认，不再绕过 default_factory 直通评分。
+- **distill 泳道权限收窄（整改票 03）**：`DEFAULT_LANES` 补 `distill`（默认密钥/DEV 可写可召回）；精华路由校验调用者泳道集含 `distill` 才许落库（否则 403）；源记忆读取按调用者泳道集收窄（与检索出口同口径），受限部署不再可能跨泳道提炼。
+- **认知中间件测试环境依赖（整改票 01）**：`test_cognitive_middleware` fixture 只隔离了 FastAPI 依赖注入，DEV MODE 库检查直连模块级会话工厂查真实库——本机库有 api_keys 行即 401；fixture 补模块级 `get_session` 隔离（五步诊断归档 `docs/memory-quality/review-remediation-v022-diagnosis-2026-09-18.md`）。
+- **episode_credit 测试全局状态污染（整改票 05）**：`finally` 里把模块级会话工厂置 `None` 改为 `monkeypatch.setattr` 自动还原，杜绝后续测试顺序依赖。
+- **v022 检索测试替身契约（整改票 04）**：向量替身不再「无视 top_k 返回全库」，按 filters 真实过滤 session/lane/domain；测试 helper 的 FTS 同步改为同事务写入（原 commit 后写入随 Session 关闭回滚，`memory_fts` 恒空）；换用真实 `Principal`。
 
 ### Added
 - **司天（后台运行监控面板，ADR-0044）**:

@@ -277,9 +277,11 @@ class Settings(BaseSettings):
     SUPERSEDES_ORDERING_ENABLED: bool = True
     SUPERSEDES_DEMOTE_EPSILON: float = 1e-6  # 旧值压到新值之下的最小分差
     # ── v022 上游吸收（aiduMEI v21.2，见 .scratch/v022-upstream-v212-adopt/）──
-    # 回声抑制（M2）：检索时滤掉本会话刚写入的自写候选；默认关——
-    # 兰台 session 域检索本就按 session_id 圈定，默认开会清空会话内召回
+    # 回声抑制（M2，ADR-0046 时间窗语义）：仅抑制本会话窗口期内新写入的回声；
+    # 默认关。兰台 session 域检索本就按 session_id 圈定，旧「删光同 session」
+    # 语义会清空会话内召回
     ECHO_SUPPRESS_ENABLED: bool = False
+    ECHO_SUPPRESS_WINDOW_SECONDS: int = 900  # 回声窗口：只抑制窗口内本会话新写入
     # MMR 多样性（M4）：λ·相关 −(1−λ)·冗余，截断前去近义重复；默认关（零回归）
     MMR_ENABLED: bool = False
     MMR_LAMBDA: float = 0.7  # 0~1；越大越偏向相关性
