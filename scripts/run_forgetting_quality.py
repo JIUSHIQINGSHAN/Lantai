@@ -128,7 +128,14 @@ def main() -> int:
     if args.check:
         from lantai.eval.offline import GATES, check_gates, run_offline_eval
 
-        result = run_offline_eval(dataset, top_k=args.top_k, judge="rule" if args.judge != "off" else "off")
+        if args.judge == "llm":
+            print(
+                "NOTE: --check 为离线确定性门禁，回答层判官降级为 rule（LLM 判官请用非 check 模式）",
+                file=sys.stderr,
+            )
+        result = run_offline_eval(
+            dataset, top_k=args.top_k, judge="rule" if args.judge != "off" else "off"
+        )
         ok, actual = check_gates(result)
         print(render_report(result))
         print("\n## 门禁判定（FTS 兜底最严格基准）")

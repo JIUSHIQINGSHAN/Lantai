@@ -28,7 +28,7 @@ def build_chinese_dataset() -> dict:
     return {
         "name": "chinese-memory-v2",
         "namespace": EVAL_NAMESPACE,
-        "description": "中文记忆评测集 v3（80 case）：错别字容错 / 时效 / 遗忘 / 矛盾取代 / 对照",
+        "description": "中文记忆评测集 v4（94 case）：错别字容错 / 词中错字 / 同义改写 / 时效 / 遗忘 / 矛盾取代 / 对照",
         "apply_forgetting": True,
         "cases": [
             # ── 错别字容错（FTS trigram，去首字模式：全部 query trigram ∈ content）────

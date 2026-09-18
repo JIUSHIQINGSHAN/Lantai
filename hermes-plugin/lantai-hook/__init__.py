@@ -47,8 +47,10 @@ _lock = threading.Lock()
 _proc: subprocess.Popen | None = None
 _proc_ready = False  # 子进程是否已通过就绪探测
 # v0.5：会话缓冲——session_id → [{"text": str, "turn": int}]（on_session_end flush 用）
-# turn 为该会话内的 1-based 缓冲序号（P0 票02：随来源链透传给 ingest_dialogue）
+# turn 为该会话内的单调递增序号（P0 票02：随来源链透传给 ingest_dialogue）；
+# 缓冲头部淘汰不影响计数（审查整改：len(buf)+1 会在长会话产生重复序号）
 _session_buffers: dict[str, list[dict]] = {}
+_session_turns: dict[str, int] = {}
 # v0.15（ADR-0022）：已注入底本（checkpoint）的会话集——每会话首轮注入一次
 _checkpoint_injected: set[str] = set()
 _CHECKPOINT_INJECTED_MAX = 50  # 防会话集无限膨胀（只影响首轮注入标记）
@@ -343,7 +345,9 @@ def _buffer_turn(session_id: str, user_message: str) -> None:
         return
     with _lock:
         buf = _session_buffers.setdefault(session_id, [])
-        buf.append({"text": msg, "turn": len(buf) + 1})
+        next_turn = _session_turns.get(session_id, 0) + 1
+        _session_turns[session_id] = next_turn
+        buf.append({"text": msg, "turn": next_turn})
         total = sum(len(m["text"]) for m in buf)
         while len(buf) > _SESSION_BUFFER_MAX_MSGS or total > _SESSION_BUFFER_MAX_CHARS:
             dropped = buf.pop(0)
@@ -354,6 +358,7 @@ def _flush_session(session_id: str) -> None:
     """清空并提交某会话的缓冲消息（on_session_end 调用），逐条携带来源。"""
     with _lock:
         entries = _session_buffers.pop(session_id, [])
+        _session_turns.pop(session_id, None)
     for entry in entries:
         _call_dialogue(entry["text"], session_id=session_id, turn=entry["turn"])
 

@@ -73,7 +73,8 @@ def ensure_can_delete(
     - 租户匹配（资源与主体都非空时）
     - 用户匹配：资源标了 user_id 且与主体不同 → 403；资源无归属
       （user_id 为空，多为 v022 之前的历史行）→ 不视为越权，只受 lane 约束
-    违规统一 403（不区分 404，避免资源存在性探测）。
+    越权一律 403；资源不存在仍由路由按 404 语义处理（REST 常规，
+    本 helper 只约束「存在但他人资源」的情形）。
     """
     if getattr(principal, "is_admin", False):
         return

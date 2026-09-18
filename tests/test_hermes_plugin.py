@@ -19,6 +19,7 @@ def mod():
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     m._session_buffers = {}
+    m._session_turns = {}
     m._proc = None
     m._proc_ready = False
     m._checkpoint_injected = set()

@@ -71,6 +71,11 @@ class CognitiveContext:
             sections.append("\n".join(lines))
 
         header = f"# 🧠 Cognitive Context\n**Task**: {self.task}\n"
+        from lantai.llm.fence import fence_declaration
+
+        decl = fence_declaration()
+        if decl:
+            header += f"\n> {decl}\n"
         return header + "\n\n".join(sections)
 
 

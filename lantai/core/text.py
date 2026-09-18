@@ -1,4 +1,19 @@
-"""共享文本工具：码点安全截断 + 总字符预算（召回预算 / 场景导航共用）。"""
+"""共享文本工具：码点安全截断 + 总字符预算 + 来源链字段规范化（单一真源）。"""
+
+SESSION_ID_MAX_CHARS = 128
+
+
+def normalize_session_id(value, *, default=None):
+    """来源链 session_id 规范化（shell_hook / MCP / 插件协议共用，单一真源）。
+
+    非字符串或超长 → 返回 default（调用方决定用 "" 还是 None，宁 miss 不脏写）。
+    """
+    if not isinstance(value, str):
+        return default
+    value = value.strip()
+    if not value or len(value) > SESSION_ID_MAX_CHARS:
+        return default
+    return value
 
 
 def truncate_codepoints(text: str, max_chars: int, suffix: str) -> str:

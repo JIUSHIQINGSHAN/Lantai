@@ -41,10 +41,10 @@ def handle_search(params: dict) -> dict:
         raise ValueError("top_k must be an int in [1, 100]")
     force = bool(params.get("force", False))
     # 来源链（P0 票02）：宿主可选透传 session_id，落检索事件供写线活性判据；
-    # 不传留空（宁 miss 不脏写）
-    session_id = params.get("session_id")
-    if not isinstance(session_id, str) or len(session_id) > 128:
-        session_id = None
+    # 不传留空（宁 miss 不脏写）；校验单一真源 normalize_session_id
+    from lantai.core.text import normalize_session_id
+
+    session_id = normalize_session_id(params.get("session_id"), default=None)
     gate = relevance_check(query)
     if not force and not gate["needs_memory"]:
         event_id = _try_log(query, [], 0, gate, session_id=session_id)
@@ -80,6 +80,10 @@ def handle_search(params: dict) -> dict:
             e["content"] = wrap_as_data(
                 str(e["content"]), item_id=e.get("id"), score=e.get("score")
             )
+    if results:
+        from lantai.llm.fence import FENCE_DECLARATION
+
+        ret["data_fence_notice"] = FENCE_DECLARATION
     # v0.4 Cognitive Middleware: 自动注入认知上下文摘要（无需 Agent 显式调用心斋）
     try:
         from lantai.runtime.middleware import build_cognitive_summary

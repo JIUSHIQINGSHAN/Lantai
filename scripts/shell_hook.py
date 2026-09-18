@@ -23,6 +23,7 @@ from sqlmodel import select
 
 from lantai.core.settings import settings
 from lantai.core.text import apply_recall_budget as _apply_recall_budget
+from lantai.core.text import normalize_session_id
 from lantai.core.text import truncate_codepoints as _truncate_codepoints
 from lantai.llm.client import embed
 from lantai.llm.fence import fence_declaration, wrap_as_data
@@ -245,10 +246,16 @@ def _handle_dialogue(text: str, session_id: str = "", turn: int | None = None) -
 
 
 def _handle_backfill(event_id: str, used_ids) -> dict:
-    """注入回执通道（P0 票02）：插件注入记忆后按 event_id 回填 used_ids（弱标注）。"""
+    """注入回执通道（P0 票02）：插件注入记忆后按 event_id 回填 used_ids（弱标注）。
+
+    空 used_ids 静默拒绝：backfill_used_ids 是整体覆盖语义，空表回执会抹掉
+    既有弱标注（审查整改）。
+    """
     if not isinstance(event_id, str) or not event_id:
         return {}
-    if not isinstance(used_ids, list) or not all(isinstance(x, str) for x in used_ids):
+    if not isinstance(used_ids, list) or not used_ids:
+        return {}
+    if not all(isinstance(x, str) for x in used_ids):
         return {}
     try:
         from lantai.observability.retrieval_log import backfill_used_ids
@@ -320,12 +327,11 @@ def _handle_one(raw: str) -> dict:
         text = data.get("text", "")
         if not isinstance(text, str) or not text.strip():
             return {}
-        # 来源链（P0 票02）：宁 miss 不脏写——非法 session/turn 一律留空/None
-        session_id = data.get("session_id")
-        if not isinstance(session_id, str) or len(session_id) > 128:
-            session_id = ""
+        # 来源链（P0 票02）：宁 miss 不脏写——非法 session/turn 一律留空/None；
+        # 校验单一真源 normalize_session_id；turn 契约 1-based（0 视为非法）
+        session_id = normalize_session_id(data.get("session_id"), default="")
         turn = data.get("turn")
-        if not isinstance(turn, int) or isinstance(turn, bool) or turn < 0:
+        if not isinstance(turn, int) or isinstance(turn, bool) or turn < 1:
             turn = None
         return _run_with_timeout(
             _handle_dialogue, settings.SHELL_HOOK_DIALOGUE_TIMEOUT, text, session_id, turn
@@ -349,9 +355,7 @@ def _handle_one(raw: str) -> dict:
         )
 
     query = data.get("query", "") or data.get("message", "") or data.get("prompt", "")
-    session_id = data.get("session_id")
-    if not isinstance(session_id, str) or len(session_id) > 128:
-        session_id = None
+    session_id = normalize_session_id(data.get("session_id"), default=None)
     return _run_with_timeout(build_context, settings.SHELL_HOOK_TIMEOUT, query, session_id)
 
 

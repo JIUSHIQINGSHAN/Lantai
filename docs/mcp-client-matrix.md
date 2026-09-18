@@ -100,3 +100,8 @@ Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户
 
 > 合规回归已固化在 `tests/test_mcp.py`（tools 元数据 / ping / initialized /
 > tools/call 缺参错误码），改 server 前先跑该文件。
+>
+> **Wire 格式变更（P0 票03，2026-09-19）**：search 的 `results[].memory.content`
+> 与 `evidence[].content` 默认被樊篱 `<memory_data>` 围栏包裹（数据非指令声明见
+> 响应 `data_fence_notice` 字段）——按内容做严格字符串比较的客户端需感知；
+> 兼容开关 `DATA_FENCE_ENABLED=false` 可退回裸文本。
