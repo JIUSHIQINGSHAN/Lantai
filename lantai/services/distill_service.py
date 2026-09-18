@@ -18,6 +18,7 @@ gate → proposal）才进得了向量库、才召回得到；本服务只负责
 
 from sqlmodel import select
 
+from lantai.core.auth import Principal
 from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
@@ -48,22 +49,26 @@ def _emotion_hits(text: str) -> int:
     return sum(1 for kw in EMOTION_WORDS if kw in text)
 
 
-def collect_session_memories(session_id: str) -> list[dict]:
+def collect_session_memories(session_id: str, principal: "Principal | None" = None) -> list[dict]:
     """取这个会话写进来的记忆原文（按 MemoryItem.session_id，票据 01 来源链）。
 
     只认显式 session_id——那是写入方透传进来的、唯一能把「这一程」圈出来
-    的键；读不到返回空，不去猜时间窗（按时间圈会把并发的别的会话卷进来）。"""
+    的键；读不到返回空，不去猜时间窗（按时间圈会把并发的别的会话卷进来）。
+
+    权限收窄（整改票 03）：非 admin 调用者只读其泳道集内的源记忆（与检索
+    出口 filter_results_by_lanes 同口径，不引入 user_id 过滤）；泳道集为空
+    即无可读源（宁 miss 不越权）。principal=None 仅限内部调用（脚本/调度）。"""
     if not (session_id or "").strip():
         return []
+    stmt = select(MemoryItem).where(
+        MemoryItem.session_id == session_id.strip(),
+        MemoryItem.status == "active",
+    )
+    if principal is not None and not principal.is_admin:
+        stmt = stmt.where(MemoryItem.lane.in_(principal.allowed_lanes or []))
     with db.get_session() as s:
         rows = s.exec(
-            select(MemoryItem)
-            .where(
-                MemoryItem.session_id == session_id.strip(),
-                MemoryItem.status == "active",
-            )
-            .order_by(MemoryItem.created_at.asc())
-            .limit(int(settings.DISTILL_MAX_SOURCE))
+            stmt.order_by(MemoryItem.created_at.asc()).limit(int(settings.DISTILL_MAX_SOURCE))
         ).all()
     return [{"id": m.id, "content": m.content, "created_at": m.created_at} for m in rows]
 
@@ -89,13 +94,16 @@ def _llm_summary(joined: str) -> str:
         return ""
 
 
-def distill_session(session_id: str, *, store: bool = False) -> dict:
+def distill_session(
+    session_id: str, *, store: bool = False, principal: Principal | None = None
+) -> dict:
     """提炼一个会话的精华；store=True 时经 add_memory 走完整闸门管线落库。
 
+    principal 用于源记忆读取的泳道收窄（写侧授权在路由层，整改票 03）。
     返回结构化结果（含未产出的原因）——「这次怎么没精华」必须可查。"""
     if not settings.DISTILL_ENABLED:
         return {"status": "skipped", "reason": "disabled", "session_id": session_id}
-    rows = collect_session_memories(session_id)
+    rows = collect_session_memories(session_id, principal=principal)
     if len(rows) < int(settings.DISTILL_MIN_MEMORIES):
         # 不是故障：短会话本来就没什么可提炼的，但要把原因说出来
         return {

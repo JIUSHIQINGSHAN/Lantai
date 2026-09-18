@@ -25,7 +25,8 @@ from lantai.storage import db as db_module
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 # 与历史 DEV MODE 一致的默认 lane 集合
-DEFAULT_LANES = ["general", "fact", "rule", "experience", "preference", "chat", "default"]
+# distill（v022 咀华泳道）对默认密钥/DEV 可写可召回；显式受限 Bearer 密钥不受影响
+DEFAULT_LANES = ["general", "fact", "rule", "experience", "preference", "chat", "default", "distill"]
 
 
 def is_loopback_host(host: str | None = None) -> bool:

@@ -15,6 +15,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from lantai.core.ids import new_id
+from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryCandidate, MemoryItem
 from lantai.storage.fts import init_fts, sync_fts
@@ -30,7 +31,9 @@ def engine():
     return e
 
 
-def _add_session_mem(engine, session_id: str, content: str) -> str:
+def _add_session_mem(
+    engine, session_id: str, content: str, *, lane: str = "general", user_id: str | None = None
+) -> str:
     mid = new_id("mem")
     with Session(engine) as s:
         mem = MemoryItem(
@@ -38,7 +41,7 @@ def _add_session_mem(engine, session_id: str, content: str) -> str:
             memory_type="general",
             key=mid,
             content=content,
-            lane="general",
+            lane=lane,
             status="active",
             importance=0.5,
             use_count=0,
@@ -46,6 +49,7 @@ def _add_session_mem(engine, session_id: str, content: str) -> str:
             last_used_at=utcnow(),
             created_at=utcnow(),
             session_id=session_id,
+            user_id=user_id,
         )
         s.add(mem)
         s.commit()
@@ -53,7 +57,9 @@ def _add_session_mem(engine, session_id: str, content: str) -> str:
     return mid
 
 
-def _distill(engine, session_id, *, store=False, llm_side_effect=None, llm_return=None):
+def _distill(
+    engine, session_id, *, store=False, llm_side_effect=None, llm_return=None, principal=None
+):
     def gts():
         return Session(engine)
 
@@ -66,7 +72,7 @@ def _distill(engine, session_id, *, store=False, llm_side_effect=None, llm_retur
     with ctx, llm:
         from lantai.services.distill_service import distill_session
 
-        return distill_session(session_id, store=store)
+        return distill_session(session_id, store=store, principal=principal)
 
 
 class TestDistill:
@@ -233,3 +239,123 @@ class TestDistillRoute:
     def test_route_empty_session_id_422(self, client):
         resp = client.post("/session/distill", json={"session_id": ""})
         assert resp.status_code == 422
+
+
+class TestDistillAuthz:
+    """整改票 03：distill 泳道权限——默认放行（可写可召回）+ 受限密钥读写收窄。"""
+
+    _SEED = ("和团队约定了新的发布流程", "发布流程改为先跑全量测试再打包", "下周一开始执行新流程")
+    # 测试专用假 token（非真实凭据）：运行期拼接构造，避免字面量形态（同 test_auth 惯例）
+    _ENV_KEY = "env-" + "secret"
+
+    @pytest.fixture()
+    def client(self, engine):
+        def gts():
+            return Session(engine)
+
+        with (
+            patch.object(db_module, "get_session", gts),
+            patch("lantai.retrieval.intent.chat_json", return_value={"intent": "fact_lookup"}),
+            patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+            patch("lantai.retrieval.reranker.rerank", return_value=[]),
+            patch("lantai.gate.scorer.embed", return_value=[[0.1] * 8]),
+            patch("lantai.retrieval.hybrid.get_vector_store"),
+            patch("lantai.storage.vector_store.ChromaVectorStore"),
+            # 精华提炼 LLM 不可用 → 确定性 fallback（落库内容可复现，fastpath 可离线直写）
+            patch(
+                "lantai.services.distill_service.chat_json",
+                side_effect=RuntimeError("llm down"),
+            ),
+        ):
+            from fastapi.testclient import TestClient
+
+            from lantai.api.app import app
+
+            with TestClient(app) as c:
+                yield c
+
+    def test_default_lanes_include_distill(self):
+        from lantai.core.auth import DEFAULT_LANES
+
+        assert "distill" in DEFAULT_LANES
+
+    def test_env_key_store_ok(self, client, engine, monkeypatch):
+        """默认密钥（环境 key → DEFAULT_LANES）可落库精华（写入侧默认放行）。"""
+        monkeypatch.setattr(settings, "API_KEY", self._ENV_KEY)
+        for i, c in enumerate(self._SEED):
+            _add_session_mem(engine, "s_auth", f"{c}{i}")
+        resp = client.post(
+            "/session/distill",
+            json={"session_id": "s_auth", "store": True},
+            headers={"X-API-Key": self._ENV_KEY},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["store"]["candidate_id"]
+
+    def test_env_key_can_recall_distill_lane(self, client, engine, monkeypatch):
+        """默认密钥可召回 distill 泳道记忆（检索出口默认放行）。
+
+        关键词腿按 user_id 圈定：环境密钥主体 user_id=api_key，探针记忆需同主体。"""
+        monkeypatch.setattr(settings, "API_KEY", self._ENV_KEY)
+        _add_session_mem(
+            engine, "s_probe", "奎章阁探针零四六精华句", lane="distill", user_id="api_key"
+        )
+        resp = client.post(
+            "/search",
+            json={"query": "奎章阁探针零四六", "top_k": 5, "force": True},
+            headers={"X-API-Key": self._ENV_KEY},
+        )
+        assert resp.status_code == 200, resp.text
+        assert any("奎章阁探针零四六" in r["document"] for r in resp.json()["results"])
+
+    def test_restricted_bearer_store_403(self, client, engine):
+        """受限密钥（泳道集无 distill）store=true → 403，拒绝而非放行。"""
+        from lantai.core.auth import create_api_key
+
+        raw, key = create_api_key("restricted", ["general"])
+        with Session(engine) as s:
+            s.add(key)
+            s.commit()
+        for i, c in enumerate(self._SEED):
+            _add_session_mem(engine, "s_auth2", f"{c}{i}")
+        resp = client.post(
+            "/session/distill",
+            json={"session_id": "s_auth2", "store": True},
+            headers={"Authorization": f"Bearer {raw}"},
+        )
+        assert resp.status_code == 403, resp.text
+
+    def test_restricted_bearer_with_distill_store_ok(self, client, engine):
+        """显式授权 distill 的受限密钥可落库（不扩大未授权密钥权限）。"""
+        from lantai.core.auth import create_api_key
+
+        raw, key = create_api_key("distiller", ["general", "distill"])
+        with Session(engine) as s:
+            s.add(key)
+            s.commit()
+        for i, c in enumerate(self._SEED):
+            _add_session_mem(engine, "s_auth3", f"{c}{i}")
+        resp = client.post(
+            "/session/distill",
+            json={"session_id": "s_auth3", "store": True},
+            headers={"Authorization": f"Bearer {raw}"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["store"]["candidate_id"]
+
+    def test_source_rows_scoped_by_allowed_lanes(self, engine):
+        """读取收窄：非 admin 调用者的摘要只来自其泳道集内的源记忆。
+
+        allowed 行数须 ≥ DISTILL_MIN_MEMORIES(3)，否则 too_short 跳过无法证收窄。"""
+        _add_session_mem(engine, "s_scope", "公开要点：发布流程确认一")
+        _add_session_mem(engine, "s_scope", "公开要点：发布流程确认二")
+        _add_session_mem(engine, "s_scope", "公开要点：发布流程确认三")
+        _add_session_mem(engine, "s_scope", "机密内容：薪酬数据绝密甲", lane="secret")
+        _add_session_mem(engine, "s_scope", "机密内容：薪酬数据绝密乙", lane="secret")
+        from lantai.core.auth import Principal
+
+        principal = Principal(user_id="u1", allowed_lanes=["general"])
+        res = _distill(engine, "s_scope", llm_side_effect=RuntimeError("down"), principal=principal)
+        assert res["status"] == "ok"
+        assert res["source_count"] == 3
+        assert "薪酬" not in res["summary"]

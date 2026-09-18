@@ -75,10 +75,13 @@ def session_distill_route(req: SessionDistillReq, ctx: Principal = Depends(get_c
     """咀华（v022 票据 04，上游 session distill）：会话精华萃取。
 
     只提炼不落库可安全重跑（排查「这次怎么没精华」不用把已结束的会话
-    再结束一遍）；store=true 时经 add_memory 走完整闸门管线进向量库。"""
+    再结束一遍）；store=true 时经 add_memory 走完整闸门管线进向量库，
+    且要求调用者泳道集含 distill（写入路由同款检查，整改票 03）。"""
+    if req.store and "distill" not in set(ctx.allowed_lanes or []):
+        raise HTTPException(403, "distill 泳道未授权：当前密钥不能落库精华")
     try:
         from lantai.services.distill_service import distill_session
 
-        return distill_session(req.session_id, store=req.store)
+        return distill_session(req.session_id, store=req.store, principal=ctx)
     except ValueError as e:
         raise HTTPException(422, str(e))
