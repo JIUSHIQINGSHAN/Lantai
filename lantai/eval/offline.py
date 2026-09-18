@@ -54,10 +54,11 @@ def _install_otel_stub() -> None:
 _install_otel_stub()
 
 
-def run_offline_eval(dataset: dict | None = None, top_k: int = 5) -> dict:
+def run_offline_eval(dataset: dict | None = None, top_k: int = 5, judge: str = "off") -> dict:
     """临时库 + 仅外部依赖 mock 的确定性评测运行。
 
-    返回 evaluate_forgetting_quality 的完整结果（metrics + per_query）。
+    judge：回答层判官（"rule" 离线确定性；"llm" 需真实 API，离线门禁勿用）。
+    返回 evaluate_forgetting_quality 的完整结果（metrics + answer + per_query）。
     每次调用独立临时 DB，finally 清理种子，不污染真实库。
     """
     from lantai.eval.chinese_memory_cases import build_chinese_dataset
@@ -91,11 +92,14 @@ def run_offline_eval(dataset: dict | None = None, top_k: int = 5) -> dict:
             },
         ),
     ):
-        return evaluate_forgetting_quality(ds, search=hybrid_search, top_k=top_k)
+        return evaluate_forgetting_quality(ds, search=hybrid_search, top_k=top_k, judge=judge)
 
 
 # 评测集 v1 契约门槛（发布稿同源）：FTS 兜底最严格基准下的确定性底线。
 # 改数据集时同步更新；门槛是「可复现自证」主张，不是可调系统参数（不进 settings）。
+# paraphrase_recall_rate / typo_mid_recall_rate 只报告不设门（2026-09-19 基线
+# 实测离线 FTS-only 下均为 0——AND 链整句匹配不覆盖泛化/词中错字；改进需
+# FTS OR 兜底，见 .scratch/p0-reliability-host-loop/issues/06-fts-or-fallback.md）。
 GATES: dict[str, float] = {
     "stale_hit_rate": 0.0,  # 归档零残留
     "typo_recall_rate": 1.0,  # 中文错别字全命中（FTS trigram）

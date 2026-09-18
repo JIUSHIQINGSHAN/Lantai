@@ -6,11 +6,15 @@
 指标（诚实原则：无数据返回 0.0，绝不编造）：
 - stale_hit_rate             陈旧记忆残留率（已归档记忆仍被召回，越低越好）
 - typo_recall_rate           中文错别字容错命中率（FTS trigram 兜底，越高越好）
+- typo_mid_recall_rate       词中错字命中率（向量层兜底为主；离线 FTS-only 下诚实测量能力边界）
+- paraphrase_recall_rate     同义改写召回率（召回层泛化；向量为空时测 BM25 兜底）
 - fresh_recall_rate          对照组召回率（管道自检，应≈1）
 - temporal_order_accuracy    时效排序正确率（未生效过滤 / 过期降权后新值在前）
 - superseded_order_accuracy  被取代记忆排序正确率（新值在前）
 - superseded_residual_rate   被取代记忆残留率（旧值仍出现在 top-k，越低越好）
 
+回答层（P0 票05，LongMemEval 式召回/回答分层）：per_query 附 retrieved_contents，
+case 带 key_points 时由 judge（rule 确定性 / llm 选配）打要点命中率 → answer_quality。
 evaluate_forgetting_quality：真实 DB 种子（namespace='eval_fq'）→ 真实检索
 （search 可注入，默认 hybrid_search；外部 LLM/embedding/向量由调用方按测试纪律 mock）
 → 指标 → finally 清理种子。
@@ -29,11 +33,11 @@ from lantai.storage.fts import sync_fts
 
 EVAL_NAMESPACE = "eval_fq"
 
-_CATEGORIES = ("stale", "typo", "fresh", "temporal", "superseded")
+_CATEGORIES = ("stale", "typo", "typo_mid", "paraphrase", "fresh", "temporal", "superseded")
 
 
 def compute_forgetting_metrics(per_query: list[dict]) -> dict:
-    """纯函数：从 per-query 结果聚合六项指标（零 DB，可单测）。
+    """纯函数：从 per-query 结果聚合八项指标（零 DB，可单测）。
 
     per_query 条目契约：
         {"category", "query", "result_ids": [...],
@@ -70,6 +74,8 @@ def compute_forgetting_metrics(per_query: list[dict]) -> dict:
 
     stale = [q for q in per_query if q["category"] == "stale"]
     typo = [q for q in per_query if q["category"] == "typo"]
+    typo_mid = [q for q in per_query if q["category"] == "typo_mid"]
+    paraphrase = [q for q in per_query if q["category"] == "paraphrase"]
     fresh = [q for q in per_query if q["category"] == "fresh"]
     temporal = [q for q in per_query if q["category"] == "temporal"]
     superseded = [q for q in per_query if q["category"] == "superseded"]
@@ -78,6 +84,8 @@ def compute_forgetting_metrics(per_query: list[dict]) -> dict:
         "sample_count": len(per_query),
         "stale_hit_rate": _rate(stale, _stale_hit),
         "typo_recall_rate": _rate(typo, _hit_target),
+        "typo_mid_recall_rate": _rate(typo_mid, _hit_target),
+        "paraphrase_recall_rate": _rate(paraphrase, _hit_target),
         "fresh_recall_rate": _rate(fresh, _hit_target),
         "temporal_order_accuracy": _rate(temporal, _order_ok),
         "superseded_order_accuracy": _rate(superseded, _order_ok),
@@ -145,8 +153,28 @@ def _collect_ids(results) -> list[str]:
     return ids
 
 
-def evaluate_forgetting_quality(dataset: dict, *, search=None, top_k: int = 5) -> dict:
-    """运行遗忘质量自测：种子 → （可选）遗忘 → 逐 case 检索 → 指标 → 清理。"""
+def _collect_contents(results) -> list[str]:
+    """从结果提取记忆正文（回答层判官输入；幂等无副作用）。"""
+    contents: list[str] = []
+    for r in results or []:
+        if not isinstance(r, dict):
+            continue
+        m = r.get("memory")
+        if isinstance(m, dict) and m.get("content"):
+            contents.append(str(m["content"]))
+        elif m is not None and hasattr(m, "content") and m.content:
+            contents.append(str(m.content))
+    return contents
+
+
+def evaluate_forgetting_quality(
+    dataset: dict, *, search=None, top_k: int = 5, judge: str = "off"
+) -> dict:
+    """运行遗忘质量自测：种子 → （可选）遗忘 → 逐 case 检索 → 指标 → 清理。
+
+    judge：回答层计分（P0 票05）——"off" 不计；"rule" 确定性要点命中；
+    "llm" 判官打分（外部 LLM，mock 责任在调用方）。case 无 key_points 时跳过。
+    """
     from lantai.memory.forgetting import apply_forgetting
     from lantai.retrieval.hybrid import delete_memory_item, hybrid_search
 
@@ -171,26 +199,42 @@ def evaluate_forgetting_quality(dataset: dict, *, search=None, top_k: int = 5) -
             mapping = case_maps[idx]
             results = run_search(case["query"], top_k=top_k, use_rerank=False)
             result_ids = _collect_ids(results)
-            per_query.append(
-                {
-                    "category": case["category"],
-                    "query": case["query"],
-                    "result_ids": result_ids,
-                    "target_id": mapping.get(str(case["target"]))
-                    if case.get("target") is not None
-                    else None,
-                    "forbidden_ids": [mapping[str(i)] for i in case.get("forbidden", [])],
-                    "preferred_id": mapping.get(str(case["preferred"]))
-                    if case.get("preferred") is not None
-                    else None,
-                    "peer_id": mapping.get(str(case["peer"]))
-                    if case.get("peer") is not None
-                    else None,
-                }
-            )
+            entry = {
+                "category": case["category"],
+                "query": case["query"],
+                "result_ids": result_ids,
+                "retrieved_contents": _collect_contents(results),
+                "target_id": mapping.get(str(case["target"]))
+                if case.get("target") is not None
+                else None,
+                "forbidden_ids": [mapping[str(i)] for i in case.get("forbidden", [])],
+                "preferred_id": mapping.get(str(case["preferred"]))
+                if case.get("preferred") is not None
+                else None,
+                "peer_id": mapping.get(str(case["peer"]))
+                if case.get("peer") is not None
+                else None,
+            }
+            if judge != "off" and case.get("key_points"):
+                if judge == "llm":
+                    from lantai.eval.answer_quality import llm_judge
+
+                    entry["answer"] = llm_judge(
+                        case["query"], entry["retrieved_contents"], case["key_points"]
+                    )
+                else:
+                    from lantai.eval.answer_quality import rule_judge
+
+                    entry["answer"] = rule_judge(
+                        case["query"], entry["retrieved_contents"], case["key_points"]
+                    )
+            per_query.append(entry)
+        from lantai.eval.answer_quality import compute_answer_metrics
+
         return {
             "dataset": dataset.get("name", ""),
             "metrics": compute_forgetting_metrics(per_query),
+            "answer": compute_answer_metrics(per_query),
             "per_query": per_query,
         }
     finally:

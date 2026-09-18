@@ -144,14 +144,17 @@ def test_compute_metrics_pure():
 
 
 def test_dataset_queries_fts_hittable():
-    """评测集自检：每个 case 的 query 与目标内容共享整串子串（FTS 兜底确定性）。
+    """评测集自检：确定性类别的 query 与目标内容共享整串子串（FTS 兜底确定性）。
 
     错别字维度用词边界插入/删除型（FTS5 trigram 实测语义：整串子串匹配）。
+    paraphrase / typo_mid 为报告型类别（P0 票05）：按设计不满足 AND 链约束，
+    诚实测量 BM25 兜底边界，不在本契约内。
     """
     import sqlite3
 
     from lantai.eval.chinese_memory_cases import build_chinese_dataset
 
+    report_only = {"paraphrase", "typo_mid"}
     ds = build_chinese_dataset()
     conn = sqlite3.connect(":memory:")
     conn.execute("CREATE VIRTUAL TABLE t USING fts5(content, tokenize='trigram')")
@@ -159,6 +162,8 @@ def test_dataset_queries_fts_hittable():
         for seed in case["seeds"]:
             conn.execute("INSERT INTO t VALUES (?)", (seed["content"],))
     for case in ds["cases"]:
+        if case["category"] in report_only:
+            continue
         q = case["query"]
         rows = conn.execute(
             "SELECT rowid FROM t WHERE content MATCH ?", ('"' + q.replace('"', '""') + '"',)
@@ -179,7 +184,7 @@ def test_evaluate_end_to_end(fq_env):
 
     result = evaluate_forgetting_quality(build_chinese_dataset())
     metrics = result["metrics"]
-    assert metrics["sample_count"] == 80
+    assert metrics["sample_count"] == 94
     # 归档零残留：apply_forgetting 后 status=archived 不参与检索
     assert metrics["stale_hit_rate"] == 0.0
     # 中文错别字（词边界）全部命中
@@ -193,7 +198,7 @@ def test_evaluate_end_to_end(fq_env):
     # 残留诚实测量：降权不删旧值，旧值仍如实出现在 top-k
     assert metrics["superseded_residual_rate"] >= 0.0
     per_cat = {q["category"] for q in result["per_query"]}
-    assert per_cat == {"typo", "fresh", "stale", "temporal", "superseded"}
+    assert per_cat == {"typo", "typo_mid", "paraphrase", "fresh", "stale", "temporal", "superseded"}
 
     # 清理断言：种子全部删除，不留孤儿边（边两端必须指向仍存在的记忆）
     with session_factory() as s:
@@ -213,7 +218,7 @@ def test_offline_eval_gates_pass():
     result = run_offline_eval()
     ok, actual = check_gates(result)
     assert ok, f"门禁未过: {actual}"
-    assert result["metrics"]["sample_count"] == 80
+    assert result["metrics"]["sample_count"] == 94
     # superseded 残留是诚实测量（降权不删旧值），只报告不设门槛
     assert result["metrics"]["superseded_residual_rate"] == 1.0
 

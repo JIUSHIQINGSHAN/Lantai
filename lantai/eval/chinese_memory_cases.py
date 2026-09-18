@@ -10,10 +10,14 @@
 
 v1 → v2（2026-08-14）：13 → 50 case（typo×15 / fresh×12 / stale×8 / temporal×8 /
 superseded×7），门槛（GATES）不变——FTS 兜底最严格基准下全部确定性可过。
+v3（2026-08-15）：50 → 80。
+v4（2026-09-19，P0 票05）：80 → 94（paraphrase×8 同义改写，带 key_points 供回答层；
+typo_mid×6 词中错字）——两项新类别不保证 FTS 确定性全命中，门槛宽松/只报告。
 
 查询设计约束：query 必须与目标内容共享 ≥1 个 trigram 子串（错别字 case 用
 「去首字」模式：query 的全部 trigram 都是 content 的 trigram，FTS AND 链确定命中），
-保证向量不可用时（FTS 兜底路径）测试仍确定。
+保证向量不可用时（FTS 兜底路径）测试仍确定。paraphrase/typo_mid 类别不满足
+AND 链约束，走 BM25 部分匹配——确定性弱但诚实测量泛化边界。
 """
 
 from lantai.eval.forgetting_quality import EVAL_NAMESPACE
@@ -751,6 +755,103 @@ def build_chinese_dataset() -> dict:
                 "target": 1,
                 "preferred": 1,
                 "peer": 0,
+            },
+            # ── v4 扩编（2026-09-19，P0 票05）：80 → 94 ─────────────────────
+            # paraphrase +8：同义改写（召回层泛化；带 key_points 供回答层判官）。
+            # 向量不可用时测 BM25 兜底——不保证全命中，门槛首版宽松、待基线校准。
+            {
+                "category": "paraphrase",
+                "query": "公司的数据库引擎用的什么",
+                "seeds": [{"content": "数据库使用SQLite存储", "lane": "fact"}],
+                "target": 0,
+                "key_points": ["SQLite"],
+            },
+            {
+                "category": "paraphrase",
+                "query": "周一上午大家开什么会",
+                "seeds": [{"content": "团队周会时间是每周一上午十点", "lane": "fact"}],
+                "target": 0,
+                "key_points": ["周一", "上午"],
+            },
+            {
+                "category": "paraphrase",
+                "query": "机房位置在哪里",
+                "seeds": [{"content": "服务器部署在华东机房", "lane": "fact"}],
+                "target": 0,
+                "key_points": ["华东机房"],
+            },
+            {
+                "category": "paraphrase",
+                "query": "项目代码审查安排在什么时候",
+                "seeds": [{"content": "代码评审每周五进行", "lane": "rule"}],
+                "target": 0,
+                "key_points": ["每周五"],
+            },
+            {
+                "category": "paraphrase",
+                "query": "咖啡偏好是什么",
+                "seeds": [{"content": "用户偏好：喜欢喝无糖咖啡", "lane": "preference"}],
+                "target": 0,
+                "key_points": ["无糖咖啡"],
+            },
+            {
+                "category": "paraphrase",
+                "query": "新同事问密码长度规则",
+                "seeds": [{"content": "密码策略要求十二位以上", "lane": "rule"}],
+                "target": 0,
+                "key_points": ["十二位"],
+            },
+            {
+                "category": "paraphrase",
+                "query": "部署用不用容器技术",
+                "seeds": [{"content": "部署环境使用Docker容器", "lane": "fact"}],
+                "target": 0,
+                "key_points": ["Docker"],
+            },
+            {
+                "category": "paraphrase",
+                "query": "报警消息发到哪里",
+                "seeds": [{"content": "监控告警推送到钉钉群", "lane": "rule"}],
+                "target": 0,
+                "key_points": ["钉钉"],
+            },
+            # typo_mid +6：词中错字（向量层兜底为主；离线 FTS-only 下诚实测量
+            # 能力边界，只报告不设硬门槛——与边界删字类 typo 的确定性设计区分）
+            {
+                "category": "typo_mid",
+                "query": "机器学习用于图象识别",
+                "seeds": [{"content": "机器学习用于图像识别与自然语言处理", "lane": "fact"}],
+                "target": 0,
+            },
+            {
+                "category": "typo_mid",
+                "query": "数据库练接池默认大小",
+                "seeds": [{"content": "数据库连接池默认大小为100", "lane": "fact"}],
+                "target": 0,
+            },
+            {
+                "category": "typo_mid",
+                "query": "服务起动时加载配置",
+                "seeds": [{"content": "服务启动时加载配置文件", "lane": "fact"}],
+                "target": 0,
+            },
+            {
+                "category": "typo_mid",
+                "query": "前端页靣支持暗色主题",
+                "seeds": [{"content": "前端页面支持暗色主题", "lane": "preference"}],
+                "target": 0,
+            },
+            {
+                "category": "typo_mid",
+                "query": "备份任悟每天凌晨执行",
+                "seeds": [{"content": "备份任务每天凌晨三点执行", "lane": "rule"}],
+                "target": 0,
+            },
+            {
+                "category": "typo_mid",
+                "query": "搜索服务支持中英文混和查询",
+                "seeds": [{"content": "搜索服务支持中英文混合查询", "lane": "fact"}],
+                "target": 0,
             },
         ],
     }

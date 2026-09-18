@@ -15,8 +15,16 @@ SPEC_DOC = Path(__file__).parent.parent / "docs" / "memory-quality" / "chinese-m
 
 EXPECTED = {
     "name": "chinese-memory-v2",
-    "total": 80,
-    "categories": {"typo": 23, "fresh": 18, "stale": 14, "temporal": 13, "superseded": 12},
+    "total": 94,
+    "categories": {
+        "typo": 23,
+        "typo_mid": 6,
+        "paraphrase": 8,
+        "fresh": 18,
+        "stale": 14,
+        "temporal": 13,
+        "superseded": 12,
+    },
 }
 
 
@@ -43,5 +51,5 @@ def test_spec_doc_counts_match_dataset():
     # 期望文本由代码推导——case 变化时此处自动变，文档不更新则失败
     assert f"{len(ds['cases'])} case" in text
     assert ds["name"] in text
-    for cat in ("typo", "fresh", "stale", "temporal", "superseded"):
+    for cat in ("typo", "typo_mid", "paraphrase", "fresh", "stale", "temporal", "superseded"):
         assert f"{cat}×{cats[cat]}" in text, f"文档缺 {cat}×{cats[cat]} 计数"

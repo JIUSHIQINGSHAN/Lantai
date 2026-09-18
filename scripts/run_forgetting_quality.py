@@ -24,6 +24,8 @@ _DEFAULT_OUT = _REPO_ROOT / "docs" / "memory-quality"
 _METRIC_LABELS = {
     "stale_hit_rate": "陈旧记忆残留率（越低越好）",
     "typo_recall_rate": "中文错别字容错命中率（越高越好）",
+    "typo_mid_recall_rate": "词中错字命中率（离线 FTS-only 诚实测量，只报告）",
+    "paraphrase_recall_rate": "同义改写召回率（离线 FTS-only 诚实测量，只报告）",
     "fresh_recall_rate": "对照组召回率（管道自检，应≈1）",
     "temporal_order_accuracy": "时效排序正确率（未生效过滤/过期降权）",
     "superseded_order_accuracy": "被取代记忆排序正确率（新值在前）",
@@ -56,29 +58,42 @@ def _make_search(intent_mode: str, top_k: int):
 
 
 def render_report(result: dict) -> str:
-    metrics = result["metrics"]
+    metrics = result.get("metrics", {})
+    answer = result.get("answer") or {}
     now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
     lines = [
         f"# 遗忘质量自测报告 — {result.get('dataset', '')}",
         "",
         f"> 生成时间：{now_str}",
         "",
-        "## 指标",
+        "## 召回层指标",
         "",
         "| 指标 | 值 | 说明 |",
         "|---|---|---|",
     ]
     for k, label in _METRIC_LABELS.items():
         lines.append(f"| {k} | {metrics.get(k, 0.0)} | {label} |")
+    if answer:
+        lines += [
+            "",
+            "## 回答层指标（要点命中率，与召回层分开计分）",
+            "",
+            f"- overall_hit_rate: {answer.get('overall_hit_rate')}",
+            f"- scored_queries: {answer.get('scored_queries')}",
+        ]
+        for cat, stat in (answer.get("by_category") or {}).items():
+            lines.append(f"- {cat}: {stat.get('hit_rate')}（{stat.get('hit_points')}/{stat.get('points')}）")
     lines += ["", "## 逐条明细", ""]
     for q in result.get("per_query", []):
+        ans = q.get("answer")
+        ans_txt = f" answer={ans['hit_points']}/{ans['points']}" if ans else ""
         lines.append(
             f"- [{q['category']}] `{q['query']}` → "
-            f"命中={bool(q['result_ids'])} ids={q['result_ids'][:5]}"
+            f"命中={bool(q['result_ids'])} ids={q['result_ids'][:5]}{ans_txt}"
         )
     lines.append("")
     lines.append(
-        "> 注：陈旧/残留类指标为诚实测量，可能暴露检索层真实缺口，"
+        "> 注：陈旧/残留/词中错字/改写类指标为诚实测量，可能暴露检索层真实缺口，"
         "修复遵循「宁 miss 不脏写」由人工闸门裁决，不自动改写。"
     )
     return "\n".join(lines)
@@ -100,6 +115,12 @@ def main() -> int:
         action="store_true",
         help="门禁模式：离线临时库跑评测并断言指标门槛（FAIL 退出码 1）",
     )
+    ap.add_argument(
+        "--judge",
+        choices=["rule", "llm", "off"],
+        default="rule",
+        help="回答层判官：rule=确定性要点命中（离线），llm=LLM 判官（需 API），off=不计",
+    )
     args = ap.parse_args()
 
     dataset = build_chinese_dataset()
@@ -107,7 +128,7 @@ def main() -> int:
     if args.check:
         from lantai.eval.offline import GATES, check_gates, run_offline_eval
 
-        result = run_offline_eval(dataset, top_k=args.top_k)
+        result = run_offline_eval(dataset, top_k=args.top_k, judge="rule" if args.judge != "off" else "off")
         ok, actual = check_gates(result)
         print(render_report(result))
         print("\n## 门禁判定（FTS 兜底最严格基准）")
@@ -118,7 +139,7 @@ def main() -> int:
         return 0 if ok else 1
 
     search = _make_search(args.intent, args.top_k)
-    result = evaluate_forgetting_quality(dataset, search=search, top_k=args.top_k)
+    result = evaluate_forgetting_quality(dataset, search=search, top_k=args.top_k, judge=args.judge)
 
     if args.json:
         print(json.dumps(result["metrics"], ensure_ascii=False, indent=2))
