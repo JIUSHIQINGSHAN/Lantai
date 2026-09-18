@@ -270,14 +270,18 @@ def update_memory(memory_id: str, req: MemoryUpdateReq, principal=Depends(get_cu
 
 @router.delete("/terminal/memory/{memory_id}")
 def delete_memory(memory_id: str, principal=Depends(get_current_user)):
-    """删除单条记忆"""
+    """删除单条记忆（含归属校验，P0 票04）"""
     session, conn = get_db_conn()
     try:
+        from lantai.core.acl import ensure_can_delete
         from lantai.models.tables import MemoryItem
 
         m = session.query(MemoryItem).filter(MemoryItem.id == memory_id).first()
         if not m:
             raise HTTPException(404, "memory not found")
+        ensure_can_delete(
+            principal, resource_user_id=m.user_id, resource_tenant_id=m.tenant_id, lane=m.lane
+        )
         session.delete(m)
         session.commit()
 
@@ -301,9 +305,10 @@ def delete_memory(memory_id: str, principal=Depends(get_current_user)):
 
 @router.post("/terminal/merge")
 def merge_memories(req: MergeReq, principal=Depends(get_current_user)):
-    """合并两条记忆：将 source 的内容追加到 target，然后删除 source"""
+    """合并两条记忆：将 source 的内容追加到 target，然后删除 source（归属校验，P0 票04）"""
     session, conn = get_db_conn()
     try:
+        from lantai.core.acl import ensure_can_delete
         from lantai.models.tables import MemoryItem
 
         src = session.query(MemoryItem).filter(MemoryItem.id == req.source_id).first()
@@ -312,6 +317,10 @@ def merge_memories(req: MergeReq, principal=Depends(get_current_user)):
             raise HTTPException(404, f"source memory {req.source_id} not found")
         if not tgt:
             raise HTTPException(404, f"target memory {req.target_id} not found")
+        for m in (src, tgt):
+            ensure_can_delete(
+                principal, resource_user_id=m.user_id, resource_tenant_id=m.tenant_id, lane=m.lane
+            )
 
         merged_content = f"{tgt.content}\n---\n{src.content}"
         new_importance = max(tgt.importance or 0.8, src.importance or 0.8)
