@@ -52,8 +52,10 @@ def _add_session_mem(
             user_id=user_id,
         )
         s.add(mem)
-        s.commit()
+        # 同事务写 FTS（生产路径同款）：commit 之后再写会落在未提交事务里，
+        # Session 关闭即回滚，memory_fts 恒空
         sync_fts(s, mid, content)
+        s.commit()
     return mid
 
 
@@ -141,7 +143,9 @@ class TestDistill:
         assert res["status"] == "skipped"
 
     def test_stored_distill_recallable_via_hybrid_search(self, engine):
-        """票据 04 DoD：落库走完整管线 → hybrid_search 可召回（走闸门的证明）。"""
+        """票据 04 DoD（整改票 06 去假阳性）：落库走完整管线 → hybrid_search
+        召回的必须是**新落库的精华记忆本身**——按 lane=distill + 同 session
+        锚定其 id 进命中集；原始记忆含公共词不能顶替断言。"""
         _add_session_mem(engine, "s6", "和团队约定了新的发布流程")
         _add_session_mem(engine, "s6", "发布流程改为先跑全量测试再打包")
         _add_session_mem(engine, "s6", "下周一开始执行新流程")
@@ -185,7 +189,16 @@ class TestDistill:
 
             run_evolve_once()
 
-        # 召回走 keyword 腿（向量 store 空）：精华正文真出现
+        # 锚定新精华：经闸门管线落成的 distill 泳道记忆（candidate → proposal → MemoryItem）
+        with Session(engine) as s:
+            distill_mem = s.exec(
+                select(MemoryItem).where(
+                    MemoryItem.lane == "distill", MemoryItem.session_id == "s6"
+                )
+            ).first()
+        assert distill_mem is not None, "精华应经闸门管线落为 distill 泳道记忆"
+
+        # 召回走 keyword 腿（向量 store 空）：命中集必须包含该精华 id
         with (
             patch.object(db_module, "get_session", gts),
             patch("lantai.retrieval.intent.chat_json", return_value={"intent": "fact_lookup"}),
@@ -198,7 +211,9 @@ class TestDistill:
             from lantai.retrieval import hybrid
 
             hits = hybrid.hybrid_search("发布流程 全量测试", top_k=5, use_rerank=False)
-        assert any("全量测试" in h["document"] for h in hits)
+        assert distill_mem.id in [h["memory"]["id"] for h in hits], (
+            f"新精华 {distill_mem.id} 未被召回，命中: {[h['memory']['id'] for h in hits]}"
+        )
 
 
 class TestDistillRoute:
