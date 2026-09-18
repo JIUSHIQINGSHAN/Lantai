@@ -59,7 +59,7 @@ Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户
 
 | 工具 | 用途 |
 |---|---|
-| search / add / feedback | 检索 / 写入（add 支持 media_url 图片感知，v0.10 目识）/ 有用性反馈 |
+| search / add / feedback | 检索 / 写入（add 支持 media_url 图片感知，v0.10 目识）/ 有用性反馈；search 可选 `session_id` 参数（来源链落检索事件，P0 票02） |
 | backfill | 弱标注回填（检索事件 → 实际使用的记忆 id） |
 | add_dialogue | 对话写通道（提炼候选，闲聊入队） |
 | candidates_pending / candidate_review | 待审队列查看 / 裁决（approve 仅生成 pending 提案，最终写入需再批准提案） |
@@ -95,6 +95,8 @@ Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户
 4. `tools/call search` 传中文 query 返回结果（验证 UTF-8 无乱码）
 5. 用 `raw_add` 写一条原文 → `search` 能召回（验证写读闭环）
 6. 无权限错误、超时按各客户端默认（stdio 进程常驻）
+7. `search` 传 `session_id` → 检索事件落 session（`retrieval_event.session_id`
+   非空可查；写线活性判据「带 session 的读才算真实会话读」依赖此值，P0 票02）
 
 > 合规回归已固化在 `tests/test_mcp.py`（tools 元数据 / ping / initialized /
 > tools/call 缺参错误码），改 server 前先跑该文件。

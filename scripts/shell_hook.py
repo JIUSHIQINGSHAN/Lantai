@@ -111,11 +111,14 @@ def _build_scene_lines(items, per_scene_chars: int) -> list[str]:
     return build_scene_navigation_lines(items, per_scene_chars, _RECALL_TRUNCATION_SUFFIX)
 
 
-def build_context(query: str) -> dict:
+def build_context(query: str, session_id: str | None = None) -> dict:
     """查询相关记忆，构建注入上下文。
 
     返回 {"context": ..., "event_id": ...}——event_id 供生成侧回填 used_ids
     （Hermes 若用 shell_hook 通道，回答后按注入的记忆 id 调 backfill）。
+
+    session_id：来源链透传（P0 票02）——落检索事件 session_id 列，
+    写线活性判据「带 session 的读才算真实会话读」依赖此值。
     """
     if not query or len(query.strip()) <= settings.SHELL_HOOK_MIN_CHARS:
         return {}
@@ -128,7 +131,7 @@ def build_context(query: str) -> dict:
         store = get_vector_store()
         results = store.search(qv, top_k=settings.SHELL_HOOK_TOP_K)
         if not results:
-            _try_log(query, [], int((time.perf_counter() - t0) * 1000))
+            _try_log(query, [], int((time.perf_counter() - t0) * 1000), session_id=session_id)
             return {}
 
         ids = [r["id"] for r in results]
@@ -174,6 +177,7 @@ def build_context(query: str) -> dict:
             query,
             [{"score": 1.0 - r["distance"], "memory": {"id": r["id"]}} for r in results],
             latency_ms,
+            session_id=session_id,
         )
         out = {}
         if lines:
@@ -203,22 +207,46 @@ def build_context(query: str) -> dict:
         return {}
 
 
-def _try_log(query: str, results: list, latency_ms: int) -> str | None:
+def _try_log(query: str, results: list, latency_ms: int, session_id: str | None = None) -> str | None:
     """Shell Hook 检索埋点（独立向量路径，方向二弱标注源）：失败零侵入。返回 event_id。"""
     try:
         from lantai.observability.retrieval_log import log_retrieval
 
-        return log_retrieval(query, results, latency_ms=latency_ms, trace_id="shell_hook")
+        return log_retrieval(
+            query, results, latency_ms=latency_ms, trace_id="shell_hook", session_id=session_id
+        )
     except Exception:
         return None
 
 
-def _handle_dialogue(text: str) -> dict:
-    """对话写入通道（v0.5）：复用常驻进程调 ingest_dialogue，异常零侵入。"""
+def _handle_dialogue(text: str, session_id: str = "", turn: int | None = None) -> dict:
+    """对话写入通道（v0.5）：复用常驻进程调 ingest_dialogue，异常零侵入。
+
+    session_id/turn：来源链透传（P0 票02）——落候选 session_id 列与
+    provenance.origin_turn，随演化链继承到记忆。
+    """
     try:
         from lantai.ingestion.dialogue import ingest_dialogue
 
-        return {"ok": True, **ingest_dialogue(text)}
+        return {
+            "ok": True,
+            **ingest_dialogue(text, session_id=session_id or "", turn=turn),
+        }
+    except Exception:
+        return {}
+
+
+def _handle_backfill(event_id: str, used_ids) -> dict:
+    """注入回执通道（P0 票02）：插件注入记忆后按 event_id 回填 used_ids（弱标注）。"""
+    if not isinstance(event_id, str) or not event_id:
+        return {}
+    if not isinstance(used_ids, list) or not all(isinstance(x, str) for x in used_ids):
+        return {}
+    try:
+        from lantai.observability.retrieval_log import backfill_used_ids
+
+        backfill_used_ids(event_id, used_ids)
+        return {"ok": True, "event_id": event_id, "used_count": len(used_ids)}
     except Exception:
         return {}
 
@@ -284,7 +312,21 @@ def _handle_one(raw: str) -> dict:
         text = data.get("text", "")
         if not isinstance(text, str) or not text.strip():
             return {}
-        return _run_with_timeout(_handle_dialogue, settings.SHELL_HOOK_DIALOGUE_TIMEOUT, text)
+        # 来源链（P0 票02）：宁 miss 不脏写——非法 session/turn 一律留空/None
+        session_id = data.get("session_id")
+        if not isinstance(session_id, str) or len(session_id) > 128:
+            session_id = ""
+        turn = data.get("turn")
+        if not isinstance(turn, int) or isinstance(turn, bool) or turn < 0:
+            turn = None
+        return _run_with_timeout(
+            _handle_dialogue, settings.SHELL_HOOK_DIALOGUE_TIMEOUT, text, session_id, turn
+        )
+
+    if data.get("type") == "backfill":
+        return _run_with_timeout(
+            _handle_backfill, settings.SHELL_HOOK_TIMEOUT, data.get("event_id"), data.get("used_ids")
+        )
 
     if data.get("type") == "checkpoint":
         return _run_with_timeout(_handle_checkpoint, settings.SHELL_HOOK_TIMEOUT)
@@ -299,7 +341,10 @@ def _handle_one(raw: str) -> dict:
         )
 
     query = data.get("query", "") or data.get("message", "") or data.get("prompt", "")
-    return _run_with_timeout(build_context, settings.SHELL_HOOK_TIMEOUT, query)
+    session_id = data.get("session_id")
+    if not isinstance(session_id, str) or len(session_id) > 128:
+        session_id = None
+    return _run_with_timeout(build_context, settings.SHELL_HOOK_TIMEOUT, query, session_id)
 
 
 def main():

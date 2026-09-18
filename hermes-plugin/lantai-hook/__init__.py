@@ -46,8 +46,9 @@ _SESSION_BUFFER_MAX_CHARS = 200_000
 _lock = threading.Lock()
 _proc: subprocess.Popen | None = None
 _proc_ready = False  # 子进程是否已通过就绪探测
-# v0.5：会话缓冲——session_id → user_message 列表（on_session_end flush 用）
-_session_buffers: dict[str, list[str]] = {}
+# v0.5：会话缓冲——session_id → [{"text": str, "turn": int}]（on_session_end flush 用）
+# turn 为该会话内的 1-based 缓冲序号（P0 票02：随来源链透传给 ingest_dialogue）
+_session_buffers: dict[str, list[dict]] = {}
 # v0.15（ADR-0022）：已注入底本（checkpoint）的会话集——每会话首轮注入一次
 _checkpoint_injected: set[str] = set()
 _CHECKPOINT_INJECTED_MAX = 50  # 防会话集无限膨胀（只影响首轮注入标记）
@@ -125,8 +126,12 @@ def _wait_ready(timeout: float = 15.0) -> bool:
         return False
 
 
-def _call_hook(query: str) -> str | None:
-    """向常驻 serve 子进程发一行注入请求，读一行响应（带锁，防并发交错）。"""
+def _call_hook(query: str) -> dict | None:
+    """向常驻 serve 子进程发一行注入请求，读一行响应（带锁，防并发交错）。
+
+    返回完整响应 dict（context/evidence/event_id）——event_id + evidence 供
+    注入回执（P0 票02）；无有效响应返回 None。
+    """
     proc = _ensure_proc()
     if proc is None:
         return None
@@ -150,8 +155,9 @@ def _call_hook(query: str) -> str | None:
         if not out:
             return None
         data = json.loads(out)
-        ctx = data.get("context", "") if isinstance(data, dict) else ""
-        return str(ctx) if ctx else None
+        if isinstance(data, dict) and data.get("context"):
+            return data
+        return None
     except (json.JSONDecodeError, OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: call failed: %r", exc)
         # 子进程可能已死，标记让下次自动重启
@@ -161,8 +167,12 @@ def _call_hook(query: str) -> str | None:
         return None
 
 
-def _call_dialogue(text: str) -> None:
-    """向 serve 子进程发对话写入请求（on_session_end flush 用，失败静默）。"""
+def _call_dialogue(text: str, session_id: str = "", turn: int | None = None) -> None:
+    """向 serve 子进程发对话写入请求（on_session_end flush 用，失败静默）。
+
+    session_id/turn：来源链显式透传（P0 票02），落候选 session_id 与
+    provenance.origin_turn；缺失留空/None，不补 0 不猜。
+    """
     proc = _ensure_proc()
     if proc is None:
         return
@@ -171,7 +181,11 @@ def _call_dialogue(text: str) -> None:
     try:
         with _lock:
             line = (
-                json.dumps({"type": "dialogue", "text": text}, ensure_ascii=False) + "\n"
+                json.dumps(
+                    {"type": "dialogue", "text": text, "session_id": session_id, "turn": turn},
+                    ensure_ascii=False,
+                )
+                + "\n"
             ).encode("utf-8")
             assert proc.stdin is not None and proc.stdout is not None
             proc.stdin.write(line)
@@ -184,6 +198,42 @@ def _call_dialogue(text: str) -> None:
                 buf += ch
     except (OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: dialogue call failed: %r", exc)
+        global _proc, _proc_ready
+        _proc = None
+        _proc_ready = False
+
+
+def _call_backfill(event_id: str, used_ids: list[str]) -> None:
+    """注入回执（P0 票02）：检索上下文注入成功后按 event_id 回填 used_ids（弱标注）。
+
+    现有机制：RetrievalEvent.used_ids + backfill_used_ids（MCP backfill /
+    POST /retrieval/backfill 同源）。失败静默——回执缺失只影响弱标注覆盖，不侵入注入。
+    """
+    proc = _ensure_proc()
+    if proc is None or not event_id or not used_ids:
+        return
+    if not _wait_ready():
+        return
+    try:
+        with _lock:
+            line = (
+                json.dumps(
+                    {"type": "backfill", "event_id": event_id, "used_ids": used_ids},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            ).encode("utf-8")
+            assert proc.stdin is not None and proc.stdout is not None
+            proc.stdin.write(line)
+            proc.stdin.flush()
+            buf = bytearray()
+            while True:
+                ch = proc.stdout.read(1)
+                if not ch or ch == b"\n":
+                    break
+                buf += ch
+    except (OSError, ValueError, AssertionError) as exc:
+        logger.warning("lantai-hook: backfill call failed: %r", exc)
         global _proc, _proc_ready
         _proc = None
         _proc_ready = False
@@ -281,7 +331,11 @@ def build_session_blocks(messages: list[str]) -> dict:
 
 
 def _buffer_turn(session_id: str, user_message: str) -> None:
-    """累积一轮 user_message 到会话缓冲（有界，防长期会话膨胀）。"""
+    """累积一轮 user_message 到会话缓冲（有界，防长期会话膨胀）。
+
+    turn = 该会话内 1-based 缓冲序号（P0 票02 来源链）；同一消息重复投递
+    会占用新序号——如实反映「说了两遍」，不做去重猜测。
+    """
     if not session_id:
         return
     msg = (user_message or "").strip()
@@ -289,23 +343,23 @@ def _buffer_turn(session_id: str, user_message: str) -> None:
         return
     with _lock:
         buf = _session_buffers.setdefault(session_id, [])
-        buf.append(msg)
-        total = sum(len(m) for m in buf)
+        buf.append({"text": msg, "turn": len(buf) + 1})
+        total = sum(len(m["text"]) for m in buf)
         while len(buf) > _SESSION_BUFFER_MAX_MSGS or total > _SESSION_BUFFER_MAX_CHARS:
             dropped = buf.pop(0)
-            total -= len(dropped)
+            total -= len(dropped["text"])
 
 
 def _flush_session(session_id: str) -> None:
-    """清空并提交某会话的缓冲消息（on_session_end 调用）。"""
+    """清空并提交某会话的缓冲消息（on_session_end 调用），逐条携带来源。"""
     with _lock:
-        msgs = _session_buffers.pop(session_id, [])
-    for text in msgs:
-        _call_dialogue(text)
+        entries = _session_buffers.pop(session_id, [])
+    for entry in entries:
+        _call_dialogue(entry["text"], session_id=session_id, turn=entry["turn"])
 
 
 def _on_pre_llm_call(**kwargs) -> dict | None:
-    """pre_llm_call 回调：底本首轮注入 + 检索注入 + 会话缓冲。"""
+    """pre_llm_call 回调：底本首轮注入 + 检索注入 + 会话缓冲 + 注入回执。"""
     query = kwargs.get("user_message") or ""
     session_id = kwargs.get("session_id") or ""
     if not isinstance(query, str):
@@ -323,11 +377,20 @@ def _on_pre_llm_call(**kwargs) -> dict | None:
     # 短句且无触发词 → 不注入检索（与 gate 语义一致，省子进程开销）
     if len(q) <= 15 and not any(w in q for w in _TRIGGER_WORDS):
         return {"context": ck} if ck else None
-    ctx = _call_hook(q)
-    if not ctx:
+    data = _call_hook(q)
+    if not data:
         return {"context": ck} if ck else None
+    ctx = str(data.get("context") or "")
     if ck:
         ctx = ck + "\n\n" + ctx
+    # 注入回执（P0 票02）：上下文已拼进本轮回包 = 弱标注「已注入」；
+    # 按 event_id 回填 evidence 记忆 id。回执失败静默（缺失只影响弱标注覆盖）。
+    event_id = data.get("event_id")
+    used_ids = [
+        e.get("id") for e in (data.get("evidence") or []) if isinstance(e, dict) and e.get("id")
+    ]
+    if event_id and used_ids:
+        _call_backfill(str(event_id), used_ids)
     return {"context": ctx}
 
 
@@ -345,8 +408,8 @@ def _on_session_end(**kwargs) -> None:
     if not session_id:
         return
     with _lock:
-        msgs = list(_session_buffers.get(session_id, []))
-    blocks = build_session_blocks(msgs)
+        entries = list(_session_buffers.get(session_id, []))
+    blocks = build_session_blocks([e["text"] for e in entries])
     if blocks:
         _call_checkpoint_write(session_id, blocks)
     _flush_session(session_id)

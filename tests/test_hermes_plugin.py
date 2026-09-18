@@ -26,18 +26,20 @@ def mod():
 
 
 class TestSessionBuffer:
-    """会话缓冲：pre_llm_call 累积 user_message，on_session_end flush"""
+    """会话缓冲：pre_llm_call 累积 user_message（带 turn 序号），on_session_end flush"""
 
     def test_buffer_accumulates_and_flushes(self, mod):
         mod._buffer_turn("sess_1", "记住：明天下午3点开会")
         mod._buffer_turn("sess_1", "我最近喜欢用 Rust 写 CLI")
         assert mod._session_buffers["sess_1"] == [
-            "记住：明天下午3点开会",
-            "我最近喜欢用 Rust 写 CLI",
+            {"text": "记住：明天下午3点开会", "turn": 1},
+            {"text": "我最近喜欢用 Rust 写 CLI", "turn": 2},
         ]
         with patch.object(mod, "_call_dialogue") as m:
             mod._flush_session("sess_1")
         assert m.call_count == 2
+        m.assert_any_call("记住：明天下午3点开会", session_id="sess_1", turn=1)
+        m.assert_any_call("我最近喜欢用 Rust 写 CLI", session_id="sess_1", turn=2)
         assert "sess_1" not in mod._session_buffers
 
     def test_buffer_ignores_empty(self, mod):
@@ -50,7 +52,7 @@ class TestSessionBuffer:
         for i in range(5):
             mod._buffer_turn("sess_1", f"消息{i}")
         assert len(mod._session_buffers["sess_1"]) == 3
-        assert mod._session_buffers["sess_1"][0] == "消息2"
+        assert mod._session_buffers["sess_1"][0] == {"text": "消息2", "turn": 3}
 
     def test_flush_missing_session_noop(self, mod):
         with patch.object(mod, "_call_dialogue") as m:
@@ -67,7 +69,7 @@ class TestCallbacks:
             patch.object(mod, "_call_checkpoint", return_value=None),
         ):
             mod._on_pre_llm_call(user_message="我最近在学知识图谱", session_id="sess_1")
-        assert mod._session_buffers["sess_1"] == ["我最近在学知识图谱"]
+        assert mod._session_buffers["sess_1"] == [{"text": "我最近在学知识图谱", "turn": 1}]
 
     def test_on_session_end_flushes(self, mod):
         mod._buffer_turn("sess_1", "记住：明天开会")
@@ -76,7 +78,7 @@ class TestCallbacks:
             patch.object(mod, "_call_checkpoint_write") as cw,
         ):
             mod._on_session_end(session_id="sess_1", completed=True)
-        m.assert_called_once_with("记住：明天开会")
+        m.assert_called_once_with("记住：明天开会", session_id="sess_1", turn=1)
         # ADR-0022：落底本块（在做=末条消息）
         cw.assert_called_once()
         blocks = cw.call_args[0][1]
@@ -126,9 +128,14 @@ class TestCheckpointInjection:
         """首轮注入底本并合并检索；同会话第二轮不再注入。"""
         with (
             patch.object(
-                mod, "_call_checkpoint", return_value="[Checkpoint · 上次会话]\n在做: X"
+                mod, "_call_checkpoint", return_value="[Checkpoint · 上次会话]"
             ) as ck,
-            patch.object(mod, "_call_hook", return_value="检索上下文") as hk,
+            patch.object(
+                mod,
+                "_call_hook",
+                return_value={"context": "检索上下文", "event_id": "rev_1", "evidence": []},
+            ) as hk,
+            patch.object(mod, "_call_backfill") as bf,
         ):
             r1 = mod._on_pre_llm_call(user_message="继续上次的工作", session_id="sess_ck")
             mod._on_pre_llm_call(user_message="继续上次的工作", session_id="sess_ck")
@@ -136,6 +143,38 @@ class TestCheckpointInjection:
         assert "检索上下文" in r1["context"]
         assert ck.call_count == 1
         assert hk.call_count == 2
+        bf.assert_not_called()  # 无 evidence 不回执
+
+    def test_injection_receipt_backfills_used_ids(self, mod):
+        """注入回执（P0 票02）：context 注入成功 → 按 event_id 回填 evidence id（弱标注）。"""
+        with (
+            patch.object(mod, "_call_checkpoint", return_value=None),
+            patch.object(
+                mod,
+                "_call_hook",
+                return_value={
+                    "context": "【相关记忆】",
+                    "event_id": "rev_9",
+                    "evidence": [{"id": "m1"}, {"id": "m2"}, {"id": None}],
+                },
+            ) as hk,
+            patch.object(mod, "_call_backfill") as bf,
+        ):
+            r = mod._on_pre_llm_call(user_message="帮我回忆部署流程", session_id="sess_rc")
+        assert "【相关记忆】" in r["context"]
+        hk.assert_called_once()
+        bf.assert_called_once_with("rev_9", ["m1", "m2"])
+
+    def test_no_receipt_when_hook_misses(self, mod):
+        """检索无命中（_call_hook None）→ 无注入无回执。"""
+        with (
+            patch.object(mod, "_call_checkpoint", return_value=None),
+            patch.object(mod, "_call_hook", return_value=None),
+            patch.object(mod, "_call_backfill") as bf,
+        ):
+            r = mod._on_pre_llm_call(user_message="帮我回忆部署流程", session_id="sess_nr")
+        assert r is None
+        bf.assert_not_called()
 
     def test_first_turn_short_query_still_injects_checkpoint(self, mod):
         """首轮短句无触发词：检索跳过，但底本仍注入（会话续接语义）。"""

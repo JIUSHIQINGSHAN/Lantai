@@ -40,9 +40,14 @@ def handle_search(params: dict) -> dict:
     if not isinstance(top_k, int) or isinstance(top_k, bool) or not (1 <= top_k <= 100):
         raise ValueError("top_k must be an int in [1, 100]")
     force = bool(params.get("force", False))
+    # 来源链（P0 票02）：宿主可选透传 session_id，落检索事件供写线活性判据；
+    # 不传留空（宁 miss 不脏写）
+    session_id = params.get("session_id")
+    if not isinstance(session_id, str) or len(session_id) > 128:
+        session_id = None
     gate = relevance_check(query)
     if not force and not gate["needs_memory"]:
-        event_id = _try_log(query, [], 0, gate)
+        event_id = _try_log(query, [], 0, gate, session_id=session_id)
         return {"results": [], "gate": gate, "event_id": event_id}
     domain = params.get("domain")
     import time
@@ -50,7 +55,7 @@ def handle_search(params: dict) -> dict:
     t0 = time.perf_counter()
     results = hybrid_search(query, top_k=top_k, domain=domain)
     latency_ms = int((time.perf_counter() - t0) * 1000)
-    event_id = _try_log(query, results, latency_ms, gate)
+    event_id = _try_log(query, results, latency_ms, gate, session_id=session_id)
     # Ticket 04: 检索透明——命中来源说明（id + 摘要 + 分数）
     from lantai.retrieval.evidence import build_evidence
 
@@ -73,12 +78,16 @@ def handle_search(params: dict) -> dict:
     return ret
 
 
-def _try_log(query: str, results: list, latency_ms: int, gate: dict) -> str | None:
+def _try_log(
+    query: str, results: list, latency_ms: int, gate: dict, session_id: str | None = None
+) -> str | None:
     """检索事件埋点（方向二）：失败零侵入。返回 event_id 供生成侧回填 used_ids。"""
     try:
         from lantai.observability.retrieval_log import log_retrieval
 
-        return log_retrieval(query, results, latency_ms=latency_ms, gate=gate)
+        return log_retrieval(
+            query, results, latency_ms=latency_ms, gate=gate, session_id=session_id
+        )
     except Exception:
         return None
 

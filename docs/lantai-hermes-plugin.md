@@ -15,6 +15,15 @@
 - 闲聊（过短/社交结束语）→ 候选进待审队列（不静默丢弃）
 - LLM 提取低置信度 / 上游失败 → 兜底候选入队（不丢数据）
 
+来源链与注入回执（P0 票02，2026-09）：
+- 会话缓冲条目携带 `turn`（会话内 1-based 序号）；flush 时每条
+  `{"type":"dialogue","text","session_id","turn"}` 透传 → 候选 `session_id`
+  列 + `provenance.origin_turn`（缺会话留空、缺轮次 None，不补 0 不猜）
+- 检索注入成功后按响应 `event_id` + `evidence[].id` 发
+  `{"type":"backfill"}` → `RetrievalEvent.used_ids` 落库（弱标注「已注入」）；
+  回执失败静默，不影响注入
+- serve 协议新增 `{"type":"backfill","event_id","used_ids"}` 动作
+
 安全边界（插件绝不阻塞/搞崩 Hermes）：
 - 子进程启动失败/失活 → 静默降级
 - 注入 5s 超时、对话写入 30s 超时（含 LLM 提取）
@@ -39,6 +48,8 @@ python scripts/install_hermes_plugin.py --hermes-home <path>
 2. 与 Hermes 聊一轮（说几句有价值的话），结束后：
    - `GET /candidates/pending` 应出现候选（或已直通进记忆库）
    - `GET /usage` 每日新增数增长
+   - 候选应带 `session_id` 与 `provenance.origin_turn`（来源链贯通）
+   - 检索命中的轮次：`retrieval_event.used_ids` 非空（注入回执落库）
 3. 回滚：删除 `plugins/lantai-hook`，把 `plugins-backup/lantai-hook-YYYYMMDD`
    移回 `plugins/lantai-hook`，并把备份内 `plugin.yaml.disabled` 改回 `plugin.yaml`，然后重启
 

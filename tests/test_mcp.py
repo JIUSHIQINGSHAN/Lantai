@@ -316,6 +316,59 @@ def test_search_response_has_evidence():
     assert payload["event_id"] == "ev_1"
 
 
+def test_search_passes_session_id_to_log():
+    """来源链（P0 票02）：search 参数 session_id 透传检索事件；非法值留空不落脏。"""
+    mod = _load_mcp()
+    with (
+        patch.object(
+            mod,
+            "hybrid_search",
+            return_value=[{"score": 0.9, "memory": {"id": "mem_1", "content": "Python 资料"}}],
+        ),
+        patch.object(
+            mod, "relevance_check", return_value={"needs_memory": True, "reason": "t", "scope": "t"}
+        ),
+        patch(
+            "lantai.observability.retrieval_log.log_retrieval", return_value="ev_2"
+        ) as m,
+    ):
+        mod.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 15,
+                "method": "tools/call",
+                "params": {
+                    "name": "search",
+                    "arguments": {"query": "python", "session_id": "sess_mcp"},
+                },
+            }
+        )
+    assert m.call_args.kwargs.get("session_id") == "sess_mcp"
+    with (
+        patch.object(
+            mod,
+            "hybrid_search",
+            return_value=[{"score": 0.9, "memory": {"id": "mem_1", "content": "Python 资料"}}],
+        ),
+        patch.object(
+            mod, "relevance_check", return_value={"needs_memory": True, "reason": "t", "scope": "t"}
+        ),
+        patch("lantai.observability.retrieval_log.log_retrieval", return_value="ev_3") as m,
+    ):
+        mod.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 16,
+                "method": "tools/call",
+                "params": {
+                    "name": "search",
+                    "arguments": {"query": "python", "session_id": 123},
+                },
+            }
+        )
+    assert m.call_args.kwargs.get("session_id") is None
+
+
 def test_raw_add_ok():
     """raw_add 工具：合法输入 → 调用 add_raw_memory + 返回结果。"""
     mod = _load_mcp()

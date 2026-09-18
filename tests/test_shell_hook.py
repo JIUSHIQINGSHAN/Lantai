@@ -160,7 +160,7 @@ def test_handle_dialogue_channel(monkeypatch):
         out = mod._handle_one('{"type":"dialogue","text":"记住：明天下午3点开会"}')
     assert out["ok"] is True
     assert out["candidate_id"] == "cand_1"
-    m.assert_called_once_with("记住：明天下午3点开会")
+    m.assert_called_once_with("记住：明天下午3点开会", session_id="", turn=None)
 
 
 def test_handle_dialogue_empty_text(monkeypatch):
@@ -182,6 +182,104 @@ def test_handle_dialogue_failure_silent(monkeypatch):
     with patch("lantai.ingestion.dialogue.ingest_dialogue", side_effect=RuntimeError("boom")):
         out = mod._handle_one('{"type":"dialogue","text":"记住：明天开会"}')
     assert out == {}
+
+
+# ── 来源链贯通 + 注入回执（P0 票02）────────────────────────────
+
+
+def test_handle_dialogue_carries_session_and_turn(monkeypatch):
+    """来源贯通：dialogue 行带 session_id/turn → 透传 ingest_dialogue。"""
+    mod = _load_hook(monkeypatch)
+    from unittest.mock import patch
+
+    with patch("lantai.ingestion.dialogue.ingest_dialogue", return_value={"ok": True}) as m:
+        out = mod._handle_one(
+            '{"type":"dialogue","text":"记住：开会","session_id":"sess_9","turn":7}'
+        )
+    assert out["ok"] is True
+    m.assert_called_once_with("记住：开会", session_id="sess_9", turn=7)
+
+
+def test_handle_dialogue_missing_origin_stays_empty(monkeypatch):
+    """宁 miss 不脏写：无 session/turn → 留空/None，不补 0 不猜。"""
+    mod = _load_hook(monkeypatch)
+    from unittest.mock import patch
+
+    with patch("lantai.ingestion.dialogue.ingest_dialogue", return_value={"ok": True}) as m:
+        mod._handle_one('{"type":"dialogue","text":"x"}')
+    m.assert_called_once_with("x", session_id="", turn=None)
+
+
+def test_handle_dialogue_invalid_turn_dropped(monkeypatch):
+    """非法 turn（bool/字符串/负数）→ None，不落脏值。"""
+    mod = _load_hook(monkeypatch)
+    from unittest.mock import patch
+
+    for raw_turn in ["3", True, -1, 1.5]:
+        with patch("lantai.ingestion.dialogue.ingest_dialogue", return_value={"ok": True}) as m:
+            mod._handle_one(
+                '{"type":"dialogue","text":"x","session_id":"s","turn":%s}' % json.dumps(raw_turn)
+            )
+        assert m.call_args.kwargs["turn"] is None, raw_turn
+
+
+def test_handle_backfill_writes_used_ids(param_env, monkeypatch):
+    """回执通道（不 mock 冒烟）：真实内存库 backfill → RetrievalEvent.used_ids 落库。"""
+    mod = _load_hook(monkeypatch)
+    sf, _engine = param_env
+    from lantai.models.tables import RetrievalEvent
+    from lantai.observability.retrieval_log import log_retrieval
+
+    event_id = log_retrieval("部署怎么做", [{"score": 0.9, "memory": {"id": "m1"}}], latency_ms=5)
+    assert event_id
+    out = mod._handle_one(
+        json.dumps({"type": "backfill", "event_id": event_id, "used_ids": ["m1"]})
+    )
+    assert out["ok"] is True
+    with sf() as s:
+        ev = s.get(RetrievalEvent, event_id)
+        assert ev is not None
+        assert ev.used_ids == ["m1"]
+
+
+def test_handle_backfill_invalid_silent(monkeypatch):
+    """回执通道：缺 event_id/used_ids 非列表 → {} 零侵入。"""
+    mod = _load_hook(monkeypatch)
+    assert mod._handle_one('{"type":"backfill"}') == {}
+    assert mod._handle_one('{"type":"backfill","event_id":"rev_x","used_ids":"m1"}') == {}
+
+
+def test_dialogue_to_candidate_real_db(param_env, monkeypatch):
+    """不 mock 冒烟：NDJSON dialogue 带来源 → 候选落 session_id + provenance.origin_turn。"""
+    mod = _load_hook(monkeypatch)
+    sf, _engine = param_env
+    out = mod._handle_one(
+        '{"type":"dialogue","text":"记住：周五下午3点发布 v0.23","session_id":"sess_smoke","turn":2}'
+    )
+    assert out.get("ok") is True
+    from sqlmodel import select
+
+    from lantai.models.tables import MemoryCandidate
+
+    with sf() as s:
+        cand = s.exec(
+            select(MemoryCandidate).where(MemoryCandidate.session_id == "sess_smoke")
+        ).first()
+        assert cand is not None
+        prov = cand.provenance or {}
+        assert prov.get("origin_turn") == 2
+
+
+def test_build_context_passes_session_to_log(param_env, monkeypatch):
+    """检索埋点透传 session_id（写线活性判据：带 session 的读才算真实会话读）。"""
+    mod = _load_hook(monkeypatch)
+    from unittest.mock import patch
+
+    with patch(
+        "lantai.observability.retrieval_log.log_retrieval", return_value="rev_x"
+    ) as m:
+        mod._handle_one('{"query":"部署怎么做","session_id":"sess_log"}')
+    assert m.call_args.kwargs.get("session_id") == "sess_log"
 
 
 # ── 召回预算 + 记忆工具指南（借鉴 TencentDB Agent Memory auto-recall）────────
