@@ -12,17 +12,14 @@ from lantai.storage import db
 
 
 @pytest.fixture
-def mem_db():
+def mem_db(monkeypatch):
     test_engine = create_engine(
         "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
     SQLModel.metadata.create_all(test_engine)
 
-    def get_session_override():
-        with Session(test_engine) as session:
-            yield session
-
-    db_module.engine = test_engine
+    # 模块级 engine 仅本测试内生效，测试后由 monkeypatch 还原，防顺序污染
+    monkeypatch.setattr(db_module, "engine", test_engine)
 
     def session_factory():
         return Session(test_engine)
@@ -36,7 +33,8 @@ def client():
 
     app.dependency_overrides[get_current_user] = lambda: Principal(user_id="test", allowed_lanes=[])
     yield TestClient(app)
-    app.dependency_overrides.clear()
+    # 只摘除本 fixture 的 override；clear() 会连带清掉其他测试注册的依赖覆盖
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 def test_prompt_fallback(mem_db):

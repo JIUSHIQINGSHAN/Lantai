@@ -20,7 +20,7 @@ def env_fixture(monkeypatch):
     engine = create_engine(
         "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
-    db.engine = engine
+    monkeypatch.setattr(db, "engine", engine)
     SQLModel.metadata.create_all(engine)
 
     def mock_search(content_or_vec, top_k=8, where=None):

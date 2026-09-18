@@ -33,7 +33,7 @@ def smoke_env(tmp_path, monkeypatch):
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    db.engine = engine
+    monkeypatch.setattr(db, "engine", engine)
     SQLModel.metadata.create_all(engine)
 
     # 真实 ChromaDB（临时目录）
