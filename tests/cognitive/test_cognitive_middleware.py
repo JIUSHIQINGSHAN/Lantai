@@ -18,7 +18,7 @@ from lantai.storage.db import get_session
 
 
 @pytest.fixture(name="client")
-def client_fixture():
+def client_fixture(monkeypatch: pytest.MonkeyPatch):
     from lantai.api.app import app
 
     engine = create_engine(
@@ -28,11 +28,20 @@ def client_fixture():
     )
     SQLModel.metadata.create_all(engine)
 
+    def session_factory() -> Session:
+        return Session(engine)
+
     def override_get_session():
         with Session(engine) as session:
             yield session
 
     app.dependency_overrides[get_session] = override_get_session
+    # DEV MODE 判定（auth.dev_mode_allowed → db_has_api_key）直连模块级
+    # db.get_session 查真实库，不受上面的依赖注入 override 影响；真实库有
+    # api_keys 行时 DEV MODE 被拒 → 401。必须把模块级入口一并隔离到内存库。
+    import lantai.storage.db as db_module
+
+    monkeypatch.setattr(db_module, "get_session", session_factory)
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.pop(get_session, None)
