@@ -55,90 +55,85 @@ class TestCreditWeights:
 
 
 class TestRecordEpisode:
-    def test_record_persists_steps_with_credits(self):
+    """模块级 db.get_session 一律 monkeypatch 替换（含异常路径自动还原）：
+    历史 finally 置 None 会污染后续所有动态调 db.get_session 的测试（整改票 05）。"""
+
+    def test_record_persists_steps_with_credits(self, monkeypatch):
         engine, sf = _setup()
-        import lantai.storage.db as dbm
 
-        original = dbm.get_session
-        dbm.get_session = sf
-        try:
-            from lantai.services.episode_service import episode_credit_map, record_episode
+        monkeypatch.setattr(db_module, "get_session", sf)
+        from lantai.services.episode_service import episode_credit_map, record_episode
 
-            res = record_episode(
-                session_id="sess_ep",
-                outcome="success",
-                steps=[{"memory_id": "mem_a"}, {"memory_id": "mem_b"}, {"memory_id": "mem_c"}],
-            )
-            assert res["episode_id"]
-            assert res["step_count"] == 3
-            with sf() as s:
-                ep = s.get(EpisodeRecord, res["episode_id"])
-                assert ep.outcome == "success"
-                assert ep.session_id == "sess_ep"
-                steps = s.exec(
-                    select(EpisodeStep).where(EpisodeStep.episode_id == ep.id)
-                ).all()
-                assert len(steps) == 3
-                assert {st.position for st in steps} == {1, 2, 3}
-            # 聚合：success 全为正、收尾步信用更大
-            credits = episode_credit_map()
-            assert set(credits) == {"mem_a", "mem_b", "mem_c"}
-            assert all(v > 0 for v in credits.values())
-            assert credits["mem_c"] > credits["mem_a"]
+        res = record_episode(
+            session_id="sess_ep",
+            outcome="success",
+            steps=[{"memory_id": "mem_a"}, {"memory_id": "mem_b"}, {"memory_id": "mem_c"}],
+        )
+        assert res["episode_id"]
+        assert res["step_count"] == 3
+        with sf() as s:
+            ep = s.get(EpisodeRecord, res["episode_id"])
+            assert ep.outcome == "success"
+            assert ep.session_id == "sess_ep"
+            steps = s.exec(
+                select(EpisodeStep).where(EpisodeStep.episode_id == ep.id)
+            ).all()
+            assert len(steps) == 3
+            assert {st.position for st in steps} == {1, 2, 3}
+        # 聚合：success 全为正、收尾步信用更大
+        credits = episode_credit_map()
+        assert set(credits) == {"mem_a", "mem_b", "mem_c"}
+        assert all(v > 0 for v in credits.values())
+        assert credits["mem_c"] > credits["mem_a"]
 
-            # failure 反向抵消
-            record_episode(
-                session_id="sess_ep",
-                outcome="failure",
-                steps=[{"memory_id": "mem_c"}],
-            )
-            credits2 = episode_credit_map(["mem_c"])
-            assert credits2["mem_c"] < credits["mem_c"]
-        finally:
-            dbm.get_session = original
+        # failure 反向抵消
+        record_episode(
+            session_id="sess_ep",
+            outcome="failure",
+            steps=[{"memory_id": "mem_c"}],
+        )
+        credits2 = episode_credit_map(["mem_c"])
+        assert credits2["mem_c"] < credits["mem_c"]
 
-    def test_cron_like_write_rejected(self):
+    def test_cron_like_write_rejected(self, monkeypatch):
         engine, sf = _setup()
-        import lantai.storage.db as dbm
 
-        dbm.get_session = sf
+        monkeypatch.setattr(db_module, "get_session", sf)
+        from lantai.services.episode_service import record_episode
+
         try:
-            from lantai.services.episode_service import record_episode
+            record_episode(session_id="", outcome="success", steps=[{"memory_id": "m"}])
+            raised = False
+        except ValueError:
+            raised = True
+        assert raised, "无 session 的写入不产生 episode（上游纪律）"
 
-            try:
-                record_episode(session_id="", outcome="success", steps=[{"memory_id": "m"}])
-                raised = False
-            except ValueError:
-                raised = True
-            assert raised, "无 session 的写入不产生 episode（上游纪律）"
+        try:
+            record_episode(session_id="s", outcome="bogus", steps=[{"memory_id": "m"}])
+            raised = False
+        except ValueError:
+            raised = True
+        assert raised, "非法 outcome 拒收"
 
-            try:
-                record_episode(session_id="s", outcome="bogus", steps=[{"memory_id": "m"}])
-                raised = False
-            except ValueError:
-                raised = True
-            assert raised, "非法 outcome 拒收"
+        try:
+            record_episode(session_id="s", outcome="success", steps=[])
+            raised = False
+        except ValueError:
+            raised = True
+        assert raised, "空轨迹拒收"
 
-            try:
-                record_episode(session_id="s", outcome="success", steps=[])
-                raised = False
-            except ValueError:
-                raised = True
-            assert raised, "空轨迹拒收"
-        finally:
-            dbm.get_session = None
-
-    def test_neutral_excluded_from_credits(self):
+    def test_neutral_excluded_from_credits(self, monkeypatch):
         engine, sf = _setup()
-        import lantai.storage.db as dbm
 
-        dbm.get_session = sf
-        try:
-            from lantai.services.episode_service import episode_credit_map, record_episode
+        monkeypatch.setattr(db_module, "get_session", sf)
+        from lantai.services.episode_service import episode_credit_map, record_episode
 
-            record_episode(
-                session_id="s2", outcome="neutral", steps=[{"memory_id": "mem_x"}]
-            )
-            assert episode_credit_map() == {}
-        finally:
-            dbm.get_session = None
+        record_episode(
+            session_id="s2", outcome="neutral", steps=[{"memory_id": "mem_x"}]
+        )
+        assert episode_credit_map() == {}
+
+    def test_module_session_factory_restored(self):
+        """守护断言（整改票 05）：任何用例结束后模块级会话工厂必须保持可调用——
+        防 finally 置 None 类污染回归。"""
+        assert callable(db_module.get_session)
