@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **现状审阅六步收口（2026-09-20 第三批，票据 `.scratch/state-remediation-20260920/`）**:
+  - **conftest API_KEY 测试环境消毒（票 02）**：仓库根部署 `.env`（gitignored）经 settings 的 env_file 渗入测试进程，`dev_mode_allowed()` 全局拒绝 DEV MODE——29 文件 70 例 401。conftest 加 autouse fixture 清 `settings.API_KEY` + pin 测试（`tests/test_test_environment.py`）把「测试环境 API_KEY 恒空」钉成显式契约；裸跑 `pytest tests/ -q`（无任何环境前缀）恢复全绿。
+  - **终端写路由守卫补全（票 03）**：`PUT /terminal/memory/{id}` 补归属校验（403，与 DELETE 同一 `ensure_can_delete` 真源同口径）——原先同资源删有守卫、改无守卫；retracted 拒改文（409）堵 D23「撤回后三面 0 命中」被改文旁路重新填回 FTS/向量的缺口；顺带修复 `updated_at` 赋 ISO 字符串致 PUT 任何成功更新必 500 的隐藏 bug（该路由此前零测试覆盖，新正面对照测试抓出）；CHANGELOG 票04「统一 403 不区分 404 防存在性探测」假宣称改正为如实表述（404 不存在 / 403 越权，REST 常规可区分）。
+  - **插件注入读路径 session_id 透传（票 05）**：`_call_hook` 携带 session_id（shell_hook 服务端本就支持，纯发送端补线），Hermes 主环路检索事件落会话——「带 session 的读才算真实会话读」从写路径半程补齐全链；缓冲序号 docstring 对齐 fd03b184 后的单调计数语义。无会话行为不变（空串照发，服务端归一化为 NULL）。
+  - **BM25 AND 语义如实声明（票 04，docs 零行为变更）**：更正 8834f846「确定性 AND 路径零改动」假宣称——默认开档下 search_fts 与 OR 召回面共用 `_bm25_keywords`，AND 语义为「各 gram 任意位置全命中」，gram 跨位拼合假阳性面如实写明（fts.py/settings.py/测试 docstring/CHANGELOG 四处）；`_GRAM_TERMS_MAX` 定义前移；Whitepaper 司天 ADR 0044→0045 误引修正。评测门数值不动（typo_mid 1.0 等 6/6 PASS）。
+
 ### Added
 - **笔削（Bixiao，撤回/删除四分法，2026-09-19 第三批；roadmap-v2 P0-2 / 调研 D23；命名登记 CONTEXT.md，《史记》「笔则笔，削则削」；ADR-0047）**:
   - **四分语义**：纠错 correct（就地改文保留版本历史，旧文进 `provenance.corrections`）、撤回 retract（主张停用即全检索面禁用，不可自动复活，unretract 仅 admin）、归档 archive（可逆退出常规检索，FTS/向量行保留复原零成本）、删除 delete（净清除正文，仅留无正文审计）。服务单一真源 `lantai/services/record_ops_service.py`，路由 `POST /terminal/memory/{id}/retract|unretract|archive|unarchive|correct`。
