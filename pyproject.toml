@@ -18,6 +18,9 @@ dependencies = [
   "lxml>=5.2",
   "openai>=1.40",
   "tenacity>=8.5",
+  # chromadb 0.6.3 为 0.x 末版；PYSEC-2026-3813/3814/3815 的修复只在 1.x（重大重写）。
+  # 缓解：兰台仅用内嵌 PersistentClient（无服务端/RBAC 面、单用户本地部署）。
+  # 1.x 迁移为独立专项（见 .scratch/p0-reliability-host-loop/issues/07-advisory-audit.md）。
   "chromadb>=0.4,<1.0",
   "requests>=2.31",
   "jieba>=0.42",
