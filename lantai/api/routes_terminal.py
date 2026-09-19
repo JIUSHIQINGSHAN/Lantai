@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from lantai.core.auth import get_current_user
 from lantai.core.logger import logger
+from lantai.core.time import utcnow
 from lantai.services.edge_service import list_edges
 from lantai.services.memory_service import list_memories
 from lantai.storage.db import get_session
@@ -238,14 +239,22 @@ def get_single_memory(memory_id: str, principal=Depends(get_current_user)):
 
 @router.put("/terminal/memory/{memory_id}")
 def update_memory(memory_id: str, req: MemoryUpdateReq, principal=Depends(get_current_user)):
-    """更新单条记忆的内容、重要性或置信度"""
+    """更新单条记忆的内容、重要性或置信度（归属校验 + retracted 拒改，现状整改票 03）"""
     session, conn = get_db_conn()
     try:
+        from lantai.core.acl import ensure_can_delete
         from lantai.models.tables import MemoryItem
 
         m = session.query(MemoryItem).filter(MemoryItem.id == memory_id).first()
         if not m:
             raise HTTPException(404, "memory not found")
+        # 与 DELETE 同一真源同一口径（P0 票04）：无归属/泳道越权一律 403
+        ensure_can_delete(
+            principal, resource_user_id=m.user_id, resource_tenant_id=m.tenant_id, lane=m.lane
+        )
+        # 撤回不变量（ADR-0047 D23）：retracted 改文会把已清空的 FTS/向量面重新填回
+        if m.status == "retracted":
+            raise HTTPException(409, "retracted memory cannot be updated")
 
         updates = 0
         if req.content is not None:
@@ -264,7 +273,7 @@ def update_memory(memory_id: str, req: MemoryUpdateReq, principal=Depends(get_cu
         if not updates:
             return {"ok": True, "message": "no changes"}
 
-        m.updated_at = time.strftime("%Y-%m-%dT%H:%M:%S")
+        m.updated_at = utcnow()
         if req.content is not None:
             # FTS 同事务同步（ADR-0008 强一致：失败随事务回滚，不再吞异常静默）
             from lantai.storage.fts import sync_fts
