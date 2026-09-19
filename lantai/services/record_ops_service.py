@@ -77,18 +77,26 @@ def sync_vector_delete(memory_id: str) -> bool:
 
 
 def sync_vector_upsert(memory_id: str, item: MemoryItem) -> bool:
-    """向量库重同步（upsert 语义）；失败返回 False 由调用方如实上报。"""
+    """向量库重同步（upsert 语义）；失败返回 False 由调用方如实上报。
+
+    metadata 契约：与 memory_service 等 8 键对齐（hybrid 按 user_id/tenant_id 等
+    做 Chroma where 过滤——缺键会让重同步后的记忆在属主过滤检索中永久不可见）。
+    """
     try:
         from lantai.retrieval.hybrid import index_memory_item
 
         index_memory_item(
             memory_id,
-            embed([item.content]),
+            embed([item.content])[0],
             {
                 "key": item.key or "",
                 "memory_type": item.memory_type,
                 "lane": item.lane or "general",
                 "domain": getattr(item, "domain", "user") or "user",
+                "tenant_id": getattr(item, "tenant_id", "") or "",
+                "user_id": getattr(item, "user_id", "") or "",
+                "session_id": getattr(item, "session_id", "") or "",
+                "agent_id": getattr(item, "agent_id", "") or "",
             },
         )
         return True
@@ -117,13 +125,8 @@ def retract_memory(
         if item is None:
             return dict(_NOT_FOUND)
         if item.status == STATUS_RETRACTED:
-            return {
-                "ok": True,
-                "already_retracted": True,
-                "fts_removed": True,
-                "vector_removed": True,
-                "warnings": [],
-            }
+            # 幂等重入：不假设首次撤回的索引同步结果，只认状态（如实，不造假 True）
+            return {"ok": True, "already_retracted": True, "warnings": []}
         warnings: list[str] = []
         fts_removed, fts_warn = _sync_fts(s, memory_id, None)
         warnings.extend(fts_warn)
@@ -171,7 +174,12 @@ def unretract_memory(
         warnings.extend(fts_warn)
         vector_synced = sync_vector_upsert(memory_id, item)
         if not vector_synced:
-            warnings.append("vector resync failed; memory searchable via FTS only")
+            if fts_synced:
+                warnings.append("vector resync failed; memory searchable via FTS only")
+            else:
+                warnings.append(
+                    "vector resync failed; memory active but not searchable until resync"
+                )
         item.status = STATUS_ACTIVE
         item.updated_at = utcnow()
         audit_event(
@@ -208,8 +216,9 @@ def archive_memory(
             return dict(_NOT_FOUND)
         if item.status == STATUS_ARCHIVED:
             return {"ok": True, "already_archived": True}
-        if item.status == STATUS_RETRACTED:
-            return {"ok": False, "error": "retracted memory cannot be archived"}
+        if item.status != STATUS_ACTIVE:
+            # 仅 active 可归档：candidate 绕晋升闸门、retracted 降级均拒
+            return {"ok": False, "error": f"only active memories can be archived (status={item.status})"}
         item.status = STATUS_ARCHIVED
         item.updated_at = utcnow()
         audit_event(
@@ -296,12 +305,14 @@ def correct_memory(
         )
         prov["corrections"] = corrections
         old_content = item.content
+        old_version = item.version or 1
         item.provenance = prov
-        item.version = (item.version or 1) + 1
+        item.version = old_version + 1
         item.content = text
         item.updated_at = utcnow()
-        fts_synced, fts_warn = _sync_fts(s, memory_id, text)
-        warnings.extend(fts_warn)
+        # FTS 同事务强一致（ADR-0008）：改文若索引失同步会留下可命中旧文的脏索引，
+        # 属「脏写」——直接抛出随事务回滚，不静默降级（与 PATCH 更新路由同策略）
+        sync_fts(s, memory_id, text)
         vector_synced = sync_vector_upsert(memory_id, item)
         if not vector_synced:
             warnings.append("vector resync failed; content updated in SQL/FTS only")
@@ -312,13 +323,12 @@ def correct_memory(
             actor=actor,
             reason=reason,
             content=old_content,
-            version_at=item.version,
+            version_at=old_version,
         )
         s.commit()
         return {
             "ok": True,
             "version": item.version,
-            "fts_synced": fts_synced,
             "vector_synced": vector_synced,
             "warnings": warnings,
         }

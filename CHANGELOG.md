@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **验收口径落地（D23）**：确定性用例「撤回后禁用命中=0」——SQL status / FTS / 向量三面 0 命中（`tests/test_record_lifecycle.py` 21 例不 mock 冒烟）；FTS 清理失败注入测试证明响应如实上报且 SQL 权威过滤面兜底仍 0 命中（宁 miss 不脏写）。
   - **无正文审计**：新表 `memory_audit_events`（`MemoryAuditEvent`）——六操作全枚举留痕，只记 content_hash/长度/版本，永不存正文（隐私删除后唯一痕迹，铁律）。
   - **不复活约束**：retracted 不被沉潜/晋升等任何 worker 翻回 active（锚测试固化）。
+  - **双轴审查整改**：向量重同步 `embed()` 取值漏 `[0]`（三层嵌套必炸，替身加形状守卫锚定）+ metadata 补齐 8 键归属契约（缺键会让属主过滤检索永久丢失该条，守卫锚定）；归档仅 active 入口（candidate 不得绕晋升闸门）；纠错改文 FTS 失败随事务回滚（不留「可命中旧文」脏索引，与 PATCH 同策略）；retract 幂等分支不再假报同步成功；delete 审计 best-effort 如实进 warnings。
 
 ### Fixed
 - **三处索引同步静默失败（同 except-pass 家族，笔削票据 05 附带发现）**：删除路由 import 不存在的 `remove_fts` → ImportError 被吞，FTS 清理从未生效；更新路由调向量库不存在的 `vs.update` → AttributeError 被吞，向量重同步从未生效；更新路由给 `sync_fts` 传 driver 连接而非 Session → 同样被吞。现 FTS 同事务同步（ADR-0008 强一致，失败随事务回滚）、向量 best-effort 且结果如实进响应（`fts_removed`/`vector_synced`/`warnings`），不再假装干净。

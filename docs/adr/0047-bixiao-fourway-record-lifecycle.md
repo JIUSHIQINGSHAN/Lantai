@@ -35,15 +35,16 @@
 
 1. **不复活**：任何 worker/生命周期路径不得把 `status="retracted"` 翻回 active（沉潜只选 active；promote 只收 candidate——现状即满足，落锚测试固化）。
 2. **同步失败不静默**：FTS/Chroma 同步结果如实进响应（`fts_removed` / `vector_removed` / `warnings`）与日志。
-3. **审计不含正文**：新表 `MemoryAuditEvent` 只记 id/action/actor/reason/content_hash/content_len/version_at，五操作（correct/retract/unretract/archive/unarchive/delete）统一走单一审计写入。
-4. 归档复用沉潜既有 `status="archived"` 值，不另造状态；检索出口依赖 hybrid 既有 `MemoryItem.status == "active"` SQL 谓词。
+3. **审计不含正文**：新表 `MemoryAuditEvent` 只记 id/action/actor/reason/content_hash/content_len/version_at，六操作（correct/retract/unretract/archive/unarchive/delete）统一走单一审计写入。审计行不含主体冗余列（tenant/user）——delete 后源行已不存在，按主体导出审计需经 memory_id 关联或未来加列（D22 已知限制）。
+4. 归档复用沉潜既有 `status="archived"` 值，不另造状态；仅 active 可入（candidate 不得绕晋升闸门、retracted 不得降级），archived 幂等重入；检索出口依赖 hybrid 既有 `MemoryItem.status == "active"` SQL 谓词。
 5. 纠错与裸更新并存：PATCH 是无痕快改，correct 是留痕纠错；选择指引见票据 04。
+6. **FTS 失败策略双轨（有意区分）**：改文类操作（PATCH 更新、correct）FTS 同事务强一致——失败随事务回滚，杜绝「可命中旧文」的脏索引；停用类操作（retract）与删除 FTS 失败降级为如实上报——SQL status 过滤面权威兜底，宁 miss 不脏写。
 
 ## 边界（如实声明，不夸口）
 
 - **摘要（digest）**：现状为纯统计日报（`docs/memory-digest/`），不含记忆正文——天然覆盖，无需钩子。
 - **缓存**：当前代码无检索缓存层；未来引入缓存必须挂钩 retract/delete，否则撤回语义破防。
-- **宿主副本**：已注入宿主会话的副本服务端无法追溯清除；缓解=樊篱围栏（ADR-0046 时代的 `lantai/llm/fence.py`）+ 注入回执链 + 下次注入刷新。不承诺「撤回即从宿主上下文消失」。
+- **宿主副本**：已注入宿主会话的副本服务端无法追溯清除；缓解=樊篱围栏（P0 票03 落地的 `lantai/llm/fence.py`）+ 注入回执链 + 下次注入刷新。不承诺「撤回即从宿主上下文消失」。
 - **MCP 面**：现状无删除类 MCP 工具，本波只做 REST API，MCP 映射另票。
 - **按范围删除**（by user/source 批量）：另票。
 - **派生物**：撤回 v1 只处理主张本身（FTS/Chroma/SQL 三面）；无其他支持来源的派生物（场景摘要/边缘）不自动追溯处理，记入已知限制。

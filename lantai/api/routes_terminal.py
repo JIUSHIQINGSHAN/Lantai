@@ -313,14 +313,19 @@ def delete_memory(memory_id: str, principal=Depends(get_current_user)):
         vector_removed = record_ops_service.sync_vector_delete(memory_id)
         if not vector_removed:
             warnings.append("vector delete failed")
-        record_ops_service.audit_event(
-            session,
-            memory_id=memory_id,
-            action="delete",
-            actor=principal.user_id or "",
-            content=m.content or "",
-            version_at=m.version or 0,
-        )
+        try:
+            # 审计 best-effort（票05）：失败不阻断删除主语义，如实进 warnings
+            record_ops_service.audit_event(
+                session,
+                memory_id=memory_id,
+                action="delete",
+                actor=principal.user_id or "",
+                content=m.content or "",
+                version_at=m.version or 0,
+            )
+        except Exception:
+            logger.exception("delete: audit write failed (reported, not silent)")
+            warnings.append("audit write failed; deletion itself succeeded")
         session.delete(m)
         session.commit()
 
@@ -365,9 +370,14 @@ def retract_memory_route(memory_id: str, req: RetractReq, principal=Depends(get_
         _check_ownership(session, memory_id, principal)
     finally:
         session.close()
-    return record_ops_service.retract_memory(
+    result = record_ops_service.retract_memory(
         memory_id, reason=req.reason.strip(), actor=principal.user_id or ""
     )
+    if not result["ok"]:
+        raise HTTPException(
+            404 if result["error"] == "memory not found" else 409, result["error"]
+        )
+    return result
 
 
 @router.post("/terminal/memory/{memory_id}/unretract")

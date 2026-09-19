@@ -39,10 +39,22 @@ class FakeVectorStore:
         self.ids: set[str] = set()
         self.deleted: list[str] = []
         self.upserted: list[str] = []
+        self.last_metadata: dict | None = None
 
     def add(self, ids, embeddings, metadatas):
+        # 形状守卫：embedding 必须是向量（数列表）而非三层嵌套——防 embed 返回值少取 [0] 的回归
+        for emb in embeddings:
+            assert isinstance(emb, list) and emb and isinstance(emb[0], (int, float)), (
+                f"embedding shape broken: {type(emb)} / {type(emb[0]) if emb else 'empty'}"
+            )
+        # metadata 契约守卫：缺归属键会让重同步后的记忆在属主过滤检索中永久不可见
+        for md in metadatas:
+            assert {"key", "memory_type", "lane", "domain", "user_id", "tenant_id"} <= set(md), (
+                f"metadata missing ownership keys: {sorted(md)}"
+            )
         self.upserted.extend(ids)
         self.ids.update(ids)
+        self.last_metadata = metadatas[0] if metadatas else None
 
     def search(self, query_embedding, top_k, filters=None):
         return [{"id": i, "distance": 0.1, "metadata": {}} for i in list(self.ids)[:top_k]]
@@ -152,6 +164,18 @@ class TestRetract:
             assert _fts_hits(conn, "撤回时FTS故障") == [mid]  # 索引残留如实可见
         assert mid not in _hybrid_ids("撤回时FTS故障")  # SQL 过滤面兜底，仍 0 命中
 
+    def test_retract_vector_failure_reported_sql_authoritative(self, engine, fake_vs, fake_embed):
+        """向量删除失败不静默：残留可见但 SQL 权威过滤面仍保证 0 命中（锚 hybrid status 谓词）。"""
+        mid = _add(engine, "向量删除失败仍不可召回的记忆")
+        fake_vs.ids.add(mid)
+        with patch(
+            "lantai.retrieval.hybrid.delete_memory_item", side_effect=RuntimeError("vs down")
+        ):
+            res = ops.retract_memory(mid, reason="x")
+        assert res["ok"] and res["vector_removed"] is False and res["warnings"]
+        assert mid in fake_vs.ids  # 向量残留如实可见
+        assert mid not in _hybrid_ids("向量删除失败仍不可召回")  # SQL 谓词兜底，仍 0 命中
+
     def test_no_worker_resurrection(self, engine, fake_vs):
         """铁律 6：retracted 不被沉潜/晋升复活。"""
         from lantai.cognition.lifecycle import KnowledgeLifecycleManager, LifecycleTransitionError
@@ -233,7 +257,7 @@ class TestArchive:
         mid = _add(engine, "撤回后不可归档降级")
         ops.retract_memory(mid, reason="x")
         res = ops.archive_memory(mid)
-        assert res["ok"] is False and "retracted" in res["error"]
+        assert res["ok"] is False and "active" in res["error"]
 
 
 class TestCorrect:
@@ -242,7 +266,8 @@ class TestCorrect:
         fake_vs.ids.add(mid)
 
         res = ops.correct_memory(mid, new_content="用户的生日是3月5日", reason="笔误")
-        assert res["ok"] and res["version"] == 2 and res["fts_synced"]
+        assert res["ok"] and res["version"] == 2
+        assert res["vector_synced"] and res["warnings"] == []
 
         with Session(engine) as s:
             item = s.get(MemoryItem, mid)
@@ -252,9 +277,24 @@ class TestCorrect:
             assert c["old_content"] == "用户的生日是3月2日"
             assert c["from_version"] == 1 and c["reason"] == "笔误"
         assert mid in fake_vs.upserted  # 向量已重同步
+        assert fake_vs.last_metadata["user_id"] == "u1"  # 归属键随重同步保留（review 整改锚）
         assert mid in _hybrid_ids("用户的生日是3月5日")
         with engine.connect() as conn:
             assert _fts_hits(conn, "生日是3月2日") == []  # 旧文不再可命中
+
+    def test_correct_fts_failure_aborts_clean(self, engine, fake_vs, fake_embed):
+        """改文类 FTS 失败强一致：随事务回滚，不留「可命中旧文」的脏索引（ADR-0008）。"""
+        mid = _add(engine, "纠错FTS故障不落脏索引")
+        with patch(
+            "lantai.services.record_ops_service.sync_fts", side_effect=RuntimeError("fts down")
+        ):
+            with pytest.raises(RuntimeError):
+                ops.correct_memory(mid, new_content="改文尝试", reason="r")
+        with Session(engine) as s:
+            item = s.get(MemoryItem, mid)
+            assert item.content == "纠错FTS故障不落脏索引"
+            assert item.version == 1
+            assert not (item.provenance or {}).get("corrections")
 
     def test_correct_rejects_empty_and_unchanged(self, engine):
         mid = _add(engine, "不可空改与同文改")
@@ -347,6 +387,16 @@ class TestRoutes:
         assert resp.status_code == 403
         with Session(engine) as s:
             assert s.get(MemoryItem, mid).status == "active"  # 资源原样
+
+    def test_correct_route_ownership_enforced(self, engine, client):
+        mid = _add(engine, "他人不可纠错我的记忆", user_id="u1")
+        app.dependency_overrides[get_current_user] = lambda: _principal("u2")
+        resp = client.post(
+            f"/terminal/memory/{mid}/correct", json={"content": "越权改文", "reason": "r"}
+        )
+        assert resp.status_code == 403
+        with Session(engine) as s:
+            assert s.get(MemoryItem, mid).content == "他人不可纠错我的记忆"  # 资源原样
 
     def test_archive_route_roundtrip(self, engine, client):
         mid = _add(engine, "路由归档往返记忆")
