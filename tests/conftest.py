@@ -201,3 +201,15 @@ def _no_background_scheduler(monkeypatch):
     import lantai.observability.telemetry as telemetry_module
 
     monkeypatch.setattr(telemetry_module.TelemetryWriter, "start", lambda self: None)
+
+
+@pytest.fixture(autouse=True)
+def _sanitize_api_key(monkeypatch):
+    """DEV MODE 免认证测试类与部署配置互斥：清空 settings.API_KEY。
+
+    仓库根 .env（部署用，gitignored）经 settings 的 env_file 加载会把 API_KEY
+    带进测试进程，dev_mode_allowed() 随即拒绝 DEV MODE，全量 29 文件 70 例 401
+    （2026-09-20 实证）。需要非空 API_KEY 的用例在测试体内自行 monkeypatch
+    覆盖（晚于本 fixture 生效，撕卸后自动还原）。
+    """
+    monkeypatch.setattr(settings, "API_KEY", "")
