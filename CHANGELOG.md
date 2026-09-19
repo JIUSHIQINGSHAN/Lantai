@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **v022 检索测试替身契约（整改票 04）**：向量替身不再「无视 top_k 返回全库」，按 filters 真实过滤 session/lane/domain；测试 helper 的 FTS 同步改为同事务写入（原 commit 后写入随 Session 关闭回滚，`memory_fts` 恒空）；换用真实 `Principal`。
 
 ### Added
-- **司天（后台运行监控面板，ADR-0044）**:
+- **司天（后台运行监控面板，ADR-0045）**:
   - 采集层 `observability/metrics.py`：进程内 `MetricsCollector`（最近请求环形缓冲 + 分钟级聚合桶），
     零第三方依赖采集 uptime/RSS/线程/CPU/fd，`normalize_route` 把 `/memory/mem_01J8…` 归一成
     `/memory/{id}` 杜绝高基数打散统计；
@@ -61,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `?quality=false` 轻量轮询；
   - 口径统一：worker 逾期判定上收为 `core.scheduler.worker_staleness` 纯函数，
     案牍 `project_work_items` 改为调用同一实现（行为不变），杜绝两处规则漂移；
-  - 命名正式登记：在 `CONTEXT.md` 登记「司天」（Sitian，出自司天监观天象察灾异），归档 ADR-0044。
+  - 命名正式登记：在 `CONTEXT.md` 登记「司天」（Sitian，出自司天监观天象察灾异），归档 ADR-0045。
 
 ### Fixed
 - **控制台初始化中断**：`ui/app.js` 绑定了 index.html 中并不存在的 `#systemRefresh`，
