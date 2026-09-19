@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from lantai.core.auth import get_current_user
+from lantai.core.logger import logger
 from lantai.services.edge_service import list_edges
 from lantai.services.memory_service import list_memories
 from lantai.storage.db import get_session
@@ -39,6 +40,25 @@ class MemoryUpdateReq(BaseModel):
 class MergeReq(BaseModel):
     source_id: str
     target_id: str
+
+
+class RetractReq(BaseModel):
+    """撤回请求：reason 必填非空（主张为何停用必须留痕）。"""
+
+    reason: str
+
+
+class ReasonReq(BaseModel):
+    """归档/恢复归档请求：reason 可选。"""
+
+    reason: str = ""
+
+
+class CorrectReq(BaseModel):
+    """纠错请求：content 必填，reason 建议提供。"""
+
+    content: str
+    reason: str = ""
 
 
 def _sse(event: str, data: dict) -> str:
@@ -245,36 +265,36 @@ def update_memory(memory_id: str, req: MemoryUpdateReq, principal=Depends(get_cu
             return {"ok": True, "message": "no changes"}
 
         m.updated_at = time.strftime("%Y-%m-%dT%H:%M:%S")
+        if req.content is not None:
+            # FTS 同事务同步（ADR-0008 强一致：失败随事务回滚，不再吞异常静默）
+            from lantai.storage.fts import sync_fts
+
+            sync_fts(session, m.id, m.content)
         session.commit()
 
-        # Sync FTS and Vector
-        try:
-            from lantai.storage.fts import sync_fts
-            from lantai.storage.vector_store import get_vector_store
+        payload = {"ok": True, "message": f"updated {updates} field(s)"}
+        if req.content is not None:
+            # 向量重同步 best-effort，结果如实回报（旧 vs.update 不存在被 except 静默吞，隐患修复）
+            from lantai.services import record_ops_service
 
-            raw_conn = session.connection().connection.driver_connection
-            if req.content is not None:
-                sync_fts(raw_conn, m.id, m.content)
-                vs = get_vector_store()
-                if vs:
-                    from lantai.retrieval.embed import embed
-
-                    vs.update([m.id], embed([m.content]))
-        except Exception:
-            pass
-
-        return {"ok": True, "message": f"updated {updates} field(s)"}
+            vector_synced = record_ops_service.sync_vector_upsert(memory_id, m)
+            payload["vector_synced"] = vector_synced
+            if not vector_synced:
+                payload["warnings"] = ["vector resync failed; content updated in SQL/FTS only"]
+        return payload
     finally:
         session.close()
 
 
 @router.delete("/terminal/memory/{memory_id}")
 def delete_memory(memory_id: str, principal=Depends(get_current_user)):
-    """删除单条记忆（含归属校验，P0 票04）"""
+    """删除单条记忆（含归属校验，P0 票04；笔削：同步结果如实回报 + 无正文审计，ADR-0047）"""
     session, conn = get_db_conn()
     try:
         from lantai.core.acl import ensure_can_delete
         from lantai.models.tables import MemoryItem
+        from lantai.services import record_ops_service
+        from lantai.storage.fts import sync_fts
 
         m = session.query(MemoryItem).filter(MemoryItem.id == memory_id).first()
         if not m:
@@ -282,25 +302,154 @@ def delete_memory(memory_id: str, principal=Depends(get_current_user)):
         ensure_can_delete(
             principal, resource_user_id=m.user_id, resource_tenant_id=m.tenant_id, lane=m.lane
         )
+        warnings: list[str] = []
+        try:
+            sync_fts(session, memory_id, None)
+            fts_removed = True
+        except Exception:
+            logger.exception("delete: fts removal failed (reported, not silent)")
+            fts_removed = False
+            warnings.append("fts removal failed")
+        vector_removed = record_ops_service.sync_vector_delete(memory_id)
+        if not vector_removed:
+            warnings.append("vector delete failed")
+        record_ops_service.audit_event(
+            session,
+            memory_id=memory_id,
+            action="delete",
+            actor=principal.user_id or "",
+            content=m.content or "",
+            version_at=m.version or 0,
+        )
         session.delete(m)
         session.commit()
 
-        # Sync FTS and Vector
-        try:
-            from lantai.storage.fts import remove_fts
-            from lantai.storage.vector_store import get_vector_store
-
-            raw_conn = session.connection().connection.driver_connection
-            remove_fts(raw_conn, memory_id)
-            vs = get_vector_store()
-            if vs:
-                vs.delete([memory_id])
-        except Exception:
-            pass
-
-        return {"ok": True}
+        return {
+            "ok": True,
+            "fts_removed": fts_removed,
+            "vector_removed": vector_removed,
+            "warnings": warnings,
+        }
     finally:
         session.close()
+
+
+def _memory_or_404(session, memory_id: str):
+    from lantai.models.tables import MemoryItem
+
+    m = session.query(MemoryItem).filter(MemoryItem.id == memory_id).first()
+    if not m:
+        raise HTTPException(404, "memory not found")
+    return m
+
+
+def _check_ownership(session, memory_id: str, principal):
+    """路由级 404 + 归属校验（笔削四操作共用口径，P0 票04）。"""
+    from lantai.core.acl import ensure_can_delete
+
+    m = _memory_or_404(session, memory_id)
+    ensure_can_delete(
+        principal, resource_user_id=m.user_id, resource_tenant_id=m.tenant_id, lane=m.lane
+    )
+
+
+@router.post("/terminal/memory/{memory_id}/retract")
+def retract_memory_route(memory_id: str, req: RetractReq, principal=Depends(get_current_user)):
+    """撤回（笔削·削，ADR-0047）：主张停止使用，全检索面禁用；不可自动复活（unretract 仅 admin）。"""
+    from lantai.services import record_ops_service
+
+    if not (req.reason or "").strip():
+        raise HTTPException(422, "reason is required for retraction")
+    session, conn = get_db_conn()
+    try:
+        _check_ownership(session, memory_id, principal)
+    finally:
+        session.close()
+    return record_ops_service.retract_memory(
+        memory_id, reason=req.reason.strip(), actor=principal.user_id or ""
+    )
+
+
+@router.post("/terminal/memory/{memory_id}/unretract")
+def unretract_memory_route(memory_id: str, principal=Depends(get_current_user)):
+    """撤销撤回（笔削，仅 admin；误撤回后的人工恢复口）"""
+    from lantai.services import record_ops_service
+
+    if not getattr(principal, "is_admin", False):
+        raise HTTPException(403, "unretract requires admin")
+    result = record_ops_service.unretract_memory(memory_id, actor=principal.user_id or "")
+    if not result["ok"]:
+        raise HTTPException(
+            404 if result["error"] == "memory not found" else 409, result["error"]
+        )
+    return result
+
+
+@router.post("/terminal/memory/{memory_id}/archive")
+def archive_memory_route(
+    memory_id: str, req: ReasonReq | None = None, principal=Depends(get_current_user)
+):
+    """归档（笔削·藏，ADR-0047）：可逆退出常规检索"""
+    from lantai.services import record_ops_service
+
+    session, conn = get_db_conn()
+    try:
+        _check_ownership(session, memory_id, principal)
+    finally:
+        session.close()
+    result = record_ops_service.archive_memory(
+        memory_id, actor=principal.user_id or "", reason=(req.reason if req else "") or ""
+    )
+    if not result["ok"]:
+        raise HTTPException(
+            404 if result["error"] == "memory not found" else 409, result["error"]
+        )
+    return result
+
+
+@router.post("/terminal/memory/{memory_id}/unarchive")
+def unarchive_memory_route(
+    memory_id: str, req: ReasonReq | None = None, principal=Depends(get_current_user)
+):
+    """恢复归档（笔削，可逆侧）"""
+    from lantai.services import record_ops_service
+
+    session, conn = get_db_conn()
+    try:
+        _check_ownership(session, memory_id, principal)
+    finally:
+        session.close()
+    result = record_ops_service.unarchive_memory(
+        memory_id, actor=principal.user_id or "", reason=(req.reason if req else "") or ""
+    )
+    if not result["ok"]:
+        raise HTTPException(
+            404 if result["error"] == "memory not found" else 409, result["error"]
+        )
+    return result
+
+
+@router.post("/terminal/memory/{memory_id}/correct")
+def correct_memory_route(memory_id: str, req: CorrectReq, principal=Depends(get_current_user)):
+    """纠错（笔削·笔，ADR-0047）：就地改文并保留版本历史（旧文进 provenance.corrections）"""
+    from lantai.services import record_ops_service
+
+    session, conn = get_db_conn()
+    try:
+        _check_ownership(session, memory_id, principal)
+    finally:
+        session.close()
+    result = record_ops_service.correct_memory(
+        memory_id,
+        new_content=req.content,
+        reason=req.reason or "",
+        actor=principal.user_id or "",
+    )
+    if not result["ok"]:
+        raise HTTPException(
+            404 if result["error"] == "memory not found" else 409, result["error"]
+        )
+    return result
 
 
 @router.post("/terminal/merge")

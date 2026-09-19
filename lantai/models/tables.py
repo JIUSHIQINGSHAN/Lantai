@@ -672,3 +672,22 @@ class PromptTemplate(SQLModel, table=True):
     template: str
     description: str = ""
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class MemoryAuditEvent(SQLModel, table=True):
+    """笔削审计（ADR-0047）：四分操作留痕。
+
+    铁律：永远不存正文——只记 hash 与长度；删除（隐私删除）后本表是唯一痕迹。
+    """
+
+    __tablename__ = "memory_audit_events"
+
+    id: str = Field(primary_key=True)
+    memory_id: str = Field(index=True)
+    action: str = Field(index=True)  # correct/retract/unretract/archive/unarchive/delete
+    actor: str = ""
+    reason: str = ""
+    content_hash: str = ""
+    content_len: int = 0
+    version_at: int = 0
+    created_at: datetime = Field(default_factory=utcnow)

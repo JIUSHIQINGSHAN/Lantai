@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **笔削（Bixiao，撤回/删除四分法，2026-09-19 第三批；roadmap-v2 P0-2 / 调研 D23；命名登记 CONTEXT.md，《史记》「笔则笔，削则削」；ADR-0047）**:
+  - **四分语义**：纠错 correct（就地改文保留版本历史，旧文进 `provenance.corrections`）、撤回 retract（主张停用即全检索面禁用，不可自动复活，unretract 仅 admin）、归档 archive（可逆退出常规检索，FTS/向量行保留复原零成本）、删除 delete（净清除正文，仅留无正文审计）。服务单一真源 `lantai/services/record_ops_service.py`，路由 `POST /terminal/memory/{id}/retract|unretract|archive|unarchive|correct`。
+  - **验收口径落地（D23）**：确定性用例「撤回后禁用命中=0」——SQL status / FTS / 向量三面 0 命中（`tests/test_record_lifecycle.py` 21 例不 mock 冒烟）；FTS 清理失败注入测试证明响应如实上报且 SQL 权威过滤面兜底仍 0 命中（宁 miss 不脏写）。
+  - **无正文审计**：新表 `memory_audit_events`（`MemoryAuditEvent`）——六操作全枚举留痕，只记 content_hash/长度/版本，永不存正文（隐私删除后唯一痕迹，铁律）。
+  - **不复活约束**：retracted 不被沉潜/晋升等任何 worker 翻回 active（锚测试固化）。
+
+### Fixed
+- **三处索引同步静默失败（同 except-pass 家族，笔削票据 05 附带发现）**：删除路由 import 不存在的 `remove_fts` → ImportError 被吞，FTS 清理从未生效；更新路由调向量库不存在的 `vs.update` → AttributeError 被吞，向量重同步从未生效；更新路由给 `sync_fts` 传 driver 连接而非 Session → 同样被吞。现 FTS 同事务同步（ADR-0008 强一致，失败随事务回滚）、向量 best-effort 且结果如实进响应（`fts_removed`/`vector_synced`/`warnings`），不再假装干净。
+
+### Added
 - **遗留问题清理（2026-09-19 第二批，票 06/07）**:
   - **FTS BM25 3-gram 滑窗分词（票 06）**：OR+bm25 召回路径原按空白切词，中文整句退化为单个短语匹配——词中错字/词面重叠改写全部零召回（基线实测）。改 CJK 3-gram 滑窗 + ASCII 整词（`_bm25_keywords` 单一真源，`FTS_BM25_GRAM_TOKENIZE` 默认开，off=旧语义对照）：错字只污染个别 gram，共享词根即部分命中。**typo_mid 0→1.0（GATES 增补确定性门 1.0）**、paraphrase 0→0.25（词面重叠型，维持报告型——完全改写归向量层）；确定性 AND 路径零改动，五项既有门不动；顺带清除 search_fts 遗留 debug print。
   - **依赖 advisory 处置留痕（票 07）**：pip-audit 定位 Mimosa 离线 advisory 匹配项——chromadb 0.6.3 ×3（PYSEC-2026-3813/3814/3815，修复仅在 1.x 重大重写版）。处置：wontfix 留痕——兰台仅内嵌 PersistentClient（无服务端/RBAC 面、单用户本地），pyproject 注释留证，1.x 迁移登记独立专项。
