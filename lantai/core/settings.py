@@ -236,6 +236,10 @@ class Settings(BaseSettings):
     SHELL_HOOK_OFFLOAD_CHARS: int = 2000  # 记忆内容超过此长度 → 落文件 + 摘要注入
     OFFLOAD_OUTPUT_DIR: str = ""  # 为空时 = 仓库根 docs/memory-offload
 
+    # 票06：BM25 OR 路径 CJK 3-gram 滑窗分词（trigram 索引下 2 字词无法匹配，
+    # 整句短语匹配不覆盖词中错字/词面重叠改写）。默认开；关 = 旧整句短语语义
+    FTS_BM25_GRAM_TOKENIZE: bool = True
+
     # 樊篱（P0 票03）：记忆正文注入提示前包 <memory_data> 数据围栏 + 「非指令」
     # 声明（OWASP LLM01 纵深防御）。默认开；关 = 行为退回无围栏（off 对照测试锚定）
     DATA_FENCE_ENABLED: bool = True

@@ -18,9 +18,9 @@
   基线：离线 FTS-only 下两者均为 0——整句 AND 匹配不覆盖泛化；改进方向
   FTS OR 兜底见 `.scratch/p0-reliability-host-loop/issues/06-fts-or-fallback.md`）
 - 陈旧 case 按 lane 半衰期保证归档（chat 90 天 / preference 200 天，decay 必达阈值）
-- 门禁（`GATES` 不变，从 v1 沿用）：stale=0 / typo=1 / fresh=1 / temporal=1 / superseded=1；
-  `superseded_residual_rate` / `typo_mid_recall_rate` / `paraphrase_recall_rate`
-  为诚实测量，只报告不设门槛
+- 门禁（票06 起六项）：stale=0 / typo=1 / **typo_mid=1**（BM25 3-gram 滑窗落地）/ fresh=1 /
+  temporal=1 / superseded=1；`superseded_residual_rate` / `paraphrase_recall_rate`
+  为诚实测量，只报告不设门槛（paraphrase 基线 0.25=词面重叠型命中；完全改写归向量层）
 - 回答层（v4 起，LongMemEval 式分层）：case 带 `key_points` 时由 `--judge`
   （rule 确定性 / llm 选配）打要点命中率，`overall_hit_rate` 与召回层分开呈现，
   不做单变量混合分
@@ -32,8 +32,8 @@
 |---|---|---|
 | stale_hit_rate | 已归档记忆仍被召回（Ebbinghaus 归档失效） | 越低越好 |
 | typo_recall_rate | 中文错别字容错命中（FTS trigram 兜底） | 越高越好 |
-| typo_mid_recall_rate | 词中错字命中（向量层兜底为主；离线 FTS-only 诚实测量） | 越高越好 |
-| paraphrase_recall_rate | 同义改写召回（离线 FTS-only 诚实测量） | 越高越好 |
+| typo_mid_recall_rate | 词中错字命中（BM25 3-gram 滑窗兜底，票06 起设确定性门） | 越高越好 |
+| paraphrase_recall_rate | 同义改写召回（词面重叠型；完全改写归向量层） | 越高越好 |
 | fresh_recall_rate | 对照组召回（管道自检，应≈1） | 越高越好 |
 | temporal_order_accuracy | Chronos 双时间轴：未生效过滤 / 过期降权后新值在前 | 越高越好 |
 | superseded_order_accuracy | 矛盾取代：supersedes 边降权后新值在前 | 越高越好 |

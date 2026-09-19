@@ -461,3 +461,60 @@ def test_hybrid_vector_empty_no_candidates_returns_empty(engine):
     ):
         results = hybrid.hybrid_search("完全不存在的记忆关键词xyz", top_k=5, use_rerank=False)
     assert results == []
+
+
+# ── 票06：BM25 OR 路径 3-gram 滑窗分词（词中错字/词面重叠改写的部分匹配兜底）──
+
+
+def _add_mem_with_fts(engine, content: str) -> str:
+    mid = _add_mem(engine, content)
+    with Session(engine) as s:
+        sync_fts(s, mid, content)
+        s.commit()
+    return mid
+
+
+def test_search_fts_bm25_gram_typo_mid_hits(engine):
+    """词中错字：错字只污染个别 3-gram，其余滑窗仍命中（AND 路径为 0 的场景）。"""
+    from lantai.storage.fts import search_fts_bm25
+
+    mid = _add_mem_with_fts(engine, "机器学习用于图像识别与自然语言处理")
+    with engine.connect() as conn:
+        c = conn.connection.driver_connection
+        rows = search_fts_bm25(c, "机器学习用于图象识别", top_k=5)
+    assert mid in [r[0] for r in rows]
+
+
+def test_search_fts_bm25_gram_paraphrase_word_overlap_hits(engine):
+    """词面重叠改写：共享 3-gram（数据库）即部分命中；AND 路径整句短语为 0 的场景。"""
+    from lantai.storage.fts import search_fts_bm25
+
+    mid = _add_mem_with_fts(engine, "数据库使用SQLite存储")
+    with engine.connect() as conn:
+        c = conn.connection.driver_connection
+        rows = search_fts_bm25(c, "公司的数据库引擎用的什么", top_k=5)
+    assert mid in [r[0] for r in rows]
+
+
+def test_search_fts_bm25_gram_off_falls_back_to_phrase(engine, monkeypatch):
+    """off 对照（铁律 2）：开关关 → 旧整句短语语义，改写零命中。"""
+    from lantai.storage.fts import search_fts_bm25
+
+    monkeypatch.setattr("lantai.core.settings.settings.FTS_BM25_GRAM_TOKENIZE", False)
+    mid = _add_mem_with_fts(engine, "机器学习用于图像识别与自然语言处理")
+    with engine.connect() as conn:
+        c = conn.connection.driver_connection
+        rows = search_fts_bm25(c, "机器学习用于图象识别", top_k=5)
+    assert mid not in [r[0] for r in rows]
+
+
+def test_search_fts_and_path_stays_phrase(engine):
+    """AND 确定性路径契约不动：短语语义（评测集去首字模式依赖它）。"""
+    mid = _add_mem_with_fts(engine, "机器学习用于图像识别与自然语言处理")
+    with engine.connect() as conn:
+        c = conn.connection.driver_connection
+        rows = search_fts(c, "器学习用于图像识别", top_k=5)
+    assert mid in rows
+    # 改写查询 AND 短语不命中（确定性语义保持，召回由 OR 路径补）
+    rows2 = search_fts(c, "公司的数据库引擎用的什么", top_k=5)
+    assert rows2 == []

@@ -97,12 +97,13 @@ def run_offline_eval(dataset: dict | None = None, top_k: int = 5, judge: str = "
 
 # 评测集 v1 契约门槛（发布稿同源）：FTS 兜底最严格基准下的确定性底线。
 # 改数据集时同步更新；门槛是「可复现自证」主张，不是可调系统参数（不进 settings）。
-# paraphrase_recall_rate / typo_mid_recall_rate 只报告不设门（2026-09-19 基线
-# 实测离线 FTS-only 下均为 0——AND 链整句匹配不覆盖泛化/词中错字；改进需
-# FTS OR 兜底，见 .scratch/p0-reliability-host-loop/issues/06-fts-or-fallback.md）。
+# 票06（FTS BM25 3-gram 滑窗）落地后：typo_mid 0→1.0（确定性全命中，设门）；
+# paraphrase 0→0.25（词面重叠型命中，等值门槛对语料增长脆弱）——维持报告型，
+# 完全改写类召回归向量层（方向调研结论）。
 GATES: dict[str, float] = {
     "stale_hit_rate": 0.0,  # 归档零残留
     "typo_recall_rate": 1.0,  # 中文错别字全命中（FTS trigram）
+    "typo_mid_recall_rate": 1.0,  # 词中错字全命中（BM25 3-gram 滑窗，票06）
     "fresh_recall_rate": 1.0,  # 对照组管道自检
     "temporal_order_accuracy": 1.0,  # Chronos 时效排序
     "superseded_order_accuracy": 1.0,  # supersedes 降权后新值在前

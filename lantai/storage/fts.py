@@ -60,15 +60,45 @@ def index_fts(conn: sqlite3.Connection, memory_id: str, content: str):
         logger.warning("FTS5 index failed for %s: %s", memory_id, e)
 
 
+def _bm25_keywords(query: str) -> list:
+    """BM25 OR 路径关键词（票06）：CJK 3-gram 滑窗 + ASCII 整词，单一真源。
+
+    trigram 索引的最小匹配单元是 3 字符——中文 2 字词（偏好/机房间）天然不可
+    匹配，整句短语匹配（旧行为）则不覆盖词中错字与词面重叠改写。3-gram 滑窗
+    让错字只污染个别 gram、共享词根即可部分命中；OR + bm25 排序负责降噪。
+    上限 _GRAM_TERMS_MAX 防 OR 链过长；确定性 AND 路径（search_fts）不受影响。
+    """
+    from lantai.core.settings import settings
+
+    cleaned = re.sub(r"[^\w\u4e00-\u9fa5]+", " ", query or "")
+    if not settings.FTS_BM25_GRAM_TOKENIZE:
+        return [w.strip() for w in cleaned.split() if len(w.strip()) >= 3]
+    terms: list = []
+    seen = set()
+    for word in cleaned.split():
+        if all(not ("\u4e00" <= ch <= "\u9fff") for ch in word):
+            if len(word) >= 3 and word not in seen:
+                seen.add(word)
+                terms.append(word)
+            continue
+        for i in range(len(word) - 2):
+            gram = word[i : i + 3]
+            if gram not in seen:
+                seen.add(gram)
+                terms.append(gram)
+    return terms[:_GRAM_TERMS_MAX]
+
+
+_GRAM_TERMS_MAX = 24
+
+
 def search_fts(
     conn, query: str, top_k: int = 5, lanes: list = None, domain: str = None, principal=None
 ) -> list:
     try:
-        import re
-
-        query = re.sub(r"[^\w\u4e00-\u9fa5]+", " ", query)
-        keywords = [w.strip() for w in query.split() if w.strip()]
-        keywords = [k for k in keywords if len(k) >= 3]
+        # 票06：BM25 OR 路径用 3-gram 滑窗关键词（_bm25_keywords 单一真源）；
+        # off 时退回旧空白切分整词（确定性 AND 路径 search_fts 不受影响）
+        keywords = _bm25_keywords(query)
         if not keywords:
             return []
         match_query = " AND ".join('"' + k.replace('"', '""') + '"' for k in keywords)
@@ -101,8 +131,6 @@ def search_fts(
         sql += " ORDER BY rank LIMIT ?"
         params.append(top_k)
 
-        print(f"search_fts SQL: {sql} PARAMS: {params}")
-
         cursor = conn.execute(sql, tuple(params))
         return [row[0] for row in cursor.fetchall()]
     except Exception as e:
@@ -116,11 +144,7 @@ def search_fts_bm25(
     conn, query: str, top_k: int = 50, lanes: list = None, domain: str = None, principal=None
 ) -> list:
     try:
-        import re
-
-        query = re.sub(r"[^\w\u4e00-\u9fa5]+", " ", query)
-        keywords = [w.strip() for w in query.split() if w.strip()]
-        keywords = [k for k in keywords if len(k) >= 3]
+        keywords = _bm25_keywords(query)
         if not keywords:
             return []
         match_query = " OR ".join('"' + k.replace('"', '""') + '"' for k in keywords)

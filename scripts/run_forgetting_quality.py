@@ -24,8 +24,8 @@ _DEFAULT_OUT = _REPO_ROOT / "docs" / "memory-quality"
 _METRIC_LABELS = {
     "stale_hit_rate": "陈旧记忆残留率（越低越好）",
     "typo_recall_rate": "中文错别字容错命中率（越高越好）",
-    "typo_mid_recall_rate": "词中错字命中率（离线 FTS-only 诚实测量，只报告）",
-    "paraphrase_recall_rate": "同义改写召回率（离线 FTS-only 诚实测量，只报告）",
+    "typo_mid_recall_rate": "词中错字命中率（BM25 3-gram 滑窗，票06 起设确定性门）",
+    "paraphrase_recall_rate": "同义改写召回率（词面重叠型；完全改写归向量层）",
     "fresh_recall_rate": "对照组召回率（管道自检，应≈1）",
     "temporal_order_accuracy": "时效排序正确率（未生效过滤/过期降权）",
     "superseded_order_accuracy": "被取代记忆排序正确率（新值在前）",
