@@ -60,13 +60,17 @@ def index_fts(conn: sqlite3.Connection, memory_id: str, content: str):
         logger.warning("FTS5 index failed for %s: %s", memory_id, e)
 
 
+_GRAM_TERMS_MAX = 24
+
+
 def _bm25_keywords(query: str) -> list:
-    """BM25 OR 路径关键词（票06）：CJK 3-gram 滑窗 + ASCII 整词，单一真源。
+    """BM25 关键词（票06）：CJK 3-gram 滑窗 + ASCII 整词，单一真源，OR/AND 两路共用。
 
     trigram 索引的最小匹配单元是 3 字符——中文 2 字词（偏好/机房间）天然不可
     匹配，整句短语匹配（旧行为）则不覆盖词中错字与词面重叠改写。3-gram 滑窗
     让错字只污染个别 gram、共享词根即可部分命中；OR + bm25 排序负责降噪。
-    上限 _GRAM_TERMS_MAX 防 OR 链过长；确定性 AND 路径（search_fts）不受影响。
+    上限 _GRAM_TERMS_MAX 防 OR 链过长（现状整改票04 如实声明：同样作用于 AND
+    路径 search_fts——超 24 gram 的长查询尾部被静默截断，存在假阳性面）。
     """
     from lantai.core.settings import settings
 
@@ -89,15 +93,14 @@ def _bm25_keywords(query: str) -> list:
     return terms[:_GRAM_TERMS_MAX]
 
 
-_GRAM_TERMS_MAX = 24
-
-
 def search_fts(
     conn, query: str, top_k: int = 5, lanes: list = None, domain: str = None, principal=None
 ) -> list:
     try:
-        # 票06：BM25 OR 路径用 3-gram 滑窗关键词（_bm25_keywords 单一真源）；
-        # off 时退回旧空白切分整词（确定性 AND 路径 search_fts 不受影响）
+        # 票06 + 现状整改票04：本路径（AND 确定性面）与 OR 召回面共用 _bm25_keywords。
+        # 默认开档下关键词同为 CJK 3-gram：AND 语义是「各 gram 任意位置全命中」，
+        # 非旧「整句短语连续匹配」；已知假阳性面为 gram 跨位拼合（「机器学…器学习」
+        # 分置两处亦命中）。off 档退回旧空白切分整词短语匹配。
         keywords = _bm25_keywords(query)
         if not keywords:
             return []

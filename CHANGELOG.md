@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **遗留问题清理（2026-09-19 第二批，票 06/07）**:
-  - **FTS BM25 3-gram 滑窗分词（票 06）**：OR+bm25 召回路径原按空白切词，中文整句退化为单个短语匹配——词中错字/词面重叠改写全部零召回（基线实测）。改 CJK 3-gram 滑窗 + ASCII 整词（`_bm25_keywords` 单一真源，`FTS_BM25_GRAM_TOKENIZE` 默认开，off=旧语义对照）：错字只污染个别 gram，共享词根即部分命中。**typo_mid 0→1.0（GATES 增补确定性门 1.0）**、paraphrase 0→0.25（词面重叠型，维持报告型——完全改写归向量层）；确定性 AND 路径零改动，五项既有门不动；顺带清除 search_fts 遗留 debug print。
+  - **FTS BM25 3-gram 滑窗分词（票 06）**：OR+bm25 召回路径原按空白切词，中文整句退化为单个短语匹配——词中错字/词面重叠改写全部零召回（基线实测）。改 CJK 3-gram 滑窗 + ASCII 整词（`_bm25_keywords` 单一真源，`FTS_BM25_GRAM_TOKENIZE` 默认开，off=旧语义对照）：错字只污染个别 gram，共享词根即部分命中。**typo_mid 0→1.0（GATES 增补确定性门 1.0）**、paraphrase 0→0.25（词面重叠型，维持报告型——完全改写归向量层）；AND 确定性路径（search_fts）共用同一关键词源，默认开档下语义同步松化为「各 gram 全命中」而非旧整句短语——已知假阳性面为 gram 跨位拼合（现状整改票04 如实声明，五项既有门以新语义验收不动）；顺带清除 search_fts 遗留 debug print。
   - **依赖 advisory 处置留痕（票 07）**：pip-audit 定位 Mimosa 离线 advisory 匹配项——chromadb 0.6.3 ×3（PYSEC-2026-3813/3814/3815，修复仅在 1.x 重大重写版）。处置：wontfix 留痕——兰台仅内嵌 PersistentClient（无服务端/RBAC 面、单用户本地），pyproject 注释留证，1.x 迁移登记独立专项。
 
 ### Added

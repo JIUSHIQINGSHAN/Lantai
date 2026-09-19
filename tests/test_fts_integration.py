@@ -508,13 +508,18 @@ def test_search_fts_bm25_gram_off_falls_back_to_phrase(engine, monkeypatch):
     assert mid not in [r[0] for r in rows]
 
 
-def test_search_fts_and_path_stays_phrase(engine):
-    """AND 确定性路径契约不动：短语语义（评测集去首字模式依赖它）。"""
+def test_search_fts_and_path_shared_segment_hits(engine):
+    """AND 路径：连续片段查询可命中（评测集去首字模式依赖）；完全改写零命中。
+
+    现状整改票04 如实声明：默认开档下本路径关键词同为 3-gram，「各 gram 全
+    命中」——本测试的片段查询与改写零命中在旧短语语义与新 gram 语义下均成立，
+    锚定的是两种语义共有的行为面，不区分新旧语义。
+    """
     mid = _add_mem_with_fts(engine, "机器学习用于图像识别与自然语言处理")
     with engine.connect() as conn:
         c = conn.connection.driver_connection
         rows = search_fts(c, "器学习用于图像识别", top_k=5)
     assert mid in rows
-    # 改写查询 AND 短语不命中（确定性语义保持，召回由 OR 路径补）
+    # 完全改写查询零命中（AND 全 gram 命中不成立，召回由 OR 路径补）
     rows2 = search_fts(c, "公司的数据库引擎用的什么", top_k=5)
     assert rows2 == []
