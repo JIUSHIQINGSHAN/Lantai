@@ -128,11 +128,14 @@ def _wait_ready(timeout: float = 15.0) -> bool:
         return False
 
 
-def _call_hook(query: str) -> dict | None:
+def _call_hook(query: str, session_id: str = "") -> dict | None:
     """向常驻 serve 子进程发一行注入请求，读一行响应（带锁，防并发交错）。
 
-    返回完整响应 dict（context/evidence/event_id）——event_id + evidence 供
-    注入回执（P0 票02）；无有效响应返回 None。
+    session_id：注入读路径来源透传（现状整改票 05）——shell_hook 服务端按
+    data.get("session_id") 落 RetrievalEvent，主环路的检索事件不再恒 NULL；
+    空串照发（服务端归一化为 NULL，宁 miss 不脏写）。返回完整响应 dict
+    （context/evidence/event_id）——event_id + evidence 供注入回执（P0 票02）；
+    无有效响应返回 None。
     """
     proc = _ensure_proc()
     if proc is None:
@@ -142,7 +145,9 @@ def _call_hook(query: str) -> dict | None:
         return None
     try:
         with _lock:
-            line = (json.dumps({"query": query}, ensure_ascii=False) + "\n").encode("utf-8")
+            line = (
+                json.dumps({"query": query, "session_id": session_id}, ensure_ascii=False) + "\n"
+            ).encode("utf-8")
             assert proc.stdin is not None and proc.stdout is not None
             proc.stdin.write(line)
             proc.stdin.flush()
@@ -335,7 +340,8 @@ def build_session_blocks(messages: list[str]) -> dict:
 def _buffer_turn(session_id: str, user_message: str) -> None:
     """累积一轮 user_message 到会话缓冲（有界，防长期会话膨胀）。
 
-    turn = 该会话内 1-based 缓冲序号（P0 票02 来源链）；同一消息重复投递
+    turn = 该会话内 1-based 单调轮次计数（P0 票02 来源链，fd03b184 起：
+    计数独立于缓冲内容，缓冲淘汰不回退）；同一消息重复投递
     会占用新序号——如实反映「说了两遍」，不做去重猜测。
     """
     if not session_id:
@@ -382,7 +388,7 @@ def _on_pre_llm_call(**kwargs) -> dict | None:
     # 短句且无触发词 → 不注入检索（与 gate 语义一致，省子进程开销）
     if len(q) <= 15 and not any(w in q for w in _TRIGGER_WORDS):
         return {"context": ck} if ck else None
-    data = _call_hook(q)
+    data = _call_hook(q, session_id=session_id)
     if not data:
         return {"context": ck} if ck else None
     ctx = str(data.get("context") or "")

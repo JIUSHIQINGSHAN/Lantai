@@ -5,6 +5,7 @@
 """
 
 import importlib.util
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -288,3 +289,57 @@ class TestInstallScriptBackup:
             "name: lantai-hook\nversion: 1.0.0\n", encoding="utf-8"
         )
         assert not inst.validate_no_duplicate(plugins)
+
+
+class TestInjectionSessionId:
+    """注入读路径 session_id 透传（现状整改票 05）：主环路检索事件不再恒 NULL。"""
+
+    def test_call_hook_payload_carries_session_id(self, mod):
+        sent = []
+
+        class FakeStdin:
+            def write(self, line):
+                sent.append(line)
+
+            def flush(self):
+                pass
+
+        class FakeStdout:
+            def __init__(self):
+                self._done = False
+
+            def read(self, n):
+                if not self._done:
+                    self._done = True
+                    return b'{"context": "ctx", "evidence": [], "event_id": "e1"}'
+                return b""
+
+        proc = type("P", (), {"stdin": FakeStdin(), "stdout": FakeStdout()})()
+        with patch.object(mod, "_ensure_proc", return_value=proc), patch.object(
+            mod, "_wait_ready", return_value=True
+        ):
+            data = mod._call_hook("兰台检索词", session_id="sess_x")
+        assert data is not None and data["event_id"] == "e1"
+        assert json.loads(sent[0]) == {"query": "兰台检索词", "session_id": "sess_x"}
+
+    def test_pre_llm_call_passes_session_id_through(self, mod):
+        with patch.object(mod, "_call_hook") as hook, patch.object(
+            mod, "_call_checkpoint", return_value=None
+        ):
+            mod._on_pre_llm_call(user_message="帮我校准记忆系统的去重阈值参数设置", session_id="sess_x")
+        assert hook.call_count == 1
+        assert hook.call_args == (
+            ("帮我校准记忆系统的去重阈值参数设置",),
+            {"session_id": "sess_x"},
+        )
+
+    def test_pre_llm_call_no_session_sends_empty(self, mod):
+        """无会话时行为不变：session_id 空串照发（服务端归一化为 NULL，宁 miss 不脏写）。"""
+        with patch.object(mod, "_call_hook") as hook, patch.object(
+            mod, "_call_checkpoint", return_value=None
+        ):
+            mod._on_pre_llm_call(user_message="帮我校准记忆系统的去重阈值参数设置", session_id="")
+        assert hook.call_args == (
+            ("帮我校准记忆系统的去重阈值参数设置",),
+            {"session_id": ""},
+        )
