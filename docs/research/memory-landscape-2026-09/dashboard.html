@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>兰台记忆方向调研 · 可视化框架（2026-09）</title>
+<style>
+:root{--ink:#2b2b2b;--paper:#f7f4ee;--card:#ffffff;--brand:#8b1a1a;--blue:#1f4e79;--line:#e4ddd0;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Microsoft YaHei","PingFang SC",sans-serif;background:var(--paper);color:var(--ink);line-height:1.6}
+header{background:linear-gradient(135deg,#3a2410,#6b3a12 55%,#8b1a1a);color:#f5ead6;padding:34px 6vw 26px}
+header h1{font-size:26px;letter-spacing:1px}
+header p{opacity:.85;font-size:13px;margin-top:6px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:18px}
+.kpi{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:10px 14px}
+.kpi b{display:block;font-size:24px;color:#ffd98a}
+.kpi span{font-size:12px;opacity:.85}
+main{padding:26px 6vw 60px;max-width:1280px;margin:0 auto}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px 24px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+h2{font-size:18px;color:var(--brand);border-left:4px solid var(--brand);padding-left:10px;margin-bottom:14px}
+h3{font-size:14px;margin:14px 0 8px;color:#5b4632}
+.note{font-size:12px;color:#8a7f6f;margin-top:8px}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
+th{background:#f2ecdf;position:sticky;top:0}
+td.num{text-align:center;font-weight:600}
+.lantai-row{background:#fdf3f0}
+.tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:9px;margin-right:4px;background:#eee6d8;color:#6b5a41}
+.tag.verified{background:#e2efda;color:#2e6b2e}
+.tag.inherited{background:#fdeeda;color:#9a6a1b}
+.scroll{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+svg text{font-family:inherit}
+.flex{display:flex;gap:22px;flex-wrap:wrap}
+.flex>div{flex:1 1 420px}
+footer{font-size:12px;color:#8a7f6f;text-align:center;padding:18px}
+a{color:var(--blue)}
+</style>
+</head>
+<body>
+<header>
+  <h1>兰台（Lantai）记忆系统 · 全景调研与方向迭代可视化框架</h1>
+  <p>检索/迭代日期 2026-09-19 · 20 个记忆系统 + 32 篇论文/基准一手核验 · 15 轮迭代 · 评分冻结 3.56/5.00 · 路线图 v2（P0×4 / P1×3 / P2×4）</p>
+  <div class="kpis">
+    <div class="kpi"><b>20</b><span>记忆系统（全部核验）</span></div>
+    <div class="kpi"><b>32</b><span>论文与基准</span></div>
+    <div class="kpi"><b>3.56</b><span>兰台加权总分（冻结）</span></div>
+    <div class="kpi"><b>59</b><span>兰台 MCP 工具（实核）</span></div>
+    <div class="kpi"><b>15</b><span>轮迭代（iterations.jsonl）</span></div>
+    <div class="kpi"><b>40+</b><span>一手来源</span></div>
+  </div>
+</header>
+<main>
+
+<section id="sec-matrix">
+  <h2>① 能力评分矩阵（最终结果）</h2>
+  <div class="scroll"><table id="matrix"></table></div>
+  <p class="note">0–5 分，步长 0.5；按加权总分排序。绿色=强，红色=弱。评分只依据公开可证实机制（官方 README/docs/arXiv），厂商自报基准分不入证据。兰台行为内部代码核验（temporal 3.0 / integration 3.5 于 R7 修正）。</p>
+</section>
+
+<section id="sec-iter">
+  <h2>② 迭代过程（15 轮）</h2>
+  <div class="flex">
+    <div><div id="iter-line"></div><p class="note">兰台加权总分演进：R7 内部核验一次性修正（temporal −0.5 / integration +1.0），R13 起冻结。</p></div>
+    <div><div id="iter-cov"></div><p class="note">覆盖增长：系统 12→20，论文 17→32。R2–R9 调研吸收，R10–R13 主题综合，R14 路线图收口，R15 可视化冻结。</p></div>
+  </div>
+  <div class="scroll" style="max-height:300px;margin-top:10px"><table id="iter-table"></table></div>
+</section>
+
+<section id="sec-quadrant">
+  <h2>③ 格局定位图（分析师判定，非实测）</h2>
+  <div id="quadrant"></div>
+</section>
+
+<section id="sec-radar">
+  <h2>④ 能力雷达：兰台 vs 三代表系统</h2>
+  <div id="radar"></div>
+  <p class="note">对照选择：Mem0（生态最大）、Zep/Graphiti（时间最强）、agentmemory（最同类：SQLite 零依赖 + MCP 工具面 54 vs 兰台 59）。</p>
+</section>
+
+<section id="sec-roadmap">
+  <h2>⑤ 路线图 v2（R14 收口）</h2>
+  <h3>定位声明：兰台 = 面向个人维护与多宿主 Agent 的、全生命周期可治理的本地长期记忆层——唯一把「人工闸门—回滚—注入围栏—状态机遗忘」做成闭环的系统；用操作级自证替代榜单叙事。</h3>
+  <table id="roadmap"></table>
+  <p class="note">churn 相对 2026-09-18 主线 A/B/C：改 2（MCP 扩容→宿主矩阵+注入回执；时间主线升 P1 首位）、增 3（RL 影子观察、治理四原语对照表、巩固产物过审）。全文见 roadmap-v2.md。</p>
+</section>
+
+<section id="sec-landscape">
+  <h2>⑥ 记忆系统台账（20 个，含机制摘要）</h2>
+  <div class="scroll"><table id="landscape"></table></div>
+</section>
+
+<section id="sec-papers">
+  <h2>⑦ 论文与基准台账（32 篇）</h2>
+  <div class="scroll"><table id="papers"></table></div>
+</section>
+
+<section id="sec-framework">
+  <h2>⑧ 评测框架说明</h2>
+  <table id="dims"></table>
+  <p class="note">锚点：0=无机制；1=仅概念；2=基础机制；3=可用且有测试/证据；4=带治理与降级的完整闭环；5=行业领先且有公开可复现证据。来源：framework.json v6。</p>
+</section>
+
+</main>
+<footer>生成于 2026-09-19 · 数据文件：framework.json / landscape.json / papers.json / iterations.jsonl · 本页零外部依赖，可直接离线打开</footer>
+<script>
+const DATA = {"dims": [{"id": "ingest_write", "name": "写入与提取", "weight": 0.1}, {"id": "retrieval", "name": "召回与检索", "weight": 0.12}, {"id": "temporal_conflict", "name": "时间感知与冲突消解", "weight": 0.12}, {"id": "forgetting_lifecycle", "name": "遗忘与生命周期", "weight": 0.1}, {"id": "governance", "name": "治理与安全", "weight": 0.12}, {"id": "human_oversight", "name": "人机协同", "weight": 0.1}, {"id": "integration", "name": "多宿主接入", "weight": 0.1}, {"id": "evaluation", "name": "评估自证", "weight": 0.1}, {"id": "procedural", "name": "程序性与技能记忆", "weight": 0.07}, {"id": "ops_cost", "name": "性能与运维", "weight": 0.07}], "systems": [{"id": "lantai", "scores": {"ingest_write": 4.0, "retrieval": 4.0, "temporal_conflict": 3.0, "forgetting_lifecycle": 4.0, "governance": 4.0, "human_oversight": 4.0, "integration": 3.5, "evaluation": 2.0, "procedural": 3.5, "ops_cost": 3.5}, "total": 3.56, "note": ""}, {"id": "mem0", "scores": {"ingest_write": 3.5, "retrieval": 4.0, "temporal_conflict": 3.0, "forgetting_lifecycle": 2.0, "governance": 2.0, "human_oversight": 1.0, "integration": 4.5, "evaluation": 3.0, "procedural": 1.0, "ops_cost": 3.0}, "total": 2.76, "note": "verified 2026-09-19: ADD-only 简化合并; 图按共现连边无类型; 治理仅 history.db; 平台自报基准有争议"}, {"id": "zep_graphiti", "scores": {"ingest_write": 3.0, "retrieval": 4.5, "temporal_conflict": 5.0, "forgetting_lifecycle": 3.0, "governance": 2.5, "human_oversight": 1.0, "integration": 4.0, "evaluation": 2.5, "procedural": 1.0, "ops_cost": 2.0}, "total": 3.0, "note": "verified 2026-09-19: bi-temporal+自动失效为业界最强; 混合检索+重排; 图库运维成本高"}, {"id": "letta", "scores": {"ingest_write": 2.5, "retrieval": 2.5, "temporal_conflict": 2.0, "forgetting_lifecycle": 2.5, "governance": 3.0, "human_oversight": 2.0, "integration": 3.5, "evaluation": 2.5, "procedural": 3.0, "ops_cost": 2.5}, "total": 2.58, "note": "verified 2026-09-19: MemFS git-backed+Dreaming 巩固; 审核自动非人工; 自认基准意义有限"}, {"id": "langmem", "scores": {"ingest_write": 3.0, "retrieval": 3.0, "temporal_conflict": 1.5, "forgetting_lifecycle": 1.5, "governance": 2.0, "human_oversight": 1.5, "integration": 3.0, "evaluation": 1.5, "procedural": 3.0, "ops_cost": 3.0}, "total": 2.25, "note": "verified 2026-09-19: CoALA 三分+热/后台双轨; 治理机制未确认"}, {"id": "supermemory", "scores": {"ingest_write": 3.5, "retrieval": 4.0, "temporal_conflict": 2.0, "forgetting_lifecycle": 2.0, "governance": 2.0, "human_oversight": 1.0, "integration": 4.5, "evaluation": 2.5, "procedural": 1.0, "ops_cost": 3.0}, "total": 2.59, "note": "verified 2026-09-19: 多模态摄取+本地模式+强集成; 基准自报且自建榜(激励注意)"}, {"id": "chatgpt_memory", "scores": {"ingest_write": 3.0, "retrieval": 2.5, "temporal_conflict": 2.5, "forgetting_lifecycle": 2.0, "governance": 2.5, "human_oversight": 2.5, "integration": 1.0, "evaluation": 2.0, "procedural": 1.0, "ops_cost": 3.0}, "total": 2.23, "note": "verified 2026-09-19: 后台自动合成+时效更新为设计目标; 闭源不可审计, 集成封闭"}, {"id": "claude_memory", "scores": {"ingest_write": 2.5, "retrieval": 2.0, "temporal_conflict": 2.0, "forgetting_lifecycle": 2.0, "governance": 3.0, "human_oversight": 3.0, "integration": 1.0, "evaluation": 1.5, "procedural": 1.0, "ops_cost": 3.0}, "total": 2.12, "note": "verified 2026-09-19: Topics 管理+敏感主题默认排除+导入导出; 机制细节不透明"}, {"id": "cursor_memories", "scores": {"ingest_write": 2.0, "retrieval": 1.5, "temporal_conflict": 1.0, "forgetting_lifecycle": 1.5, "governance": 1.0, "human_oversight": 2.0, "integration": 1.5, "evaluation": 0.5, "procedural": 0.5, "ops_cost": 2.0}, "total": 1.34, "note": "verified 2026-09-19: 云端不可控引发隐私争议, 功能自 2.1.17 移除——客户端内建记忆脆弱性实证"}, {"id": "openai_agents_sessions", "scores": {"ingest_write": 2.0, "retrieval": 1.5, "temporal_conflict": 0.5, "forgetting_lifecycle": 1.0, "governance": 1.5, "human_oversight": 1.0, "integration": 4.0, "evaluation": 0.5, "procedural": 0.5, "ops_cost": 3.5}, "total": 1.55, "note": "verified 2026-09-19: 会话历史层(非长期记忆), 协议可插拔+加密包装"}, {"id": "memos", "scores": {"ingest_write": 3.0, "retrieval": 3.5, "temporal_conflict": 2.0, "forgetting_lifecycle": 2.0, "governance": 2.0, "human_oversight": 1.5, "integration": 3.5, "evaluation": 3.0, "procedural": 3.5, "ops_cost": 2.0}, "total": 2.58, "note": "verified 2026-09-19: 调度器+技能进化层级(L1/L2/L3)+cube 隔离; 自托管需 Neo4j+Qdrant"}, {"id": "memobase", "scores": {"ingest_write": 3.5, "retrieval": 3.0, "temporal_conflict": 2.5, "forgetting_lifecycle": 1.5, "governance": 1.5, "human_oversight": 1.0, "integration": 3.0, "evaluation": 3.0, "procedural": 0.5, "ops_cost": 3.0}, "total": 2.29, "note": "verified 2026-09-19: 画像式组织+时间线+缓冲冲刷; 遗忘/治理薄"}, {"id": "cognee", "scores": {"ingest_write": 3.5, "retrieval": 4.0, "temporal_conflict": 1.5, "forgetting_lifecycle": 1.5, "governance": 1.5, "human_oversight": 1.0, "integration": 3.5, "evaluation": 2.0, "procedural": 2.0, "ops_cost": 2.0}, "total": 2.27, "note": "verified 2026-09-19: remember/recall/improve/forget 四操作+图/向量/代码路由; 生产图库许可产品"}, {"id": "memu", "scores": {"ingest_write": 3.0, "retrieval": 3.0, "temporal_conflict": 1.0, "forgetting_lifecycle": 2.0, "governance": 2.0, "human_oversight": 1.5, "integration": 4.0, "evaluation": 1.5, "procedural": 4.5, "ops_cost": 3.5}, "total": 2.48, "note": "verified 2026-09-19: 记忆即 Wiki 技能文件+代理自进化+宿主二进制注入; 程序性记忆最强样本"}, {"id": "mirix", "scores": {"ingest_write": 3.0, "retrieval": 3.0, "temporal_conflict": 1.5, "forgetting_lifecycle": 2.5, "governance": 2.0, "human_oversight": 1.5, "integration": 2.5, "evaluation": 2.0, "procedural": 3.5, "ops_cost": 2.0}, "total": 2.31, "note": "verified 2026-09-19: 六记忆组件+专职 agent+auto-dream 清理; 部署较重(Postgres+Docker)"}, {"id": "memori", "scores": {"ingest_write": 3.0, "retrieval": 2.5, "temporal_conflict": 1.0, "forgetting_lifecycle": 1.0, "governance": 2.0, "human_oversight": 1.0, "integration": 4.0, "evaluation": 3.0, "procedural": 2.5, "ops_cost": 3.0}, "total": 2.25, "note": "verified 2026-09-19: 企业记忆基建(BYODB/VPC)+MCP 一条命令; 时间/遗忘弱"}, {"id": "agentmemory", "scores": {"ingest_write": 3.5, "retrieval": 4.0, "temporal_conflict": 2.0, "forgetting_lifecycle": 3.0, "governance": 2.0, "human_oversight": 1.5, "integration": 4.5, "evaluation": 2.5, "procedural": 3.5, "ops_cost": 3.5}, "total": 2.95, "note": "verified 2026-09-19: 32+ 客户端+54 工具+四级整合+衰减遗忘; SQLite 零依赖——兰台最直接的同类对照"}, {"id": "openviking", "scores": {"ingest_write": 3.5, "retrieval": 3.5, "temporal_conflict": 1.5, "forgetting_lifecycle": 1.5, "governance": 2.0, "human_oversight": 1.5, "integration": 4.5, "evaluation": 2.0, "procedural": 4.0, "ops_cost": 2.5}, "total": 2.6, "note": "verified 2026-09-19: 38k stars 2026 现象级; viking:// 文件系统+L0/L1/L2+会话提交提取记忆(新建/合并/跳过——与兰台闸门流同构); AGPLv3"}], "landscape": [{"id": "mem0", "name": "Mem0", "category": "oss_leader", "url": "https://github.com/mem0ai/mem0", "stars": 65600, "verification": "verified 2026-09-19", "license": "Apache-2.0", "storage": "OSS: 本地 Qdrant + History store(SQLite ~/.mem0/history.db); 服务器版 Postgres+pgvector; 平台托管", "mcp": true, "mechanisms": ["单遍 ADD-only 提取(2026-04 新算法, 无 UPDATE/DELETE)", "平台 Graph Memory: add 时抽实体, 按共现连边(无类型边), 替换外接图库方案", "检索=向量+BM25+图连接加分合成单分", "Temporal Reasoning: time-aware retrieval 排序时间版本", "History store 追踪记忆变更历史"]}, {"id": "zep_graphiti", "name": "Zep / Graphiti", "category": "oss_leader", "url": "https://github.com/getzep/graphiti", "stars": 31000, "verification": "verified 2026-09-19", "license": "Apache-2.0", "storage": "Graphiti: Neo4j 5.26/FalkorDB/Neptune/Kuzu(弃用); Zep 平台: 专有 Context Graph Engine", "mcp": true, "mechanisms": ["三层模型: episodic 节点(原始数据=来源)→entity 节点→边上 facts", "显式 bi-temporal: facts 带 valid_at/invalid_at 有效窗口, 自动失效", "混合检索: 语义嵌入+BM25+图遍历+重排(cross-encoder/log-prob)", "增量更新(对比 GraphRAG 批处理)", "每用户独立 temporal graph; 事实可溯源到 episode"]}, {"id": "letta", "name": "Letta (MemGPT)", "category": "oss_leader", "url": "https://github.com/letta-ai/letta", "stars": 24800, "verification": "verified 2026-09-19", "license": "Apache-2.0", "storage": "MemFS: git-backed 记忆文件系统($MEMORY_DIR 可直接检查); 活跃开发转向 letta-code", "mcp": true, "mechanisms": ["agent 自主更新记忆并 commit 到 MemFS", "/init 初始化 + /doctor 审计层级漂移/重复/token 占用", "Dreaming(sleep-time compute, arXiv 2504.16088 系): 后台子代理复盘对话整合", "可选二道审核——官方明言 does not ask you for approval(自动非人工)", "重组记忆前自动备份"]}, {"id": "langmem", "name": "LangMem", "category": "framework", "url": "https://langchain-ai.github.io/langmem/", "stars": 1700, "verification": "verified 2026-09-19", "license": "MIT", "storage": "LangGraph BaseStore(InMemoryStore/AsyncPostgresStore)+语义索引", "mcp": false, "mechanisms": ["CoALA 三分: semantic(profile/collection)+episodic(few-shot 示例)+procedural(自改 prompt)", "热路径工具即时写 vs 后台 manager 自动 extract/consolidate/update 双轨", "namespace(user_id,app_context)+key 组织, 支持语义搜索与内容过滤", "collection 模式召回高但删除/更新复杂度留给开发者"]}, {"id": "supermemory", "name": "Supermemory", "category": "oss_leader", "url": "https://supermemory.ai", "stars": 30200, "verification": "verified 2026-09-19", "license": "MIT", "storage": "monorepo: Postgres+Drizzle, Cloudflare Workers/KV; 本地版内置 graph engine+本地嵌入(Xenova/bge), 数据存 ./.supermemory", "mcp": true, "mechanisms": ["add() 摄取管线: PDF/图片 OCR/视频转写/代码 AST 感知分块", "hybrid 检索(RAG+memory 合并)+文档搜索元数据过滤", "用户画像 ~50ms(static+dynamic facts)", "连接器: Drive/Gmail/Notion/OneDrive/GitHub/Web Crawler", "MCP: memory(save/forget)/recall/context; 支持 Claude Desktop/Cursor/Claude Code 等"]}, {"id": "memos", "name": "MemOS", "category": "oss_emerging", "url": "https://github.com/MemTensor/MemOS", "stars": 11500, "verification": "verified 2026-09-19", "license": "Apache-2.0", "storage": "自托管: Neo4j+Qdrant(docker compose); 本地插件: SQLite(100% 设备端); 云插件: MemOS Cloud", "mcp": false, "mechanisms": ["MemScheduler 异步摄取毫秒级", "自然语言反馈纠正/补充/替换已有记忆", "混合检索(FTS5+向量)+智能去重", "技能进化层级: L1 traces/L2 policies/L3 world model", "Multi-Cube 知识库: 隔离/受控共享/动态组合(create_cube)"]}, {"id": "cognee", "name": "Cognee", "category": "oss_emerging", "url": "https://github.com/topoteretes/cognee", "stars": 30800, "verification": "verified 2026-09-19", "license": "Apache-2.0", "storage": "自托管知识图谱引擎; Postgres 单实例 1.0(关系元数据+PGVector+图, 图为 demo 特性, 生产图库为许可产品)", "mcp": true, "mechanisms": ["四操作: remember/recall/improve/forget", "文本→实体/关系/分块; 代码→符号+依赖图; 会话蒸馏→固化", "检索按问题类型自动路由(图/向量/代码)", "会话知识经 improve 沉淀入图"]}, {"id": "agentmemory", "name": "agentmemory", "category": "oss_emerging", "url": "https://github.com/rohitg00/agentmemory", "stars": 26800, "verification": "inherited", "license": "MIT", "storage": "SQLite + iii-engine", "mcp": true, "mechanisms": ["单 server 服务 32+ 客户端", "四级整合+衰减+自动遗忘"]}, {"id": "memobase", "name": "Memobase", "category": "oss_emerging", "url": "https://github.com/memodb-io/memobase", "stars": 2900, "verification": "verified 2026-09-19", "license": "MIT", "storage": "FastAPI+Postgres+Redis, Docker 化; 默认处理完即删原始 blob", "mcp": false, "mechanisms": ["profile-based: 不存碎片条目, 学出 topic/sub_topic/content 结构化画像", "用户事件时间线回答时间相关问题", "buffer flush: 1024 tokens 或闲置 1h 自动冲刷", "0.0.40 起单次记忆化固定 3 次 LLM 调用(token 降 40-50%)", "context API 直接插 prompt, max_token_size/prefer_topics 参数"]}, {"id": "memu", "name": "MemU", "category": "oss_emerging", "url": "https://github.com/NevaMind-AI/MemU", "stars": 14400, "verification": "verified 2026-09-19", "license": "Apache-2.0", "storage": "Local/Cloud 双模式: inmemory(余弦)/sqlite(默认)/postgres(pgvector); 记忆=Markdown 技能文件(Wiki)", "mcp": false, "mechanisms": ["后台桥接任务把会话日志切片为自包含作业文件(prepare)", "代理自读技能库决定: 不操作/修补/新建技能, commit_results 提交", "MemoryService 不做 LLM 调用, 只 store/embed/retrieve", "每宿主专用二进制(Codex/Claude Code/Cursor): 挖掘会话日志+修补 CLAUDE.md+回答前 retrieve", "核心记忆逻辑仅 500 行, 可审阅可适配"]}, {"id": "aidumem", "name": "aiduMEM", "category": "upstream", "url": "https://pypi.org/project/aidumem/", "stars": null, "verification": "inherited", "license": "MIT", "storage": "mem0 v2 + Qdrant + SQLite FTS5", "mcp": false, "mechanisms": ["Aegis 零硬编码", "万神殿联邦(Pantheon)", "MCP 服务端 TODO"]}, {"id": "lantai", "name": "兰台 (Lantai)", "category": "self", "url": "https://github.com/JIUSHIQINGSHAN", "stars": null, "verification": "self-verified 2026-09-19", "license": "proprietary", "storage": "SQLite+FTS5+Chroma 内嵌", "mcp": "59 tools (stdio, serverInfo 0.21.0)", "mechanisms": ["gate 闸门+锦囊待审", "校雠三态去重", "衰减+知命状态机", "沉潜巩固", "烽燧/贯珠联想检索"]}, {"id": "chatgpt_memory", "name": "ChatGPT Memory + Dreaming V3", "category": "platform", "url": "https://openai.com/index/chatgpt-memory-dreaming/", "stars": null, "verification": "verified 2026-09-19", "license": "proprietary", "storage": "平台托管(闭源)", "mcp": false, "mechanisms": ["Dreaming 2025-04 V0→2026-06 V3: 后台参考聊天历史自动合成记忆, 无需显式要求", "V3 服务 Free 用户计算量降约 5 倍", "演进: 2024 saved memories → 2025 +Dreaming V0 → 2026 V3", "memory summary 页可查看/添加/更新/设置提及指令", "三大评测目标: 延续上下文/遵循偏好/随时间保持更新(如'将去新加坡'→'已去过')"]}, {"id": "claude_memory", "name": "Claude Memory (产品级)", "category": "platform", "url": "https://support.claude.com/en/articles/11817273-use-claude-s-chat-search-and-memory-to-build-on-previous-context", "stars": null, "verification": "verified 2026-09-19", "license": "proprietary", "storage": "平台托管(云), 跨 chat+Cowork", "mcp": false, "mechanisms": ["2025-09 起分批上线: 记忆摘要+搜索过往聊天(引用回链原对话)+incognito 排除", "2026-08-06: 记忆跨 chat+Cowork 云端共享; Topics 视图逐条编辑/删除", "敏感主题(健康/信仰)默认不入记忆, 需显式开启", "默认开启: Free/Pro/Max; 默认关闭: Team/Enterprise", "支持从其他 AI 工具导入记忆; 有导入/导出文章"]}, {"id": "cursor_memories", "name": "Cursor Memories", "category": "platform", "url": "https://forum.cursor.com/t/memories-not-showing/143820", "stars": null, "verification": "verified 2026-09-19 (官方论坛帖子)", "license": "proprietary", "storage": "云端账户(非本地文件)", "mcp": false, "mechanisms": ["从对话自动生成记忆(可批准), 亦可让 AI 记住", "存云端账户, 非 markdown 文件", "管理与删除入口在 Settings>Rules", "状态: 自 2.1.17 起功能被移除, 提供导出转 Rules(.mdc) 迁移", "社区曾质疑: 需共享代码、隐私模式下不可用、作用域(全局vs项目)混乱"]}, {"id": "openai_agents_sessions", "name": "OpenAI Agents SDK Sessions", "category": "framework", "url": "https://openai.github.io/openai-agents-python/sessions/", "stars": null, "verification": "verified 2026-09-19", "license": "MIT", "storage": "可插拔后端: SQLite/Redis/SQLAlchemy/Mongo/Dapr/加密包装", "mcp": false, "mechanisms": ["运行前自动前置历史, 运行后自动存新条目", "统一 Session 协议(get_items/add_items/pop_item/clear_session)可自定义后端", "EncryptedSession 透明加密+TTL 包装器; CompactionSession 长对话压缩", "SessionSettings(limit=N) 限历史量; 定位=客户端会话记忆而非长期记忆"]}, {"id": "mirix", "name": "MIRIX", "category": "oss_emerging", "url": "https://github.com/Mirix-AI/MIRIX", "stars": 3400, "verification": "verified 2026-09-19", "license": "Apache-2.0", "storage": "PostgreSQL(BM25+向量)+Docker(REST 8531+仪表盘 5173)", "mcp": "未提及", "mechanisms": ["六种记忆组件各配专职 memory agent(meta agent 架构)", "auto-dream 端点: 去重/合并/过期/冲突清理", "多模态: 文本/图像/语音/屏幕捕获", "致谢 Letta 作为记忆基础"]}, {"id": "memori", "name": "Memori (MemoriLabs)", "category": "oss_emerging", "url": "https://github.com/MemoriLabs/Memori", "stars": 16800, "verification": "verified 2026-09-19", "license": "Apache-2.0", "storage": "LLM/DB/框架无关, BYODB; 云/单租户/VPC/本地", "mcp": true, "mechanisms": ["agent 执行与对话→结构化持久状态", "一条命令 MCP 接入 Claude Code/Cursor/Codex/Warp/Antigravity", "OpenClaw 与 Hermes Agent 插件"]}, {"id": "agentmemory", "name": "agentmemory", "category": "oss_emerging", "url": "https://github.com/rohitg00/agentmemory", "stars": 28600, "verification": "verified 2026-09-19", "license": "Apache-2.0", "storage": "SQLite+iii-engine(v0.11.2), 零外部依赖", "mcp": true, "mechanisms": ["自动捕获代理行为→压缩→下次会话注入", "BM25+向量+知识图谱三路检索, RRF(k=60) 融合; 无嵌入时退化 BM25", "Ebbinghaus 衰减+访问强化+auto-evict+矛盾检测+TTL", "四级整合: working→episodic→semantic→procedural", "默认 54 个 MCP 工具(core 8/基础 14)+17 技能"]}, {"id": "openviking", "name": "OpenViking (字节跳动/火山引擎)", "category": "oss_emerging", "url": "https://github.com/volcengine/OpenViking", "stars": 38000, "verification": "verified 2026-09-19", "license": "AGPLv3(主); ov_cli/examples Apache-2.0", "storage": "viking:// 虚拟文件系统(语义化目录+.abstract/.overview, L0/L1/L2 三层加载)", "mcp": true, "mechanisms": ["Agent 像操作文件一样 ls/tree/read/write 记忆", "会话提交归档→后台提取记忆→与已有记忆比较决定新建/合并/跳过", "向量搜索先定位候选目录再目录内探索(TrieHI, ICDE 论文)", "集成: MCP+Hooks、Claude/Codex/Cursor/TRAE/OpenCode/LangChain; SDK Py/Go/TS+HTTP; 桌面应用 Beta", "托管 SaaS(火山引擎)+BYOC 商业版"]}], "papers": [{"id": "memgpt", "title": "MemGPT: Towards LLMs as Operating Systems", "arxiv": "2310.08560", "year": 2023, "mechanism": "OS 式分层记忆：主上下文+外部存储，self-editing", "url": "https://arxiv.org/abs/2310.08560", "venue": ""}, {"id": "generative-agents", "title": "Generative Agents: Interactive Simulacra", "arxiv": "2304.03442", "year": 2023, "mechanism": "记忆流+检索(近因/重要性/相关)+反思合成", "url": "https://arxiv.org/abs/2304.03442", "venue": ""}, {"id": "reflexion", "title": "Reflexion: Language Agents with Verbal Reinforcement Learning", "arxiv": "2303.11366", "year": 2023, "mechanism": "失败反思转语言化经验存入 episodic memory", "url": "https://arxiv.org/abs/2303.11366", "venue": ""}, {"id": "voyager", "title": "Voyager: An Open-Ended Embodied Agent with LLMs", "arxiv": "2305.16291", "year": 2023, "mechanism": "技能库程序性记忆+自动课程", "url": "https://arxiv.org/abs/2305.16291", "venue": ""}, {"id": "a-mem", "title": "A-MEM: Agentic Memory for LLM Agents", "arxiv": "2502.12110", "year": 2025, "mechanism": "Zettelkasten 卡片盒：原子笔记+动态链接+记忆演化", "url": "https://arxiv.org/abs/2502.12110", "venue": ""}, {"id": "zep-tkg", "title": "Zep: A Temporal Knowledge Graph Architecture for Agent Memory", "arxiv": "2501.13956", "year": 2025, "mechanism": "bi-temporal 图谱+边失效", "url": "https://arxiv.org/abs/2501.13956", "venue": ""}, {"id": "mcma", "title": "MCMA (多客户端记忆适配, 全文已存)", "arxiv": null, "year": null, "mechanism": "见 docs/research/papers/07-fulltext", "url": "docs/research/papers/07-mcma-fulltext.md", "venue": ""}, {"id": "memorybank", "title": "MemoryBank: Enhancing LLMs with Long-Term Memory", "arxiv": "2305.10250", "year": 2023, "mechanism": "Ebbinghaus 衰减+召回强化", "url": "https://arxiv.org/abs/2305.10250", "venue": ""}, {"id": "mem0-paper", "title": "Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory", "arxiv": "2504.19413", "year": 2025, "mechanism": "提取后 ADD/UPDATE/DELETE/NOOP+图变体", "url": "https://arxiv.org/abs/2504.19413", "venue": ""}, {"id": "hipporag", "title": "HippoRAG: Neurobiologically Inspired Long-Term Memory", "arxiv": "2405.14831", "year": 2024, "mechanism": "海马体索引理论：KG+PPR 单跳多跳检索", "url": "https://arxiv.org/abs/2405.14831", "venue": ""}, {"id": "hipporag2", "title": "From RAG to Memory: Non-Parametric Continual Learning (HippoRAG 2)", "arxiv": "2502.14802", "year": 2025, "mechanism": "持续学习视角的记忆：深度上下文整合", "url": "https://arxiv.org/abs/2502.14802", "venue": ""}, {"id": "memos-paper", "title": "MemOS: A Memory OS for AI System", "arxiv": "2507.03724", "year": 2025, "mechanism": "明文/参数/激活三态记忆统一调度", "url": "https://arxiv.org/abs/2507.03724", "venue": ""}, {"id": "longmemeval", "title": "LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory", "arxiv": "2410.10813", "year": 2024, "mechanism": "500 问五能力：提取/多会话/时间/更新/拒答", "url": "https://arxiv.org/abs/2410.10813", "venue": ""}, {"id": "locomo", "title": "Evaluating Very Long-Term Conversational Memory (LoCoMo)", "arxiv": "2402.17753", "year": 2024, "mechanism": "超长对话 QA/事件摘要基准", "url": "https://aclanthology.org/2024.acl-long.747/", "venue": "ACL 2024"}, {"id": "memoryagentbench", "title": "MemoryAgentBench", "arxiv": "2507.05257", "year": 2025, "mechanism": "增量输入四能力：准确检索/测试时学习/长程理解/选择性遗忘", "url": "https://arxiv.org/abs/2507.05257", "venue": ""}, {"id": "memory-age-survey", "title": "Memory in the Age of AI Agents: A Survey", "arxiv": "2512.13564", "year": 2025, "mechanism": "综述：记忆形态/操作/评估", "url": "https://arxiv.org/abs/2512.13564", "venue": ""}, {"id": "coala", "title": "Cognitive Architectures for Language Agents (CoALA)", "arxiv": "2309.02427", "year": 2023, "mechanism": "工作/情景/语义/程序性四类记忆的 agent 认知架构分类", "url": "https://arxiv.org/abs/2309.02427", "venue": ""}, {"id": "lightmem", "title": "LightMem: Lightweight and Efficient Memory-Augmented Generation", "arxiv": "2510.18866", "year": 2025, "mechanism": "Atkinson-Shiffrin 三阶段（感觉/短/长时）+ 两级压缩 + 闲时更新；性能-开销平衡", "url": "https://arxiv.org/abs/2510.18866", "venue": "ICLR 2026 (v4)"}, {"id": "mem-alpha", "title": "Mem-α: Learning Memory Construction via Reinforcement Learning", "arxiv": "2509.25911", "year": 2025, "mechanism": "RL 训练「存什么/如何结构化/何时更新」的记忆构建策略", "url": "https://arxiv.org/abs/2509.25911", "venue": ""}, {"id": "memory-r1", "title": "Memory-R1: Enhancing LLM Agents to Manage and Utilize Memories via RL", "arxiv": "2508.19828", "year": 2025, "mechanism": "RL 学习 ADD/UPDATE/DELETE/NOOP 记忆操作与检索利用", "url": "https://arxiv.org/abs/2508.19828", "venue": ""}, {"id": "mirix", "title": "MIRIX: Multi-Agent Memory System for LLM-Based Agents", "arxiv": "2507.07957", "year": 2025, "mechanism": "模块化多智能体记忆，超越文本的多模态记忆", "url": "https://arxiv.org/abs/2507.07957", "venue": ""}, {"id": "halumem", "title": "HaluMem: Evaluating Hallucinations in Memory Systems of Agents", "arxiv": "2511.03506", "year": 2025, "mechanism": "首个按记忆操作阶段定位幻觉（捏造/错误/冲突/遗漏）的操作级基准", "url": "https://arxiv.org/abs/2511.03506", "venue": ""}, {"id": "membench", "title": "MemBench: Towards More Comprehensive Evaluation on the Memory of LLM-based Agents", "arxiv": "2506.21605", "year": 2025, "mechanism": "多记忆层级+交互场景+多维指标的综合基准", "url": "https://arxiv.org/abs/2506.21605", "venue": ""}, {"id": "scm-self-controlled", "title": "SCM: Enhancing LLM with Self-Controlled Memory Framework", "arxiv": "2304.13343", "year": 2023, "mechanism": "记忆流+记忆控制器（何时/如何用记忆）", "url": "https://arxiv.org/abs/2304.13343", "venue": ""}, {"id": "governed-shared-memory", "title": "Governed Shared Memory for Multi-Agent LLM Systems", "arxiv": "2606.24535", "year": 2026, "mechanism": "fleet-memory 四大失败模式（越权泄漏/陈旧传播/矛盾存续/血统崩塌）→ scoped retrieval、temporal supersession、provenance、策略化传播", "url": "https://arxiv.org/abs/2606.24535", "venue": ""}, {"id": "trustmem", "title": "TRUSTMEM: Learning Trustworthy Memory Consolidation for LLM Agents", "arxiv": "2606.25161", "year": 2026, "mechanism": "写/改/删操作可能遗漏、损坏、幻觉——巩固可信度作为持久系统状态问题", "url": "https://arxiv.org/abs/2606.25161", "venue": ""}, {"id": "oblivion", "title": "Oblivion: Self-Adaptive Agentic Memory Control through Decay-Driven Activation", "arxiv": "2604.00131", "year": 2026, "mechanism": "遗忘=可及性衰减而非显式删除；读写路径解耦，按不确定性决定是否查记忆", "url": "https://arxiv.org/abs/2604.00131", "venue": ""}, {"id": "implicitmembench", "title": "ImplicitMemBench: Measuring Unconscious Behavioral Adaptation in LLMs", "arxiv": "2604.08064", "year": 2026, "mechanism": "内隐记忆基准：程序性记忆/启动效应等非陈述性记忆", "url": "https://arxiv.org/abs/2604.08064", "venue": ""}, {"id": "evomembench", "title": "EvoMemBench: Benchmarking Agent Memory from a Self-Evolving Perspective", "arxiv": "2605.18421", "year": 2026, "mechanism": "记忆广度(episode内/跨episode)×内容(知识/执行)两轴评估自进化", "url": "https://arxiv.org/abs/2605.18421", "venue": ""}, {"id": "sleep-consolidated-scm", "title": "SCM: Sleep-Consolidated Memory with Algorithmic Forgetting for LLMs", "arxiv": "2604.20943", "year": 2026, "mechanism": "有限容量工作记忆+多维重要性标注+离线巩固+算法性遗忘（与 2304.13343 同名异文）", "url": "https://arxiv.org/abs/2604.20943", "venue": ""}, {"id": "fine-mem", "title": "Fine-Mem: Fine-Grained Feedback Alignment for Long-Horizon Memory Management", "arxiv": "2601.08435", "year": 2026, "mechanism": "细粒度逐步奖励解决记忆管理 RL 的奖励稀疏与信用分配", "url": "https://arxiv.org/abs/2601.08435", "venue": ""}, {"id": "agentmembench", "title": "AgentMemBench: A Systematic Benchmark for Long-Term Memory Management Strategies", "arxiv": "2608.00009", "year": 2026, "mechanism": "五种记忆管理策略(ICW/EKV/GEM/CBS/WAM)统一可复现对比", "url": "https://arxiv.org/abs/2608.00009", "venue": ""}], "iterations": [{"iter": 1, "title": "评测框架 v1 与数据骨架", "type": "setup", "total": 3.4, "delta": 0, "systems": 12, "papers": 17, "churn": {"added": 0, "changed": 0, "removed": 0}}, {"iter": 2, "title": "论文元信息补全: +15 篇(LightMem/Mem-α/MIRIX/HaluMem/MemBench/SCM 等)", "type": "survey", "total": 3.4, "delta": 0.0, "systems": 12, "papers": 32, "churn": {"added": 0, "changed": 0, "removed": 0}}, {"iter": 3, "title": "头部 5 系统一手核验吸收(代理调研)", "type": "survey", "total": 3.52, "delta": 0.12, "systems": 12, "papers": 32, "churn": {"added": 0, "changed": 0, "removed": 0}}, {"iter": 4, "title": "平台/框架原生记忆一手核验(Dreaming V3/Claude memory/Cursor/OpenAI Sessions)", "type": "survey", "total": 3.52, "delta": 0.0, "systems": 16, "papers": 32, "churn": {"added": 0, "changed": 0, "removed": 0}}, {"iter": 5, "title": "新兴开源批1: MemOS/Memobase/Cognee/MemU 一手核验", "type": "survey", "total": 3.52, "delta": 0.0, "systems": 16, "papers": 32, "churn": {"added": 0, "changed": 0, "removed": 0}}, {"iter": 6, "title": "新兴开源批2: MIRIX/Memori/agentmemory/OpenViking 一手核验", "type": "survey", "total": 3.52, "delta": 0.0, "systems": 20, "papers": 32, "churn": {"added": 0, "changed": 0, "removed": 0}}, {"iter": 7, "title": "兰台内部代码核验: MCP 工具面/时间字段/UI", "type": "survey-internal", "total": 3.56, "delta": 1.5, "systems": 20, "papers": 32, "churn": {"added": 0, "changed": 0, "removed": 0}}, {"iter": 8, "title": "论文纵深综合: 三大机制集群与兰台映射", "type": "synthesis", "total": 3.56, "delta": 0.0, "systems": 20, "papers": 32, "churn": {"added": 0, "changed": 0, "removed": 0}}, {"iter": 9, "title": "基准与评测方法综合: 9 基准全景与操作级自证策略", "type": "synthesis", "total": 3.56, "delta": 0.0, "systems": 20, "papers": 32, "churn": {"added": 0, "changed": 0, "removed": 0}}, {"iter": 10, "title": "主题I: 分类学与生命周期——兰台 CoALA 全覆盖+唯一四段式生命周期", "type": "synthesis", "total": 3.56, "delta": 0.0, "systems": 20, "papers": 32, "churn": {"added": 0, "changed": 0, "removed": 0}}, {"iter": 11, "title": "主题II: 时间与冲突——Zep 5.0 vs 兰台 3.0, 事件时间缺失为数据级硬缺口", "type": "synthesis", "total": 3.56, "delta": 0.0, "systems": 20, "papers": 32, "churn": {"added": 0, "changed": 0, "removed": 0}}, {"iter": 12, "title": "主题III: 治理安全——兰台为全场唯一人工闸门+回滚+注入围栏闭环", "type": "synthesis", "total": 3.56, "delta": 0.0, "systems": 20, "papers": 32, "churn": {"added": 0, "changed": 0, "removed": 0}}, {"iter": 13, "title": "主题IV: 接入与评测——工具面足量(59), 差距在宿主矩阵与注入回执; 评分冻结 3.56", "type": "synthesis", "total": 3.56, "delta": 0.0, "systems": 20, "papers": 32, "churn": {"added": 0, "changed": 0, "removed": 0}}, {"iter": 14, "title": "路线图 v2 收敛: P0/P1/P2 12 项 + churn(改2增3)", "type": "synthesis", "total": 3.56, "delta": 0.0, "systems": 20, "papers": 32, "churn": {"added": 3, "changed": 2, "removed": 0}}, {"iter": 15, "title": "冻结: 5 图表 + dashboard.html + synthesis.md 简报", "type": "freeze", "total": 3.56, "delta": 0.0, "systems": 20, "papers": 32, "churn": {"added": 0, "changed": 0, "removed": 0}}], "totals": {"lantai": 3.56, "mem0": 2.76, "zep_graphiti": 3.0, "letta": 2.58, "langmem": 2.25, "supermemory": 2.59, "chatgpt_memory": 2.23, "claude_memory": 2.12, "cursor_memories": 1.34, "openai_agents_sessions": 1.55, "memos": 2.58, "memobase": 2.29, "cognee": 2.27, "memu": 2.48, "mirix": 2.31, "memori": 2.25, "agentmemory": 2.95, "openviking": 2.6}};
+
+// 截图/打印模式：URL 带 #full 时展开全部内滚容器，保证长图完整
+if (location.hash === '#full') {
+  window.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.scroll').forEach(e => e.style.maxHeight = 'none');
+  });
+}
+
+// ---------- ① matrix ----------
+const dimIds = DATA.dims.map(d=>d.id);
+const dimNames = DATA.dims.map(d=>d.name);
+const sorted = [...DATA.systems].sort((a,b)=>b.total-a.total);
+function cellColor(v){
+  const t=Math.max(0,Math.min(1,v/5));
+  const r=Math.round(215-130*t), g=Math.round(120+110*t), b=Math.round(90+60*t);
+  return `rgb(${r},${g},${b})`;
+}
+let h='<thead><tr><th>系统</th><th>加权</th>'+dimNames.map(n=>`<th>${n}</th>`).join('')+'</tr></thead><tbody>';
+for(const s of sorted){
+  const cls = s.id==='lantai' ? ' class="lantai-row"' : '';
+  h+=`<tr${cls}><td><b>${s.id==='lantai'?'兰台':s.id}</b></td><td class="num">${s.total.toFixed(2)}</td>`;
+  for(const d of dimIds){
+    const v=s.scores[d];
+    h+=`<td class="num" style="background:${cellColor(v)}">${v}</td>`;
+  }
+  h+='</tr>';
+}
+document.getElementById('matrix').innerHTML=h+'</tbody>';
+
+// ---------- ② iteration line + coverage ----------
+function lineChart(el, series, opts){
+  const W=560,H=260,P={l:46,r:14,t:18,b:30};
+  const all=series.flatMap(s=>s.ys.filter(v=>v!=null));
+  let lo=Math.min(...all), hi=Math.max(...all);
+  if(opts.forceLo!=null){lo=opts.forceLo; hi=opts.forceHi;}
+  const n=Math.max(...series.map(s=>s.xs.length));
+  const X=i=>P.l+(W-P.l-P.r)*(i/(n-1));
+  const Y=v=>P.t+(H-P.t-P.b)*(1-(v-lo)/(hi-lo||1));
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%">`;
+  for(let k=0;k<=4;k++){const y=P.t+(H-P.t-P.b)*k/4;
+    s+=`<line x1="${P.l}" y1="${y}" x2="${W-P.r}" y2="${y}" stroke="#eee4d4"/>`;
+    s+=`<text x="${P.l-6}" y="${y+4}" font-size="10" text-anchor="end" fill="#8a7f6f">${(hi-(hi-lo)*k/4).toFixed(opts.dec??1)}</text>`;}
+  for(const sr of series){
+    const pts=sr.xs.map((x,i)=>[X(i), sr.ys[i]==null?null:Y(sr.ys[i])]);
+    let path='',pen=false;
+    for(const [px,py] of pts){ if(py==null){pen=false;continue;}
+      path+=(pen?'L':'M')+px.toFixed(1)+' '+py.toFixed(1); pen=true;}
+    s+=`<path d="${path}" fill="none" stroke="${sr.color}" stroke-width="2"/>`;
+    pts.forEach(([px,py],i)=>{ if(py!=null) s+=`<circle cx="${px}" cy="${py}" r="2.6" fill="${sr.color}"/>`;});
+  }
+  s+=`<text x="${W/2}" y="${H-6}" font-size="11" text-anchor="middle" fill="#5b4632">${opts.xlabel||''}</text>`;
+  s+='</svg>';
+  document.getElementById(el).innerHTML=s;
+}
+const its=DATA.iterations;
+lineChart('iter-line',[{xs:its.map(r=>r.iter),ys:its.map(r=>r.total),color:'#8b1a1a'}],
+ {forceLo:3.2,forceHi:3.8,xlabel:'迭代轮次 →  加权总分',dec:2});
+lineChart('iter-cov',[
+ {xs:its.map(r=>r.iter),ys:its.map(r=>r.systems),color:'#1f4e79'},
+ {xs:its.map(r=>r.iter),ys:its.map(r=>r.papers),color:'#c55a11'}],
+ {forceLo:0,forceHi:35,xlabel:'迭代轮次 →  累计覆盖（蓝=系统 / 橙=论文）',dec:0});
+let it='<thead><tr><th>轮</th><th>标题</th><th>类型</th><th>总分</th><th>|Δ|</th><th>churn</th></tr></thead><tbody>';
+for(const r of its){
+  it+=`<tr><td>${r.iter}</td><td>${r.title}</td><td>${r.type}</td><td class="num">${r.total??''}</td><td class="num">${r.delta||0}</td><td class="num">+${r.churn.added}/${r.churn.changed}</td></tr>`;
+}
+document.getElementById('iter-table').innerHTML=it+'</tbody>';
+
+// ---------- ③ quadrant ----------
+const pos={'lantai':[1.2,1.3],'agentmemory':[1.6,2.2],'memobase':[4.0,4.2],'langmem':[4.6,5.2],
+ 'letta':[4.0,6.2],'mem0':[5.2,6.6],'supermemory':[7.6,5.2],'memori':[6.6,5.6],
+ 'zep_graphiti':[4.4,8.6],'cognee':[4.0,7.6],'memos':[4.6,8.0],'mirix':[5.0,7.0],
+ 'openviking':[5.6,7.8],'chatgpt_memory':[9.5,5.4],'claude_memory':[8.8,7.0],
+ 'cursor_memories':[8.2,3.0],'openai_agents_sessions':[3.0,2.8]};
+const stars=Object.fromEntries(DATA.landscape.map(s=>[s.id,s.stars]));
+{
+ const W=900,H=560,P=40;
+ const X=x=>P+(W-2*P)*x/10, Y=y=>H-P-(H-2*P)*y/10;
+ let s=`<svg viewBox="0 0 ${W} ${H}" width="100%">`;
+ s+=`<rect x="${P}" y="${P}" width="${W-2*P}" height="${H-2*P}" fill="#fffdf8" stroke="#e4ddd0"/>`;
+ s+=`<line x1="${X(5)}" y1="${Y(10)}" x2="${X(5)}" y2="${Y(0)}" stroke="#d8cfc0"/>`;
+ s+=`<line x1="${X(0)}" y1="${Y(5)}" x2="${X(10)}" y2="${Y(5)}" stroke="#d8cfc0"/>`;
+ s+=`<text x="${X(1)}" y="${Y(0.4)}" font-size="13" fill="#2e7d32" font-weight="bold">本地优先 × 轻量内嵌</text>`;
+ s+=`<text x="${X(7.4)}" y="${Y(0.4)}" font-size="13" fill="#c55a11" font-weight="bold">托管/闭源</text>`;
+ for(const [id,[x,y]] of Object.entries(pos)){
+   const st=stars[id]||0; const r=id==='lantai'?9:Math.max(5,Math.min(16,Math.sqrt(st)/16));
+   const c=id==='lantai'?'#8b1a1a':'#5b7ea8';
+   s+=`<circle cx="${X(x)}" cy="${Y(y)}" r="${r}" fill="${c}" opacity=".78" stroke="#fff"/>`;
+   const below=['chatgpt_memory','cursor_memories'].includes(id);
+   s+=`<text x="${X(x)}" y="${Y(y)+(below?r+13:-r-6)}" font-size="11.5" text-anchor="middle" fill="${c}" font-weight="${id==='lantai'?'bold':'normal'}">${id==='lantai'?'兰台':id}</text>`;
+ }
+ s+=`<text x="${W/2}" y="${H-8}" font-size="11" text-anchor="middle" fill="#8a7f6f">横轴：本地优先 ←→ 托管优先；纵轴：轻量内嵌 ←→ 重量基础设施；气泡≈GitHub stars（2026-09-19）</text>`;
+ s+='</svg>';
+ document.getElementById('quadrant').innerHTML=s;
+}
+
+// ---------- ④ radar ----------
+{
+ const peers={'lantai':'#8b1a1a','mem0':'#1f4e79','zep_graphiti':'#2e7d32','agentmemory':'#c55a11'};
+ const byId=Object.fromEntries(DATA.systems.map(s=>[s.id,s]));
+ const W=640,H=520,cx=W/2,cy=H/2+6,R=190,n=dimIds.length;
+ let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:640px">`;
+ for(let ring=1;ring<=5;ring++){
+   let pts=[];
+   for(let i=0;i<n;i++){const a=-Math.PI/2+2*Math.PI*i/n;pts.push(`${cx+R*ring/5*Math.cos(a)},${cy+R*ring/5*Math.sin(a)}`);}
+   s+=`<polygon points="${pts.join(' ')}" fill="none" stroke="#eee4d4"/>`;
+   s+=`<text x="${cx+6}" y="${cy-R*ring/5+4}" font-size="9" fill="#b3a890">${ring}</text>`;
+ }
+ for(let i=0;i<n;i++){
+   const a=-Math.PI/2+2*Math.PI*i/n;
+   s+=`<line x1="${cx}" y1="${cy}" x2="${cx+R*Math.cos(a)}" y2="${cy+R*Math.sin(a)}" stroke="#eee4d4"/>`;
+   const lx=cx+(R+30)*Math.cos(a), ly=cy+(R+22)*Math.sin(a);
+   s+=`<text x="${lx}" y="${ly}" font-size="11.5" text-anchor="middle" fill="#5b4632">${dimNames[i]}</text>`;
+ }
+ for(const [id,color] of Object.entries(peers)){
+   const sc=byId[id].scores;
+   let pts=[];
+   for(let i=0;i<n;i++){const a=-Math.PI/2+2*Math.PI*i/n;const r=R*sc[dimIds[i]]/5;pts.push(`${cx+r*Math.cos(a)},${cy+r*Math.sin(a)}`);}
+   s+=`<polygon points="${pts.join(' ')}" fill="${color}" fill-opacity=".10" stroke="${color}" stroke-width="2"/>`;
+ }
+ let ly=H-58;
+ const label={'lantai':'兰台','mem0':'Mem0','zep_graphiti':'Zep/Graphiti','agentmemory':'agentmemory'};
+ for(const [id,color] of Object.entries(peers)){
+   s+=`<rect x="${cx-200}" y="${ly-10}" width="12" height="12" fill="${color}"/>`;
+   s+=`<text x="${cx-182}" y="${ly}" font-size="12">${label[id]} ${byId[id].total.toFixed(2)}</text>`;
+   ly+=18;
+ }
+ s+='</svg>';
+ document.getElementById('radar').innerHTML=s;
+}
+
+// ---------- ⑤ roadmap ----------
+const roadmap=[
+ ['P0-1','可靠性收口','解释/修复已知测试失败，全量门禁绿；核心函数不 mock 冒烟','继承主线 A'],
+ ['P0-2','撤回/删除四分法','纠错/撤回/归档/删除语义分离，覆盖 SQLite/FTS5/Chroma/摘要/缓存/宿主副本；撤回后禁用命中=0','iter-12 D23'],
+ ['P0-3','E1 阶段化评测','dry-run 拆「提取→闸门→入库→索引→召回→注入」各步成功率与失败归因（HaluMem 式）','iter-09 E1'],
+ ['P0-4','注入回执链','事件链绑定 request/session/turn/memory id；宿主回执证明实际注入；来源可追溯率 100%','iter-13 D24'],
+ ['P1-1','事件时间与时效视图','MemoryItem 增 event_time（可空+精度）；时间窗过滤+当前/历史双视图；迟到更正走冲突裁决','iter-11 D20（P1 首位）'],
+ ['P1-2','宿主矩阵','shell hook 泛化为 Claude Code/Codex/Cursor 钩子适配；≥3 宿主端到端冒烟','iter-13 D24'],
+ ['P1-3','巩固可信度','沉潜/反思产物一律过审+快照；巩固产物 100% 带提案记录','iter-08（TRUSTMEM）'],
+ ['P2-1','episode 影子→离线消融','区分召回/注入/采用/任务完成；≥100 有效样本；不足不调权','D18'],
+ ['P2-2','RL 影子观察','记录记忆操作与结果供离线分析（Mem-α/Memory-R1 路线）；不承诺实现、不进生产调权','iter-08 D16'],
+ ['P2-3','操作级自证发布','E1/E2 指标+judge 协议公开；LongMemEval-S/MemoryAgentBench 子集作外部锚点；不追 LoCoMo 榜','iter-09 E3'],
+ ['P2-4','考功/结晶转化率','技能结晶、经验→规则的实际转化率公开数字','iter-10 D19'],
+ ['P2-5','治理四原语对照表','scoped retrieval / temporal supersession / provenance / policy propagation 对齐文档','iter-12 D22'],
+];
+let rh='<thead><tr><th>编号</th><th>事项</th><th>内容与验收</th><th>依据</th></tr></thead><tbody>';
+for(const [no,t,c,ev] of roadmap){rh+=`<tr><td><b>${no}</b></td><td>${t}</td><td>${c}</td><td>${ev}</td></tr>`;}
+document.getElementById('roadmap').innerHTML=rh+'</tbody>';
+
+// ---------- ⑥ landscape ----------
+let lh='<thead><tr><th>系统</th><th>类别</th><th>许可</th><th>stars*</th><th>核验</th><th>MCP</th><th>存储</th><th>关键机制（≤5）</th></tr></thead><tbody>';
+for(const s of DATA.landscape){
+  const cat={'oss_leader':'头部开源','oss_emerging':'新兴开源','platform':'平台原生','framework':'框架原生','upstream':'上游','self':'本项目'}[s.category]||s.category;
+  const v=s.verification||''; const vc=v.includes('verified')?'verified':'inherited';
+  lh+=`<tr${s.id==='lantai'?' class="lantai-row"':''}><td><a href="${s.url}" target="_blank">${s.id==='lantai'?'兰台 (Lantai)':s.name}</a></td><td>${cat}</td><td>${s.license||''}</td><td class="num">${s.stars==null?'—':s.stars.toLocaleString()}</td><td><span class="tag ${vc}">${vc==='verified'?'已核验':'继承'}</span></td><td>${s.mcp===true?'有':s.mcp===false?'无':String(s.mcp||'')}</td><td>${s.storage||''}</td><td>${(s.mechanisms||[]).map(m=>'· '+m).join('<br>')}</td></tr>`;
+}
+document.getElementById('landscape').innerHTML=lh+'</tbody>';
+
+// ---------- ⑦ papers ----------
+let ph='<thead><tr><th>论文/基准</th><th>年份</th><th>arXiv/出处</th><th>机制/定位</th></tr></thead><tbody>';
+for(const p of DATA.papers){
+  const link=p.url&&p.url.startsWith('http')?`<a href="${p.url}" target="_blank">${p.arxiv||p.venue||'链接'}</a>`:(p.arxiv||p.venue||'');
+  ph+=`<tr><td>${p.title}</td><td class="num">${p.year||''}</td><td>${link}</td><td>${p.mechanism||''}</td></tr>`;
+}
+document.getElementById('papers').innerHTML=ph+'</tbody>';
+
+// ---------- ⑧ dims ----------
+let dh='<thead><tr><th>维度</th><th>权重</th><th>定义</th></tr></thead><tbody>';
+const defmap={'写入与提取':'提取、缓冲合并、去重、置信度分诊、噪声过滤、异步化','召回与检索':'混合检索（词法/向量/结构）、多跳联想、降级容灾、可诊断性','时间感知与冲突消解':'双时间轴、时效失效而非硬删、冲突裁决及理由留存','遗忘与生命周期':'衰减/强化、可逆归档、巩固压缩、生命状态机、退役','治理与安全':'provenance、纠错/撤回/删除语义、权限隔离、注入防御、审计','人机协同':'待审队列、回滚检查点、主动探针、受控自主审批','多宿主接入':'MCP/插件/客户端矩阵、注入通道、可移植性','评估自证':'公开基准或自建可复现评测、影子评估、回归门禁','程序性与技能记忆':'skill 分层存储、复用结晶、失败学习闭环','性能与运维':'轻量内嵌、异步管线、可观测面板、延迟与 token 成本'};
+for(const d of DATA.dims){dh+=`<tr><td><b>${d.name}</b></td><td class="num">${d.weight}</td><td>${defmap[d.name]||''}</td></tr>`;}
+document.getElementById('dims').innerHTML=dh+'</tbody>';
+</script>
+</body>
+</html>

@@ -1,0 +1,434 @@
+{
+  "version": "v6 (iter-07, 2026-09-19): 兰台内部代码核验——temporal 3.5→3.0(无事件时间), integration 2.5→3.5(59 MCP 工具)",
+  "scale": "0-5, step 0.5; 0=无机制, 1=仅概念/规划, 2=基础机制, 3=机制可用且有测试/证据, 4=带治理与降级的完整闭环, 5=行业领先且有公开可复现证据",
+  "evidence_rule": "每个非零分须挂证据；inherited=true 表示仅依据内部文档继承、本轮未验证。外部系统的分数基于其公开文档/论文的可证实机制，非实测。",
+  "dimensions": [
+    {
+      "id": "ingest_write",
+      "name": "写入与提取",
+      "weight": 0.1,
+      "definition": "从对话/文件提取记忆的管线化能力：提取、缓冲合并、去重、置信度分诊、噪声过滤、异步化"
+    },
+    {
+      "id": "retrieval",
+      "name": "召回与检索",
+      "weight": 0.12,
+      "definition": "混合检索（词法/向量/结构）、多跳联想、降级容灾、检索可诊断性"
+    },
+    {
+      "id": "temporal_conflict",
+      "name": "时间感知与冲突消解",
+      "weight": 0.12,
+      "definition": "双时间轴（事件时间vs入库时间）、时效失效而非硬删、新旧冲突裁决及其理由留存"
+    },
+    {
+      "id": "forgetting_lifecycle",
+      "name": "遗忘与生命周期",
+      "weight": 0.1,
+      "definition": "衰减/强化、归档（可逆）、巩固压缩、知识生命状态机、退役"
+    },
+    {
+      "id": "governance",
+      "name": "治理与安全",
+      "weight": 0.12,
+      "definition": "provenance 血统、纠错/撤回/删除语义、权限隔离、提示注入防御、审计"
+    },
+    {
+      "id": "human_oversight",
+      "name": "人机协同",
+      "weight": 0.1,
+      "definition": "待审队列、回滚检查点、主动探针求证、受控自主审批"
+    },
+    {
+      "id": "integration",
+      "name": "多宿主接入",
+      "weight": 0.1,
+      "definition": "MCP/插件/多客户端矩阵、注入通道多样性（shell hook、middleware）、可移植性"
+    },
+    {
+      "id": "evaluation",
+      "name": "评估自证",
+      "weight": 0.1,
+      "definition": "公开基准或自建可复现评测、影子评估、回归门禁"
+    },
+    {
+      "id": "procedural",
+      "name": "程序性与技能记忆",
+      "weight": 0.07,
+      "definition": "skill/procedure 分层存储、复用结晶、从失败中学习（认知闭环）"
+    },
+    {
+      "id": "ops_cost",
+      "name": "性能与运维",
+      "weight": 0.07,
+      "definition": "轻量内嵌、异步管线、可观测面板、查询延迟与 token 成本控制"
+    }
+  ],
+  "systems_scores": {
+    "lantai": {
+      "note": "兰台自评；基线为继承分（依据 CONTEXT.md 词汇表 + ADR 目录 + 2026-08/09 内部调研），后续轮次随外部证据修正",
+      "scores": {
+        "ingest_write": {
+          "score": 4.0,
+          "inherited": true,
+          "evidence": "gate/coalesce/fastpath/校雠三态去重/披沙精炼/沙汰过滤/潜移异步/verbatim (CONTEXT.md; ADR-0003,0019,0030,0026,0033,0009)"
+        },
+        "retrieval": {
+          "score": 4.0,
+          "inherited": true,
+          "evidence": "混合检索+贯珠图谱二度联想+烽燧多跳广播+拾遗降级 (CONTEXT.md; ADR-0035,0028)"
+        },
+        "temporal_conflict": {
+          "score": 3.0,
+          "inherited": false,
+          "evidence": "核验: tables.py 仅 created_at/last_used_at/review_due_at, 无 event_time/valid_at/invalid_at——双时间轴不存在; 保留: supersedes 边(tables.py:267)+conflict_event+直断理由+回声抑制时间窗(ADR-0046)。2026-08 报告『Chronos 双时间轴』表述与当前 schema 不符"
+        },
+        "forgetting_lifecycle": {
+          "score": 4.0,
+          "inherited": true,
+          "evidence": "衰减/归档(ADR-0005)+知命状态机(v0.4)+沉潜闲时巩固(ADR-0036)"
+        },
+        "governance": {
+          "score": 4.0,
+          "inherited": true,
+          "evidence": "provenance(ADR-0015)+ACL+辨域三维隔离(ADR-0034)+樊篱注入围栏+checkpoint(ADR-0021)"
+        },
+        "human_oversight": {
+          "score": 4.0,
+          "inherited": true,
+          "evidence": "锦囊待审(ADR-0026)+案牍工作台+探颐主动求证(ADR-0037)+持节受控自主(ADR-0039)"
+        },
+        "integration": {
+          "score": 3.5,
+          "inherited": false,
+          "evidence": "核验: lantai/cli/mcp.py 59 个 MCP 工具(serverInfo 0.21.0, stdio), 远超 2026-08 报告『4 个』; 宿主: Hermes 插件+shell_hook.py+截图脚本; 仍缺多客户端矩阵"
+        },
+        "evaluation": {
+          "score": 2.0,
+          "inherited": true,
+          "evidence": "dry-run 179 样本管线+参数矩阵+行为学习基准（docs/benchmarks），无公开基准对照与可复现对外主张"
+        },
+        "procedural": {
+          "score": 3.5,
+          "inherited": true,
+          "evidence": "Skill 资产(ADR-0011)+技能结晶(v0.7)+认知闭环基准+考功价值演化(ADR-0031)"
+        },
+        "ops_cost": {
+          "score": 3.5,
+          "inherited": true,
+          "evidence": "SQLite/FTS5/Chroma 内嵌+潜移异步+司天监控(ADR-0045)；无规模/延迟公开数据"
+        }
+      },
+      "total": 3.56
+    },
+    "mem0": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: ADD-only 简化合并; 图按共现连边无类型; 治理仅 history.db; 平台自报基准有争议",
+      "scores": {
+        "ingest_write": 3.5,
+        "retrieval": 4.0,
+        "temporal_conflict": 3.0,
+        "forgetting_lifecycle": 2.0,
+        "governance": 2.0,
+        "human_oversight": 1.0,
+        "integration": 4.5,
+        "evaluation": 3.0,
+        "procedural": 1.0,
+        "ops_cost": 3.0
+      }
+    },
+    "zep_graphiti": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: bi-temporal+自动失效为业界最强; 混合检索+重排; 图库运维成本高",
+      "scores": {
+        "ingest_write": 3.0,
+        "retrieval": 4.5,
+        "temporal_conflict": 5.0,
+        "forgetting_lifecycle": 3.0,
+        "governance": 2.5,
+        "human_oversight": 1.0,
+        "integration": 4.0,
+        "evaluation": 2.5,
+        "procedural": 1.0,
+        "ops_cost": 2.0
+      }
+    },
+    "letta": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: MemFS git-backed+Dreaming 巩固; 审核自动非人工; 自认基准意义有限",
+      "scores": {
+        "ingest_write": 2.5,
+        "retrieval": 2.5,
+        "temporal_conflict": 2.0,
+        "forgetting_lifecycle": 2.5,
+        "governance": 3.0,
+        "human_oversight": 2.0,
+        "integration": 3.5,
+        "evaluation": 2.5,
+        "procedural": 3.0,
+        "ops_cost": 2.5
+      }
+    },
+    "langmem": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: CoALA 三分+热/后台双轨; 治理机制未确认",
+      "scores": {
+        "ingest_write": 3.0,
+        "retrieval": 3.0,
+        "temporal_conflict": 1.5,
+        "forgetting_lifecycle": 1.5,
+        "governance": 2.0,
+        "human_oversight": 1.5,
+        "integration": 3.0,
+        "evaluation": 1.5,
+        "procedural": 3.0,
+        "ops_cost": 3.0
+      }
+    },
+    "supermemory": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: 多模态摄取+本地模式+强集成; 基准自报且自建榜(激励注意)",
+      "scores": {
+        "ingest_write": 3.5,
+        "retrieval": 4.0,
+        "temporal_conflict": 2.0,
+        "forgetting_lifecycle": 2.0,
+        "governance": 2.0,
+        "human_oversight": 1.0,
+        "integration": 4.5,
+        "evaluation": 2.5,
+        "procedural": 1.0,
+        "ops_cost": 3.0
+      }
+    },
+    "chatgpt_memory": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: 后台自动合成+时效更新为设计目标; 闭源不可审计, 集成封闭",
+      "scores": {
+        "ingest_write": 3.0,
+        "retrieval": 2.5,
+        "temporal_conflict": 2.5,
+        "forgetting_lifecycle": 2.0,
+        "governance": 2.5,
+        "human_oversight": 2.5,
+        "integration": 1.0,
+        "evaluation": 2.0,
+        "procedural": 1.0,
+        "ops_cost": 3.0
+      },
+      "total": 2.23
+    },
+    "claude_memory": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: Topics 管理+敏感主题默认排除+导入导出; 机制细节不透明",
+      "scores": {
+        "ingest_write": 2.5,
+        "retrieval": 2.0,
+        "temporal_conflict": 2.0,
+        "forgetting_lifecycle": 2.0,
+        "governance": 3.0,
+        "human_oversight": 3.0,
+        "integration": 1.0,
+        "evaluation": 1.5,
+        "procedural": 1.0,
+        "ops_cost": 3.0
+      },
+      "total": 2.12
+    },
+    "cursor_memories": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: 云端不可控引发隐私争议, 功能自 2.1.17 移除——客户端内建记忆脆弱性实证",
+      "scores": {
+        "ingest_write": 2.0,
+        "retrieval": 1.5,
+        "temporal_conflict": 1.0,
+        "forgetting_lifecycle": 1.5,
+        "governance": 1.0,
+        "human_oversight": 2.0,
+        "integration": 1.5,
+        "evaluation": 0.5,
+        "procedural": 0.5,
+        "ops_cost": 2.0
+      },
+      "total": 1.34
+    },
+    "openai_agents_sessions": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: 会话历史层(非长期记忆), 协议可插拔+加密包装",
+      "scores": {
+        "ingest_write": 2.0,
+        "retrieval": 1.5,
+        "temporal_conflict": 0.5,
+        "forgetting_lifecycle": 1.0,
+        "governance": 1.5,
+        "human_oversight": 1.0,
+        "integration": 4.0,
+        "evaluation": 0.5,
+        "procedural": 0.5,
+        "ops_cost": 3.5
+      },
+      "total": 1.55
+    },
+    "memos": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: 调度器+技能进化层级(L1/L2/L3)+cube 隔离; 自托管需 Neo4j+Qdrant",
+      "scores": {
+        "ingest_write": 3.0,
+        "retrieval": 3.5,
+        "temporal_conflict": 2.0,
+        "forgetting_lifecycle": 2.0,
+        "governance": 2.0,
+        "human_oversight": 1.5,
+        "integration": 3.5,
+        "evaluation": 3.0,
+        "procedural": 3.5,
+        "ops_cost": 2.0
+      },
+      "total": 2.58
+    },
+    "memobase": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: 画像式组织+时间线+缓冲冲刷; 遗忘/治理薄",
+      "scores": {
+        "ingest_write": 3.5,
+        "retrieval": 3.0,
+        "temporal_conflict": 2.5,
+        "forgetting_lifecycle": 1.5,
+        "governance": 1.5,
+        "human_oversight": 1.0,
+        "integration": 3.0,
+        "evaluation": 3.0,
+        "procedural": 0.5,
+        "ops_cost": 3.0
+      },
+      "total": 2.29
+    },
+    "cognee": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: remember/recall/improve/forget 四操作+图/向量/代码路由; 生产图库许可产品",
+      "scores": {
+        "ingest_write": 3.5,
+        "retrieval": 4.0,
+        "temporal_conflict": 1.5,
+        "forgetting_lifecycle": 1.5,
+        "governance": 1.5,
+        "human_oversight": 1.0,
+        "integration": 3.5,
+        "evaluation": 2.0,
+        "procedural": 2.0,
+        "ops_cost": 2.0
+      },
+      "total": 2.27
+    },
+    "memu": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: 记忆即 Wiki 技能文件+代理自进化+宿主二进制注入; 程序性记忆最强样本",
+      "scores": {
+        "ingest_write": 3.0,
+        "retrieval": 3.0,
+        "temporal_conflict": 1.0,
+        "forgetting_lifecycle": 2.0,
+        "governance": 2.0,
+        "human_oversight": 1.5,
+        "integration": 4.0,
+        "evaluation": 1.5,
+        "procedural": 4.5,
+        "ops_cost": 3.5
+      },
+      "total": 2.48
+    },
+    "mirix": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: 六记忆组件+专职 agent+auto-dream 清理; 部署较重(Postgres+Docker)",
+      "scores": {
+        "ingest_write": 3.0,
+        "retrieval": 3.0,
+        "temporal_conflict": 1.5,
+        "forgetting_lifecycle": 2.5,
+        "governance": 2.0,
+        "human_oversight": 1.5,
+        "integration": 2.5,
+        "evaluation": 2.0,
+        "procedural": 3.5,
+        "ops_cost": 2.0
+      },
+      "total": 2.31
+    },
+    "memori": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: 企业记忆基建(BYODB/VPC)+MCP 一条命令; 时间/遗忘弱",
+      "scores": {
+        "ingest_write": 3.0,
+        "retrieval": 2.5,
+        "temporal_conflict": 1.0,
+        "forgetting_lifecycle": 1.0,
+        "governance": 2.0,
+        "human_oversight": 1.0,
+        "integration": 4.0,
+        "evaluation": 3.0,
+        "procedural": 2.5,
+        "ops_cost": 3.0
+      },
+      "total": 2.25
+    },
+    "agentmemory": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: 32+ 客户端+54 工具+四级整合+衰减遗忘; SQLite 零依赖——兰台最直接的同类对照",
+      "scores": {
+        "ingest_write": 3.5,
+        "retrieval": 4.0,
+        "temporal_conflict": 2.0,
+        "forgetting_lifecycle": 3.0,
+        "governance": 2.0,
+        "human_oversight": 1.5,
+        "integration": 4.5,
+        "evaluation": 2.5,
+        "procedural": 3.5,
+        "ops_cost": 3.5
+      },
+      "total": 2.95
+    },
+    "openviking": {
+      "verified": true,
+      "evidence_note": "verified 2026-09-19: 38k stars 2026 现象级; viking:// 文件系统+L0/L1/L2+会话提交提取记忆(新建/合并/跳过——与兰台闸门流同构); AGPLv3",
+      "scores": {
+        "ingest_write": 3.5,
+        "retrieval": 3.5,
+        "temporal_conflict": 1.5,
+        "forgetting_lifecycle": 1.5,
+        "governance": 2.0,
+        "human_oversight": 1.5,
+        "integration": 4.5,
+        "evaluation": 2.0,
+        "procedural": 4.0,
+        "ops_cost": 2.5
+      },
+      "total": 2.6
+    }
+  },
+  "open_questions": [
+    "双时间轴/时效失效在兰台 Chronos 的实际覆盖度（继承判断，未验证）",
+    "兰台 MCP 工具面 2026-09 的实际数量与宿主矩阵",
+    "LightMem / Mem-alpha / HaluMem / MemBench 等新论文与基准的准确元信息"
+  ],
+  "weighted_totals": {
+    "lantai": 3.56,
+    "mem0": 2.76,
+    "zep_graphiti": 3.0,
+    "letta": 2.58,
+    "langmem": 2.25,
+    "supermemory": 2.59,
+    "chatgpt_memory": 2.23,
+    "claude_memory": 2.12,
+    "cursor_memories": 1.34,
+    "openai_agents_sessions": 1.55,
+    "memos": 2.58,
+    "memobase": 2.29,
+    "cognee": 2.27,
+    "memu": 2.48,
+    "mirix": 2.31,
+    "memori": 2.25,
+    "agentmemory": 2.95,
+    "openviking": 2.6
+  }
+}

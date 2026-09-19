@@ -1,0 +1,297 @@
+{
+  "version": "v1 (iter-01, 2026-09-19)",
+  "papers": [
+    {
+      "id": "memgpt",
+      "title": "MemGPT: Towards LLMs as Operating Systems",
+      "arxiv": "2310.08560",
+      "year": 2023,
+      "mechanism": "OS 式分层记忆：主上下文+外部存储，self-editing",
+      "url": "https://arxiv.org/abs/2310.08560",
+      "verification": "inherited (docs/research/papers/03 全文已存)"
+    },
+    {
+      "id": "generative-agents",
+      "title": "Generative Agents: Interactive Simulacra",
+      "arxiv": "2304.03442",
+      "year": 2023,
+      "mechanism": "记忆流+检索(近因/重要性/相关)+反思合成",
+      "url": "https://arxiv.org/abs/2304.03442",
+      "verification": "inherited (papers/01 全文已存)"
+    },
+    {
+      "id": "reflexion",
+      "title": "Reflexion: Language Agents with Verbal Reinforcement Learning",
+      "arxiv": "2303.11366",
+      "year": 2023,
+      "mechanism": "失败反思转语言化经验存入 episodic memory",
+      "url": "https://arxiv.org/abs/2303.11366",
+      "verification": "inherited (papers/02 全文已存)"
+    },
+    {
+      "id": "voyager",
+      "title": "Voyager: An Open-Ended Embodied Agent with LLMs",
+      "arxiv": "2305.16291",
+      "year": 2023,
+      "mechanism": "技能库程序性记忆+自动课程",
+      "url": "https://arxiv.org/abs/2305.16291",
+      "verification": "inherited (papers/05 全文已存)"
+    },
+    {
+      "id": "a-mem",
+      "title": "A-MEM: Agentic Memory for LLM Agents",
+      "arxiv": "2502.12110",
+      "year": 2025,
+      "mechanism": "Zettelkasten 卡片盒：原子笔记+动态链接+记忆演化",
+      "url": "https://arxiv.org/abs/2502.12110",
+      "verification": "inherited (papers/04 全文已存)"
+    },
+    {
+      "id": "zep-tkg",
+      "title": "Zep: A Temporal Knowledge Graph Architecture for Agent Memory",
+      "arxiv": "2501.13956",
+      "year": 2025,
+      "mechanism": "bi-temporal 图谱+边失效",
+      "url": "https://arxiv.org/abs/2501.13956",
+      "verification": "inherited (papers/06 全文已存)"
+    },
+    {
+      "id": "mcma",
+      "title": "MCMA (多客户端记忆适配, 全文已存)",
+      "arxiv": null,
+      "year": null,
+      "mechanism": "见 docs/research/papers/07-fulltext",
+      "url": "docs/research/papers/07-mcma-fulltext.md",
+      "verification": "inherited"
+    },
+    {
+      "id": "memorybank",
+      "title": "MemoryBank: Enhancing LLMs with Long-Term Memory",
+      "arxiv": "2305.10250",
+      "year": 2023,
+      "mechanism": "Ebbinghaus 衰减+召回强化",
+      "url": "https://arxiv.org/abs/2305.10250",
+      "verification": "inherited (2026-09-18 调研 [12])"
+    },
+    {
+      "id": "mem0-paper",
+      "title": "Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory",
+      "arxiv": "2504.19413",
+      "year": 2025,
+      "mechanism": "提取后 ADD/UPDATE/DELETE/NOOP+图变体",
+      "url": "https://arxiv.org/abs/2504.19413",
+      "verification": "inherited (2026-09-18 调研 [3])"
+    },
+    {
+      "id": "hipporag",
+      "title": "HippoRAG: Neurobiologically Inspired Long-Term Memory",
+      "arxiv": "2405.14831",
+      "year": 2024,
+      "mechanism": "海马体索引理论：KG+PPR 单跳多跳检索",
+      "url": "https://arxiv.org/abs/2405.14831",
+      "verification": "inherited (标题元信息)"
+    },
+    {
+      "id": "hipporag2",
+      "title": "From RAG to Memory: Non-Parametric Continual Learning (HippoRAG 2)",
+      "arxiv": "2502.14802",
+      "year": 2025,
+      "mechanism": "持续学习视角的记忆：深度上下文整合",
+      "url": "https://arxiv.org/abs/2502.14802",
+      "verification": "inherited (标题元信息)"
+    },
+    {
+      "id": "memos-paper",
+      "title": "MemOS: A Memory OS for AI System",
+      "arxiv": "2507.03724",
+      "year": 2025,
+      "mechanism": "明文/参数/激活三态记忆统一调度",
+      "url": "https://arxiv.org/abs/2507.03724",
+      "verification": "inherited"
+    },
+    {
+      "id": "longmemeval",
+      "title": "LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory",
+      "arxiv": "2410.10813",
+      "year": 2024,
+      "mechanism": "500 问五能力：提取/多会话/时间/更新/拒答",
+      "url": "https://arxiv.org/abs/2410.10813",
+      "verification": "inherited (2026-09-18 调研 [9])"
+    },
+    {
+      "id": "locomo",
+      "title": "Evaluating Very Long-Term Conversational Memory (LoCoMo)",
+      "arxiv": "2402.17753",
+      "venue": "ACL 2024",
+      "year": 2024,
+      "mechanism": "超长对话 QA/事件摘要基准",
+      "url": "https://aclanthology.org/2024.acl-long.747/",
+      "verification": "inherited (2026-09-18 调研 [10])"
+    },
+    {
+      "id": "memoryagentbench",
+      "title": "MemoryAgentBench",
+      "arxiv": "2507.05257",
+      "year": 2025,
+      "mechanism": "增量输入四能力：准确检索/测试时学习/长程理解/选择性遗忘",
+      "url": "https://arxiv.org/abs/2507.05257",
+      "verification": "inherited (2026-09-18 调研 [11])"
+    },
+    {
+      "id": "memory-age-survey",
+      "title": "Memory in the Age of AI Agents: A Survey",
+      "arxiv": "2512.13564",
+      "year": 2025,
+      "mechanism": "综述：记忆形态/操作/评估",
+      "url": "https://arxiv.org/abs/2512.13564",
+      "verification": "inherited (2026-08-11 调研 [16])"
+    },
+    {
+      "id": "coala",
+      "title": "Cognitive Architectures for Language Agents (CoALA)",
+      "arxiv": "2309.02427",
+      "year": 2023,
+      "mechanism": "工作/情景/语义/程序性四类记忆的 agent 认知架构分类",
+      "url": "https://arxiv.org/abs/2309.02427",
+      "verification": "inherited (元信息)"
+    },
+    {
+      "id": "lightmem",
+      "title": "LightMem: Lightweight and Efficient Memory-Augmented Generation",
+      "arxiv": "2510.18866",
+      "year": 2025,
+      "mechanism": "Atkinson-Shiffrin 三阶段（感觉/短/长时）+ 两级压缩 + 闲时更新；性能-开销平衡",
+      "url": "https://arxiv.org/abs/2510.18866",
+      "verification": "verified 2026-09-19 (arXiv 摘要)",
+      "note": "与 2604.07798 (SLM 版 LightMem) 同名异文; ICLR 2026 接收",
+      "venue": "ICLR 2026 (v4)"
+    },
+    {
+      "id": "mem-alpha",
+      "title": "Mem-α: Learning Memory Construction via Reinforcement Learning",
+      "arxiv": "2509.25911",
+      "year": 2025,
+      "mechanism": "RL 训练「存什么/如何结构化/何时更新」的记忆构建策略",
+      "url": "https://arxiv.org/abs/2509.25911",
+      "verification": "verified 2026-09-19 (arXiv 摘要)"
+    },
+    {
+      "id": "memory-r1",
+      "title": "Memory-R1: Enhancing LLM Agents to Manage and Utilize Memories via RL",
+      "arxiv": "2508.19828",
+      "year": 2025,
+      "mechanism": "RL 学习 ADD/UPDATE/DELETE/NOOP 记忆操作与检索利用",
+      "url": "https://arxiv.org/abs/2508.19828",
+      "verification": "verified 2026-09-19 (arXiv 摘要)"
+    },
+    {
+      "id": "mirix",
+      "title": "MIRIX: Multi-Agent Memory System for LLM-Based Agents",
+      "arxiv": "2507.07957",
+      "year": 2025,
+      "mechanism": "模块化多智能体记忆，超越文本的多模态记忆",
+      "url": "https://arxiv.org/abs/2507.07957",
+      "verification": "verified 2026-09-19 (arXiv 摘要)"
+    },
+    {
+      "id": "halumem",
+      "title": "HaluMem: Evaluating Hallucinations in Memory Systems of Agents",
+      "arxiv": "2511.03506",
+      "year": 2025,
+      "mechanism": "首个按记忆操作阶段定位幻觉（捏造/错误/冲突/遗漏）的操作级基准",
+      "url": "https://arxiv.org/abs/2511.03506",
+      "verification": "verified 2026-09-19 (arXiv 摘要)"
+    },
+    {
+      "id": "membench",
+      "title": "MemBench: Towards More Comprehensive Evaluation on the Memory of LLM-based Agents",
+      "arxiv": "2506.21605",
+      "year": 2025,
+      "mechanism": "多记忆层级+交互场景+多维指标的综合基准",
+      "url": "https://arxiv.org/abs/2506.21605",
+      "verification": "verified 2026-09-19 (arXiv 摘要)"
+    },
+    {
+      "id": "scm-self-controlled",
+      "title": "SCM: Enhancing LLM with Self-Controlled Memory Framework",
+      "arxiv": "2304.13343",
+      "year": 2023,
+      "mechanism": "记忆流+记忆控制器（何时/如何用记忆）",
+      "url": "https://arxiv.org/abs/2304.13343",
+      "verification": "verified 2026-09-19 (arXiv 摘要)"
+    },
+    {
+      "id": "governed-shared-memory",
+      "title": "Governed Shared Memory for Multi-Agent LLM Systems",
+      "arxiv": "2606.24535",
+      "year": 2026,
+      "mechanism": "fleet-memory 四大失败模式（越权泄漏/陈旧传播/矛盾存续/血统崩塌）→ scoped retrieval、temporal supersession、provenance、策略化传播",
+      "url": "https://arxiv.org/abs/2606.24535",
+      "verification": "verified 2026-09-19 (arXiv 摘要)"
+    },
+    {
+      "id": "trustmem",
+      "title": "TRUSTMEM: Learning Trustworthy Memory Consolidation for LLM Agents",
+      "arxiv": "2606.25161",
+      "year": 2026,
+      "mechanism": "写/改/删操作可能遗漏、损坏、幻觉——巩固可信度作为持久系统状态问题",
+      "url": "https://arxiv.org/abs/2606.25161",
+      "verification": "verified 2026-09-19 (arXiv 摘要)"
+    },
+    {
+      "id": "oblivion",
+      "title": "Oblivion: Self-Adaptive Agentic Memory Control through Decay-Driven Activation",
+      "arxiv": "2604.00131",
+      "year": 2026,
+      "mechanism": "遗忘=可及性衰减而非显式删除；读写路径解耦，按不确定性决定是否查记忆",
+      "url": "https://arxiv.org/abs/2604.00131",
+      "verification": "verified 2026-09-19 (arXiv 摘要)"
+    },
+    {
+      "id": "implicitmembench",
+      "title": "ImplicitMemBench: Measuring Unconscious Behavioral Adaptation in LLMs",
+      "arxiv": "2604.08064",
+      "year": 2026,
+      "mechanism": "内隐记忆基准：程序性记忆/启动效应等非陈述性记忆",
+      "url": "https://arxiv.org/abs/2604.08064",
+      "verification": "verified 2026-09-19 (arXiv 摘要)"
+    },
+    {
+      "id": "evomembench",
+      "title": "EvoMemBench: Benchmarking Agent Memory from a Self-Evolving Perspective",
+      "arxiv": "2605.18421",
+      "year": 2026,
+      "mechanism": "记忆广度(episode内/跨episode)×内容(知识/执行)两轴评估自进化",
+      "url": "https://arxiv.org/abs/2605.18421",
+      "verification": "verified 2026-09-19 (arXiv 摘要)"
+    },
+    {
+      "id": "sleep-consolidated-scm",
+      "title": "SCM: Sleep-Consolidated Memory with Algorithmic Forgetting for LLMs",
+      "arxiv": "2604.20943",
+      "year": 2026,
+      "mechanism": "有限容量工作记忆+多维重要性标注+离线巩固+算法性遗忘（与 2304.13343 同名异文）",
+      "url": "https://arxiv.org/abs/2604.20943",
+      "verification": "verified 2026-09-19 (arXiv 摘要)"
+    },
+    {
+      "id": "fine-mem",
+      "title": "Fine-Mem: Fine-Grained Feedback Alignment for Long-Horizon Memory Management",
+      "arxiv": "2601.08435",
+      "year": 2026,
+      "mechanism": "细粒度逐步奖励解决记忆管理 RL 的奖励稀疏与信用分配",
+      "url": "https://arxiv.org/abs/2601.08435",
+      "verification": "verified 2026-09-19 (arXiv 摘要)"
+    },
+    {
+      "id": "agentmembench",
+      "title": "AgentMemBench: A Systematic Benchmark for Long-Term Memory Management Strategies",
+      "arxiv": "2608.00009",
+      "year": 2026,
+      "mechanism": "五种记忆管理策略(ICW/EKV/GEM/CBS/WAM)统一可复现对比",
+      "url": "https://arxiv.org/abs/2608.00009",
+      "verification": "verified 2026-09-19 (arXiv 摘要)"
+    }
+  ],
+  "count": 32
+}

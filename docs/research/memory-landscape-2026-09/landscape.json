@@ -1,0 +1,670 @@
+{
+  "version": "v1 (iter-01, 2026-09-19)",
+  "verification_legend": {
+    "inherited": "来自 2026-08-11/2026-09-18 内部调研文档，本轮未重新核验",
+    "verified": "本轮实际抓取官方来源核验"
+  },
+  "systems": [
+    {
+      "id": "mem0",
+      "name": "Mem0",
+      "url": "https://github.com/mem0ai/mem0",
+      "category": "oss_leader",
+      "storage": "OSS: 本地 Qdrant + History store(SQLite ~/.mem0/history.db); 服务器版 Postgres+pgvector; 平台托管",
+      "memory_types": [
+        "事实"
+      ],
+      "license": "Apache-2.0",
+      "mcp": true,
+      "chinese": "unknown",
+      "stars": {
+        "value": 65600,
+        "as_of": "2026-09-19",
+        "source": "github-page"
+      },
+      "benchmarks_claimed": [
+        "LoCoMo 92.5 (平台自报; 旧版 71.4)",
+        "LongMemEval 94.4 (自报)",
+        "BEAM 64.1@1M (自报)",
+        "p50 延迟 0.88-1.09s (自报)"
+      ],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "单遍 ADD-only 提取(2026-04 新算法, 无 UPDATE/DELETE)",
+        "平台 Graph Memory: add 时抽实体, 按共现连边(无类型边), 替换外接图库方案",
+        "检索=向量+BM25+图连接加分合成单分",
+        "Temporal Reasoning: time-aware retrieval 排序时间版本",
+        "History store 追踪记忆变更历史"
+      ],
+      "sources": [
+        "https://arxiv.org/abs/2504.19413",
+        "https://docs.mem0.ai/migration/oss-v2-to-v3",
+        "https://github.com/mem0ai/mem0"
+      ],
+      "governance_note": "history.db 记录变更; provenance/审批/回滚/权限隔离未确认",
+      "dispute": "Zep 2025-05 质疑其论文中 Zep 对比实现有误; Letta 2025-08 称无法复现其 LoCoMo 报告(issue #3004 未回应)",
+      "mcp_note": "官方托管 MCP(11 工具): Claude/Claude Code/Codex/Cursor/Windsurf/VS Code/OpenCode"
+    },
+    {
+      "id": "zep_graphiti",
+      "name": "Zep / Graphiti",
+      "url": "https://github.com/getzep/graphiti",
+      "category": "oss_leader",
+      "storage": "Graphiti: Neo4j 5.26/FalkorDB/Neptune/Kuzu(弃用); Zep 平台: 专有 Context Graph Engine",
+      "memory_types": [
+        "事实",
+        "episode"
+      ],
+      "license": "Apache-2.0",
+      "mcp": true,
+      "chinese": "unknown",
+      "stars": {
+        "value": 31000,
+        "as_of": "2026-09-19",
+        "source": "github-page"
+      },
+      "benchmarks_claimed": [
+        "README 无数字; 论文 arXiv 2501.13956",
+        "2025-05 博文质疑 Mem0 LoCoMo 对比"
+      ],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "三层模型: episodic 节点(原始数据=来源)→entity 节点→边上 facts",
+        "显式 bi-temporal: facts 带 valid_at/invalid_at 有效窗口, 自动失效",
+        "混合检索: 语义嵌入+BM25+图遍历+重排(cross-encoder/log-prob)",
+        "增量更新(对比 GraphRAG 批处理)",
+        "每用户独立 temporal graph; 事实可溯源到 episode"
+      ],
+      "sources": [
+        "https://arxiv.org/abs/2501.13956",
+        "https://github.com/getzep/graphiti"
+      ],
+      "mcp_note": "官方双轨 MCP: Graphiti mcp_server/ + Zep 平台 Memory MCP Server"
+    },
+    {
+      "id": "letta",
+      "name": "Letta (MemGPT)",
+      "url": "https://github.com/letta-ai/letta",
+      "category": "oss_leader",
+      "storage": "MemFS: git-backed 记忆文件系统($MEMORY_DIR 可直接检查); 活跃开发转向 letta-code",
+      "memory_types": [
+        "工作记忆",
+        "长期事实",
+        "文件"
+      ],
+      "license": "Apache-2.0",
+      "mcp": true,
+      "chinese": "unknown",
+      "stars": {
+        "value": 24800,
+        "as_of": "2026-09-19",
+        "source": "github-page"
+      },
+      "benchmarks_claimed": [
+        "文件系统-only gpt-4o-mini agent LoCoMo 74.0% (2025-08 博客自报)",
+        "结论: 当前记忆基准可能意义有限"
+      ],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "agent 自主更新记忆并 commit 到 MemFS",
+        "/init 初始化 + /doctor 审计层级漂移/重复/token 占用",
+        "Dreaming(sleep-time compute, arXiv 2504.16088 系): 后台子代理复盘对话整合",
+        "可选二道审核——官方明言 does not ask you for approval(自动非人工)",
+        "重组记忆前自动备份"
+      ],
+      "sources": [
+        "https://docs.letta.com/v1-sdk/memory/memory-blocks",
+        "https://www.letta.com/blog/benchmarking-ai-agent-memory/"
+      ],
+      "governance_note": "git-backed 历史/备份 + memory viewer; 正式审批/权限隔离未确认"
+    },
+    {
+      "id": "langmem",
+      "name": "LangMem",
+      "url": "https://langchain-ai.github.io/langmem/",
+      "category": "framework",
+      "storage": "LangGraph BaseStore(InMemoryStore/AsyncPostgresStore)+语义索引",
+      "memory_types": [
+        "事实",
+        "经历",
+        "程序性"
+      ],
+      "license": "MIT",
+      "mcp": false,
+      "chinese": "unknown",
+      "stars": {
+        "value": 1700,
+        "as_of": "2026-09-19",
+        "source": "github-page"
+      },
+      "benchmarks_claimed": [],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "CoALA 三分: semantic(profile/collection)+episodic(few-shot 示例)+procedural(自改 prompt)",
+        "热路径工具即时写 vs 后台 manager 自动 extract/consolidate/update 双轨",
+        "namespace(user_id,app_context)+key 组织, 支持语义搜索与内容过滤",
+        "collection 模式召回高但删除/更新复杂度留给开发者"
+      ],
+      "sources": [
+        "https://docs.langchain.com/oss/python/concepts/memory",
+        "https://langchain-ai.github.io/langmem/concepts/conceptual_guide/"
+      ],
+      "mcp_note": "所读页面未提及 MCP(未确认)"
+    },
+    {
+      "id": "supermemory",
+      "name": "Supermemory",
+      "url": "https://supermemory.ai",
+      "category": "oss_leader",
+      "storage": "monorepo: Postgres+Drizzle, Cloudflare Workers/KV; 本地版内置 graph engine+本地嵌入(Xenova/bge), 数据存 ./.supermemory",
+      "memory_types": [
+        "事实",
+        "文档"
+      ],
+      "license": "MIT",
+      "mcp": true,
+      "chinese": "unknown",
+      "stars": {
+        "value": 30200,
+        "as_of": "2026-09-19",
+        "source": "github-page"
+      },
+      "benchmarks_claimed": [
+        "LongMemEval 95% Recall@15, +720 tokens, 上下文缩减 99.4% (自报)",
+        "LoCoMo/ConvoMem 榜首 (自报)",
+        "自建 MemoryBench 对比 Mem0/Zep(激励注意)"
+      ],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "add() 摄取管线: PDF/图片 OCR/视频转写/代码 AST 感知分块",
+        "hybrid 检索(RAG+memory 合并)+文档搜索元数据过滤",
+        "用户画像 ~50ms(static+dynamic facts)",
+        "连接器: Drive/Gmail/Notion/OneDrive/GitHub/Web Crawler",
+        "MCP: memory(save/forget)/recall/context; 支持 Claude Desktop/Cursor/Claude Code 等"
+      ],
+      "sources": [
+        "https://github.com/supermemoryai/supermemory",
+        "https://hamzashabbir.dev/article/agent-memory-mem0-vs-letta-vs-zep-vs-langmem-benchmark-2026"
+      ],
+      "sources_extra": "https://github.com/supermemoryai/supermemory"
+    },
+    {
+      "id": "memos",
+      "name": "MemOS",
+      "url": "https://github.com/MemTensor/MemOS",
+      "category": "oss_emerging",
+      "storage": "自托管: Neo4j+Qdrant(docker compose); 本地插件: SQLite(100% 设备端); 云插件: MemOS Cloud",
+      "memory_types": [
+        "明文/参数/激活记忆"
+      ],
+      "license": "Apache-2.0",
+      "mcp": false,
+      "chinese": true,
+      "stars": {
+        "value": 11500,
+        "as_of": "2026-09-19",
+        "source": "github-page"
+      },
+      "benchmarks_claimed": [
+        "LoCoMo 88.83 / LongMemEval 89.20 (OmniMemEval, 自报)",
+        "省 35.24% token (自报)"
+      ],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "MemScheduler 异步摄取毫秒级",
+        "自然语言反馈纠正/补充/替换已有记忆",
+        "混合检索(FTS5+向量)+智能去重",
+        "技能进化层级: L1 traces/L2 policies/L3 world model",
+        "Multi-Cube 知识库: 隔离/受控共享/动态组合(create_cube)",
+        "DeepSeek Harness: 任务前自动召回+任务后保存经验"
+      ],
+      "sources": [
+        "https://www.53ai.com/news/OpenSourceLLM/2026012069157.html",
+        "https://arxiv.org/abs/2507.03724"
+      ],
+      "mcp_note": "仅 topics 标签提及 mcp, 正文未说明"
+    },
+    {
+      "id": "cognee",
+      "name": "Cognee",
+      "url": "https://github.com/topoteretes/cognee",
+      "category": "oss_emerging",
+      "storage": "自托管知识图谱引擎; Postgres 单实例 1.0(关系元数据+PGVector+图, 图为 demo 特性, 生产图库为许可产品)",
+      "memory_types": [
+        "事实",
+        "实体关系"
+      ],
+      "license": "Apache-2.0",
+      "mcp": true,
+      "chinese": "unknown",
+      "stars": {
+        "value": 30800,
+        "as_of": "2026-09-19",
+        "source": "github-page"
+      },
+      "benchmarks_claimed": [],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "四操作: remember/recall/improve/forget",
+        "文本→实体/关系/分块; 代码→符号+依赖图; 会话蒸馏→固化",
+        "检索按问题类型自动路由(图/向量/代码)",
+        "会话知识经 improve 沉淀入图"
+      ],
+      "sources": [
+        "https://www.digitalapplied.com/blog/open-source-agent-memory-mem0-letta-zep-compared"
+      ],
+      "mcp_note": "cognee-mcp 服务器 + Claude Code/Codex/OpenClaw 插件"
+    },
+    {
+      "id": "agentmemory",
+      "name": "agentmemory",
+      "url": "https://github.com/rohitg00/agentmemory",
+      "category": "oss_emerging",
+      "storage": "SQLite + iii-engine",
+      "memory_types": [
+        "事实"
+      ],
+      "license": "MIT",
+      "mcp": true,
+      "chinese": "unknown",
+      "stars": {
+        "value": 26800,
+        "as_of": "2026-08-11",
+        "source": "internal-docs"
+      },
+      "benchmarks_claimed": [],
+      "verification": "inherited",
+      "key_mechanisms": [
+        "单 server 服务 32+ 客户端",
+        "四级整合+衰减+自动遗忘"
+      ],
+      "sources": [
+        "https://github.com/rohitg00/agentmemory"
+      ]
+    },
+    {
+      "id": "memobase",
+      "name": "Memobase",
+      "url": "https://github.com/memodb-io/memobase",
+      "category": "oss_emerging",
+      "storage": "FastAPI+Postgres+Redis, Docker 化; 默认处理完即删原始 blob",
+      "memory_types": [
+        "用户画像"
+      ],
+      "license": "MIT",
+      "mcp": false,
+      "chinese": "likely",
+      "stars": {
+        "value": 2900,
+        "as_of": "2026-09-19",
+        "source": "github-page"
+      },
+      "benchmarks_claimed": [
+        "LoCoMo SOTA 自报(对比 mem0/langmem/zep)",
+        "在线延迟 <100ms (仅几次 SQL)"
+      ],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "profile-based: 不存碎片条目, 学出 topic/sub_topic/content 结构化画像",
+        "用户事件时间线回答时间相关问题",
+        "buffer flush: 1024 tokens 或闲置 1h 自动冲刷",
+        "0.0.40 起单次记忆化固定 3 次 LLM 调用(token 降 40-50%)",
+        "context API 直接插 prompt, max_token_size/prefer_topics 参数"
+      ],
+      "sources": [
+        "https://www.digitalapplied.com/blog/open-source-agent-memory-mem0-letta-zep-compared"
+      ],
+      "mcp_note": "提供 Memobase-MCP(src/mcp)"
+    },
+    {
+      "id": "memu",
+      "name": "MemU",
+      "url": "https://github.com/NevaMind-AI/MemU",
+      "category": "oss_emerging",
+      "storage": "Local/Cloud 双模式: inmemory(余弦)/sqlite(默认)/postgres(pgvector); 记忆=Markdown 技能文件(Wiki)",
+      "memory_types": [
+        "事实",
+        "情景"
+      ],
+      "license": "Apache-2.0",
+      "mcp": false,
+      "chinese": "likely",
+      "stars": {
+        "value": 14400,
+        "as_of": "2026-09-19",
+        "source": "github-page"
+      },
+      "benchmarks_claimed": [],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "后台桥接任务把会话日志切片为自包含作业文件(prepare)",
+        "代理自读技能库决定: 不操作/修补/新建技能, commit_results 提交",
+        "MemoryService 不做 LLM 调用, 只 store/embed/retrieve",
+        "每宿主专用二进制(Codex/Claude Code/Cursor): 挖掘会话日志+修补 CLAUDE.md+回答前 retrieve",
+        "核心记忆逻辑仅 500 行, 可审阅可适配"
+      ],
+      "sources": [
+        "https://github.com/NevaMind-AI/MemU"
+      ],
+      "mcp_note": "仅 topics 标签有 mcp, 正文未说明"
+    },
+    {
+      "id": "aidumem",
+      "name": "aiduMEM",
+      "url": "https://pypi.org/project/aidumem/",
+      "category": "upstream",
+      "storage": "mem0 v2 + Qdrant + SQLite FTS5",
+      "memory_types": [
+        "事实"
+      ],
+      "license": "MIT",
+      "mcp": false,
+      "chinese": "likely",
+      "stars": {
+        "value": null,
+        "as_of": null
+      },
+      "benchmarks_claimed": [],
+      "verification": "inherited",
+      "key_mechanisms": [
+        "Aegis 零硬编码",
+        "万神殿联邦(Pantheon)",
+        "MCP 服务端 TODO"
+      ],
+      "sources": [
+        "https://pypi.org/project/aidumem/"
+      ]
+    },
+    {
+      "id": "lantai",
+      "name": "兰台 (Lantai)",
+      "url": "https://github.com/JIUSHIQINGSHAN",
+      "category": "self",
+      "storage": "SQLite+FTS5+Chroma 内嵌",
+      "memory_types": [
+        "事实(lane)",
+        "规则",
+        "偏好",
+        "经验",
+        "技能",
+        "情景(episode)",
+        "会话快照(底本)"
+      ],
+      "license": "proprietary",
+      "mcp": "59 tools (stdio, serverInfo 0.21.0)",
+      "chinese": true,
+      "stars": {
+        "value": null,
+        "as_of": null
+      },
+      "benchmarks_claimed": [
+        "自建 dry-run 179 样本",
+        "行为学习基准"
+      ],
+      "verification": "self-verified 2026-09-19",
+      "key_mechanisms": [
+        "gate 闸门+锦囊待审",
+        "校雠三态去重",
+        "衰减+知命状态机",
+        "沉潜巩固",
+        "烽燧/贯珠联想检索",
+        "provenance+checkpoint+樊篱",
+        "持节受控自主"
+      ],
+      "sources": [
+        "CONTEXT.md",
+        "docs/adr/"
+      ]
+    },
+    {
+      "id": "chatgpt_memory",
+      "name": "ChatGPT Memory + Dreaming V3",
+      "url": "https://openai.com/index/chatgpt-memory-dreaming/",
+      "category": "platform",
+      "storage": "平台托管(闭源)",
+      "memory_types": [
+        "用户画像事实",
+        "自动合成记忆"
+      ],
+      "license": "proprietary",
+      "mcp": false,
+      "chinese": "unknown",
+      "stars": null,
+      "benchmarks_claimed": [
+        "延续上下文/遵循偏好/随时间更新 三维度对比评测(无公开数值)"
+      ],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "Dreaming 2025-04 V0→2026-06 V3: 后台参考聊天历史自动合成记忆, 无需显式要求",
+        "V3 服务 Free 用户计算量降约 5 倍",
+        "演进: 2024 saved memories → 2025 +Dreaming V0 → 2026 V3",
+        "memory summary 页可查看/添加/更新/设置提及指令",
+        "三大评测目标: 延续上下文/遵循偏好/随时间保持更新(如'将去新加坡'→'已去过')"
+      ],
+      "sources": [
+        "https://openai.com/index/chatgpt-memory-dreaming/",
+        "https://help.openai.com (Memory FAQ)"
+      ]
+    },
+    {
+      "id": "claude_memory",
+      "name": "Claude Memory (产品级)",
+      "url": "https://support.claude.com/en/articles/11817273-use-claude-s-chat-search-and-memory-to-build-on-previous-context",
+      "category": "platform",
+      "storage": "平台托管(云), 跨 chat+Cowork",
+      "memory_types": [
+        "对话要点合成",
+        "记忆摘要"
+      ],
+      "license": "proprietary",
+      "mcp": false,
+      "chinese": "unknown",
+      "stars": null,
+      "benchmarks_claimed": [],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "2025-09 起分批上线: 记忆摘要+搜索过往聊天(引用回链原对话)+incognito 排除",
+        "2026-08-06: 记忆跨 chat+Cowork 云端共享; Topics 视图逐条编辑/删除",
+        "敏感主题(健康/信仰)默认不入记忆, 需显式开启",
+        "默认开启: Free/Pro/Max; 默认关闭: Team/Enterprise",
+        "支持从其他 AI 工具导入记忆; 有导入/导出文章"
+      ],
+      "sources": [
+        "https://support.claude.com/en/articles/11817273-...",
+        "https://support.claude.com/en/articles/12138966-release-notes"
+      ]
+    },
+    {
+      "id": "cursor_memories",
+      "name": "Cursor Memories",
+      "url": "https://forum.cursor.com/t/memories-not-showing/143820",
+      "category": "platform",
+      "storage": "云端账户(非本地文件)",
+      "memory_types": [
+        "对话要点→规则"
+      ],
+      "license": "proprietary",
+      "mcp": false,
+      "chinese": "unknown",
+      "stars": null,
+      "benchmarks_claimed": [],
+      "verification": "verified 2026-09-19 (官方论坛帖子)",
+      "key_mechanisms": [
+        "从对话自动生成记忆(可批准), 亦可让 AI 记住",
+        "存云端账户, 非 markdown 文件",
+        "管理与删除入口在 Settings>Rules",
+        "状态: 自 2.1.17 起功能被移除, 提供导出转 Rules(.mdc) 迁移",
+        "社区曾质疑: 需共享代码、隐私模式下不可用、作用域(全局vs项目)混乱"
+      ],
+      "sources": [
+        "https://forum.cursor.com/t/memories-not-showing/143820",
+        "https://forum.cursor.com/t/0-51-memories-feature/98509"
+      ]
+    },
+    {
+      "id": "openai_agents_sessions",
+      "name": "OpenAI Agents SDK Sessions",
+      "url": "https://openai.github.io/openai-agents-python/sessions/",
+      "category": "framework",
+      "storage": "可插拔后端: SQLite/Redis/SQLAlchemy/Mongo/Dapr/加密包装",
+      "memory_types": [
+        "会话历史(对话续接)"
+      ],
+      "license": "MIT",
+      "mcp": false,
+      "chinese": "unknown",
+      "stars": null,
+      "benchmarks_claimed": [],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "运行前自动前置历史, 运行后自动存新条目",
+        "统一 Session 协议(get_items/add_items/pop_item/clear_session)可自定义后端",
+        "EncryptedSession 透明加密+TTL 包装器; CompactionSession 长对话压缩",
+        "SessionSettings(limit=N) 限历史量; 定位=客户端会话记忆而非长期记忆"
+      ],
+      "sources": [
+        "https://openai.github.io/openai-agents-python/sessions/"
+      ]
+    },
+    {
+      "id": "mirix",
+      "name": "MIRIX",
+      "url": "https://github.com/Mirix-AI/MIRIX",
+      "category": "oss_emerging",
+      "storage": "PostgreSQL(BM25+向量)+Docker(REST 8531+仪表盘 5173)",
+      "memory_types": [
+        "core",
+        "episodic",
+        "semantic",
+        "procedural",
+        "resource",
+        "knowledge_vault"
+      ],
+      "license": "Apache-2.0",
+      "mcp": "未提及",
+      "chinese": "unknown",
+      "stars": {
+        "value": 3400,
+        "as_of": "2026-09-19",
+        "source": "github-page"
+      },
+      "benchmarks_claimed": [],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "六种记忆组件各配专职 memory agent(meta agent 架构)",
+        "auto-dream 端点: 去重/合并/过期/冲突清理",
+        "多模态: 文本/图像/语音/屏幕捕获",
+        "致谢 Letta 作为记忆基础"
+      ],
+      "sources": [
+        "https://github.com/Mirix-AI/MIRIX",
+        "https://arxiv.org/abs/2507.07957"
+      ]
+    },
+    {
+      "id": "memori",
+      "name": "Memori (MemoriLabs)",
+      "url": "https://github.com/MemoriLabs/Memori",
+      "category": "oss_emerging",
+      "storage": "LLM/DB/框架无关, BYODB; 云/单租户/VPC/本地",
+      "memory_types": [
+        "entity",
+        "process",
+        "session 三层追踪; attributes/events/facts/people/preferences/relationships/rules/skills 增强"
+      ],
+      "license": "Apache-2.0",
+      "mcp": true,
+      "chinese": "unknown",
+      "stars": {
+        "value": 16800,
+        "as_of": "2026-09-19",
+        "source": "github-page"
+      },
+      "benchmarks_claimed": [
+        "LoCoMo 87% 准确率, ~721 tokens/查询(2.8% 全上下文) 自报, 优于 Zep/LangMem/Mem0"
+      ],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "agent 执行与对话→结构化持久状态",
+        "一条命令 MCP 接入 Claude Code/Cursor/Codex/Warp/Antigravity",
+        "OpenClaw 与 Hermes Agent 插件"
+      ],
+      "note": "原 GibsonAI/memori 已迁移至 MemoriLabs/Memori",
+      "sources": [
+        "https://github.com/MemoriLabs/Memori"
+      ]
+    },
+    {
+      "id": "agentmemory",
+      "name": "agentmemory",
+      "url": "https://github.com/rohitg00/agentmemory",
+      "category": "oss_emerging",
+      "storage": "SQLite+iii-engine(v0.11.2), 零外部依赖",
+      "memory_types": [
+        "working",
+        "episodic",
+        "semantic",
+        "procedural 四级"
+      ],
+      "license": "Apache-2.0",
+      "mcp": true,
+      "chinese": "unknown",
+      "stars": {
+        "value": 28600,
+        "as_of": "2026-09-19",
+        "source": "github-page"
+      },
+      "benchmarks_claimed": [
+        "LongMemEval-S R@5 95.2% (自报)"
+      ],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "自动捕获代理行为→压缩→下次会话注入",
+        "BM25+向量+知识图谱三路检索, RRF(k=60) 融合; 无嵌入时退化 BM25",
+        "Ebbinghaus 衰减+访问强化+auto-evict+矛盾检测+TTL",
+        "四级整合: working→episodic→semantic→procedural",
+        "默认 54 个 MCP 工具(core 8/基础 14)+17 技能",
+        "实时查看器含会话回放"
+      ],
+      "sources": [
+        "https://github.com/rohitg00/agentmemory",
+        "https://agent-memory.dev"
+      ]
+    },
+    {
+      "id": "openviking",
+      "name": "OpenViking (字节跳动/火山引擎)",
+      "url": "https://github.com/volcengine/OpenViking",
+      "category": "oss_emerging",
+      "storage": "viking:// 虚拟文件系统(语义化目录+.abstract/.overview, L0/L1/L2 三层加载)",
+      "memory_types": [
+        "user memories(偏好/经验)",
+        "resources",
+        "skills",
+        "peers"
+      ],
+      "license": "AGPLv3(主); ov_cli/examples Apache-2.0",
+      "mcp": true,
+      "chinese": true,
+      "stars": {
+        "value": 38000,
+        "as_of": "2026-09-19",
+        "source": "github-page"
+      },
+      "benchmarks_claimed": [],
+      "verification": "verified 2026-09-19",
+      "key_mechanisms": [
+        "Agent 像操作文件一样 ls/tree/read/write 记忆",
+        "会话提交归档→后台提取记忆→与已有记忆比较决定新建/合并/跳过",
+        "向量搜索先定位候选目录再目录内探索(TrieHI, ICDE 论文)",
+        "集成: MCP+Hooks、Claude/Codex/Cursor/TRAE/OpenCode/LangChain; SDK Py/Go/TS+HTTP; 桌面应用 Beta",
+        "托管 SaaS(火山引擎)+BYOC 商业版"
+      ],
+      "sources": [
+        "https://github.com/volcengine/OpenViking",
+        "https://openviking.ai/"
+      ]
+    }
+  ],
+  "count": 20
+}
