@@ -40,6 +40,26 @@ class ConflictResult:
     decision_trace: DecisionTrace | None = None  # v0.4: 可解释裁决追踪
 
 
+
+
+def _temporal_recency(item) -> tuple:
+    """更漏（ADR-0048/票 10）recency 修正：优先 event_time、无则回退 created_at。
+
+    返回 (recency, axis)；axis ∈ {"event", "created", "none"}——
+    「不按最近写入机械取胜」：迟到更正里新值 created_at 必然更新，机械奖励迟到本身。
+    """
+    from datetime import datetime, timezone as _tz
+
+    base = item.event_time or item.created_at
+    axis = "event" if item.event_time else ("created" if item.created_at else "none")
+    if base is None:
+        return 0.5, axis
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=_tz.utc)
+    days_old = (datetime.now(_tz.utc) - base).days
+    return max(0.0, 1.0 - days_old / 30.0), axis
+
+
 class ConflictEngine:
     # 6-dim weights
     _W_EVIDENCE_STRENGTH = 0.30
@@ -88,14 +108,7 @@ class ConflictEngine:
         scope = self._extract_scope(item)
         provenance_quality = 1.0 if scope else 0.5
 
-        if item.created_at is not None:
-            created = item.created_at
-            if created.tzinfo is None:
-                created = created.replace(tzinfo=UTC)
-            days_old = (datetime.now(UTC) - created).days
-            recency = max(0.0, 1.0 - days_old / 30.0)
-        else:
-            recency = 0.5
+        recency, recency_axis = _temporal_recency(item)
 
         contextual_fit = 1.0 if scope.get("domain") else 0.5
 
@@ -112,6 +125,7 @@ class ConflictEngine:
             "confidence": round(confidence, 3),
             "provenance_quality": round(provenance_quality, 3),
             "recency": round(recency, 3),
+            "recency_axis": recency_axis,
             "independence": round(ev_independence, 3),
             "contextual_fit": round(contextual_fit, 3),
         }
@@ -129,16 +143,8 @@ class ConflictEngine:
         scope = self._extract_scope(item)
         provenance_quality = 1.0 if scope else 0.5
 
-        # --- recency ---
-        if item.created_at is not None:
-            created = item.created_at
-            # make aware if naive
-            if created.tzinfo is None:
-                created = created.replace(tzinfo=UTC)
-            days_old = (datetime.now(UTC) - created).days
-            recency = max(0.0, 1.0 - days_old / 30.0)
-        else:
-            recency = 0.5
+        # --- recency（更漏修正：优先 event_time，recency_axis 入 trace）---
+        recency, recency_axis = _temporal_recency(item)
 
         # --- contextual_fit ---
         contextual_fit = 1.0 if scope.get("domain") else 0.5
