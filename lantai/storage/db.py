@@ -16,7 +16,7 @@ engine = create_engine(settings.DATABASE_URL, echo=False, connect_args={"timeout
 # PRAGMA user_version 记录数据库结构版本；未版本化库（全新库或 v0.5 及以前
 # 老库）自动基线为 v1，增量补丁按版本号依次执行。ALTER TABLE ADD COLUMN 为
 # 毫秒级操作，代码更新与数据重构解耦，异常只记日志不阻断启动（降级而非崩溃）。
-CURRENT_SCHEMA_VERSION = 20
+CURRENT_SCHEMA_VERSION = 21
 
 
 def _has_column(conn, table: str, column: str) -> bool:
@@ -408,6 +408,49 @@ def apply_migrations(conn) -> None:
             conn.execute("PRAGMA user_version = 20")
             conn.commit()
             logger.info("Migrated v20: Knowledge Lifecycle fields")
+
+        # v20 -> v21: 更漏（ADR-0048）双时间轴——event_time 两新列 + valid_from 回填 + 时效三索引
+        if user_version < 21:
+            # 空库/无表场景（迁移测试建账用例）：表由 create_all 负责，迁移只记账不建表
+            has_memoryitem = bool(
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table'"
+                    " AND name = 'memoryitem'"
+                ).fetchone()
+            )
+            if has_memoryitem:
+                # DDL 固定字面量（SQLite ALTER TABLE 不支持绑定参数），_has_column 幂等守卫
+                if not _has_column(conn, "memoryitem", "event_time"):
+                    conn.execute("ALTER TABLE memoryitem ADD COLUMN event_time DATETIME")
+                if not _has_column(conn, "memoryitem", "event_time_precision"):
+                    conn.execute(
+                        "ALTER TABLE memoryitem ADD COLUMN event_time_precision TEXT DEFAULT ''"
+                    )
+                # 回填（spec §5.3）：valid_from 语义必填，存量 NULL 以 created_at 近似——
+                # 当前态下 created_at ≤ now 恒真，行为与 NULL 等价零回归；as-of 判定
+                # 「any-of + unknown 软放行」使回填无法制造新的误排除。DML 常量字面量，无注入面。
+                # 双列守卫：极老库（缺 valid_from/created_at 任一列）跳过回填，宁欠不炸。
+                if _has_column(conn, "memoryitem", "valid_from") and _has_column(
+                    conn, "memoryitem", "created_at"
+                ):
+                    conn.execute(
+                        "UPDATE memoryitem SET valid_from = created_at WHERE valid_from IS NULL"
+                    )
+                    try:
+                        conn.execute(
+                            "CREATE INDEX IF NOT EXISTS ix_memoryitem_event_time ON memoryitem(event_time)"
+                        )
+                        conn.execute(
+                            "CREATE INDEX IF NOT EXISTS ix_memoryitem_valid_from ON memoryitem(valid_from)"
+                        )
+                        conn.execute(
+                            "CREATE INDEX IF NOT EXISTS ix_memoryitem_valid_to ON memoryitem(valid_to)"
+                        )
+                    except Exception:
+                        pass
+            conn.execute("PRAGMA user_version = 21")
+            conn.commit()
+            logger.info("Migrated v21: Genglou bi-temporal event time (ADR-0048)")
 
     except Exception as exc:
         logger.error("数据库增量迁移异常（服务继续启动）: %s", exc)

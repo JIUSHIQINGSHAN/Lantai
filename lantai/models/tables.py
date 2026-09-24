@@ -138,8 +138,20 @@ class MemoryItem(SQLModel, table=True):
     helpful_count: int = 0
     decay_score: float = 1.0
     decay_class: str = "episodic"  # procedural(永不衰减)/semantic(慢)/episodic(快)；与 tier 正交
-    valid_from: datetime | None = None
-    valid_to: datetime | None = None
+    # 更漏（ADR-0048）双时间轴：事件轴回答「现实何时发生/何时为真」，
+    # 事务轴 created_at/updated_at 回答「兰台何时知道」；两轴互不回写。
+    event_time: datetime | None = Field(
+        default=None, index=True
+    )  # 事件发生/状态起始时刻；NULL=未提取到（宁 miss 不猜）
+    event_time_precision: str = Field(
+        default=""
+    )  # event_time 释读精度：year/month/day/hour/minute/second/fuzzy；非空 ⇔ event_time 非空
+    valid_from: datetime | None = Field(
+        default_factory=utcnow, index=True
+    )  # 主张有效期起点（语义必填：服务层默认 + 迁移回填 created_at；列物理可空——SQLite 无法对既有列补 NOT NULL）
+    valid_to: datetime | None = Field(
+        default=None, index=True
+    )  # 主张有效期终点；NULL=未失效（即 Zep invalid_at IS NULL 的当前态语义）
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     promotion_trace: dict = Field(
