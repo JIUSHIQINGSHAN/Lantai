@@ -175,6 +175,19 @@ def _create_candidate(
     if created_at is not None:
         provenance_prompt = PROVENANCE_PROMPT_DIALOGUE_IMPORT
     origin_extra: dict = {}
+    # 更漏（ADR-0048/票 08）：显式事件时间提取尝试——确定性格式命中才写 provenance，
+    # 失败不猜（宁 miss 不脏写），U3 标注面：event_time_extract_failed 如实记录
+    try:
+        from lantai.core.time_precision import extract_explicit_event_time
+
+        et, etp = extract_explicit_event_time(text)
+        if et is not None:
+            origin_extra["event_time"] = et.isoformat()
+            origin_extra["event_time_precision"] = etp
+        else:
+            origin_extra["event_time_extract_failed"] = True
+    except Exception:
+        pass
     if (session_id or "").strip():
         origin_extra["origin_session_id"] = session_id.strip()
     if turn is not None:

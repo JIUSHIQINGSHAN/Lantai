@@ -277,6 +277,8 @@ def correct_memory(
     reason: str = "",
     actor: str = "",
     session: Session | None = None,
+    event_time=None,
+    event_time_precision: str | None = None,
 ) -> dict:
     """纠错（笔）：就地改文并保留版本历史（旧文进 provenance.corrections）。"""
 
@@ -303,6 +305,24 @@ def correct_memory(
                 "from_version": item.version,
             }
         )
+        # 更漏（票 08）：纠错可更正事件时间——I1 校验，旧值随 corrections 留痕
+        if event_time is not None or event_time_precision is not None:
+            from lantai.core.time_precision import validate_event_time_pair
+
+            new_etp = event_time_precision if event_time_precision is not None else item.event_time_precision
+            parsed_et = event_time
+            if isinstance(parsed_et, str):
+                from datetime import datetime as _dt
+
+                parsed_et = _dt.fromisoformat(parsed_et)
+            if not validate_event_time_pair(parsed_et, new_etp):
+                return {"ok": False, "error": "invalid event_time pair (I1)"}
+            corrections[-1]["old_event_time"] = (
+                item.event_time.isoformat() if item.event_time else None
+            )
+            corrections[-1]["old_event_time_precision"] = item.event_time_precision
+            item.event_time = parsed_et
+            item.event_time_precision = new_etp
         prov["corrections"] = corrections
         old_content = item.content
         old_version = item.version or 1

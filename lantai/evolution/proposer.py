@@ -58,6 +58,13 @@ def propose_from_candidate(candidate_id: str, gate_result: dict) -> MemoryPropos
                 "content": data.get("new_content", cand.summary),
                 "lane": cand.lane,
                 "structure": structure,
+                # 更漏（ADR-0048/票 08）：候选 provenance 的显式事件时间随链透传
+                #（低置信不猜——提取侧已保证只在确定性格式命中时写入）
+                **(
+                    {"event_time": cand.provenance["event_time"], "event_time_precision": cand.provenance["event_time_precision"]}
+                    if isinstance(cand.provenance, dict) and cand.provenance.get("event_time")
+                    else {}
+                ),
             },
             confidence=float(data.get("confidence", 0.5)),
             conflict_ids=[c["memory_id"] for c in gate_result.get("conflicts", [])],

@@ -175,6 +175,32 @@ def apply_proposal(proposal_id: str) -> dict:
                     mem_kwargs["session_id"] = src_cand.session_id
                 if src_cand.user_id:
                     mem_kwargs["user_id"] = src_cand.user_id
+            # 更漏（ADR-0048/票 08）：提案携带显式事件时间 → I1 校验后落列；
+            # 违例拒写留痕（宁 miss 不脏写，不静默修正）
+            et = patch.get("event_time")
+            etp = patch.get("event_time_precision", "")
+            if et is not None or etp:
+                from lantai.core.time_precision import validate_event_time_pair
+
+                if isinstance(et, str):
+                    from datetime import datetime as _dt
+
+                    try:
+                        et = _dt.fromisoformat(et)
+                    except ValueError:
+                        return {
+                            "ok": False,
+                            "reason": "invalid event_time pair (I1)",
+                            "detail": {"event_time": et, "event_time_precision": etp},
+                        }
+                if not validate_event_time_pair(et, etp):
+                    return {
+                        "ok": False,
+                        "reason": "invalid event_time pair (I1)",
+                        "detail": {"event_time": str(et), "event_time_precision": etp},
+                    }
+                mem_kwargs["event_time"] = et
+                mem_kwargs["event_time_precision"] = etp
             mem = MemoryItem(**mem_kwargs)
             # Skill 资产化：提案携带步骤结构 → 视为技能（procedural 永不衰减）
             if structure.get("steps"):
