@@ -16,7 +16,7 @@ engine = create_engine(settings.DATABASE_URL, echo=False, connect_args={"timeout
 # PRAGMA user_version 记录数据库结构版本；未版本化库（全新库或 v0.5 及以前
 # 老库）自动基线为 v1，增量补丁按版本号依次执行。ALTER TABLE ADD COLUMN 为
 # 毫秒级操作，代码更新与数据重构解耦，异常只记日志不阻断启动（降级而非崩溃）。
-CURRENT_SCHEMA_VERSION = 21
+CURRENT_SCHEMA_VERSION = 22
 
 
 def _has_column(conn, table: str, column: str) -> bool:
@@ -451,6 +451,38 @@ def apply_migrations(conn) -> None:
             conn.execute("PRAGMA user_version = 21")
             conn.commit()
             logger.info("Migrated v21: Genglou bi-temporal event time (ADR-0048)")
+
+        # v21 -> v22: 回执链一等化（ADR-0049）——request_id + receipt_status + receipt_at
+        if user_version < 22:
+            has_re = bool(
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table'"
+                    " AND name = 'retrieval_event'"
+                ).fetchone()
+            )
+            if has_re:
+                if not _has_column(conn, "retrieval_event", "request_id"):
+                    conn.execute("ALTER TABLE retrieval_event ADD COLUMN request_id TEXT")
+                if not _has_column(conn, "retrieval_event", "receipt_status"):
+                    conn.execute(
+                        "ALTER TABLE retrieval_event ADD COLUMN receipt_status TEXT DEFAULT 'pending'"
+                    )
+                if not _has_column(conn, "retrieval_event", "receipt_at"):
+                    conn.execute("ALTER TABLE retrieval_event ADD COLUMN receipt_at DATETIME")
+                try:
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS ix_retrieval_event_request_id"
+                        " ON retrieval_event(request_id)"
+                    )
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS ix_retrieval_event_receipt_status"
+                        " ON retrieval_event(receipt_status)"
+                    )
+                except Exception:
+                    pass
+            conn.execute("PRAGMA user_version = 22")
+            conn.commit()
+            logger.info("Migrated v22: receipt chain (ADR-0049)")
 
     except Exception as exc:
         logger.error("数据库增量迁移异常（服务继续启动）: %s", exc)

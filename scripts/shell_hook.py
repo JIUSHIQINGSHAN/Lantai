@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlmodel import select
 
+from lantai.core.ids import new_id
 from lantai.core.settings import settings
 from lantai.core.text import apply_recall_budget as _apply_recall_budget
 from lantai.core.text import normalize_session_id
@@ -175,11 +176,13 @@ def build_context(query: str, session_id: str | None = None) -> dict:
         detail_kept = max(0, len(lines) - len(scene_lines))
         evidence = [{"id": e[3], "content": e[1], "score": e[2]} for e in entries[:detail_kept]]
         latency_ms = int((time.perf_counter() - t0) * 1000)
+        request_id = new_id("req")  # 回执链（ADR-0049）：一次注入调用的整体标识
         event_id = _try_log(
             query,
             [{"score": 1.0 - r["distance"], "memory": {"id": r["id"]}} for r in results],
             latency_ms,
             session_id=session_id,
+            request_id=request_id,
         )
         out = {}
         if lines:
@@ -211,18 +214,31 @@ def build_context(query: str, session_id: str | None = None) -> dict:
                 out["context"] = decl + "\n" + out["context"]
         if event_id:
             out["event_id"] = event_id
+        if event_id:
+            out["request_id"] = request_id  # 宿主回执时按 request_id 对账（ADR-0049）
         return out
     except Exception:
         return {}
 
 
-def _try_log(query: str, results: list, latency_ms: int, session_id: str | None = None) -> str | None:
+def _try_log(
+    query: str,
+    results: list,
+    latency_ms: int,
+    session_id: str | None = None,
+    request_id: str | None = None,
+) -> str | None:
     """Shell Hook 检索埋点（独立向量路径，方向二弱标注源）：失败零侵入。返回 event_id。"""
     try:
         from lantai.observability.retrieval_log import log_retrieval
 
         return log_retrieval(
-            query, results, latency_ms=latency_ms, trace_id="shell_hook", session_id=session_id
+            query,
+            results,
+            latency_ms=latency_ms,
+            trace_id="shell_hook",
+            session_id=session_id,
+            request_id=request_id,
         )
     except Exception:
         return None
@@ -245,7 +261,7 @@ def _handle_dialogue(text: str, session_id: str = "", turn: int | None = None) -
         return {}
 
 
-def _handle_backfill(event_id: str, used_ids) -> dict:
+def _handle_backfill(event_id: str, used_ids, request_id: str | None = None) -> dict:
     """注入回执通道（P0 票02）：插件注入记忆后按 event_id 回填 used_ids（弱标注）。
 
     空 used_ids 静默拒绝：backfill_used_ids 是整体覆盖语义，空表回执会抹掉
@@ -260,8 +276,13 @@ def _handle_backfill(event_id: str, used_ids) -> dict:
     try:
         from lantai.observability.retrieval_log import backfill_used_ids
 
-        backfill_used_ids(event_id, used_ids)
-        return {"ok": True, "event_id": event_id, "used_count": len(used_ids)}
+        backfill_used_ids(event_id, used_ids, request_id=request_id)
+        return {
+            "ok": True,
+            "event_id": event_id,
+            "used_count": len(used_ids),
+            "receipt_status": "acked",
+        }
     except Exception:
         return {}
 
@@ -338,8 +359,13 @@ def _handle_one(raw: str) -> dict:
         )
 
     if data.get("type") == "backfill":
+        rid = data.get("request_id")
         return _run_with_timeout(
-            _handle_backfill, settings.SHELL_HOOK_TIMEOUT, data.get("event_id"), data.get("used_ids")
+            _handle_backfill,
+            settings.SHELL_HOOK_TIMEOUT,
+            data.get("event_id"),
+            data.get("used_ids"),
+            rid if isinstance(rid, str) and rid.strip() else None,
         )
 
     if data.get("type") == "checkpoint":

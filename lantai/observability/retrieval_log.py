@@ -7,9 +7,12 @@
 
 import hashlib
 
+from sqlmodel import select
+
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
-from lantai.models.tables import RetrievalEvent
+from lantai.core.time import utcnow
+from lantai.models.tables import MemoryItem, RetrievalEvent
 from lantai.parameters.registry import default_snapshot
 from lantai.parameters.validation import snapshot_hash
 from lantai.storage import db
@@ -56,6 +59,7 @@ def log_retrieval(
     trace_id: str | None = None,
     lanes: list[str] | None = None,
     session_id: str | None = None,
+    request_id: str | None = None,
 ) -> str | None:
     """
     在检索出口记录一次事件。失败仅记日志，绝不抛给主链路。
@@ -63,6 +67,8 @@ def log_retrieval(
 
     session_id：来源链（v022 票据 05）——带 session 的检索才算「真实会话
     读」，写活性判据此计数；不透传则留空（如实 NULL，不猜测）。
+    request_id：回执链（ADR-0049）——一次注入调用的整体标识，由注入侧
+    （shell_hook context / 中间件）生成透传；不透传留空（pending 状态照记）。
     """
     try:
         event_id = new_id("rev")
@@ -84,6 +90,8 @@ def log_retrieval(
                     query_norm_hash=_norm_hash(query),
                     lane=",".join(lanes) if lanes else "",
                     session_id=(session_id or "").strip() or None,
+                    request_id=(request_id or "").strip() or None,
+                    receipt_status="pending",
                     intent_bucket=intent if isinstance(intent, str) else None,
                     param_snapshot_hash=snapshot_hash(default_snapshot()),
                     result_ids=result_ids,
@@ -103,14 +111,109 @@ def log_retrieval(
         return None
 
 
-def backfill_used_ids(event_id: str, used_ids: list[str]) -> None:
-    """生成侧回填：哪些被召回的记忆真正被用进回答（弱标注）。"""
+def backfill_used_ids(event_id: str, used_ids: list[str], request_id: str | None = None) -> None:
+    """宿主回执：哪些被召回的记忆真正被用进回答（整体覆盖语义）。
+
+    回执链一等化（ADR-0049）：回执成功 → receipt_status="acked" + receipt_at 落定。
+    request_id 提供时与事件列核对——不一致如实记日志（不拒绝、不改状态；
+    宁 miss 不脏写，回执归属以 event_id 为准）。
+    """
     try:
         with db.get_session() as s:
             ev = s.get(RetrievalEvent, event_id)
             if ev:
+                if request_id and ev.request_id and request_id != ev.request_id:
+                    logger.warning(
+                        "receipt request_id mismatch (kept by event_id): ev=%s ev_req=%s got=%s",
+                        event_id,
+                        ev.request_id,
+                        request_id,
+                    )
                 ev.used_ids = list(used_ids)
+                ev.receipt_status = "acked"
+                ev.receipt_at = utcnow()
                 s.add(ev)
                 s.commit()
     except Exception:
         logger.exception("retrieval used_ids backfill failed (non-fatal)")
+
+
+RECEIPT_MISS_TIMEOUT_SECONDS = 300
+
+
+def mark_missed_receipts(timeout_seconds: int = RECEIPT_MISS_TIMEOUT_SECONDS, now=None) -> int:
+    """回执超时判定（ADR-0049）：pending 且超龄 → missed，返回置位数。
+
+    missed 是事实不是错误（宁 miss 不脏写）：宿主未回执的事件如实置位，
+    使「回执缺失」可观测、可统计，而不是永远 pending。幂等：已置位不重算。
+    """
+    from datetime import timedelta
+
+    moment = now or utcnow()
+    cutoff = moment - timedelta(seconds=timeout_seconds)
+    try:
+        with db.get_session() as s:
+            rows = s.exec(
+                select(RetrievalEvent).where(
+                    RetrievalEvent.receipt_status == "pending",
+                    RetrievalEvent.created_at < cutoff,
+                )
+            ).all()
+            for ev in rows:
+                ev.receipt_status = "missed"
+                ev.receipt_at = moment
+                s.add(ev)
+            if rows:
+                s.commit()
+            return len(rows)
+    except Exception:
+        logger.exception("receipt miss marking failed (non-fatal)")
+        return 0
+
+
+def receipt_traceability_report() -> dict:
+    """可追溯率统计出口（ADR-0049；票 06 宿主冒烟与自证复用）。
+
+    口径（票据 04 交付 4）：acked 事件中，used_ids 非空且每个 used_id 均能
+    回溯到现存 MemoryItem 行的比例（missed/pending 不入分子）。全部计数如实
+    分列，不混计；无 acked 样本时 rate 如实返回 None（不编造）。
+    """
+    try:
+        with db.get_session() as s:
+            status_rows = s.exec(
+                select(RetrievalEvent.receipt_status, RetrievalEvent.used_ids)
+            ).all()
+            acked_used: list[list[str]] = []
+            pending = missed = acked_plain = 0
+            for status, used_ids in status_rows:
+                if status == "acked":
+                    if used_ids:
+                        acked_used.append(list(used_ids))
+                    else:
+                        acked_plain += 1
+                elif status == "missed":
+                    missed += 1
+                else:
+                    pending += 1
+        traceable = 0
+        if acked_used:
+            with db.get_session() as s2:
+                for used in acked_used:
+                    existing = [uid for uid in used if s2.get(MemoryItem, uid) is not None]
+                    if used and len(existing) == len(used):
+                        traceable += 1
+        acked_total = len(acked_used) + acked_plain
+        return {
+            "pending": pending,
+            "acked": acked_total,
+            "acked_with_used_ids": len(acked_used),
+            "missed": missed,
+            "traceable": traceable,
+            # 口径：acked 事件中可完整回溯的比例（used_ids 空的 acked 不入分子）
+            "traceability_rate": (
+                round(traceable / len(acked_used), 4) if acked_used else None
+            ),
+        }
+    except Exception:
+        logger.exception("receipt traceability report failed (non-fatal)")
+        return {}

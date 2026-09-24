@@ -556,6 +556,14 @@ class RetrievalEvent(SQLModel, table=True):
     is_system_noise: bool = Field(
         default=False, index=True
     )  # 系统注入噪音（技能库维护等），评估统计时排除
+    # 回执链（ADR-0049，票 04）：检索事件 → 注入 evidence → 宿主回执 → 可追溯出口
+    request_id: str | None = Field(
+        default=None, index=True
+    )  # 一次注入调用的整体标识（new_id("req")），与 event_id/session_id 并列不替代
+    receipt_status: str = Field(
+        default="pending", index=True
+    )  # pending（未回执）/ acked（宿主已回执）/ missed（超时未回执——事实非错误）
+    receipt_at: datetime | None = None  # 回执状态落定时刻（acked/missed 置位时写）
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
