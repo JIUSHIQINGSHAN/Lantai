@@ -48,6 +48,12 @@ class RetrievalParams:
     mmr_enabled: bool = field(default_factory=lambda: bool(settings.MMR_ENABLED))
     mmr_lambda: float = field(default_factory=lambda: settings.MMR_LAMBDA)
     errsig_bonus: float = field(default_factory=lambda: settings.ERRSIG_BONUS)
+    temporal_asof_strict: bool = field(
+        default_factory=lambda: bool(settings.TEMPORAL_ASOF_STRICT)
+    )
+    temporal_fuzzy_penalty: float = field(
+        default_factory=lambda: float(settings.TEMPORAL_FUZZY_PENALTY)
+    )
     extra: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -60,6 +66,11 @@ class RetrievalParams:
             "echo_suppress_window",
             _fail_closed_positive(self.echo_suppress_window, 900.0),
         )
+        # 更漏（票 09）：fuzzy 乘子 fail-closed 0~1（非正/越界回默认）
+        penalty = float(self.temporal_fuzzy_penalty)
+        if not (0.0 <= penalty <= 1.0):
+            penalty = 0.8
+        object.__setattr__(self, "temporal_fuzzy_penalty", penalty)
 
     @classmethod
     def from_overrides(cls, overrides: dict | None = None) -> "RetrievalParams":
@@ -83,6 +94,8 @@ class RetrievalParams:
             "MMR_ENABLED": "mmr_enabled",
             "MMR_LAMBDA": "mmr_lambda",
             "ERRSIG_BONUS": "errsig_bonus",
+            "TEMPORAL_ASOF_STRICT": "temporal_asof_strict",
+            "TEMPORAL_FUZZY_PENALTY": "temporal_fuzzy_penalty",
         }
         known = {}
         extra = {}
@@ -112,6 +125,8 @@ class RetrievalParams:
             "MMR_ENABLED": "mmr_enabled",
             "MMR_LAMBDA": "mmr_lambda",
             "ERRSIG_BONUS": "errsig_bonus",
+            "TEMPORAL_ASOF_STRICT": "temporal_asof_strict",
+            "TEMPORAL_FUZZY_PENALTY": "temporal_fuzzy_penalty",
         }
         attr = mapping.get(key, key)
         if hasattr(self, attr):
@@ -295,6 +310,10 @@ def hybrid_search(
     session: Any = None,
     params: RetrievalParams | None = None,
     principal=None,
+    as_of=None,
+    time_from=None,
+    time_to=None,
+    as_of_recorded=None,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     """混合检索：向量 + BM25 + 衰减（支持辨域 ADR-0034 domain 过滤）。
 
@@ -318,6 +337,10 @@ def hybrid_search(
         session=session,
         params=effective_params,
         principal=principal,
+        as_of=as_of,
+        time_from=time_from,
+        time_to=time_to,
+        as_of_recorded=as_of_recorded,
     )
 
 
@@ -358,6 +381,10 @@ def _hybrid_search_impl(
     session: Any = None,
     params: RetrievalParams | None = None,
     principal=None,
+    as_of=None,
+    time_from=None,
+    time_to=None,
+    as_of_recorded=None,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     p = params or RetrievalParams()
     trace_steps = []
@@ -441,6 +468,10 @@ def _hybrid_search_impl(
             session=session,
             params=p,
             principal=principal,
+            as_of=as_of,
+            time_from=time_from,
+            time_to=time_to,
+            as_of_recorded=as_of_recorded,
         )
 
     # Step 3: FTS5 子串召回（ADR-0008）与 BM25 召回（F2 重构）
@@ -516,6 +547,17 @@ def _hybrid_search_impl(
         items = [m for m in items if getattr(m, "domain", "user") == domain]
 
     items = _chronos_filter(items)
+    from lantai.retrieval.temporal import temporal_view_filter
+
+    items, _temporal_explain = temporal_view_filter(
+        items,
+        as_of=as_of,
+        time_from=time_from,
+        time_to=time_to,
+        as_of_recorded=as_of_recorded,
+        strict=params.temporal_asof_strict,
+        fuzzy_penalty=params.temporal_fuzzy_penalty,
+    )
 
     if trace:
         t3 = time.perf_counter()
@@ -762,6 +804,10 @@ def _keyword_fallback(
     domain: str | None = None,
     session: Any = None,
     params: RetrievalParams | None = None,
+    as_of=None,
+    time_from=None,
+    time_to=None,
+    as_of_recorded=None,
     principal=None,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     """向量检索降级路径：FTS5 召回作候选集，BM25 + decay 打分（无向量分）。
@@ -869,6 +915,17 @@ def _keyword_fallback(
     if domain and domain != "all":
         items = [m for m in items if getattr(m, "domain", "user") == domain]
     items = _chronos_filter(items)
+    from lantai.retrieval.temporal import temporal_view_filter
+
+    items, _temporal_explain = temporal_view_filter(
+        items,
+        as_of=as_of,
+        time_from=time_from,
+        time_to=time_to,
+        as_of_recorded=as_of_recorded,
+        strict=effective_params.temporal_asof_strict,
+        fuzzy_penalty=effective_params.temporal_fuzzy_penalty,
+    )
 
     if not items:
         if trace:

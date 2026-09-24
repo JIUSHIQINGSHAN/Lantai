@@ -186,6 +186,10 @@ class Settings(BaseSettings):
 
     # 向量存储配置（默认 Chromadb 内嵌，无需外部依赖）
     VECTOR_STORE_TYPE: str = "chromadb"
+    # 更漏（ADR-0048/票 09）：时效视图开关（默认全关 = 现行行为零漂移）
+    TEMPORAL_CURRENT_STRICT: bool = False  # 当前态收紧：已过 valid_to 退出（默认关，须独立票验证后再开）
+    TEMPORAL_ASOF_STRICT: bool = False  # 作用域仅 as-of 视图：未命中剔除，但 event_time IS NULL/fuzzy 仍放行（I4）
+    TEMPORAL_FUZZY_PENALTY: float = 0.8  # as-of/时间窗激活时 fuzzy/unknown 的分数乘子（fail-closed 0~1）
     CHROMADB_PATH: str = ""  # 为空时从 LANTAI_HOME 自动推导
 
     # 闸门配置

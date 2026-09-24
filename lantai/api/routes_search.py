@@ -28,6 +28,11 @@ def search(
     import time
 
     t0 = time.perf_counter()
+    from datetime import datetime as _dt
+
+    def _parse_dt(v):
+        return _dt.fromisoformat(v) if v else None
+
     result = hybrid_search(
         req.query,
         req.top_k,
@@ -38,6 +43,10 @@ def search(
         explain=explain,
         domain=req.domain,
         principal=ctx,
+        as_of=_parse_dt(req.as_of),
+        as_of_recorded=_parse_dt(req.as_of_recorded),
+        time_from=_parse_dt(req.time_from),
+        time_to=_parse_dt(req.time_to),
     )
     latency_ms = int((time.perf_counter() - t0) * 1000)
     if trace and isinstance(result, tuple):

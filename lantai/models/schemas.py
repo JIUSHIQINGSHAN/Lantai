@@ -66,6 +66,11 @@ class SearchReq(BaseModel):
     domain: str | None = None  # 辨域（ADR-0034）：user/session/agent/all
     use_rerank: bool = True
     force: bool = False  # 显式透传：为 True 时绕过相关性闸门直接检索（拾遗 ADR-0028）
+    # 更漏（ADR-0048/票 09）：时效视图参数——全部缺省 = 现行行为逐字节不变
+    as_of: str | None = None  # 历史时点视图（ISO 8601，现实轴）
+    as_of_recorded: str | None = None  # 事务轴近似（created_at <= 该时刻）
+    time_from: str | None = None  # 事件轴窗口 [from, to)
+    time_to: str | None = None
 
 
 class GateReq(BaseModel):
