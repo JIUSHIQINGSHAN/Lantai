@@ -26,7 +26,20 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 # 与历史 DEV MODE 一致的默认 lane 集合
 # distill（v022 咀华泳道）对默认密钥/DEV 可写可召回；显式受限 Bearer 密钥不受影响
-DEFAULT_LANES = ["general", "fact", "rule", "experience", "preference", "chat", "default", "distill"]
+DEFAULT_LANES = [
+    "general",
+    "fact",
+    "rule",
+    "experience",
+    "preference",
+    "chat",
+    "default",
+    "distill",
+    "hermes",
+    "user",
+    "project",
+    "working",
+]
 
 
 def is_loopback_host(host: str | None = None) -> bool:
@@ -136,7 +149,7 @@ def get_current_user(request: Request) -> Principal:
         from lantai.core.acl import active_bindings
         from lantai.core.acl import allowed_lanes as acl_allowed_lanes
 
-        if agent_id and active_bindings():
+        if role not in ("admin", "system") and agent_id and active_bindings():
             if agent_id not in active_bindings():
                 raise HTTPException(status_code=403, detail="Agent not bound (ACL)")
             lanes = acl_allowed_lanes(agent_id) or []

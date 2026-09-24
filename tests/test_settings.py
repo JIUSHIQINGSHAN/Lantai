@@ -85,6 +85,33 @@ class TestLantaiHome:
         assert "test_legacy_home" in s.DATABASE_URL
 
 
+class TestSettingsEnvPathResolution:
+    """冒烟测试：验证 settings.py 中 env_file 使用绝对路径绑定仓库根 .env 的行为"""
+
+    def test_env_file_path_is_absolute_repo_root(self):
+        """Settings model_config 中的 env_file 是指向 _REPO_ROOT / '.env' 的绝对路径"""
+        from lantai.core.settings import _REPO_ROOT
+
+        env_file = Settings.model_config.get("env_file")
+        assert env_file is not None
+        assert Path(env_file).is_absolute()
+        assert Path(env_file) == _REPO_ROOT / ".env"
+
+    def test_settings_loads_repo_root_env_regardless_of_cwd(self, tmp_path, monkeypatch):
+        """无论当前工作目录切换到何处（如临时子目录），Settings 均能稳定绑定仓库根 .env 路径"""
+        import os
+        from lantai.core.settings import _REPO_ROOT
+
+        # 切换当前工作目录到外部临时目录
+        monkeypatch.chdir(tmp_path)
+        assert Path(os.getcwd()) == tmp_path
+
+        # 实例化 Settings，其 model_config 依然锁定了仓库根下的 .env 绝对路径
+        s = Settings()
+        assert Path(s.model_config.get("env_file")) == _REPO_ROOT / ".env"
+
+
+
 class TestValidateConfig:
     """validate_config() 只 warn 不 crash"""
 

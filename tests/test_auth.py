@@ -186,3 +186,93 @@ class TestSecureBinding:
         monkeypatch.setattr(settings, "HOST", "127.0.0.1")
         monkeypatch.setattr(settings, "API_KEY", "")
         assert_secure_binding()
+
+
+class TestAdminAclExemptionAndDefaultLanes:
+    """冒烟测试：验证 admin/system 角色 ACL 豁免与 DEFAULT_LANES 扩充覆盖"""
+
+    def test_default_lanes_contains_expected_lanes(self):
+        from lantai.core.auth import DEFAULT_LANES
+
+        expected = [
+            "general", "fact", "rule", "experience", "preference",
+            "chat", "default", "distill", "hermes", "user", "project", "working"
+        ]
+        assert DEFAULT_LANES == expected
+
+    def test_dev_mode_principal_receives_all_default_lanes(self, client):
+        """DEV MODE 下（无 key，回环地址），发起的请求具有完整的 12 个默认泳道"""
+        for lane in ("hermes", "user", "project", "working"):
+            resp = client.post(
+                "/add",
+                json={
+                    "title": f"Dev test {lane}",
+                    "content": f"This is sufficient content for testing dev mode on {lane}",
+                    "lane": lane,
+                },
+            )
+            assert resp.status_code == 200, f"Failed for lane: {lane}, resp: {resp.text}"
+
+    def test_admin_with_unbound_agent_id_bypasses_acl(self, client, monkeypatch):
+        """Admin (通过 X-API-Key 鉴权) 携带未绑定的 X-Agent-Id 能够豁免 ACL，不被 403 阻断"""
+        monkeypatch.setattr(settings, "API_KEY", TEST_ENV_KEY)
+        monkeypatch.setattr(settings, "AGENT_LANE_BINDINGS", {"bound-agent": ["general"]})
+
+        # 携带未绑定的 agent-id: "unbound-agent"，向 "project" 泳道写入
+        resp = client.post(
+            "/add",
+            headers={
+                "X-API-Key": TEST_ENV_KEY,
+                "X-Agent-Id": "unbound-agent",
+            },
+            json={
+                "title": "Admin bypass ACL test",
+                "content": "Admin should bypass ACL even if unbound agent id is passed",
+                "lane": "project",
+            },
+        )
+        assert resp.status_code == 200
+
+    def test_non_admin_with_unbound_agent_id_rejected_by_acl(self, client, monkeypatch):
+        """普通用户 (Bearer Key 鉴权) 携带未绑定的 X-Agent-Id 时会被 ACL 拦截返回 403"""
+        monkeypatch.setattr(settings, "AGENT_LANE_BINDINGS", {"bound-agent": ["general"]})
+
+        with db_module.get_session() as s:
+            raw_key, api_key = create_api_key("regular-user", ["project"])
+            s.add(api_key)
+            s.commit()
+
+        resp = client.post(
+            "/add",
+            headers={
+                "Authorization": f"Bearer {raw_key}",
+                "X-Agent-Id": "unbound-agent",
+            },
+            json={
+                "title": "Regular user ACL check",
+                "content": "Regular user must be blocked when agent id is unbound",
+                "lane": "project",
+            },
+        )
+        assert resp.status_code == 403
+        assert "Agent not bound (ACL)" in resp.json()["detail"]
+
+    def test_non_admin_bearer_cannot_write_to_unauthorized_new_lanes(self, client):
+        """受限 Bearer 用户无法跨越其授权边界写入新增泳道 (如 hermes, project)"""
+        with db_module.get_session() as s:
+            raw_key, api_key = create_api_key("restricted-user", ["general"])
+            s.add(api_key)
+            s.commit()
+
+        for lane in ("hermes", "project", "working", "user"):
+            resp = client.post(
+                "/add",
+                headers={"Authorization": f"Bearer {raw_key}"},
+                json={
+                    "title": f"Restricted write {lane}",
+                    "content": f"Content should not be writable to {lane} by restricted user",
+                    "lane": lane,
+                },
+            )
+            assert resp.status_code == 403
+

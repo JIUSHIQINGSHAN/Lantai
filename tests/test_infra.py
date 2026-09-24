@@ -40,3 +40,84 @@ class TestCosineMetric:
 
         source = inspect.getsource(ChromaVectorStore.__init__)
         assert "cosine" in source
+
+
+class TestChromaVectorStoreCompatibility:
+    """冒烟测试：验证 ChromaVectorStore 集合列举在不同版本（字符串/对象）下的兼容性"""
+
+    def test_collection_resolution_with_string_collection_names(self, monkeypatch, tmp_path):
+        """当 list_collections 返回字符串列表时（如 Chroma 0.6.0+ CollectionName），能正确识别 remembrance_vectors"""
+        import chromadb
+        from chromadb.config import Settings as ChromaSettings
+        from lantai.storage.vector_store import ChromaVectorStore
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                self.created_name = None
+
+            def list_collections(self):
+                # 返回字符串类型的集合名
+                return ["remembrance_vectors", "other_vectors"]
+
+            def get_or_create_collection(self, name, **kwargs):
+                self.created_name = name
+                return {"name": name}
+
+        fake_client = FakeClient()
+        monkeypatch.setattr(chromadb, "PersistentClient", lambda **kw: fake_client)
+        store = ChromaVectorStore()
+        assert fake_client.created_name == "remembrance_vectors"
+
+    def test_collection_resolution_with_object_collections(self, monkeypatch, tmp_path):
+        """当 list_collections 返回 Collection 实体对象时（如 Chroma < 0.6.0），能通过 .name 正确识别"""
+        import chromadb
+        from lantai.storage.vector_store import ChromaVectorStore
+
+        class MockCollectionObj:
+            def __init__(self, name):
+                self.name = name
+
+            def __repr__(self):
+                return f"<Collection object: {self.name}>"
+
+            def __str__(self):
+                return repr(self)
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                self.created_name = None
+
+            def list_collections(self):
+                # 返回含有 name 属性但 str(c) 为对象表示的对象
+                return [MockCollectionObj("remembrance_vectors")]
+
+            def get_or_create_collection(self, name, **kwargs):
+                self.created_name = name
+                return {"name": name}
+
+        fake_client = FakeClient()
+        monkeypatch.setattr(chromadb, "PersistentClient", lambda **kw: fake_client)
+        store = ChromaVectorStore()
+        assert fake_client.created_name == "remembrance_vectors"
+
+    def test_collection_resolution_fallback_to_lantai_vectors(self, monkeypatch, tmp_path):
+        """当既有集合中不存在 remembrance_vectors 时，回退使用 lantai_vectors"""
+        import chromadb
+        from lantai.storage.vector_store import ChromaVectorStore
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                self.created_name = None
+
+            def list_collections(self):
+                return []
+
+            def get_or_create_collection(self, name, **kwargs):
+                self.created_name = name
+                return {"name": name}
+
+        fake_client = FakeClient()
+        monkeypatch.setattr(chromadb, "PersistentClient", lambda **kw: fake_client)
+        store = ChromaVectorStore()
+        assert fake_client.created_name == "lantai_vectors"
+

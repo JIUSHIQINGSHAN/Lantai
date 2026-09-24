@@ -32,7 +32,7 @@ import threading
 logger = logging.getLogger(__name__)
 
 # ── 配置 ──────────────────────────────────────────────────────────
-_VENV_PY = r"C:/Users/Asus/Desktop/记忆/.venv-audit/Scripts/python.exe"
+_VENV_PY = r"C:/Users/Asus/Desktop/记忆/.venv/Scripts/python.exe"
 _SHELL_HOOK = r"C:/Users/Asus/Desktop/记忆/scripts/shell_hook.py"
 _REQUEST_TIMEOUT = 5.0  # 注入请求超时（秒）
 _DIALOGUE_TIMEOUT = 30.0  # 对话写入请求超时（秒，含 LLM 提取）
