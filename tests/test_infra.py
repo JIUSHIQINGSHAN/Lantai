@@ -8,8 +8,25 @@ T02: 基础设施栈测试
 - ChromaDB 使用 cosine 距离
 """
 
+import sys
+import types
+
 from lantai.core.settings import Settings
 from lantai.models.tables import MemoryItem
+
+
+def _fake_chroma_module(fake_client, settings_cls=None):
+    """构造 chromadb 替身模块，仅替换 sys.modules["chromadb"] 条目。
+
+    不 setattr 全局 chromadb 模块——那会污染 chromadb 内部组件缓存并泄漏到
+    后续测试的内嵌 Chroma 客户端（全量跑实证，票 03 终验定位）。config 子模块
+    保留真实引用，使 patch 窗口内 `from chromadb.config import Settings` 仍可用。
+    """
+    fake = types.ModuleType("chromadb")
+    fake.PersistentClient = lambda **kw: fake_client
+    fake.config = __import__("chromadb.config", fromlist=["Settings"])
+    fake.Settings = settings_cls or fake.config.Settings
+    return fake
 
 
 class TestEmbedModel:
@@ -64,7 +81,7 @@ class TestChromaVectorStoreCompatibility:
                 return {"name": name}
 
         fake_client = FakeClient()
-        monkeypatch.setattr(chromadb, "PersistentClient", lambda **kw: fake_client)
+        monkeypatch.setitem(sys.modules, "chromadb", _fake_chroma_module(fake_client, ChromaSettings))
         store = ChromaVectorStore()
         assert fake_client.created_name == "remembrance_vectors"
 
@@ -96,7 +113,7 @@ class TestChromaVectorStoreCompatibility:
                 return {"name": name}
 
         fake_client = FakeClient()
-        monkeypatch.setattr(chromadb, "PersistentClient", lambda **kw: fake_client)
+        monkeypatch.setitem(sys.modules, "chromadb", _fake_chroma_module(fake_client))
         store = ChromaVectorStore()
         assert fake_client.created_name == "remembrance_vectors"
 
@@ -117,7 +134,7 @@ class TestChromaVectorStoreCompatibility:
                 return {"name": name}
 
         fake_client = FakeClient()
-        monkeypatch.setattr(chromadb, "PersistentClient", lambda **kw: fake_client)
+        monkeypatch.setitem(sys.modules, "chromadb", _fake_chroma_module(fake_client))
         store = ChromaVectorStore()
         assert fake_client.created_name == "lantai_vectors"
 

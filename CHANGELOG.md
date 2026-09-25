@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **更漏波全量落地（2026-09-25，roadmap-v2-execution 票 03/04/05/08/09/10/11；ADR-0048/0049；「更漏」Genglou=铜壶滴漏，ADR-0013 转正登记）**:
+  - **事件时间双时间轴（票 05-A/08/09/10，ADR-0048）**：MemoryItem 增 `event_time`（可空+精度 year~fuzzy，宁 miss 不猜）+ `valid_from`（语义必填，迁移回填 created_at）/`valid_to`；迁移链 v20→v21（`_has_column` 幂等 + 回填 + 三索引 + 表存在/双列守卫）。写入侧 `lantai/core/time_precision.py`（I1 校验 + 显式时间确定性格式提取，相对时间解析另票）+ 候选 provenance→proposal→MemoryItem 链路透传 + correct 可更正事件时间（旧值 corrections 留痕）。检索侧 `lantai/retrieval/temporal.py` 纯函数（逐精度区间/second 闭点特判/as-of 判定按信息量取最具体）+ hybrid 双挂点（主路径+拾遗降级）+ `RetrievalParams.temporal_asof_strict/temporal_fuzzy_penalty`（fail-closed）+ `POST /search` 与 MCP `search` 增 `as_of/as_of_recorded/time_from/time_to`（缺省行为逐字节不变）。迟到更正闭环 `lantai/cognition/late_correction.py`（替换型四步一个事务：supersedes 边+知命 SUPERSEDED+valid_to/valid_from 锚定+checkpoint+`ConflictEvent(kind="override")` 落账，I3 钳制豁免——锚点早于回填 valid_from 时钳制并留 clamped/anchor_raw；失效型仅回写 valid_to；自始错误导流笔削）；直断 recency 优先 event_time 且 `recency_axis` 入 DecisionTrace——「不按最近写入机械取胜」。**E2 实测：37 条时间/更新用例双视图证据选择正确率 1.0（≥90% 口径达标）**。
+  - **E1 阶段化评测 harness（票 03）**：`lantai/eval/staged.py` 六段回放（提取→闸门→入库→索引→召回→注入）+ 首错归因 Q1-Q6 + 条件化计分（失败只计入首错段）+ 预埋锚点三件套（闸门必拒/索引前删档/改写零召回）各归正确阶段不串段 + `scripts/run_staged_eval.py` 报告出口；`tests/test_staged_eval.py` 含 run_dry_run 对照校验（阶段化不改评分定义）。
+  - **回执链一等化（票 04，ADR-0049）**：RetrievalEvent 增 `request_id/receipt_status/receipt_at` 三列 + 迁移 v21→v22；状态机 pending→acked（backfill 落定）/pending→missed（`mark_missed_receipts` 超时惰性判定，missed 是事实不是错误）；`receipt_traceability_report()` 可追溯率出口 + `scripts/receipt_report.py`；shell_hook NDJSON `context` 响应携 `request_id`、`backfill` 帧透传对账（request_id 不一致记日志不拒绝，归属以 event_id 为准）。**受控链可追溯率 1.0 实测**。
+  - **测试增量**：test_genglou_migration（4）/test_genglou_ingest（8）/test_genglou_retrieval（11）/test_genglou_correction（4）/test_staged_eval（4）/test_receipt_chain（7）/test_e2_temporal（3）共 41 例不 mock 冒烟；既有 test_migrations/test_shell_hook/test_retrieval_log 回归全绿。
+  - **已知限制（如实声明）**：SQLModel 0.0.42 对 `default_factory` 字段（valid_from）在 DB 重读 NULL 时重新应用默认——「valid_from IS NULL」无稳定读回语义，I4 的承载面为 event_time IS NULL（E2 用例按此口径）；fuzzy 精度区间定宽 ±1d；事务轴完整 system-time as-of（append-only 版本化）留 v2（`as_of_recorded` 以 created_at 近似）。
+
 ### Fixed
 - **现状审阅六步收口（2026-09-20 第三批，票据 `.scratch/state-remediation-20260920/`）**:
   - **conftest API_KEY 测试环境消毒（票 02）**：仓库根部署 `.env`（gitignored）经 settings 的 env_file 渗入测试进程，`dev_mode_allowed()` 全局拒绝 DEV MODE——29 文件 70 例 401。conftest 加 autouse fixture 清 `settings.API_KEY` + pin 测试（`tests/test_test_environment.py`）把「测试环境 API_KEY 恒空」钉成显式契约；裸跑 `pytest tests/ -q`（无任何环境前缀）恢复全绿。

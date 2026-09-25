@@ -75,25 +75,23 @@ def asof_matches(item, as_of: datetime, *, delta_days: float = 1.0, strict: bool
     """as-of 视图判定（spec §3.2）：返回 (命中, matched_by)。
 
     判定顺序按信息量（matched_by 取最具体者）：
-    1. temporal_unknown（valid_from/valid_to/event_time 全缺，理论上回填后不应出现，
-       防御分支）→ (True, "unknown_soft")——I4：任何模式都放行；
-    2. 有效期命中（vf/vt 至少一端非空，NULL 端为开）→ (True, "validity")；
-    3. 事件区间命中 → (True, "event_interval")；
+    1. 有效期命中（vf/vt 至少一端非空，NULL 端为开）→ (True, "validity")；
+    2. 事件区间命中 → (True, "event_interval")；
+    3. **I4：event_time IS NULL → (True, "unknown_soft")**——任何模式都不因
+       时间条件硬排除（spec §2.5 I4；注意 valid_from 列在 SQLModel 0.0.42
+       default_factory 读回语义下不存在稳定 NULL——I4 的承载面是 event_time）；
     4. strict=True → (False, "") 剔除；strict=False（默认）→ (True, "missed_soft") 仅降权。
     """
     as_of = _ensure_utc(as_of)
     vf = _ensure_utc(item.valid_from) if item.valid_from else None
     vt = _ensure_utc(item.valid_to) if item.valid_to else None
-    if vf is None and vt is None and item.event_time is None:
-        return True, "unknown_soft"  # I4
     if vf or vt:
         if (vf is None or vf <= as_of) and (vt is None or vt > as_of):
             return True, "validity"
-    elif item.event_time is not None:
-        # 无有效期信息但有事件时间 → 有效期面不判，直接走事件区间
-        pass
-    if _event_interval_hit(item, as_of, delta_days):
+    if item.event_time is not None and _event_interval_hit(item, as_of, delta_days):
         return True, "event_interval"
+    if item.event_time is None:
+        return True, "unknown_soft"  # I4：event_time IS NULL 永不硬排除
     if strict:
         return False, ""
     return True, "missed_soft"
@@ -118,8 +116,8 @@ def window_matches(item, time_from: datetime, time_to: datetime) -> tuple:
         hi = vt if vt else datetime.max.replace(tzinfo=UTC)
         if lo < w1 and hi > w0:
             return True, "validity"
-    if item.event_time is None and item.valid_from is None and item.valid_to is None:
-        return True, "unknown_soft"  # I4
+    if item.event_time is None:
+        return True, "unknown_soft"  # I4：event_time IS NULL 永不硬排除
     return False, ""
 
 

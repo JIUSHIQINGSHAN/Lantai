@@ -70,13 +70,13 @@ def staged_env(tmp_path, monkeypatch):
     # 真内嵌 Chroma（tmp 目录；单例撕卸，不触发 conftest 绊线）
     from lantai.core.settings import settings
 
-    monkeypatch.setattr(settings, "CHROMADB_PATH", str(tmp_path / "chroma_staged"))
+    monkeypatch.setattr(settings, "CHROMADB_PATH", str(tmp_path / "chroma-staged"))
     monkeypatch.setattr(settings, "VECTOR_STORE_TYPE", "chromadb")
-    monkeypatch.setattr(vs_module, "_VS_SINGLETON", None, raising=False)
+    monkeypatch.setattr(vs_module, "_store", None, raising=False)
 
     yield engine
 
-    monkeypatch.setattr(vs_module, "_VS_SINGLETON", None, raising=False)
+    monkeypatch.setattr(vs_module, "_store", None, raising=False)
     engine.dispose()
 
 

@@ -179,7 +179,13 @@ class ConflictEngine:
         winner_comps = comps_a if winner_label == "A" else comps_b
         loser_comps = comps_b if winner_label == "A" else comps_a
         loser_label = "B" if winner_label == "A" else "A"
-        diffs = {k: round(winner_comps.get(k, 0) - loser_comps.get(k, 0), 3) for k in winner_comps}
+        # recency_axis 等字符串标注键不入差值计算（票 10）
+        diffs = {
+            k: round(winner_comps.get(k, 0) - loser_comps.get(k, 0), 3)
+            for k in winner_comps
+            if isinstance(winner_comps.get(k, 0), (int, float))
+            and isinstance(loser_comps.get(k, 0), (int, float))
+        }
         top_dim, top_diff = max(diffs.items(), key=lambda kv: kv[1])
         dim_labels = {
             "evidence_strength": "证据强度",

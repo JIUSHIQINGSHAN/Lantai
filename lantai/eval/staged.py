@@ -255,12 +255,9 @@ def run_staged_eval(*, extract_fn=None, top_k: int = 5) -> dict:
                 mid, content = item["mid"], item["content"]
                 sync_fts(s, mid, content)
                 s.commit()
-                from lantai.llm.client import embed as _prod_embed
-
-                try:
-                    emb = _prod_embed([content])[0]
-                except Exception:
-                    emb = _embed_for_eval([content])[0]
+                # 确定性 hash embed（spec §1.2 原则三：评测固定模型/种子；
+                # 与 _embed_for_eval 同源，杜绝 1024/512 混维写入同一 collection）
+                emb = _embed_for_eval([content])[0]
                 index_memory_item(mid, emb, {"memory_id": mid})
                 item["emb"] = emb
                 # 库内直查对账（不经检索路径）

@@ -95,8 +95,9 @@ class TestAsofMatches:
         assert ok and by == "event_interval"
 
     def test_i4_null_event_time_never_excluded(self):
-        """I4：event_time IS NULL 在严格模式下也放行（unknown_soft）。"""
-        item = self._item()  # 全缺
+        """I4：event_time IS NULL 在严格模式下也放行（unknown_soft）——
+        承载面是 event_time（valid_from 列在 SQLModel 0.0.42 读回语义下无稳定 NULL）。"""
+        item = self._item(valid_from=None, valid_to=None)  # event_time 全缺形态
         ok, by = asof_matches(item, datetime(2026, 9, 10, tzinfo=UTC), strict=True)
         assert ok and by == "unknown_soft"
         ok, by = asof_matches(item, datetime(2026, 9, 10, tzinfo=UTC), strict=False)
@@ -150,7 +151,7 @@ class TestViewFilterIntegration:
             event_time=datetime(2026, 1, 15, tzinfo=UTC),
             event_time_precision="day",
         )
-        unknown = _mem(id="evs-unknown")
+        unknown = _mem(id="evs-unknown", valid_from=None, valid_to=None)
         kept, explain = temporal_view_filter(
             [stale, unknown], as_of=datetime(2026, 9, 10, tzinfo=UTC), strict=True
         )
@@ -183,13 +184,13 @@ def retrieval_env(tmp_path, monkeypatch):
 
     from lantai.core.settings import settings
 
-    monkeypatch.setattr(settings, "CHROMADB_PATH", str(tmp_path / "chroma_retr"))
+    monkeypatch.setattr(settings, "CHROMADB_PATH", str(tmp_path / "chroma-retrieval"))
     monkeypatch.setattr(settings, "VECTOR_STORE_TYPE", "chromadb")
-    monkeypatch.setattr(vs_module, "_VS_SINGLETON", None, raising=False)
+    monkeypatch.setattr(vs_module, "_store", None, raising=False)
 
     yield engine
 
-    monkeypatch.setattr(vs_module, "_VS_SINGLETON", None, raising=False)
+    monkeypatch.setattr(vs_module, "_store", None, raising=False)
     engine.dispose()
 
 
