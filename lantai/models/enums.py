@@ -29,6 +29,7 @@ class ProposalType(StrEnum):
     MERGE = "merge"
     DEPRECATE = "deprecate"
     ROLLBACK = "rollback"
+    CONSOLIDATION = "consolidation"  # 沉潜过审（ADR-0050）：巩固产物提案
 
 
 class ProposalStatus(StrEnum):
@@ -37,6 +38,7 @@ class ProposalStatus(StrEnum):
     REJECTED = "rejected"
     APPLIED = "applied"
     ROLLED_BACK = "rolled_back"
+    SHADOW = "shadow"  # 沉潜过审（ADR-0050）：影子对照留痕，结构性不可裁决/不可应用
 
 
 class EdgeRelation(StrEnum):

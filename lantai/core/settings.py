@@ -315,6 +315,11 @@ class Settings(BaseSettings):
     AUTODREAM_MAX_DAILY: int = 10
     AUTODREAM_MIN_CONFIDENCE: float = 0.5
     AUTODREAM_CRON_DAYS: int = 7  # 周期蒸馏间隔（Fog：7 天周期记忆蒸馏）
+    # 沉潜过审（ADR-0050/票 07）：巩固产物过审开关（默认 off = 现行直写行为零漂移）
+    CONSOLIDATION_AUDIT_MODE: str = "off"  # off/shadow/enforce；非法值 fail-loud：拒绝执行巩固并 ERROR 留痕（宁停摆不静默直写）
+    CONSOLIDATION_SHADOW_MAX_DAYS: int = 7  # shadow 硬时限（天）：自 ConsolidationRun 首条 mode=shadow 留痕起算，超期拒绝执行巩固
+    CONSOLIDATION_REJECTED_COOLDOWN_DAYS: int = 30  # consolidation 提案被拒后冷却期（天）：抑制生成侧重复奏（每夜重新提纯是真实 LLM 成本），期满允许再奏
+    CONSOLIDATION_AGGREGATE_MASTER_MIN_SOURCES: int = 3  # 聚合主记忆判定阈值：source_ids ≥ 此值即视为已聚合主记忆，跳过聚类防无限递归折叠（ADR-0002 零硬编码）
     # 技能结晶（v0.7，借鉴 aiduMEI SkillCrystallizer 窄版）
     CRYSTAL_ENABLED: bool = True
     CRYSTAL_MIN_CLUSTER: int = 3
@@ -383,7 +388,11 @@ class Settings(BaseSettings):
         5.0  # 水位触发阈值（dry-run 推荐值维持；校准报告 2026-08-15：样本不足不下调）
     )
     REFLECT_IMPORTANCE_WINDOW_DAYS: int = 7  # 水位窗口（近似「自上次反思以来」，零新表）
-    REFLECT_AUTO_APPLY_CONF: float = 0.7  # 与 evolve 自动应用阈值一致（维持）
+    # 反思过审收口（ADR-0050/票 07 决策 7a）：反思产物自动应用总开关。
+    # 默认 False＝反思提案一律进 pending 待人工裁决（与沉潜/autodream 同轨：后台合成产物
+    # 不自动生效）；置 True 恢复「高置信 + rejecter risk=low 自动 apply」既有通道。
+    REFLECT_AUTO_APPLY: bool = False
+    REFLECT_AUTO_APPLY_CONF: float = 0.7  # 与 evolve 自动应用阈值一致（仅 REFLECT_AUTO_APPLY=True 时生效）
     REFLECT_MIN_CONFIDENCE: float = 0.5  # 低于此置信的提案不落库（维持）
     REFLECT_MIN_USE_COUNT: int = 3  # R4 低帮助率规则
     REFLECT_LOW_HELPFUL_RATIO: float = 0.3  # R4 低帮助率规则

@@ -455,7 +455,8 @@ def render_calibration_markdown(stats: dict) -> str:
         "## 待回填结论（对标 dry-run 推荐）",
         "",
         "- A 水位触发：REFLECT_IMPORTANCE_POOL 是否保持 5.0",
-        "- B 自动应用分流：REFLECT_AUTO_APPLY_CONF 是否保持 0.7",
+        "- B 反思过审：REFLECT_AUTO_APPLY 保持 False（默认关＝产物一律进 pending 过审，"
+        "ADR-0050 决策 7a）；REFLECT_AUTO_APPLY_CONF=0.7 仅显式开启时生效",
         "- C 落库底线：REFLECT_MIN_CONFIDENCE 是否保持 0.5",
     ]
     return "\n".join(lines) + "\n"

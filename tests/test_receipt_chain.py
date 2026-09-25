@@ -180,11 +180,11 @@ class TestReceiptChain:
         conn.commit()
 
         apply_migrations(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 22
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 23  # 链已前移到 v23（票 07 沉潜过审），幂等守卫保证 v22 段仍生效
         cols = {r[1] for r in conn.execute("PRAGMA table_info(retrieval_event)").fetchall()}
         assert {"request_id", "receipt_status", "receipt_at"} <= cols
         apply_migrations(conn)  # 幂等重放
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 22
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 23
         conn.close()
 
 

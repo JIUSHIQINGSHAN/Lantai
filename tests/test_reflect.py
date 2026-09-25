@@ -315,8 +315,64 @@ class TestRunReflectOnce:
         calls = [curate_json] + reject_verdicts
         return calls
 
-    def test_auto_apply_deprecate(self, reflect_env):
-        """高置信 + risk=low → deprecate 自动应用：archived + valid_to + checkpoint。"""
+    def test_auto_apply_disabled_by_default(self, reflect_env):
+        """过审收口（ADR-0050 决策 7a）：REFLECT_AUTO_APPLY 默认 False →
+        高置信 + risk=low 的反射提案不再自动应用，一律进 pending 待人工裁决。"""
+        session_factory, _ = reflect_env
+        _seed(
+            session_factory,
+            [
+                _mem(id="mem_old", content="旧域名 example.com"),
+                _mem(id="mem_new", content="新域名 example.org"),
+                MemoryEdge(
+                    id="edge_1",
+                    source_memory_id="mem_new",
+                    target_memory_id="mem_old",
+                    relation="supersedes",
+                    confidence=0.9,
+                ),
+            ],
+        )
+        curate = {
+            "proposals": [
+                {
+                    "proposal_type": "deprecate",
+                    "target_memory_id": "mem_old",
+                    "new_content": "",
+                    "memory_type": "semantic",
+                    "reason": "superseded by mem_new",
+                    "confidence": 0.9,
+                    "evidence_ids": ["mem_new"],
+                },
+            ]
+        }
+        reject = {"accept": True, "risk": "low", "reason": "supported"}
+
+        from lantai.core.settings import settings
+        from lantai.evolution.reflector import run_reflect_once
+
+        assert settings.REFLECT_AUTO_APPLY is False  # 默认关（现场断言，防被误改）
+
+        with (
+            patch("lantai.evolution.reflector.chat_json", side_effect=[curate, reject]),
+            _embed_mock(),
+            _vector_mocks(),
+        ):
+            result = run_reflect_once()
+
+        # 产物未自动生效：进 pending
+        assert result["auto_applied"] == 0
+        assert result["pending"] == 1
+        with session_factory() as s:
+            old = s.get(MemoryItem, "mem_old")
+            assert old.status == "active"  # 候选未被落库（未裁决）
+            prop = s.exec(select(MemoryProposal)).one()
+            assert prop.status == "pending"  # 待人工裁决
+            assert s.exec(select(MemoryCheckpoint)).all() == []  # 零 checkpoint
+
+    def test_auto_apply_deprecate(self, reflect_env, monkeypatch):
+        """高置信 + risk=low 且显式开启 REFLECT_AUTO_APPLY → deprecate 自动应用：
+        archived + valid_to + checkpoint（既有行为在开关开启时逐字保留）。"""
         session_factory, _ = reflect_env
         old = _mem(id="mem_old", content="旧域名 example.com")
         new = _mem(id="mem_new", content="新域名 example.org")
@@ -350,7 +406,10 @@ class TestRunReflectOnce:
         }
         reject = {"accept": True, "risk": "low", "reason": "supported"}
 
+        from lantai.core.settings import settings
         from lantai.evolution.reflector import run_reflect_once
+
+        monkeypatch.setattr(settings, "REFLECT_AUTO_APPLY", True)  # 显式开启（默认关）
 
         with (
             patch("lantai.evolution.reflector.chat_json", side_effect=[curate, reject]),
@@ -510,7 +569,7 @@ class TestRunOutcome:
             assert r.error == ""
             assert r.waterline == 0.0
 
-    def test_full_run_records_outcome(self, reflect_env):
+    def test_full_run_records_outcome(self, reflect_env, monkeypatch):
         session_factory, _ = reflect_env
         _seed(
             session_factory,
@@ -540,7 +599,10 @@ class TestRunOutcome:
             ]
         }
         reject = {"accept": True, "risk": "low", "reason": "supported"}
+        from lantai.core.settings import settings
         from lantai.evolution.reflector import run_reflect_once
+
+        monkeypatch.setattr(settings, "REFLECT_AUTO_APPLY", True)  # 显式开启（默认关）
 
         with (
             patch("lantai.evolution.reflector.chat_json", side_effect=[curate, reject]),

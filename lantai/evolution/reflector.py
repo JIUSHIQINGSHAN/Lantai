@@ -334,8 +334,10 @@ def run_reflect_once(source: str = "unknown") -> dict:
 def _run_reflect_once(source: str) -> dict:
     """反思主入口：健康扫描 →（水位触发新记忆蒸馏）→ curator → 提案 → 裁决。
 
-    自动应用：confidence >= REFLECT_AUTO_APPLY_CONF 且 rejecter risk=low；
+    自动应用（需 REFLECT_AUTO_APPLY=True，默认 False）：confidence >=
+    REFLECT_AUTO_APPLY_CONF 且 rejecter risk=low；开关关闭时一律 pending。
     risk=medium 强制 pending；accept=false / risk=high 丢弃（宁 miss）。
+    ADR-0050 决策 7a：默认关——后台合成产物不自动生效，人工闸门不被绕过。
     返回统计 + 健康快照前后对比（自证）。
     """
     with db.get_session() as s:
@@ -392,7 +394,11 @@ def _run_reflect_once(source: str) -> dict:
                 s.commit()
             discarded += 1
             continue
-        if prop.confidence >= settings.REFLECT_AUTO_APPLY_CONF and verdict.get("risk") == "low":
+        if (
+            settings.REFLECT_AUTO_APPLY
+            and prop.confidence >= settings.REFLECT_AUTO_APPLY_CONF
+            and verdict.get("risk") == "low"
+        ):
             from lantai.evolution.promoter import apply_proposal
 
             res = apply_proposal(prop.id)

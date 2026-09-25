@@ -50,6 +50,15 @@ _SECTION_ORDER = {
 }
 _PRIORITY_ORDER = {"critical": 0, "high": 1, "normal": 2, "low": 3}
 
+# 案牍展示层提案类型中文文案（ADR-0050/票 07）：consolidation 提案按 status=="pending"
+# 全量捞取自动进案牍（无类型白名单），此处仅增补枚举文案；未登记类型回落原始枚举值。
+_PROPOSAL_TYPE_LABELS = {
+    "consolidation": "沉潜巩固提案",
+}
+# 风险标注（ADR-0050）：consolidation 折叠多条 active 碎片并落新主记忆，
+# 波及面与 merge/deprecate 同级 → high（未知类型维持 medium）。
+_HIGH_RISK_PROPOSAL_TYPES = {"merge", "deprecate", "consolidation"}
+
 
 def _aware(value: datetime | None) -> datetime | None:
     if value is None:
@@ -207,19 +216,22 @@ def project_work_items(
                 id=f"proposal:{row['id']}",
                 kind="proposal",
                 source_id=row["id"],
-                title=f"{proposal_type} 提案",
+                title=_PROPOSAL_TYPE_LABELS.get(proposal_type) or f"{proposal_type} 提案",
                 summary=(row.get("reason") or row.get("proposed_patch", {}).get("content") or "")[
                     :240
                 ],
                 section="immediate_action" if stale else "pending_decisions",
                 priority="high" if stale else "normal",
                 reason="提案等待超过 7 天" if stale else "等待最终写入裁决",
-                risk="high" if proposal_type in {"merge", "deprecate"} else "medium",
+                risk="high" if proposal_type in _HIGH_RISK_PROPOSAL_TYPES else "medium",
                 status=row.get("status", "pending"),
                 created_at=created,
                 updated_at=created,
                 allowed_actions=["reject", "approve"],
-                badges=[proposal_type, f"置信 {float(row.get('confidence') or 0):.2f}"],
+                badges=[
+                    _PROPOSAL_TYPE_LABELS.get(proposal_type, proposal_type),
+                    f"置信 {float(row.get('confidence') or 0):.2f}",
+                ],
                 related_refs=[
                     {"kind": "candidate", "id": row["candidate_id"]}
                     for _ in [0]
@@ -603,16 +615,10 @@ def get_work_item_detail(kind: str, source_id: str) -> WorkItemDetailResponse:
         elif kind == "proposal":
             row = s.get(MemoryProposal, source_id)
             source = row.model_dump(mode="json")
-            related["candidate"] = (
-                s.get(MemoryCandidate, row.candidate_id).model_dump(mode="json")
-                if row.candidate_id and s.get(MemoryCandidate, row.candidate_id)
-                else None
-            )
-            related["target_memory"] = (
-                s.get(MemoryItem, row.target_memory_id).model_dump(mode="json")
-                if row.target_memory_id and s.get(MemoryItem, row.target_memory_id)
-                else None
-            )
+            cand = s.get(MemoryCandidate, row.candidate_id) if row.candidate_id else None
+            related["candidate"] = cand.model_dump(mode="json") if cand else None
+            target = s.get(MemoryItem, row.target_memory_id) if row.target_memory_id else None
+            related["target_memory"] = target.model_dump(mode="json") if target else None
             related["conflicts"] = [
                 value.model_dump(mode="json")
                 for conflict_id in row.conflict_ids

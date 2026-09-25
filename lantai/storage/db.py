@@ -16,7 +16,7 @@ engine = create_engine(settings.DATABASE_URL, echo=False, connect_args={"timeout
 # PRAGMA user_version 记录数据库结构版本；未版本化库（全新库或 v0.5 及以前
 # 老库）自动基线为 v1，增量补丁按版本号依次执行。ALTER TABLE ADD COLUMN 为
 # 毫秒级操作，代码更新与数据重构解耦，异常只记日志不阻断启动（降级而非崩溃）。
-CURRENT_SCHEMA_VERSION = 22
+CURRENT_SCHEMA_VERSION = 23
 
 
 def _has_column(conn, table: str, column: str) -> bool:
@@ -483,6 +483,24 @@ def apply_migrations(conn) -> None:
             conn.execute("PRAGMA user_version = 22")
             conn.commit()
             logger.info("Migrated v22: receipt chain (ADR-0049)")
+
+        # v22 -> v23: 沉潜过审（ADR-0050）——consolidation_run 运行留痕表
+        # （shadow/enforce 期每次运行一行的审计分母地基；off 期零新行，表结构照建）
+        if user_version < 23:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS consolidation_run ("
+                "id TEXT PRIMARY KEY, ran_at DATETIME, "
+                "mode TEXT DEFAULT 'off', "
+                "clusters INTEGER DEFAULT 0, purified_ok INTEGER DEFAULT 0, "
+                "proposals_created INTEGER DEFAULT 0, "
+                "skipped_dupes INTEGER DEFAULT 0, "
+                "skipped_rejected_cooldown INTEGER DEFAULT 0, "
+                "skipped_lowq INTEGER DEFAULT 0, "
+                "pruned INTEGER DEFAULT 0, error TEXT DEFAULT '')"
+            )
+            conn.execute("PRAGMA user_version = 23")
+            conn.commit()
+            logger.info("Migrated v23: consolidation audit gate run ledger (ADR-0050)")
 
     except Exception as exc:
         logger.error("数据库增量迁移异常（服务继续启动）: %s", exc)

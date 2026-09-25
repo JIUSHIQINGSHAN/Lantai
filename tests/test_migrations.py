@@ -131,3 +131,45 @@ class TestApplyMigrations:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         assert conn.execute("SELECT COUNT(*) FROM memorycandidate").fetchone()[0] == 1
         conn.close()
+
+    def test_v22_to_v23_creates_consolidation_run(self, tmp_path):
+        """v22 老库 → v23（ADR-0050/票 07）：consolidation_run 运行留痕表补建，
+        字段齐全、幂等、存量数据保持。"""
+        path = tmp_path / "v22.db"
+        conn = sqlite3.connect(str(path))
+        conn.executescript(
+            """
+            CREATE TABLE retrieval_event (
+                id TEXT PRIMARY KEY, query TEXT, request_id TEXT,
+                receipt_status TEXT DEFAULT 'pending', receipt_at DATETIME
+            );
+            """
+        )
+        conn.execute("INSERT INTO retrieval_event (id, query) VALUES (?, ?)", ("r1", "老查询"))
+        conn.execute("PRAGMA user_version = 22")
+        conn.commit()
+
+        apply_migrations(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
+        cols = _columns(conn, "consolidation_run")
+        for col in (
+            "id",
+            "ran_at",
+            "mode",
+            "clusters",
+            "purified_ok",
+            "proposals_created",
+            "skipped_dupes",
+            "skipped_rejected_cooldown",
+            "skipped_lowq",
+            "pruned",
+            "error",
+        ):
+            assert col in cols
+        assert conn.execute("SELECT id FROM retrieval_event WHERE id = ?", ("r1",)).fetchall() == [
+            ("r1",)
+        ]
+        # 幂等：重复启动不重建不报错
+        apply_migrations(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
+        conn.close()

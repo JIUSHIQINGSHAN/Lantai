@@ -601,6 +601,30 @@ class ReflectRun(SQLModel, table=True):
     error: str = ""  # 未捕获异常时记录（调度器重试前留痕）
 
 
+class ConsolidationRun(SQLModel, table=True):
+    """沉潜巩固运行留痕（ADR-0050 决策 9）：shadow/enforce 期每次运行一行，验收比例的分母地基。
+
+    off 期不留痕（零漂移）。purified_ok 唯一定义＝本周期通过 LLM 提纯与 TrustMem 且进入
+    「应落提案」判定（即去重/冷却/低质过滤之后）的簇数——提案数 ÷ purified_ok 校验
+    「留痕 ↔ 提案」两路一致性；直写指纹以伪 id checkpoint（memory_id="cluster_consolidation"）
+    新增行数独立承载（见 consolidation_service.consolidation_audit_report）。
+    """
+
+    __tablename__ = "consolidation_run"
+
+    id: str = Field(primary_key=True)
+    ran_at: datetime = Field(index=True)
+    mode: str = "off"  # shadow | enforce（off 不留痕）
+    clusters: int = 0
+    purified_ok: int = 0
+    proposals_created: int = 0
+    skipped_dupes: int = 0  # 生成侧幂等去重跳过簇数（同 evidence_ids 已有 pending 提案）
+    skipped_rejected_cooldown: int = 0  # 拒绝冷却期内跳过簇数（CONSOLIDATION_REJECTED_COOLDOWN_DAYS）
+    skipped_lowq: int = 0  # LLM 失败/输出无效/TrustMem 不过跳过簇数（宁 miss 不静默）
+    pruned: int = 0
+    error: str = ""  # 拒绝执行时记录原因（shadow 超期硬时限等；正常运行为空）
+
+
 class SessionCheckpoint(SQLModel, table=True):
     """底本（ADR-0021，session checkpoint）：五段会话快照。
 
