@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **宿主矩阵（2026-09-26，票据 `.scratch/host-matrix/`（spec + issues 01-05）；父票 `.scratch/roadmap-v2-execution/issues/06-p1-host-matrix.md`；roadmap P1-2；不起新名——描述性短语「宿主适配层/宿主矩阵」，扩写既有 Shell Hook 条）**:
+  - **协议归一化层**（`lantai/integrations/host_protocol.py`，纯函数、无 IO）：`HostRequest` 不可变值对象 + `parse_host_request` + `render_host_response`；`scripts/shell_hook.py` 退化为「适配 → 归一化 → 分发 → 渲染」的宿主实现之一，`_handle_one` 签名与返回逐字节不变——`tests/test_hermes_plugin.py` **零改动**通过、`tests/test_shell_hook.py` 既有断言**零改动**通过（该文件仅新增 2 条畸形帧回归测试，未触碰既有 24 例）。
+  - **宿主帧适配**（`lantai/integrations/host_adapters.py`）：Hermes 直通；Claude Code 与 Codex CLI → `hookSpecificOutput.additionalContext`（官方文档一手实证二者同形状）。**只翻译注入类响应**，回执/对话/底本等控制面应答原样返回（否则 `receipt_status` 被抹掉）。
+  - **≥3 宿主端到端冒烟**（`tests/test_host_matrix.py`，7 passed）：Hermes + Claude Code + Codex，真实子进程 + 真实 stdin/stdout NDJSON 协议帧 + 真实 SQLite/FTS，每宿主跑「注入（context 非空 + event_id）→ 回执（`receipt_status="acked"`）→ 隔离（畸形帧降级不影响后续）」三断言。唯一替身为子进程外部 embedding 网络（`tests/support/host_matrix_stub/sitecustomize.py`，确定性 3-gram 哈希；子进程无法继承父进程 patch）。
+  - **安装出口**（`scripts/install_host_hooks.py`）：默认**只打印**配置片段、不写宿主目录（宁 miss 不脏写）；`--write` 才落盘并打印落点；**落点已存在则拒绝覆盖**。三宿主片段：`.claude/settings.json` / `.codex/hooks.json`（含 `features.hooks`）/ `.cursor/rules/lantai.mdc`。
+  - **Cursor 降级档（如实声明）**：调研实证 Cursor **无命令钩子入口**，只能静态规则注入（无运行时检索、无回执）——故**不计入命令钩子矩阵**，矩阵取 Hermes + Claude Code + Codex（三者同构）。不依赖 Codex 阻塞语义（官方 config-reference 未载）。
+  - **协议文档**（`docs/host-hook-protocol.md`）：5 动作逐条列字段/超时/降级/回执语义；与 ADR-0006（时点决策）分工，ADR 只加引用行。
+  - **两处真实缺陷（实施中发现并修）**：①非对象 JSON 帧（`[1,2]`/`null`/`123`）原会抛 `AttributeError`——`--serve` 常驻 NDJSON 循环里**一个畸形帧即打死进程**，今统一静默降级；②CC/Codex 响应适配最初连回执应答也包成 `additionalContext`，致 `backfill` 在这两个宿主上**恒失败**——E2E 暴露后修正为只翻译注入类响应。
+  - **已知不一致（如实登记，未改）**：`checkpoint_write` 的 `session_id` 不过归一化函数（`query`/`dialogue` 经）——既有差异，改它会变更已落库来源链值；记入协议文档 §2.4。
 - **沉潜产物过审（2026-09-26，票据 `.scratch/roadmap-v2-execution/issues/07-p1-consolidation-audit.md`；ADR-0050；不起新名——描述性短语「沉潜/巩固产物过审」，`ProposalStatus.SHADOW`/`CONSOLIDATION` 为技术枚举值不入词汇表，CONTEXT.md 零改动）**:
   - **三模式机制（ADR-0050 决策 1/2）**：settings 增 `CONSOLIDATION_AUDIT_MODE`（off/shadow/enforce，默认 off＝现行直写行为逐字节零漂移，off 冒烟断言零新行；非法值 fail-loud 不静默回落——拒绝执行本周期巩固＋ERROR 留痕＋report status="refused"，宁巩固停摆不静默直写）＋ `CONSOLIDATION_SHADOW_MAX_DAYS=7`（shadow 硬时限，自 ConsolidationRun 首条 mode=shadow 留痕起算，超期拒绝执行巩固——静默直写不能在过审制名义下无限合法存续）＋ `CONSOLIDATION_REJECTED_COOLDOWN_DAYS=30`（拒绝冷却，只抑制生成侧重复奏不触碰提案终态）。
   - **enforce 提案制（决策 3）**：`consolidate_cluster` 提纯+TrustMem 通过后只落恰一条 pending `MemoryProposal`（`ProposalType` 枚举增补 `CONSOLIDATION`；evidence_ids=source_ids、proposed_patch=主记忆构造全集、confidence=提纯 confidence【漏填将令 supersedes 边与案牍徽标显 0.0】、tenant/user/agent/session 四元组取首碎片【同簇未必同租户】、reason=TrustMem 校验结论、decided_by="consolidation"），裁决前不落主记忆不折叠零 checkpoint；生成侧幂等去重＋拒绝冷却（skipped_dupes/skipped_rejected_cooldown/skipped_lowq 单列入 report 与留痕，防每夜重复提纯的真实 LLM 成本）；提案无 TTL（宁巩固延迟不未审生效）。

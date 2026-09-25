@@ -81,6 +81,32 @@ def test_handle_one_empty_returns_empty(monkeypatch):
     assert mod._handle_one('{"query":""}') == {}
 
 
+def test_handle_one_non_object_json_does_not_raise(monkeypatch):
+    """非对象 JSON 帧静默降级为空（票 06 片 01 修复）。
+
+    抽取前 `_handle_one` 对 `[1,2]`/`null`/`123`/`"str"` 会抛 AttributeError
+    （对非 dict 调 `.get`）——serve 常驻 NDJSON 循环里一个畸形帧即打死进程。
+    坏帧须降级不抛（宁 miss 不脏写）。
+    """
+    mod = _load_hook(monkeypatch)
+    for raw in ("[1,2]", "null", "123", '"str"', "true"):
+        assert mod._handle_one(raw) == {}, raw
+
+
+def test_serve_mode_survives_malformed_frame(monkeypatch, capsys):
+    """serve 模式遇畸形帧仍继续处理后续帧（进程不被打死）。"""
+    mod = _load_hook(monkeypatch)
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO('null\n{"query":""}\nnot-json{{{\n{"type":"checkpoint"}\n'),
+    )
+    monkeypatch.setattr("sys.argv", ["shell_hook.py", "--serve"])
+    mod.main()  # 不抛即通过；四个帧各自降级
+    lines = [ln for ln in capsys.readouterr().out.strip().splitlines() if ln.strip()]
+    assert len(lines) == 4
+    assert all(ln.startswith("{") for ln in lines)
+
+
 def test_serve_mode_processes_line(monkeypatch, capsys):
     """serve 模式：--serve 参数走 NDJSON 循环，逐行响应。"""
     mod = _load_hook(monkeypatch)

@@ -2,11 +2,8 @@
 
 契约：stdin JSON → stdout {context} 或 {}；2s 硬超时；异常静默降级。"""
 
-import json
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeout
 
 # ── 强制 UTF-8 I/O ──────────────────────────────────────────────
 # Windows 默认 GBK 解码 stdin；Hermes 按 UTF-8 写 JSON，按 GBK 读则中文乱码
@@ -24,8 +21,17 @@ from sqlmodel import select
 from lantai.core.ids import new_id
 from lantai.core.settings import settings
 from lantai.core.text import apply_recall_budget as _apply_recall_budget
-from lantai.core.text import normalize_session_id
 from lantai.core.text import truncate_codepoints as _truncate_codepoints
+from lantai.integrations.host_adapters import adapt_response
+from lantai.integrations.host_protocol import (
+    ACTION_BACKFILL,
+    ACTION_CHECKPOINT,
+    ACTION_CHECKPOINT_WRITE,
+    ACTION_DIALOGUE,
+    ACTION_QUERY,
+    parse_host_request,
+    render_host_response,
+)
 from lantai.llm.client import embed
 from lantai.llm.fence import fence_declaration, wrap_as_data
 from lantai.models.tables import MemoryItem
@@ -335,54 +341,60 @@ def _run_with_timeout(func, timeout, *args):
 
 
 def _handle_one(raw: str) -> dict:
-    """解析单个输入，返回字典结果。"""
-    raw = (raw or "").strip()
-    if not raw:
-        return {}
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
+    """解析单个输入，返回字典结果（宿主适配后的最终输出帧）。
+
+    分层（票 06）：
+    - 协议解析/字段校验 → `lantai.integrations.host_protocol`（宿主无关归一化层）
+    - 分发到 handler + 超时包装 → 本文件的 `_dispatch_one`
+    - 响应帧按宿主翻译 → `lantai.integrations.host_adapters`
+
+    宿主由环境变量 `LANTAI_HOST` 指定（宿主调用钩子时设置）；缺省 = 直通兰台
+    自有形状，故既有断言零改动即证明等价。
+    """
+    return adapt_response(os.environ.get("LANTAI_HOST") or None, _dispatch_one(raw))
+
+
+def _dispatch_one(raw: str) -> dict:
+    """归一化 → 分发到 handler + 超时包装（宿主无关）。"""
+    req = parse_host_request(raw)
+    if req is None:
         return {}
 
-    if data.get("type") == "dialogue":
-        text = data.get("text", "")
-        if not isinstance(text, str) or not text.strip():
-            return {}
-        # 来源链（P0 票02）：宁 miss 不脏写——非法 session/turn 一律留空/None；
-        # 校验单一真源 normalize_session_id；turn 契约 1-based（0 视为非法）
-        session_id = normalize_session_id(data.get("session_id"), default="")
-        turn = data.get("turn")
-        if not isinstance(turn, int) or isinstance(turn, bool) or turn < 1:
-            turn = None
+    if req.action == ACTION_DIALOGUE:
         return _run_with_timeout(
-            _handle_dialogue, settings.SHELL_HOOK_DIALOGUE_TIMEOUT, text, session_id, turn
+            _handle_dialogue,
+            settings.SHELL_HOOK_DIALOGUE_TIMEOUT,
+            req.text,
+            req.session_id,
+            req.turn,
         )
 
-    if data.get("type") == "backfill":
-        rid = data.get("request_id")
+    if req.action == ACTION_BACKFILL:
         return _run_with_timeout(
             _handle_backfill,
             settings.SHELL_HOOK_TIMEOUT,
-            data.get("event_id"),
-            data.get("used_ids"),
-            rid if isinstance(rid, str) and rid.strip() else None,
+            req.event_id,
+            list(req.used_ids),
+            req.request_id,
         )
 
-    if data.get("type") == "checkpoint":
+    if req.action == ACTION_CHECKPOINT:
         return _run_with_timeout(_handle_checkpoint, settings.SHELL_HOOK_TIMEOUT)
 
-    if data.get("type") == "checkpoint_write":
-        session_id = data.get("session_id", "")
-        blocks = data.get("blocks")
-        if not isinstance(session_id, str) or not isinstance(blocks, dict):
-            return {}
+    if req.action == ACTION_CHECKPOINT_WRITE:
         return _run_with_timeout(
-            _handle_checkpoint_write, settings.SHELL_HOOK_TIMEOUT, session_id, blocks
+            _handle_checkpoint_write,
+            settings.SHELL_HOOK_TIMEOUT,
+            req.session_id,
+            req.blocks,
         )
 
-    query = data.get("query", "") or data.get("message", "") or data.get("prompt", "")
-    session_id = normalize_session_id(data.get("session_id"), default=None)
-    return _run_with_timeout(build_context, settings.SHELL_HOOK_TIMEOUT, query, session_id)
+    if req.action == ACTION_QUERY:
+        return _run_with_timeout(
+            build_context, settings.SHELL_HOOK_TIMEOUT, req.query, req.session_id
+        )
+
+    return {}
 
 
 def main():
@@ -395,12 +407,12 @@ def main():
             if not line:
                 continue
             result = _handle_one(line)
-            sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+            sys.stdout.write(render_host_response(result) + "\n")
             sys.stdout.flush()
         return
 
     result = _handle_one(sys.stdin.read())
-    print(json.dumps(result, ensure_ascii=False))
+    print(render_host_response(result))
 
 
 if __name__ == "__main__":

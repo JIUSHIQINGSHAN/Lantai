@@ -23,6 +23,7 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **checkpoint**（检查点） | 记忆单项变更前后的对比快照，专门用于误操作或异常变更时的精确版本回滚。 | 命名：项目内部技术命名（快照）；设计：见 `lantai/models/tables.py`（`MemoryCheckpoint`） |
 | **archived**（归档记忆） | 因久未使用或严重衰减而退出常规检索的历史记忆，保留原始数据但不再干扰日常对话。 | 命名：项目内部技术名（ADR-0013 候选意象「尘封」）；设计：见 [ADR-0005](docs/adr/0005-forgetting-semantics.md) |
 | **Shell Hook** | 终端环境下的零依赖记忆注入通道；命令行工具以此在毫秒级内获取当前会话相关的记忆上下文。 | 命名：项目内部技术命名；设计：见 [ADR-0006](docs/adr/0006-shell-hook-contract.md) |
+| **宿主适配层**（宿主矩阵） | 把同一套记忆注入协议接给不同 AI 宿主（Hermes / Claude Code / Codex 等）的归一化层；协议解析、字段校验、帧渲染收敛于此，接新宿主只加一个薄帧映射。不起正式中文名（描述性短语，ADR-0013 纪律）。 | 命名：描述性短语（无新名）；设计：见 [宿主接入协议](docs/host-hook-protocol.md)、`lantai/integrations/host_protocol.py` |
 | **verbatim**（原文直存） | 对长代码、系统日志或精密配置等不宜提炼的内容进行原文完整存储的模式，以哈希去重并保留原始字句。 | 命名：项目内部技术命名（原文直存）；设计：见 [ADR-0009](docs/adr/0009-raw-drawer-verbatim.md) |
 | **conflict_event**（冲突账本） | 记录新旧记忆在规则或事实层发生矛盾的审计账簿，记录冲突双方与裁决历史，供人工或探针排解。 | 命名：项目内部技术名（ADR-0013 候选意象「参商」）；设计：见 [ADR-0010](docs/adr/0010-conflict-resolution-layer.md) |
 | **Skill 资产**（可注入技能） | 包含明确步骤与执行逻辑的程序性记忆；检索命中时以规范步骤块呈现，供 Agent 照章执行。 | 命名：项目内部命名（ADR-0013 候选意象「法门」）；设计：见 [ADR-0011](docs/adr/0011-skill-asset.md) |

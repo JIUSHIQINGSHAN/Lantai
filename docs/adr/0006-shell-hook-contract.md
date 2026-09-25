@@ -33,5 +33,9 @@
 
 ## 相关
 
+- **[宿主接入协议](../host-hook-protocol.md)** — 当前契约的权威描述（动作/字段/超时/降级/回执）；本 ADR 只记录时点决策，实现变更以该文件为准
+- [ADR-0051](0051-host-adapter-matrix.md) — 宿主适配矩阵（本契约泛化为多宿主，含 Cursor 降级档）
 - [ADR-0007](0007-mcp-form.md) — MCP server 形态（Shell Hook 是读路径）
+- [ADR-0049](0049-receipt-chain.md) — 回执链（`backfill` 的 `receipt_status="acked"` 语义来源）
 - [票据 10](../../.scratch/aidumem-port/issues/10-shell-hook-contract.md)
+- 票据 06（宿主矩阵泛化）：`.scratch/host-matrix/spec.md`
