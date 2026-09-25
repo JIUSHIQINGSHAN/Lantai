@@ -923,8 +923,8 @@ def _keyword_fallback(
         time_from=time_from,
         time_to=time_to,
         as_of_recorded=as_of_recorded,
-        strict=effective_params.temporal_asof_strict,
-        fuzzy_penalty=effective_params.temporal_fuzzy_penalty,
+        strict=params.temporal_asof_strict,
+        fuzzy_penalty=params.temporal_fuzzy_penalty,
     )
 
     if not items:

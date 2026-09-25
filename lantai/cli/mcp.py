@@ -50,10 +50,26 @@ def handle_search(params: dict) -> dict:
         event_id = _try_log(query, [], 0, gate, session_id=session_id)
         return {"results": [], "gate": gate, "event_id": event_id}
     domain = params.get("domain")
+    # 更漏（ADR-0048/票 11）：时效视图参数透传——全部缺省 = 现行行为不变
+    from datetime import datetime as _dt
+
+    def _parse_dt(v):
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("as_of/time_from/time_to must be ISO 8601 strings")
+        return _dt.fromisoformat(v)
+
+    temporal_kwargs = {
+        "as_of": _parse_dt(params.get("as_of")),
+        "as_of_recorded": _parse_dt(params.get("as_of_recorded")),
+        "time_from": _parse_dt(params.get("time_from")),
+        "time_to": _parse_dt(params.get("time_to")),
+    }
     import time
 
     t0 = time.perf_counter()
-    results = hybrid_search(query, top_k=top_k, domain=domain)
+    results = hybrid_search(query, top_k=top_k, domain=domain, **temporal_kwargs)
     latency_ms = int((time.perf_counter() - t0) * 1000)
     event_id = _try_log(query, results, latency_ms, gate, session_id=session_id)
     # Ticket 04: 检索透明——命中来源说明（id + 摘要 + 分数）
@@ -811,6 +827,10 @@ TOOLS = {
                     "description": "辨域过滤：user/session/agent/all",
                     "enum": ["user", "session", "agent", "all"],
                 },
+                "as_of": {"type": "string", "description": "历史时点视图（ISO 8601，更漏 ADR-0048）"},
+                "as_of_recorded": {"type": "string", "description": "事务轴近似 as-of（ISO 8601）"},
+                "time_from": {"type": "string", "description": "事件轴窗口起点（ISO 8601）"},
+                "time_to": {"type": "string", "description": "事件轴窗口终点（ISO 8601）"},
             },
             "required": ["query"],
         },
