@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - **实证（变异验证）**：`GATE_MIN_EXTRACTOR_CONF=0.55` 强制跑该测试 → failed；加 `patch.object(settings, "GATE_MIN_EXTRACTOR_CONF", 0.25)` 后同条件 → passed。即**这个测试一直在靠本地 `.env` 的一个非默认值活着**。
     - **修法**：测试内显式钉住阈值，同 `tests/test_e2e.py:165` 既有口径——那里注释本就写着「避免被宿主 .env 的 GATE_MIN_EXTRACTOR_CONF 污染」，**同样的坑踩过一次并修过一次，这次漏了 distill 这条路径**。
     - **系统性隐患（建议单开一票）**：本地 `.env` 有 14 项覆盖，至少两项让测试行为偏离 CI 默认——① `GATE_MIN_EXTRACTOR_CONF=0.25`（本轮已实证）；② `LANTAI_HOME` 指向**真实开发数据目录**，测试因此读写真实 ChromaDB/SQLite 而非隔离临时目录（本轮撞到 `Embedding dimension 8 does not match collection dimensionality 1024`），CI 是干净目录；另有 `RERANKER_ENABLED=false`、`OPENAI_BASE_URL`/`OPENAI_API_KEY` 亦不同。应收敛为「fixture 钉住全部相关配置」或「CI 显式注入同一份测试配置」，否则「本地绿 CI 红」会一而再。
+  - **收口：CI 全绿（2026-09-27，run 36265312167）**：Tests job **success**，`1263 passed` + 遗忘质量门禁 **PASS**。这是兰台历史上 CI **第一次真正跑完全量 pytest 并通过**——v0.22.1 及以前该 job 51 秒就挂在 Ruff lint 步骤，全量测试与遗忘门禁从未在 CI 执行过。三次 push 各修一层「本地绿 CI 红」的不同机制：`bd973f6` naive datetime 债 + 依赖上界（37 failed）→ `667eb6dc` `_distill` 漏 patch embedding、store 路径真连网（1 failed）→ `14ed7d8` 测试靠本地 `.env` 的 `GATE_MIN_EXTRACTOR_CONF=0.25` 活着、CI 用默认 0.55 拒掉候选（1 failed）。三条机制互不相同，共同点是**本地环境与 CI 的隐式差异**（本地有真 key、有 `.env` 覆盖、指向真实数据目录）。
 
 ## [0.22.1] - 2026-09-26 - 起复（Qifu · 巩固撤销与碎片恢复 + 裁决时刻口径）
 
