@@ -295,7 +295,7 @@ critical）、反思/参数建议任务失败、5xx 错误率、p95 延迟、零
 
 - `CONTEXT.md` — 领域词汇表（lane / gate / coalesce / fastpath / checkpoint…）
 - `docs/glossary.md` — **工程术语对照表（大白话版）**：契约 / 冒烟 / 门禁 / 回归…以及「怎么看一份 Agent 汇报」
-- `docs/adr/` — 架构决策记录 0001-0051
+- `docs/adr/` — 架构决策记录 0001-0053
 - `docs/plans/` — 各版本执行方案
 - `docs/release-process.md` — 版本上传规范流程（发布门禁 + 人工闸门）
 - `docs/aidumem-port-results.md` — aiduMEM 移植结果与审计修复记录
