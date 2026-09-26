@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **双版本复验**（锁上界后两个版本都必须绿）：`sqlmodel==0.0.47`（CI 实际版本）**1249 passed / 0 failed** + 遗忘门禁 6/6；`sqlmodel==0.0.42`（本地原版本）**1263 passed / 0 failed**（多出的 14 例是本轮新增的 `tests/test_core_time.py`）。
   - **读侧口径**（重要）：读回值的 tzinfo 是**版本相关**的——0.0.47 的 `process_result_value` 给无偏移落盘文本补 `tzinfo=utc`（读回 aware），0.0.42 用原生 `DateTime`（读回 naive）。产品代码不受影响（比较全走 `_ensure_utc` 归一或在 SQL 侧比，落盘文本两版逐字节相同）；测试断言因此改为只锁**时刻**、不锁时区标注（`tests/test_import.py` / `tests/test_import_jsonl.py` 的 `assert_same_moment`，`tests/test_param_shadow.py` 的 deadline 先归一再比），否则会 `TypeError: can't compare offset-naive and offset-aware`。
   - **测试增量**：`tests/test_core_time.py` 14 例不 mock 冒烟，直调 `utcnow` / `ensure_aware` / `parse_iso_utc`（aware 归一、naive 按 UTC 解释、None 透传、非法 ISO 抛错、写库守门）。这两个新助手是 datetime 列写库的唯一时区守门员，被 import_service / promoter / record_ops_service 三处产品路径调用。**变异验证**：`parse_iso_utc` 去掉 `ensure_aware` 包装 → naive 字符串用例 failed；`ensure_aware` 删 naive 分支 → 3 例 failed（还原后全绿）。
+  - **追加：CI 仍红一例——`_distill` 测试助手漏 patch embedding，真连了网（2026-09-27，run 36257985267）**：
+    - push 后 CI 的 **lint 步骤第一次通过**（历史上从未通过过），全量 pytest 也第一次跑完（13 分钟，此前 51 秒就挂在 lint）。但 **1 failed**：`tests/test_distill.py::TestDistill::test_stored_distill_recallable_via_hybrid_search` 断言「精华应经闸门管线落为 distill 泳道记忆」拿到 None。
+    - **根因（实证）**：CI 日志 `Captured stdout call` 段有 `dedup prescreen failed (insert fallback): RetryError[...AuthenticationError]`。`_distill` 助手只 patch 了 `distill_service.chat_json`，而 `store=True` 会走 `add_memory` → `_create_candidate_direct` → `_apply_dedup` → `embed(...)`——**真实外部网络调用**。本地有真 key 所以成功；CI 用 `tests/conftest.py` 的假 key `"test-key"`（其注释「不会真调 API」在此路径上不成立）拿到 AuthenticationError，被 catch 后回退 insert，两个环境走不同分支 → **本地绿 CI 红**。
+    - **修法**：`_distill` 内补两个 patch——`lantai.llm.client.embed`（源绑定）与 `lantai.services.memory_service.embed`（`from X import embed` 会各存一份，只替源不替已绑定引用不生效）。**实证**：不加 patch 稳定复现 AuthenticationError 警告；加上后警告变为 `Embedding dimension 8 does not match collection dimensionality 1024`（假向量 8 维 vs 真 ChromaDB collection 1024 维——已非网络调用）。
+    - **遗留（建议单开一票）**：该测试的假向量维度（8）与真实 ChromaDB collection（1024）不一致，靠异常被 catch 兜底。不影响断言（断言锚定 lane+session 查 SQLite），但测试替身保真度欠账。
+    - **诊断弯路备忘**：曾据 `gate/decision.py` 也有未替身 embed 而改那里，后经 socket 全屏蔽 + tripwire 实证该路径在本测试不触发，已回退。**网络逃逸必须 spy/tripwire 实证，不能读代码猜。**
 
 ## [0.22.1] - 2026-09-26 - 起复（Qifu · 巩固撤销与碎片恢复 + 裁决时刻口径）
 

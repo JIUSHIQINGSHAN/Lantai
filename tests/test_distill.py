@@ -71,7 +71,17 @@ def _distill(
         return_value=llm_return,
         side_effect=llm_side_effect,
     )
-    with ctx, llm:
+    # store=true 会走 add_memory → _apply_dedup → embed(...)：这是真实外部网络调用，
+    # 必须替身。不替身时本地有真 key 所以成功、CI 用 conftest 的假 key 拿到
+    # AuthenticationError（catch 后回退 insert），两个环境走不同分支——
+    # 这正是「本地绿 CI 红」的来源。embed 同时替 llm.client（源）与
+    # memory_service（已绑定引用）两处，因为 `from X import embed` 会各存一份。
+    emb = patch("lantai.llm.client.embed", side_effect=lambda texts: [[0.1] * 8 for _ in texts])
+    emb_ms = patch(
+        "lantai.services.memory_service.embed",
+        side_effect=lambda texts: [[0.1] * 8 for _ in texts],
+    )
+    with ctx, llm, emb, emb_ms:
         from lantai.services.distill_service import distill_session
 
         return distill_session(session_id, store=store, principal=principal)
