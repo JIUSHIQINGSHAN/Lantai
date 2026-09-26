@@ -471,6 +471,34 @@ def correct_memory_route(memory_id: str, req: CorrectReq, principal=Depends(get_
     return result
 
 
+@router.post("/terminal/memory/{memory_id}/revive-consolidated")
+def revive_consolidated_route(
+    memory_id: str, req: RetractReq, principal=Depends(get_current_user)
+):
+    """起复（笔削家族第七操作，ADR-0052）：巩固撤销面——碎片恢复 active 或主记忆撤销全簇。
+
+    幂等：已撤销簇返回 already_revoked、已起复碎片返回 already_active。
+    reason 必填（同 retract 口径）：撤销/恢复均须留痕。
+    """
+    from lantai.services import record_ops_service
+
+    if not (req.reason or "").strip():
+        raise HTTPException(422, "reason is required for revival")
+    session, conn = get_db_conn()
+    try:
+        _check_ownership(session, memory_id, principal)
+    finally:
+        session.close()
+    result = record_ops_service.revive_consolidated(
+        memory_id, reason=req.reason.strip(), actor=principal.user_id or ""
+    )
+    if not result["ok"]:
+        raise HTTPException(
+            404 if result["error"] == "memory not found" else 409, result["error"]
+        )
+    return result
+
+
 @router.post("/terminal/merge")
 def merge_memories(req: MergeReq, principal=Depends(get_current_user)):
     """合并两条记忆：将 source 的内容追加到 target，然后删除 source（归属校验，P0 票04）"""

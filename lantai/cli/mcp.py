@@ -337,6 +337,19 @@ def handle_rollback(params: dict) -> dict:
     return _rollback(memory_id)
 
 
+def handle_revive_consolidated(params: dict) -> dict:
+    """起复（ADR-0052）：巩固撤销面——碎片恢复 active 或主记忆撤销全簇。幂等。"""
+    memory_id = params.get("memory_id", "")
+    if not isinstance(memory_id, str) or not memory_id:
+        raise ValueError("memory_id must be a non-empty string")
+    reason = params.get("reason", "")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("reason is required for revival (同 retract 口径：撤销/恢复均须留痕)")
+    from lantai.services.record_ops_service import revive_consolidated
+
+    return revive_consolidated(memory_id, reason=reason.strip())
+
+
 def handle_conflicts_list(params: dict) -> dict:
     """列出冲突账本事件（默认 open，等待人工裁决）。"""
     limit = params.get("limit", 50)
@@ -1094,6 +1107,17 @@ TOOLS = {
             "required": ["memory_id"],
         },
     },
+    "revive_consolidated": {
+        "description": "起复（ADR-0052）：巩固撤销面——碎片恢复 active 或主记忆撤销全簇。幂等",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+            "required": ["memory_id", "reason"],
+        },
+    },
     "conflicts_list": {
         "description": "列出冲突账本事件（确定性规则命中记录）",
         "inputSchema": {
@@ -1505,6 +1529,7 @@ TOOL_HANDLERS = {
     "raw_add": handle_raw_add,
     "obsidian_sync": handle_obsidian_sync,
     "rollback": handle_rollback,
+    "revive_consolidated": handle_revive_consolidated,
     "conflicts_list": handle_conflicts_list,
     "conflict_resolve": handle_conflict_resolve,
     "add_dialogue": handle_add_dialogue,

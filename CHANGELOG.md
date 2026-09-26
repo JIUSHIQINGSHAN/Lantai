@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **常量与审计面**：`STATUS_CONSOLIDATED` 入模块常量；`AUDIT_ACTIONS` 增补 `"revive"` / `"unconsolidate"`（既有六名不动，顺序追加），既有审计查询面自动可见。
   - **命名**：「起复」（Qifu，唐宋典制「夺情起复」——官员去位后重新起用；碎片被折叠如官员去位，恢复现役即起复）已登记 `CONTEXT.md` 词汇表；候选「拾残」因与既有「拾遗」（检索韧性降级）同字不同义违反 R5 而弃用。
   - **测试增量**：`tests/test_record_lifecycle.py` 新增 `TestReviveConsolidated` 13 例不 mock 冒烟（真 DB + 真 FTS + 真实服务函数，替身边界仅 embed 与向量库）：碎片起复三面可召回/审计无正文/checkpoint 留痕、撤销全簇三面 0 命中 + 碎片全 active + 边清零、审计双面、两形态幂等、普通 active 记忆被拒、普通撤回过的主记忆补完撤销、撤销后同提案再 apply 被提案状态机拒（封死双主记忆）、FTS/向量失败如实回报且 SQL 权威过滤面兜底。**变异验证**：去掉边清理 → 3 例 failed；跳过碎片恢复 → 4 例 failed（还原后全绿）。
+- **起复出口——REST + MCP（2026-09-26，票据 `.scratch/consolidation-rollback/issues/02-p0-revive-exports.md`；ADR-0052；依赖票 01）**：
+  - **REST** `POST /terminal/memory/{memory_id}/revive-consolidated`（`routes_terminal.py`，笔削家族同址）：reason 必填非空（422 on empty，同 retract 口径——撤销/恢复均须留痕）；归属校验复用 `_check_ownership`（P0 票 04 单一真源）；`memory not found` → 404、`invalid target` → 409 映射同既有范式；幂等语义标注于 docstring。
+  - **MCP 工具** `revive_consolidated`（`mcp.py`）：schema 同 rollback 风格（memory_id + reason，两者均 required）；handler 调 service 单一真源；空 id/空 reason → `-32602` 且不调 service（留痕强制，异常隔离范式同既有）；`tools/list` 计数断言 59→60 同步。
+  - **测试增量**：`tests/test_record_lifecycle.py` 新增 `TestReviveRoutes` 7 例（碎片起复 200 / 主记忆撤销 200 + 簇内碎片全 active + 边清零 / 非巩固目标 409 资源原样 / 空 reason 422 资源原样 / 越权 403 资源原样 / 不存在 404 / 重复撤销 already_revoked）；`tests/test_mcp.py` 新增 2 例（合法输入透传返回 / 空 id 与空 reason 双校验）。**变异验证**：删路由 → 6 例 failed；去 reason 强制 → MCP 校验例 failed（还原后全绿）。
 
 ## [0.22.0] - 2026-09-26 - 圭表（Guibiao · 更漏双时间轴 + 宿主矩阵 + 沉潜过审）
 

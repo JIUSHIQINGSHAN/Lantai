@@ -31,7 +31,7 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert len(resp["result"]["tools"]) == 59  # 包含 cognitive_context 心斋认知切面
+    assert len(resp["result"]["tools"]) == 60  # 包含 cognitive_context 心斋认知切面 + revive_consolidated 起复
     assert "persona_get" in names
     assert "persona_set" in names
     assert "cognitive_context" in names
@@ -42,6 +42,7 @@ def test_tools_list():
     assert "kaogong_eval" in names
     assert "memory_consolidate" in names
     assert "consolidation_report" in names
+    assert "revive_consolidated" in names
     assert "probe_detect" in names
     assert "probe_resolve" in names
     assert "scratchpad_get" in names
@@ -941,3 +942,44 @@ def test_triage_mcp_tools(mcp_env):
     out_pilot = _call_tool(mod, "triage_auto_pilot", {"dry_run": True, "limit": 10})
     assert out_pilot["scanned"] >= 1
     assert out_pilot["dry_run"] is True
+
+
+def test_revive_consolidated_ok():
+    """revive_consolidated 工具：合法输入 → 调 service 并如实返回结果。"""
+    mod = _load_mcp()
+    with patch(
+        "lantai.services.record_ops_service.revive_consolidated",
+        return_value={"ok": True, "scope": "cluster"},
+    ) as m:
+        resp = mod.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 90,
+                "method": "tools/call",
+                "params": {
+                    "name": "revive_consolidated",
+                    "arguments": {"memory_id": "mem_1", "reason": "提纯丢失关键细节"},
+                },
+            }
+        )
+    assert "error" not in resp
+    m.assert_called_once_with("mem_1", reason="提纯丢失关键细节")
+    body = json.loads(resp["result"]["content"][0]["text"])
+    assert body["ok"] is True and body["scope"] == "cluster"
+
+
+def test_revive_consolidated_validation():
+    """revive_consolidated 工具：空 id / 空 reason → -32602，不调 service（留痕强制）。"""
+    mod = _load_mcp()
+    for args in ({"memory_id": "", "reason": "r"}, {"memory_id": "mem_1", "reason": "   "}):
+        with patch("lantai.services.record_ops_service.revive_consolidated") as m:
+            resp = mod.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 91,
+                    "method": "tools/call",
+                    "params": {"name": "revive_consolidated", "arguments": args},
+                }
+            )
+        assert resp["error"]["code"] == -32602
+        m.assert_not_called()
