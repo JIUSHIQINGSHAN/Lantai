@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-app = FastAPI(title="兰台记忆（Lantai）", version="0.21.0", lifespan=lifespan)
+app = FastAPI(title="兰台记忆（Lantai）", version="0.22.0", lifespan=lifespan)
 
 # 司天（ADR-0044）：请求级遥测（内存指标 + 采样落库）；关闭时中间件零开销直通
 app.add_middleware(TelemetryMiddleware)

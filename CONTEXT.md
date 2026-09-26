@@ -71,6 +71,7 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **漏窗**（Louchuang，UI 主题） | 悬镜控制台浅色皮肤；汲取苏州园林漏窗移步换景的意境，采用绢黄底色与月洞门造型卡片。 | 命名：苏州园林建筑构件「漏窗」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0038](docs/adr/0038-visual-management-studio.md) |
 | **缥缃**（Piaoxiang，版本代号） | v0.14.0 发行版本代号；象征古籍书卷，契合兰台为 AI 守护长期记忆档案的系统定位。 | 命名：古人对淡青与淡黄色丝帛书衣的称谓，借指书卷；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
 | **绳墨**（Shengmo，版本代号） | v0.15.2 发行版本代号；寓意以严谨准绳定曲直，对应反思校准、测试门禁与发布纪律收口。 | 命名：《礼记·经解》「绳墨之于曲直」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
+| **圭表**（Guibiao，版本代号） | v0.22.0 发行版本代号；寓意量时而立、以刻度界定是非，对应更漏双时间轴、宿主矩阵与沉潜过审三大件收口。 | 命名：古代度量日影定时辰的仪器；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
 | **更漏**（Genglou，时间感知） | 记忆的双时间轴体系：区分「兰台何时知道」（事务轴 `created_at`）与「现实何时发生/何时为真」（事件轴 `event_time` ± 精度标识、主张有效期 `valid_from`/`valid_to`）；支撑当前态视图与任意历史时点视图（as-of），并为迟到更正提供事件轴锚点与直断裁决依据。 | 命名：铜壶滴漏计时（ADR-0013 候选意象转正）；设计：见 [ADR-0048](docs/adr/0048-genglou-bitemporal-event-time.md) 与 [P1 Schema 规范](docs/plans/p1-event-time-schema-spec.md) |
 | *decay_score*（技术字段） | 记忆保持强度分值（0.0~1.0）；随时间指数衰减，跌破极低阈值后触发休眠归档。 | 命名：项目内部技术字段；设计：见 `lantai/models/tables.py` 及 [ADR-0005](docs/adr/0005-forgetting-semantics.md) |
 | *search_trace*（技术字段） | 检索诊断调试数组；开启后记录检索执行各步骤的耗时、候选条数与得分分布。 | 命名：项目内部技术字段；设计：见 `lantai/retrieval/hybrid.py` 诊断输出 |

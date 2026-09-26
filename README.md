@@ -11,9 +11,9 @@
 让 AI 在对的时间，找到对的回忆。
 ```
 
-[![Version](https://img.shields.io/badge/version-0.21.0-blue.svg)](https://github.com/JIUSHIQINGSHAN/Lantai)
+[![Version](https://img.shields.io/badge/version-0.22.0-blue.svg)](https://github.com/JIUSHIQINGSHAN/Lantai)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-yellow.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-849%2F849-green.svg)](docs/aidumem-port-results.md)
+[![Tests](https://img.shields.io/badge/tests-1220%2F1220-green.svg)](docs/aidumem-port-results.md)
 [![改编自](https://img.shields.io/badge/based%20on-aiduMEM-orange.svg)](https://github.com/monkey2jack/aiduMEM)
 
 ---
@@ -94,12 +94,12 @@ lantai-server
 ### 方式二：Docker 容器运行
 
 ```bash
-docker build -t lantai:0.21.0 .
+docker build -t lantai:0.22.0 .
 docker run -d -p 8767:8767 \
   -e API_KEY=your-admin-key \
   -e OPENAI_API_KEY=sk-xxx \
   -v /your/data:/data \
-  lantai:0.21.0
+  lantai:0.22.0
 ```
 
 > 容器默认 `HOST=0.0.0.0` 对外暴露，**必须注入 `API_KEY`**——启动守卫（`assert_secure_binding`）会在非回环地址且无密钥时拒绝运行；请求路径也会校验 `X-API-Key`（或库内 Bearer key），非回环不再回退 DEV MODE。
@@ -167,6 +167,18 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 ### 🕰️ 克罗诺斯双时间轴（Chronos · 移植自 aiduMEM）
 
 `valid_from` / `valid_to` 时间窗口：未生效记忆直接过滤，过期记忆降权保留。设了时间窗的记忆自动受控。
+
+### ⏱️ 更漏双时间轴（Genglou · 事件时间，ADR-0048）
+
+`valid_from` / `valid_to` 管「何时为真」，`event_time`（+ 精度标记）管「现实何时发生」——两轴分离，迟到更正有锚点。`POST /search?as_of=...` 查任意历史时点的世界快照，`time_from/time_to` 圈时间窗；无 `event_time` 的记忆**永不硬排除**（宁 miss 不脏写，I4 不变式）。
+
+### 🛰️ 注入回执链（ADR-0049）
+
+每次注入带 `request_id`，宿主回执回填 `receipt_status`（acked / missed）——「AI 到底有没有收到这条记忆」从此可追溯，不是猜。
+
+### 🔌 宿主矩阵（ADR-0051）
+
+同一套记忆注入协议接多个 AI 宿主：Hermes（插件）、Claude Code hooks、Codex CLI——协议归一化在 `lantai/integrations/host_protocol.py`，接新宿主只加一个薄帧映射。安装出口 `scripts/install_host_hooks.py`（默认只打印、不写盘）。
 
 ### 📸 Checkpoint 回滚
 
@@ -250,6 +262,8 @@ critical）、反思/参数建议任务失败、5xx 错误率、p95 延迟、零
 | `MONITOR_PERSIST_SLOW_MS` / `MONITOR_PERSIST_SAMPLE` | `800` / `20` | 慢请求阈值（必落库）与正常请求落库采样率 1/N |
 | `MONITOR_RETENTION_DAYS` | `7` | `operation_logs` 保留天数 |
 | `MONITOR_ALERT_*` | 见 settings | 告警阈值：错误率 / p95 / 零召回率 / 待审积压 / 库体积 |
+| `CONSOLIDATION_AUDIT_MODE` | `off` | 沉潜巩固产物过审模式（ADR-0050）：`off` 现行直写 / `shadow` 影子对照 / `enforce` 一律提案待人工裁决；非法值 fail-loud 停摆 |
+| `REFLECT_AUTO_APPLY` | `false` | 反思产物自动应用开关（ADR-0050 决策 7a）：默认关＝反思产物一律进 pending 待审 |
 
 ## 测试
 
@@ -275,12 +289,13 @@ critical）、反思/参数建议任务失败、5xx 错误率、p95 延迟、零
 - [ ] v0.16.2 观察池选一（Persona / refine / EvolveMem / 评测集新类别）（bge-m3 中文样本）——实测 36 对 / 3 类：单一余弦阈值无法分离 merge/update，升级结构判别（ADR-0019）
 - [x] v0.15 校准·底本·检索·工程健康（A 观察期校准 + B 底本闭环 + C 检索深化 + D 工程健康）——v0.15.0/.1/.2 三版收口，tag 已推送
 - [ ] v0.16 沙汰·察窗·零召回·观察池（运营健康收口）——候选入队信噪分离 + 观察窗口口径 + 零召回根因修复 + 观察池选一，见 [路线计划书](docs/plans/roadmap-2026-08-v016.md)
+- [x] v0.22.0 圭表——更漏双时间轴（ADR-0048）+ 回执链一等化（ADR-0049）+ 宿主矩阵（ADR-0051）+ 沉潜产物过审（ADR-0050）+ E1/E2 评测 harness（roadmap-v2 11 票全清，tag 已推送）
 
 ## 文档索引
 
 - `CONTEXT.md` — 领域词汇表（lane / gate / coalesce / fastpath / checkpoint…）
 - `docs/glossary.md` — **工程术语对照表（大白话版）**：契约 / 冒烟 / 门禁 / 回归…以及「怎么看一份 Agent 汇报」
-- `docs/adr/` — 架构决策记录 0001-0044
+- `docs/adr/` — 架构决策记录 0001-0051
 - `docs/plans/` — 各版本执行方案
 - `docs/release-process.md` — 版本上传规范流程（发布门禁 + 人工闸门）
 - `docs/aidumem-port-results.md` — aiduMEM 移植结果与审计修复记录
