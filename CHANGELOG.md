@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - **修法**：`_distill` 内补两个 patch——`lantai.llm.client.embed`（源绑定）与 `lantai.services.memory_service.embed`（`from X import embed` 会各存一份，只替源不替已绑定引用不生效）。**实证**：不加 patch 稳定复现 AuthenticationError 警告；加上后警告变为 `Embedding dimension 8 does not match collection dimensionality 1024`（假向量 8 维 vs 真 ChromaDB collection 1024 维——已非网络调用）。
     - **遗留（建议单开一票）**：该测试的假向量维度（8）与真实 ChromaDB collection（1024）不一致，靠异常被 catch 兜底。不影响断言（断言锚定 lane+session 查 SQLite），但测试替身保真度欠账。
     - **诊断弯路备忘**：曾据 `gate/decision.py` 也有未替身 embed 而改那里，后经 socket 全屏蔽 + tripwire 实证该路径在本测试不触发，已回退。**网络逃逸必须 spy/tripwire 实证，不能读代码猜。**
+  - **同例二次根因：测试依赖本地 `.env` 的非默认配置，CI 没 `.env` 故红（2026-09-27，run 36263359841）**：
+    - 补了 embed patch 后网络逃逸警告消失（实证生效），但**同一断言仍红**——是两个独立问题。
+    - **根因**：distill 候选的 `extractor_confidence = 0.3`，而 `GATE_MIN_EXTRACTOR_CONF` 的**代码默认值是 0.55**。CI 无 `.env` → 用默认值 → `decide()` 判 low confidence 拒掉候选（走 `pending_review`，宁 miss 不脏写）→ 无提案 → 无 `MemoryItem` → 断言红。本地 `.env` 是 `0.25`（注释「落地校准：Qwen2.5-7B 实际置信度 0.3-0.5」）→ 一直绿。
+    - **实证（变异验证）**：`GATE_MIN_EXTRACTOR_CONF=0.55` 强制跑该测试 → failed；加 `patch.object(settings, "GATE_MIN_EXTRACTOR_CONF", 0.25)` 后同条件 → passed。即**这个测试一直在靠本地 `.env` 的一个非默认值活着**。
+    - **修法**：测试内显式钉住阈值，同 `tests/test_e2e.py:165` 既有口径——那里注释本就写着「避免被宿主 .env 的 GATE_MIN_EXTRACTOR_CONF 污染」，**同样的坑踩过一次并修过一次，这次漏了 distill 这条路径**。
+    - **系统性隐患（建议单开一票）**：本地 `.env` 有 14 项覆盖，至少两项让测试行为偏离 CI 默认——① `GATE_MIN_EXTRACTOR_CONF=0.25`（本轮已实证）；② `LANTAI_HOME` 指向**真实开发数据目录**，测试因此读写真实 ChromaDB/SQLite 而非隔离临时目录（本轮撞到 `Embedding dimension 8 does not match collection dimensionality 1024`），CI 是干净目录；另有 `RERANKER_ENABLED=false`、`OPENAI_BASE_URL`/`OPENAI_API_KEY` 亦不同。应收敛为「fixture 钉住全部相关配置」或「CI 显式注入同一份测试配置」，否则「本地绿 CI 红」会一而再。
 
 ## [0.22.1] - 2026-09-26 - 起复（Qifu · 巩固撤销与碎片恢复 + 裁决时刻口径）
 

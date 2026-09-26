@@ -171,8 +171,14 @@ class TestDistill:
         def gts():
             return Session(engine)
 
+        # 闸门阈值必须显式钉住：distill 候选的 extractor_confidence 是 0.3，而
+        # GATE_MIN_EXTRACTOR_CONF 的**代码默认值是 0.55**——CI 没有 .env，用默认值
+        # 会把候选判为 low confidence 拒掉（走 pending_review，宁 miss 不脏写），
+        # 于是没有提案、没有 MemoryItem，断言必红。本地 .env 是 0.25 所以一直绿。
+        # 同 test_e2e.py 的口径：不让宿主 .env / 环境变量决定测试走哪条分支。
         with (
             patch.object(db_module, "get_session", gts),
+            patch.object(settings, "GATE_MIN_EXTRACTOR_CONF", 0.25),
             patch(
                 "lantai.evolution.proposer.chat_json",
                 return_value={
