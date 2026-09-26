@@ -587,6 +587,73 @@ class TestConsolidationDB:
             ids = {m.id for c in find_consolidation_clusters(s) for m in c}
             assert "mem_agg" in ids  # 阈值放开后回到候选面
 
+    def test_min_cluster_size_is_configurable(self, param_env, monkeypatch):
+        """聚类下限可配（ADR-0002 零硬编码）：原硬编码 min_cluster_size=3（签名默认值
+        与 run_consolidation_cycle 调用字面量两处），现取
+        settings.CONSOLIDATION_MIN_CLUSTER_SIZE——两条同关键词碎片在默认下限下不成簇，
+        下限降到 2 即成簇，证明参数真实生效而非摆设。"""
+        session_factory, _ = param_env
+        with session_factory() as s:
+            # 恰好两条同关键词碎片：默认下限 3 下不成簇
+            s.add(
+                MemoryItem(
+                    id="mem_mc1",
+                    content="聚类下限测试 龙井 茶 杭州",
+                    lane="general",
+                    domain="user",
+                    status="active",
+                )
+            )
+            s.add(
+                MemoryItem(
+                    id="mem_mc2",
+                    content="聚类下限测试 龙井 茶 杭州 又一条",
+                    lane="general",
+                    domain="user",
+                    status="active",
+                )
+            )
+            s.commit()
+
+            monkeypatch.setattr(settings, "CONSOLIDATION_MIN_CLUSTER_SIZE", 3)
+            assert find_consolidation_clusters(s) == []
+
+            monkeypatch.setattr(settings, "CONSOLIDATION_MIN_CLUSTER_SIZE", 2)
+            clusters = find_consolidation_clusters(s)
+            assert len(clusters) == 1
+            assert {m.id for m in clusters[0]} == {"mem_mc1", "mem_mc2"}
+
+    def test_prune_threshold_is_configurable(self, param_env, monkeypatch):
+        """突触修剪阈值可配（ADR-0002 零硬编码）：原硬编码 threshold=0.05（签名默认值
+        与 run_consolidation_cycle 调用字面量两处），现取
+        settings.CONSOLIDATION_PRUNE_THRESHOLD——decay=0.04 的记忆在默认阈值下被修剪，
+        阈值降到 0.01 后同一条不被修剪，证明参数真实生效。"""
+        session_factory, _ = param_env
+        with session_factory() as s:
+            s.add(
+                MemoryItem(
+                    id="mem_prune",
+                    content="修剪阈值测试 一条深度衰减碎片",
+                    lane="general",
+                    domain="user",
+                    status="active",
+                    decay_score=0.04,
+                    helpful_count=0,
+                )
+            )
+            s.commit()
+
+            monkeypatch.setattr(settings, "CONSOLIDATION_PRUNE_THRESHOLD", 0.05)
+            assert prune_decayed_synapses(session=s) == 1
+            assert s.get(MemoryItem, "mem_prune").status == "archived"
+
+            # 阈值降到 0.01 → 同一条（decay=0.04）不再被修剪
+            s.get(MemoryItem, "mem_prune").status = "active"
+            s.commit()
+            monkeypatch.setattr(settings, "CONSOLIDATION_PRUNE_THRESHOLD", 0.01)
+            assert prune_decayed_synapses(session=s) == 0
+            assert s.get(MemoryItem, "mem_prune").status == "active"
+
     def test_enforce_dedup_and_cooldown(self, param_env, monkeypatch):
         """生成侧幂等去重与拒绝冷却（ADR-0050 决策 3）：同 evidence pending 已存在→跳过；
         冷却期内 rejected→跳过；冷却期满→允许再奏。"""

@@ -113,8 +113,14 @@ def _proposal_quadruple(cluster_items: list[MemoryItem]) -> dict:
 
 
 def find_consolidation_clusters(
-    session: Session, min_cluster_size: int = 3
+    session: Session, min_cluster_size: int | None = None
 ) -> list[list[MemoryItem]]:
+    """扫描活跃记忆，按 domain/lane 与主题聚类出可折叠的碎片记忆集。
+
+    min_cluster_size 缺省取 settings.CONSOLIDATION_MIN_CLUSTER_SIZE（ADR-0002 零硬编码）。
+    """
+    if min_cluster_size is None:
+        min_cluster_size = settings.CONSOLIDATION_MIN_CLUSTER_SIZE
     """扫描活跃记忆，按 domain/lane 与主题聚类出可折叠的碎片记忆集。"""
     active_items = session.exec(select(MemoryItem).where(MemoryItem.status == "active")).all()
 
@@ -393,8 +399,13 @@ def consolidate_cluster(
         return _execute(s)
 
 
-def prune_decayed_synapses(threshold: float = 0.05, session: Session | None = None) -> int:
-    """自动修剪极度衰减的边缘碎片（转为 archived 休眠）。"""
+def prune_decayed_synapses(threshold: float | None = None, session: Session | None = None) -> int:
+    """自动修剪极度衰减的边缘碎片（转为 archived 休眠）。
+
+    threshold 缺省取 settings.CONSOLIDATION_PRUNE_THRESHOLD（ADR-0002 零硬编码）。
+    """
+    if threshold is None:
+        threshold = settings.CONSOLIDATION_PRUNE_THRESHOLD
 
     def _prune(s: Session) -> int:
         decayed_items = s.exec(
@@ -568,7 +579,7 @@ def run_consolidation_cycle(session: Session | None = None) -> dict:
             _LAST_CONSOLIDATION_REPORT = report
             return report
 
-        clusters = find_consolidation_clusters(s, min_cluster_size=3)
+        clusters = find_consolidation_clusters(s)
         new_count = 0
         proposals_created = 0
         purified_ok = 0
@@ -602,7 +613,7 @@ def run_consolidation_cycle(session: Session | None = None) -> dict:
                     # report 契约：proposals_created 在 shadow 期 = 影子提案数 = 直写数
                     proposals_created += 1
 
-        pruned = prune_decayed_synapses(threshold=0.05, session=s)
+        pruned = prune_decayed_synapses(session=s)
         # status 判定扩展（ADR-0050 决策 3）：只产提案的运行不再误报 idle
         status = "success" if (new_count + proposals_created + pruned) > 0 else "idle"
 

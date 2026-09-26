@@ -320,6 +320,8 @@ class Settings(BaseSettings):
     CONSOLIDATION_SHADOW_MAX_DAYS: int = 7  # shadow 硬时限（天）：自 ConsolidationRun 首条 mode=shadow 留痕起算，超期拒绝执行巩固
     CONSOLIDATION_REJECTED_COOLDOWN_DAYS: int = 30  # consolidation 提案被拒后冷却期（天）：抑制生成侧重复奏（每夜重新提纯是真实 LLM 成本），期满允许再奏
     CONSOLIDATION_AGGREGATE_MASTER_MIN_SOURCES: int = 3  # 聚合主记忆判定阈值：source_ids ≥ 此值即视为已聚合主记忆，跳过聚类防无限递归折叠（ADR-0002 零硬编码）
+    CONSOLIDATION_MIN_CLUSTER_SIZE: int = 3  # 聚类下限：同关键词命中记忆数 ≥ 此值才成簇（ADR-0002 零硬编码，原硬编码 3）
+    CONSOLIDATION_PRUNE_THRESHOLD: float = 0.05  # 突触修剪阈值：decay_score < 此值即剪（ADR-0002 零硬编码，原硬编码 0.05）
     # 技能结晶（v0.7，借鉴 aiduMEI SkillCrystallizer 窄版）
     CRYSTAL_ENABLED: bool = True
     CRYSTAL_MIN_CLUSTER: int = 3
