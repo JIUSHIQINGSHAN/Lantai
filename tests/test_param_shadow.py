@@ -7,7 +7,7 @@ promote 通过、到期判定、promote 前置检查。
 check_shadow_due 到期判定、rollback 护栏恢复。
 """
 
-from datetime import timedelta
+from datetime import UTC, timedelta
 from unittest.mock import Mock, patch
 
 import pytest
@@ -255,11 +255,13 @@ class TestShadowIntegration:
         with sf() as s:
             got = s.get(ShadowWindow, w.id)
             assert got is not None
-            # SQLite 存 naive datetime，转 naive 比较
+            # 读回值的 tzinfo 取决于 sqlmodel 版本（≥0.0.47 aware / 0.0.42 naive），
+            # 归一后再比，否则会 TypeError: can't compare offset-naive and offset-aware。
+            # 阈值语义不变（仍是「现在前 1 小时」）。
             deadline = got.check_deadline
-            if deadline.tzinfo is not None:
-                deadline = deadline.replace(tzinfo=None)
-            assert deadline > utcnow().replace(tzinfo=None) - timedelta(hours=1)
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=UTC)
+            assert deadline > utcnow() - timedelta(hours=1)
 
     def test_open_shadow_respects_max_windows(self, shadow_db):
         """MAX_ACTIVE_SHADOW_WINDOWS=1：新窗取消最旧 observing。"""
@@ -287,10 +289,12 @@ class TestShadowIntegration:
         sf = shadow_db
         self._seed_query_set(sf)
         w = open_shadow("rev_7", {"RETRIEVAL_W_VECTOR": 0.7}, observe_days=1)
-        # 手动把 deadline 拨到过去，触发到期判定（SQLite 存 naive）
+        # 手动把 deadline 拨到过去，触发到期判定。aware：sqlmodel ≥0.0.47 的
+        # UTCDateTime 拒绝 naive 写库（`process_bind_param` 强制 utcoffset() is not None）。
+        # 相对时刻不变——仍是「现在前 1 天」，到期判定照旧触发。
         with sf() as s:
             got = s.get(ShadowWindow, w.id)
-            got.check_deadline = utcnow().replace(tzinfo=None) - timedelta(days=1)
+            got.check_deadline = utcnow() - timedelta(days=1)
             s.add(got)
             s.commit()
         from lantai.parameters.runtime import check_shadow_due

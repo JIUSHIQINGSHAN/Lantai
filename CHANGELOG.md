@@ -19,6 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **验收**：`ruff check` / `ruff format --check` 退出码 0（修复前 50 条违规 + 50 文件不合规）；全量 pytest **1249 passed / 0 failed**（与 v0.22.1 基线同数，零回归）；遗忘质量门禁 **6/6 PASS**。
   - **待实证**：push 后 Tests job 应第一次真正跑完 pytest 与遗忘门禁。Linux/Py3.11 平台差异可能暴露新的既有失败（本地是 Windows/Py3.13）——若出现，按「宁 miss 不脏写」逐条诊断，不静默跳过。
 
+### Fixed
+
+- **sqlmodel 0.0.47 强制时区——naive datetime 写库被拒，CI 全量测试第一次跑即红（2026-09-26，票据 `.scratch/naive-datetime-gate/issues/01-naive-datetime.md`）**：
+  - **实证**：上一条 lint 收口 push 后，CI Tests job 第一次跑完全量 pytest 即红 **37 failed / 1212 passed**。本地复现（装 0.0.47）36/37 同样失败——不是平台差异，是**依赖版本漂移**：CI 装 `sqlmodel==0.0.47`（`>=0.0.22` 无上界，pip 取最新），本地是 `0.0.42`。
+  - **机制**：0.0.47 起 `sqlmodel/sql/sqltypes.py` 的 `UTCDateTime.process_bind_param` 对 naive datetime **直接 raise `ValueError: Datetime values must have timezone information`**（0.0.42 用的是 SQLAlchemy 原生 `DateTime`，naive 值直接放过）。读侧 `process_result_value` 同时改为对无偏移落盘文本补 `tzinfo=utc` 再返回——**读回值从 naive 变 aware**，继续拿 naive 字面量比会撞 `TypeError: can't compare offset-naive and offset-aware`。
+  - **落盘格式不变**（实测：aware 值入库时 `astimezone(UTC)` 去偏移，与 naive 版写出的 SQLite 文本逐字节相同），所以这是低风险迁移——**只补 tzinfo，不动任何时刻数值**。
+  - **诊断修正**：naive 来源**产品代码占三处**，不是「全在测试夹具层」——`digest_worker.py`（`_local_day_window_utc` / `collect_calibration_stats` 把窗口边界剥成 naive 后当查询绑定参数）、`ingestion/import_service.py` + `services/import_service.py`（`normalize_timestamp` / `_parse_dt` 显式剥 tzinfo，结果写 `created_at`/`updated_at`）、`core/time_precision.py:extract_explicit_event_time`（返回 naive → `.isoformat()` 落 provenance → promoter / record_ops `fromisoformat` → 写 `event_time`）。
+  - **修法**：上述三处产品路径改返回/传递 aware UTC；`evolution/promoter.py` 与 `services/record_ops_service.py` 的 `fromisoformat` 改调新增单一真源 `lantai/core/time.py:parse_iso_utc`（同模块新增 `ensure_aware`）；测试夹具与断言语义同步改 aware（`_utc_naive()` → `_now_aware()`、`ORIGINAL_TS` 加 `tzinfo=UTC`、`tzinfo is None` 断言改 `utcoffset() == timedelta(0)`、naive/aware 比较改 aware 对 aware）。**I1 拒写路径原样保留**（promoter 的 ValueError 早退分支不动）。
+  - **依赖锁**：`pyproject.toml` `sqlmodel>=0.0.22` → `>=0.0.22,<0.0.48`。挡住未评估的破坏性行为变更；0.0.48+ 升级另票评测。这一条正是本轮 37 例失败的机制——不锁上界，「本地绿 CI 红」的假象会再造。
+  - **验收**：原先 32 例失败全清，逐文件复验通过（`test_digest` 11 / `test_eval_query_set` 10 / `test_genglou_ingest` 8 / `test_import`+`test_import_jsonl` 16 / `test_mem_command` 5 / `test_param_reliability`+`test_param_shadow` 36 / `test_recall_chain` 7 / `test_distill` 15）。CI 里单独失败的 `test_distill.py::test_stored_distill_recallable_via_hybrid_search` 本地 15/15 全过，证实是前序失败污染、非独立缺陷。
+  - **双版本复验**（锁上界后两个版本都必须绿）：`sqlmodel==0.0.47`（CI 实际版本）**1249 passed / 0 failed** + 遗忘门禁 6/6；`sqlmodel==0.0.42`（本地原版本）**1263 passed / 0 failed**（多出的 14 例是本轮新增的 `tests/test_core_time.py`）。
+  - **读侧口径**（重要）：读回值的 tzinfo 是**版本相关**的——0.0.47 的 `process_result_value` 给无偏移落盘文本补 `tzinfo=utc`（读回 aware），0.0.42 用原生 `DateTime`（读回 naive）。产品代码不受影响（比较全走 `_ensure_utc` 归一或在 SQL 侧比，落盘文本两版逐字节相同）；测试断言因此改为只锁**时刻**、不锁时区标注（`tests/test_import.py` / `tests/test_import_jsonl.py` 的 `assert_same_moment`，`tests/test_param_shadow.py` 的 deadline 先归一再比），否则会 `TypeError: can't compare offset-naive and offset-aware`。
+  - **测试增量**：`tests/test_core_time.py` 14 例不 mock 冒烟，直调 `utcnow` / `ensure_aware` / `parse_iso_utc`（aware 归一、naive 按 UTC 解释、None 透传、非法 ISO 抛错、写库守门）。这两个新助手是 datetime 列写库的唯一时区守门员，被 import_service / promoter / record_ops_service 三处产品路径调用。**变异验证**：`parse_iso_utc` 去掉 `ensure_aware` 包装 → naive 字符串用例 failed；`ensure_aware` 删 naive 分支 → 3 例 failed（还原后全绿）。
+
 ## [0.22.1] - 2026-09-26 - 起复（Qifu · 巩固撤销与碎片恢复 + 裁决时刻口径）
 
 > 版本代号「起复」：唐宋典制「夺情起复」——官员去位（丁忧）后重新起用；被折叠的碎片记忆恢复现役即起复。贴合本版主题：为巩固产物补上对称的撤销面。命名依据见 [ADR-0052](docs/adr/0052-consolidation-revive.md)，登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 [CONTEXT.md](CONTEXT.md) 词汇表。

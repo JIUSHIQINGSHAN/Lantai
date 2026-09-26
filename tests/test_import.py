@@ -6,7 +6,7 @@ import_session_jsonl / 演化链时间戳继承用真实 SQLite，仅 mock 外�
 """
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 
 import pytest
@@ -16,7 +16,25 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import lantai.models.tables  # noqa: F401
 from lantai.models.tables import MemoryCandidate, MemoryItem
 
-ORIGINAL_TS = datetime(2024, 7, 3, 9, 46, 40)  # 1720000000000 epoch ms
+# aware UTC：sqlmodel ≥0.0.47 的 UTCDateTime 拒绝 naive datetime（写库与查询
+# 绑定参数都查 tzinfo），导入链归一化结果须为 aware。时刻数值不变
+# ——只补时区，1720000000000 epoch ms 仍是 2024-07-03 09:46:40 UTC。
+ORIGINAL_TS = datetime(2024, 7, 3, 9, 46, 40, tzinfo=UTC)
+
+
+def assert_same_moment(actual, expected):
+    """断言两个 datetime 是**同一时刻**，不要求 tzinfo 形态一致。
+
+    库内读回值的 tzinfo 取决于 sqlmodel 版本：≥0.0.47 的
+    `UTCDateTime.process_result_value` 会给无偏移落盘文本补 `tzinfo=utc`（读回
+    aware），0.0.42 用原生 `DateTime`（读回 naive）。本测试套件要在这两个版本
+    下都跑（pyproject 锁 `sqlmodel>=0.0.22,<0.0.48`），所以断言必须只锁真正
+    不变的量——时刻本身，而不是时区标注。
+    """
+    assert actual is not None
+    a = actual if actual.tzinfo else actual.replace(tzinfo=UTC)
+    e = expected if expected.tzinfo else expected.replace(tzinfo=UTC)
+    assert a == e, f"{actual!r} 与 {expected!r} 不是同一时刻"
 
 
 @pytest.fixture()
@@ -41,7 +59,7 @@ def mem_db(monkeypatch):
 
 
 def test_normalize_timestamp_formats():
-    """纯函数冒烟：epoch 毫秒/秒/ISO（含 Z 与时区偏移）→ naive UTC；非法抛错。"""
+    """纯函数冒烟：epoch 毫秒/秒/ISO（含 Z 与时区偏移）→ aware UTC；非法抛错。"""
     from lantai.ingestion.import_service import normalize_timestamp
 
     assert normalize_timestamp(1720000000000) == ORIGINAL_TS
@@ -151,7 +169,7 @@ def test_import_session_jsonl_preserves_timestamp(mem_db, tmp_path):
     assert res["statuses"]["fastpath"] == 1
     with session_factory() as s:
         cand = s.exec(select(MemoryCandidate)).one()
-        assert cand.created_at == ORIGINAL_TS
+        assert_same_moment(cand.created_at, ORIGINAL_TS)
         assert cand.provenance["prompt"] == "dialogue-session-import"
 
 
@@ -205,7 +223,7 @@ def test_import_extract_path_uses_import_provenance(mem_db, tmp_path):
     assert res["statuses"]["new"] == 1
     with session_factory() as s:
         cand = s.exec(select(MemoryCandidate)).one()
-        assert cand.created_at == ORIGINAL_TS
+        assert_same_moment(cand.created_at, ORIGINAL_TS)
         assert cand.provenance["prompt"] == "dialogue-session-import"
 
 
@@ -294,7 +312,7 @@ def test_chain_carries_import_timestamp_to_memory(mem_db):
     assert result["ok"] is True
     with session_factory() as s:
         mem = s.exec(select(MemoryItem).where(MemoryItem.key == "键")).one()
-        assert mem.created_at == ORIGINAL_TS
+        assert_same_moment(mem.created_at, ORIGINAL_TS)
         assert mem.provenance["prompt"] == "dialogue-session-import"
 
 
@@ -321,4 +339,10 @@ def test_chain_does_not_override_normal_created_at(mem_db):
     with session_factory() as s:
         mem = s.exec(select(MemoryItem).where(MemoryItem.key == "键")).one()
         assert mem.created_at is not None
-        assert mem.created_at > datetime(2024, 7, 3)  # 未被压到历史时间
+        # 读回值 tzinfo 取决于 sqlmodel 版本（≥0.0.47 aware / 0.0.42 naive），
+        # 先归一再比，否则 TypeError: can't compare offset-naive and offset-aware。
+        # 阈值日期语义不变（仍是 2024-07-03）。
+        created = mem.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        assert created > datetime(2024, 7, 3, tzinfo=UTC)  # 未被压到历史时间

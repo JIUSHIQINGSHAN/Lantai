@@ -5,7 +5,13 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
-  "sqlmodel>=0.0.22",
+  # sqlmodel 0.0.47 起 UTCDateTime.process_bind_param 对 naive datetime 直接 raise
+  # （ValueError: Datetime values must have timezone information）。原无上界时
+  # CI 装 0.0.47、本地装 0.0.42，同一次代码在两边一红一绿——v0.22.1 后 CI 全量
+  # 测试第一次真正跑起来就红 37 例，全部源于此漂移。
+  # 兰台产品链路已全部写 aware（lantai/core/time.py:utcnow 及 ensure_aware），
+  # 上界 <0.0.48 挡的是「未评估的破坏性行为变更」；0.0.48+ 升级单独开票评测。
+  "sqlmodel>=0.0.22,<0.0.48",
   "pydantic>=2.7",
   "pydantic-settings>=2.4",
   "httpx>=0.27",

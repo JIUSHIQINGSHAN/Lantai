@@ -330,9 +330,12 @@ def correct_memory(
             )
             parsed_et = event_time
             if isinstance(parsed_et, str):
-                from datetime import datetime as _dt
+                from lantai.core.time import parse_iso_utc
 
-                parsed_et = _dt.fromisoformat(parsed_et)
+                try:
+                    parsed_et = parse_iso_utc(parsed_et)
+                except ValueError:
+                    return {"ok": False, "error": "invalid event_time format"}
             if not validate_event_time_pair(parsed_et, new_etp):
                 return {"ok": False, "error": "invalid event_time pair (I1)"}
             corrections[-1]["old_event_time"] = (

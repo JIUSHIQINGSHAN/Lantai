@@ -20,11 +20,14 @@ from lantai.storage.fts import sync_fts
 
 
 def _parse_dt(value, field: str) -> datetime:
-    """ISO8601 时间戳解析 → naive UTC（失败抛 ValueError，调用方记非法行）。
+    """ISO8601 时间戳解析 → aware UTC（失败抛 ValueError，调用方记非法行）。
 
-    与摄取链 normalize_timestamp 同语义：Z/±HH:MM 时区输入换算为 UTC 后去掉
-    tzinfo，保证 SQLite 落库与 digest 等 naive UTC 区间比较一致（ADR-0018
-    「时间线不再被压平」；票据 07 验收 2 含时区）。
+    与摄取链 normalize_timestamp 同语义：Z/±HH:MM 时区输入换算为 UTC 并保留
+    tzinfo，保证 SQLite 落库与区间比较一致（ADR-0018「时间线不再被压平」；
+    票据 07 验收 2 含时区）。保留 tzinfo 是因为 sqlmodel ≥0.0.47 的 UTCDateTime
+    对 naive datetime 写库直接 raise（`process_bind_param` 强制 utcoffset()
+    is not None），而解析结果要落到 created_at/updated_at；落盘仍是 UTC 文本，
+    时刻数值不变。
     """
     if isinstance(value, datetime):
         dt = value
@@ -36,9 +39,8 @@ def _parse_dt(value, field: str) -> datetime:
             raise ValueError(f"{field} 时间戳无法解析: {text!r}")
     else:
         raise ValueError(f"{field} 时间戳为空")
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(UTC).replace(tzinfo=None)
-    return dt
+    # 带偏移 → 换算到 UTC；无偏移的 ISO 串按 UTC 解释（导入链约定：全部时间戳归一到 UTC）
+    return dt.astimezone(UTC) if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
 def parse_import_lines(text: str) -> tuple[list[dict], list[dict]]:

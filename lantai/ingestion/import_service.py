@@ -18,18 +18,24 @@ from lantai.core.settings import settings
 
 
 def normalize_timestamp(value) -> datetime:
-    """时间戳归一化 → naive UTC datetime（纯函数）。
+    """时间戳归一化 → aware UTC datetime（纯函数）。
 
     接受 epoch 毫秒（≥1e11）/ epoch 秒（≥1e9）/ ISO-8601 字符串（含 Z/±时区）；
     非法输入抛 ValueError。
+
+    aware（带 UTC 时区）：sqlmodel ≥0.0.47 的 UTCDateTime 对 naive datetime 写库
+    直接 raise ValueError（`process_bind_param` 强制 utcoffset() is not None），
+    导入时间戳要落到 created_at/updated_at，故归一化结果必须带时区。
+    时刻数值不变——只是把 tzinfo 补上；落盘仍是 UTC 文本（UTCDateTime 入库时
+    astimezone(UTC) 去偏移），与历史 naive UTC 库值逐秒一致。
     """
     if isinstance(value, bool) or value is None:
         raise ValueError("timestamp must be numeric or ISO string")
     if isinstance(value, (int, float)):
         if value >= 1e11:
-            return datetime.fromtimestamp(value / 1000.0, tz=UTC).replace(tzinfo=None)
+            return datetime.fromtimestamp(value / 1000.0, tz=UTC)
         if value >= 1e9:
-            return datetime.fromtimestamp(value, tz=UTC).replace(tzinfo=None)
+            return datetime.fromtimestamp(value, tz=UTC)
         raise ValueError(f"timestamp out of range: {value}")
     if isinstance(value, str):
         s = value.strip()
@@ -44,16 +50,15 @@ def normalize_timestamp(value) -> datetime:
             dt = datetime.fromisoformat(iso)
         except ValueError:
             raise ValueError(f"invalid ISO timestamp: {value}") from None
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(UTC).replace(tzinfo=None)
-        return dt
+        # 带偏移 → 换算到 UTC；无偏移的 ISO 串按 UTC 解释（导入链约定：全部时间戳归一到 UTC）
+        return dt.astimezone(UTC) if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
     raise ValueError(f"unsupported timestamp type: {type(value).__name__}")
 
 
 def parse_session_line(raw: str) -> dict | None:
     """解析单行 JSONL 会话消息（纯函数）。
 
-    合法行 → {"role", "content", "ts"(naive UTC), "session"}；
+    合法行 → {"role", "content", "ts"(aware UTC), "session"}；
     非法 JSON / 缺字段 / 空内容 / 非法时间戳 → None（统计为解析失败，不抛）。
     """
     raw = (raw or "").strip()

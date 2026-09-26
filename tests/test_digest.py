@@ -25,8 +25,11 @@ from lantai.models.tables import (
 )
 
 
-def _utc_naive(dt: datetime) -> datetime:
-    return dt.replace(tzinfo=None)
+def _now_aware() -> datetime:
+    """当前时刻（aware UTC）：sqlmodel ≥0.0.47 的 UTCDateTime 拒绝 naive
+    datetime 写库（`process_bind_param` 强制 `utcoffset() is not None`），
+    测试夹具须写 aware。时刻数值语义不变——只补 tzinfo，不改变时刻本身。"""
+    return datetime.now(UTC)
 
 
 @pytest.fixture()
@@ -61,7 +64,7 @@ class TestReflectionDistribution:
 
     def test_reflection_distribution(self, digest_env):
         session_factory = digest_env
-        now = _utc_naive(datetime.now(UTC))
+        now = _now_aware()
         _seed(
             session_factory,
             [
@@ -148,7 +151,7 @@ class TestReflectionDistribution:
         """口径修复（2026-08-15）：evolve auto / autodream 等其他无候选提案
         不混入反思统计（decided_by == 'reflect' 为唯一反思标识）。"""
         session_factory = digest_env
-        now = _utc_naive(datetime.now(UTC))
+        now = _now_aware()
         _seed(
             session_factory,
             [
@@ -197,7 +200,7 @@ class TestReflectionDistribution:
     def test_reflection_window_consistency(self, digest_env):
         """窗口一致性：跨日应用的提案不计入今日；other 兜底使合计 == created。"""
         session_factory = digest_env
-        now = _utc_naive(datetime.now(UTC))
+        now = _now_aware()
         _seed(
             session_factory,
             [
@@ -244,7 +247,7 @@ class TestCalibrationStats:
 
     def test_collect_calibration_stats_window(self, digest_env):
         session_factory = digest_env
-        now = _utc_naive(datetime.now(UTC))
+        now = _now_aware()
         _seed(
             session_factory,
             [
@@ -398,7 +401,7 @@ class TestCalibrationStats:
 
     def test_render_calibration_markdown(self, digest_env):
         session_factory = digest_env
-        now = _utc_naive(datetime.now(UTC))
+        now = _now_aware()
         _seed(
             session_factory,
             [
@@ -461,7 +464,7 @@ class TestCalibrationStats:
     def test_runs_five_way_classification(self, digest_env):
         """运行记录五分类互斥：空闲/异常/LLM 失败/产出/零产出。"""
         session_factory = digest_env
-        now = _utc_naive(datetime.now(UTC))
+        now = _now_aware()
         _seed(
             session_factory,
             [
@@ -492,7 +495,7 @@ class TestCalibrationStats:
     def test_conf_bucket_outlier_lands_in_other(self, digest_env):
         """桶外置信（<0.5）计入「其他」兜底桶，不静默丢失。"""
         session_factory = digest_env
-        now = _utc_naive(datetime.now(UTC))
+        now = _now_aware()
         _seed(
             session_factory,
             [
@@ -534,7 +537,7 @@ class TestCollectStats:
 
     def test_window_counts(self, digest_env):
         session_factory = digest_env
-        now = _utc_naive(datetime.now(UTC))
+        now = _now_aware()
         old = now - timedelta(days=2)
         _seed(
             session_factory,
@@ -639,7 +642,7 @@ class TestRunDigest:
 
     def test_run_digest_once_writes_report(self, digest_env):
         session_factory = digest_env
-        now = _utc_naive(datetime.now(UTC))
+        now = _now_aware()
         _seed(
             session_factory,
             [

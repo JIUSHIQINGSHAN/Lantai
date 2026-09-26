@@ -20,7 +20,9 @@ from lantai.storage.fts import init_fts, sync_fts
 
 
 def _utcnow():
-    return datetime.now(UTC).replace(tzinfo=None)
+    # aware（带 UTC 时区）：sqlmodel ≥0.0.47 拒绝 naive datetime 写库，
+    # 原 `.replace(tzinfo=None)` 在新版下触发 ValueError。时刻本身不变。
+    return datetime.now(UTC)
 
 
 class LocalEmbedder:

@@ -64,16 +64,18 @@ def ingest_env(tmp_path, monkeypatch):
 
 class TestExplicitTimeExtraction:
     def test_iso_and_cn_formats(self):
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         from lantai.core.time_precision import extract_explicit_event_time
 
+        # aware UTC：提取结果要经 provenance → promoter 写入 MemoryItem.event_time，
+        # sqlmodel ≥0.0.47 的 UTCDateTime 拒绝 naive datetime 写库。时刻数值不变。
         dt, prec = extract_explicit_event_time("系统 2026-09-15 完成迁移")
-        assert prec == "day" and dt == datetime(2026, 9, 15)
+        assert prec == "day" and dt == datetime(2026, 9, 15, tzinfo=UTC)
         dt, prec = extract_explicit_event_time("2026年9月15日迁的库")
-        assert prec == "day" and dt == datetime(2026, 9, 15)
+        assert prec == "day" and dt == datetime(2026, 9, 15, tzinfo=UTC)
         dt, prec = extract_explicit_event_time("2024 年起用 Postgres".replace(" ", ""))
-        assert prec == "year" and dt == datetime(2024, 1, 1)
+        assert prec == "year" and dt == datetime(2024, 1, 1, tzinfo=UTC)
 
     def test_no_guess_on_relative_or_empty(self):
         """U3 不猜面：相对时间/无时间 → (None, "")，绝不回填。"""
@@ -199,7 +201,10 @@ class TestEventTimeChain:
         with db_module.get_session() as s:
             cand = s.get(MemoryCandidate, res["candidate_id"])
             prov = cand.provenance or {}
-        assert prov.get("event_time") == "2026-09-15T00:00:00"
+        # 带 +00:00：提取结果为 aware UTC（sqlmodel ≥0.0.47 的 UTCDateTime 拒绝
+        # naive datetime 写库，链路 candidate → proposal → MemoryItem.event_time
+        # 要求 aware）。时刻数值不变——仍是 2026-09-15 00:00:00 UTC。
+        assert prov.get("event_time") == "2026-09-15T00:00:00+00:00"
         assert prov.get("event_time_precision") == "day"
 
         # 无时间文本：failed 标注，不猜

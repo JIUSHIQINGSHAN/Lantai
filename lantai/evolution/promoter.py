@@ -321,10 +321,10 @@ def apply_proposal(proposal_id: str) -> dict:
                 from lantai.core.time_precision import validate_event_time_pair
 
                 if isinstance(et, str):
-                    from datetime import datetime as _dt
+                    from lantai.core.time import parse_iso_utc
 
                     try:
-                        et = _dt.fromisoformat(et)
+                        et = parse_iso_utc(et)
                     except ValueError:
                         return {
                             "ok": False,

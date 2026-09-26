@@ -3,6 +3,8 @@
 覆盖：表可建、build_query_set 过滤噪音/去重 norm_hash/limit、load_query_set、同名覆盖。
 """
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -51,7 +53,10 @@ def _add_event(s, eid, query, norm_hash, noise=False, lane="", created_at=None):
             latency_ms=5,
             zero_result=False,
             is_system_noise=noise,
-            created_at=created_at or __import__("datetime").datetime(2026, 8, 1),
+            # aware UTC：sqlmodel ≥0.0.47 的 UTCDateTime 拒绝 naive datetime 写库
+            # （`process_bind_param` 强制 utcoffset() is not None）。默认日期
+            # 数值不变——仍是 2026-08-01，只补时区。
+            created_at=created_at or datetime(2026, 8, 1, tzinfo=UTC),
         )
     )
     s.commit()
@@ -86,24 +91,26 @@ class TestBuildQuerySet:
 
     def test_dedup_by_norm_hash(self, db_session):
         """同 norm_hash 去重，保留最新。"""
-        import datetime
-
         sf = db_session
         with sf() as s:
-            _add_event(s, "e1", "old query", "dup_hash", created_at=datetime.datetime(2026, 8, 1))
-            _add_event(s, "e2", "new query", "dup_hash", created_at=datetime.datetime(2026, 8, 5))
+            # aware UTC（sqlmodel ≥0.0.47 拒绝 naive 写库）；相对次序不变
+            # ——8/1 仍早于 8/5，去重后保留「new query」。
+            _add_event(
+                s, "e1", "old query", "dup_hash", created_at=datetime(2026, 8, 1, tzinfo=UTC)
+            )
+            _add_event(
+                s, "e2", "new query", "dup_hash", created_at=datetime(2026, 8, 5, tzinfo=UTC)
+            )
         qs = build_query_set("dedup_test")
         assert qs.sample_count == 1  # 去重后 1 条
         assert qs.queries[0]["query"] == "new query"  # 保留最新
 
     def test_dedup_disabled(self, db_session):
         """dedup=False 保留重复。"""
-        import datetime
-
         sf = db_session
         with sf() as s:
-            _add_event(s, "e1", "old", "dup", created_at=datetime.datetime(2026, 8, 1))
-            _add_event(s, "e2", "new", "dup", created_at=datetime.datetime(2026, 8, 5))
+            _add_event(s, "e1", "old", "dup", created_at=datetime(2026, 8, 1, tzinfo=UTC))
+            _add_event(s, "e2", "new", "dup", created_at=datetime(2026, 8, 5, tzinfo=UTC))
         qs = build_query_set("no_dedup", dedup=False)
         assert qs.sample_count == 2
 

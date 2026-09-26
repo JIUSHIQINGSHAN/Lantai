@@ -4,7 +4,7 @@ parse_import_lines 纯函数直调不 mock；落库用真实临时 SQLite（仅 
 embedding/向量存储两个外部依赖）；REST 冒烟。
 """
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, patch
 
 import pytest
@@ -55,9 +55,11 @@ def test_parse_ok():
     assert [v["content"] for v in valid] == ["第一条", "第二条"]
     assert valid[0]["lane"] == "fact"
     assert valid[1]["lane"] == "general"  # 缺省取 RAW_MEMORY_DEFAULT_LANE
-    # +08:00 → naive UTC（与摄取链 normalize_timestamp 同语义）
-    assert valid[0]["created_at"] == datetime(2026, 1, 1, 19, 4, 5)
-    assert valid[0]["created_at"].tzinfo is None
+    # +08:00 → aware UTC（与摄取链 normalize_timestamp 同语义）。aware 是
+    # sqlmodel ≥0.0.47 的硬要求（UTCDateTime 拒绝 naive 写库）；换算时刻不变
+    # ——2026-01-02 03:04:05 +08:00 仍是 2026-01-01 19:04:05 UTC。
+    assert valid[0]["created_at"] == datetime(2026, 1, 1, 19, 4, 5, tzinfo=UTC)
+    assert valid[0]["created_at"].utcoffset() == timedelta(0)
     assert valid[0]["updated_at"] is None
     assert valid[1]["tags"] == ["a", "b"]
 
@@ -125,8 +127,8 @@ def test_import_preserves_timestamps_and_dedups(imp_env):
         assert len(s.exec(select(MemoryItem)).all()) == 2
 
 
-def test_import_normalizes_tz_to_naive_utc(imp_env):
-    """带时区（+08:00）输入落库为 naive UTC，digest 等 naive 区间比较一致。"""
+def test_import_normalizes_tz_to_aware_utc(imp_env):
+    """带时区（+08:00）输入落库为 UTC，与 digest 等区间比较一致。"""
     session_factory, _ = imp_env
     text = '{"content": "时区记录", "created_at": "2026-01-02T03:04:05+08:00"}\n'
     from lantai.services.import_service import run_jsonl_import
@@ -135,9 +137,26 @@ def test_import_normalizes_tz_to_naive_utc(imp_env):
     assert report["imported"] == 1
     with session_factory() as s:
         row = s.exec(select(MemoryItem)).one()
-        assert row.created_at == datetime(2026, 1, 1, 19, 4, 5)
-        assert row.created_at.tzinfo is None
-        assert row.updated_at == row.created_at
+        # 只锁时刻：+08:00 的 03:04:05 即 UTC 19:04:05（前一日）。tzinfo 形态
+        # 取决于 sqlmodel 版本（≥0.0.47 读回 aware，0.0.42 读回 naive），
+        # 见 assert_same_moment 注记。
+        assert_same_moment(row.created_at, datetime(2026, 1, 1, 19, 4, 5, tzinfo=UTC))
+        assert_same_moment(row.updated_at, row.created_at)
+
+
+def assert_same_moment(actual, expected):
+    """断言两个 datetime 是**同一时刻**，不要求 tzinfo 形态一致。
+
+    库内读回值的 tzinfo 取决于 sqlmodel 版本：≥0.0.47 的
+    `UTCDateTime.process_result_value` 会给无偏移落盘文本补 `tzinfo=utc`（读回
+    aware），0.0.42 用原生 `DateTime`（读回 naive）。pyproject 锁的是
+    `sqlmodel>=0.0.22,<0.0.48`，两个版本都要跑，所以断言只锁真正不变的量
+    ——时刻本身，而不是时区标注。
+    """
+    assert actual is not None
+    a = actual if actual.tzinfo else actual.replace(tzinfo=UTC)
+    e = expected if expected.tzinfo else expected.replace(tzinfo=UTC)
+    assert a == e, f"{actual!r} 与 {expected!r} 不是同一时刻"
 
 
 def test_import_respects_agent_lane_bindings(imp_env, monkeypatch):
