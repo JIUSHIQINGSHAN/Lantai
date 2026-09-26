@@ -13,6 +13,7 @@ off（默认）直写行为逐字节不变；shadow 直写照旧另落影子提�
 fail-loud：拒绝执行本周期巩固并 ERROR 留痕——宁巩固停摆，不静默直写。
 """
 
+import contextlib
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
@@ -503,10 +504,9 @@ def _record_consolidation_run(s: Session, **fields) -> None:
         s.commit()
     except Exception as exc:
         logger.warning("consolidation_run 落库失败（审计留痕不静默）: %s", exc)
-        try:
+        # 回滚失败同样不阻断：回滚本身失败说明会话已失效，静默收场（留痕已由 warning 承担）
+        with contextlib.suppress(Exception):
             s.rollback()
-        except Exception:
-            pass
 
 
 def _refused_report(mode: str, error: str) -> dict:
@@ -717,9 +717,7 @@ def consolidation_audit_report(window_days: int = 7) -> dict:
             "proposal_ratio": (
                 round(len(enforce_props) / enforce_purified, 4) if enforce_purified else None
             ),
-            "ratio_ok": (
-                len(enforce_props) == enforce_purified if enforce_purified else None
-            ),
+            "ratio_ok": (len(enforce_props) == enforce_purified if enforce_purified else None),
             "pseudo_id_checkpoints": len(win_ckpts),
             "direct_write_fingerprint_ok": len(win_ckpts) == 0,
             "self_attestation_ok": enforce_self_ok,

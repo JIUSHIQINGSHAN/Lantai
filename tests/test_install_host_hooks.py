@@ -91,7 +91,14 @@ class TestMainDefaultPrintsOnly:
         monkeypatch.setattr(
             sys,
             "argv",
-            ["install_host_hooks.py", "--host", "claude-code", "--write", "--target", str(tmp_path)],
+            [
+                "install_host_hooks.py",
+                "--host",
+                "claude-code",
+                "--write",
+                "--target",
+                str(tmp_path),
+            ],
         )
         rc = cli.main()
         assert rc == 0
@@ -115,7 +122,14 @@ class TestMainDefaultPrintsOnly:
         monkeypatch.setattr(
             sys,
             "argv",
-            ["install_host_hooks.py", "--host", "claude-code", "--write", "--target", str(tmp_path)],
+            [
+                "install_host_hooks.py",
+                "--host",
+                "claude-code",
+                "--write",
+                "--target",
+                str(tmp_path),
+            ],
         )
         rc = cli.main()
         assert rc != 0

@@ -129,9 +129,7 @@ class TestCheckpointInjection:
     def test_first_turn_injects_checkpoint_once(self, mod):
         """首轮注入底本并合并检索；同会话第二轮不再注入。"""
         with (
-            patch.object(
-                mod, "_call_checkpoint", return_value="[Checkpoint · 上次会话]"
-            ) as ck,
+            patch.object(mod, "_call_checkpoint", return_value="[Checkpoint · 上次会话]") as ck,
             patch.object(
                 mod,
                 "_call_hook",
@@ -315,18 +313,22 @@ class TestInjectionSessionId:
                 return b""
 
         proc = type("P", (), {"stdin": FakeStdin(), "stdout": FakeStdout()})()
-        with patch.object(mod, "_ensure_proc", return_value=proc), patch.object(
-            mod, "_wait_ready", return_value=True
+        with (
+            patch.object(mod, "_ensure_proc", return_value=proc),
+            patch.object(mod, "_wait_ready", return_value=True),
         ):
             data = mod._call_hook("兰台检索词", session_id="sess_x")
         assert data is not None and data["event_id"] == "e1"
         assert json.loads(sent[0]) == {"query": "兰台检索词", "session_id": "sess_x"}
 
     def test_pre_llm_call_passes_session_id_through(self, mod):
-        with patch.object(mod, "_call_hook") as hook, patch.object(
-            mod, "_call_checkpoint", return_value=None
+        with (
+            patch.object(mod, "_call_hook") as hook,
+            patch.object(mod, "_call_checkpoint", return_value=None),
         ):
-            mod._on_pre_llm_call(user_message="帮我校准记忆系统的去重阈值参数设置", session_id="sess_x")
+            mod._on_pre_llm_call(
+                user_message="帮我校准记忆系统的去重阈值参数设置", session_id="sess_x"
+            )
         assert hook.call_count == 1
         assert hook.call_args == (
             ("帮我校准记忆系统的去重阈值参数设置",),
@@ -335,8 +337,9 @@ class TestInjectionSessionId:
 
     def test_pre_llm_call_no_session_sends_empty(self, mod):
         """无会话时行为不变：session_id 空串照发（服务端归一化为 NULL，宁 miss 不脏写）。"""
-        with patch.object(mod, "_call_hook") as hook, patch.object(
-            mod, "_call_checkpoint", return_value=None
+        with (
+            patch.object(mod, "_call_hook") as hook,
+            patch.object(mod, "_call_checkpoint", return_value=None),
         ):
             mod._on_pre_llm_call(user_message="帮我校准记忆系统的去重阈值参数设置", session_id="")
         assert hook.call_args == (

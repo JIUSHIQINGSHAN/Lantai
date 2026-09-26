@@ -244,7 +244,7 @@ def test_handle_dialogue_invalid_turn_dropped(monkeypatch):
     for raw_turn in ["3", True, -1, 1.5]:
         with patch("lantai.ingestion.dialogue.ingest_dialogue", return_value={"ok": True}) as m:
             mod._handle_one(
-                '{"type":"dialogue","text":"x","session_id":"s","turn":%s}' % json.dumps(raw_turn)
+                f'{{"type":"dialogue","text":"x","session_id":"s","turn":{json.dumps(raw_turn)}}}'
             )
         assert m.call_args.kwargs["turn"] is None, raw_turn
 
@@ -301,9 +301,7 @@ def test_build_context_passes_session_to_log(param_env, monkeypatch):
     mod = _load_hook(monkeypatch)
     from unittest.mock import patch
 
-    with patch(
-        "lantai.observability.retrieval_log.log_retrieval", return_value="rev_x"
-    ) as m:
+    with patch("lantai.observability.retrieval_log.log_retrieval", return_value="rev_x") as m:
         mod._handle_one('{"query":"部署怎么做","session_id":"sess_log"}')
     assert m.call_args.kwargs.get("session_id") == "sess_log"
 

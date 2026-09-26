@@ -94,9 +94,7 @@ def compute_answer_metrics(per_query: list[dict]) -> dict:
         total_hit += int(ans.get("hit_points") or 0)
         total_points += int(ans.get("points") or 0)
     for cat, stat in by_category.items():
-        stat["hit_rate"] = (
-            round(stat["hit_points"] / stat["points"], 4) if stat["points"] else None
-        )
+        stat["hit_rate"] = round(stat["hit_points"] / stat["points"], 4) if stat["points"] else None
     overall = round(total_hit / total_points, 4) if total_points else None
     return {
         "scored_queries": scored,

@@ -383,9 +383,7 @@ def retract_memory_route(memory_id: str, req: RetractReq, principal=Depends(get_
         memory_id, reason=req.reason.strip(), actor=principal.user_id or ""
     )
     if not result["ok"]:
-        raise HTTPException(
-            404 if result["error"] == "memory not found" else 409, result["error"]
-        )
+        raise HTTPException(404 if result["error"] == "memory not found" else 409, result["error"])
     return result
 
 
@@ -398,9 +396,7 @@ def unretract_memory_route(memory_id: str, principal=Depends(get_current_user)):
         raise HTTPException(403, "unretract requires admin")
     result = record_ops_service.unretract_memory(memory_id, actor=principal.user_id or "")
     if not result["ok"]:
-        raise HTTPException(
-            404 if result["error"] == "memory not found" else 409, result["error"]
-        )
+        raise HTTPException(404 if result["error"] == "memory not found" else 409, result["error"])
     return result
 
 
@@ -420,9 +416,7 @@ def archive_memory_route(
         memory_id, actor=principal.user_id or "", reason=(req.reason if req else "") or ""
     )
     if not result["ok"]:
-        raise HTTPException(
-            404 if result["error"] == "memory not found" else 409, result["error"]
-        )
+        raise HTTPException(404 if result["error"] == "memory not found" else 409, result["error"])
     return result
 
 
@@ -442,9 +436,7 @@ def unarchive_memory_route(
         memory_id, actor=principal.user_id or "", reason=(req.reason if req else "") or ""
     )
     if not result["ok"]:
-        raise HTTPException(
-            404 if result["error"] == "memory not found" else 409, result["error"]
-        )
+        raise HTTPException(404 if result["error"] == "memory not found" else 409, result["error"])
     return result
 
 
@@ -465,16 +457,12 @@ def correct_memory_route(memory_id: str, req: CorrectReq, principal=Depends(get_
         actor=principal.user_id or "",
     )
     if not result["ok"]:
-        raise HTTPException(
-            404 if result["error"] == "memory not found" else 409, result["error"]
-        )
+        raise HTTPException(404 if result["error"] == "memory not found" else 409, result["error"])
     return result
 
 
 @router.post("/terminal/memory/{memory_id}/revive-consolidated")
-def revive_consolidated_route(
-    memory_id: str, req: RetractReq, principal=Depends(get_current_user)
-):
+def revive_consolidated_route(memory_id: str, req: RetractReq, principal=Depends(get_current_user)):
     """起复（笔削家族第七操作，ADR-0052）：巩固撤销面——碎片恢复 active 或主记忆撤销全簇。
 
     幂等：已撤销簇返回 already_revoked、已起复碎片返回 already_active。
@@ -493,9 +481,7 @@ def revive_consolidated_route(
         memory_id, reason=req.reason.strip(), actor=principal.user_id or ""
     )
     if not result["ok"]:
-        raise HTTPException(
-            404 if result["error"] == "memory not found" else 409, result["error"]
-        )
+        raise HTTPException(404 if result["error"] == "memory not found" else 409, result["error"])
     return result
 
 

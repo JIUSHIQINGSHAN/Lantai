@@ -15,8 +15,7 @@ from lantai.storage.db import CURRENT_SCHEMA_VERSION, apply_migrations
 def _columns(conn, table: str) -> set:
     # table-valued PRAGMA 走参数绑定（防注入纪律，与 db.py 一致）
     return {
-        r[0]
-        for r in conn.execute("SELECT name FROM pragma_table_info(?)", (table,)).fetchall()
+        r[0] for r in conn.execute("SELECT name FROM pragma_table_info(?)", (table,)).fetchall()
     }
 
 
@@ -209,9 +208,12 @@ class TestApplyMigrations:
             ).fetchone()[0]
             is None
         )
-        assert conn.execute(
-            "SELECT created_at FROM memoryproposal WHERE id = ?", ("p_old",)
-        ).fetchone()[0] == "2026-01-01 00:00:00"
+        assert (
+            conn.execute(
+                "SELECT created_at FROM memoryproposal WHERE id = ?", ("p_old",)
+            ).fetchone()[0]
+            == "2026-01-01 00:00:00"
+        )
 
         # 幂等：重复启动不加列不报错（_has_column 守卫）
         apply_migrations(conn)
@@ -246,7 +248,10 @@ class TestApplyMigrations:
         apply_migrations(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         # 已落值不被迁移覆盖
-        assert conn.execute(
-            "SELECT decided_at FROM memoryproposal WHERE id = ?", ("p_new",)
-        ).fetchone()[0] == "2026-06-01 12:00:00"
+        assert (
+            conn.execute(
+                "SELECT decided_at FROM memoryproposal WHERE id = ?", ("p_new",)
+            ).fetchone()[0]
+            == "2026-06-01 12:00:00"
+        )
         conn.close()

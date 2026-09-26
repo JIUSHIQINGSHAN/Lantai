@@ -8,9 +8,7 @@
 全部纯函数：真实 MemoryItem 直调可测，不 mock 任何内部逻辑。
 """
 
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
+from datetime import UTC, datetime, timedelta, timezone
 
 PRECISION_DELTAS = {
     # 精度 → 锚点向后展开的不确定区间宽度（左闭右开；second 特判为点）
@@ -55,11 +53,9 @@ def _validity_hit(item, as_of: datetime) -> bool:
     """有效期命中：(valid_from IS NULL OR valid_from <= as_of) AND (valid_to IS NULL OR valid_to > as_of)。"""
     vf = _ensure_utc(item.valid_from) if item.valid_from else None
     vt = _ensure_utc(item.valid_to) if item.valid_to else None
-    if vf and vf > as_of:
-        return False
-    if vt and vt <= as_of:
-        return False
-    return True
+    # 两个「排除」条件合并为一个否定：起点晚于 as_of 或终点不晚于 as_of 即不命中。
+    # 等价于原「逐条 return False，全过 return True」（None 值在两式下都为假，不排除）。
+    return not (vf and vf > as_of or vt and vt <= as_of)
 
 
 def _event_interval_hit(item, as_of: datetime, delta_days: float) -> bool:

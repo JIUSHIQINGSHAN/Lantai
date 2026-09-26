@@ -21,9 +21,15 @@ jobs:
         run: |
           pip install -e .[dev]
       - name: Lint and Format Check (Ruff)
+        # 门禁范围＝产品代码 + 测试（lantai/ tests/ scripts/）。
+        # 历史上这里是 `ruff check .`：带着 73 条既有违规（多在 docs/research 与 .scratch
+        # 的一次性调研脚本里）长期失败，导致本 job 的全量 pytest 与遗忘质量门禁
+        # 从未在 CI 真正执行过（v0.22.1 前实证，Tests job 51 秒挂在 lint 步骤）。
+        # 目录显式列出而非 `ruff check .`：显式传径时 exclude 配置不生效，必须靠
+        # 命令本身圈定范围（docs/ 的 markdown 代码块与调研脚本均非产品代码）。
         run: |
-          ruff check .
-          ruff format --check .
+          ruff check lantai/ tests/ scripts/
+          ruff format --check lantai/ tests/ scripts/
       - name: Full test suite with coverage
         run: pytest tests/ -q --cov=lantai --cov-report=term-missing
       - name: Forgetting quality gate (chinese-memory-v2)

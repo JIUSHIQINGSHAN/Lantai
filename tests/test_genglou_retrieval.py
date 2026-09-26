@@ -4,7 +4,7 @@
 """
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy.pool import StaticPool
@@ -24,8 +24,6 @@ from lantai.retrieval.temporal import (
     window_matches,
 )
 from lantai.storage.fts import init_fts
-
-UTC = timezone.utc
 
 
 def _hash_embed(texts):
@@ -82,7 +80,9 @@ class TestAsofMatches:
         return _mem(**kw)
 
     def test_validity_hit(self):
-        item = self._item(valid_from=datetime(2026, 9, 1, tzinfo=UTC), valid_to=datetime(2026, 9, 20, tzinfo=UTC))
+        item = self._item(
+            valid_from=datetime(2026, 9, 1, tzinfo=UTC), valid_to=datetime(2026, 9, 20, tzinfo=UTC)
+        )
         ok, by = asof_matches(item, datetime(2026, 9, 10, tzinfo=UTC))
         assert ok and by == "validity"
         # as-of 在有效期外 → 不走 validity（但 unknown 兜底面已由 event_time 存在性决定）
@@ -105,7 +105,9 @@ class TestAsofMatches:
 
     def test_fuzzy_i4(self):
         """fuzzy 精度：区间宽 ±1d，严格模式同样放行。"""
-        item = self._item(event_time=datetime(2026, 9, 15, tzinfo=UTC), event_time_precision="fuzzy")
+        item = self._item(
+            event_time=datetime(2026, 9, 15, tzinfo=UTC), event_time_precision="fuzzy"
+        )
         ok, by = asof_matches(item, datetime(2026, 9, 16, tzinfo=UTC), strict=True)
         assert ok
 
@@ -239,8 +241,8 @@ class TestHybridTemporalIntegration:
         assert mid in got_in
 
         # 不带时间参数 → 零回归（现行行为：active 记忆正常召回）
-        results_plain = hybrid_mod.hybrid_search(
-            "用户的主数据库是什么", top_k=5, use_rerank=False
-        )
-        got_plain = {r["memory"]["id"] for r in results_plain if isinstance(r, dict) and "memory" in r}
+        results_plain = hybrid_mod.hybrid_search("用户的主数据库是什么", top_k=5, use_rerank=False)
+        got_plain = {
+            r["memory"]["id"] for r in results_plain if isinstance(r, dict) and "memory" in r
+        }
         assert mid in got_plain

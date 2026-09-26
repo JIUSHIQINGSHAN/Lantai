@@ -18,13 +18,11 @@ roadmap P1-1 验收口径：**30+ 时间/更新用例，当前/历史证据选�
 """
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 from lantai.core.ids import new_id
 from lantai.models.tables import MemoryItem
 from lantai.retrieval.temporal import _ensure_utc
-
-UTC = timezone.utc
 
 SEEDS: list[dict] = [
     {
@@ -106,7 +104,17 @@ def build_cases() -> list[dict]:
     """30+ 双视图用例（确定性构造；qid 可复现）。"""
     cases: list[dict] = []
 
-    def add(qid, query, *, as_of=None, time_from=None, time_to=None, as_of_recorded=None, hit=(), miss=()):
+    def add(
+        qid,
+        query,
+        *,
+        as_of=None,
+        time_from=None,
+        time_to=None,
+        as_of_recorded=None,
+        hit=(),
+        miss=(),
+    ):
         cases.append(
             {
                 "qid": qid,
@@ -123,8 +131,14 @@ def build_cases() -> list[dict]:
     # A. as-of 时点扫描（数据库族）：06-01 边界前后、历史/当前切换
     for i, as_of in enumerate(
         [
-            _d(1, 1), _d(3, 15), _d(5, 31), _d(6, 1), _d(6, 2),
-            _d(8, 15), _d(9, 25), _d(12, 31),
+            _d(1, 1),
+            _d(3, 15),
+            _d(5, 31),
+            _d(6, 1),
+            _d(6, 2),
+            _d(8, 15),
+            _d(9, 25),
+            _d(12, 31),
         ]
     ):
         hit_old = as_of < _d(6, 1)  # valid_to(06-01) > as_of → old 为真
@@ -154,22 +168,27 @@ def build_cases() -> list[dict]:
     add(
         "e2-window-db-event",
         "用户的主数据库是什么",
-        time_from=_d(1, 10), time_to=_d(1, 20),
-        hit=["e2-db-old"], miss=["e2-db-new"],
+        time_from=_d(1, 10),
+        time_to=_d(1, 20),
+        hit=["e2-db-old"],
+        miss=["e2-db-new"],
     )
     add(
         "e2-window-travel-point",
         "用户办理护照签证了吗",
-        time_from=_d(8, 20, 11), time_to=_d(8, 20, 13),
+        time_from=_d(8, 20, 11),
+        time_to=_d(8, 20, 13),
         hit=["e2-travel"],
     )
     add(
         "e2-window-validity-coverage",
         "用户的主数据库是什么",
-        time_from=_d(7, 1), time_to=_d(7, 10),
+        time_from=_d(7, 1),
+        time_to=_d(7, 10),
         # db-new 有效期 [06-01, ∞) 覆盖窗口 → validity 命中；
         # db-old 有效期 [01-01, 06-01) 与窗口不交 → 排除
-        hit=["e2-db-new"], miss=["e2-db-old"],
+        hit=["e2-db-new"],
+        miss=["e2-db-old"],
     )
     # G. 事务轴 as-of（as_of_recorded）：兰台当时还不知道 → 不可见
     add(
@@ -196,9 +215,18 @@ def build_cases() -> list[dict]:
 
     # 生成式补充：数据库族月度扫描（凑满 30+，确定性）
     month_checks = [
-        (1, "e2-db-old"), (2, "e2-db-old"), (3, "e2-db-old"), (4, "e2-db-old"),
-        (5, "e2-db-old"), (6, "e2-db-new"), (7, "e2-db-new"), (8, "e2-db-new"),
-        (9, "e2-db-new"), (10, "e2-db-new"), (11, "e2-db-new"), (12, "e2-db-new"),
+        (1, "e2-db-old"),
+        (2, "e2-db-old"),
+        (3, "e2-db-old"),
+        (4, "e2-db-old"),
+        (5, "e2-db-old"),
+        (6, "e2-db-new"),
+        (7, "e2-db-new"),
+        (8, "e2-db-new"),
+        (9, "e2-db-new"),
+        (10, "e2-db-new"),
+        (11, "e2-db-new"),
+        (12, "e2-db-new"),
     ]
     for i, (m, expect_id) in enumerate(month_checks):
         add(
@@ -267,9 +295,7 @@ def run_e2_temporal_eval(*, top_k: int = 5) -> dict:
             if isinstance(results, tuple):
                 results = results[0]
             got = {
-                r["memory"]["id"]
-                for r in (results or [])
-                if isinstance(r, dict) and "memory" in r
+                r["memory"]["id"] for r in (results or []) if isinstance(r, dict) and "memory" in r
             }
         except Exception as exc:  # noqa: BLE001
             failures.append({"qid": case["qid"], "error": str(exc)[:120]})

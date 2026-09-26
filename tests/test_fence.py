@@ -194,7 +194,7 @@ class TestFenceAtExits:
             patch("lantai.observability.retrieval_log.log_retrieval", return_value="ev_1"),
         ):
             resp = mod.handle_search({"query": "机密", "top_k": 5})
-        assert FENCE_DECLARATION == resp.get("data_fence_notice")
+        assert resp.get("data_fence_notice") == FENCE_DECLARATION
 
     def test_middleware_summary_fenced(self, param_env):
         """出口冒烟：认知摘要中的规则/失败片段围栏。"""

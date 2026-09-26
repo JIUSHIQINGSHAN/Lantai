@@ -101,9 +101,7 @@ class TestParseHostRequest:
 
     def test_backfill_request_id_optional(self):
         ok = parse_host_request(
-            json.dumps(
-                {"type": "backfill", "event_id": "e", "used_ids": ["m"], "request_id": "r1"}
-            )
+            json.dumps({"type": "backfill", "event_id": "e", "used_ids": ["m"], "request_id": "r1"})
         )
         assert ok is not None and ok.request_id == "r1"
         blank = parse_host_request(

@@ -187,9 +187,15 @@ class Settings(BaseSettings):
     # 向量存储配置（默认 Chromadb 内嵌，无需外部依赖）
     VECTOR_STORE_TYPE: str = "chromadb"
     # 更漏（ADR-0048/票 09）：时效视图开关（默认全关 = 现行行为零漂移）
-    TEMPORAL_CURRENT_STRICT: bool = False  # 当前态收紧：已过 valid_to 退出（默认关，须独立票验证后再开）
-    TEMPORAL_ASOF_STRICT: bool = False  # 作用域仅 as-of 视图：未命中剔除，但 event_time IS NULL/fuzzy 仍放行（I4）
-    TEMPORAL_FUZZY_PENALTY: float = 0.8  # as-of/时间窗激活时 fuzzy/unknown 的分数乘子（fail-closed 0~1）
+    TEMPORAL_CURRENT_STRICT: bool = (
+        False  # 当前态收紧：已过 valid_to 退出（默认关，须独立票验证后再开）
+    )
+    TEMPORAL_ASOF_STRICT: bool = (
+        False  # 作用域仅 as-of 视图：未命中剔除，但 event_time IS NULL/fuzzy 仍放行（I4）
+    )
+    TEMPORAL_FUZZY_PENALTY: float = (
+        0.8  # as-of/时间窗激活时 fuzzy/unknown 的分数乘子（fail-closed 0~1）
+    )
     CHROMADB_PATH: str = ""  # 为空时从 LANTAI_HOME 自动推导
 
     # 闸门配置
@@ -316,12 +322,20 @@ class Settings(BaseSettings):
     AUTODREAM_MIN_CONFIDENCE: float = 0.5
     AUTODREAM_CRON_DAYS: int = 7  # 周期蒸馏间隔（Fog：7 天周期记忆蒸馏）
     # 沉潜过审（ADR-0050/票 07）：巩固产物过审开关（默认 off = 现行直写行为零漂移）
-    CONSOLIDATION_AUDIT_MODE: str = "off"  # off/shadow/enforce；非法值 fail-loud：拒绝执行巩固并 ERROR 留痕（宁停摆不静默直写）
-    CONSOLIDATION_SHADOW_MAX_DAYS: int = 7  # shadow 硬时限（天）：自 ConsolidationRun 首条 mode=shadow 留痕起算，超期拒绝执行巩固
+    CONSOLIDATION_AUDIT_MODE: str = (
+        "off"  # off/shadow/enforce；非法值 fail-loud：拒绝执行巩固并 ERROR 留痕（宁停摆不静默直写）
+    )
+    CONSOLIDATION_SHADOW_MAX_DAYS: int = (
+        7  # shadow 硬时限（天）：自 ConsolidationRun 首条 mode=shadow 留痕起算，超期拒绝执行巩固
+    )
     CONSOLIDATION_REJECTED_COOLDOWN_DAYS: int = 30  # consolidation 提案被拒后冷却期（天）：抑制生成侧重复奏（每夜重新提纯是真实 LLM 成本），期满允许再奏
     CONSOLIDATION_AGGREGATE_MASTER_MIN_SOURCES: int = 3  # 聚合主记忆判定阈值：source_ids ≥ 此值即视为已聚合主记忆，跳过聚类防无限递归折叠（ADR-0002 零硬编码）
-    CONSOLIDATION_MIN_CLUSTER_SIZE: int = 3  # 聚类下限：同关键词命中记忆数 ≥ 此值才成簇（ADR-0002 零硬编码，原硬编码 3）
-    CONSOLIDATION_PRUNE_THRESHOLD: float = 0.05  # 突触修剪阈值：decay_score < 此值即剪（ADR-0002 零硬编码，原硬编码 0.05）
+    CONSOLIDATION_MIN_CLUSTER_SIZE: int = (
+        3  # 聚类下限：同关键词命中记忆数 ≥ 此值才成簇（ADR-0002 零硬编码，原硬编码 3）
+    )
+    CONSOLIDATION_PRUNE_THRESHOLD: float = (
+        0.05  # 突触修剪阈值：decay_score < 此值即剪（ADR-0002 零硬编码，原硬编码 0.05）
+    )
     # 技能结晶（v0.7，借鉴 aiduMEI SkillCrystallizer 窄版）
     CRYSTAL_ENABLED: bool = True
     CRYSTAL_MIN_CLUSTER: int = 3
@@ -394,7 +408,9 @@ class Settings(BaseSettings):
     # 默认 False＝反思提案一律进 pending 待人工裁决（与沉潜/autodream 同轨：后台合成产物
     # 不自动生效）；置 True 恢复「高置信 + rejecter risk=low 自动 apply」既有通道。
     REFLECT_AUTO_APPLY: bool = False
-    REFLECT_AUTO_APPLY_CONF: float = 0.7  # 与 evolve 自动应用阈值一致（仅 REFLECT_AUTO_APPLY=True 时生效）
+    REFLECT_AUTO_APPLY_CONF: float = (
+        0.7  # 与 evolve 自动应用阈值一致（仅 REFLECT_AUTO_APPLY=True 时生效）
+    )
     REFLECT_MIN_CONFIDENCE: float = 0.5  # 低于此置信的提案不落库（维持）
     REFLECT_MIN_USE_COUNT: int = 3  # R4 低帮助率规则
     REFLECT_LOW_HELPFUL_RATIO: float = 0.3  # R4 低帮助率规则

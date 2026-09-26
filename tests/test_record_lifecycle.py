@@ -711,7 +711,9 @@ class TestReviveRoutes:
         """碎片起复 200：状态恢复 + 响应带 scope=fragment。"""
         _, frag_ids = _seed_consolidated_cluster(engine)
         frag = frag_ids[0]
-        app.dependency_overrides[get_current_user] = lambda: _principal("u1", lanes=("general", "preference"))
+        app.dependency_overrides[get_current_user] = lambda: _principal(
+            "u1", lanes=("general", "preference")
+        )
         resp = client.post(
             f"/terminal/memory/{frag}/revive-consolidated", json={"reason": "误折叠，恢复单条"}
         )
@@ -723,7 +725,9 @@ class TestReviveRoutes:
     def test_route_master_revokes_full_cluster(self, engine, fake_vs, fake_embed, client):
         """主记忆撤销 200：主记忆 retracted + 碎片全 active + 边清零。"""
         master_id, frag_ids = _seed_consolidated_cluster(engine)
-        app.dependency_overrides[get_current_user] = lambda: _principal("u1", lanes=("general", "preference"))
+        app.dependency_overrides[get_current_user] = lambda: _principal(
+            "u1", lanes=("general", "preference")
+        )
         resp = client.post(
             f"/terminal/memory/{master_id}/revive-consolidated",
             json={"reason": "提纯丢失关键细节，整簇撤销"},
@@ -748,10 +752,10 @@ class TestReviveRoutes:
     def test_route_non_consolidation_target_409(self, engine, fake_vs, client):
         """非巩固目标 409（宁 miss 不脏写），资源原样。"""
         mid = _add(engine, "普通活跃记忆，不属巩固产物")
-        app.dependency_overrides[get_current_user] = lambda: _principal("u1", lanes=("general", "preference"))
-        resp = client.post(
-            f"/terminal/memory/{mid}/revive-consolidated", json={"reason": "误操作"}
+        app.dependency_overrides[get_current_user] = lambda: _principal(
+            "u1", lanes=("general", "preference")
         )
+        resp = client.post(f"/terminal/memory/{mid}/revive-consolidated", json={"reason": "误操作"})
         assert resp.status_code == 409
         with Session(engine) as s:
             assert s.get(MemoryItem, mid).status == "active"
@@ -759,7 +763,9 @@ class TestReviveRoutes:
     def test_route_empty_reason_422(self, engine, fake_vs, client):
         """reason 空 → 422（同 retract 口径：撤销/恢复均须留痕）。"""
         _, frag_ids = _seed_consolidated_cluster(engine)
-        app.dependency_overrides[get_current_user] = lambda: _principal("u1", lanes=("general", "preference"))
+        app.dependency_overrides[get_current_user] = lambda: _principal(
+            "u1", lanes=("general", "preference")
+        )
         resp = client.post(
             f"/terminal/memory/{frag_ids[0]}/revive-consolidated", json={"reason": "   "}
         )
@@ -770,7 +776,9 @@ class TestReviveRoutes:
     def test_route_ownership_enforced(self, engine, fake_vs, client):
         """归属校验：他人不可起复我的记忆（403），资源原样。"""
         master_id, frag_ids = _seed_consolidated_cluster(engine)
-        app.dependency_overrides[get_current_user] = lambda: _principal("u2", lanes=("general", "preference"))
+        app.dependency_overrides[get_current_user] = lambda: _principal(
+            "u2", lanes=("general", "preference")
+        )
         resp = client.post(
             f"/terminal/memory/{master_id}/revive-consolidated", json={"reason": "越权撤销"}
         )
@@ -781,16 +789,18 @@ class TestReviveRoutes:
 
     def test_route_not_found_404(self, engine, fake_vs, client):
         """不存在的记忆 404。"""
-        app.dependency_overrides[get_current_user] = lambda: _principal("u1", lanes=("general", "preference"))
-        resp = client.post(
-            "/terminal/memory/mem_none/revive-consolidated", json={"reason": "x"}
+        app.dependency_overrides[get_current_user] = lambda: _principal(
+            "u1", lanes=("general", "preference")
         )
+        resp = client.post("/terminal/memory/mem_none/revive-consolidated", json={"reason": "x"})
         assert resp.status_code == 404
 
     def test_route_idempotent(self, engine, fake_vs, fake_embed, client):
         """路由层幂等：重复撤销 200 + already_revoked。"""
         master_id, _ = _seed_consolidated_cluster(engine)
-        app.dependency_overrides[get_current_user] = lambda: _principal("u1", lanes=("general", "preference"))
+        app.dependency_overrides[get_current_user] = lambda: _principal(
+            "u1", lanes=("general", "preference")
+        )
         first = client.post(
             f"/terminal/memory/{master_id}/revive-consolidated", json={"reason": "整簇撤"}
         )

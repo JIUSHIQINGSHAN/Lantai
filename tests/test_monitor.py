@@ -264,9 +264,7 @@ class TestIngestLiveness:
         with session_factory() as s:
             snap = build_monitor_snapshot(s, now=now, include_quality=False)
         assert snap["ingest_liveness"]["judgment"] == "ok"
-        assert not any(
-            a["id"].startswith("ingest_") for a in snap["alerts"]
-        )
+        assert not any(a["id"].startswith("ingest_") for a in snap["alerts"])
 
     def test_background_only_judged_not_ok(self, monitor_env):
         """只有后台（cron/反思，session 为空）在写 → background_only → high 告警。
@@ -305,7 +303,9 @@ class TestIngestLiveness:
         with session_factory() as s:
             s.add(_retrieval_event(1, session_id="sess_a", now=stale))  # 窗口外
             s.add(_retrieval_event(2, session_id="sess_a", noise=True, now=now))  # 噪音
-            s.add(_retrieval_event(3, session_id="sess_a", with_session=False, now=now))  # 无 session
+            s.add(
+                _retrieval_event(3, session_id="sess_a", with_session=False, now=now)
+            )  # 无 session
             s.commit()
         with session_factory() as s:
             live = build_monitor_snapshot(s, now=now, include_quality=False)["ingest_liveness"]
@@ -432,7 +432,9 @@ def test_evaluate_alerts_flags_dev_fallback_auth():
 def test_effective_auth_label_dual_track():
     from lantai.ops.monitor import _effective_auth_label
 
-    assert _effective_auth_label(loopback=True, api_key_configured=True, keys_total=0) == "x_api_key"
+    assert (
+        _effective_auth_label(loopback=True, api_key_configured=True, keys_total=0) == "x_api_key"
+    )
     assert (
         _effective_auth_label(loopback=True, api_key_configured=True, keys_total=1)
         == "x_api_key+bearer_table"
@@ -445,9 +447,7 @@ def test_effective_auth_label_dual_track():
         _effective_auth_label(loopback=True, api_key_configured=False, keys_total=0)
         == "dev_fallback"
     )
-    assert (
-        _effective_auth_label(loopback=False, api_key_configured=False, keys_total=0) == "none"
-    )
+    assert _effective_auth_label(loopback=False, api_key_configured=False, keys_total=0) == "none"
 
 
 def test_render_prometheus_exposes_snapshot(monitor_env):

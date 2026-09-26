@@ -28,9 +28,7 @@ if os.environ.get("LANTAI_TEST_STUB_EMBED") == "1":
         for t in texts:
             v = [0.0] * _EMBED_DIM
             t = (t or "").strip()
-            grams = (
-                [t[i : i + 3] for i in range(len(t) - 2)] if len(t) >= 3 else ([t] if t else [])
-            )
+            grams = [t[i : i + 3] for i in range(len(t) - 2)] if len(t) >= 3 else ([t] if t else [])
             for g in grams:
                 idx = int.from_bytes(hashlib.sha256(g.encode("utf-8")).digest()[:4], "big") % (
                     _EMBED_DIM

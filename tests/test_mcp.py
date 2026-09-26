@@ -31,7 +31,9 @@ def test_tools_list():
     mod = _load_mcp()
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert len(resp["result"]["tools"]) == 60  # 包含 cognitive_context 心斋认知切面 + revive_consolidated 起复
+    assert (
+        len(resp["result"]["tools"]) == 60
+    )  # 包含 cognitive_context 心斋认知切面 + revive_consolidated 起复
     assert "persona_get" in names
     assert "persona_set" in names
     assert "cognitive_context" in names
@@ -329,9 +331,7 @@ def test_search_passes_session_id_to_log():
         patch.object(
             mod, "relevance_check", return_value={"needs_memory": True, "reason": "t", "scope": "t"}
         ),
-        patch(
-            "lantai.observability.retrieval_log.log_retrieval", return_value="ev_2"
-        ) as m,
+        patch("lantai.observability.retrieval_log.log_retrieval", return_value="ev_2") as m,
     ):
         mod.handle(
             {

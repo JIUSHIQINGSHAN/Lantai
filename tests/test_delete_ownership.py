@@ -23,16 +23,15 @@ def env(monkeypatch):
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
     monkeypatch.setattr(
-        "lantai.storage.vector_store.get_vector_store", lambda: type("D", (), {"delete": lambda *a, **k: None})()
+        "lantai.storage.vector_store.get_vector_store",
+        lambda: type("D", (), {"delete": lambda *a, **k: None})(),
     )
     with TestClient(app) as client:
         yield engine, client
 
 
 def _principal(user_id="u1", role="user", lanes=("general",), tenant=None):
-    return Principal(
-        user_id=user_id, role=role, allowed_lanes=list(lanes), tenant_id=tenant
-    )
+    return Principal(user_id=user_id, role=role, allowed_lanes=list(lanes), tenant_id=tenant)
 
 
 def _override(client, principal):
@@ -186,9 +185,10 @@ class TestEdgesAndDocuments:
             resp = client.delete("/documents/doc_o1")
             assert resp.status_code == 403, resp.text
             with Session(engine) as s:
-                assert s.exec(
-                    select(RawDocument).where(RawDocument.id == "doc_o1")
-                ).first() is not None
+                assert (
+                    s.exec(select(RawDocument).where(RawDocument.id == "doc_o1")).first()
+                    is not None
+                )
         finally:
             _teardown_override()
 

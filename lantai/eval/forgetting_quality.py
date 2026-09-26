@@ -211,9 +211,7 @@ def evaluate_forgetting_quality(
                 "preferred_id": mapping.get(str(case["preferred"]))
                 if case.get("preferred") is not None
                 else None,
-                "peer_id": mapping.get(str(case["peer"]))
-                if case.get("peer") is not None
-                else None,
+                "peer_id": mapping.get(str(case["peer"])) if case.get("peer") is not None else None,
             }
             if judge != "off" and case.get("key_points"):
                 if judge == "llm":

@@ -125,11 +125,18 @@ class TestEventTimeChain:
         assert applied["ok"] is True
 
         with db_module.get_session() as s:
-            mem = s.get(MemoryItem, s.exec(
-                __import__("sqlmodel").select(MemoryItem).where(
-                    MemoryItem.key == "系统 2026-09-15 完成迁移", MemoryItem.status == "active"
+            mem = s.get(
+                MemoryItem,
+                s.exec(
+                    __import__("sqlmodel")
+                    .select(MemoryItem)
+                    .where(
+                        MemoryItem.key == "系统 2026-09-15 完成迁移", MemoryItem.status == "active"
+                    )
                 )
-            ).first().id)
+                .first()
+                .id,
+            )
             assert mem.event_time is not None
             assert mem.event_time.year == 2026 and mem.event_time.month == 9
             assert mem.event_time_precision == "day"
@@ -178,11 +185,13 @@ class TestEventTimeChain:
         from lantai.models.tables import MemoryCandidate
 
         # extract_candidate（外部 LLM 提取器替身面）：固定高置信提取结果
-        fake_extract = lambda q, t: {
-            "summary": t[:400],
-            "claims": [t],
-            "extractor_confidence": 0.9,
-        }
+        def fake_extract(q, t):
+            return {
+                "summary": t[:400],
+                "claims": [t],
+                "extractor_confidence": 0.9,
+            }
+
         with _patch("lantai.ingestion.dialogue.extract_candidate", fake_extract):
             res = dlg.ingest_dialogue("系统 2026-09-15 完成迁移", session_id="sess-u3")
         assert res.get("candidate_id"), res
@@ -246,14 +255,10 @@ class TestCorrectEventTime:
         from lantai.services.record_ops_service import correct_memory
 
         with db_module.get_session() as s:
-            mem = MemoryItem(
-                id=new_id("evs-mem"), content="内容甲", key="内容甲", status="active"
-            )
+            mem = MemoryItem(id=new_id("evs-mem"), content="内容甲", key="内容甲", status="active")
             s.add(mem)
             s.commit()
             mid = mem.id
 
-        res = correct_memory(
-            mid, new_content="内容乙", event_time=None, event_time_precision="day"
-        )
+        res = correct_memory(mid, new_content="内容乙", event_time=None, event_time_precision="day")
         assert res["ok"] is False and "I1" in res["error"]

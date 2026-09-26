@@ -8,6 +8,8 @@
 全是自己的心跳（上游 aiduMEI 写线断裂事故教训，票据 05）。
 """
 
+import contextlib
+
 from lantai.core.logger import logger
 from lantai.storage.db import _has_column
 
@@ -34,7 +36,6 @@ def apply_v022_migrations(engine) -> None:
         logger.error("v022 增量迁移异常（服务继续启动）: %s", exc)
     finally:
         if conn is not None:
-            try:
+            # 关闭失败不阻断启动（外层已捕获异常并记日志，此处只保证不二次抛错）
+            with contextlib.suppress(Exception):
                 conn.close()
-            except Exception:
-                pass

@@ -6,8 +6,8 @@ from typing import Any
 from sqlmodel import select
 
 from lantai.core.logger import logger
-from lantai.core.time import utcnow
 from lantai.core.settings import settings
+from lantai.core.time import utcnow
 from lantai.llm.client import embed
 from lantai.models.tables import MemoryEdge, MemoryItem
 from lantai.retrieval.errsig import extract_error_signatures, signature_bonus
@@ -48,9 +48,7 @@ class RetrievalParams:
     mmr_enabled: bool = field(default_factory=lambda: bool(settings.MMR_ENABLED))
     mmr_lambda: float = field(default_factory=lambda: settings.MMR_LAMBDA)
     errsig_bonus: float = field(default_factory=lambda: settings.ERRSIG_BONUS)
-    temporal_asof_strict: bool = field(
-        default_factory=lambda: bool(settings.TEMPORAL_ASOF_STRICT)
-    )
+    temporal_asof_strict: bool = field(default_factory=lambda: bool(settings.TEMPORAL_ASOF_STRICT))
     temporal_fuzzy_penalty: float = field(
         default_factory=lambda: float(settings.TEMPORAL_FUZZY_PENALTY)
     )
@@ -207,8 +205,10 @@ def mmr_select(scored: list, limit: int, *, lam: float = 0.7) -> list:
         best_idx = None
         best_val = None
         for i, (rel, m) in enumerate(pool):
-            red = 0.0 if getattr(m, "_supersedes_pinned", False) else _redundancy(
-                m.content, chosen_texts
+            red = (
+                0.0
+                if getattr(m, "_supersedes_pinned", False)
+                else _redundancy(m.content, chosen_texts)
             )
             val = lam * rel - (1.0 - lam) * red
             if best_val is None or val > best_val:
@@ -291,7 +291,7 @@ def _apply_supersedes_order(
             for n in superseder_ids:
                 pinned_item = id_to_item.get(n)
                 if pinned_item is not None:
-                    setattr(pinned_item, "_supersedes_pinned", True)
+                    pinned_item._supersedes_pinned = True
         out.append((sc, m))
     out.sort(key=lambda x: -x[0])
     return out
@@ -585,11 +585,7 @@ def _hybrid_search_impl(
     # 开关与出身都显式——空 session 不过滤（上游纪律）。
     echo_session = None
     echo_cutoff = None
-    if (
-        p.echo_suppress_enabled
-        and principal is not None
-        and getattr(principal, "session_id", None)
-    ):
+    if p.echo_suppress_enabled and principal is not None and getattr(principal, "session_id", None):
         echo_session = principal.session_id
         echo_cutoff = utcnow() - timedelta(seconds=p.echo_suppress_window)
 

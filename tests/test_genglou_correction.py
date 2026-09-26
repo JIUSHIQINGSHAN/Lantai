@@ -3,6 +3,8 @@
 不 mock：真实内存库直调 late_correction + ConflictEngine recency 修正。
 """
 
+from datetime import UTC
+
 import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -54,21 +56,19 @@ class TestSupersedeCorrection:
             old = _mem(
                 "evs-old1",
                 content="服务器在 A 机房",
-                valid_from=datetime(2026, 8, 1, tzinfo=timezone.utc),
-                created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+                valid_from=datetime(2026, 8, 1, tzinfo=UTC),
+                created_at=datetime(2026, 8, 1, tzinfo=UTC),
             )
             new = _mem(
                 "evs-new1",
                 content="服务器从 9 月起换到 B 机房",
-                event_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
+                event_time=datetime(2026, 9, 1, tzinfo=UTC),
                 event_time_precision="day",
             )
             s.add_all([old, new])
             s.commit()
 
-            res = apply_supersede_correction(
-                old, new, session=s, reason="机房迁移", actor="tester"
-            )
+            res = apply_supersede_correction(old, new, session=s, reason="机房迁移", actor="tester")
             assert res["ok"] is True
             assert res["clamped"] is False and res["approximated"] is False
 
@@ -112,13 +112,13 @@ class TestSupersedeCorrection:
             old = _mem(
                 "evs-old2",
                 content="用户的主数据库是 PostgreSQL 15",
-                valid_from=datetime(2026, 9, 25, tzinfo=timezone.utc),  # 回填 created_at
-                created_at=datetime(2026, 9, 25, tzinfo=timezone.utc),
+                valid_from=datetime(2026, 9, 25, tzinfo=UTC),  # 回填 created_at
+                created_at=datetime(2026, 9, 25, tzinfo=UTC),
             )
             new = _mem(
                 "evs-new2",
                 content="用户从 2026-01-01 起主数据库是 MySQL 9",
-                event_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                event_time=datetime(2026, 1, 1, tzinfo=UTC),
                 event_time_precision="day",
             )
             s.add_all([old, new])
@@ -148,11 +148,13 @@ class TestRecencyAxis:
         new_with_et = _mem(
             "evs-ra",
             content="用户的主数据库是 MySQL 9",
-            created_at=datetime(2026, 9, 25, tzinfo=timezone.utc),
-            event_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 9, 25, tzinfo=UTC),
+            event_time=datetime(2026, 1, 1, tzinfo=UTC),
             event_time_precision="day",
         )
-        rec, axis = engine_resolver._score_with_components(new_with_et, None) if False else (None, None)
+        rec, axis = (
+            engine_resolver._score_with_components(new_with_et, None) if False else (None, None)
+        )
         # _score_with_components 返回 (score, components)；直接断言 axis
         score, comps = ConflictEngine()._score_with_components(new_with_et, None)
         assert comps["recency_axis"] == "event"
@@ -160,7 +162,7 @@ class TestRecencyAxis:
         new_no_et = _mem(
             "evs-rb",
             content="用户的主数据库是 MySQL 9",
-            created_at=datetime(2026, 9, 25, tzinfo=timezone.utc),
+            created_at=datetime(2026, 9, 25, tzinfo=UTC),
         )
         score2, comps2 = ConflictEngine()._score_with_components(new_no_et, None)
         assert comps2["recency_axis"] == "created"
@@ -177,14 +179,14 @@ class TestExpireCorrection:
             old = _mem(
                 "evs-exp",
                 content="签证 9 月 30 日到期",
-                valid_from=datetime(2026, 9, 1, tzinfo=timezone.utc),
+                valid_from=datetime(2026, 9, 1, tzinfo=UTC),
             )
             s.add(old)
             s.commit()
 
             res = apply_expire_correction(
                 old,
-                valid_to=datetime(2026, 9, 30, tzinfo=timezone.utc),
+                valid_to=datetime(2026, 9, 30, tzinfo=UTC),
                 reason="签证到期",
                 session=s,
             )
@@ -192,15 +194,13 @@ class TestExpireCorrection:
             s.refresh(old)
             assert old.valid_to.replace(tzinfo=None) == datetime(2026, 9, 30)
             assert old.superseded_by is None  # 无新值无 supersedes
-            edges = s.exec(
-                select(MemoryEdge).where(MemoryEdge.target_memory_id == "evs-exp")
-            ).all()
+            edges = s.exec(select(MemoryEdge).where(MemoryEdge.target_memory_id == "evs-exp")).all()
             assert not [e for e in edges if e.relation == "supersedes"]
 
             # I3 违例：valid_to 早于 valid_from → 拒写
             res_bad = apply_expire_correction(
                 old,
-                valid_to=datetime(2026, 8, 31, tzinfo=timezone.utc),
+                valid_to=datetime(2026, 8, 31, tzinfo=UTC),
                 reason="矛盾",
                 session=s,
             )

@@ -173,7 +173,6 @@ class TestSessionOriginChain:
     上游 aiduMEI v21.2 教训：写入路径不透传 session，回声抑制/会话萃取/
     轨迹登记三个功能上线即空转而探针全绿。"""
 
-
     def test_session_and_turn_recorded_on_candidate(self, param_env):
         """带 session_id/turn 的对话摄取 → 候选列与 provenance 双落值"""
         session_factory, _ = param_env
@@ -198,7 +197,6 @@ class TestSessionOriginChain:
             assert cand.provenance.get("origin_turn") == 3
             assert cand.provenance.get("origin_source") == "dialogue"
 
-
     def test_no_session_stays_null(self, param_env):
         """无 session 的写入如实留空（NULL），不猜测、不编造"""
         session_factory, _ = param_env
@@ -214,7 +212,6 @@ class TestSessionOriginChain:
             assert cand.session_id is None
             assert "origin_session_id" not in cand.provenance
             assert "origin_turn" not in cand.provenance
-
 
     def test_session_recorded_on_extraction_path(self, param_env):
         """LLM 提取路径同样落 session（非 fastpath 专用）"""
@@ -241,7 +238,6 @@ class TestSessionOriginChain:
             cand = s.get(MemoryCandidate, result["candidate_id"])
             assert cand.session_id == "sess_ext"
             assert cand.provenance.get("origin_session_id") == "sess_ext"
-
 
     def test_dialogue_route_passes_session(self, client):
         """REST POST /dialogue 透传 session_id / turn"""

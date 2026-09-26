@@ -195,10 +195,20 @@ class TestAdminAclExemptionAndDefaultLanes:
         from lantai.core.auth import DEFAULT_LANES
 
         expected = [
-            "general", "fact", "rule", "experience", "preference",
-            "chat", "default", "distill", "hermes", "user", "project", "working"
+            "general",
+            "fact",
+            "rule",
+            "experience",
+            "preference",
+            "chat",
+            "default",
+            "distill",
+            "hermes",
+            "user",
+            "project",
+            "working",
         ]
-        assert DEFAULT_LANES == expected
+        assert expected == DEFAULT_LANES
 
     def test_dev_mode_principal_receives_all_default_lanes(self, client):
         """DEV MODE 下（无 key，回环地址），发起的请求具有完整的 12 个默认泳道"""
@@ -275,4 +285,3 @@ class TestAdminAclExemptionAndDefaultLanes:
                 },
             )
             assert resp.status_code == 403
-

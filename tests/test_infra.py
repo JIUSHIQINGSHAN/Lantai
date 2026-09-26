@@ -66,6 +66,7 @@ class TestChromaVectorStoreCompatibility:
         """当 list_collections 返回字符串列表时（如 Chroma 0.6.0+ CollectionName），能正确识别 remembrance_vectors"""
         import chromadb
         from chromadb.config import Settings as ChromaSettings
+
         from lantai.storage.vector_store import ChromaVectorStore
 
         class FakeClient:
@@ -81,13 +82,17 @@ class TestChromaVectorStoreCompatibility:
                 return {"name": name}
 
         fake_client = FakeClient()
-        monkeypatch.setitem(sys.modules, "chromadb", _fake_chroma_module(fake_client, ChromaSettings))
-        store = ChromaVectorStore()
+        monkeypatch.setitem(
+            sys.modules, "chromadb", _fake_chroma_module(fake_client, ChromaSettings)
+        )
+        # 构造即被测行为（建/解析集合），返回值本测试不读
+        ChromaVectorStore()
         assert fake_client.created_name == "remembrance_vectors"
 
     def test_collection_resolution_with_object_collections(self, monkeypatch, tmp_path):
         """当 list_collections 返回 Collection 实体对象时（如 Chroma < 0.6.0），能通过 .name 正确识别"""
         import chromadb
+
         from lantai.storage.vector_store import ChromaVectorStore
 
         class MockCollectionObj:
@@ -114,12 +119,14 @@ class TestChromaVectorStoreCompatibility:
 
         fake_client = FakeClient()
         monkeypatch.setitem(sys.modules, "chromadb", _fake_chroma_module(fake_client))
-        store = ChromaVectorStore()
+        # 构造即被测行为（建/解析集合），返回值本测试不读
+        ChromaVectorStore()
         assert fake_client.created_name == "remembrance_vectors"
 
     def test_collection_resolution_fallback_to_lantai_vectors(self, monkeypatch, tmp_path):
         """当既有集合中不存在 remembrance_vectors 时，回退使用 lantai_vectors"""
         import chromadb
+
         from lantai.storage.vector_store import ChromaVectorStore
 
         class FakeClient:
@@ -135,6 +142,6 @@ class TestChromaVectorStoreCompatibility:
 
         fake_client = FakeClient()
         monkeypatch.setitem(sys.modules, "chromadb", _fake_chroma_module(fake_client))
-        store = ChromaVectorStore()
+        # 构造即被测行为（建/解析集合），返回值本测试不读
+        ChromaVectorStore()
         assert fake_client.created_name == "lantai_vectors"
-

@@ -37,9 +37,7 @@ def _get_test_session():
     raise RuntimeError("测试须先 patch db_module.get_session")
 
 
-def _add_mem(
-    engine, content: str, *, session_id: str | None = None, created_at=None
-) -> str:
+def _add_mem(engine, content: str, *, session_id: str | None = None, created_at=None) -> str:
     mid = new_id("mem")
     with Session(engine) as s:
         mem = MemoryItem(
@@ -126,9 +124,7 @@ class TestEchoSuppression:
         """默认关：本会话写入照常回捞（行为不变，零回归）。"""
         assert settings.ECHO_SUPPRESS_ENABLED is False
         mid = _add_mem(engine, "兰台项目部署在本地内网服务器", session_id="sess_1")
-        results = _search(
-            engine, "部署在本地内网服务器", principal=Principal(session_id="sess_1")
-        )
+        results = _search(engine, "部署在本地内网服务器", principal=Principal(session_id="sess_1"))
         assert [r["memory"]["id"] for r in results] == [mid]
 
     def test_on_suppresses_only_fresh_session_writes(self, engine):
@@ -170,7 +166,9 @@ class TestEchoSuppression:
         from lantai.retrieval.hybrid import RetrievalParams
 
         assert (
-            RetrievalParams.from_overrides({"ECHO_SUPPRESS_WINDOW_SECONDS": -5}).echo_suppress_window
+            RetrievalParams.from_overrides(
+                {"ECHO_SUPPRESS_WINDOW_SECONDS": -5}
+            ).echo_suppress_window
             == 900
         )
         assert (
@@ -180,7 +178,9 @@ class TestEchoSuppression:
             == 900
         )
         assert (
-            RetrievalParams.from_overrides({"ECHO_SUPPRESS_WINDOW_SECONDS": 60}).echo_suppress_window
+            RetrievalParams.from_overrides(
+                {"ECHO_SUPPRESS_WINDOW_SECONDS": 60}
+            ).echo_suppress_window
             == 60
         )
 
@@ -269,7 +269,9 @@ class TestErrSig:
         from lantai.retrieval.hybrid import RetrievalParams
 
         p = RetrievalParams.from_overrides({"ERRSIG_BONUS": 0.10})
-        results = _search(engine, "配置解析", top_k=5, params=p, principal=Principal(), explain=True)
+        results = _search(
+            engine, "配置解析", top_k=5, params=p, principal=Principal(), explain=True
+        )
         for r in results:
             assert r["explain"]["errsig_bonus"] == 0.0
 
@@ -279,7 +281,9 @@ class TestErrSig:
         from lantai.retrieval.hybrid import RetrievalParams
 
         p = RetrievalParams.from_overrides({"ERRSIG_BONUS": 0.0})
-        results = _search(engine, "报 ValueError", top_k=5, params=p, principal=Principal(), explain=True)
+        results = _search(
+            engine, "报 ValueError", top_k=5, params=p, principal=Principal(), explain=True
+        )
         for r in results:
             assert r["explain"]["errsig_bonus"] == 0.0
 

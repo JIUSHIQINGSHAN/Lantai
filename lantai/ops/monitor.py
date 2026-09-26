@@ -685,8 +685,10 @@ def evaluate_alerts(snapshot: dict) -> list[dict]:
             )
         )
 
-    if security.get("loopback") and not security.get("api_key_configured") and not security.get(
-        "api_keys_total"
+    if (
+        security.get("loopback")
+        and not security.get("api_key_configured")
+        and not security.get("api_keys_total")
     ):
         alerts.append(
             _alert(

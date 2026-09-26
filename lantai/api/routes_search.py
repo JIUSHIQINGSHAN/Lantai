@@ -93,7 +93,9 @@ def search_graph_expand(req: GraphExpandReq, ctx: Principal = Depends(get_curren
     )
 
 
-def _try_log(req, results: list, latency_ms: int, gate: dict, *, session_id: str | None = None) -> str | None:
+def _try_log(
+    req, results: list, latency_ms: int, gate: dict, *, session_id: str | None = None
+) -> str | None:
     """检索事件埋点（方向二）：失败不影响主链路。返回 event_id 供生成侧回填。
 
     session_id 透传（v022 票据 05）：写活性判据用「带 session 的真实会话读」，

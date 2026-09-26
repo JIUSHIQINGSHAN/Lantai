@@ -82,7 +82,7 @@ def handle_search(params: dict) -> dict:
         "evidence": build_evidence(results),
     }
     # 樊篱（P0 票03）：正文是数据不是指令——主结果与 evidence 各自围栏
-    #（evidence 独立包裹，避免先包裹再截断切开闭合标记）
+    # （evidence 独立包裹，避免先包裹再截断切开闭合标记）
     from lantai.llm.fence import wrap_as_data
 
     for r in results:
@@ -840,7 +840,10 @@ TOOLS = {
                     "description": "辨域过滤：user/session/agent/all",
                     "enum": ["user", "session", "agent", "all"],
                 },
-                "as_of": {"type": "string", "description": "历史时点视图（ISO 8601，更漏 ADR-0048）"},
+                "as_of": {
+                    "type": "string",
+                    "description": "历史时点视图（ISO 8601，更漏 ADR-0048）",
+                },
                 "as_of_recorded": {"type": "string", "description": "事务轴近似 as-of（ISO 8601）"},
                 "time_from": {"type": "string", "description": "事件轴窗口起点（ISO 8601）"},
                 "time_to": {"type": "string", "description": "事件轴窗口终点（ISO 8601）"},

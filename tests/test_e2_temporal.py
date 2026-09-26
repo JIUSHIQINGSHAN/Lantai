@@ -88,14 +88,16 @@ def test_dual_view_accuracy_at_least_90(e2_env):
 
 def test_mcp_search_temporal_passthrough(e2_env, monkeypatch):
     """票 11 冒烟：MCP search 工具透传 as_of/time_from/time_to（真实 handle_search 直调）。"""
+    from lantai.cli.mcp import handle_search
     from lantai.eval.e2_temporal_cases import build_seed_items
     from lantai.retrieval.hybrid import index_memory_item
     from lantai.storage.fts import sync_fts
-    from lantai.cli.mcp import handle_search
 
     with db_module.get_session() as s:
         for item in build_seed_items():
-            existing = s.get(__import__("lantai.models.tables", fromlist=["MemoryItem"]).MemoryItem, item.id)
+            existing = s.get(
+                __import__("lantai.models.tables", fromlist=["MemoryItem"]).MemoryItem, item.id
+            )
             if existing:
                 s.delete(existing)
         s.commit()

@@ -15,7 +15,7 @@
 「胜出执行」，胜出裁决由 ConflictEngine/人工在调用前完成）。
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlmodel import select
 
@@ -30,7 +30,7 @@ def _ensure_utc(dt: datetime) -> datetime:
     from datetime import timezone
 
     if dt is not None and dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -92,7 +92,9 @@ def apply_supersede_correction(
         new_item.valid_from = anchor
 
         # d. checkpoint 快照留底（旧值）
-        _make_checkpoint(s, old_item, {}, actor or reason or "late_correction", trigger="late_correction")
+        _make_checkpoint(
+            s, old_item, {}, actor or reason or "late_correction", trigger="late_correction"
+        )
 
         # 落账：ConflictEvent(kind="override") detail 契约（spec §4.2 步骤 1/2）
         s.add(
@@ -103,8 +105,12 @@ def apply_supersede_correction(
                 kind="override",
                 detail={
                     "correction_type": correction_type,
-                    "old_event_time": old_item.event_time.isoformat() if old_item.event_time else None,
-                    "new_event_time": new_item.event_time.isoformat() if new_item.event_time else None,
+                    "old_event_time": old_item.event_time.isoformat()
+                    if old_item.event_time
+                    else None,
+                    "new_event_time": new_item.event_time.isoformat()
+                    if new_item.event_time
+                    else None,
                     "valid_to_anchor": anchor.isoformat() if anchor else None,
                     "recency_axis": "event" if new_item.event_time else "created",
                     "approximated": approximated,

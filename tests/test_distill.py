@@ -93,7 +93,11 @@ class TestDistill:
         _add_session_mem(engine, "s2", "一起排查了文件系统软链接的权限问题")
         _add_session_mem(engine, "s2", "最终决定把日志目录挂到独立磁盘")
         _add_session_mem(engine, "s2", "用户确认下周回归测试")
-        res = _distill(engine, "s2", llm_return={"summary": "与用户一起定位软链接权限问题并决定日志独立磁盘，下周回归。"})
+        res = _distill(
+            engine,
+            "s2",
+            llm_return={"summary": "与用户一起定位软链接权限问题并决定日志独立磁盘，下周回归。"},
+        )
         assert res["status"] == "ok"
         assert res["mode"] == "llm"
         assert "软链接" in res["summary"]
@@ -232,11 +236,13 @@ class TestDistillRoute:
             patch("lantai.gate.scorer.embed", return_value=[[0.1] * 8]),
             patch("lantai.retrieval.hybrid.get_vector_store"),
             patch("lantai.storage.vector_store.ChromaVectorStore"),
-            patch("lantai.services.distill_service.chat_json", return_value={"summary": "精华一句话"}),
+            patch(
+                "lantai.services.distill_service.chat_json", return_value={"summary": "精华一句话"}
+            ),
         ):
-            from lantai.api.app import app
-
             from fastapi.testclient import TestClient
+
+            from lantai.api.app import app
 
             with TestClient(app) as c:
                 yield c

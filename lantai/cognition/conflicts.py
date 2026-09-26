@@ -40,23 +40,19 @@ class ConflictResult:
     decision_trace: DecisionTrace | None = None  # v0.4: 可解释裁决追踪
 
 
-
-
 def _temporal_recency(item) -> tuple:
     """更漏（ADR-0048/票 10）recency 修正：优先 event_time、无则回退 created_at。
 
     返回 (recency, axis)；axis ∈ {"event", "created", "none"}——
     「不按最近写入机械取胜」：迟到更正里新值 created_at 必然更新，机械奖励迟到本身。
     """
-    from datetime import datetime, timezone as _tz
-
     base = item.event_time or item.created_at
     axis = "event" if item.event_time else ("created" if item.created_at else "none")
     if base is None:
         return 0.5, axis
     if base.tzinfo is None:
-        base = base.replace(tzinfo=_tz.utc)
-    days_old = (datetime.now(_tz.utc) - base).days
+        base = base.replace(tzinfo=UTC)
+    days_old = (datetime.now(UTC) - base).days
     return max(0.0, 1.0 - days_old / 30.0), axis
 
 

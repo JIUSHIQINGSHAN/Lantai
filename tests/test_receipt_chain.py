@@ -161,10 +161,11 @@ class TestReceiptChain:
         """迁移冒烟：v21 旧库升级 → retrieval_event 三列就位 + 索引 + 幂等。"""
         import sqlite3
 
-        import lantai.models.tables  # noqa: F401
-        import lantai.eval.models  # noqa: F401
-        from lantai.storage.db import apply_migrations
         from sqlmodel import SQLModel, create_engine
+
+        import lantai.eval.models  # noqa: F401
+        import lantai.models.tables  # noqa: F401
+        from lantai.storage.db import apply_migrations
 
         engine = create_engine("sqlite:///" + str(tmp_path / "v22.db"))
         SQLModel.metadata.create_all(engine)
@@ -180,7 +181,9 @@ class TestReceiptChain:
         conn.commit()
 
         apply_migrations(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 24  # 链已前移到 v24（票 07 沉潜过审 + ADR-0053 decided_at），幂等守卫保证 v22 段仍生效
+        assert (
+            conn.execute("PRAGMA user_version").fetchone()[0] == 24
+        )  # 链已前移到 v24（票 07 沉潜过审 + ADR-0053 decided_at），幂等守卫保证 v22 段仍生效
         cols = {r[1] for r in conn.execute("PRAGMA table_info(retrieval_event)").fetchall()}
         assert {"request_id", "receipt_status", "receipt_at"} <= cols
         apply_migrations(conn)  # 幂等重放

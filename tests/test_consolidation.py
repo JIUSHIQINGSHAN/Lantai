@@ -106,9 +106,11 @@ def _cluster_of_three(s):
 
 def _fts_content(s, memory_id):
     """按 id 参数绑定查询 FTS 行内容（无行返回 None）。"""
-    row = s.connection().execute(
-        text("SELECT content FROM memory_fts WHERE memory_id = :mid"), {"mid": memory_id}
-    ).fetchone()
+    row = (
+        s.connection()
+        .execute(text("SELECT content FROM memory_fts WHERE memory_id = :mid"), {"mid": memory_id})
+        .fetchone()
+    )
     return row[0] if row else None
 
 
@@ -138,7 +140,9 @@ class TestConsolidationDB:
         session_factory, _ = param_env
         with session_factory() as s:
             _seed_fragments(s)
-            cluster = _cluster_of_three(s)
+            # 构造簇本身即断言（_cluster_of_three 内含三条碎片在簇内的校验），
+            # 返回值本测试不用，故不接收
+            _cluster_of_three(s)
 
             with patch(
                 "lantai.services.consolidation_service.chat_json",
@@ -307,7 +311,9 @@ class TestConsolidationDB:
 
         from lantai.services.evolution_service import decide_proposal
 
-        res = decide_proposal(prop_id, ProposalDecisionReq(approve=False, reason="提纯丢失关键细节"))
+        res = decide_proposal(
+            prop_id, ProposalDecisionReq(approve=False, reason="提纯丢失关键细节")
+        )
         assert res["ok"] is True
 
         with session_factory() as s:
@@ -551,18 +557,12 @@ class TestConsolidationDB:
             )
             s.commit()
 
-            monkeypatch.setattr(
-                settings, "CONSOLIDATION_AGGREGATE_MASTER_MIN_SOURCES", 3
-            )
-            assert all(
-                "mem_agg" not in [m.id for m in c] for c in find_consolidation_clusters(s)
-            )
+            monkeypatch.setattr(settings, "CONSOLIDATION_AGGREGATE_MASTER_MIN_SOURCES", 3)
+            assert all("mem_agg" not in [m.id for m in c] for c in find_consolidation_clusters(s))
 
             # 阈值调高到 4 → 同一条不再被判为聚合主记忆，重新进入候选面
-            monkeypatch.setattr(
-                settings, "CONSOLIDATION_AGGREGATE_MASTER_MIN_SOURCES", 4
-            )
-            clusters = find_consolidation_clusters(s)
+            monkeypatch.setattr(settings, "CONSOLIDATION_AGGREGATE_MASTER_MIN_SOURCES", 4)
+            find_consolidation_clusters(s)
             # 单条不足以成簇（<min_cluster_size），但已被纳入分组＝不再是「跳过」态；
             # 用第二条同关键词碎片凑够簇验证它确实回到了候选面
             s.add(
@@ -704,9 +704,12 @@ class TestConsolidationDB:
         session_factory, _ = param_env
         monkeypatch.setattr(settings, "CONSOLIDATION_AUDIT_MODE", "enforce")
 
-        with session_factory() as s, patch(
-            "lantai.services.consolidation_service.chat_json",
-            return_value=dict(_LLM_PURIFIED),
+        with (
+            session_factory() as s,
+            patch(
+                "lantai.services.consolidation_service.chat_json",
+                return_value=dict(_LLM_PURIFIED),
+            ),
         ):
             _seed_fragments(s)
             assert run_consolidation_cycle(session=s)["proposals_created"] == 1
@@ -741,9 +744,12 @@ class TestConsolidationDB:
         session_factory, _ = param_env
         monkeypatch.setattr(settings, "CONSOLIDATION_AUDIT_MODE", "enforce")
 
-        with session_factory() as s, patch(
-            "lantai.services.consolidation_service.chat_json",
-            return_value=dict(_LLM_PURIFIED),
+        with (
+            session_factory() as s,
+            patch(
+                "lantai.services.consolidation_service.chat_json",
+                return_value=dict(_LLM_PURIFIED),
+            ),
         ):
             _seed_fragments(s)
             assert run_consolidation_cycle(session=s)["proposals_created"] == 1
@@ -791,7 +797,9 @@ class TestConsolidationDB:
         with session_factory() as s:
             row = s.get(MemoryProposal, prop_id)
             # SQLite DATETIME 读回 naive（范式同 consolidation_service._as_utc）
-            decided = row.decided_at if row.decided_at.tzinfo else row.decided_at.replace(tzinfo=UTC)
+            decided = (
+                row.decided_at if row.decided_at.tzinfo else row.decided_at.replace(tzinfo=UTC)
+            )
             assert row.decided_at is not None
             assert before <= decided <= utcnow()  # 裁决时刻落在测试窗口内
             assert row.applied_at is None  # reject 不写 applied_at（两列正交）

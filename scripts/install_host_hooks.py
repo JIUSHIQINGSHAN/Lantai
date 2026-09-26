@@ -62,7 +62,9 @@ def build_snippet(host: str) -> str:
                     "UserPromptSubmit": [
                         {"matcher": "*", "hooks": [{"type": "command", "command": cmd}]}
                     ],
-                    "SessionStart": [{"matcher": "*", "hooks": [{"type": "command", "command": cmd}]}],
+                    "SessionStart": [
+                        {"matcher": "*", "hooks": [{"type": "command", "command": cmd}]}
+                    ],
                 }
             },
             ensure_ascii=False,

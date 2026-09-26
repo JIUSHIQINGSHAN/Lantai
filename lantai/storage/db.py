@@ -180,9 +180,7 @@ def apply_migrations(conn) -> None:
         # v10 -> v11（裁决失败留痕）：reflect_run 补 rejecter_failed 裁决 LLM 失败次数
         if user_version < 11:
             if not _has_column(conn, "reflect_run", "rejecter_failed"):
-                conn.execute(
-                    "ALTER TABLE reflect_run ADD COLUMN rejecter_failed INTEGER DEFAULT 0"
-                )
+                conn.execute("ALTER TABLE reflect_run ADD COLUMN rejecter_failed INTEGER DEFAULT 0")
             conn.execute("PRAGMA user_version = 11")
             conn.commit()
             logger.info("数据库增量迁移 v11 完成（裁决失败留痕）")
@@ -217,13 +215,9 @@ def apply_migrations(conn) -> None:
                     "ALTER TABLE memorycandidate ADD COLUMN previous_review_due_at DATETIME"
                 )
             if not _has_column(conn, "memorycandidate", "defer_count"):
-                conn.execute(
-                    "ALTER TABLE memorycandidate ADD COLUMN defer_count INTEGER DEFAULT 0"
-                )
+                conn.execute("ALTER TABLE memorycandidate ADD COLUMN defer_count INTEGER DEFAULT 0")
             if not _has_column(conn, "memorycandidate", "defer_reason"):
-                conn.execute(
-                    "ALTER TABLE memorycandidate ADD COLUMN defer_reason TEXT DEFAULT ''"
-                )
+                conn.execute("ALTER TABLE memorycandidate ADD COLUMN defer_reason TEXT DEFAULT ''")
             conn.execute("PRAGMA user_version = 14")
             conn.commit()
             logger.info("数据库增量迁移 v14 完成（候选延期留痕）")
@@ -360,9 +354,7 @@ def apply_migrations(conn) -> None:
 
             # domain to memorycandidate
             if not _has_column(conn, "memorycandidate", "domain"):
-                conn.execute(
-                    "ALTER TABLE memorycandidate ADD COLUMN domain TEXT DEFAULT 'user'"
-                )
+                conn.execute("ALTER TABLE memorycandidate ADD COLUMN domain TEXT DEFAULT 'user'")
 
             conn.execute("PRAGMA user_version = 18")
             conn.commit()
@@ -375,9 +367,7 @@ def apply_migrations(conn) -> None:
                     "ALTER TABLE memorycandidate ADD COLUMN role TEXT DEFAULT 'observation'"
                 )
             if not _has_column(conn, "memoryitem", "promotion_trace"):
-                conn.execute(
-                    "ALTER TABLE memoryitem ADD COLUMN promotion_trace TEXT DEFAULT '{}'"
-                )
+                conn.execute("ALTER TABLE memoryitem ADD COLUMN promotion_trace TEXT DEFAULT '{}'")
             conn.execute("PRAGMA user_version = 19")
             conn.commit()
             logger.info("Migrated v19: Cognitive fields (role, promotion_trace)")
@@ -414,8 +404,7 @@ def apply_migrations(conn) -> None:
             # 空库/无表场景（迁移测试建账用例）：表由 create_all 负责，迁移只记账不建表
             has_memoryitem = bool(
                 conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table'"
-                    " AND name = 'memoryitem'"
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memoryitem'"
                 ).fetchone()
             )
             if has_memoryitem:
@@ -456,8 +445,7 @@ def apply_migrations(conn) -> None:
         if user_version < 22:
             has_re = bool(
                 conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table'"
-                    " AND name = 'retrieval_event'"
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'retrieval_event'"
                 ).fetchone()
             )
             if has_re:
@@ -508,8 +496,7 @@ def apply_migrations(conn) -> None:
         if user_version < 24:
             has_mp = bool(
                 conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table'"
-                    " AND name = 'memoryproposal'"
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memoryproposal'"
                 ).fetchone()
             )
             if has_mp and not _has_column(conn, "memoryproposal", "decided_at"):

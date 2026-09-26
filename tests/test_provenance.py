@@ -210,8 +210,7 @@ def test_migration_v6_adds_provenance_columns(tmp_path):
     for table in ("memorycandidate", "memoryproposal", "memoryitem"):
         # table-valued PRAGMA 走参数绑定（防注入纪律，与 db.py 一致）
         cols = {
-            r[0]
-            for r in conn.execute("SELECT name FROM pragma_table_info(?)", (table,)).fetchall()
+            r[0] for r in conn.execute("SELECT name FROM pragma_table_info(?)", (table,)).fetchall()
         }
         assert "provenance" in cols
     assert (

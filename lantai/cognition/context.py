@@ -61,9 +61,7 @@ class CognitiveContext:
                     # 樊篱（P0 票03）：记忆正文是数据不是指令
                     from lantai.llm.fence import wrap_as_data
 
-                    lines.append(
-                        f"- {wrap_as_data(str(content), item_id=item.get('id'))}{meta}"
-                    )
+                    lines.append(f"- {wrap_as_data(str(content), item_id=item.get('id'))}{meta}")
                 else:
                     from lantai.llm.fence import wrap_as_data
 

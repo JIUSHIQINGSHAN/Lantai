@@ -100,6 +100,7 @@ class TestSettingsEnvPathResolution:
     def test_settings_loads_repo_root_env_regardless_of_cwd(self, tmp_path, monkeypatch):
         """无论当前工作目录切换到何处（如临时子目录），Settings 均能稳定绑定仓库根 .env 路径"""
         import os
+
         from lantai.core.settings import _REPO_ROOT
 
         # 切换当前工作目录到外部临时目录
@@ -109,7 +110,6 @@ class TestSettingsEnvPathResolution:
         # 实例化 Settings，其 model_config 依然锁定了仓库根下的 .env 绝对路径
         s = Settings()
         assert Path(s.model_config.get("env_file")) == _REPO_ROOT / ".env"
-
 
 
 class TestValidateConfig:

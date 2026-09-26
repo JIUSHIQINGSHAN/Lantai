@@ -210,9 +210,7 @@ def receipt_traceability_report() -> dict:
             "missed": missed,
             "traceable": traceable,
             # 口径：acked 事件中可完整回溯的比例（used_ids 空的 acked 不入分子）
-            "traceability_rate": (
-                round(traceable / len(acked_used), 4) if acked_used else None
-            ),
+            "traceability_rate": (round(traceable / len(acked_used), 4) if acked_used else None),
         }
     except Exception:
         logger.exception("receipt traceability report failed (non-fatal)")

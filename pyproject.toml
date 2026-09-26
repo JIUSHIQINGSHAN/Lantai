@@ -62,6 +62,15 @@ include = ["lantai*"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+# 门禁范围纪律：lint/format 只管产品代码与测试（lantai/ tests/ scripts/）。
+# 调研工作区（docs/research/ 下的一次性图表/看板生成脚本）与草稿区（.scratch/）是
+# 交付物一次性资产，不入 CI 门禁——否则 CI 测试门禁会被它们的存量违规永久挡住
+# （v0.22.1 前实测：73 条既有违规让 ruff check . 长期失败，pytest 从未在 CI 跑过）。
+# 若要把它们纳入，须先清理存量并单独成一票，不混入门禁收口。
+extend-exclude = [
+    "docs/research",
+    ".scratch",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM"]

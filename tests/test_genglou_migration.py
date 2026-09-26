@@ -57,16 +57,25 @@ def v20_file_db(tmp_path):
     # 元组序与下方 INSERT 列清单一致：id, content, valid_from, created_at, updated_at
     seeds = [
         (
-            "m1", "content-m1", None, "2026-09-01 10:00:00.000000",
+            "m1",
+            "content-m1",
+            None,
+            "2026-09-01 10:00:00.000000",
             "2026-09-01 10:00:00.000000",
         ),
         (
-            "m2", "content-m2", None, "2026-09-02 11:00:00.000000",
+            "m2",
+            "content-m2",
+            None,
+            "2026-09-02 11:00:00.000000",
             "2026-09-02 11:00:00.000000",
         ),
         (
-            "m3", "content-m3", "2026-09-05 00:00:00.000000",
-            "2026-09-03 12:00:00.000000", "2026-09-03 12:00:00.000000",
+            "m3",
+            "content-m3",
+            "2026-09-05 00:00:00.000000",
+            "2026-09-03 12:00:00.000000",
+            "2026-09-03 12:00:00.000000",
         ),
     ]
     conn.executemany(
@@ -91,17 +100,15 @@ class TestGenglouMigrationV21:
 
         apply_migrations(conn)
 
-        assert _user_version(conn) == 24  # 链已前移到 v24（票 07 沉潜过审 + ADR-0053 decided_at），幂等守卫保证 v21 段仍生效
-        columns = {
-            r[1] for r in conn.execute("PRAGMA table_info(memoryitem)").fetchall()
-        }
+        assert (
+            _user_version(conn) == 24
+        )  # 链已前移到 v24（票 07 沉潜过审 + ADR-0053 decided_at），幂等守卫保证 v21 段仍生效
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(memoryitem)").fetchall()}
         assert "event_time" in columns
         assert "event_time_precision" in columns
 
         # U5 回填等价：NULL 行回填为各自 created_at；已有值不被覆盖
-        rows = conn.execute(
-            "SELECT id, valid_from, created_at FROM memoryitem"
-        ).fetchall()
+        rows = conn.execute("SELECT id, valid_from, created_at FROM memoryitem").fetchall()
         fetched = {rid: (vf, created) for rid, vf, created in rows}
         assert fetched["m1"][0] == fetched["m1"][1]  # 回填 == created_at
         assert fetched["m2"][0] == fetched["m2"][1]
@@ -127,16 +134,12 @@ class TestGenglouMigrationV21:
         """迁移可重放：二次执行不炸、版本不回退、数据不再改写。"""
         conn = v20_file_db
         apply_migrations(conn)
-        first_pass = conn.execute(
-            "SELECT id, valid_from FROM memoryitem ORDER BY id"
-        ).fetchall()
+        first_pass = conn.execute("SELECT id, valid_from FROM memoryitem ORDER BY id").fetchall()
 
         apply_migrations(conn)  # 重放
 
         assert _user_version(conn) == 24
-        second_pass = conn.execute(
-            "SELECT id, valid_from FROM memoryitem ORDER BY id"
-        ).fetchall()
+        second_pass = conn.execute("SELECT id, valid_from FROM memoryitem ORDER BY id").fetchall()
         assert first_pass == second_pass
 
     def test_fresh_database_full_chain(self, tmp_path):
@@ -149,9 +152,7 @@ class TestGenglouMigrationV21:
         try:
             apply_migrations(conn)
             assert _user_version(conn) >= 21
-            columns = {
-                r[1] for r in conn.execute("PRAGMA table_info(memoryitem)").fetchall()
-            }
+            columns = {r[1] for r in conn.execute("PRAGMA table_info(memoryitem)").fetchall()}
             assert "event_time" in columns
             null_count = conn.execute(
                 "SELECT COUNT(*) FROM memoryitem WHERE valid_from IS NULL"

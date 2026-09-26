@@ -6,6 +6,7 @@ scripts/migrate_v04_lifecycle.py
 import pathlib
 import sqlite3
 
+
 def apply_lifecycle_migration(db_path: pathlib.Path):
     con = sqlite3.connect(db_path)
     cur = con.cursor()

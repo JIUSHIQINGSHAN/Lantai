@@ -82,7 +82,9 @@ def render_report(result: dict) -> str:
             f"- scored_queries: {answer.get('scored_queries')}",
         ]
         for cat, stat in (answer.get("by_category") or {}).items():
-            lines.append(f"- {cat}: {stat.get('hit_rate')}（{stat.get('hit_points')}/{stat.get('points')}）")
+            lines.append(
+                f"- {cat}: {stat.get('hit_rate')}（{stat.get('hit_points')}/{stat.get('points')}）"
+            )
     lines += ["", "## 逐条明细", ""]
     for q in result.get("per_query", []):
         ans = q.get("answer")

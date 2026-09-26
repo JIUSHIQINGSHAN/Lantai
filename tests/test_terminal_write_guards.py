@@ -14,6 +14,7 @@ from lantai.api.app import app
 from lantai.core.auth import get_current_user
 from lantai.models.tables import MemoryItem
 
+
 @pytest.fixture()
 def env(monkeypatch):
     engine = create_engine(
@@ -44,15 +45,16 @@ def env(monkeypatch):
     with TestClient(app) as client:
         yield engine, client, added
 
+
 def _principal(user_id="u1", role="user", lanes=("general",), tenant=None):
     from lantai.core.auth import Principal
 
-    return Principal(
-        user_id=user_id, role=role, allowed_lanes=list(lanes), tenant_id=tenant
-    )
+    return Principal(user_id=user_id, role=role, allowed_lanes=list(lanes), tenant_id=tenant)
+
 
 def _override(client, principal, monkeypatch):
     monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: principal)
+
 
 def _add_memory(engine, *, id="mem_g1", user_id="u1", lane="general", status="active"):
     with Session(engine) as s:
@@ -69,16 +71,19 @@ def _add_memory(engine, *, id="mem_g1", user_id="u1", lane="general", status="ac
         )
         s.commit()
 
+
 def _memory(engine, memory_id):
     with Session(engine) as s:
         m = s.get(MemoryItem, memory_id)
         return m.content, m.status
+
 
 def _fts_hits(engine, query):
     from lantai.storage.fts import search_fts
 
     with engine.connect() as conn:
         return search_fts(conn.connection.driver_connection, query, top_k=50)
+
 
 def test_put_other_user_forbidden_and_content_intact(env, monkeypatch):
     engine, client, _ = env
@@ -88,12 +93,14 @@ def test_put_other_user_forbidden_and_content_intact(env, monkeypatch):
     assert resp.status_code == 403, resp.text
     assert _memory(engine, "mem_ou") == ("content-mem_ou", "active")
 
+
 def test_put_lane_outside_allowed_forbidden(env, monkeypatch):
     engine, client, _ = env
     _add_memory(engine, id="mem_lr", lane="rule")
     _override(client, _principal(user_id="u1", lanes=("general",)), monkeypatch)
     resp = client.put("/terminal/memory/mem_lr", json={"importance": 0.9})
     assert resp.status_code == 403, resp.text
+
 
 def test_put_owner_active_ok_and_fts_synced(env, monkeypatch):
     engine, client, added = env
@@ -106,12 +113,14 @@ def test_put_owner_active_ok_and_fts_synced(env, monkeypatch):
     assert len(_fts_hits(engine, "新正文")) >= 1  # 正面对照：FTS 同步在本 harness 真实生效
     assert added == ["mem_ok"]
 
+
 def test_put_admin_cross_owner_ok(env, monkeypatch):
     engine, client, _ = env
     _add_memory(engine, id="mem_ac", user_id="someone-else")
     _override(client, _principal(user_id="boss", role="admin"), monkeypatch)
     resp = client.put("/terminal/memory/mem_ac", json={"confidence": 0.8})
     assert resp.status_code == 200, resp.text
+
 
 def test_patch_rejected_retracted_and_index_untouched(env, monkeypatch):
     engine, client, added = env

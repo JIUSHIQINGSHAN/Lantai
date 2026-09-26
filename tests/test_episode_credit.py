@@ -75,9 +75,7 @@ class TestRecordEpisode:
             ep = s.get(EpisodeRecord, res["episode_id"])
             assert ep.outcome == "success"
             assert ep.session_id == "sess_ep"
-            steps = s.exec(
-                select(EpisodeStep).where(EpisodeStep.episode_id == ep.id)
-            ).all()
+            steps = s.exec(select(EpisodeStep).where(EpisodeStep.episode_id == ep.id)).all()
             assert len(steps) == 3
             assert {st.position for st in steps} == {1, 2, 3}
         # 聚合：success 全为正、收尾步信用更大
@@ -128,9 +126,7 @@ class TestRecordEpisode:
         monkeypatch.setattr(db_module, "get_session", sf)
         from lantai.services.episode_service import episode_credit_map, record_episode
 
-        record_episode(
-            session_id="s2", outcome="neutral", steps=[{"memory_id": "mem_x"}]
-        )
+        record_episode(session_id="s2", outcome="neutral", steps=[{"memory_id": "mem_x"}])
         assert episode_credit_map() == {}
 
     def test_module_session_factory_restored(self):

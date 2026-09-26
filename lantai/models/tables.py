@@ -623,7 +623,9 @@ class ConsolidationRun(SQLModel, table=True):
     purified_ok: int = 0
     proposals_created: int = 0
     skipped_dupes: int = 0  # 生成侧幂等去重跳过簇数（同 evidence_ids 已有 pending 提案）
-    skipped_rejected_cooldown: int = 0  # 拒绝冷却期内跳过簇数（CONSOLIDATION_REJECTED_COOLDOWN_DAYS）
+    skipped_rejected_cooldown: int = (
+        0  # 拒绝冷却期内跳过簇数（CONSOLIDATION_REJECTED_COOLDOWN_DAYS）
+    )
     skipped_lowq: int = 0  # LLM 失败/输出无效/TrustMem 不过跳过簇数（宁 miss 不静默）
     pruned: int = 0
     error: str = ""  # 拒绝执行时记录原因（shadow 超期硬时限等；正常运行为空）

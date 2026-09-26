@@ -9,11 +9,11 @@ embed 用确定性 sha256 3-gram 替身（外部网络替身面）。
 import hashlib
 
 import pytest
-from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine
 
-import lantai.gate.decision as gate_decision_mod
 import lantai.evolution.promoter as promoter_mod
+import lantai.gate.decision as gate_decision_mod
 import lantai.retrieval.hybrid as hybrid_mod
 import lantai.storage.db as db_module
 import lantai.storage.vector_store as vs_module
@@ -37,9 +37,9 @@ def _hash_embed(texts):
 @pytest.fixture()
 def staged_env(tmp_path, monkeypatch):
     """内存库（StaticPool 真实建表+FTS）+ patch db.get_session 与三处模块级 embed + 内嵌 Chroma。"""
+    import lantai.eval.models  # noqa: F401  # 注册 EvalQuerySet/EvalRun
     import lantai.models.tables  # noqa: F401
     import lantai.parameters.trust_models  # noqa: F401
-    import lantai.eval.models  # noqa: F401  # 注册 EvalQuerySet/EvalRun
 
     engine = create_engine(
         "sqlite://",
@@ -90,7 +90,10 @@ class TestStagedEvalHarness:
         names = [st["stage"] for st in result["stages"]]
         assert names == ["extract", "gate", "store", "index", "retrieve", "inject"]
         for st in result["stages"]:
-            assert "samples" in st and "success_rate" in st and "failure_buckets" is not None
+            # 键存在 + 值非 None 都要查：原句第三项比对的是字符串字面量而非 st 的值
+            # （F632：`"failure_buckets" is not None` 恒真），实为漏检——此处修回本意
+            assert "samples" in st and "success_rate" in st
+            assert st["failure_buckets"] is not None
         assert all(st["samples"] > 0 for st in result["stages"])
 
         # 三预埋锚点各归正确阶段（HaluMem 式归因不串段）
@@ -112,7 +115,7 @@ class TestStagedEvalHarness:
         """闸门必拒样本不计入下游各段分母（条件化评测）。"""
         from lantai.eval.staged import CORPUS, run_staged_eval
 
-        result = run_staged_eval()
+        run_staged_eval()
         # l1（闸门必拒）不进 store/index/retrieve 的成功样本
         # 语料 fact 总数（非噪音）：10 条；gate 段 samples ≥ 10（含三态对账加样）
         l1 = next(c for c in CORPUS if c[0] == "l1")
@@ -134,9 +137,9 @@ class TestStagedEvalHarness:
         )
 
         # 预置一条可命中记忆（直接构造，走真实索引）
+        from lantai.core.ids import new_id
         from lantai.models.tables import MemoryItem
         from lantai.retrieval.hybrid import index_memory_item
-        from lantai.core.ids import new_id
 
         with db_module.get_session() as s:
             mem = MemoryItem(

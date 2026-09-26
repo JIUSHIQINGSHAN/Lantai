@@ -7,7 +7,6 @@
 from unittest.mock import Mock, patch
 
 import pytest
-
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 

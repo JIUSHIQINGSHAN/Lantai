@@ -265,9 +265,7 @@ def test_delete_privacy_wipe_with_audit_log(bixiao_env, client):
             text("SELECT COUNT(*) FROM memory_fts WHERE memory_id = :id"), {"id": mid}
         ).scalar()
         assert remaining == 0  # memory_fts 物理行已擦
-        events = s.exec(
-            select(MemoryAuditEvent).where(MemoryAuditEvent.memory_id == mid)
-        ).all()
+        events = s.exec(select(MemoryAuditEvent).where(MemoryAuditEvent.memory_id == mid)).all()
         assert len(events) == 1
         a = events[0]
         assert a.action == "delete"
