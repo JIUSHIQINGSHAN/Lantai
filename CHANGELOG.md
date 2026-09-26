@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI 测试门禁 lint 收口——50 条存量违规清零，全量 pytest 第一次真正在 CI 上跑（2026-09-26，票据 `.scratch/ci-lint-gate/issues/01-ci-lint-gate.md`）**：
+  - **背景实证**：v0.22.1 push 后 Tests job 51 秒挂在 Ruff lint 步骤（仓库带 73 条既有违规，多在 `docs/research` 与 `.scratch` 的一次性调研脚本里），**全量 pytest 与遗忘质量门禁从未在 CI 执行过**——「CI 绿」从未真正验证过测试。本地 Windows/Py3.13 全量通过是唯一防线，CI 的 Linux/Py3.11 平台差异从未被门禁覆盖。
+  - **门禁范围收口**（`.github/workflows/tests.yml`）：`ruff check .` / `ruff format --check .` → `ruff check lantai/ tests/ scripts/` / `ruff format --check lantai/ tests/ scripts/`。目录显式列出而非依赖 `exclude` 配置——显式传径时 ruff 的 exclude 不生效（实测 `[tool.ruff.format] exclude` 配 `docs` 后仍报 5 个 markdown）。`[tool.ruff] extend-exclude` 保留（对裸 `ruff check .` 生效，本地开发同样绿）。
+  - **排除的非产品代码**：`docs/` 下 markdown 内嵌 python 代码块（格式化会改**文档正文**，5 个 ADR/plan/spec）、`docs/research` 三个一次性图表脚本（23 条违规）、`.scratch` 三个草稿脚本（7 条违规）。若要把它们纳入，须先清理存量并单独成一票。
+  - **50 条存量违规全清**（39 自动 + 11 手工）：`UP017`×18（`timezone.utc` → `UTC`，同一 `datetime.timezone` 单例）、`I001`×16（import 排序）、`F841`×6（删未用赋值，构造/调用副作用保留）、`SIM105`×2（`try/except/pass` → `contextlib.suppress`）、`SIM300`×2、`F811`×1（删遮蔽模块级的函数内 `datetime` 导入）、`B010`×1（`setattr` → 属性赋值）、`E731`×1（`lambda` → `def`）、`UP031`×1（%-格式化 → f-string，4 个输入逐字节一致）、`SIM103`×1（`_validity_hit` 两条 `return False` 合并为单一 `return not(...)`，25 组输入真值表全等）、`F632`×1。
+  - **顺带修掉一处恒真的漏检断言**（`tests/test_staged_eval.py`）：原句第三项 `"failure_buckets" is not None` 比对的是**字符串字面量**而非 `st["failure_buckets"]` 的值（恒真，Python 甚至发 SyntaxWarning），根本没检查该键的值——改为 `assert st["failure_buckets"] is not None` 恢复本意。这类 bug 在会跑的 CI 上活不下来，正是 lint 挡门禁欠的债。
+  - **自动修避坑**：`ruff --fix` 会把 `UTC = timezone.utc` 生成无意义的 `UTC = UTC` 自赋值（3 文件），手工改为 `from datetime import UTC` 并删别名行，全仓 0 处。
+  - **验收**：`ruff check` / `ruff format --check` 退出码 0（修复前 50 条违规 + 50 文件不合规）；全量 pytest **1249 passed / 0 failed**（与 v0.22.1 基线同数，零回归）；遗忘质量门禁 **6/6 PASS**。
+  - **待实证**：push 后 Tests job 应第一次真正跑完 pytest 与遗忘门禁。Linux/Py3.11 平台差异可能暴露新的既有失败（本地是 Windows/Py3.13）——若出现，按「宁 miss 不脏写」逐条诊断，不静默跳过。
+
 ## [0.22.1] - 2026-09-26 - 起复（Qifu · 巩固撤销与碎片恢复 + 裁决时刻口径）
 
 > 版本代号「起复」：唐宋典制「夺情起复」——官员去位（丁忧）后重新起用；被折叠的碎片记忆恢复现役即起复。贴合本版主题：为巩固产物补上对称的撤销面。命名依据见 [ADR-0052](docs/adr/0052-consolidation-revive.md)，登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 [CONTEXT.md](CONTEXT.md) 词汇表。
