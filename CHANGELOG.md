@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-09-26 - 起复（Qifu · 巩固撤销与碎片恢复 + 裁决时刻口径）
+
+> 版本代号「起复」：唐宋典制「夺情起复」——官员去位（丁忧）后重新起用；被折叠的碎片记忆恢复现役即起复。贴合本版主题：为巩固产物补上对称的撤销面。命名依据见 [ADR-0052](docs/adr/0052-consolidation-revive.md)，登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 [CONTEXT.md](CONTEXT.md) 词汇表。
+>
+> 本版为 v0.22.0 的修订版：无新用户功能，收口 [ADR-0050](docs/adr/0050-consolidation-audit-gate.md) 决策 5 登记的两笔欠账（巩固回滚不闭环 / 冷却期起算点用 `created_at` 近似）。三票据 `.scratch/consolidation-rollback/`（票 01 服务函数 → 02 出口 → 03 decided_at 列）。
+
 ### Added
 - **起复——巩固撤销与碎片恢复（2026-09-26，ADR-0052；票据 `.scratch/consolidation-rollback/issues/01-p0-consolidation-revive.md`；闭环 ADR-0050 决策 5 欠账①「retract 后碎片恢复只剩手改 DB」）**：
   - **服务函数** `lantai/services/record_ops_service.py:revive_consolidated(memory_id, *, reason, actor="", session=None)`：输入二义性按形态判别（宁 miss 不脏写，不猜意图）——主记忆（`source_ids` 非空，promoter 巩固 apply 落库标记）→ 撤销全簇（主记忆 retracted + 全部 consolidated 碎片恢复 active + 删除 supersedes 边 + 主记忆/逐碎片审计，一个事务）；碎片（`status == "consolidated"`）→ 恢复 active + FTS/向量重同步 + checkpoint（`trigger="revive"`）+ 审计（`action="revive"`）；两者皆非 → `{"ok": False, "error": "invalid target ..."}`（路由层映射 409）。**已被普通撤回过的主记忆同样受理**——补完没收尾的撤销（重做索引清理并如实回报，不假设干净）。

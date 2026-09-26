@@ -11,9 +11,9 @@
 让 AI 在对的时间，找到对的回忆。
 ```
 
-[![Version](https://img.shields.io/badge/version-0.22.0-blue.svg)](https://github.com/JIUSHIQINGSHAN/Lantai)
+[![Version](https://img.shields.io/badge/version-0.22.1-blue.svg)](https://github.com/JIUSHIQINGSHAN/Lantai)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-yellow.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-1220%2F1220-green.svg)](docs/aidumem-port-results.md)
+[![Tests](https://img.shields.io/badge/tests-1249%2F1249-green.svg)](docs/aidumem-port-results.md)
 [![改编自](https://img.shields.io/badge/based%20on-aiduMEM-orange.svg)](https://github.com/monkey2jack/aiduMEM)
 
 ---
@@ -94,12 +94,12 @@ lantai-server
 ### 方式二：Docker 容器运行
 
 ```bash
-docker build -t lantai:0.22.0 .
+docker build -t lantai:0.22.1 .
 docker run -d -p 8767:8767 \
   -e API_KEY=your-admin-key \
   -e OPENAI_API_KEY=sk-xxx \
   -v /your/data:/data \
-  lantai:0.22.0
+  lantai:0.22.1
 ```
 
 > 容器默认 `HOST=0.0.0.0` 对外暴露，**必须注入 `API_KEY`**——启动守卫（`assert_secure_binding`）会在非回环地址且无密钥时拒绝运行；请求路径也会校验 `X-API-Key`（或库内 Bearer key），非回环不再回退 DEV MODE。
@@ -290,6 +290,7 @@ critical）、反思/参数建议任务失败、5xx 错误率、p95 延迟、零
 - [x] v0.15 校准·底本·检索·工程健康（A 观察期校准 + B 底本闭环 + C 检索深化 + D 工程健康）——v0.15.0/.1/.2 三版收口，tag 已推送
 - [ ] v0.16 沙汰·察窗·零召回·观察池（运营健康收口）——候选入队信噪分离 + 观察窗口口径 + 零召回根因修复 + 观察池选一，见 [路线计划书](docs/plans/roadmap-2026-08-v016.md)
 - [x] v0.22.0 圭表——更漏双时间轴（ADR-0048）+ 回执链一等化（ADR-0049）+ 宿主矩阵（ADR-0051）+ 沉潜产物过审（ADR-0050）+ E1/E2 评测 harness（roadmap-v2 11 票全清，tag 已推送）
+- [x] v0.22.1 起复——巩固撤销与碎片恢复（ADR-0052）+ 裁决时刻列 decided_at 与冷却期口径修正（ADR-0053），闭环 ADR-0050 决策 5 两笔欠账（tag 已推送）
 
 ## 文档索引
 
