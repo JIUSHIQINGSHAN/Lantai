@@ -2,6 +2,7 @@
 
 from sqlmodel import select
 
+from lantai.core.time import utcnow
 from lantai.evolution.promoter import apply_proposal, rollback
 from lantai.evolution.reflector import record_feedback
 from lantai.models.enums import ProposalStatus
@@ -34,6 +35,9 @@ def decide_proposal(proposal_id: str, req: ProposalDecisionReq) -> dict:
         if not req.approve and not (req.reason or "").strip():
             raise ValueError("reject reason is required")
         prop.decision_reason = req.reason or ""
+        # decided_at（ADR-0053）：裁决即落时刻，不等 apply——approve 与 reject 同口径。
+        # 巩固拒绝冷却期按此起算（ADR-0050 边界「冷却期起算点用 created_at 近似」的修法）。
+        prop.decided_at = utcnow()
         if req.approve:
             prop.status = ProposalStatus.APPROVED
             prop.decided_by = "user"

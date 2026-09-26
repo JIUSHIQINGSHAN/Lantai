@@ -440,10 +440,9 @@ def _consolidation_proposal_blocked(s: Session, evidence_ids: list[str]) -> str 
       enforce 期碎片在 pending 期间保持 active，会被下一轮再次聚出，不去重则每夜
       重复生成同簇提案直至裁决）；
     - "cooldown"：存在冷却期内 rejected 的同簇提案（拒的是「当时产物」非永久禁令，
-      冷却期满允许再奏）。created_at 近似裁决时刻（MemoryProposal 无裁决时刻列）：
-      pending 逾冷却期后方被拒则该窗口内冷却失效（不脏写，仅一次多余提纯与打扰）；
-      修法须新增 decided_at 列 + 迁移，见 ADR-0050 边界「冷却期起算点用 created_at
-      近似」条（独立票据候选）。
+      冷却期满允许再奏）。起算点按 **decided_at or created_at**（ADR-0053）：decided_at
+      为人/系统做出拒绝决定的时刻，精确；老行 decided_at IS NULL 时回退 created_at
+      （提案生成时刻）——旧口径逐字节不变，宁 miss 不猜（不拿 created_at 冒充 decided_at）。
 
     状态过滤下推 SQL（本函数只关心 pending/rejected 两态）：applied/shadow 行与判定
     无关却在库中永久累积，全表取回再于 Python 内过滤的代价随运行时长线性增长。
@@ -464,8 +463,9 @@ def _consolidation_proposal_blocked(s: Session, evidence_ids: list[str]) -> str 
         if row.status == ProposalStatus.PENDING:
             return "dupes"
         if row.status == ProposalStatus.REJECTED:
-            created = _as_utc(row.created_at)
-            if created is not None and now - created <= cooldown:
+            # decided_at 优先（ADR-0053）：裁决时刻精确起算；老行 NULL 回退 created_at
+            decided = _as_utc(row.decided_at) or _as_utc(row.created_at)
+            if decided is not None and now - decided <= cooldown:
                 return "cooldown"
     return None
 

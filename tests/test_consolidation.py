@@ -26,7 +26,7 @@ r"""沉潜（ADR-0036）：闲时夜梦沉淀与记忆折叠压缩测试。
   两处 patch 的是 run_consolidation_cycle 本体与报告形状，非内部逻辑，合规。
 """
 
-from datetime import timedelta
+from datetime import UTC, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -697,6 +697,104 @@ class TestConsolidationDB:
                 assert rep4["proposals_created"] == 1
                 assert rep4["skipped_rejected_cooldown"] == 0
                 assert len(s.exec(select(MemoryProposal)).all()) == 2
+
+    def test_cooldown_counts_from_decided_at(self, param_env, monkeypatch):
+        """ADR-0053：拒绝冷却期按 decided_at 起算——created_at 很久以前（旧口径已过期）
+        但 decided_at 昨天（新口径仍在窗口内）→ 仍跳过，不重复打扰维护者。"""
+        session_factory, _ = param_env
+        monkeypatch.setattr(settings, "CONSOLIDATION_AUDIT_MODE", "enforce")
+
+        with session_factory() as s, patch(
+            "lantai.services.consolidation_service.chat_json",
+            return_value=dict(_LLM_PURIFIED),
+        ):
+            _seed_fragments(s)
+            assert run_consolidation_cycle(session=s)["proposals_created"] == 1
+            prop = s.exec(select(MemoryProposal)).one()
+            # pending 逾冷却期后方被拒：created_at 早在 60 天前（旧口径冷却早已失效），
+            # 而 decided_at 是昨天（真实裁决时刻，仍在 30 天窗口内）
+            prop.status = "rejected"
+            prop.decision_reason = "人工拒绝"
+            prop.created_at = utcnow() - timedelta(
+                days=settings.CONSOLIDATION_REJECTED_COOLDOWN_DAYS * 2
+            )
+            prop.decided_at = utcnow() - timedelta(days=1)
+            s.add(prop)
+            s.commit()
+            rep = run_consolidation_cycle(session=s)
+            assert rep["skipped_rejected_cooldown"] == 1  # 新口径：仍在冷却期
+            assert rep["proposals_created"] == 0
+
+            # decided_at 也过窗（31 天前裁决）→ 允许再奏
+            prop.decided_at = utcnow() - timedelta(
+                days=settings.CONSOLIDATION_REJECTED_COOLDOWN_DAYS + 1
+            )
+            s.add(prop)
+            s.commit()
+            rep2 = run_consolidation_cycle(session=s)
+            assert rep2["skipped_rejected_cooldown"] == 0
+            assert rep2["proposals_created"] == 1
+
+    def test_cooldown_legacy_row_falls_back_to_created_at(self, param_env, monkeypatch):
+        """ADR-0053：老行（decided_at IS NULL）回退 created_at——旧口径逐字节不变，
+        宁 miss 不猜（不拿 created_at 冒充 decided_at）。"""
+        session_factory, _ = param_env
+        monkeypatch.setattr(settings, "CONSOLIDATION_AUDIT_MODE", "enforce")
+
+        with session_factory() as s, patch(
+            "lantai.services.consolidation_service.chat_json",
+            return_value=dict(_LLM_PURIFIED),
+        ):
+            _seed_fragments(s)
+            assert run_consolidation_cycle(session=s)["proposals_created"] == 1
+            prop = s.exec(select(MemoryProposal)).one()
+            # 老行形状：decided_at 保持 NULL（迁移不回填），只按 created_at 判定
+            assert prop.decided_at is None
+            prop.status = "rejected"
+            prop.decision_reason = "人工拒绝"
+            s.add(prop)
+            s.commit()
+            rep = run_consolidation_cycle(session=s)
+            assert rep["skipped_rejected_cooldown"] == 1  # created_at 即现在 → 窗口内
+
+            prop.created_at = utcnow() - timedelta(
+                days=settings.CONSOLIDATION_REJECTED_COOLDOWN_DAYS + 1
+            )
+            s.add(prop)
+            s.commit()
+            rep2 = run_consolidation_cycle(session=s)
+            assert rep2["skipped_rejected_cooldown"] == 0
+            assert rep2["proposals_created"] == 1
+
+    def test_decide_proposal_writes_decided_at(self, param_env, monkeypatch):
+        """decide_proposal 裁决即落 decided_at（ADR-0053）：approve/reject 两分支同口径，
+        与 applied_at（apply 执行时刻）正交。"""
+        session_factory, _ = param_env
+        monkeypatch.setattr(settings, "CONSOLIDATION_AUDIT_MODE", "enforce")
+
+        with session_factory() as s:
+            _seed_fragments(s)
+            cluster = _cluster_of_three(s)
+            with patch(
+                "lantai.services.consolidation_service.chat_json",
+                return_value=dict(_LLM_PURIFIED),
+            ):
+                prop = consolidate_cluster(cluster, session=s)
+            prop_id = prop.id
+            assert s.get(MemoryProposal, prop_id).decided_at is None  # 未裁决前 NULL
+
+        from lantai.services.evolution_service import decide_proposal
+
+        before = utcnow()
+        assert decide_proposal(prop_id, ProposalDecisionReq(approve=False, reason="细节丢失"))["ok"]
+
+        with session_factory() as s:
+            row = s.get(MemoryProposal, prop_id)
+            # SQLite DATETIME 读回 naive（范式同 consolidation_service._as_utc）
+            decided = row.decided_at if row.decided_at.tzinfo else row.decided_at.replace(tzinfo=UTC)
+            assert row.decided_at is not None
+            assert before <= decided <= utcnow()  # 裁决时刻落在测试窗口内
+            assert row.applied_at is None  # reject 不写 applied_at（两列正交）
 
     def test_report_key_contract_matches_initial(self, param_env):
         """报告键集契约：初值键集须等于 ADR-0050 决策 3 列明的报告契约键集。

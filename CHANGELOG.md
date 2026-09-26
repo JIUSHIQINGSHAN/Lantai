@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **REST** `POST /terminal/memory/{memory_id}/revive-consolidated`（`routes_terminal.py`，笔削家族同址）：reason 必填非空（422 on empty，同 retract 口径——撤销/恢复均须留痕）；归属校验复用 `_check_ownership`（P0 票 04 单一真源）；`memory not found` → 404、`invalid target` → 409 映射同既有范式；幂等语义标注于 docstring。
   - **MCP 工具** `revive_consolidated`（`mcp.py`）：schema 同 rollback 风格（memory_id + reason，两者均 required）；handler 调 service 单一真源；空 id/空 reason → `-32602` 且不调 service（留痕强制，异常隔离范式同既有）；`tools/list` 计数断言 59→60 同步。
   - **测试增量**：`tests/test_record_lifecycle.py` 新增 `TestReviveRoutes` 7 例（碎片起复 200 / 主记忆撤销 200 + 簇内碎片全 active + 边清零 / 非巩固目标 409 资源原样 / 空 reason 422 资源原样 / 越权 403 资源原样 / 不存在 404 / 重复撤销 already_revoked）；`tests/test_mcp.py` 新增 2 例（合法输入透传返回 / 空 id 与空 reason 双校验）。**变异验证**：删路由 → 6 例 failed；去 reason 强制 → MCP 校验例 failed（还原后全绿）。
+- **提案裁决时刻列 `decided_at` + 冷却期口径修正（2026-09-26，ADR-0053；票据 `.scratch/consolidation-rollback/issues/03-p0-decided-at-column.md`；闭环 ADR-0050 边界「冷却期起算点用 `created_at` 近似」条）**：
+  - **Schema**：`MemoryProposal.decided_at: datetime | None = None`（nullable 无默认——NULL 是「未记录」的事实状态，宁 miss 不猜；与 `applied_at`【apply 执行时刻】正交）。
+  - **迁移 v23→v24**（`db.py`，`CURRENT_SCHEMA_VERSION` 23→24）：`_has_column` 幂等守卫 + `ALTER TABLE memoryproposal ADD COLUMN decided_at DATETIME`；**老行不回填**（拿 created_at 冒充 decided_at 会让冷却起算点悄悄失真，且把「猜」写进库不可撤销）；无索引（不参与检索热路径，只服务冷却判定）。
+  - **三处落点**（裁决即落时刻，与终态同事务）：`decide_proposal` approve 分支、同函数 reject 分支、`promoter.apply_proposal` stale 硬门落 REJECTED 处（ADR-0050 决策 3 硬门＝系统裁决，与人工 reject 同口径）。
+  - **冷却口径修正**：`_consolidation_proposal_blocked` 改读 `decided_at or created_at`——新行精确起算，老行自动回退旧口径（**既有 dedup/cooldown 用例零改动通过即证**，行为逐字节不变）。修复场景：提案 pending 逾冷却期后方被拒，旧口径下冷却窗口自生成时刻起算早已过期，次夜即重复提纯再奏（一次多余 LLM 成本 + 一次打扰）。
+  - **测试增量**：`tests/test_migrations.py` 新增 v23→v24 两例（老库加列不填充 + 新库跳过不覆盖）；`tests/test_genglou_migration.py` 版本锚 23→24 顺延；`tests/test_consolidation.py` 新增 3 例（冷却按 decided_at 起算 / 老行回退 created_at 口径不变 / decide_proposal 两分支均落值且与 applied_at 正交）。**变异验证**：去 decided_at 落值 → 裁决用例 failed；冷却读侧忽略 decided_at → decided_at 用例 failed（还原后全绿）。
 
 ## [0.22.0] - 2026-09-26 - 圭表（Guibiao · 更漏双时间轴 + 宿主矩阵 + 沉潜过审）
 

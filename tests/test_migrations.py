@@ -173,3 +173,80 @@ class TestApplyMigrations:
         apply_migrations(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         conn.close()
+
+    def test_v23_to_v24_adds_decided_at(self, tmp_path):
+        """v23 老库 → v24（ADR-0053）：memoryproposal 补 decided_at 列，老行不回填
+        （NULL 即「未记录」的事实状态），存量数据与既有列保持。"""
+        path = tmp_path / "v23.db"
+        conn = sqlite3.connect(str(path))
+        conn.executescript(
+            """
+            CREATE TABLE memoryproposal (
+                id TEXT PRIMARY KEY,
+                proposal_type TEXT,
+                evidence_ids TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at DATETIME,
+                applied_at DATETIME
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO memoryproposal (id, proposal_type, status, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            ("p_old", "consolidation", "rejected", "2026-01-01 00:00:00"),
+        )
+        conn.execute("PRAGMA user_version = 23")
+        conn.commit()
+
+        apply_migrations(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
+        assert "decided_at" in _columns(conn, "memoryproposal")
+        # 老行不回填：decided_at IS NULL 是事实状态（冷却读侧回退 created_at）
+        assert (
+            conn.execute(
+                "SELECT decided_at FROM memoryproposal WHERE id = ?", ("p_old",)
+            ).fetchone()[0]
+            is None
+        )
+        assert conn.execute(
+            "SELECT created_at FROM memoryproposal WHERE id = ?", ("p_old",)
+        ).fetchone()[0] == "2026-01-01 00:00:00"
+
+        # 幂等：重复启动不加列不报错（_has_column 守卫）
+        apply_migrations(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
+        conn.close()
+
+    def test_v24_new_db_skips_column_add(self, tmp_path):
+        """v24 新库（create_all 已含 decided_at）→ 不加列、user_version 定格。"""
+        path = tmp_path / "v24.db"
+        conn = sqlite3.connect(str(path))
+        conn.executescript(
+            """
+            CREATE TABLE memoryproposal (
+                id TEXT PRIMARY KEY,
+                proposal_type TEXT,
+                evidence_ids TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at DATETIME,
+                applied_at DATETIME,
+                decided_at DATETIME
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO memoryproposal (id, proposal_type, status, decided_at)"
+            " VALUES (?, ?, ?, ?)",
+            ("p_new", "consolidation", "rejected", "2026-06-01 12:00:00"),
+        )
+        conn.execute("PRAGMA user_version = 24")
+        conn.commit()
+
+        apply_migrations(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
+        # 已落值不被迁移覆盖
+        assert conn.execute(
+            "SELECT decided_at FROM memoryproposal WHERE id = ?", ("p_new",)
+        ).fetchone()[0] == "2026-06-01 12:00:00"
+        conn.close()

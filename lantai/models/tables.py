@@ -351,6 +351,10 @@ class MemoryProposal(SQLModel, table=True):
     )  # 继承候选提取来源（可溯源）
     created_at: datetime = Field(default_factory=utcnow)
     applied_at: datetime | None = None
+    # 裁决时刻（ADR-0053）：人/系统做出 approve/reject 决定的时刻，与 applied_at（apply
+    # 执行时刻）正交。nullable 无默认、老行不回填——NULL 是「未记录」的事实状态，
+    # 宁 miss 不猜（拿 created_at 冒充 decided_at 会让冷却期起算点悄悄失真）。
+    decided_at: datetime | None = None
 
 
 class ConflictEvent(SQLModel, table=True):

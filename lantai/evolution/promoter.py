@@ -172,6 +172,8 @@ def apply_proposal(proposal_id: str) -> dict:
                     "（ADR-0050 决策 3 硬门：consolidated 只能由一次折叠产生，"
                     "继续执行将产出双主记忆重复召回）"
                 )
+                # decided_at（ADR-0053）：stale 硬门即系统裁决时刻，与人工 reject 同口径落值
+                prop.decided_at = utcnow()
                 s.add(prop)
                 s.commit()
                 return {

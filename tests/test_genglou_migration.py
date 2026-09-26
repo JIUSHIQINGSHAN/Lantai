@@ -91,7 +91,7 @@ class TestGenglouMigrationV21:
 
         apply_migrations(conn)
 
-        assert _user_version(conn) == 23  # 链已前移到 v23（票 07 沉潜过审），幂等守卫保证 v21 段仍生效
+        assert _user_version(conn) == 24  # 链已前移到 v24（票 07 沉潜过审 + ADR-0053 decided_at），幂等守卫保证 v21 段仍生效
         columns = {
             r[1] for r in conn.execute("PRAGMA table_info(memoryitem)").fetchall()
         }
@@ -133,7 +133,7 @@ class TestGenglouMigrationV21:
 
         apply_migrations(conn)  # 重放
 
-        assert _user_version(conn) == 23
+        assert _user_version(conn) == 24
         second_pass = conn.execute(
             "SELECT id, valid_from FROM memoryitem ORDER BY id"
         ).fetchall()
