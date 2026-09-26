@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **起复——巩固撤销与碎片恢复（2026-09-26，ADR-0052；票据 `.scratch/consolidation-rollback/issues/01-p0-consolidation-revive.md`；闭环 ADR-0050 决策 5 欠账①「retract 后碎片恢复只剩手改 DB」）**：
+  - **服务函数** `lantai/services/record_ops_service.py:revive_consolidated(memory_id, *, reason, actor="", session=None)`：输入二义性按形态判别（宁 miss 不脏写，不猜意图）——主记忆（`source_ids` 非空，promoter 巩固 apply 落库标记）→ 撤销全簇（主记忆 retracted + 全部 consolidated 碎片恢复 active + 删除 supersedes 边 + 主记忆/逐碎片审计，一个事务）；碎片（`status == "consolidated"`）→ 恢复 active + FTS/向量重同步 + checkpoint（`trigger="revive"`）+ 审计（`action="revive"`）；两者皆非 → `{"ok": False, "error": "invalid target ..."}`（路由层映射 409）。**已被普通撤回过的主记忆同样受理**——补完没收尾的撤销（重做索引清理并如实回报，不假设干净）。
+  - **独立函数不改 `rollback`**：`promoter.rollback` 是 5 类提案共用的单实体版本回滚，塞入「撤边 + 恢复他者」会让正确性风险外溢到 merge/deprecate 分支；巩固撤销形态（一主多碎片 + supersedes 边）是 consolidation 独有，独立最诚实。
+  - **幂等**（同 `retract_memory` 先例，只认状态不假设首次同步结果）：簇已撤销（主记忆 retracted 且边清零、无 consolidated 碎片）→ `already_revoked`；碎片已 active 且带 `trigger="revive"` checkpoint（起复的精确标记，区别于普通 active 记忆与晚更正 supersedes 旧值）→ `already_active`。
+  - **恢复语义的如实边界**：碎片折叠不改内容（consolidated 只改 `status`），恢复是真实的；但折叠后碎片若被遗忘/笔削/晚更改变更过，恢复的是变更后现状——不宣称「恢复到巩固前现场」（生成时刻基线由提案 `proposed_patch`/`provenance` 承载，与 ADR-0050 决策 3 同口径）。
+  - **常量与审计面**：`STATUS_CONSOLIDATED` 入模块常量；`AUDIT_ACTIONS` 增补 `"revive"` / `"unconsolidate"`（既有六名不动，顺序追加），既有审计查询面自动可见。
+  - **命名**：「起复」（Qifu，唐宋典制「夺情起复」——官员去位后重新起用；碎片被折叠如官员去位，恢复现役即起复）已登记 `CONTEXT.md` 词汇表；候选「拾残」因与既有「拾遗」（检索韧性降级）同字不同义违反 R5 而弃用。
+  - **测试增量**：`tests/test_record_lifecycle.py` 新增 `TestReviveConsolidated` 13 例不 mock 冒烟（真 DB + 真 FTS + 真实服务函数，替身边界仅 embed 与向量库）：碎片起复三面可召回/审计无正文/checkpoint 留痕、撤销全簇三面 0 命中 + 碎片全 active + 边清零、审计双面、两形态幂等、普通 active 记忆被拒、普通撤回过的主记忆补完撤销、撤销后同提案再 apply 被提案状态机拒（封死双主记忆）、FTS/向量失败如实回报且 SQL 权威过滤面兜底。**变异验证**：去掉边清理 → 3 例 failed；跳过碎片恢复 → 4 例 failed（还原后全绿）。
+
 ## [0.22.0] - 2026-09-26 - 圭表（Guibiao · 更漏双时间轴 + 宿主矩阵 + 沉潜过审）
 
 > 版本代号「圭表」：古代度量日影定时辰的仪器——量时而立，与「更漏」同属计时器，贴合本版时间主线。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 [CONTEXT.md](CONTEXT.md) 词汇表。

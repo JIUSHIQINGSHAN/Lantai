@@ -113,7 +113,7 @@ off 模式逐字节不变：不写任何新行、不填任何新字段；off 冒
 - **无自动应用旁路（已核验）**：evolve_worker 的自动应用仅作用于本循环 propose_from_candidate 新产提案（`lantai/workers/evolve_worker.py:35-36`），`run_pending_proposals` 仅 apply APPROVED 态（:48-54）；持节巡检仅扫 pending_review 候选（`lantai/services/auto_triage_service.py:201-216`）——consolidation pending 提案无任何 worker 旁路，只能人工裁决。
 - **运行留痕是新表＋迁移**：`ConsolidationRun` 数据行仅 shadow/enforce 期写入（v22→v23 顺延，`db.py:483` 链尾）；**表结构在迁移时无条件建立**（`CREATE TABLE IF NOT EXISTS`，含 off 期——迁移无法按运行时模式条件化），故精确表述为「off 期零新**行**、表结构照建」，非「零新表」（与决策 2 的「off 逐字节不变」指**数据行为**零漂移，不含 schema 版本推进；off 冒烟断言零新行，见决策 2）。
 - **report 键语义随模式**：`proposals_created` 为新增键；`new_memories` 固定为「新落主记忆数」（enforce 期字面 0）、`status` 判定扩展（决策 3）——既有消费方向后兼容，按需取新键。
-- **巩固回滚不闭环＋恢复无工具**：单次 apply 各实体仅 1 笔 checkpoint（<2 笔门槛 `promoter.py:294`）、rollback 无 supersedes 补偿（决策 5）；碎片恢复无工具（unarchive 仅 archived，`record_ops_service.py:251-252`）——完整回滚与 consolidated→active 恢复语义均另票。
+- **巩固回滚不闭环＋恢复无工具**：单次 apply 各实体仅 1 笔 checkpoint（<2 笔门槛 `promoter.py:294`）、rollback 无 supersedes 补偿（决策 5）；碎片恢复无工具（unarchive 仅 archived，`record_ops_service.py:251-252`）——完整回滚与 consolidated→active 恢复语义均另票。**（2026-09-26 欠账①已闭环：见 [ADR-0052](0052-consolidation-revive.md)「起复」——`record_ops_service.revive_consolidated` 一事务撤主记忆/恢复碎片/撤 supersedes 边；欠账②冷却期起算点见上条，另票 candidate。）**
 - **调度不升级**：enforce 下 `run_consolidation_cycle` 只产提案不代裁决（票 :52）；REST/MCP 入口行为随模式走，无新端点、无新常驻进程。
 - **反思 auto-apply 通道收口已在票 07 实施切片内落地**（2026-09-26 维护者显式拍板选方案 (a)，见决策 7 路径 B 落地段）：`REFLECT_AUTO_APPLY` 默认关，产物一律进 pending——**收口完成，roadmap P1-3 结项前置条件解除**。
 
