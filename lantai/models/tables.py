@@ -304,9 +304,16 @@ class SkillCrystal(SQLModel, table=True):
 
     Mímir 铁律：LLM 只能建议不能直接 commit——检测只产 candidate，人工审核
     （decide approve 必须带 steps）后才落成 Skill 资产；宁 miss 不脏写。
+
+    归属（票 .scratch/readside-gaps/11）：`procedure` / `trigger_rule` 是从
+    记忆里蒸馏出的操作流程，`GET /crystals` 原本一个身份都不取、全文可读。
+    真实库 skillcrystal 5 行；迁移见 `migrations_v022.apply_v022_migrations`。
     """
 
     id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
     skill_name: str = Field(index=True, unique=True)
     trigger_rule: str = ""
     procedure: str = ""
@@ -729,7 +736,18 @@ class OperationLog(SQLModel, table=True):
 
 
 class PromptTemplate(SQLModel, table=True):
+    """提示词模板（DB 覆盖 lantai.llm.prompts 的默认值）。
+
+    归属（票 .scratch/readside-gaps/11）：模板正文是使用者反复打磨的
+    方法论，`GET /prompts`、`GET /prompts/{id}` 原本一个身份都不取、
+    全文可读。真实库 prompttemplate 1 行；迁移见
+    `migrations_v022.apply_v022_migrations`。
+    """
+
     id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
     template: str
     description: str = ""
     updated_at: datetime = Field(default_factory=utcnow)

@@ -45,12 +45,19 @@ def build_crystal_candidates(clusters: list[list]) -> list[dict]:
 
 
 def run_crystal_detect_once(
-    namespace: str = "default", *, dry_run: bool = True, limit: int | None = None
+    namespace: str = "default",
+    *,
+    dry_run: bool = True,
+    limit: int | None = None,
+    principal=None,
 ) -> dict:
     """执行一轮结晶检测：聚类 -> 候选（dry_run 不写库）。
 
     返回 {"clusters", "candidates", "created", "updated", "skipped"}；
     候选按 skill_name upsert：存在则 hit_count+1（幂等，不重复堆积）。
+
+    归属（票 11）：新建的候选落 `principal.user_id`，否则结晶又是
+    一条谁都能看见的无主行。`principal=None` 的后台巡检留 NULL。
     """
     if not settings.CRYSTAL_ENABLED:
         return {
@@ -74,6 +81,8 @@ def run_crystal_detect_once(
     candidates = build_crystal_candidates(clusters)
     created = updated = 0
     if not dry_run:
+        owner = getattr(principal, "user_id", None)
+        tenant = getattr(principal, "tenant_id", None)
         with db.get_session() as s:
             for cand in candidates[: settings.CRYSTAL_MAX_DAILY]:
                 existing = s.exec(
@@ -89,7 +98,14 @@ def run_crystal_detect_once(
                     s.add(existing)
                     updated += 1
                 else:
-                    s.add(SkillCrystal(id=new_id("crystal"), **cand))
+                    s.add(
+                        SkillCrystal(
+                            id=new_id("crystal"),
+                            user_id=owner,
+                            tenant_id=tenant,
+                            **cand,
+                        )
+                    )
                     created += 1
             s.commit()
     return {
@@ -101,29 +117,62 @@ def run_crystal_detect_once(
     }
 
 
-def list_crystals(status: str = "candidate", limit: int = 50) -> dict:
-    """列出结晶候选项（默认 candidate 待审）。"""
+def _crystal_scope(principal):
+    """读侧归属条件：admin/`principal=None` → None（不过滤）；
+    否则 `user_id == viewer OR user_id IS NULL`（票 11，NULL 口径同票 03/04/06/09）。"""
+    if principal is None:
+        return None
+    if bool(getattr(principal, "is_admin", False)):
+        return None
+    from lantai.services.work_item_service import _viewer_of
+
+    viewer = _viewer_of(principal)
+    return (SkillCrystal.user_id == viewer) | (SkillCrystal.user_id.is_(None))
+
+
+def list_crystals(status: str = "candidate", limit: int = 50, principal=None) -> dict:
+    """列出结晶候选项（默认 candidate 待审）。
+
+    归属（票 .scratch/readside-gaps/11）：`procedure` / `trigger_rule`
+    是从记忆里蒸馏出的操作流程，原本一个身份都不取、全文可读。
+    """
     with db.get_session() as s:
-        rows = s.exec(
-            select(SkillCrystal)
-            .where(SkillCrystal.status == status)
-            .order_by(SkillCrystal.updated_at.desc())
-            .limit(limit)
-        ).all()
+        q = select(SkillCrystal).where(SkillCrystal.status == status)
+        scope = _crystal_scope(principal)
+        if scope is not None:
+            q = q.where(scope)
+        rows = s.exec(q.order_by(SkillCrystal.updated_at.desc()).limit(limit)).all()
         return {"crystals": [r.model_dump(mode="json") for r in rows]}
 
 
 def decide_crystal(
-    crystal_id: str, approve: bool, steps: list[str] | None = None, reason: str = ""
+    crystal_id: str,
+    approve: bool,
+    steps: list[str] | None = None,
+    reason: str = "",
+    principal=None,
 ) -> dict:
     """裁决候选：approve 必须带非空 steps -> 落成 Skill 资产 + approved；
-    reject -> archived + reason（宁 miss 不脏写）。"""
+    reject -> archived + reason（宁 miss 不脏写）。
+
+    归属（票 11）：裁决是破坏性操作——A 不能替 B 批准/驳回一个技能结晶。
+    校验在任何写操作**之前**（403 不能伴随落库），复用
+    `acl.ensure_can_delete` 单一真源（同票 02）。
+    """
     with db.get_session() as s:
         crystal = s.get(SkillCrystal, crystal_id)
         if not crystal:
             raise ValueError("crystal not found")
         if crystal.status != "candidate":
             raise ValueError("crystal state changed; refresh and retry")
+        if principal is not None:
+            from lantai.core.acl import ensure_can_delete
+
+            ensure_can_delete(
+                principal,
+                resource_user_id=crystal.user_id,
+                resource_tenant_id=crystal.tenant_id,
+            )
         skill_name, trigger_rule = crystal.skill_name, crystal.trigger_rule
     result = None
     if approve:

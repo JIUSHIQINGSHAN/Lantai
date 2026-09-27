@@ -15,9 +15,16 @@ from lantai.storage.db import _has_column
 
 
 def apply_v022_migrations(engine) -> None:
-    """幂等补充迁移：retrieval_event.session_id + 检索索引。
+    """幂等补充迁移：retrieval_event.session_id + 检索索引 + 归属列。
 
-    DDL 固定字面量（SQLite ALTER TABLE 不支持绑定参数，防注入纪律）。"""
+    DDL 固定字面量（SQLite ALTER TABLE 不支持绑定参数，防注入纪律）。
+
+    归属列（票 .scratch/readside-gaps/11）：`prompt_template` 与
+    `skill_crystal` 原本没有归属四元组，`GET /prompts`、`GET /crystals`
+    一个身份都不取、模板与技能流程全文可读。真实库两表分别 1 / 5 行，
+    迁移只加列、不回填（老行保持 NULL，读侧靠 `OR IS NULL` 兜住——
+    单人部署下判"不可见"会让功能直接消失）。
+    """
     conn = None
     try:
         conn = engine.raw_connection()
@@ -30,8 +37,15 @@ def apply_v022_migrations(engine) -> None:
             )
         except Exception as exc:  # 索引失败不阻断启动
             logger.warning("迁移跳过 ix_retrieval_event_session_id: %s", exc)
+        for table in ("prompt_template", "skill_crystal"):
+            for col in ("tenant_id", "user_id", "agent_id"):
+                if not _has_column(conn, table, col):
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
         conn.commit()
-        logger.info("v022 迁移完成：retrieval_event.session_id（写线活性判据）")
+        logger.info(
+            "v022 迁移完成：retrieval_event.session_id（写线活性判据）"
+            "+ prompt_template/skill_crystal 归属列（票 11）"
+        )
     except Exception as exc:
         logger.error("v022 增量迁移异常（服务继续启动）: %s", exc)
     finally:
