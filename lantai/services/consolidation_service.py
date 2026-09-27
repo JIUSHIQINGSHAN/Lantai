@@ -35,6 +35,7 @@ from lantai.models.tables import (
 )
 from lantai.retrieval.hybrid import index_memory_item
 from lantai.storage import db
+from lantai.storage.fts import sync_fts
 
 _LAST_CONSOLIDATION_REPORT: dict = {
     "last_run": None,
@@ -340,6 +341,10 @@ def consolidate_cluster(
         s.add(cp)
 
         # 2. 创建提纯后的主记忆
+        #    属主四元组从首碎片继承（ADR-0050 决策 3，与影子提案同一语义）。
+        #    票 .scratch/consolidation-index-sync/01：此前不继承，主记忆
+        #    tenant_id/user_id 全 NULL → 读成 "" → 属主过滤检索永久漏掉它
+        #    （实测 filter={'tenant_id':'t_acme'} 下主记忆不出现，补 owner 后出现）。
         master = MemoryItem(
             id=master_id,
             content=content,
@@ -353,6 +358,7 @@ def consolidate_cluster(
             status="active",
             created_at=utcnow(),
             updated_at=utcnow(),
+            **_proposal_quadruple(cluster_items),
         )
         s.add(master)
 
@@ -362,10 +368,14 @@ def consolidate_cluster(
             m.updated_at = utcnow()
             s.add(m)
 
-        s.commit()
-        s.refresh(master)
-
-        # 4. 同步更新向量库与 FTS 索引
+        # 4. 索引同步（票 .scratch/consolidation-index-sync/01）
+        #    与唯一正确的既有范式对齐（memory_service.py:429-443、
+        #    promoter.py:295/215）：flush → index → **sync_fts** → commit。
+        #    FTS 必须在**同一事务内、commit 之前**（ADR-0008 强一致）——
+        #    这样索引失败会回滚整笔提交，而不是留下「碎片已折叠、主记忆落库、
+        #    索引没建」的孤儿态（原状：无重试、无重建路径，不可恢复）。
+        #    碎片折叠后其 FTS 行必须删掉，否则词汇通道召回已折叠内容。
+        s.flush()
         try:
             from lantai.llm.client import embed
 
@@ -375,6 +385,10 @@ def consolidate_cluster(
                     master.id,
                     embeddings[0],
                     {
+                        # 8 键契约（record_ops_service.py:90-96）：缺键会让
+                        # 重同步后的记忆在属主过滤检索中永久不可见
+                        "key": master.key or "",
+                        "memory_type": master.memory_type,
                         "lane": getattr(master, "lane", "general") or "general",
                         "domain": getattr(master, "domain", "user") or "user",
                         "tenant_id": getattr(master, "tenant_id", "") or "",
@@ -384,7 +398,17 @@ def consolidate_cluster(
                     },
                 )
         except Exception as exc:
-            logger.warning("沉潜：主记忆向量索引同步异常（已落库）: %s", exc)
+            # 不静默：此处失败意味着整笔提交将回滚（碎片保持 active，可重试），
+            # 必须让人看见「本次沉潜没做成」而不是「做成了但搜不到」。
+            logger.error("沉潜：主记忆向量索引同步失败，本次折叠将回滚（可重试）: %s", exc)
+            raise
+
+        sync_fts(s, master.id, master.content)
+        for m in cluster_items:
+            sync_fts(s, m.id, None)  # 碎片已折叠：删其 FTS 行
+
+        s.commit()
+        s.refresh(master)
 
         logger.info(
             "沉潜：成功将 %d 条碎片折叠为主记忆 %s: %s",
