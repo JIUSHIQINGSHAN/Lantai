@@ -40,6 +40,8 @@ def _mem(
     decay_class="episodic",
     updated=None,
     memory_type="semantic",
+    user_id="default",
+    tenant_id="",
 ):
     from lantai.models.tables import MemoryItem
 
@@ -55,6 +57,11 @@ def _mem(
         decay_score=1.0,
         decay_class=decay_class,
         use_count=i,
+        # 归属（票 .scratch/ownership-gaps/01）：`GET /memories` 现在会传
+        # principal，属主过滤随之生效——种子数据必须带属主，否则被自己的
+        # 安全修复过滤掉。DEV MODE 的 principal 正是 user_id="default"。
+        user_id=user_id,
+        tenant_id=tenant_id,
         created_at=now - timedelta(days=10),
         updated_at=updated if updated is not None else (now - timedelta(hours=i)),
     )

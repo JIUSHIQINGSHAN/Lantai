@@ -54,8 +54,17 @@ def list_memories_route(
     memory_type: str = "",
     limit: int = 50,
     offset: int = 0,
+    ctx: Principal = Depends(get_current_user),
 ):
-    """档案浏览（VAULT）：只读分页 + 过滤，受保护。"""
+    """档案浏览（VAULT）：只读分页 + 过滤，受保护。
+
+    必须传 principal（票 .scratch/ownership-gaps/01）：`build_memories_page`
+    本就按 tenant/user/session/agent/allowed_lanes 建过滤条件，但不传就
+    一个条件都不建——**任意登录用户可读全库记忆全文并拿到 ULID id**，
+    而那个 id 正是 supersedes 边注入需要的目标预言机。
+    同文件的 /add、/add/raw 与 routes_terminal.py:165 的 /terminal/graph
+    都传了，只有这里漏了。
+    """
     try:
         return list_memories(
             lane=lane,
@@ -64,6 +73,7 @@ def list_memories_route(
             memory_type=memory_type,
             limit=limit,
             offset=offset,
+            principal=ctx,
         )
     except ValueError as e:
         raise HTTPException(422, str(e))

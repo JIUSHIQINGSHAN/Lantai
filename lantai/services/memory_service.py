@@ -528,6 +528,10 @@ def build_memories_page(
             "id": m.id,
             "memory_type": m.memory_type,
             "lane": m.lane,
+            # 归属标识（票 .scratch/ownership-gaps/01）：让调用方能自查这条
+            # 是不是自己的——此前列表页看不出归属，越权与否只能靠猜。
+            "user_id": m.user_id,
+            "tenant_id": m.tenant_id,
             "status": m.status,
             "tier": m.tier,
             "decay_class": m.decay_class,
