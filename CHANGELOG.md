@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **测试数据目录隔离——`db.engine` 不再绑定宿主真实库（2026-09-27，票据 `.scratch/test-env-parity/issues/02-test-data-dir-isolation.md`）**：
+  - **背景**：本地 `.env` 的 `LANTAI_HOME` 指向真实开发库（`C:\Users\Asus\AppData\Local\remembrance-data`），而 `lantai/storage/db.py:13` 的 `engine` 在 **import 时**就按 `settings.DATABASE_URL` 建好——测试进程因此绑定宿主真实 SQLite/ChromaDB。CI 是干净目录、本地不是，这个差异正是「本地绿 CI 红」根因家族（`.scratch/test-env-parity/` spec 的动机表列了三项，本票治第三项）。
+  - **实现**（`tests/conftest.py`）：新增 session 级 autouse fixture `_isolate_data_dir`——`settings.LANTAI_HOME` / `DATABASE_URL` / `CHROMADB_PATH` 重指到 `tmp_path_factory` 临时目录，并把 `db_module.engine` 重指到临时库。**只改 settings 无效**（engine 已于 import 时建好），这是本票的核心动作；`get_session()` 引用模块级 `engine` 名字（晚期绑定）故自动跟随。
+  - **坑一**：SQLite **不会自动建父目录**，`LANTAI_HOME` 指向不存在的目录会 `unable to open database file`（实测 45 例 setup 连坐）→ fixture 内先 `mkdir` + `touch` 库文件。
+  - **坑二**：与既有绊线（`pytest_runtest_setup` 校验 `db.engine` 身份）冲突——隔离后每个测试都会被误报「前置测试污染了 db.engine」。故 fixture 内把绊线基线 `_ORIG_ENGINE` 更新为隔离后的 engine（隔离后的即「合法身份」）。**这两行必须成对出现**，只改其一会让全部测试误报（变异验证实测 10 例连坐），已在代码里标注警示。
+  - **测试增量**：`tests/test_env_isolation.py` 4 例不 mock 冒烟，直读测试进程内的 engine/settings 状态，并真往隔离库写一行再查回（隔离是否生效是可观测事实，mock 掉就什么都验证不了）。**变异验证**：去掉 `db_module.engine = engine` 重定向 → 4 例全红（1 failed + 3 error）；恢复后全绿。
+  - **验收**：全量 pytest **1277 passed / 0 failed**（开工基线 1276 passed 1 failed——那个偶发顺序失败随隔离消失）。
+  - **方法论修正（重要，记录以免重蹈）**：最初据「真实 `.chromadb` 目录 mtime 落在跑测窗口内」判定「测试在写真实库」，**该结论错误**。后续对照实验发现**不跑测试时真实库 mtime 也每秒在变**——本机有 4 个 `E:/Hermes/scripts/lantai_mcp_bridge.py` 后台进程在持续写同一个真实库。改用**内容指纹**复验：跑 `test_dedup_flow` + `test_provenance` + `test_scene` 前后，真实库 `memoryitem` 行数 **593 → 593 不变**，即测试并未写真实 SQLite。**教训：判定「测试是否写了某资源」必须先做「不跑测试」的同期对照，排除后台进程噪声。** 隔离 fixture 的价值不变且更强——它消除的是「测试依赖宿主环境状态」这个结构性问题，以及后台进程某天写出会让测试行为分叉的数据的可能。
+
 - **CI 测试门禁 lint 收口——50 条存量违规清零，全量 pytest 第一次真正在 CI 上跑（2026-09-26，票据 `.scratch/ci-lint-gate/issues/01-ci-lint-gate.md`）**：
   - **背景实证**：v0.22.1 push 后 Tests job 51 秒挂在 Ruff lint 步骤（仓库带 73 条既有违规，多在 `docs/research` 与 `.scratch` 的一次性调研脚本里），**全量 pytest 与遗忘质量门禁从未在 CI 执行过**——「CI 绿」从未真正验证过测试。本地 Windows/Py3.13 全量通过是唯一防线，CI 的 Linux/Py3.11 平台差异从未被门禁覆盖。
   - **门禁范围收口**（`.github/workflows/tests.yml`）：`ruff check .` / `ruff format --check .` → `ruff check lantai/ tests/ scripts/` / `ruff format --check lantai/ tests/ scripts/`。目录显式列出而非依赖 `exclude` 配置——显式传径时 ruff 的 exclude 不生效（实测 `[tool.ruff.format] exclude` 配 `docs` 后仍报 5 个 markdown）。`[tool.ruff] extend-exclude` 保留（对裸 `ruff check .` 生效，本地开发同样绿）。

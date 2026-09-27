@@ -4,7 +4,11 @@
    测试环境打桩绕过（生产环境与本测试无关）。
 2. 内存 SQLite fixture——参数建议模块测试复用。
 3. LLM 假 key——lantai.llm.client 模块级实例化 OpenAI client，CI 无真实 key；
-   测试全部 mock chat_json/embed，假 key 仅保证 import 不炸，不会真调 API。
+   假 key 仅保证 import 不炸。
+4. 数据目录隔离（`_isolate_data_dir`）——`db.engine` 在 import 时就按
+   `settings.DATABASE_URL` 建好，而本地 `.env` 的 `LANTAI_HOME` 指向**真实开发库**；
+   不隔离则测试读写宿主真实 SQLite/ChromaDB（实证：跑全量会改真实库 mtime，
+   且偶发顺序污染）。详见 `.scratch/test-env-parity/issues/02-*.md`。
 """
 
 import os
@@ -177,6 +181,60 @@ def pytest_runtest_setup(item):
             f"前置测试 {_PREV_TEST['id']} 污染了 lantai.storage.db.engine"
             f"（未还原：{_ORIG_ENGINE!r} → {dbm.engine!r}）"
         )
+
+
+# ── 数据目录隔离（票 02）───────────────────────────────────────
+# 背景：本地 .env 的 LANTAI_HOME 指向真实开发库，而 db.engine 在 import 时就按
+# settings.DATABASE_URL 建好——测试因此读写宿主真实 SQLite/ChromaDB。
+# 实证：跑全量会改真实 .chromadb 目录 mtime；且偶发顺序污染（1276 passed 1 failed
+# → 隔离后 1277 passed 0 failed）。
+# 隔离后 db.engine 换成临时库，故绊线的基线须随之更新为「隔离后的 engine」，
+# 否则每个测试都会误报「engine 被污染」。
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_data_dir(tmp_path_factory):
+    """测试数据目录隔离：SQLite + ChromaDB 全落 pytest 临时区，不碰宿主真实库。
+
+    - `settings.DATABASE_URL` / `CHROMADB_PATH` / `LANTAI_HOME` 重指到临时目录
+      （`LANTAI_HOME` 也一起改，防止别处再从它推导路径）。
+    - `db.engine` 重指到临时库（它在 import 时已按旧 URL 建好，只改 settings 无效）。
+    - session 级：一个测试进程共用一个隔离库，跑完即随 tmp 清理。
+
+    目录必须**先建好**再指过去——SQLite 不会自动建父目录，指向不存在的目录会
+    `unable to open database file`（实测 45 例 setup 连坐）。
+    """
+    global _ORIG_ENGINE
+
+    import lantai.models.tables  # noqa: F401  注册全部表
+    import lantai.storage.db as db_module
+
+    home = tmp_path_factory.mktemp("lantai_test_home")
+    home.mkdir(parents=True, exist_ok=True)
+    db_file = home / "remembrance.db"
+    db_file.touch()  # SQLite 不会自动建父目录/文件
+
+    settings.LANTAI_HOME = str(home)
+    settings.DATABASE_URL = f"sqlite:///{db_file}"
+    settings.CHROMADB_PATH = str(home / ".chromadb")
+
+    engine = create_engine(
+        settings.DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    db_module.engine = engine
+    # 绊线基线随之更新：隔离后的 engine 即「合法身份」。
+    # ⚠ 这两行必须成对出现：只更新 _ORIG_ENGINE 而不重定向 db_module.engine
+    # （或反之）会让每个测试被绊线误报「前置测试污染了 db.engine」
+    # ——变异验证时实测如此（10 例连坐）。改动此处请连同验证。
+    _ORIG_ENGINE = engine
+
+    yield engine
+
+    engine.dispose()
 
 
 def pytest_runtest_teardown(item, nextitem):
