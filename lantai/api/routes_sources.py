@@ -29,8 +29,15 @@ def ingest_run_route():
 
 
 @router.get("/candidates")
-def list_candidates_route(status: str = "new", limit: int = 20):
-    return list_candidates(status, limit)
+def list_candidates_route(status: str = "new", limit: int = 20, ctx=Depends(get_current_user)):
+    """候选列表（`status` 过滤 + 归属收窄）。
+
+    归属（票 .scratch/readside-gaps/07 修法口径 2）：此前一个身份都不取，
+    把别人的候选 `summary` / `claims` / `contradictions` 明文连同 `id`
+    一起吐出来。注意**这条不是 `/candidates/pending`**——那条 Ticket 02
+    已修，读的是同一个 `MemoryCandidate` 表但走 `candidate_service`。
+    """
+    return list_candidates(status, limit, principal=ctx)
 
 
 @router.delete("/documents/{document_id}")
