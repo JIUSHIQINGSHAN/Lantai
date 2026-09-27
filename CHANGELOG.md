@@ -47,6 +47,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **静默失败清零系列 第二批——三处「坏了看不出来」改成「坏了看得见」（2026-09-28，票据 `.scratch/proposal-livelock/`、`.scratch/fts-availability/`、`.scratch/supersedes-silent-failure/`）**：
+  - **⑥ event_time 违例早退导致 APPROVED livelock**（`evolution/promoter.py`，票据 `proposal-livelock`）：`apply_proposal` 里 I1 校验失败时 `return out` 早退，但**没改提案状态**——提案停在 `APPROVED`，而 `evolve_worker.run_pending_proposals()` 专挑 `status == APPROVED` 的活，于是同一个坏提案被反复捞起、反复早退，永不收敛。修法：走既有的 `_reject_proposal` 助手落终态 `REJECTED`（与同函数 :275 的陈旧闸门同口径），日志留痕。**这是真 livelock 而非仅终局陷阱**——worker 会一直空转。
+  - **⑦ `init_fts` 静默失败，FTS5 坏了 `/health` 还说 OK**（`storage/fts.py` + `storage/db.py` + `api/routes_health.py`，票据 `fts-availability`）：`CREATE VIRTUAL TABLE IF NOT EXISTS` 在目标已存在时是**静默 no-op**——SQLite 不报错，哪怕已存在的是张普通表、或分词器不对的 FTS5 表。实测两种坏态：同名普通表 → 之后每次查询 `no such column: memory_fts`，词汇召回整体消失；FTS5 但 `tokenize≠trigram` → bm25 查询照样成功，只是**中文子串召回永久失效且任何一层都不报错**。修法：`init_fts` 返回 `bool`，CREATE 之后**回读 `sqlite_master` 的真实 DDL** 核验 `fts5`/`trigram` 两个关键字都在才敢声称成功；`db.py` 置模块级 `FTS_OK`（None = 尚未初始化，与「查了是坏的」区分）；`/health/deep` 增 `checks["fts"]`。**不让它抛异常**——抛出去会连坐整个服务启动，而这本是「降级但可用」。**不自动 DROP 重建**——可能误删别人的表（宁 miss 不脏写）。
+  - **⑧ supersedes 边查询失败静默 → 陈旧值排在更正值之上**（`retrieval/hybrid.py`，票据 `supersedes-silent-failure`）：`_apply_supersedes_order` 的 except 原样返回未降权排序。这不是普通 miss，是**方向性错误**——旧值 0.90 / 新更正 0.88 的场景下（RRF + 衰减噪声下更正常略低），用户看到的是**已撤回的事实**。降权 epsilon=1e-6 刻意薄到刚好够打破这种毫厘之差，静默 except 抹掉的正是整个机制唯一的作用场景。修法：`logger.warning` + explain 里逐条标 `supersedes_unavailable: True`。**只加留痕，不改降级行为**（仍 `return scored`）——三处调用点都在昂贵工作之后，在此抛异常会把每次 DB 抖动变成 `POST /search` 硬 500，与模块既有的三级降级设计矛盾。
+  - **测试增量**：`tests/test_consolidation.py` +4、`tests/test_fts_integration.py` +8、`tests/test_fts_integration.py` +4。每条均做**变异验证**（`.scratch/*/mutation_check.py`）。
+  - **验收**：全量 pytest **1373 passed / 0 failed**（第二批开工基线 1369，零回归）。
+
 - **静默失败清零系列——五处「坏了看不出来」改成「坏了看得见」（2026-09-28，票据 `.scratch/migration-observability/`、`.scratch/retrieval-silent-failure/`、`.scratch/gate-fail-open/`、`.scratch/proposal-type-whitelist/`、`.scratch/api-error-status/`）**：
   - **共同病根**：`except Exception: pass` 把「子系统坏了」渲染成与「子系统正常但没查到东西」完全同形的返回值。用户侧表现为「结果变少了」——无法区分是内容不相关还是索引/通道坏了。这类 bug 的共同点是**没有任何日志痕迹**，连排查入口都没有。
   - **① 迁移期四处索引创建失败**（`storage/db.py`，票据 `migration-observability`）：v17/v20/v21/v22 四个迁移点的 `CREATE INDEX` 失败被 `pass` 吞掉。后果：库长期缺索引，检索/去重查询全表扫，越用越慢且无人知晓。修法：`logger.warning` 留痕（含索引名与原因）。**顺带实证一个认知坑**：v17 迁移先 `ALTER TABLE ADD COLUMN domain` 再建索引，所以「缺列的旧库」仍能成功建索引——最初据此写的测试（缺列库应告警）是错的前提，改用**索引名撞表名**才真触发失败。

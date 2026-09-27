@@ -906,3 +906,130 @@ class TestHealthDeepReportsFts:
         finally:
             bad_engine.dispose()
             os.unlink(path)
+
+
+class TestSupersedesEdgeFailureIsLogged:
+    """supersedes 边查询失败必须留痕，不得静默返回未降权排序。
+
+    背景（`.scratch/supersedes-silent-failure/issues/01-*.md`）：
+    `_apply_supersedes_order`（hybrid.py:258）的 `except Exception: return scored`
+    是**方向性错误**而非普通 miss——旧记忆 O 得分 0.90、新更正 N 得分 0.88，
+    有 supersedes 边时不查边就把 O 排第一，**用户看到已撤回的事实**。
+
+    降权 epsilon=1e-6 是刻意薄到刚好打破平局、偏向更正值；静默 except 恰好
+    抹掉整个机制唯一的作用场景。且无别的兜底：旧值按设计仍 active
+    （「旧值在校正、证实前保留」）。
+
+    口径与同文件既有三处（BM25/FTS/LIKE）一致：只加留痕，不改降级行为。
+    """
+
+    @staticmethod
+    def _seed_pair(engine):
+        """造一对 old/new + supersedes 边，返回 (old_id, new_id, scored)。
+
+        记忆行走真实库（边查询要能查到），但 scored 里放**脱离会话的实例**
+        ——`_apply_supersedes_order` 只读 id 与算分，不需要活会话。
+        """
+        from lantai.retrieval.hybrid import _apply_supersedes_order
+
+        old = _add_mem(engine, "API 密钥存储在 config.py")
+        new = _add_mem(engine, "API 密钥改为环境变量注入")
+        with Session(engine) as s:
+            s.add(
+                MemoryEdge(
+                    id=new_id("edge"),
+                    source_memory_id=new,
+                    target_memory_id=old,
+                    relation="supersedes",
+                    confidence=1.0,
+                )
+            )
+            s.commit()
+            old_item = s.get(MemoryItem, old)
+            new_item = s.get(MemoryItem, new)
+            # 复制成独立实例：会话关闭后仍可用（expunge 会让属性访问触发刷新）
+            import copy
+
+            old_item = copy.deepcopy(old_item)
+            new_item = copy.deepcopy(new_item)
+        # scored 里旧值**分数更高**——真实场景（RRF+衰减有噪声，更正往往更新）
+        scored = [(0.90, old_item), (0.88, new_item)]
+        return old, new, scored, _apply_supersedes_order
+
+    def test_edge_failure_logs_warning_and_still_returns(self, engine, caplog):
+        """边查询抛异常 → warning 留痕 + 仍返回结果（降级不炸）。"""
+        import logging
+
+        old, new, scored, apply_fn = self._seed_pair(engine)
+
+        class BoomSession:
+            """exec 一律抛——模拟 DB 锁 / 连接失效（边查询失败）。"""
+
+            def exec(self, *a, **kw):
+                raise RuntimeError("database is locked")
+
+        with caplog.at_level(logging.WARNING, logger="lantai"):
+            out = apply_fn(scored, None, None, BoomSession())
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warnings, "边查询失败必须留痕，不得静默 return scored"
+        joined = " | ".join(str(r.getMessage()) for r in warnings)
+        assert "supersedes" in joined.lower(), f"warning 须点明是 supersedes 边，实得: {joined}"
+        # 行为不变：降级仍返回全部候选，不炸
+        assert len(out) == 2
+
+    def test_edge_failure_marks_unavailable_in_breakdowns(self, engine, caplog):
+        """检索透明：边查询失败时 explain 标注 supersedes_unavailable（可审计）。"""
+        import logging
+
+        old, new, scored, apply_fn = self._seed_pair(engine)
+        breakdowns = {old: {}, new: {}}
+
+        class BoomSession:
+            def exec(self, *a, **kw):
+                raise RuntimeError("database is locked")
+
+        with caplog.at_level(logging.WARNING, logger="lantai"):
+            apply_fn(scored, breakdowns, None, BoomSession())
+
+        assert breakdowns[old].get("supersedes_unavailable") is True
+        assert breakdowns[new].get("supersedes_unavailable") is True
+
+    def test_edge_failure_leaves_stale_first_documented_degradation(self, engine, caplog):
+        """固化已知降级行为：边查不到时陈旧值确实仍排更正值之前。
+
+        这是**如实记录的降级**（宁 miss 不脏写：不猜边就不纠偏），
+        不是要修的目标——本用例确保「留痕改造」没有偷偷改变排序行为。
+        """
+        import logging
+
+        old, new, scored, apply_fn = self._seed_pair(engine)
+
+        class BoomSession:
+            """exec 一律抛——模拟 DB 锁 / 连接失效（边查询失败）。"""
+
+            def exec(self, *a, **kw):
+                raise RuntimeError("database is locked")
+
+        with caplog.at_level(logging.WARNING, logger="lantai"):
+            out = apply_fn(scored, None, None, BoomSession())
+        ids = [m.id for _, m in out]
+        assert ids.index(old) < ids.index(new), "降级路径不应改变排序（只让它可见）"
+
+    def test_healthy_path_still_marks_demotion_without_unavailable(self, engine, caplog):
+        """回归护栏：正常路径 demoted/superseded_by 照旧，且不出现 unavailable 标记。"""
+        import logging
+
+        old, new, scored, apply_fn = self._seed_pair(engine)
+        breakdowns = {old: {}, new: {}}
+
+        # 第 4 参是**会话本体**（None 时函数内部自建）；此处传真实会话
+        with caplog.at_level(logging.WARNING, logger="lantai"):
+            out = apply_fn(scored, breakdowns, None, Session(engine))
+
+        assert breakdowns[old].get("demoted") is True
+        assert new in breakdowns[old].get("superseded_by", [])
+        assert breakdowns[old].get("supersedes_unavailable") is not True
+        assert breakdowns[new].get("supersedes_unavailable") is not True
+        # 新值排到旧值之前（机制正常工作）
+        assert [m.id for _, m in out].index(new) < [m.id for _, m in out].index(old)

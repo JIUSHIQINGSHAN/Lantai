@@ -255,7 +255,19 @@ def _apply_supersedes_order(
             ).all()
 
         edges = _get_s(_edge_cb)
-    except Exception:
+    except Exception as e:
+        # 边查询失败不得静默（票 .scratch/supersedes-silent-failure/01）：
+        # 静默时 `return scored` 把未降权的原序交出去，而这不是普通 miss——
+        # 旧值 0.90 / 新更正 0.88 的场景下用户看到的是**已撤回的事实**。
+        # 降权 epsilon=1e-6 恰为这种毫厘之差而设，静默 except 抹掉的正是
+        # 整个机制唯一的作用场景。且无别的兜底：旧值按设计仍 active。
+        logger.warning(f"supersedes edge lookup failed, ordering left undemoted: {e}")
+        # 检索透明（ADR-0008 溯源精神）：explain 里标注本次未做纠偏，
+        # 让 /search 的 trace 看得见，而不只是日志里一行。
+        if breakdowns is not None:
+            for _, m in scored:
+                if m.id in breakdowns:
+                    breakdowns[m.id]["supersedes_unavailable"] = True
         return scored
     from lantai.memory.policies import resolve_conflict
 
