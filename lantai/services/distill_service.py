@@ -178,6 +178,10 @@ def distill_session(
         from lantai.models.schemas import AddMemoryReq
         from lantai.services.memory_service import add_memory
 
+        # 归属随调用方 principal 落列（票 .scratch/ownership-gaps/03）：不落
+        # 则精华属主恒 NULL，按属主过滤的检索召回不到它
+        store_user_id = (principal.user_id if principal else None) or "default"
+        store_tenant_id = principal.tenant_id if principal else None
         result["store"] = add_memory(
             AddMemoryReq(
                 source_type="session_distill",
@@ -193,6 +197,8 @@ def distill_session(
                     "distill_initial_salience": initial,
                     "origin_agent": "session-distill",
                 },
-            )
+            ),
+            user_id=store_user_id,
+            tenant_id=store_tenant_id,
         )
     return result

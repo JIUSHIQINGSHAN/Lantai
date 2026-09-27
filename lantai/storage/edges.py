@@ -7,9 +7,24 @@ from lantai.storage import db
 
 
 def create_edge(
-    source_memory_id: str, target_memory_id: str, relation: str, confidence: float = 0.5
+    source_memory_id: str,
+    target_memory_id: str,
+    relation: str,
+    confidence: float = 0.5,
+    *,
+    user_id: str | None = None,
+    tenant_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
 ) -> MemoryEdge:
-    """创建记忆关系"""
+    """创建记忆关系。
+
+    归属四元组（票 .scratch/ownership-gaps/03）：列在 tables.py:271-282
+    早已存在，此前从不填。`DELETE /edges/{id}` 的 ACL（routes_edges.py:46）
+    拿 `edge.user_id` 与 principal 比对——边不带属主，那道校验永远判
+    「无归属不越权」，形同虚设。supersedes 边还会参与他人召回排序
+    （hybrid.py:248 的 `_edge_cb` 无用户过滤），属主是审计的唯一起点。
+    """
     from lantai.core.ids import new_id
 
     edge = MemoryEdge(
@@ -18,6 +33,10 @@ def create_edge(
         target_memory_id=target_memory_id,
         relation=relation,
         confidence=confidence,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        agent_id=agent_id,
+        session_id=session_id,
     )
     with db.get_session() as s:
         s.add(edge)

@@ -111,10 +111,25 @@ class TestServiceFallback:
             patch.object(ms, "add_memory", return_value=fake) as m,
         ):
             res = ms.add_memory_async(req, user_id="default")
-        m.assert_called_once_with(req, user_id="default")
+        # 归属四元组必须一路透传到同步落库（票 .scratch/ownership-gaps/03）：
+        # 降级路径若丢掉 tenant_id，异步写入的内容在按属主过滤的检索里仍不可见
+        m.assert_called_once_with(req, user_id="default", tenant_id=None)
         assert res["status"] == "synced"
         assert res["document_id"] == "doc1"
         assert len(res["job_id"]) == 16
+
+    def test_add_memory_async_forwards_tenant(self):
+        """tenant_id 显式传入时不得在降级同步路径上被丢弃。"""
+        from lantai.models.schemas import AddMemoryReq
+        from lantai.services import memory_service as ms
+
+        req = AddMemoryReq(title="t", content="这是一段足够长的内容")
+        with (
+            patch.object(ms.settings, "COALESCE_ENABLED", False),
+            patch.object(ms, "add_memory", return_value={}) as m,
+        ):
+            ms.add_memory_async(req, user_id="u1", tenant_id="t9")
+        m.assert_called_once_with(req, user_id="u1", tenant_id="t9")
 
     def test_add_memory_async_queues_when_enabled(self):
         from lantai.models.schemas import AddMemoryReq

@@ -517,7 +517,18 @@ def merge_memories(req: MergeReq, principal=Depends(get_current_user)):
         from lantai.services.edge_service import add_edge
 
         with contextlib.suppress(Exception):
-            add_edge(req.target_id, req.source_id, "supersedes", 1.0)
+            add_edge(
+                req.target_id,
+                req.source_id,
+                "supersedes",
+                1.0,
+                # 归属随 principal 落列（票 .scratch/ownership-gaps/03）：
+                # 合并边不带属主，DELETE 的 ACL 与审计都无从下手
+                user_id=principal.user_id,
+                tenant_id=principal.tenant_id,
+                agent_id=principal.agent_id,
+                session_id=principal.session_id,
+            )
 
         session.commit()
         return {"ok": True, "merged_into": req.target_id, "content": merged_content}

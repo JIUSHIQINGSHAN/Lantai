@@ -3,9 +3,28 @@
 from lantai.storage.edges import create_edge, delete_edge, get_edges, get_supersed_chain
 
 
-def add_edge(source_id: str, target_id: str, relation: str, confidence: float = 0.5) -> dict:
+def add_edge(
+    source_id: str,
+    target_id: str,
+    relation: str,
+    confidence: float = 0.5,
+    *,
+    user_id: str | None = None,
+    tenant_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
+) -> dict:
     """创建记忆关系。"""
-    edge = create_edge(source_id, target_id, relation, confidence)
+    edge = create_edge(
+        source_id,
+        target_id,
+        relation,
+        confidence,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
     return {"edge_id": edge.id, "relation": edge.relation}
 
 

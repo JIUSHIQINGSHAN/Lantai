@@ -17,8 +17,20 @@ class EdgeReq(BaseModel):
 
 
 @router.post("/edges")
-def create_edge_route(req: EdgeReq):
-    return add_edge(req.source_memory_id, req.target_memory_id, req.relation, req.confidence)
+def create_edge_route(req: EdgeReq, ctx=Depends(get_current_user)):
+    # 归属四元组随 principal 落列（票 .scratch/ownership-gaps/03）：边不带
+    # 属主，`DELETE /edges/{id}` 的 ACL 无从校验，supersedes 边改他人召回
+    # 排序也无从审计。
+    return add_edge(
+        req.source_memory_id,
+        req.target_memory_id,
+        req.relation,
+        req.confidence,
+        user_id=getattr(ctx, "user_id", None),
+        tenant_id=getattr(ctx, "tenant_id", None),
+        agent_id=getattr(ctx, "agent_id", None),
+        session_id=getattr(ctx, "session_id", None),
+    )
 
 
 @router.get("/edges/{memory_id}")

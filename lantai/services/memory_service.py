@@ -131,11 +131,17 @@ def _dedup_structural(
     return None  # insert
 
 
-def add_memory(req: AddMemoryReq, user_id: str = "default") -> dict:
+def add_memory(
+    req: AddMemoryReq, user_id: str = "default", *, tenant_id: str | None = None
+) -> dict:
     """创建 RawDocument + MemoryCandidate。
 
-    当 COALESCE_ENABLED=true 时走缓冲路径。
-    fastpath 命中时直接写入（绕过 LLM 提取）。
+    user_id / tenant_id：归属四元组（票 .scratch/ownership-gaps/03）。此前
+    参数收了却不落列，`MemoryCandidate.user_id` 恒 NULL → 来源链继承到
+    MemoryItem 也是 NULL → `hybrid.py:435` 的 `filters["user_id"]` 与
+    `fts.py:160` 的 `AND m.user_id = ?` 把**所有人**的检索结果过滤光。
+    缺省 "default" 与 DEV MODE principal（auth.py:187）同值，内部调用方
+    不传时仍落到可见归属而不是 NULL。
     """
     if (req.media_url or "").strip():
         from lantai.services.vision_service import build_vision_memory, vision_provenance_extra
@@ -143,13 +149,15 @@ def add_memory(req: AddMemoryReq, user_id: str = "default") -> dict:
         req = build_vision_memory(req)
         return _create_candidate_with_extraction(
             req,
+            user_id=user_id,
+            tenant_id=tenant_id,
             provenance_prompt=PROVENANCE_PROMPT_VISION,
             provenance_extra=vision_provenance_extra(req),
         )
     # Fastpath 白名单直写——缓冲前判断
     fp = fastpath_check(req.content)
     if fp:
-        return _create_candidate_direct(req, fp)
+        return _create_candidate_direct(req, fp, user_id=user_id, tenant_id=tenant_id)
 
     # Coalesce 开关——true 时走缓冲
     if settings.COALESCE_ENABLED:
@@ -169,13 +177,21 @@ def add_memory(req: AddMemoryReq, user_id: str = "default") -> dict:
             req_copy = req.model_copy()
             req_copy.content = combined
             req_copy.session_id = ""
-            return _create_candidate_with_extraction(req_copy)
+            return _create_candidate_with_extraction(
+                req_copy, user_id=user_id, tenant_id=tenant_id
+            )
 
     # 默认同步路径
-    return _create_candidate_with_extraction(req)
+    return _create_candidate_with_extraction(req, user_id=user_id, tenant_id=tenant_id)
 
 
-def _create_candidate_direct(req: AddMemoryReq, fp_data: dict) -> dict:
+def _create_candidate_direct(
+    req: AddMemoryReq,
+    fp_data: dict,
+    *,
+    user_id: str = "default",
+    tenant_id: str | None = None,
+) -> dict:
     """fastpath 命中——直接创建 RawDocument + MemoryCandidate，不走 LLM"""
     h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
     with db.get_session() as s:
@@ -200,6 +216,10 @@ def _create_candidate_direct(req: AddMemoryReq, fp_data: dict) -> dict:
 
         cand = MemoryCandidate(
             id=new_id("cand"),
+            # 归属四元组（票 .scratch/ownership-gaps/03）：不落列则来源链
+            # 继承到 MemoryItem 也是 NULL，属主过滤把所有人的结果都滤光
+            user_id=user_id,
+            tenant_id=tenant_id,
             session_id=(getattr(req, "session_id", "") or "").strip() or None,
             document_id=doc.id,
             topic=fp_data["topic"] or req.tags,
@@ -221,6 +241,9 @@ def _create_candidate_direct(req: AddMemoryReq, fp_data: dict) -> dict:
 
 def _create_candidate_with_extraction(
     req: AddMemoryReq,
+    *,
+    user_id: str = "default",
+    tenant_id: str | None = None,
     provenance_prompt: str | None = None,
     provenance_extra: dict | None = None,
 ) -> dict:
@@ -271,6 +294,9 @@ def _create_candidate_with_extraction(
 
         cand = MemoryCandidate(
             id=new_id("cand"),
+            # 归属四元组（票 .scratch/ownership-gaps/03）：同 fastpath 路径口径
+            user_id=user_id,
+            tenant_id=tenant_id,
             session_id=(getattr(req, "session_id", "") or "").strip() or None,
             document_id=doc.id,
             topic=data["topic"] or req.tags,
@@ -292,7 +318,9 @@ def _create_candidate_with_extraction(
         return {"document_id": doc.id, "candidate_id": cand.id}
 
 
-def add_memory_async(req: AddMemoryReq, user_id: str = "default") -> dict:
+def add_memory_async(
+    req: AddMemoryReq, user_id: str = "default", *, tenant_id: str | None = None
+) -> dict:
     """异步批量写入（幂等）：COALESCE_ENABLED=false 时降级同步，不丢数据。
 
     COALESCE_ENABLED=true 时入队；若入队即触发冲刷，在此处持久化
@@ -300,7 +328,7 @@ def add_memory_async(req: AddMemoryReq, user_id: str = "default") -> dict:
     """
     buffer = get_coalesce_buffer()
     if not settings.COALESCE_ENABLED:
-        result = add_memory(req, user_id=user_id)
+        result = add_memory(req, user_id=user_id, tenant_id=tenant_id)
         return {
             "status": "synced",
             "job_id": buffer.job_id(user_id, req.lane, req.content),
@@ -312,7 +340,9 @@ def add_memory_async(req: AddMemoryReq, user_id: str = "default") -> dict:
         req_copy = req.model_copy()
         req_copy.content = detail.get("combined_content", req.content)
         try:
-            persisted = _create_candidate_with_extraction(req_copy)
+            persisted = _create_candidate_with_extraction(
+                req_copy, user_id=user_id, tenant_id=tenant_id
+            )
         except Exception:
             buffer.forget_fingerprint(result["job_id"])
             # 该批其他消息已被 _flush 弹出：锁内恢复，避免静默丢失
@@ -377,12 +407,19 @@ def build_verbatim_item(
     *,
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
+    user_id: str | None = None,
+    tenant_id: str | None = None,
+    agent_id: str | None = None,
 ) -> MemoryItem:
     """verbatim 直存项构造（纯函数）：sha256 幂等 key + 固定语义字段。
 
     add_raw_memory 与冷启动导入（services/import_service.py）共用，消除重复
     构造；created_at/updated_at 缺省取 utcnow，updated_at 缺省取 created_at
     （导入路径原样保留原始时间戳语义）。
+
+    归属四元组（票 .scratch/ownership-gaps/03）：不传即如实 NULL——宁 miss
+    不脏写，不猜归属；但调用方（尤其 HTTP 路由）必须把 principal 传下来，
+    否则这条记忆在按属主过滤的检索里永久不可见。
     """
     h = hashlib.sha256(content.encode("utf-8")).hexdigest()
     created = created_at or utcnow()
@@ -397,15 +434,28 @@ def build_verbatim_item(
         importance=0.5,
         tags=tags or [],
         decay_class="semantic",  # 原文直存衰减慢；procedural 永不衰减过强
+        user_id=user_id,
+        tenant_id=tenant_id,
+        agent_id=agent_id,
         created_at=created,
         updated_at=updated_at or created,
     )
 
 
-def add_raw_memory(req: RawMemoryReq) -> dict:
+def add_raw_memory(
+    req: RawMemoryReq,
+    *,
+    user_id: str = "default",
+    tenant_id: str | None = None,
+    agent_id: str | None = None,
+) -> dict:
     """原文直存（verbatim 记忆）：零 LLM、不走提取/闸门/演化，直接写 MemoryItem。
 
     幂等：内容 sha256 作 key，重复内容返回已有记忆（不重复索引）。
+
+    归属四元组（票 .scratch/ownership-gaps/03）：此前签名里没有这些参数，
+    verbatim 是条数最多的一类（本机真实库 391/635 条），属主恒 NULL 让
+    `fts.py:160` 的 `AND m.user_id = ?` 把它们全部滤掉。
     """
     h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
     lane = req.lane or settings.RAW_MEMORY_DEFAULT_LANE
@@ -420,7 +470,14 @@ def add_raw_memory(req: RawMemoryReq) -> dict:
         if existing:
             return {"memory_id": existing.id, "dedup": True, "verbatim": True}
         emb = embed([req.content])[0]
-        mem = build_verbatim_item(req.content, lane, tags=req.tags)
+        mem = build_verbatim_item(
+            req.content,
+            lane,
+            tags=req.tags,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+        )
         # 来源链（v022 票据 01）：直存也带 session 出身；空则 NULL
         if (getattr(req, "session_id", "") or "").strip():
             mem.session_id = req.session_id.strip()

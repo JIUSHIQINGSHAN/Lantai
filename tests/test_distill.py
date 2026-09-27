@@ -151,6 +151,38 @@ class TestDistill:
             meta = cand.provenance
             assert meta  # provenance 已构造
 
+    def test_store_inherits_principal_owner(self, engine):
+        """store=true 且传了 principal：精华候选必须带该属主（票 ownership-gaps/03）。
+
+        否则精华写进去即属主 NULL，按属主过滤的检索（fts.py 的
+        `AND m.user_id = ?`）召回不到它——写了等于没写。
+        """
+        from lantai.core.auth import Principal
+
+        _add_session_mem(engine, "s5b", "和团队约定了新的发布流程")
+        _add_session_mem(engine, "s5b", "发布流程改为先跑全量测试再打包")
+        _add_session_mem(engine, "s5b", "下周一开始执行新流程")
+        res = _distill(
+            engine,
+            "s5b",
+            store=True,
+            llm_side_effect=RuntimeError("down"),
+            # allowed_lanes 必须含源记忆的 lane（general）：非 admin 且泳道集为空
+            # 时 collect_session_memories 直接返回空（宁 miss 不越权），
+            # 就没有源可提炼，store 分支根本不会执行
+            principal=Principal(
+                user_id="u_distill", tenant_id="t_distill", allowed_lanes=["general"]
+            ),
+        )
+        assert res["status"] == "ok", res
+        assert res["store"]["candidate_id"]
+        with Session(engine) as s:
+            cand = s.get(MemoryCandidate, res["store"]["candidate_id"])
+            assert cand.user_id == "u_distill", (
+                f"精华没落调用方 user_id（{cand.user_id!r}）——按属主检索召回不到"
+            )
+            assert cand.tenant_id == "t_distill"
+
     def test_empty_session_returns_skipped(self, engine):
         _add_session_mem(engine, "other", "别的会话的记忆")
         res = _distill(engine, "nosuch")
