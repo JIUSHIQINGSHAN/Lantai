@@ -70,15 +70,19 @@ def batch_defer(req: BatchDeferRequest) -> BatchActionResult:
     return BatchActionResult(ok=not failed, succeeded=succeeded, failed=failed)
 
 
-def batch_organize(req: BatchOrganizeRequest) -> BatchActionResult:
-    """未分类记忆批量挂载到同一分类树节点。"""
+def batch_organize(req: BatchOrganizeRequest, *, principal=None) -> BatchActionResult:
+    """未分类记忆批量挂载到同一分类树节点。
+
+    principal 透传给 assign_memory_to_node（票 ownership-gaps/05）：批量
+    不放宽单条的归属校验——他人记忆照样进 `failed`，`ok=False`。
+    """
     from lantai.services.tree_service import assign_memory_to_node
 
     succeeded: list[dict] = []
     failed: list[dict] = []
     for memory_id in req.memory_ids:
         try:
-            result = assign_memory_to_node(memory_id, req.node_path)
+            result = assign_memory_to_node(memory_id, req.node_path, principal=principal)
             succeeded.append({"kind": "memory", "source_id": memory_id, "result": result})
         except Exception as exc:
             failed.append({"kind": "memory", "source_id": memory_id, "error": _error_text(exc)})

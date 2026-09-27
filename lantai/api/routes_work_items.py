@@ -1,7 +1,8 @@
 """案牍控制台聚合路由。"""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from lantai.core.auth import get_current_user
 from lantai.models.work_items import (
     BatchActionResult,
     BatchDeferRequest,
@@ -58,8 +59,9 @@ def batch_defer_route(req: BatchDeferRequest):
 
 
 @router.post("/work-items/batch/organize", response_model=BatchActionResult)
-def batch_organize_route(req: BatchOrganizeRequest):
-    return batch_organize(req)
+def batch_organize_route(req: BatchOrganizeRequest, ctx=Depends(get_current_user)):
+    # 归属必须透传（票 ownership-gaps/05）：批量不放宽单条校验
+    return batch_organize(req, principal=ctx)
 
 
 @router.post("/workers/{worker_name}/run")

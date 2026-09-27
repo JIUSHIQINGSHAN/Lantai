@@ -123,25 +123,50 @@ def add_node(
     return {"node": node.model_dump(mode="json")}
 
 
-def assign_memory(session, memory_id: str, node_path: str) -> dict:
-    """把记忆挂到节点（校验节点/记忆均存在；宁 miss 不脏写）。"""
+def assign_memory(session, memory_id: str, node_path: str, *, principal=None) -> dict:
+    """把记忆挂到节点（校验节点/记忆均存在 + 归属校验；宁 miss 不脏写）。
+
+    归属校验（票 .scratch/ownership-gaps/05）：改他人记忆的 tree_path 视为
+    破坏性操作，口径与 `PUT/DELETE /terminal/memory/{id}` 同一真源
+    （`acl.ensure_can_delete`）。此前三个端点都不查归属，A 能把 B 的记忆
+    挂到自己的节点也能摘下来，`batch/organize` 更是批量版。
+    principal=None 仅限内部调用（MCP/脚本），不校验。
+    """
     path = normalize_path(node_path)
     if not session.exec(select(MemoryNode).where(MemoryNode.node_path == path)).first():
         raise ValueError(f"node not found: {path}")
     mem = session.get(MemoryItem, memory_id)
     if not mem:
         raise ValueError(f"memory not found: {memory_id}")
+    if principal is not None:
+        from lantai.core.acl import ensure_can_delete
+
+        ensure_can_delete(
+            principal,
+            resource_user_id=mem.user_id,
+            resource_tenant_id=mem.tenant_id,
+            lane=mem.lane,
+        )
     mem.tree_path = path
     session.add(mem)
     session.commit()
     return {"ok": True, "memory_id": memory_id, "node_path": path}
 
 
-def unassign_memory(session, memory_id: str) -> dict:
-    """解除记忆挂载。"""
+def unassign_memory(session, memory_id: str, *, principal=None) -> dict:
+    """解除记忆挂载（归属校验同 assign，票 ownership-gaps/05）。"""
     mem = session.get(MemoryItem, memory_id)
     if not mem:
         raise ValueError(f"memory not found: {memory_id}")
+    if principal is not None:
+        from lantai.core.acl import ensure_can_delete
+
+        ensure_can_delete(
+            principal,
+            resource_user_id=mem.user_id,
+            resource_tenant_id=mem.tenant_id,
+            lane=mem.lane,
+        )
     mem.tree_path = None
     session.add(mem)
     session.commit()
@@ -161,11 +186,11 @@ def add_tree_node(name: str, parent_path: str = "/", description: str = "") -> d
         return add_node(s, name, parent_path, description)
 
 
-def assign_memory_to_node(memory_id: str, node_path: str) -> dict:
+def assign_memory_to_node(memory_id: str, node_path: str, *, principal=None) -> dict:
     with db.get_session() as s:
-        return assign_memory(s, memory_id, node_path)
+        return assign_memory(s, memory_id, node_path, principal=principal)
 
 
-def unassign_memory_from_node(memory_id: str) -> dict:
+def unassign_memory_from_node(memory_id: str, *, principal=None) -> dict:
     with db.get_session() as s:
-        return unassign_memory(s, memory_id)
+        return unassign_memory(s, memory_id, principal=principal)
