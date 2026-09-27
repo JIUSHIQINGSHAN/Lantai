@@ -16,6 +16,7 @@ from sqlmodel import Session
 
 from lantai.cognition.context import CognitiveContextBuilder
 from lantai.cognition.reflection import ReflectionEngine
+from lantai.core.auth import get_current_user
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
 from lantai.models.tables import CognitiveRole, Evidence, MemoryItem
@@ -103,6 +104,7 @@ def cognitive_context(
     task: str = "",
     top_k: int = 12,
     db: Session = Depends(get_session),
+    ctx=Depends(get_current_user),
 ) -> dict:
     """
     返回结构化认知上下文（7 切面 JSON）：
@@ -110,7 +112,7 @@ def cognitive_context(
 
     Agent 不再接收扁平的 Memory 列表，而是接收具有角色语义的分层上下文。
     """
-    builder = CognitiveContextBuilder(db)
+    builder = CognitiveContextBuilder(db, principal=ctx)
     ctx = builder.build(task=task, top_k=top_k)
     return {
         "task": ctx.task,
@@ -129,11 +131,12 @@ def cognitive_context_prompt(
     task: str = "",
     top_k: int = 12,
     db: Session = Depends(get_session),
+    ctx=Depends(get_current_user),
 ) -> dict:
     """
     返回供 Agent system prompt 使用的 Markdown 格式认知上下文。
     """
-    builder = CognitiveContextBuilder(db)
+    builder = CognitiveContextBuilder(db, principal=ctx)
     ctx = builder.build(task=task, top_k=top_k)
     return {"task": ctx.task, "prompt": ctx.to_prompt()}
 
@@ -144,6 +147,7 @@ def cognitive_summary(
     max_rules: int = 2,
     max_failures: int = 1,
     db: Session = Depends(get_session),
+    ctx=Depends(get_current_user),
 ) -> dict:
     """
     轻量认知摘要（v0.4 Cognitive Middleware）：返回给定 task 最相关的 Rule 和 Failure。
@@ -157,7 +161,7 @@ def cognitive_summary(
       "summary": "相关规则: ... | 已知失败: ..."
     }
     """
-    builder = CognitiveContextBuilder(db)
+    builder = CognitiveContextBuilder(db, principal=ctx)
     ctx = builder.build(task=task, top_k=max(max_rules, max_failures) + 2)
 
     rules_out = []

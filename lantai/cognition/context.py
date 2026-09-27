@@ -80,10 +80,47 @@ class CognitiveContext:
 class CognitiveContextBuilder:
     """
     从 DB 中按 CognitiveRole 分流拉取记忆，构建结构化认知上下文。
+
+    归属收窄（票 .scratch/readside-gaps/03）：此前 `select(MemoryItem)`
+    是全表，而 `content` 一字不漏、还带记忆 ULID `id`——A 调一次
+    `/cognitive/context` 就拿到全库最敏感的正文，而这个端点的用途正是
+    「把记忆喂给 Agent」，泄漏面直接是模型上下文。三个 handler
+    （`/context`、`/context/prompt`、`/summary`）此前一个身份都不取。
+
+    `principal=None` 仅限内部调用（`runtime/middleware.py` 的
+    `build_cognitive_summary` 是环境式中间件、`cli/mcp.py` 的工具没有
+    调用方身份），按 `"default"` 收敛。
     """
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, *, principal=None):
         self.db = db
+        self.principal = principal
+
+    def _owned_memory_stmt(self):
+        """带归属条件的 MemoryItem 查询（票 .scratch/readside-gaps/03）。
+
+        判据复用 `work_item_service._viewer_of`（同一仓里已有现成的，
+        不另写一份——票 01 的既有决定），但**可见性口径与票 01/02 刻意
+        分歧**：这里是 `user_id == viewer OR user_id IS NULL`。
+
+        分歧的理由是部署事实，不是偏好：真实库 `memoryitem` 650 行里
+        629 行 `user_id IS NULL`，4 把 API key 全是 `user_id='default'`
+        ——单人部署。照票 01 判「NULL 一律不可见」会让本端点对唯一的真实
+        用户返回空上下文，Agent 直接失明；那是把功能修废，不是收窄泄漏。
+        NULL 是「未记录」的事实状态，不是「属于所有人」——同
+        `memory_service.get_core_memory` 那一支的口径。
+
+        admin/system 全权（不走本函数）。
+        """
+        from lantai.services.work_item_service import _viewer_of
+
+        principal = self.principal
+        if principal is not None and bool(getattr(principal, "is_admin", False)):
+            return select(MemoryItem)
+        viewer = _viewer_of(principal)
+        return select(MemoryItem).where(
+            (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
+        )
 
     @staticmethod
     def _task_relevance(content: str, task: str) -> float:
@@ -97,8 +134,8 @@ class CognitiveContextBuilder:
     def build(self, task: str, top_k: int = 12) -> CognitiveContext:
         ctx = CognitiveContext(task=task)
 
-        # 1. 拉取所有 MemoryItem，按综合分（task_relevance + confidence）全局排序
-        memories = self.db.exec(select(MemoryItem)).all()
+        # 1. 拉取归属范围内的 MemoryItem，按综合分（task_relevance + confidence）排序
+        memories = self.db.exec(self._owned_memory_stmt()).all()
 
         def _score(mem: MemoryItem) -> float:
             relevance = self._task_relevance(mem.content or "", task)
