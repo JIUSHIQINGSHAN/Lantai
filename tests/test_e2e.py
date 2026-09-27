@@ -14,18 +14,28 @@ from lantai.core.settings import settings
 
 
 @pytest.fixture(scope="function")
-def client():
-    """创建测试客户端，使用内存数据库"""
+def e2e_engine():
+    """端到端测试用的内存引擎（建全部表 + FTS）。"""
     from sqlalchemy.pool import StaticPool
 
-    test_engine = create_engine(
+    from lantai.storage.fts import init_fts
+
+    e = create_engine(
         "sqlite:///:memory:",
         echo=False,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     # 在内存库上创建所有表（models 已在导入时注册到 SQLModel.metadata）
-    SQLModel.metadata.create_all(test_engine)
+    SQLModel.metadata.create_all(e)
+    init_fts(e.raw_connection())
+    return e
+
+
+@pytest.fixture(scope="function")
+def client(e2e_engine):
+    """创建测试客户端，使用内存数据库"""
+    test_engine = e2e_engine
 
     def get_test_session():
         return Session(test_engine)
@@ -205,14 +215,56 @@ class TestEvolution:
 class TestFeedback:
     """反馈测试"""
 
-    def test_feedback(self, client):
-        resp = client.post("/add", json={"title": "Test", "content": "Feedback test"})
-        mem_id = resp.json()["candidate_id"]
+    def test_feedback(self, client, e2e_engine):
+        """反馈必须打到**真实存在的记忆**上。
+
+        修正记录：本条原来拿 `/add` 返回的 `candidate_id` 当 `memory_id` 用——
+        `/add` 落的是候选，`/feedback` 找的是记忆，两者 id 空间不同。旧代码在
+        `record_feedback` 里 `return {"ok": False}` 而路由原样 200 返回，
+        于是测试「通过」了，但反馈其实从未落库（静默失败伪装成成功）。
+        状态码改造后这条谎言兜不住了（422），故改为先建一条真记忆再反馈。
+        """
+        from lantai.core.ids import new_id
+        from lantai.core.time import utcnow
+        from lantai.models.tables import MemoryItem
+
+        mem_id = new_id("mem")
+        with Session(e2e_engine) as s:
+            s.add(
+                MemoryItem(
+                    id=mem_id,
+                    memory_type="general",
+                    key=mem_id,
+                    content="Feedback test",
+                    lane="general",
+                    status="active",
+                    importance=0.5,
+                    use_count=0,
+                    decay_score=1.0,
+                    last_used_at=utcnow(),
+                )
+            )
+            s.commit()
+
         resp = client.post(
             "/feedback",
             json={"memory_id": mem_id, "query": "test", "helped": True, "user_accepted": True},
         )
         assert resp.status_code == 200
+        assert resp.json().get("ok") is not False, "反馈落库失败不得静默"
+
+    def test_feedback_unknown_memory_is_4xx(self, client):
+        """反例：反馈打到不存在的记忆 → 4xx（不得 200 + ok:false 静默失败）。"""
+        resp = client.post(
+            "/feedback",
+            json={
+                "memory_id": "mem___nonexistent__",
+                "query": "test",
+                "helped": True,
+                "user_accepted": True,
+            },
+        )
+        assert resp.status_code in (404, 422), f"应 4xx，实得 {resp.status_code}"
 
 
 class TestIntegration:

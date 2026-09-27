@@ -13,6 +13,29 @@ from lantai.services.evolution_service import (
 router = APIRouter()
 
 
+def _ok_or_raise(result: dict) -> dict:
+    """service 的 `{"ok": False, ...}` → 对应 4xx（票 .scratch/api-error-status/01）。
+
+    service 层失败多以返回 dict 表达（被 worker / eval / MCP 多处消费，形状不能动），
+    但 HTTP 客户端看到的是 200 + ok:false——语义上成功、实际失败，调用方必须翻 body
+    才知道出错了。此处只在**路由边界**翻译状态码，service 契约零变更。
+    """
+    if isinstance(result, dict) and result.get("ok") is False:
+        reason = str(result.get("reason") or "operation failed")
+        if "not found" in reason or "missing" in reason:
+            raise HTTPException(404, reason)
+        if (
+            "not applicable" in reason
+            or "state changed" in reason
+            or "already" in reason
+            or "ambiguous" in reason
+        ):
+            # 资源在、但当前状态不允许该操作（stale 硬门 / 多义寻址 / 已 apply）
+            raise HTTPException(409, reason)
+        raise HTTPException(422, reason)
+    return result
+
+
 @router.get("/proposals")
 def list_proposals_route(status: str = "pending", limit: int = 50):
     return list_proposals(status, limit)
@@ -21,7 +44,7 @@ def list_proposals_route(status: str = "pending", limit: int = 50):
 @router.post("/proposals/{proposal_id}/decide")
 def decide_proposal_route(proposal_id: str, req: ProposalDecisionReq):
     try:
-        return decide_proposal(proposal_id, req)
+        return _ok_or_raise(decide_proposal(proposal_id, req))
     except RuntimeError as e:
         raise HTTPException(409, str(e)) from e
     except ValueError as e:
@@ -31,12 +54,12 @@ def decide_proposal_route(proposal_id: str, req: ProposalDecisionReq):
 
 @router.post("/memory/{memory_id}/rollback")
 def do_rollback_route(memory_id: str):
-    return do_rollback(memory_id)
+    return _ok_or_raise(do_rollback(memory_id))
 
 
 @router.post("/feedback")
 def feedback_route(req: FeedbackReq):
-    return record_feedback_entry(req)
+    return _ok_or_raise(record_feedback_entry(req))
 
 
 @router.post("/evolve/run")

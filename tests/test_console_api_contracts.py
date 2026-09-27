@@ -174,3 +174,70 @@ def test_graph_expand_route_contract(client):
     data = res.json()
     assert "primary_results" in data and isinstance(data["primary_results"], list)
     assert "associated_memories" in data and isinstance(data["associated_memories"], list)
+
+
+# ── 错误不得伪装成 200（票 .scratch/api-error-status/01）──────────────────
+# routes_evolution 的 decide / rollback / feedback 三处把 service 的
+# {"ok": False, ...} 原样 200 返回。调用方（前端/脚本）只能靠翻 body 判断成败，
+# 而 HTTP 语义上这是 4xx/5xx。统一改为：service 报错 → HTTPException 带正确状态码。
+
+
+def test_proposal_decide_failure_is_not_200(client):
+    """approve 一个已被 apply/拒绝的提案 → 409，不是 200 + {"ok": false}。"""
+    res = client.post("/proposals/__nonexistent__/decide", json={"approve": True, "reason": "x"})
+    # 不存在 → 404（既有 ValueError 分支已处理）
+    assert res.status_code == 404, f"应 404，实得 {res.status_code}: {res.text[:200]}"
+
+
+def test_proposal_decide_ok_true_still_200(client, monkeypatch):
+    """回归护栏：service 成功时仍返回 200（不得把正常响应也改成错误码）。"""
+    import lantai.api.routes_evolution as routes_evolution
+
+    monkeypatch.setattr(
+        routes_evolution, "decide_proposal", lambda *a, **kw: {"ok": True, "proposal_id": "p1"}
+    )
+    res = client.post("/proposals/p1/decide", json={"approve": True, "reason": "同意"})
+    assert res.status_code == 200
+    assert res.json()["ok"] is True
+
+
+def test_rollback_failure_is_not_200(client):
+    """回滚一个不存在的记忆 → 404/409，不是 200 + {"ok": false}。"""
+    res = client.post("/memory/__nonexistent__/rollback")
+    # no previous version 不是「资源不存在」而是「状态不允许」→ 422；
+    # 关键是**不再是 200**（错误不得伪装成成功）
+    assert res.status_code == 422, f"应 422，实得 {res.status_code}: {res.text[:200]}"
+    body = res.json()
+    assert "detail" in body, "HTTPException 的错误应落在 detail 字段"
+    assert body["detail"], "detail 不得为空（调用方要能看到原因）"
+
+
+def test_rollback_ok_true_still_200(client, monkeypatch):
+    """回归护栏：回滚成功仍返回 200。"""
+    import lantai.api.routes_evolution as routes_evolution
+
+    monkeypatch.setattr(
+        routes_evolution, "do_rollback", lambda *a, **kw: {"ok": True, "memory_id": "m1"}
+    )
+    res = client.post("/memory/m1/rollback")
+    assert res.status_code == 200
+    assert res.json()["ok"] is True
+
+
+def test_proposal_decide_ok_false_becomes_4xx(client, monkeypatch):
+    """decide 成功调到 service 但 service 返回 ok:False → 4xx（不得 200）。
+
+    与 test_proposal_decide_failure_is_not_200 的区别：那条走的是「提案不存在」
+    抛 ValueError 的既有分支；本条走的是 apply 落拒（如 stale 硬门 / 寻址失败）
+    返回 {"ok": False} 的路径——正是本次修法覆盖的情形。
+    """
+    import lantai.api.routes_evolution as routes_evolution
+
+    monkeypatch.setattr(
+        routes_evolution,
+        "decide_proposal",
+        lambda *a, **kw: {"ok": False, "reason": "stale: evidence already consolidated"},
+    )
+    res = client.post("/proposals/p1/decide", json={"approve": True, "reason": "同意"})
+    assert res.status_code == 409, f"应 409，实得 {res.status_code}: {res.text[:200]}"
+    assert "stale" in res.json()["detail"]
