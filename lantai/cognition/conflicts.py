@@ -127,34 +127,6 @@ class ConflictEngine:
         }
         return score, components
 
-    def _score(self, item: MemoryItem, session: Session | None) -> float:
-        """Compute 6-dimensional ConflictScore for *item*."""
-        # --- evidence_strength & independence (from DB) ---
-        ev_strength, ev_independence = self._evidence_stats(item, session)
-
-        # --- confidence ---
-        confidence = item.confidence if item.confidence is not None else 0.5
-
-        # --- provenance_quality ---
-        scope = self._extract_scope(item)
-        provenance_quality = 1.0 if scope else 0.5
-
-        # --- recency（更漏修正：优先 event_time，recency_axis 入 trace）---
-        recency, recency_axis = _temporal_recency(item)
-
-        # --- contextual_fit ---
-        contextual_fit = 1.0 if scope.get("domain") else 0.5
-
-        score = (
-            self._W_EVIDENCE_STRENGTH * ev_strength
-            + self._W_CONFIDENCE * confidence
-            + self._W_PROVENANCE * provenance_quality
-            + self._W_RECENCY * recency
-            + self._W_INDEPENDENCE * ev_independence
-            + self._W_CONTEXTUAL * contextual_fit
-        )
-        return score
-
     def _generate_reason(
         self,
         score_a: float,

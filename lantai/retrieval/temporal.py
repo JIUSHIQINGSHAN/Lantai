@@ -49,15 +49,6 @@ def interval_overlaps(start: datetime, end: datetime, window: tuple) -> bool:
     return start < w1 and end > w0  # 半开区间交叠
 
 
-def _validity_hit(item, as_of: datetime) -> bool:
-    """有效期命中：(valid_from IS NULL OR valid_from <= as_of) AND (valid_to IS NULL OR valid_to > as_of)。"""
-    vf = _ensure_utc(item.valid_from) if item.valid_from else None
-    vt = _ensure_utc(item.valid_to) if item.valid_to else None
-    # 两个「排除」条件合并为一个否定：起点晚于 as_of 或终点不晚于 as_of 即不命中。
-    # 等价于原「逐条 return False，全过 return True」（None 值在两式下都为假，不排除）。
-    return not (vf and vf > as_of or vt and vt <= as_of)
-
-
 def _event_interval_hit(item, as_of: datetime, delta_days: float) -> bool:
     """事件区间命中：E(event_time, precision) 与 [as_of−Δ, as_of+Δ] 交叠。"""
     if item.event_time is None:
