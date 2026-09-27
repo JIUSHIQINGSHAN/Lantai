@@ -237,6 +237,94 @@ def _isolate_data_dir(tmp_path_factory):
     engine.dispose()
 
 
+# ── 外部 LLM 调用统一替身（票 01，方案甲）──────────────────────
+# 背景：本地 .env 有真 OPENAI_API_KEY，CI 只有 conftest 的假 key "test-key"。
+# 未 patch 的 embed/chat_json 绑定因此**真连 API**：本地成功走主路径，CI 拿
+# AuthenticationError 被 except 吞掉走降级路径——两个环境跑的不是同一条路。
+# spy 实证（2026-09-27 全量）：11 个产品代码调用点、162 次真实调用。
+#
+# 方案甲：在 conftest 统一替身（而非逐测试补 patch）——一处收口，新测试自动继承。
+# 只 patch 源模块不够：`from lantai.llm.client import embed` 会在各模块**各存一份
+# 绑定**，必须连模块级 import 点一起替（函数内 import 则自动跟随源 patch，无需列举）。
+_LLM_MODULE_BINDINGS = (
+    "lantai.eval.answer_quality",
+    "lantai.evolution.promoter",
+    "lantai.evolution.proposer",
+    "lantai.evolution.reflector",
+    "lantai.gate.contradiction",
+    "lantai.gate.decision",
+    "lantai.gate.scorer",
+    "lantai.parameters.advisor",
+    "lantai.parsing.extractor",
+    "lantai.retrieval.hybrid",
+    "lantai.retrieval.intent",
+    "lantai.services.auto_triage_service",
+    "lantai.services.consolidation_service",
+    "lantai.services.distill_service",
+    "lantai.services.memory_service",
+    "lantai.services.mem_command",
+    "lantai.services.record_ops_service",
+    "lantai.services.refine_service",
+    "lantai.services.vision_service",
+)
+
+# 假向量维度：与真实 EMBED_MODEL(bge-m3)=1024 一致，避免「维度不符」把调用点
+# 提前踢进 except（那会让替身失去意义——见 test_env_isolation 的相关冒烟）。
+_FAKE_EMBED_DIM = 1024
+
+
+def _fake_embed(texts):
+    return [[0.1] * _FAKE_EMBED_DIM for _ in texts]
+
+
+def _fake_chat_json(*args, **kwargs):
+    """LLM 结构化输出替身：返回空 dict，让调用方走各自的「无内容」分支。
+
+    刻意不给业务字段（summary/claims/...）：那会让测试依赖替身的返回值，
+    把「LLM 恰好返回什么」变成隐式契约。需要特定返回值的测试自行 patch
+    （晚于本 fixture 生效，撕卸后自动还原）——既有测试已是这个范式。
+    """
+    return {}
+
+
+def _fake_vision_caption(media_url: str) -> str:
+    return "vision stub"
+
+
+@pytest.fixture(autouse=True)
+def _stub_external_llm(monkeypatch):
+    """统一替身全部外部 LLM 调用点（源 + 模块级绑定），测试不再真连 API。
+
+    需要特定 LLM 返回值的测试在测试体内自行 patch 对应模块的属性——晚于本
+    fixture 生效，撕卸后自动还原（既有 `test_distill` / `test_e2e` 等即此范式）。
+    """
+    import lantai.llm.client as client_mod
+
+    monkeypatch.setattr(client_mod, "embed", _fake_embed)
+    monkeypatch.setattr(client_mod, "chat_json", _fake_chat_json)
+    monkeypatch.setattr(client_mod, "vision_caption", _fake_vision_caption)
+
+    import importlib
+
+    for mod_name in _LLM_MODULE_BINDINGS:
+        mod = importlib.import_module(mod_name)
+        for attr in ("embed", "chat_json", "vision_caption"):
+            if hasattr(mod, attr):
+                fake = {
+                    "embed": _fake_embed,
+                    "chat_json": _fake_chat_json,
+                    "vision_caption": _fake_vision_caption,
+                }[attr]
+                monkeypatch.setattr(mod, attr, fake)
+
+    # 两个「import as」形态的模块：属性名是 llm_client 而非 embed/chat_json
+    for mod_name in ("lantai.services.auto_triage_service", "lantai.services.refine_service"):
+        mod = importlib.import_module(mod_name)
+        if hasattr(mod, "llm_client"):
+            monkeypatch.setattr(mod.llm_client, "embed", _fake_embed)
+            monkeypatch.setattr(mod.llm_client, "chat_json", _fake_chat_json)
+
+
 def pytest_runtest_teardown(item, nextitem):
     _PREV_TEST["id"] = item.nodeid
 

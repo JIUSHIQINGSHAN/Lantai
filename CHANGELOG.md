@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **外部 LLM 调用统一替身——162 次真实联网归零，全量测试快 23 倍（2026-09-28，票据 `.scratch/test-env-parity/issues/01-test-isolation-env-dependence.md`，维护者选定方案甲）**：
+  - **背景**：spy 实证（包住 `lantai.llm.client` 真实实现记录产品代码栈帧，跑全量）发现 **11 个产品代码调用点、162 次真实外部调用**——`retrieval/intent.py:24`(67)、`services/memory_service.py:51`(21)、`evolution/proposer.py:26`(14)、`parsing/extractor.py:9`(12)、`gate/decision.py:24`(9)、`services/auto_triage_service.py:62`(4)、`gate/contradiction.py:9`(3)、`services/import_service.py:126`(2)、`retrieval/hybrid.py:431`(2)、`services/record_ops_service.py:101`(1)。本地 `.env` 有真 key 所以走主路径，CI 用 conftest 假 key 拿到 `AuthenticationError` 被 `except` 吞掉走降级路径——**两个环境跑的不是同一条路**，只是目前两条路产出同样断言结果（巧合，非保证）。
+  - **实现**（`tests/conftest.py`）：autouse fixture `_stub_external_llm` + `_LLM_MODULE_BINDINGS` 清单（19 个模块级 import 点）。**只 patch 源模块不够**——`from lantai.llm.client import embed` 会在各模块各存一份绑定，必须连模块级 import 点一起替；**函数内 import 自动跟随源 patch**（实测验证，那 8 处无需列举）。另处理两个 `from lantai.llm import client as llm_client` 形态（属性名是 `llm_client` 而非 `embed`）。
+  - **替身取值**：`embed` 返回 **1024 维**（与真实 `EMBED_MODEL=bge-m3` 一致——维度不符会让调用点被提前踢进 `except`，替身就失去意义）；`chat_json` 返回**空 dict**（刻意不喂业务字段，避免把「LLM 恰好返回什么」变成隐式契约；需要特定返回值的测试自行 patch，晚于本 fixture 生效、撕卸自动还原——既有范式）。
+  - **实证成果**：逃逸次数 **162 → 0**；全量 **1285 passed / 0 failed**；**耗时 2190s → 101s（快 23 倍）**——此前全量大半时间耗在真连 API 上。
+  - **测试增量**：`tests/test_env_isolation.py` 增 5 例。判据用**行为特征**（调用它看返回是否为替身特征值）而非 `is 某函数对象`——因为 `tests/conftest.py` 会被 import 两次（pytest rootdir 加载 + 测试内 `from tests.conftest import ...`），两个模块对象的同名函数不是同一个（首轮实测踩到）。**变异验证**：fixture 不 patch 模块级绑定 → 逃逸被抓住、测试 failed；恢复后全绿。
+
 - **测试数据目录隔离——`db.engine` 不再绑定宿主真实库（2026-09-27，票据 `.scratch/test-env-parity/issues/02-test-data-dir-isolation.md`）**：
   - **背景**：本地 `.env` 的 `LANTAI_HOME` 指向真实开发库（`C:\Users\Asus\AppData\Local\remembrance-data`），而 `lantai/storage/db.py:13` 的 `engine` 在 **import 时**就按 `settings.DATABASE_URL` 建好——测试进程因此绑定宿主真实 SQLite/ChromaDB。CI 是干净目录、本地不是，这个差异正是「本地绿 CI 红」根因家族（`.scratch/test-env-parity/` spec 的动机表列了三项，本票治第三项）。
   - **实现**（`tests/conftest.py`）：新增 session 级 autouse fixture `_isolate_data_dir`——`settings.LANTAI_HOME` / `DATABASE_URL` / `CHROMADB_PATH` 重指到 `tmp_path_factory` 临时目录，并把 `db_module.engine` 重指到临时库。**只改 settings 无效**（engine 已于 import 时建好），这是本票的核心动作；`get_session()` 引用模块级 `engine` 名字（晚期绑定）故自动跟随。
