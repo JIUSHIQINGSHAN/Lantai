@@ -46,7 +46,7 @@ def _type_status_rows(refl: dict) -> list[str]:
     return rows
 
 
-def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
+def _aggregate_reflection(s, start: datetime, end: datetime, *, principal=None) -> dict:
     """反思提案窗口聚合：created/applied/pending/rejected/other + 类型×状态 + 置信桶。
 
     反思提案 = `decided_by == 'reflect'`（reflector 唯一打标；evolve auto /
@@ -57,6 +57,7 @@ def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
     应用 1）」自相矛盾。other = 窗口内 created 中非三类状态者（approved/
     rolled_back 等），保证 applied+pending+rejected+other == created。
     """
+    prop_scope = _digest_scope(MemoryProposal.user_id, principal)
     created = s.exec(
         select(func.count())
         .select_from(MemoryProposal)
@@ -64,6 +65,7 @@ def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
             MemoryProposal.decided_by == "reflect",
             MemoryProposal.created_at >= start,
             MemoryProposal.created_at < end,
+            *([prop_scope] if prop_scope is not None else []),
         )
     ).one()
     applied = s.exec(
@@ -74,6 +76,7 @@ def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
             MemoryProposal.status == "applied",
             MemoryProposal.created_at >= start,
             MemoryProposal.created_at < end,
+            *([prop_scope] if prop_scope is not None else []),
         )
     ).one()
     pending = s.exec(
@@ -84,6 +87,7 @@ def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
             MemoryProposal.status == "pending",
             MemoryProposal.created_at >= start,
             MemoryProposal.created_at < end,
+            *([prop_scope] if prop_scope is not None else []),
         )
     ).one()
     rejected = s.exec(
@@ -94,6 +98,7 @@ def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
             MemoryProposal.status == "rejected",
             MemoryProposal.created_at >= start,
             MemoryProposal.created_at < end,
+            *([prop_scope] if prop_scope is not None else []),
         )
     ).one()
     other = s.exec(
@@ -112,6 +117,7 @@ def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
             MemoryProposal.decided_by == "reflect",
             MemoryProposal.created_at >= start,
             MemoryProposal.created_at < end,
+            *([prop_scope] if prop_scope is not None else []),
         )
         .group_by(MemoryProposal.proposal_type, MemoryProposal.status)
     ).all()
@@ -120,6 +126,7 @@ def _aggregate_reflection(s, start: datetime, end: datetime) -> dict:
             MemoryProposal.decided_by == "reflect",
             MemoryProposal.created_at >= start,
             MemoryProposal.created_at < end,
+            *([prop_scope] if prop_scope is not None else []),
         )
     ).all()
     by_type: dict[str, dict[str, int]] = {}
@@ -175,14 +182,47 @@ def _local_day_window_utc(day: date | None = None) -> tuple[datetime, datetime]:
     return (local_start.astimezone(UTC), local_end.astimezone(UTC))
 
 
-def collect_digest_stats(day: date | None = None) -> dict:
-    """聚合当日五项统计（真实 DB 查询，不 mock）。"""
+def _digest_scope(column, principal):
+    """日报计数的归属过滤条件（票 .scratch/readside-gaps/04）。
+
+    口径与票 03 的认知上下文**刻意一致**：`user_id == viewer OR IS NULL`。
+    真实库 memoryitem 650 行里 629 行 NULL、persona 那一行也是 NULL——
+    单人部署。判「NULL 不可见」会让日报对唯一的真实用户显示 0 条记忆，
+    报表归零不是收窄，是修废。NULL 是「未记录」的事实状态，不是「属于
+    所有人」，同 `memory_service.get_core_memory`。
+
+    admin/system 全权（返回 None 表示不加条件）。判据复用
+    `work_item_service._viewer_of`，不另写一份。
+    """
+    from lantai.services.work_item_service import _viewer_of
+
+    if principal is not None and bool(getattr(principal, "is_admin", False)):
+        return None
+    viewer = _viewer_of(principal)
+    return (column == viewer) | (column.is_(None))
+
+
+def collect_digest_stats(day: date | None = None, *, principal=None) -> dict:
+    """聚合当日五项统计（真实 DB 查询，不 mock）。
+
+    归属收窄（票 .scratch/readside-gaps/04）：此前 8 项计数全表不带身份，
+    `GET /digest/today` 于是把全库记忆总量/待审量/检索质量吐给任何持 key
+    者。单人部署下那是"我自己的统计"；多人用则 A 能看见 B 制造了多少记忆、
+    多少待审。`principal=None` 仅限内部调用（digest worker 自身 / MCP
+    `get_digest`），按 `"default"` 收敛。
+    """
     start, end = _local_day_window_utc(day)
+    mem_scope = _digest_scope(MemoryItem.user_id, principal)
+    cand_scope = _digest_scope(MemoryCandidate.user_id, principal)
     with db.get_session() as s:
         new_mem = s.exec(
             select(func.count())
             .select_from(MemoryItem)
-            .where(MemoryItem.created_at >= start, MemoryItem.created_at < end)
+            .where(
+                MemoryItem.created_at >= start,
+                MemoryItem.created_at < end,
+                *([mem_scope] if mem_scope is not None else []),
+            )
         ).one()
         modified_mem = s.exec(
             select(func.count())
@@ -191,13 +231,21 @@ def collect_digest_stats(day: date | None = None) -> dict:
                 MemoryItem.updated_at >= start,
                 MemoryItem.updated_at < end,
                 MemoryItem.updated_at > MemoryItem.created_at,
+                *([mem_scope] if mem_scope is not None else []),
             )
         ).one()
-        total_mem = s.exec(select(func.count()).select_from(MemoryItem)).one()
+        total_mem = s.exec(
+            select(func.count())
+            .select_from(MemoryItem)
+            .where(*([mem_scope] if mem_scope is not None else []))
+        ).one()
         pending_total = s.exec(
             select(func.count())
             .select_from(MemoryCandidate)
-            .where(MemoryCandidate.status == "pending_review")
+            .where(
+                MemoryCandidate.status == "pending_review",
+                *([cand_scope] if cand_scope is not None else []),
+            )
         ).one()
         pending_new = s.exec(
             select(func.count())
@@ -206,6 +254,7 @@ def collect_digest_stats(day: date | None = None) -> dict:
                 MemoryCandidate.status == "pending_review",
                 MemoryCandidate.created_at >= start,
                 MemoryCandidate.created_at < end,
+                *([cand_scope] if cand_scope is not None else []),
             )
         ).one()
         archived_created_today = s.exec(
@@ -215,6 +264,7 @@ def collect_digest_stats(day: date | None = None) -> dict:
                 MemoryCandidate.status == "rejected",
                 MemoryCandidate.created_at >= start,
                 MemoryCandidate.created_at < end,
+                *([cand_scope] if cand_scope is not None else []),
             )
         ).one()
         retr_total = s.exec(
@@ -245,7 +295,7 @@ def collect_digest_stats(day: date | None = None) -> dict:
                 RetrievalEvent.created_at >= start, RetrievalEvent.created_at < end
             )
         ).one()
-        refl = _aggregate_reflection(s, start, end)
+        refl = _aggregate_reflection(s, start, end, principal=principal)
     return {
         "day": day or datetime.now().astimezone().date(),
         "memories": {
@@ -476,33 +526,47 @@ def write_digest_report(stats: dict) -> Path:
     return path
 
 
-def run_digest_once(day: date | None = None) -> dict:
-    """生成当日盘点报告：先跑 TTL 归档（使归档数准确），再聚合统计并落盘。"""
+def run_digest_once(day: date | None = None, *, principal=None) -> dict:
+    """生成当日盘点报告：先跑 TTL 归档（使归档数准确），再聚合统计并落盘。
+
+    归属收窄（票 .scratch/readside-gaps/04）： 按 viewer 过滤；
+     只回文件名（不回绝对路径，同 ）。
+     仅限内部调用（scheduler job / MCP），按  收敛。
+    """
     ttl = run_candidate_ttl_once()
-    stats = collect_digest_stats(day)
+    stats = collect_digest_stats(day, principal=principal)
     stats["archived"]["ttl"] = int(ttl.get("archived", 0))
     path = write_digest_report(stats)
     record_run("digest")
     return {
         "ok": True,
         "day": stats["day"].isoformat(),
-        "path": str(path),
+        "path": path.name,
         "content": render_digest_markdown(stats),
         "stats": stats,
     }
 
 
-def load_today_digest() -> dict:
-    """今日报告（不存在则生成一次）；REST `GET /digest/today` 与 MCP `get_digest` 入口。"""
+def load_today_digest(*, principal=None) -> dict:
+    """今日报告（不存在则生成一次）；REST `GET /digest/today` 与 MCP `get_digest` 入口。
+
+    归属收窄（票 .scratch/readside-gaps/04）两处：
+    - `stats` 按 viewer 过滤（`collect_digest_stats(principal=...)`）；
+    - **`path` 只回文件名**。此前回 `str(path)` 绝对路径，把宿主机用户名、
+      部署位置、仓库结构一次交给任何持 key 者——那是标准的信息收集素材。
+      调用方要的是"今天有没有报告、报告叫什么"，不是"报告在 C 盘哪个目录"。
+
+    `principal=None` 仅限内部调用（digest worker / MCP），按 `"default"` 收敛。
+    """
     day = datetime.now().astimezone().date()
     path = _digest_dir() / f"{day.isoformat()}.md"
     if not path.exists():
-        return run_digest_once(day)
-    stats = collect_digest_stats(day)
+        return run_digest_once(day, principal=principal)
+    stats = collect_digest_stats(day, principal=principal)
     return {
         "ok": True,
         "day": day.isoformat(),
-        "path": str(path),
+        "path": path.name,
         "content": path.read_text(encoding="utf-8"),
         "stats": stats,
     }

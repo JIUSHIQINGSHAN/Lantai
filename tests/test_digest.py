@@ -664,9 +664,12 @@ class TestRunDigest:
 
         result = run_digest_once()
         assert result["ok"] is True
-        path = Path(result["path"])
-        assert path.exists()
-        assert path.name.endswith(".md")
+        # 票 04：path 只回文件名（不回绝对路径——那会把宿主机用户名交出去）。
+        # 要验证落盘，走报告目录自己拼，别再指望 path 字段。
+        assert result["path"].endswith(".md")
+        assert "\\" not in result["path"] and "/" not in result["path"]
+        path = Path(settings.DIGEST_OUTPUT_DIR) / result["path"]
+        assert path.exists(), f"报告没落盘：{path}"
         content = path.read_text(encoding="utf-8")
         assert content.startswith("# 记忆日报")
         assert "| 新增记忆 | 1 |" in content
@@ -696,7 +699,10 @@ class TestLoadTodayDigest:
         res = load_today_digest()
         assert res["ok"] is True
         assert res["content"].startswith("# 记忆日报")
-        assert Path(res["path"]).exists()
+        # 票 04：path 只回文件名，不再能直接 Path(...).exists()
+        assert res["path"].endswith(".md")
+        assert "\\" not in res["path"] and "/" not in res["path"]
+        assert (Path(settings.DIGEST_OUTPUT_DIR) / res["path"]).exists()
         res2 = load_today_digest()
         assert res2["content"] == res["content"]
 
