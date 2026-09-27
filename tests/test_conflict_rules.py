@@ -5,6 +5,7 @@
 - ConflictEvent 账本落库 + service 裁决
 """
 
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -341,6 +342,197 @@ def test_decide_llm_fallback_when_no_rule(conflict_env):
     # LLM 命中不写确定性账本（规则层未命中）
     with session_factory() as s:
         assert s.exec(select(ConflictEvent)).all() == []
+
+
+# ── 矛盾检测不可用 ≠ 无矛盾（票 .scratch/gate-fail-open/01）────────
+
+
+class TestContradictionCheckUnavailable:
+    """LLM 矛盾检测失败时，`decide()` 不得把「检不了」当「没矛盾」静默放行。
+
+    原实现 `check_contradiction` 的 except 分支返回
+    `{"contradicts": False, ...}`，与「检测器说没矛盾」完全同形；`decide()`
+    的 site 1（decision.py:119-132）再包一层 try/except，双保险静默。
+    LLM 一挂，矛盾检测整条通道失效且日志无痕，候选长驱直入 PROMOTE。
+
+    修法口径：`contradiction.py` 失败返回带 `check_unavailable: True` 标记，
+    `decide()` 据此回 REJECT 进待审队列（宁 miss 不脏写：miss 必须留痕）。
+    """
+
+    @staticmethod
+    def _seed_no_rule_hit(conflict_env):
+        """造一对**不命中任何确定性规则/反义词/否定对**的候选，逼进 site 1 LLM。
+
+        反例护栏：这里必须真进 LLM 分支，否则测试会在确定性层短路而假绿。
+        """
+        session_factory, _ = conflict_env
+        from lantai.gate.conflict_rules import (
+            check_antonyms,
+            check_negation_pairs,
+            check_rules,
+        )
+
+        existing, summary = "当前端口是3000", "把端口改为8080"
+        # 造境自校验：确定性层必须真的不命中
+        assert check_rules(summary, existing) == []
+        assert check_antonyms(summary, existing) == []
+        assert check_negation_pairs(summary, existing) == []
+
+        cand_id = _seed(conflict_env, existing_content=existing, summary=summary)
+        return session_factory, cand_id
+
+    def test_llm_failure_yields_reject_not_silent_promote(self, conflict_env, caplog):
+        """site 1 LLM 抛异常 → REJECT（原实现静默放行成 WORKING_ONLY）。"""
+        session_factory, cand_id = self._seed_no_rule_hit(conflict_env)
+        from lantai.gate.decision import decide
+
+        with (
+            patch("lantai.gate.decision.check_contradiction", side_effect=RuntimeError("llm down")),
+            caplog.at_level(logging.WARNING, logger="lantai"),
+        ):
+            result = decide(cand_id)
+
+        assert result["decision"] == "reject", (
+            "检测器不可用不得伪装成『检测器说没矛盾』——"
+            f"应 reject 待审，实得 {result['decision']}"
+        )
+        assert "contradiction check" in result["reason"].lower()
+        assert result.get("check_unavailable") is True
+
+    def test_llm_no_conflict_still_promotes(self, conflict_env):
+        """回归护栏：LLM 正常返回「无矛盾」→ 照旧放行，不得误判成 reject。"""
+        _, cand_id = self._seed_no_rule_hit(conflict_env)
+        from lantai.gate.decision import decide
+
+        with patch(
+            "lantai.gate.decision.check_contradiction",
+            return_value={"contradicts": False, "reason": "端口变更非矛盾", "severity": "low"},
+        ):
+            result = decide(cand_id)
+        assert result["decision"] != "reject"
+        assert result.get("check_unavailable") is not True
+
+    def test_llm_failure_marks_flag_and_logs(self, conflict_env, caplog):
+        """`check_contradiction` 本体：失败返回带标记 + warning 留痕（此前零日志）。"""
+        from lantai.gate.contradiction import check_contradiction
+
+        with (
+            patch("lantai.gate.contradiction.chat_json", side_effect=TimeoutError("llm timeout")),
+            caplog.at_level(logging.WARNING, logger="lantai"),
+        ):
+            out = check_contradiction("新说法", "旧说法")
+
+        assert out.get("check_unavailable") is True
+        assert out["contradicts"] is False
+        assert "contradiction check unavailable" in caplog.text
+        # 成功路径形状未被改动：失败返回仍带齐原有三键
+        assert set(out) >= {"contradicts", "reason", "severity"}
+
+    def test_empty_llm_return_is_not_failure(self, conflict_env):
+        """反向护栏：LLM 成功但返回空 dict（conftest 替身即此）≠ 检测失败。
+
+        空返回走「无矛盾」正常路径，不得因 `{}` 里没有 contradicts 就判检不了。
+        """
+        from lantai.gate.contradiction import check_contradiction
+
+        with patch("lantai.gate.contradiction.chat_json", return_value={}):
+            out = check_contradiction("新说法", "旧说法")
+        assert out.get("check_unavailable") is not True
+        assert out == {}
+
+    def test_real_chat_json_failure_propagates_flag_end_to_end(self, conflict_env, caplog):
+        """端到端：只 patch 最外层 `chat_json`，中间的 decision.py 双 try 全真实执行。
+
+        这是本票的核心断言——旧的 site-1 except（decision.py:123-124）会把
+        标记重新抹平成 `{"contradicts": False}`。抹平即脏写，故必须穿层验证。
+        """
+        _, cand_id = self._seed_no_rule_hit(conflict_env)
+        from lantai.gate.decision import decide
+
+        with (
+            patch("lantai.gate.contradiction.chat_json", side_effect=RuntimeError("503")),
+            caplog.at_level(logging.WARNING, logger="lantai"),
+        ):
+            result = decide(cand_id)
+
+        assert result["decision"] == "reject"
+        assert "contradiction check" in result["reason"].lower()
+
+    def test_deterministic_hit_still_short_circuits_llm(self, conflict_env):
+        """既有护栏不变：确定性规则命中 → LLM 绝不执行，仍 archive_conflict。
+
+        新标记只影响「检不了」路径，不得让规则命中的硬冲突也变成 reject。
+        """
+        session_factory, _ = conflict_env
+        from lantai.gate.decision import decide
+
+        cand_id = _seed(
+            conflict_env, existing_content="旧策略已禁用自动同步", summary="新策略启用自动同步"
+        )
+        with patch(
+            "lantai.gate.decision.check_contradiction",
+            side_effect=AssertionError("LLM must not run when rule hits"),
+        ):
+            result = decide(cand_id)
+        assert result["decision"] == "archive_conflict"
+        assert result.get("check_unavailable") is not True
+
+    def test_negation_site_2_unchanged(self, conflict_env):
+        """ADR-0024 不动：否定候选 + LLM 失败 → 仍放行（宁 miss），不因新标记改判。"""
+        from lantai.gate.decision import decide
+
+        cand_id = _seed_imp(
+            conflict_env, existing_content="用户不会游泳", summary="用户会游泳", importance=0.5
+        )
+        with patch("lantai.gate.decision.check_contradiction", side_effect=RuntimeError("llm down")):
+            result = decide(cand_id)
+        assert result["decision"] != "archive_conflict"
+
+
+class TestContradictionUnavailableReachesPendingReview:
+    """LLM 检不了 → 候选落 pending_review（不是被静默丢弃）。"""
+
+    def test_evolve_worker_enqueues_when_check_unavailable(self, param_env, caplog):
+        """走真实 worker：decide → reject → enqueue_rejected（含 review_due_at）。"""
+        session_factory, _ = param_env
+        with session_factory() as s:
+            s.add(
+                MemoryItem(
+                    id=new_id("mem"),
+                    memory_type="semantic",
+                    key="k1",
+                    content="当前端口是3000",
+                    lane="fact",
+                    status="active",
+                    importance=0.5,
+                    use_count=0,
+                    decay_score=1.0,
+                )
+            )
+            s.add(
+                MemoryCandidate(
+                    id="cand_llm_down",
+                    document_id="d1",
+                    summary="把端口改为8080",
+                    extractor_confidence=0.9,
+                    lane="fact",
+                    status="new",
+                )
+            )
+            s.commit()
+
+        from lantai.workers.evolve_worker import run_evolve_once
+
+        with (
+            patch("lantai.gate.decision.check_contradiction", side_effect=RuntimeError("llm down")),
+            caplog.at_level(logging.WARNING, logger="lantai"),
+        ):
+            run_evolve_once()
+
+        with session_factory() as s:
+            c = s.get(MemoryCandidate, "cand_llm_down")
+            assert c.status == "pending_review", "检不了必须进待审队列，不得静默丢弃"
+            assert c.review_due_at is not None
 
 
 def test_conflict_service_resolve(conflict_env):

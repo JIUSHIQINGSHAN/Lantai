@@ -116,12 +116,21 @@ def decide(candidate_id: str) -> dict:
                         )
                     )
         # 规则/反义词均未命中（且无降权动作）→ 回落 LLM 矛盾检测（降级不阻断）
+        check_unavailable = False
         if not conflicts and not demoted:
             for m in related:
                 try:
                     c = check_contradiction(summary_text, m.content)
-                except Exception:
+                except Exception as e:
+                    # 双保险：连 check_contradiction 自身的 except 都兜不住时（如
+                    # 签名变更 / patch 抛错），仍要留下「检不了」的痕迹。
+                    # 旧实现此处把异常抹平成 {"contradicts": False}——与
+                    # 「检测器说没矛盾」同形，调用方无从区分，只能放行。
+                    logger.warning(
+                        "候选 %s 的矛盾检测调用失败（按检不了处理）: %s", cand.id, e
+                    )
                     c = {"contradicts": False, "reason": "", "severity": "low"}
+                    check_unavailable = True
                 if c.get("contradicts"):
                     conflicts.append(
                         {
@@ -130,6 +139,35 @@ def decide(candidate_id: str) -> dict:
                             "reason": c.get("reason", ""),
                         }
                     )
+                elif c.get("check_unavailable"):
+                    check_unavailable = True
+
+        # 「检不了」≠「没矛盾」（票 .scratch/gate-fail-open/01）
+        #
+        # LLM 矛盾检测失败（超时/429/5xx/非 JSON/未配 key）时，旧链路把
+        # contradicts: False 当「检测器说没矛盾」直接放行——LLM 一挂，
+        # 矛盾检测整条通道静默失效，候选长驱直入 PROMOTE/WORKING_ONLY，
+        # 日志里连一行都没有。
+        #
+        # 修法：check_contradiction 的失败返回带 `check_unavailable` 标记，
+        # 此处据此判 REJECT，由 evolve_worker 走 reject 分支把候选推进
+        # **待审队列**（pending_review + review_due_at）交人裁决。
+        # 宁 miss 不脏写：miss 可以，但 miss 必须留痕、可被看见，
+        # 不得伪装成「我检查过了，确实没矛盾」。
+        #
+        # 放在此处（而非与 ADR-0024 合并）的用意：确定性规则已命中的硬冲突
+        # 走上面的 conflicts 分支原样 archive_conflict，不受影响；只有
+        # 「本该靠 LLM 判断而 LLM 不可用」才降级为待审。
+        # 不新加 GateDecision 成员——staged scorer 对未知成员会静默错算，
+        # evolve_worker 的 `== "reject"` 分支也会漏接。
+        if check_unavailable:
+            return {
+                "decision": GateDecision.REJECT,
+                "reason": "contradiction check unavailable, needs human review",
+                "check_unavailable": True,
+                "conflicts": conflicts,
+                "novelty": nv,
+            }
 
         # ADR-0024：单字否定对候选（是/不是、会/不会…）→ LLM 裁决。
         # 候选不落硬规则；LLM 判非矛盾/失败 → 放行（宁 miss）。
