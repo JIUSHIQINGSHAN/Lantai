@@ -75,6 +75,9 @@ def stats():
             select(MemoryItem.status, func.count()).group_by(MemoryItem.status)
         ).all()
         tier_rows = s.exec(select(MemoryItem.tier, func.count()).group_by(MemoryItem.tier)).all()
+        domain_rows = s.exec(
+            select(MemoryItem.domain, func.count()).group_by(MemoryItem.domain)
+        ).all()
         decay_rows = s.exec(
             select(MemoryItem.decay_class, func.count()).group_by(MemoryItem.decay_class)
         ).all()
@@ -85,6 +88,7 @@ def stats():
         "by_lane": {k: v for k, v in lane_rows},
         "by_status": {k: v for k, v in status_rows},
         "by_tier": {k: v for k, v in tier_rows},
+        "by_domain": {k: v for k, v in domain_rows},
         "by_decay_class": {k: v for k, v in decay_rows},
         "coalesce_buffer": buffer,
         "workers": scheduler.WORKER_LAST_RUN,

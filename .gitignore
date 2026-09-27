@@ -41,6 +41,7 @@ logs/
 .workbuddy/
 .reasonix/
 .zcode/
+.pi/
 # 本地票据/研究/原型（release 门禁需工作区干净）
 .scratch/
 scratch/

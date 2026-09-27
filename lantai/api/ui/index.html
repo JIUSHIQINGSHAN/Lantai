@@ -76,6 +76,11 @@
             </div>
 
             <div class="panel-card">
+              <h3>📜 今日盘点</h3>
+              <div id="ovDigestContent" class="digest-content">读取中…</div>
+            </div>
+
+            <div class="panel-card">
               <h3>🧬 分轨与认知健康</h3>
               <div id="laneDistributionBox" class="meta-grid" style="margin-top:12px;">
                 <div><span>用户域 (user)</span><b id="ovUserMem">—</b></div>
@@ -96,6 +101,7 @@
             <p id="queueSummary">正在读取待办</p>
           </div>
           <div class="top-actions">
+            <button class="secondary-button" id="crystalDetectBtn" title="扫描记忆库，提取高频流程结晶">🔮 结晶检测</button>
             <button class="ai-btn" id="aiTriageBtn" title="扫描待审候选并给出智能研判建议">🤖 AI 智能预审</button>
             <button class="icon-button" id="refreshButton" title="刷新" aria-label="刷新">↻</button>
           </div>
@@ -148,7 +154,7 @@
               <span aria-hidden="true">⌕</span>
               <input id="vaultSearchInput" type="search" placeholder="在全库档案中全文检索..." autocomplete="off">
             </label>
-            <select id="vaultDomainFilter">
+            <select id="vaultDomainFilter" aria-label="按记忆域筛选">
               <option value="">全部分域</option>
               <option value="user">用户域 (user)</option>
               <option value="session">会话域 (session)</option>
@@ -158,6 +164,65 @@
           </div>
           <div id="vaultList" class="results-list" style="padding:0;">
             <div class="inspector-empty">正在加载档案库...</div>
+          </div>
+
+          <div class="panel-card limbo-panel">
+            <div class="limbo-header">
+              <div>
+                <h3>🗃️ 故纸堆（笔削可逆侧）</h3>
+                <p class="muted">已归档 / 已撤回 / 已巩固的记忆在此候审——恢复后立即回到常规检索。撤回恢复（unretract）需管理员权限。</p>
+              </div>
+              <div class="limbo-controls">
+                <select id="limboStatusFilter" aria-label="按状态筛选">
+                  <option value="archived">已归档 (archived)</option>
+                  <option value="retracted">已撤回 (retracted)</option>
+                  <option value="consolidated">已巩固 (consolidated)</option>
+                </select>
+                <button id="limboRefreshBtn" class="secondary-button" title="刷新故纸堆列表">↻ 刷新</button>
+              </div>
+            </div>
+            <div id="limboList" class="results-list limbo-list">
+              <div class="inspector-empty">尚未加载——点「刷新」查看</div>
+            </div>
+          </div>
+
+          <div class="studio-grid" style="padding:0; margin-top:20px;">
+            <!-- 分类目录树 -->
+            <div class="panel-card">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                <h3 style="margin:0;">🌳 目录树</h3>
+                <button class="secondary-button" id="treeRefreshBtn" title="刷新目录树">↻ 刷新</button>
+              </div>
+              <div id="treeView" class="tree-view">尚未加载</div>
+              <form id="treeNodeForm" class="studio-form" style="margin-top:14px;">
+                <label class="form-field"><span>新节点名</span><input id="treeNodeName" type="text" placeholder="如：工作" required></label>
+                <label class="form-field"><span>父路径</span><input id="treeNodeParent" type="text" value="/" placeholder="/"></label>
+                <label class="form-field"><span>描述（可选）</span><input id="treeNodeDesc" type="text" placeholder=""></label>
+                <div class="form-footer">
+                  <span class="muted" style="font-size:12px;">重名 / 父缺失会被拒绝（宁 miss 不脏写）</span>
+                  <button type="submit" class="primary-btn">➕ 新增节点</button>
+                </div>
+              </form>
+            </div>
+
+            <!-- 导入导出 -->
+            <div class="panel-card">
+              <h3>📦 导入与检查点</h3>
+              <form id="importForm" class="studio-form">
+                <label class="form-field"><span>JSONL 文本（每行一个记忆对象，verbatim 直存）</span>
+                  <textarea id="importText" rows="7" placeholder='{"content": "...", "lane": "general"}'></textarea>
+                </label>
+                <div class="form-footer">
+                  <button type="submit" class="primary-btn">⬆️ 批量导入</button>
+                </div>
+              </form>
+              <pre id="importResult" class="code-box" style="margin-top:10px;" hidden></pre>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin:16px 0 8px;">
+                <h4 style="margin:0;">🛟 会话检查点</h4>
+                <button class="secondary-button" id="checkpointRefreshBtn">↻ 查看最新</button>
+              </div>
+              <pre id="checkpointView" class="code-box">尚未加载</pre>
+            </div>
           </div>
         </div>
       </section>
@@ -170,6 +235,8 @@
             <button class="tab-btn active" data-studio-tab="persona">👑 器识人格</button>
             <button class="tab-btn" data-studio-tab="scratchpad">📝 会话札记</button>
             <button class="tab-btn" data-studio-tab="consolidation">🌙 沉潜夜梦</button>
+            <button class="tab-btn" data-studio-tab="recall">📈 召回报告</button>
+            <button class="tab-btn" data-studio-tab="prompts">🧩 提示词与核心记忆</button>
           </div>
         </header>
 
@@ -182,6 +249,12 @@
                   <h2>👑 器识（Persona 人格基座）</h2>
                   <p class="muted">定义 AI 的言语风格、行为准则与认知底色（常量级不衰减）。</p>
                 </div>
+              </div>
+              <div class="persona-switcher">
+                <label class="form-field" style="flex:1;"><span>已有人格基座</span>
+                  <select id="personaSwitcher" aria-label="选择人格基座"></select>
+                </label>
+                <button type="button" class="secondary-button" id="personaActivateBtn" title="将所选人格设为当前活跃人格">✅ 激活所选</button>
               </div>
               <form id="personaForm" class="studio-form">
                 <label class="form-field"><span>人格名称</span><input id="personaName" type="text" placeholder="default" required></label>
@@ -228,6 +301,75 @@
               <pre id="conReportRaw" class="code-box">正在读取报告...</pre>
             </div>
           </div>
+
+          <!-- 召回报告面板 -->
+          <div class="studio-tab-panel" id="panelRecall">
+            <div class="metrics-grid">
+              <div class="metric-card"><span class="val" id="rrWindow">—</span><span class="lbl">监控窗口（天）</span></div>
+              <div class="metric-card"><span class="val" id="rrReal">—</span><span class="lbl">真实检索事件</span></div>
+              <div class="metric-card"><span class="val" id="rrZero">—</span><span class="lbl">零召回次数</span></div>
+              <div class="metric-card"><span class="val" id="rrRate">—</span><span class="lbl">零召回率</span></div>
+            </div>
+            <div class="studio-grid" style="padding:0; margin-top:16px;">
+              <div class="panel-card">
+                <h3>🛤️ 分 Lane 零召回</h3>
+                <div id="rrByLane" class="digest-content">读取中…</div>
+              </div>
+              <div class="panel-card">
+                <h3>🎯 分意图零召回</h3>
+                <div id="rrByIntent" class="digest-content">读取中…</div>
+              </div>
+            </div>
+            <div class="panel-card" style="margin-top:16px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <h3 style="margin:0;">📊 原始报告</h3>
+                <button class="secondary-button" id="rrRefreshBtn">↻ 刷新</button>
+              </div>
+              <pre id="rrRaw" class="code-box">正在读取报告...</pre>
+            </div>
+          </div>
+
+          <!-- 提示词与核心记忆面板 -->
+          <div class="studio-tab-panel" id="panelPrompts">
+            <div class="studio-grid" style="padding:0;">
+              <div class="panel-card">
+                <h3>🧩 提示词覆写</h3>
+                <p class="muted">数据库中的覆写优先于代码默认模板；当前不支持删除覆写（空模板不会保存）。</p>
+                <div class="persona-switcher">
+                  <label class="form-field" style="flex:1;"><span>已覆写的提示词</span>
+                    <select id="promptSelect" aria-label="选择已覆写的提示词"></select>
+                  </label>
+                </div>
+                <form id="promptForm" class="studio-form">
+                  <label class="form-field"><span>提示词 ID（如 EXTRACT_SYS）</span><input id="promptId" type="text" placeholder="EXTRACT_SYS" required></label>
+                  <label class="form-field"><span>模板内容</span><textarea id="promptTemplate" rows="10" placeholder="编辑后保存生效；空内容不会保存"></textarea></label>
+                  <label class="form-field"><span>备注说明</span><input id="promptDesc" type="text" placeholder="这条覆写是干什么的"></label>
+                  <div class="form-footer">
+                    <button type="button" class="secondary-button" id="promptLoadDefaultBtn" title="读取代码默认模板到编辑框（不落库）">📖 查看默认</button>
+                    <button type="submit" class="primary-btn">💾 保存覆写</button>
+                  </div>
+                </form>
+              </div>
+              <div class="panel-card">
+                <h3>🧠 核心记忆块（Core Memory）</h3>
+                <p class="muted">identity / task / policy 三个常量级块，每次召回注入。</p>
+                <form id="coreMemoryForm" class="studio-form">
+                  <label class="form-field"><span>块</span>
+                    <select id="coreBlockSelect" aria-label="选择核心记忆块">
+                      <option value="identity">identity（身份）</option>
+                      <option value="task">task（任务）</option>
+                      <option value="policy">policy（策略）</option>
+                    </select>
+                  </label>
+                  <label class="form-field"><span>内容</span><textarea id="coreBlockContent" rows="10"></textarea></label>
+                  <div class="form-footer">
+                    <span class="muted" id="coreBlockMeta" style="font-size:12px;">—</span>
+                    <button type="submit" class="primary-btn">💾 保存块</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -240,13 +382,15 @@
           <div class="panel-card">
             <div class="search-controls">
               <input type="text" id="playgroundQuery" placeholder="输入搜索查询或测试对话文本（按回车直接检索）..." class="search-input">
-              <select id="playgroundDomain" class="select-box">
+              <select id="playgroundDomain" class="select-box" aria-label="检索的记忆域">
                 <option value="all">全域 (all)</option>
                 <option value="user" selected>用户域 (user)</option>
                 <option value="session">会话域 (session)</option>
                 <option value="agent">智能体域 (agent)</option>
               </select>
               <label class="check-field inline"><input id="playgroundForce" type="checkbox" checked><span>强制放行闸门</span></label>
+              <label class="check-field inline" title="贯珠（ADR-0035）：混合初筛 + 拓扑二度联想"><input id="playgroundGraphExpand" type="checkbox"><span>图增强（贯珠）</span></label>
+              <label class="check-field inline" title="图增强最大跳数"><span>跳数</span><input id="playgroundMaxHops" type="number" min="1" max="3" value="2" style="width:52px;"></label>
               <button id="playgroundSearchBtn" class="primary-btn">🔍 检索测试</button>
             </div>
             <div class="quick-chips">
@@ -286,7 +430,7 @@
             </div>
             <div class="chat-input-bar">
               <input type="text" id="terminalInput" placeholder="输入查询，观察记忆检索全过程..." autocomplete="off">
-              <select id="terminalDomain">
+              <select id="terminalDomain" aria-label="检索的记忆域">
                 <option value="all">全域</option>
                 <option value="user" selected>用户域</option>
                 <option value="session">会话域</option>
@@ -322,6 +466,10 @@
                 <button class="danger-btn" id="neDeleteBtn">删除节点</button>
                 <button class="secondary-button" id="neLinkBtn" title="进入连线模式：点击另一个节点创建关系">🔗 连线</button>
                 <button class="secondary-button" id="neMergeBtn" title="进入合并模式：点击另一个节点合并">🔀 合并</button>
+                <button class="secondary-button" id="neCorrectBtn" title="笔削·纠：以新内容改正该记忆（原因建议留痕）">✏️ 纠错</button>
+                <button class="secondary-button" id="neRetractBtn" title="笔削·撤：停用该主张（原因必填留痕）">📤 撤回</button>
+                <button class="secondary-button" id="neArchiveBtn" title="笔削·藏：归档退出常规检索（可逆）">🗄️ 归档</button>
+                <button class="secondary-button" id="neRollbackBtn" title="回滚：恢复到上一版本（版本历史留痕）">↩️ 回滚</button>
               </div>
             </div>
           </div>
@@ -410,7 +558,7 @@
           </div>
         </header>
         <div class="tool-list">
-          <a class="quick-link" href="/monitor/prometheus" target="_blank" rel="noopener"><span><b>司天监控面板</b><small>进程 / 存储 / 调度 / 请求遥测与规则告警（本工作台内嵌视图见「司天监控」）</small></span><i>→</i></a>
+          <a class="secondary-button" href="/monitor/prometheus" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:8px;text-decoration:none;padding:8px 14px;"><span><b>司天监控面板 ↗</b> <small style="color:var(--muted)">进程 / 存储 / 调度 / 请求遥测与规则告警（本工作台内嵌视图见「司天监控」）</small></span></a>
           <a href="/ui/vault"><span><b>全景档案库</b><small>独立档案库管理与多维浏览</small></span><i>→</i></a>
           <a href="/ui/map"><span><b>知识星图</b><small>关系、实体双链与拓扑场景</small></span><i>→</i></a>
           <a href="/ui/recall"><span><b>追忆漏斗</b><small>逐步查看检索漏斗与各层召回</small></span><i>→</i></a>
@@ -440,6 +588,7 @@
     <button data-view="vault">档案</button>
     <button data-view="studio">进化</button>
     <button data-view="playground">演练</button>
+    <button data-view="terminal">终端</button>
     <button data-view="monitor">监控</button>
     <button data-view="system">系统</button>
   </nav>
@@ -465,6 +614,7 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
   <script src="https://cdn.jsdelivr.net/npm/d3@7" crossorigin="anonymous"></script>
+  <script>window.d3 || document.write('<script src="/ui/assets/d3.v7.min.js">\x3c/script>');</script>
   <script type="module" src="/ui/assets/app.js"></script>
 </body>
 </html>

@@ -1,9 +1,15 @@
-import {api, clearApiKey, getApiKey, saveApiKey} from './api.js';
-
-import { initTerminal, activateTerminalView } from './terminal.js';
+import {api, clearApiKey, getApiKey, onUnauthorized, saveApiKey} from './api.js';
+import {$, formatDate, node, setAfterUndo, showToast} from './dom.js';
+import { initTerminal, activateTerminalView, deactivateTerminal } from './terminal.js';
 import {
   activateMonitorView, deactivateMonitor, initMonitor, refreshMonitorBadge,
 } from './monitor.js';
+import {initVault, loadLimbo, loadTree, loadVault} from './vault.js';
+import {
+  initStudio, loadConsolidationReport, loadPersona, loadScratchpad,
+  triggerConsolidation,
+} from './studio.js';
+import {initPlayground} from './playground.js';
 
 // Init Terminal on load
 document.addEventListener('DOMContentLoaded', () => {
@@ -20,6 +26,7 @@ const KIND_LABELS = {
   crystal: '结晶', memory: '记忆', worker: 'Worker',
 };
 const RISK_LABELS = {critical: '严重', high: '高风险', medium: '中风险', low: '低风险'};
+const HEALTH_LABELS = {healthy: '健康', degraded: '波动', critical: '告急'};
 
 const state = {
   sections: Object.fromEntries(SECTION_ORDER.map(name => [name, {items: [], total: 0, limit: 50, error: ''}])),
@@ -28,46 +35,10 @@ const state = {
   aiTriageMap: new Map(),
 };
 
-const $ = selector => document.querySelector(selector);
 const shell = $('.app-shell');
 const queue = $('#queue');
 const inspector = $('#inspector');
-const toast = $('#toast');
-let toastTimer = null;
 let refreshTimer = null;
-
-function node(tag, className = '', text = '') {
-  const value = document.createElement(tag);
-  if (className) value.className = className;
-  if (text !== '') value.textContent = text;
-  return value;
-}
-
-function formatDate(value, short = false) {
-  if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return new Intl.DateTimeFormat('zh-CN', short
-    ? {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'}
-    : {year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'}
-  ).format(date);
-}
-
-function showToast(message, undo) {
-  clearTimeout(toastTimer);
-  toast.replaceChildren(document.createTextNode(message));
-  if (undo) {
-    const button = node('button', '', '撤销');
-    button.addEventListener('click', async () => {
-      button.disabled = true;
-      try { await undo(); showToast('已撤销'); await loadQueue(); }
-      catch (error) { showToast(`撤销失败：${error.message}`); }
-    });
-    toast.append(button);
-  }
-  toast.hidden = false;
-  toastTimer = setTimeout(() => { toast.hidden = true; }, undo ? 9000 : 4200);
-}
 
 function updateConnection() {
   const hasKey = Boolean(getApiKey());
@@ -75,14 +46,35 @@ function updateConnection() {
   $('#connectionDot').style.background = hasKey ? 'var(--accent)' : 'var(--green)';
 }
 
+// api.js 401 统一钩子：提示并引导到连接设置（节流，避免轮询刷屏）
+let unauthorizedAt = 0;
+onUnauthorized(() => {
+  const now = Date.now();
+  if (now - unauthorizedAt < 10000) return;
+  unauthorizedAt = now;
+  showToast('未授权（401）：请在连接设置中检查 API Key');
+  const dialog = $('#connectionDialog');
+  if (dialog && !dialog.open) {
+    $('#apiKeyInput').value = getApiKey();
+    $('#rememberKey').checked = Boolean(localStorage.getItem('lantai_api_key'));
+    dialog.showModal();
+  }
+});
+
 function setView(view) {
   state.view = view;
   document.querySelectorAll('.view').forEach(value => value.classList.remove('active'));
-  document.querySelectorAll('[data-view]').forEach(value => value.classList.toggle('active', value.dataset.view === view));
+  document.querySelectorAll('[data-view]').forEach(value => {
+    const active = value.dataset.view === view;
+    value.classList.toggle('active', active);
+    if (active) value.setAttribute('aria-current', 'page');
+    else value.removeAttribute('aria-current');
+  });
   const targetView = $(`#${view}View`);
   if (targetView) targetView.classList.add('active');
   if (view !== 'tasks') closeInspector();
   if (view !== 'monitor') deactivateMonitor();
+  if (view !== 'terminal') deactivateTerminal();
 
   if (view === 'monitor') {
     activateMonitorView();
@@ -90,6 +82,8 @@ function setView(view) {
     loadOverview();
   } else if (view === 'vault') {
     loadVault();
+    loadLimbo();
+    loadTree();
   } else if (view === 'terminal') {
     activateTerminalView();
   } else if (view === 'studio') {
@@ -104,237 +98,73 @@ function setView(view) {
 // ===== 0. 中枢总览 (Overview) =====
 async function loadOverview() {
   try {
-    const [stats, work, persona] = await Promise.all([
-      api('/mem/stats').catch(() => ({})),
+    const [stats, work, persona, monitor, digest] = await Promise.all([
+      api('/stats').catch(() => ({})),
       api('/work-items?section=immediate_action&limit=1').catch(() => ({})),
       api('/persona').catch(() => ({})),
+      api('/monitor/overview').catch(() => ({})),
+      api('/digest/today').catch(() => null),
     ]);
 
     const total = stats.total_memories ?? stats.total ?? '—';
     $('#ovTotalMem').textContent = String(total);
     $('#ovPendingTasks').textContent = String(work.counts?.immediate_action ?? work.total ?? 0);
-    $('#ovHealthStatus').textContent = '良好 100%';
+    $('#ovHealthStatus').textContent = HEALTH_LABELS[monitor.summary?.status] || '—';
+    const zeroRate = monitor.quality?.zero_recall_rate;
+    $('#ovZeroRecall').textContent = (zeroRate === undefined || zeroRate === null)
+      ? '—' : `${(Number(zeroRate) * 100).toFixed(1)}%`;
     $('#ovUserMem').textContent = String(stats.by_domain?.user ?? '—');
     $('#ovSessionMem').textContent = String(stats.by_domain?.session ?? '—');
     $('#ovAgentMem').textContent = String(stats.by_domain?.agent ?? '—');
     $('#ovActivePersona').textContent = (persona && persona.name) || '兰台执笔';
+
+    // 今日盘点（digest/today：stats 优先，content 首段兑底）
+    const digestBox = $('#ovDigestContent');
+    if (digestBox) {
+      if (!digest || digest.ok === false) {
+        digestBox.textContent = '今日盘点尚未生成';
+      } else if (digest.stats && Object.keys(digest.stats).length) {
+        // 嵌套 stats 拍平成点路径行（避免横向滚动的 JSON 坨）
+        const rows = flattenStats(digest.stats).slice(0, 20);
+        digestBox.replaceChildren(...rows.map(([k, v]) => {
+          const row = node('div', 'digest-row');
+          row.append(node('span', 'digest-key', k), node('b', '', v));
+          return row;
+        }));
+      } else {
+        digestBox.textContent = String(digest.content || '今日盘点尚未生成').slice(0, 600);
+      }
+    }
   } catch (err) {
     console.warn('读取总览指标失败', err);
   }
 }
 
-// ===== 1. 档案星图工作区 (Vault) =====
-async function loadVault() {
-  const q = $('#vaultSearchInput')?.value?.trim() || '';
-  const domain = $('#vaultDomainFilter')?.value || '';
-  const list = $('#vaultList');
-  list.innerHTML = '<div class="inspector-empty">正在加载档案库记忆...</div>';
-
-  try {
-    const res = await api('/search', {
-      method: 'POST',
-      body: JSON.stringify({query: q || '记忆', top_k: 20, force: true, domain: domain || undefined}),
-    });
-    const items = res.results || res.memories || [];
-    if (!items.length) {
-      list.innerHTML = '<div class="inspector-empty">档案库暂无匹配记录</div>';
-      return;
-    }
-
-    list.innerHTML = '';
-    items.forEach((resItem, idx) => {
-      const m = resItem.memory || resItem;
-      const card = node('div', 'result-item');
-      const meta = node('div', 'meta-row');
-      meta.innerHTML = `<span>#${idx+1} [${m.domain || 'user'}/${m.lane || 'general'}] <code style="font-size:11px;color:var(--muted);">${m.id}</code></span><span>v${m.version || 1} · ${(m.memory_type || 'semantic')}</span>`;
-      const body = node('div', 'text-body', m.content || m.key || '—');
-      const breakdown = node('div', 'score-breakdown');
-      breakdown.innerHTML = `<span>时效衰减: ${(m.decay_score ?? 1.0).toFixed(2)}</span><span>置信度: ${(m.confidence ?? 0.9).toFixed(2)}</span><span>重要性: ${(m.importance ?? 0.8).toFixed(2)}</span><span>创建: ${formatDate(m.created_at, true)}</span>`;
-      card.appendChild(meta);
-      card.appendChild(body);
-      card.appendChild(breakdown);
-      list.appendChild(card);
-    });
-  } catch (err) {
-    list.innerHTML = `<div class="inspector-empty" style="color:var(--bad)">读取档案失败: ${err.message}</div>`;
+// stats 嵌套对象 → [[点路径, 标量字符串]]；数组保留 JSON（如 conf_buckets 的桶）
+function flattenStats(obj, prefix = '', out = []) {
+  for (const [k, v] of Object.entries(obj)) {
+    const key = prefix ? `${prefix}.${k}` : k;
+    if (v !== null && typeof v === 'object' && !Array.isArray(v)) flattenStats(v, key, out);
+    else out.push([key, Array.isArray(v) ? JSON.stringify(v) : String(v)]);
   }
+  return out;
 }
 
-// ===== 2. 认知进化工作室 (Studio Tabs) =====
-function setStudioTab(tab) {
-  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.studioTab === tab));
-  document.querySelectorAll('.studio-tab-panel').forEach(p => p.classList.remove('active'));
-  const target = $(`#panel${tab.charAt(0).toUpperCase() + tab.slice(1)}`);
-  if (target) target.classList.add('active');
-}
-
-async function loadPersona() {
+// ===== 结晶检测入口（POST /crystals/detect） =====
+async function runCrystalDetect() {
+  const btn = $('#crystalDetectBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '🔮 检测中...'; }
   try {
-    const data = await api('/persona');
-    if (data) {
-      $('#personaName').value = data.name || 'default';
-      $('#personaStyle').value = data.linguistic_style || '';
-      $('#personaGuidelines').value = data.guidelines || '';
-      $('#personaFacts').value = data.epistemic_facts || '';
-    }
+    const res = await api('/crystals/detect', {method: 'POST'});
+    const found = res.created ?? res.candidates ?? res.count ?? 0;
+    showToast(`结晶检测完成：新增 ${found} 个候选`);
+    await loadQueue();
   } catch (err) {
-    showToast(`读取人格失败: ${err.message}`);
-  }
-}
-
-async function savePersona(e) {
-  e.preventDefault();
-  const payload = {
-    name: $('#personaName').value.trim() || 'default',
-    linguistic_style: $('#personaStyle').value.trim(),
-    guidelines: $('#personaGuidelines').value.trim(),
-    epistemic_facts: $('#personaFacts').value.trim(),
-    is_active: true,
-  };
-  try {
-    await api('/persona', {method: 'POST', body: JSON.stringify(payload)});
-    showToast('👑 器识人格基座已成功更新并落库！');
-  } catch (err) {
-    showToast(`更新人格失败: ${err.message}`);
-  }
-}
-
-async function loadScratchpad(sessionId) {
-  try {
-    const data = await api(`/scratchpad?session_id=${encodeURIComponent(sessionId)}`);
-    const content = (data && data.content) || '';
-    $('#scratchpadContent').value = content;
-    $('#scratchpadCount').textContent = `${content.length} / 1000 字符`;
-  } catch (err) {
-    showToast(`读取札记失败: ${err.message}`);
-  }
-}
-
-async function saveScratchpad(e) {
-  e.preventDefault();
-  const sid = $('#scratchpadSession').value.trim() || 'default';
-  const content = $('#scratchpadContent').value;
-  try {
-    await api('/scratchpad', {method: 'POST', body: JSON.stringify({session_id: sid, content})});
-    showToast('📝 札记工作区便签已成功保存！');
-  } catch (err) {
-    showToast(`保存札记失败: ${err.message}`);
-  }
-}
-
-async function loadConsolidationReport() {
-  try {
-    const report = await api('/evolution/consolidate/report');
-    if (report) {
-      $('#conStatus').textContent = report.status || 'idle';
-      $('#conGroups').textContent = report.consolidated_groups || 0;
-      $('#conNew').textContent = report.new_memories || 0;
-      $('#conPruned').textContent = report.pruned_count || 0;
-      $('#conReportRaw').textContent = JSON.stringify(report, null, 2);
-    }
-  } catch (err) {
-    $('#conReportRaw').textContent = `读取沉淀报告异常: ${err.message}`;
-  }
-}
-
-async function triggerConsolidation() {
-  const btn = $('#triggerConsolidateBtn');
-  const quickBtn = $('#quickConsolidateBtn');
-  if (btn) { btn.disabled = true; btn.textContent = '🌙 正在沉淀聚类与修剪...'; }
-  if (quickBtn) { quickBtn.disabled = true; quickBtn.textContent = '🌙 沉淀中...'; }
-  try {
-    const res = await api('/evolution/consolidate', {method: 'POST'});
-    showToast(`沉潜完成：提纯 ${res.new_memories || 0} 条主记忆，修剪 ${res.pruned_count || 0} 条衰减噪音`);
-    await loadConsolidationReport();
-  } catch (err) {
-    showToast(`沉淀执行失败: ${err.message}`);
+    showToast(err.status === 404 ? '结晶功能未启用（FEATURE_CRYSTALS 已关闭）' : `结晶检测失败: ${err.message}`);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🌙 立即触发夜梦沉淀'; }
-    if (quickBtn) { quickBtn.disabled = false; quickBtn.textContent = '🌙 立即夜梦沉淀'; }
+    if (btn) { btn.disabled = false; btn.textContent = '🔮 结晶检测'; }
   }
 }
-
-
-// ===== 3. 四路检索与探针演练场 (Playground) =====
-async function runPlaygroundSearch() {
-  const query = $('#playgroundQuery').value.trim();
-  if (!query) {
-    showToast('请输入检索测试文本');
-    return;
-  }
-  const domain = $('#playgroundDomain').value;
-  const force = Boolean($('#playgroundForce')?.checked);
-  const resultsBox = $('#playgroundResults');
-  const searchBtn = $('#playgroundSearchBtn');
-  
-  searchBtn.disabled = true;
-  searchBtn.textContent = '🔍 检索中...';
-  resultsBox.innerHTML = '<div class="inspector-empty">正在进行四路检索与拓扑探针检测...</div>';
-
-  try {
-    const payload = {
-      query,
-      top_k: 6,
-      force,
-      domain: domain === 'all' ? undefined : domain,
-    };
-
-    const [searchRes, probeRes] = await Promise.all([
-      api('/search', {method: 'POST', body: JSON.stringify(payload)}),
-      api('/probing/detect', {method: 'POST', body: JSON.stringify({query})}),
-    ]);
-
-    // 探针展示
-    const alertBox = $('#probingAlertBox');
-    if (probeRes && probeRes.probes && probeRes.probes.length > 0) {
-      alertBox.hidden = false;
-      $('#probeQuestionText').textContent = probeRes.probes[0].question || '存在未决记忆冲突，建议向用户求证。';
-    } else {
-      alertBox.hidden = true;
-    }
-
-    // 结果渲染
-    const items = (searchRes && (searchRes.results || searchRes.memories)) || [];
-    if (!items.length) {
-      const gateMsg = searchRes && searchRes.gate && !searchRes.gate.needs_memory
-        ? `（相关性闸门拦截: ${searchRes.gate.reason}，可勾选“强制放行”重试）`
-        : '（未命中任何相关记忆）';
-      resultsBox.innerHTML = `<div class="inspector-empty">零召回 ${gateMsg}</div>`;
-      return;
-    }
-
-    resultsBox.innerHTML = '';
-    items.forEach((resItem, idx) => {
-      const m = resItem.memory || resItem;
-      const score = typeof resItem.score === 'number' ? resItem.score : (m.score || 1.0);
-      const card = node('div', 'result-item');
-      
-      const meta = node('div', 'meta-row');
-      meta.innerHTML = `<span>#${idx+1} [${m.domain || 'user'}/${m.lane || 'general'}] <code style="font-size:11px;color:var(--muted);">${m.id || '—'}</code></span><span class="score-tag">得分: ${score.toFixed(4)}</span>`;
-      
-      const body = node('div', 'text-body', m.content || m.key || '—');
-      
-      const breakdown = node('div', 'score-breakdown');
-      const decay = typeof m.decay_score === 'number' ? m.decay_score.toFixed(2) : '1.00';
-      const conf = typeof m.confidence === 'number' ? m.confidence.toFixed(2) : '0.90';
-      const imp = typeof m.importance === 'number' ? m.importance.toFixed(2) : '0.80';
-      const ver = m.version || 1;
-      const mtype = m.memory_type || 'semantic';
-      breakdown.innerHTML = `<span>类型: ${mtype}</span><span>时效衰减: ${decay}</span><span>置信度: ${conf}</span><span>重要性: ${imp}</span><span>版本: v${ver}</span>`;
-      
-      card.appendChild(meta);
-      card.appendChild(body);
-      card.appendChild(breakdown);
-      resultsBox.appendChild(card);
-    });
-  } catch (err) {
-    resultsBox.innerHTML = `<div class="inspector-empty" style="color:var(--bad)">检索异常: ${err.message}</div>`;
-  } finally {
-    searchBtn.disabled = false;
-    searchBtn.textContent = '🔍 检索测试';
-  }
-}
-
 
 async function fetchSection(section) {
   const slot = state.sections[section];
@@ -348,7 +178,9 @@ async function fetchSection(section) {
     slot.total = data.total;
     slot.error = '';
   } catch (error) {
-    slot.error = error.message;
+    slot.error = error.status === 404
+      ? '该分区功能未启用（特性开关已关闭）'  // P1-12：特性路由 404 友好降级
+      : error.message;
     if (error.status === 401) showToast('连接需要 API Key');
   }
 }
@@ -356,11 +188,33 @@ async function fetchSection(section) {
 async function loadQueue({silent = false} = {}) {
   if (!silent) renderLoading();
   await Promise.all(SECTION_ORDER.map(fetchSection));
-  renderQueue();
+  // P1-6：清理已不在队列中的选中项（防止批量栏计数虚高、批量操作打到幽灵 id）
+  const alive = new Set(SECTION_ORDER.flatMap(name => (state.sections[name].items || []).map(item => item.id)));
+  for (const id of [...state.selected.keys()]) {
+    if (!alive.has(id)) state.selected.delete(id);
+  }
+  renderQueue({force: true});
   if (state.activeId) {
-    if (state.detailDirty) state.refreshPending = true;
+    if (state.detailDirty) markRefreshPending();
     else await openInspector(state.activeId, {silent: true});
   }
+}
+
+// P1-5：编辑未提交时来了新数据——只在首次进入 pending 状态时提示一次，不每轮轮询轰炸
+function markRefreshPending() {
+  if (state.refreshPending) return;
+  state.refreshPending = true;
+  showToast('详情已有新数据；你的编辑未提交，提交前请先刷新（会丢弃未提交修改）');
+}
+
+let lastQueueFingerprint = '';
+
+function queueFingerprint() {
+  return JSON.stringify(SECTION_ORDER.map(name => {
+    const slot = state.sections[name];
+    return [slot.total, slot.error, (slot.items || []).map(item =>
+      `${item.id}:${item.status ?? ''}:${item.due_at ?? ''}:${item.priority ?? ''}`)];
+  }));
 }
 
 function renderLoading() {
@@ -374,7 +228,11 @@ function renderLoading() {
   });
 }
 
-function renderQueue() {
+function renderQueue({force = false} = {}) {
+  // 轮询指纹比对：队列未变化时跳过全量重建，避免丢焦点/滚动位置
+  const fp = queueFingerprint();
+  if (!force && fp === lastQueueFingerprint) return;
+  lastQueueFingerprint = fp;
   queue.replaceChildren();
   let total = 0;
   let systemCount = 0;
@@ -436,7 +294,7 @@ function renderRow(item) {
     updateBatchbar();
   });
   const main = node('div', 'row-main');
-  main.append(node('strong', '', item.title), node('small', '', item.summary || item.badges.join(' · ')));
+  main.append(node('strong', '', item.title), node('small', '', item.summary || (item.badges || []).join(' · ')));
   
   // AI 智能预审研判建议徽标
   const aiRec = state.aiTriageMap?.get(item.source_id);
@@ -482,6 +340,11 @@ function allItems() {
 async function openInspector(id, {silent = false} = {}) {
   const item = allItems().find(value => value.id === id);
   if (!item) { closeInspector(); return; }
+  // P1-5 补充：有未提交修改时，手动切换/重开会覆盖编辑——先确认，不静默丢弃
+  if (!silent && state.detailDirty) {
+    if (!window.confirm('当前详情有未提交的修改，继续将丢弃这些修改。确认？')) return;
+    state.detailDirty = false;
+  }
   state.activeId = id;
   shell.classList.add('inspector-open'); inspector.setAttribute('aria-hidden', 'false');
   document.querySelectorAll('.work-row').forEach(row => row.classList.toggle('active', row.dataset.id === id));
@@ -490,7 +353,7 @@ async function openInspector(id, {silent = false} = {}) {
   if (!silent) $('#inspectorBody').replaceChildren(node('div', 'inspector-empty', '正在读取详情'));
   try {
     const detail = await api(`/work-items/detail/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.source_id)}`);
-    if (state.detailDirty && silent) { state.refreshPending = true; return; }
+    if (state.detailDirty && silent) { markRefreshPending(); return; }
     state.activeDetail = detail; state.detailDirty = false; state.refreshPending = false;
     renderDetail(detail);
   } catch (error) {
@@ -567,7 +430,6 @@ function renderDetail(detail) {
   if (related.duplicates?.length) body.append(detailSection('重复候选', related.duplicates.map(value => value.summary).join('\n')));
   body.append(rawSection(detail));
   renderInspectorActions(detail);
-  if (state.refreshPending) showToast('详情已有新数据，提交前请刷新');
 }
 
 function renderDiff(patch, target) {
@@ -690,7 +552,9 @@ async function approveItem(detail) {
       await api(`/param-suggestions/${item.source_id}/decision`, {method: 'POST', body: JSON.stringify({decision: 'accepted', note: 'console approved', expected_base_snapshot_hash: source.base_snapshot_hash})});
       showToast('参数建议已应用'); closeInspector(); await loadQueue();
     } else if (item.kind === 'crystal') {
-      const steps = $('#crystalSteps').value.split('\n').map(value => value.trim()).filter(Boolean);
+      const field = $('#crystalSteps');
+      if (!field || !field.isConnected) { showToast('详情面板已过期，请重新打开该条目'); return; }
+      const steps = field.value.split('\n').map(value => value.trim()).filter(Boolean);
       if (!steps.length) { showToast('至少填写一个执行步骤'); return; }
       await api(`/crystals/${item.source_id}/decide`, {method: 'POST', body: JSON.stringify({approve: true, reason: 'console approved', steps})});
       showToast('技能已创建'); closeInspector(); await loadQueue();
@@ -725,8 +589,10 @@ async function decideConflict(detail, decision) {
     field: {label: '裁决理由', type: 'textarea', required: true}, confirm: '确认'});
   if (!answer.confirmed || !answer.value) return;
   try {
-    const params = new URLSearchParams({decision, note: answer.value});
-    await api(`/conflicts/${detail.item.source_id}/resolve?${params}`, {method: 'POST'});
+    await api(`/conflicts/${detail.item.source_id}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({decision, note: answer.value}),
+    });
     showToast('冲突账本已更新'); closeInspector(); await loadQueue();
   } catch (error) { handleActionError(error); }
 }
@@ -788,7 +654,8 @@ async function refineCandidateItem(detail) {
   const {item} = detail;
   showToast('AI 披沙提纯中...');
   try {
-    const res = await api(`/candidates/${encodeURIComponent(item.source_id)}/refine`, {method: 'POST'});
+    // 提纯是 LLM 长任务：放宽到 3 分钟
+    const res = await api(`/candidates/${encodeURIComponent(item.source_id)}/refine`, {method: 'POST', timeout: 180000});
     showToast('披沙提纯完成');
     await openInspector(item.id);
     await loadQueue({silent: true});
@@ -802,11 +669,12 @@ async function runAiAutoTriage() {
   if (btn) { btn.disabled = true; btn.textContent = '🤖 研判中...'; }
   showToast('AI 正在扫描案牍并研判决策...');
   try {
-    const res = await api('/candidates/ai_triage?limit=50', {method: 'POST'});
+    // LLM 逐条研判是长任务：单次超时放宽到 5 分钟（默认 30s 会在候选多时误报超时）
+    const res = await api('/candidates/ai_triage?limit=50', {method: 'POST', timeout: 300000});
     const recs = res.recommendations || [];
     state.aiTriageMap.clear();
     recs.forEach(r => state.aiTriageMap.set(r.id, r));
-    renderQueue();
+    renderQueue({force: true});
     const rejectCount = recs.filter(r => r.action === 'reject').length;
     const approveCount = recs.filter(r => r.action === 'approve').length;
     showToast(`AI 研判完成：${approveCount} 建议批准，${rejectCount} 建议淘汰`);
@@ -894,7 +762,7 @@ function bindEvents() {
   $('#aiTriageBtn')?.addEventListener('click', runAiAutoTriage);
   $('#systemRefresh').addEventListener('click', async () => { setView('tasks'); await loadQueue(); });
   $('#closeInspector').addEventListener('click', closeInspector);
-  $('#clearSelection').addEventListener('click', () => { state.selected.clear(); renderQueue(); });
+  $('#clearSelection').addEventListener('click', () => { state.selected.clear(); renderQueue({force: true}); });
   $('#searchInput').addEventListener('input', debounce(event => { state.filters.q = event.target.value.trim(); loadQueue(); }, 260));
   $('#kindFilter').addEventListener('change', event => { state.filters.kind = event.target.value; loadQueue(); });
   $('#riskFilter').addEventListener('change', event => { state.filters.risk = event.target.value; loadQueue(); });
@@ -903,50 +771,26 @@ function bindEvents() {
     $('#connectionDialog').showModal();
   });
   $('#connectionDialog').addEventListener('close', async event => {
-    if (event.target.returnValue === 'save') saveApiKey($('#apiKeyInput').value, $('#rememberKey').checked);
-    if (event.target.returnValue === 'clear') clearApiKey();
-    updateConnection(); await loadQueue();
+    // P1-8：只在真正改动了连接配置时才全量刷新；取消不应触发队列重建
+    if (event.target.returnValue === 'save') {
+      saveApiKey($('#apiKeyInput').value, $('#rememberKey').checked);
+      updateConnection(); await loadQueue();
+    } else if (event.target.returnValue === 'clear') {
+      clearApiKey();
+      updateConnection(); await loadQueue();
+    }
   });
   $('#themeButton').addEventListener('click', toggleTheme);
-  
-  // 悬镜 Studio 表单绑定
-  $('#personaForm')?.addEventListener('submit', savePersona);
-  $('#scratchpadForm')?.addEventListener('submit', saveScratchpad);
-  $('#scratchpadSession')?.addEventListener('change', e => loadScratchpad(e.target.value.trim() || 'default'));
-  $('#scratchpadContent')?.addEventListener('input', e => {
-    $('#scratchpadCount').textContent = `${e.target.value.length} / 1000 字符`;
-  });
-  $('#triggerConsolidateBtn')?.addEventListener('click', triggerConsolidation);
-  $('#playgroundSearchBtn')?.addEventListener('click', runPlaygroundSearch);
-  $('#playgroundQuery')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); runPlaygroundSearch(); }
-  });
 
-  // 选项卡与中枢快捷跳转
-  document.querySelectorAll('[data-studio-tab]').forEach(btn => {
-    btn.addEventListener('click', () => setStudioTab(btn.dataset.studioTab));
-  });
-  document.querySelectorAll('[data-goto]').forEach(btn => {
-    btn.addEventListener('click', () => setView(btn.dataset.goto));
-  });
+  // 各视图模块自行绑定（模式同 terminal/monitor）
+  initStudio();
+  initVault();
+  initPlayground();
+  $('#crystalDetectBtn')?.addEventListener('click', runCrystalDetect);
   $('#quickConsolidateBtn')?.addEventListener('click', triggerConsolidation);
 
-  // 档案库搜索
-  $('#vaultSearchBtn')?.addEventListener('click', () => loadVault());
-  $('#vaultSearchInput')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); loadVault(); }
-  });
-  $('#vaultDomainFilter')?.addEventListener('change', () => loadVault());
-
-  // 演练场快捷词点击
-  document.querySelectorAll('.chip-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const q = btn.dataset.query;
-      if (q) {
-        $('#playgroundQuery').value = q;
-        runPlaygroundSearch();
-      }
-    });
+  document.querySelectorAll('[data-goto]').forEach(btn => {
+    btn.addEventListener('click', () => setView(btn.dataset.goto));
   });
 
   document.addEventListener('keydown', event => {
@@ -979,6 +823,7 @@ function initTheme() {
 
 async function init() {
   initTheme(); updateConnection(); bindEvents();
+  setAfterUndo(loadQueue);
   initMonitor({notify: message => showToast(message)});
   await loadQueue();
   refreshMonitorBadge();

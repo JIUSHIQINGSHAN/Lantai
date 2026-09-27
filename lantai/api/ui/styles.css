@@ -19,6 +19,8 @@
   --warn: #dd6b20;
   --focus: #c69b51;
   --shadow: rgba(0, 0, 0, 0.4);
+  --on-accent: #141719;
+  --on-danger: #fff;
   --sidebar: 216px;
   --inspector: 420px;
   --font-display: "KaiTi", "STKaiti", "Songti SC", "Inter Variable", "SF Pro Display", serif;
@@ -65,8 +67,8 @@ button { cursor: pointer; }
 
 .sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--panel); }
 .brand-block { height: 78px; display: flex; align-items: center; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--line); }
-.brand-mark { width: 34px; height: 42px; display: grid; place-items: center; border: 1px solid var(--accent); color: var(--accent); font: 23px/1 "KaiTi", "STKaiti", serif; }
-.brand-block strong { display: block; font: 19px/1.2 "KaiTi", "STKaiti", serif; }
+.brand-mark { width: 34px; height: 42px; display: grid; place-items: center; border: 1px solid var(--accent); color: var(--accent); font: 23px/1 var(--font-display); }
+.brand-block strong { display: block; font: 19px/1.2 var(--font-display); }
 .brand-block span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
 .primary-nav { padding: 14px 10px; display: grid; gap: 4px; }
 .nav-item { min-height: 42px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); text-align: left; }
@@ -84,7 +86,7 @@ button { cursor: pointer; }
 .view { display: none; min-height: 100vh; }
 .view.active { display: block; }
 .topbar { height: 78px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 92%, transparent); }
-.topbar h1 { margin: 0; font: 23px/1.1 "KaiTi", "STKaiti", serif; }
+.topbar h1 { margin: 0; font: 23px/1.1 var(--font-display); }
 .topbar p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
 .top-actions { display: flex; gap: 8px; }
 
@@ -153,8 +155,8 @@ select, input, textarea { border: 1px solid var(--line); border-radius: 6px; bac
 .raw-details summary { cursor: pointer; color: var(--muted); }
 .raw-details pre { max-height: 280px; overflow: auto; padding: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.5 ui-monospace, "Cascadia Mono", monospace; }
 .inspector-actions { min-height: 60px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 18px; border-top: 1px solid var(--line); background: var(--panel); }
-.inspector-actions button, dialog footer button, .batch-actions button { min-height: 36px; padding: 0 12px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: #141719; }
-.inspector-actions button.danger, dialog footer button.danger, .batch-actions button.danger { border-color: var(--red); background: var(--red); color: #fff; }
+.inspector-actions button, dialog footer button, .batch-actions button { min-height: 36px; padding: 0 12px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: var(--on-accent); }
+.inspector-actions button.danger, dialog footer button.danger, .batch-actions button.danger { border-color: var(--red); background: var(--red); color: var(--on-danger); }
 .inspector-actions button.secondary-button { border-color: var(--line); background: transparent; color: var(--ink); }
 
 .tools-view { padding-bottom: 40px; }
@@ -188,6 +190,12 @@ dialog header button { width: 32px; height: 32px; border: 0; background: transpa
   .row-reason { display: none; }
 }
 
+/* 913–996px：三列刚性最小值会溢出，inspector 改为右侧抽屉覆盖 */
+@media (max-width: 1120px) {
+  .app-shell.inspector-open { grid-template-columns: var(--sidebar) minmax(460px, 1fr); }
+  .inspector { position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 92vw); z-index: 30; border-left: 1px solid var(--line); }
+}
+
 @media (max-width: 900px) {
   body { padding-bottom: 58px; }
   .app-shell, .app-shell.inspector-open { display: block; min-height: calc(100vh - 58px); }
@@ -206,8 +214,8 @@ dialog header button { width: 32px; height: 32px; border: 0; background: transpa
   .risk-label { grid-column: 2 / 4; grid-row: 2; margin: 4px 0 0; }
   .inspector { position: fixed; inset: 0 0 58px; z-index: 30; width: 100%; height: auto; border: 0; }
   .app-shell.inspector-open .inspector { display: grid; }
-  .mobile-nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; height: 58px; display: grid; grid-template-columns: repeat(6, 1fr); border-top: 1px solid var(--line); background: var(--panel); }
-  .mobile-nav button { min-width: 0; min-height: 44px; border: 0; background: transparent; color: var(--muted); font-size: 11px; }
+  .mobile-nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; height: 58px; display: flex; overflow-x: auto; border-top: 1px solid var(--line); background: var(--panel); }
+  .mobile-nav button { flex: 1 0 auto; min-width: 44px; min-height: 44px; border: 0; background: transparent; color: var(--muted); font-size: 11px; white-space: nowrap; }
   .mobile-nav button.active { color: var(--accent); box-shadow: inset 0 3px var(--accent); }
   .tool-list { margin: 14px 16px; }
 }
@@ -234,12 +242,24 @@ dialog header button { width: 32px; height: 32px; border: 0; background: transpa
 .chip-btn { padding: 4px 10px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); font-size: 11px; cursor: pointer; }
 .chip-btn:hover { background: var(--surface-strong); border-color: var(--accent); }
 
-/* 沉潜夜梦沉淀仪表盘 */
-.consolidation-dashboard { padding: 20px; }
 .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; }
 .metric-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; text-align: center; }
 .metric-card .val { display: block; font-size: 24px; font-weight: 700; color: var(--accent); }
 .metric-card .lbl { font-size: 12px; color: var(--muted); margin-top: 4px; display: block; }
+
+/* 今日盘点卡片 */
+.digest-content { margin-top: 10px; font-size: 12.5px; color: var(--ink); max-height: 220px; overflow: auto; white-space: pre-wrap; }
+.digest-row { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+.digest-row:last-child { border-bottom: 0; }
+.digest-key { color: var(--muted); }
+
+/* 器识人格切换器 */
+.persona-switcher { display: flex; align-items: flex-end; gap: 10px; margin: 14px 0 4px; }
+.persona-switcher .form-field { margin: 0; }
+
+/* 记忆卡轻量操作（检索反馈等） */
+.card-actions { display: flex; gap: 8px; margin-top: 8px; }
+.card-actions .chip-btn:disabled { opacity: 0.5; cursor: default; }
 .code-box { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; color: var(--ink); overflow-x: auto; white-space: pre-wrap; }
 
 /* 检索演练场 */
@@ -305,7 +325,7 @@ dialog header button { width: 32px; height: 32px; border: 0; background: transpa
 .metric-card.tone-ok .val { color: var(--green); }
 .metric-card.tone-warn .val { color: var(--warn); }
 .metric-card.tone-bad .val { color: var(--red); }
-.nav-item b.tone-bad { background: var(--red); color: #fff; }
+.nav-item b.tone-bad { background: var(--red); color: var(--on-danger); }
 
 .alert-list { display: grid; gap: 8px; }
 .alert-card { border: 1px solid var(--line); border-left: 3px solid var(--muted); border-radius: 8px; padding: 10px 12px; background: var(--surface); }
@@ -377,3 +397,25 @@ dialog header button { width: 32px; height: 32px; border: 0; background: transpa
 .log-latency { color: var(--muted); font-family: var(--font-mono); font-size: 11px; }
 .log-meta { margin-top: 3px; color: var(--muted); font-size: 11px; }
 .config-box { max-height: 360px; overflow-y: auto; }
+
+/* 故纸堆（笔削可逆侧：已归档/已撤回/已巩固） */
+.limbo-panel { margin-top: 20px; }
+.limbo-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.limbo-header h3 { margin: 0 0 4px; }
+.limbo-header .muted { margin: 0; font-size: 12px; }
+.limbo-controls { display: flex; gap: 8px; align-items: center; }
+.limbo-list { padding: 0; margin-top: 14px; }
+.limbo-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); margin-bottom: 8px; }
+.limbo-item-body { flex: 1; min-width: 0; }
+.limbo-item-text { font-size: 13px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.limbo-item-meta { margin-top: 4px; font-size: 11px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+.limbo-item-meta code { font-size: 10.5px; }
+
+/* 目录树 */
+.tree-view { max-height: 320px; overflow: auto; font-size: 13px; }
+.tree-node { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 5px 8px; border-bottom: 1px dashed var(--line); }
+.tree-node:last-child { border-bottom: 0; }
+.tree-node-name { font-weight: 600; }
+.tree-node-meta { display: flex; gap: 10px; align-items: baseline; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+.tree-node-meta code { font-size: 10.5px; }
+.tree-node-desc { font-style: italic; }

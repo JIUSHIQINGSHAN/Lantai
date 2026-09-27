@@ -177,6 +177,13 @@ class CrystalDecideReq(BaseModel):
     reason: str = ""
 
 
+class ConflictResolveReq(BaseModel):
+    """冲突事件人工裁决（ADR-0010）：理由走 body，避免中文长文本进 URL query。"""
+
+    decision: str
+    note: str = ""
+
+
 class SetPersonaReq(BaseModel):
     """设置/更新器识（Persona 人格基座，ADR-0029）。"""
 

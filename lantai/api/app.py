@@ -129,7 +129,7 @@ EXT_ROUTERS = {
     "scenes": (settings.FEATURE_SCENES, None),
     "terminal": (settings.FEATURE_TERMINAL, routes_terminal_router),
     "work_items": (settings.FEATURE_WORK_ITEMS, routes_work_items_router),
-    "crystals": (False, routes_crystals_router),
+    "crystals": (settings.FEATURE_CRYSTALS, routes_crystals_router),
 }
 
 AUTH = [Depends(get_current_user)]

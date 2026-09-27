@@ -42,7 +42,7 @@
   color: var(--accent);
   display: grid;
   place-items: center;
-  font: 24px/1 "KaiTi", serif;
+  font: 24px/1 var(--font-display, "KaiTi", serif);
 }
 .chat-bubble {
   padding: 12px 16px;
@@ -213,25 +213,39 @@
   border: 0;
   border-radius: 8px;
   background: var(--red);
-  color: #fff;
+  color: var(--on-danger, #fff);
   font-weight: 600;
   font-size: 13px;
   cursor: pointer;
 }
 .danger-btn:hover { opacity: 0.9; }
 
-/* D3 tooltip if needed */
-.d3-tooltip {
-  position: absolute;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 12px;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.2s;
-  box-shadow: 0 4px 12px var(--shadow);
-  color: var(--ink);
-  z-index: 20;
+
+/* ---------------- 移动端 / 窄屏：上下堆叠，输入栏避开底部导航 ---------------- */
+@media (max-width: 900px) {
+  #terminalView.active {
+    height: auto;
+    overflow: visible;
+  }
+  .terminal-split {
+    grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+  }
+  .terminal-chat {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .chat-feed {
+    min-height: 280px;
+    max-height: 46vh;
+  }
+  .terminal-graph {
+    min-height: 55vh;
+  }
+  .chat-input-bar {
+    padding: 12px 16px;
+    /* body 已有 58px 底部留白，但 terminal 视图自身 overflow 可见时仍需确保不被 mobile-nav 遮挡 */
+    margin-bottom: 0;
+  }
 }

@@ -162,12 +162,13 @@ class Settings(BaseSettings):
 
     # Feature Flags (Core vs Ext)
     FEATURE_OBSIDIAN: bool = False
-    FEATURE_WIKI: bool = False
+    FEATURE_WIKI: bool = True  # v0.7 已发布的分类树（挂载树/目录树依赖）；关闭则 404
     FEATURE_VISION: bool = False
     FEATURE_KAOGONG: bool = False
     FEATURE_SCENES: bool = False
-    FEATURE_TERMINAL: bool = False
-    FEATURE_WORK_ITEMS: bool = False
+    FEATURE_TERMINAL: bool = True  # 认知终端是控制台核心视图（图谱/对话/笔削）；关闭则终端页全 404
+    FEATURE_WORK_ITEMS: bool = True  # 案牍审阅是控制台主工作区；关闭则四个分区全 404
+    FEATURE_CRYSTALS: bool = True  # v0.7 已发布的结晶 REST（案牍裁决依赖）；关闭则隐藏入口
 
     # Reranker 配置（硅基流 /v1/rerank）
     RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"

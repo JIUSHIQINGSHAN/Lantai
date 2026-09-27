@@ -122,7 +122,8 @@ function renderAlerts(snapshot) {
   if (badge) badge.textContent = String(alerts.length);
   const nav = $('#navMonitorCount');
   if (nav) {
-    nav.textContent = String(snapshot.summary?.critical_count || alerts.length);
+    // critical_count 为 0 时是 falsy，|| 会错误回退成全部告警数——计数与色调分开取
+    nav.textContent = String(snapshot.summary?.alert_count ?? alerts.length);
     nav.classList.toggle('tone-bad', Boolean(snapshot.summary?.critical_count));
   }
   if (!alerts.length) {
@@ -433,7 +434,12 @@ function renderConfig(groups) {
 }
 
 // ===== 加载 =====
+let snapshotInFlight = false;
+
 async function loadSnapshot({silent = false} = {}) {
+  // 在飞守卫：上一轮未返回时不叠加请求（慢请求下 setInterval 会并发堆积、乱序覆盖渲染）
+  if (snapshotInFlight) return;
+  snapshotInFlight = true;
   try {
     const [snapshot, series, logs, config] = await Promise.all([
       api('/monitor/overview'),
@@ -463,6 +469,8 @@ async function loadSnapshot({silent = false} = {}) {
     if (box && !silent) {
       box.replaceChildren(node('div', 'alert-card sev-critical', `监控接口不可用：${error.message}`));
     }
+  } finally {
+    snapshotInFlight = false;
   }
 }
 
@@ -507,8 +515,8 @@ export async function refreshMonitorBadge() {
   if (!badge) return 0;
   try {
     const snapshot = await api('/monitor/overview?quality=false');
-    lastSnapshot = snapshot;
-    const count = snapshot.summary?.critical_count || snapshot.summary?.alert_count || 0;
+    // 轻量快照不覆写 lastSnapshot（与全量快照口径不同，混用会让 monitorAlertCount 语义漂移）
+    const count = snapshot.summary?.alert_count ?? 0;
     badge.textContent = String(count);
     badge.classList.toggle('tone-bad', Boolean(snapshot.summary?.critical_count));
     return count;

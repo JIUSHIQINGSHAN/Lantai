@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **控制台前端模块化拆分 + 认知终端/案牍审阅/沉淀工作台启用（2026-09-28）**：
+  - **拆分**：`ui/app.js` 从 1137 行降到 838 行（净减 299 行），通用能力抽到 `ui/dom.js`（`$`/`node`/`formatDate`/`showToast`/`setAfterUndo`，91 行），业务面板各自独立：`vault.js`（278 行，挂载树/待整理/库房）、`studio.js`（319 行，器识/便签/沉淀报告）、`playground.js`（209 行，试炼场）。`terminal.js` 同步补 `deactivateTerminal`（切走视图时停掉轮询）。
+  - **特性开关**（`core/settings.py`）：`FEATURE_WIKI` / `FEATURE_TERMINAL` / `FEATURE_WORK_ITEMS` / `FEATURE_CRYSTALS` 默认 `False → True`，且 `EXT_ROUTERS` 的 `crystals` 从硬编码 `(False, router)` 改为跟随 `settings.FEATURE_CRYSTALS`——**此前该开关对 crystals 完全无效**（写死 False），是死开关。
+  - **冲突裁决改 JSON body**（ADR-0010）：`POST /conflicts/{id}/resolve` 的 `decision`/`note` 从 query 参数改为 body（新增 `schemas.ConflictResolveReq`）。原因：中文长理由进 URL query 会 414 且写进访问日志。**这是破坏性 API 变更**，前端 `api.js` 已同步。
+  - **监控面板**：`/health/stats` 增 `by_domain` 分组统计；导航加 `aria-current="page"` 无障碍标记。
+  - **d3 本地兜底**：`ui/d3.v7.min.js`（v7.9.0，279KB）入库，CDN 挂掉时 `document.write` 回退；`routes_ui.py` 资源白名单同步放行 5 个新文件。
+  - **测试增量**：`tests/test_console_api_contracts.py` 14 例（不 mock，真实起 FastAPI TestClient 打契约）——覆盖 stats 分组、冲突裁决 body 化与旧 query 拒绝、crystals 路由挂载、资源白名单、limbo 过滤、图展开等。
+
 ### Fixed
 
 - **外部 LLM 调用统一替身——162 次真实联网归零，全量测试快 23 倍（2026-09-28，票据 `.scratch/test-env-parity/issues/01-test-isolation-env-dependence.md`，维护者选定方案甲）**：
