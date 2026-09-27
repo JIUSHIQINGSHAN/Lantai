@@ -165,7 +165,7 @@ class TestReceiptChain:
 
         import lantai.eval.models  # noqa: F401
         import lantai.models.tables  # noqa: F401
-        from lantai.storage.db import apply_migrations
+        from lantai.storage.db import CURRENT_SCHEMA_VERSION, apply_migrations
 
         engine = create_engine("sqlite:///" + str(tmp_path / "v22.db"))
         SQLModel.metadata.create_all(engine)
@@ -180,14 +180,15 @@ class TestReceiptChain:
         conn.execute("PRAGMA user_version = 21")
         conn.commit()
 
+        # 断言对齐 CURRENT_SCHEMA_VERSION 而非字面量 24：迁移链每加一段
+        # （v23 沉潜过审 / v24 decided_at / v25 核心记忆归属）这里都要跟着改，
+        # 写死就等于每次加迁移都要回来修一遍测试
         apply_migrations(conn)
-        assert (
-            conn.execute("PRAGMA user_version").fetchone()[0] == 24
-        )  # 链已前移到 v24（票 07 沉潜过审 + ADR-0053 decided_at），幂等守卫保证 v22 段仍生效
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         cols = {r[1] for r in conn.execute("PRAGMA table_info(retrieval_event)").fetchall()}
         assert {"request_id", "receipt_status", "receipt_at"} <= cols
         apply_migrations(conn)  # 幂等重放
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 24
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         conn.close()
 
 

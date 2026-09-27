@@ -321,9 +321,20 @@ class SkillCrystal(SQLModel, table=True):
 
 
 class CoreMemoryBlock(SQLModel, table=True):
+    """核心记忆持久块（identity/task/policy）。
+
+    归属四元组（票 .scratch/ownership-gaps/04）：此前本表**一个归属列都没有**，
+    `/core-memory` 又不带身份，于是 A 写的 policy 块任意登录用户一读就到。
+    列由迁移 v25 补；老行留 NULL（「未记录」的事实状态，宁 miss 不脏写），
+    读侧对 NULL 属主按调用方身份收窄——见 get_core_memory 的口径说明。
+    """
+
     id: str = Field(primary_key=True)
     block: str = Field(index=True)
     namespace: str = Field(index=True, default="default")
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
     content: str = ""
     version: int = 1
     updated_at: datetime = Field(default_factory=utcnow)

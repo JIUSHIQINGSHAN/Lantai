@@ -11,7 +11,7 @@ import sqlite3
 import pytest
 from sqlmodel import SQLModel, create_engine
 
-from lantai.storage.db import apply_migrations
+from lantai.storage.db import CURRENT_SCHEMA_VERSION, apply_migrations
 
 
 def _user_version(conn: sqlite3.Connection) -> int:
@@ -100,9 +100,9 @@ class TestGenglouMigrationV21:
 
         apply_migrations(conn)
 
-        assert (
-            _user_version(conn) == 24
-        )  # 链已前移到 v24（票 07 沉潜过审 + ADR-0053 decided_at），幂等守卫保证 v21 段仍生效
+        # 对齐 CURRENT_SCHEMA_VERSION 而非字面量：迁移链每加一段这里都要跟着改，
+        # 写死等于每次加迁移都要回来修测试（v23/v24/v25 已经踩过三次）
+        assert _user_version(conn) == CURRENT_SCHEMA_VERSION
         columns = {r[1] for r in conn.execute("PRAGMA table_info(memoryitem)").fetchall()}
         assert "event_time" in columns
         assert "event_time_precision" in columns
@@ -138,7 +138,7 @@ class TestGenglouMigrationV21:
 
         apply_migrations(conn)  # 重放
 
-        assert _user_version(conn) == 24
+        assert _user_version(conn) == CURRENT_SCHEMA_VERSION
         second_pass = conn.execute("SELECT id, valid_from FROM memoryitem ORDER BY id").fetchall()
         assert first_pass == second_pass
 

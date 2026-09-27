@@ -16,7 +16,7 @@ engine = create_engine(settings.DATABASE_URL, echo=False, connect_args={"timeout
 # PRAGMA user_version 记录数据库结构版本；未版本化库（全新库或 v0.5 及以前
 # 老库）自动基线为 v1，增量补丁按版本号依次执行。ALTER TABLE ADD COLUMN 为
 # 毫秒级操作，代码更新与数据重构解耦，异常只记日志不阻断启动（降级而非崩溃）。
-CURRENT_SCHEMA_VERSION = 24
+CURRENT_SCHEMA_VERSION = 25
 
 # FTS5 词汇召回通道是否可用（票 .scratch/fts-availability/01）：init_db 内由
 # init_fts 的返回值置位。默认 None = 尚未初始化（测试进程里 init_db 未被调用时
@@ -521,6 +521,34 @@ def apply_migrations(conn) -> None:
             conn.execute("PRAGMA user_version = 24")
             conn.commit()
             logger.info("Migrated v24: proposal decided_at (ADR-0053)")
+
+        # v24 -> v25: 核心记忆块补归属列（票 .scratch/ownership-gaps/04）
+        # （CoreMemoryBlock 此前一个归属列都没有，/core-memory 又不带身份，
+        #  A 写的 policy 块任意登录用户一读就到。老行留 NULL——「未记录」的
+        #  事实状态，读侧按调用方身份收窄，不猜归属、不回填）
+        if user_version < 25:
+            has_cmb = bool(
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'corememoryblock'"
+                ).fetchone()
+            )
+            if has_cmb:
+                if not _has_column(conn, "corememoryblock", "tenant_id"):
+                    conn.execute("ALTER TABLE corememoryblock ADD COLUMN tenant_id TEXT")
+                if not _has_column(conn, "corememoryblock", "user_id"):
+                    conn.execute("ALTER TABLE corememoryblock ADD COLUMN user_id TEXT")
+                if not _has_column(conn, "corememoryblock", "agent_id"):
+                    conn.execute("ALTER TABLE corememoryblock ADD COLUMN agent_id TEXT")
+                try:
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS ix_corememoryblock_owner "
+                        "ON corememoryblock (user_id, namespace)"
+                    )
+                except Exception as exc:  # 索引失败不阻断启动，但必须留痕
+                    logger.warning("迁移跳过 ix_corememoryblock_owner: %s", exc)
+            conn.execute("PRAGMA user_version = 25")
+            conn.commit()
+            logger.info("Migrated v25: core memory block ownership (ownership-gaps/04)")
 
     except Exception as exc:
         logger.error("数据库增量迁移异常（服务继续启动）: %s", exc)

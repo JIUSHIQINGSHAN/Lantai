@@ -146,10 +146,16 @@ def inject_checkpoint_context(
     include_persona: bool = False,
     include_scratchpad: bool = True,
     session_id: str = "default",
+    principal=None,
 ) -> str:
     """生成注入文本：`[Checkpoint · 上次会话]` + 五段行；陈旧自动标注；可联动注入器识（Persona）与札记（Scratchpad）。
 
     无快照/无合法块返回空串（零侵入降级）。纯格式函数，测试可注入 now。
+
+    principal 透传给札记（票 ownership-gaps/04）：札记会进 LLM 提示，
+    既要有归属收窄（不读别人的），也要过樊篱（正文不能截断
+    `<memory_data>` 围栏）——后者已由 format_scratchpad_context 内部做，
+    这里只负责把身份带下去。
     """
     parts = []
     if include_persona:
@@ -166,7 +172,7 @@ def inject_checkpoint_context(
         try:
             from lantai.services.scratchpad_service import format_scratchpad_context
 
-            sp_text = format_scratchpad_context(session_id)
+            sp_text = format_scratchpad_context(session_id, principal=principal)
             if sp_text.strip():
                 parts.append(sp_text.strip())
         except Exception:

@@ -370,29 +370,74 @@ def set_decay_class(memory_id: str, decay_class: str) -> dict:
         return {"ok": True, "memory_id": memory_id, "decay_class": decay_class}
 
 
-def get_core_memory(namespace: str = "default") -> dict:
-    """读取 CoreMemoryBlock 列表。"""
+def get_core_memory(namespace: str = "default", principal=None) -> dict:
+    """读取 CoreMemoryBlock 列表。
+
+    归属过滤（票 .scratch/ownership-gaps/04）：此前本表一个归属列都没有，
+    `/core-memory` 又不带身份，A 写的 policy 块任意登录用户一读就到。
+    传入 principal 时非 admin 只见自己的块；admin 全见（同 acl.py 口径）。
+
+    NULL 属主的老行（迁移 v25 之前写的）按 "default" 归属可见——与票 03
+    「内部调用落到 DEV MODE 的 default」同一口径：NULL 是「未记录」的事实
+    状态，不是「属于所有人」，否则要么永远看不见要么人人可读。
+    principal=None 仅限内部调用（MCP / 脚本），同样按 "default" 收敛。
+    """
+    viewer = (getattr(principal, "user_id", None) or "default") if principal is not None else "default"
+    is_admin = bool(getattr(principal, "is_admin", False)) if principal is not None else False
     with db.get_session() as s:
-        blocks = s.exec(select(CoreMemoryBlock).where(CoreMemoryBlock.namespace == namespace)).all()
+        stmt = select(CoreMemoryBlock).where(CoreMemoryBlock.namespace == namespace)
+        if not is_admin:
+            stmt = stmt.where(
+                (CoreMemoryBlock.user_id == viewer) | (CoreMemoryBlock.user_id.is_(None))
+            )
+        blocks = s.exec(stmt.order_by(CoreMemoryBlock.block)).all()
         return {"blocks": [b.model_dump(mode="json") for b in blocks]}
 
 
-def put_core_memory(block: str, content: str, namespace: str = "default") -> dict:
-    """创建或更新 CoreMemoryBlock。"""
+def put_core_memory(
+    block: str, content: str, namespace: str = "default", principal=None
+) -> dict:
+    """创建或更新 CoreMemoryBlock（归属随 principal 落列，票 ownership-gaps/04）。
+
+    非 admin 只能改自己的块：定位不到自己的行时**新建自己名下的块**，
+    而不是覆写别人的（宁 miss 不越权）。
+    """
     if block not in ("identity", "task", "policy"):
         raise ValueError("invalid block")
+    if principal is None:
+        tenant_id, user_id, agent_id = None, "default", None
+    else:
+        tenant_id = getattr(principal, "tenant_id", None)
+        user_id = getattr(principal, "user_id", None) or "default"
+        agent_id = getattr(principal, "agent_id", None)
+    is_admin = bool(getattr(principal, "is_admin", False)) if principal is not None else False
+
     with db.get_session() as s:
-        row = s.exec(
-            select(CoreMemoryBlock).where(
-                CoreMemoryBlock.block == block, CoreMemoryBlock.namespace == namespace
+        stmt = select(CoreMemoryBlock).where(
+            CoreMemoryBlock.block == block, CoreMemoryBlock.namespace == namespace
+        )
+        if not is_admin:
+            # 只在自己的行（含未记录归属的老行）里找；找不到 → 自己名下新建
+            stmt = stmt.where(
+                (CoreMemoryBlock.user_id == user_id) | (CoreMemoryBlock.user_id.is_(None))
             )
-        ).first()
+        row = s.exec(stmt).first()
         if row:
             row.content = content
             row.version += 1
+            # 归属列补写：老行可能是 NULL（迁移前写的），首次覆写即登记归属
+            row.user_id = user_id
+            row.tenant_id = tenant_id
+            row.agent_id = agent_id
         else:
             row = CoreMemoryBlock(
-                id=new_id("core"), block=block, namespace=namespace, content=content
+                id=new_id("core"),
+                block=block,
+                namespace=namespace,
+                content=content,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                agent_id=agent_id,
             )
         s.add(row)
         s.commit()

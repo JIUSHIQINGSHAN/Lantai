@@ -28,14 +28,18 @@ def add_memory_route(
 
 
 @router.get("/core-memory")
-def get_core_memory_route(namespace: str = "default"):
-    return get_core_memory(namespace)
+def get_core_memory_route(namespace: str = "default", ctx: Principal = Depends(get_current_user)):
+    # 必须把 principal 传下去（票 .scratch/ownership-gaps/04）：此前两个
+    # /core-memory 端点都不带身份，A 写的 policy 块任意登录用户一读就到。
+    return get_core_memory(namespace, principal=ctx)
 
 
 @router.put("/core-memory")
-def put_core_memory_route(block: str, content: str, namespace: str = "default"):
+def put_core_memory_route(
+    block: str, content: str, namespace: str = "default", ctx: Principal = Depends(get_current_user)
+):
     try:
-        return put_core_memory(block, content, namespace)
+        return put_core_memory(block, content, namespace, principal=ctx)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
