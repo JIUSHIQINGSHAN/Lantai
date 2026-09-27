@@ -38,6 +38,7 @@ from lantai.api.app import app
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.evolution.promoter import apply_proposal
+from lantai.models.enums import ProposalStatus
 from lantai.models.schemas import ProposalDecisionReq
 from lantai.models.tables import (
     ConsolidationRun,
@@ -1056,3 +1057,130 @@ class TestConsolidationEndpointsAndMCP:
 
         rep = handle_consolidation_report({})
         assert "last_run" in rep or "status" in rep
+
+
+# ── event_time 违例早退不改状态 → APPROVED 永留（票 .scratch/proposal-livelock/01）──
+
+
+class TestEventTimeRejectReachesTerminalState:
+    """apply_proposal 的 event_time I1 违例必须落终态 REJECTED，不得停在 APPROVED。
+
+    机理：`evolve_worker.run_pending_proposals()` 专捞 `status == APPROVED` 的提案
+    逐条 apply。apply 若只早退不改状态，那条提案就每轮被重捞、每轮失败、永不
+    前进——livelock。stale-evidence 路径（promoter.py:275-287）已按此修，
+    但同一函数里 event_time 的两条违例早退没有：它们只 `return {"ok": False}`
+    就走了，提案继续停在 APPROVED。
+
+    既有 stale 用例 `test_stale_gate_via_decide_proposal_no_livelock` 固化了前者的
+    修复；本类固化后者。
+    """
+
+    @staticmethod
+    def _seed_add_proposal_with_event_time(session_factory, *, event_time, precision):
+        """造一条 add 提案（target 寻址不经硬门），携带给定的 event_time 配对。"""
+        with session_factory() as s:
+            s.add(
+                MemoryProposal(
+                    id="prop_et_bad",
+                    proposal_type="add",
+                    reason="test",
+                    proposed_patch={
+                        "memory_type": "semantic",
+                        "key": "k_et",
+                        "content": "2026年9月15日项目启动",
+                        "lane": "general",
+                        "event_time": event_time,
+                        "event_time_precision": precision,
+                    },
+                    confidence=0.9,
+                    status="pending",
+                )
+            )
+            s.commit()
+
+    def test_invalid_precision_reaches_rejected(self, param_env):
+        """event_time 非空 + precision 非枚举 → REJECTED 终态（现状：停在 APPROVED）。"""
+        session_factory, _ = param_env
+        from lantai.services.evolution_service import decide_proposal
+
+        self._seed_add_proposal_with_event_time(
+            session_factory, event_time="2026-09-15T00:00:00+00:00", precision="decade"
+        )
+        with patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]):
+            res = decide_proposal("prop_et_bad", ProposalDecisionReq(approve=True, reason="批准"))
+        assert res["ok"] is False
+        assert "event_time" in res["reason"]
+
+        with session_factory() as s:
+            prop = s.get(MemoryProposal, "prop_et_bad")
+            assert prop.status == ProposalStatus.REJECTED, (
+                "违例早退必须落终态——停在 APPROVED 会被 run_pending_proposals "
+                "每轮重捞重试，永不前进（livelock）"
+            )
+            assert "event_time" in (prop.decision_reason or "").lower()
+            assert prop.decided_at is not None
+
+    def test_unparseable_event_time_reaches_rejected(self, param_env):
+        """event_time 是非法 ISO 字符串 → 同样落 REJECTED（现状：停在 APPROVED）。"""
+        session_factory, _ = param_env
+        from lantai.services.evolution_service import decide_proposal
+
+        self._seed_add_proposal_with_event_time(
+            session_factory, event_time="not-a-date", precision="day"
+        )
+        with patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]):
+            res = decide_proposal("prop_et_bad", ProposalDecisionReq(approve=True, reason="批准"))
+        assert res["ok"] is False
+        assert "event_time" in res["reason"]
+
+        with session_factory() as s:
+            prop = s.get(MemoryProposal, "prop_et_bad")
+            assert prop.status == ProposalStatus.REJECTED
+
+    def test_no_livelock_worker_stops_picking_it_up(self, param_env):
+        """端到端实证：worker 第二轮不再捞到该提案（终态即出口）。"""
+        session_factory, _ = param_env
+        from lantai.models.enums import ProposalStatus
+        from lantai.workers.evolve_worker import run_pending_proposals
+
+        self._seed_add_proposal_with_event_time(
+            session_factory, event_time="2026-09-15T00:00:00+00:00", precision="decade"
+        )
+        with session_factory() as s:
+            s.get(MemoryProposal, "prop_et_bad").status = ProposalStatus.APPROVED
+            s.commit()
+
+        with patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]):
+            run_pending_proposals()
+            with session_factory() as s:
+                after_first = s.get(MemoryProposal, "prop_et_bad").status
+            # 第二轮：若仍是 APPROVED，worker 会再次捞起再次失败——livelock 实证
+            run_pending_proposals()
+        with session_factory() as s:
+            after_second = s.get(MemoryProposal, "prop_et_bad").status
+
+        assert after_first == ProposalStatus.REJECTED
+        assert after_second == ProposalStatus.REJECTED
+
+    def test_valid_event_time_still_applies(self, param_env):
+        """回归护栏：配对合法 → 正常 apply，不得被新闸误杀。"""
+        session_factory, _ = param_env
+        from lantai.services.evolution_service import decide_proposal
+
+        self._seed_add_proposal_with_event_time(
+            session_factory, event_time="2026-09-15T00:00:00+00:00", precision="day"
+        )
+        with patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]):
+            res = decide_proposal("prop_et_bad", ProposalDecisionReq(approve=True, reason="批准"))
+        assert res["ok"] is True
+
+        with session_factory() as s:
+            prop = s.get(MemoryProposal, "prop_et_bad")
+            assert prop.status == ProposalStatus.APPLIED
+            # add 分支的返回不带 memory_id（apply_extra 为空），按 key 寻址新建记忆
+            mem = s.exec(
+                select(MemoryItem).where(MemoryItem.key == "k_et", MemoryItem.status == "active")
+            ).first()
+            assert mem is not None
+            assert mem.event_time is not None
+            assert mem.event_time_precision == "day"

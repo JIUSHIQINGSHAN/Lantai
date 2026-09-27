@@ -434,17 +434,28 @@ def apply_proposal(proposal_id: str) -> dict:
                     try:
                         et = parse_iso_utc(et)
                     except ValueError:
-                        return {
-                            "ok": False,
-                            "reason": "invalid event_time pair (I1)",
-                            "detail": {"event_time": et, "event_time_precision": etp},
-                        }
+                        # 落终态 REJECTED（票 .scratch/proposal-livelock/01）：与 stale
+                        # 硬门同口径。只早退不改状态的话，decide_proposal 先置的
+                        # APPROVED 将永留，evolve_worker.run_pending_proposals（专捞
+                        # APPROVED）每轮重试每次失败＝livelock。
+                        # 宁 miss 不脏写：坏配对不静默修正，显式拒绝 + 留痕。
+                        out = _reject_proposal(
+                            prop,
+                            "invalid event_time pair (I1)",
+                            {"event_time": et, "event_time_precision": etp},
+                        )
+                        s.add(prop)
+                        s.commit()
+                        return out
                 if not validate_event_time_pair(et, etp):
-                    return {
-                        "ok": False,
-                        "reason": "invalid event_time pair (I1)",
-                        "detail": {"event_time": str(et), "event_time_precision": etp},
-                    }
+                    out = _reject_proposal(
+                        prop,
+                        "invalid event_time pair (I1)",
+                        {"event_time": str(et), "event_time_precision": etp},
+                    )
+                    s.add(prop)
+                    s.commit()
+                    return out
                 mem_kwargs["event_time"] = et
                 mem_kwargs["event_time_precision"] = etp
             mem = MemoryItem(**mem_kwargs)
