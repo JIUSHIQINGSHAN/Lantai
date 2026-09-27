@@ -541,6 +541,22 @@ def test_conflict_service_resolve(conflict_env):
     from lantai.services.conflict_service import list_conflict_events, resolve_conflict_event
 
     with session_factory() as s:
+        # 归属（票 readside-gaps/07）：冲突账本没有归属列，可见性从挂载记忆
+        # 过渡推导。这里显式种一条 `user_id="default"` 的记忆——内部调用
+        # （principal=None）按 `_viewer_of` 收敛到 `"default"`，种 NULL 或
+        # 别人的记忆都会让这条测试看不到自己的账本（那是另一条测试的事）。
+        m = MemoryItem(
+            id="m1",
+            memory_type="text",
+            content="状态开关相关事实",
+            lane="fact",
+            domain="user",
+            decay_score=1.0,
+            status="active",
+            user_id="default",
+            tenant_id=None,
+        )
+        s.add(m)
         ev = ConflictEvent(id=new_id("cfev"), memory_id="m1", rule_name="status_switch")
         s.add(ev)
         s.commit()

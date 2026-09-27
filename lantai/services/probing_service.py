@@ -59,19 +59,51 @@ def detect_memory_probes(
     query: str,
     session_id: str | None = None,
     session: Session | None = None,
+    principal=None,
 ) -> list[dict]:
-    """扫描未决冲突账本，检测与当前查询相关的冲突事实，生成主动求证探针。"""
+    """扫描未决冲突账本，检测与当前查询相关的冲突事实，生成主动求证探针。
+
+    归属收窄（票 .scratch/readside-gaps/07 修法口径 4）：此前
+    `select(ConflictEvent).where(status=="open")` 全表捞，把别人的
+    `existing_content` + `incoming_ref` **两份全文**吐出来，还渲染成
+    "顺便向您求证确认下：关于「…」"的问句——等于把 B 的记忆原文
+    包装成给 A 的提问。
+
+    `ConflictEvent` 没有归属列，判据过渡推导：`conf.memory_id → MemoryItem.user_id`。
+    口径同 `resolve_probe_response`：admin/system 全权；非 admin 只见自己
+    记忆上的冲突。NULL 属主的老行**不可见**（宁可漏探，不可错探——探针
+    会把正文渲染成问句送给用户，那是比列表更直接的泄漏面）。
+
+    `principal=None`（`cli/mcp.py` 的 `handle_probe_detect`）不加过滤，
+    与改动前逐字一致。
+    """
     clean_q = query.strip()
     if not clean_q:
         return []
 
     tokens = set(w.strip() for w in jieba.lcut(clean_q) if len(w.strip()) >= 2)
 
+    def _visible(s: Session, conf: ConflictEvent) -> bool:
+        """冲突对当前 principal 是否可见（过渡到挂载记忆的属主）。"""
+        if principal is None:
+            return True
+        if bool(getattr(principal, "is_admin", False)):
+            return True
+        item = s.get(MemoryItem, conf.memory_id)
+        if item is None:
+            # 挂载记忆已不存在：账本本身无归属可判，不泄露任何正文
+            return False
+        from lantai.services.work_item_service import _viewer_of
+
+        return bool(item.user_id) and item.user_id == _viewer_of(principal)
+
     def _detect(s: Session) -> list[dict]:
         open_conflicts = s.exec(select(ConflictEvent).where(ConflictEvent.status == "open")).all()
 
         probes = []
         for conf in open_conflicts:
+            if not _visible(s, conf):
+                continue
             item = s.get(MemoryItem, conf.memory_id)
             existing_content = item.content if item else ""
             incoming_ref = conf.incoming_ref or ""
@@ -120,8 +152,26 @@ def resolve_probe_response(
     conflict_id: str,
     user_reply: str,
     session: Session | None = None,
+    principal=None,
 ) -> dict:
-    """分析用户对探针的自然语言答复，自动执行冲突消解与版本更替。"""
+    """分析用户对探针的自然语言答复，自动执行冲突消解与版本更替。
+
+    归属校验（票 .scratch/readside-gaps/07 修法口径 4）：**全轮最严重的一条**。
+    肯定分支会 `item.content = conf.incoming_ref`——写的是正文，而此前一个
+    身份都不取，A 用自己的 key 就能把 B 的记忆原文覆盖掉（`OBSERVED3.txt`
+    实测：`mem-user-B.content` 被改成 A 传的 `incoming_ref`）。
+
+    `ConflictEvent` **没有归属列**（`tables.py:371-383`），判据只能过渡推导：
+    `conf.memory_id → MemoryItem.user_id`。这比加列更准——冲突账本的存在意义
+    就是挂在某条记忆上，记忆换属主，冲突的可见性跟着换。
+
+    按**破坏性写操作**处理，复用 `acl.ensure_can_delete` 单一真源（同票 02
+    口径）：admin/system 全权；非 admin 只能消解自己记忆上的冲突。
+    403 必须发生在任何 `s.commit()` 之前——不允许"拒绝了但已经落库"。
+
+    `principal=None`（`cli/mcp.py` 的 `handle_probe_resolve` 没有调用方身份）
+    不加校验，与改动前逐字一致；内部入口与 REST 暴露面分开。
+    """
     clean_reply = user_reply.strip()
     if not clean_reply:
         return {"status": "error", "message": "user_reply 不能为空"}
@@ -137,6 +187,17 @@ def resolve_probe_response(
         item = s.get(MemoryItem, conf.memory_id)
         if not item:
             return {"status": "error", "message": f"MemoryItem {conf.memory_id} 不存在"}
+
+        # 归属校验：在任何写操作之前（403 不能伴随落库）
+        if principal is not None:
+            from lantai.core.acl import ensure_can_delete
+
+            ensure_can_delete(
+                principal,
+                resource_user_id=item.user_id,
+                resource_tenant_id=item.tenant_id,
+                lane=item.lane,
+            )
 
         # 1. 优先匹配否定词（否定意图优先）
         is_neg = any(re.search(pat, clean_reply, re.IGNORECASE) for pat in _NEGATIVE_PATTERNS)
