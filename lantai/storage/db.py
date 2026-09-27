@@ -272,8 +272,10 @@ def apply_migrations(conn) -> None:
                     conn.execute(
                         "CREATE INDEX IF NOT EXISTS idx_memoryitem_domain ON memoryitem(domain)"
                     )
-            except Exception:
-                pass
+            except Exception as exc:
+                # 索引缺失不阻断迁移（老库必须能起来），但必须留痕——
+                # 静默缺失会让后续查询悄悄退化且无从归因（票 .scratch/migration-observability/01）
+                logger.warning("迁移 v17 索引创建跳过 idx_memoryitem_domain: %s", exc)
             conn.execute("PRAGMA user_version = 17")
             conn.commit()
         # v17 -> v18: Add ownership fields to multiple tables
@@ -393,8 +395,12 @@ def apply_migrations(conn) -> None:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS ix_memoryitem_superseded_by ON memoryitem(superseded_by)"
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "迁移 v20 索引创建跳过 ix_memoryitem_lifecycle_status/"
+                    "ix_memoryitem_superseded_by: %s",
+                    exc,
+                )
             conn.execute("PRAGMA user_version = 20")
             conn.commit()
             logger.info("Migrated v20: Knowledge Lifecycle fields")
@@ -435,8 +441,10 @@ def apply_migrations(conn) -> None:
                         conn.execute(
                             "CREATE INDEX IF NOT EXISTS ix_memoryitem_valid_to ON memoryitem(valid_to)"
                         )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning(
+                            "迁移 v21 索引创建跳过 event_time/valid_from/valid_to: %s", exc
+                        )
             conn.execute("PRAGMA user_version = 21")
             conn.commit()
             logger.info("Migrated v21: Genglou bi-temporal event time (ADR-0048)")
@@ -466,8 +474,12 @@ def apply_migrations(conn) -> None:
                         "CREATE INDEX IF NOT EXISTS ix_retrieval_event_receipt_status"
                         " ON retrieval_event(receipt_status)"
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "迁移 v22 索引创建跳过 ix_retrieval_event_request_id/"
+                        "ix_retrieval_event_receipt_status: %s",
+                        exc,
+                    )
             conn.execute("PRAGMA user_version = 22")
             conn.commit()
             logger.info("Migrated v22: receipt chain (ADR-0049)")

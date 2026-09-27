@@ -9,6 +9,8 @@
 
 import sqlite3
 
+import pytest
+
 from lantai.storage.db import CURRENT_SCHEMA_VERSION, apply_migrations
 
 
@@ -254,4 +256,218 @@ class TestApplyMigrations:
             ).fetchone()[0]
             == "2026-06-01 12:00:00"
         )
+        conn.close()
+
+
+class TestIndexCreationFailureIsLogged:
+    """迁移期索引创建失败必须留痕（不得静默 pass）。
+
+    背景：db.py 曾有 4 处 `except Exception: pass` 吞掉 CREATE INDEX 失败，
+    索引静默缺失 → 查询退化且无任何信号。同文件其余 40+ 处 except 都有
+    logger.warning（如 :40 列检查跳过），这 4 处是疏漏而非设计。
+    修法：只加留痕、不改行为（索引失败仍不阻断迁移，老库必须能起来）。
+    """
+
+    @staticmethod
+    def _db_with_index_name_taken(tmp_path):
+        """构造「索引名被占」的老库：memoryitem 存在，且库中已有一个
+        与 `idx_memoryitem_domain` 同名的**表**。
+
+        SQLite 的索引名与表名共享同一命名空间，所以 v17 的
+        `CREATE INDEX IF NOT EXISTS idx_memoryitem_domain` 必然抛
+        `OperationalError: there is already a table named ...`——
+        这正是索引创建失败的**真实失败形态**（名字被占，不是列缺失：
+        列缺失时 v17 会先 ALTER 补列，索引反而建得起来）。
+
+        现实中也存在：历史脚本/人工建过同名表，或另一条迁移链先建了表。
+        """
+        conn = sqlite3.connect(str(tmp_path / "index_name_taken.db"))
+        conn.executescript(
+            """
+            CREATE TABLE memoryitem (
+                id TEXT PRIMARY KEY,
+                content TEXT,
+                lane TEXT DEFAULT 'general',
+                status TEXT DEFAULT 'active',
+                decay_score REAL DEFAULT 1.0
+            );
+            CREATE TABLE retrieval_event (
+                id TEXT PRIMARY KEY,
+                query TEXT
+            );
+            CREATE TABLE memorycandidate (
+                id TEXT PRIMARY KEY,
+                summary TEXT,
+                status TEXT DEFAULT 'new'
+            );
+            CREATE TABLE idx_memoryitem_domain (x);
+            """
+        )
+        conn.execute("INSERT INTO memoryitem (id, content) VALUES ('m1', '老数据')")
+        conn.commit()
+        return conn
+
+    def test_index_failure_logs_warning_and_migration_continues(self, tmp_path, caplog):
+        """索引建不上 → warning 留痕 + 迁移照常完成 + 存量数据不丢。
+
+        不 mock：真实 SQLite 库 + 真实 CREATE INDEX 失败路径。
+        失败形态选「索引名被表占用」而非「缺列」——缺列时迁移会先补列，
+        索引建得起来，warning 反而不该出现（见 test_no_spurious_warning）。
+        """
+        import logging
+
+        from lantai.core.logger import logger
+
+        conn = self._db_with_index_name_taken(tmp_path)
+
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            apply_migrations(conn)
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+        # ① 留痕：至少有 warning（不是静默 pass）
+        assert warnings, "索引创建失败必须留痕，不得静默吞掉"
+        joined = " | ".join(str(r.getMessage()) for r in warnings)
+        assert "索引" in joined or "index" in joined.lower(), (
+            f"warning 须点明是索引创建失败，实得: {joined}"
+        )
+
+        # ② 行为不变：迁移仍完成（老库必须能起来）
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
+
+        # ③ 存量数据零丢失
+        assert conn.execute("SELECT id, content FROM memoryitem").fetchall() == [("m1", "老数据")]
+        conn.close()
+
+    def test_missing_column_db_creates_index_without_warning(self, tmp_path, caplog):
+        """反例护栏：老库缺 domain 列时**不该**有 warning。
+
+        v17 先 ALTER 补列再建索引（db.py:262-263），所以「缺列」形态下索引
+        建得起来。留痕只针对**真失败**；若这条也报 warning，说明留痕变成噪音，
+        该修的是「宁滥勿缺」的反模式，不是把噪音当真信号。
+        """
+        import logging
+
+        from lantai.core.logger import logger
+
+        conn = sqlite3.connect(str(tmp_path / "no_domain.db"))
+        conn.executescript(
+            """
+            CREATE TABLE memoryitem (
+                id TEXT PRIMARY KEY,
+                content TEXT,
+                lane TEXT DEFAULT 'general',
+                status TEXT DEFAULT 'active',
+                decay_score REAL DEFAULT 1.0
+            );
+            CREATE TABLE retrieval_event (id TEXT PRIMARY KEY, query TEXT);
+            CREATE TABLE memorycandidate (id TEXT PRIMARY KEY, summary TEXT, status TEXT DEFAULT 'new');
+            """
+        )
+        conn.commit()
+
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            apply_migrations(conn)
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not warnings, (
+            f"缺列库（v17 会先补列）不应有 warning，实得: {[r.getMessage() for r in warnings]}"
+        )
+        # 补列 + 索引都建起来了
+        assert "domain" in _columns(conn, "memoryitem")
+        names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+        assert "idx_memoryitem_domain" in names
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
+        conn.close()
+
+    def test_no_spurious_warning_on_healthy_db(self, tmp_path, caplog):
+        """健康库（列齐全）不得误报 warning——留痕不能变成噪音。"""
+        import logging
+
+        from lantai.core.logger import logger
+
+        path = tmp_path / "healthy.db"
+        conn = _make_legacy_db(path, with_new_columns=True)
+
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            apply_migrations(conn)
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not warnings, f"健康库不应有 warning，实得: {[r.getMessage() for r in warnings]}"
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
+        conn.close()
+
+    # 四个留痕站点逐一覆盖：索引名被同名表占用 → CREATE INDEX 必失败。
+    # 只测 v17 会漏掉另外三处（票 01 修了 4 处，就得有 4 处活着的留痕）。
+    @pytest.mark.parametrize(
+        ("colliding_table", "extra_ddl", "expected_marker"),
+        [
+            pytest.param(
+                "idx_memoryitem_domain",
+                "",
+                "idx_memoryitem_domain",
+                id="v17-domain",
+            ),
+            pytest.param(
+                "ix_memoryitem_lifecycle_status",
+                "",
+                "ix_memoryitem_lifecycle_status",
+                id="v20-lifecycle",
+            ),
+            pytest.param(
+                "ix_memoryitem_event_time",
+                # v21 的索引创建被 `valid_from`/`created_at` 双列守卫包着，
+                # 老库必须自带这两列才会走到建索引这一步。
+                "ALTER TABLE memoryitem ADD COLUMN created_at DATETIME;"
+                "ALTER TABLE memoryitem ADD COLUMN valid_from DATETIME;"
+                "ALTER TABLE memoryitem ADD COLUMN valid_to DATETIME;",
+                "event_time",
+                id="v21-genglou",
+            ),
+            pytest.param(
+                "ix_retrieval_event_request_id",
+                "",
+                "request_id",
+                id="v22-receipt-chain",
+            ),
+        ],
+    )
+    def test_each_index_site_logs_on_failure(
+        self, tmp_path, caplog, colliding_table, extra_ddl, expected_marker
+    ):
+        """四处索引留痕**各自**都是活的：改回 pass 就必须有测试红。"""
+        import logging
+
+        from lantai.core.logger import logger
+
+        conn = sqlite3.connect(str(tmp_path / f"collide_{colliding_table}.db"))
+        conn.executescript(
+            """
+            CREATE TABLE memoryitem (
+                id TEXT PRIMARY KEY,
+                content TEXT,
+                lane TEXT DEFAULT 'general',
+                status TEXT DEFAULT 'active',
+                decay_score REAL DEFAULT 1.0
+            );
+            CREATE TABLE retrieval_event (id TEXT PRIMARY KEY, query TEXT);
+            CREATE TABLE memorycandidate (id TEXT PRIMARY KEY, summary TEXT, status TEXT DEFAULT 'new');
+            """
+            + extra_ddl
+        )
+        conn.execute(f"CREATE TABLE {colliding_table} (x)")
+        conn.execute("INSERT INTO memoryitem (id, content) VALUES ('m1', '老数据')")
+        conn.commit()
+
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            apply_migrations(conn)
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warnings, f"{colliding_table} 建索引失败必须留痕，不得静默吞掉"
+        joined = " | ".join(str(r.getMessage()) for r in warnings)
+        assert expected_marker in joined, f"warning 须点明 {expected_marker}，实得: {joined}"
+
+        # 留痕不改变行为：迁移照常完成，存量数据零丢失
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
+        assert conn.execute("SELECT id, content FROM memoryitem").fetchall() == [("m1", "老数据")]
         conn.close()
