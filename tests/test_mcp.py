@@ -983,3 +983,70 @@ def test_revive_consolidated_validation():
             )
         assert resp["error"]["code"] == -32602
         m.assert_not_called()
+
+
+# ── 工具广告与处理器一致性（票据 .scratch/mcp-tool-parity/issues/01-*.md）────
+# 背景：recall_chain 曾在 TOOLS 里广告、handle_recall_chain 也实现了，但
+# TOOL_HANDLERS 漏登记 → 客户端调用即 KeyError → -32603 internal error。
+# 实证：60 个广告工具 vs 59 个 handler。既有测试只数广告个数、只校验元数据形状，
+# 无任何断言覆盖「广告 ⇔ handler」对应关系，故漏网。
+
+
+def test_every_advertised_tool_has_handler():
+    """广告清单与分发表必须一一对应（两个方向都查）。
+
+    - 广告无 handler → 运行时 KeyError（recall_chain 曾如此，已实证 -32603）
+    - handler 未广告 → 不可达死代码
+    """
+    mod = _load_mcp()
+    advertised = set(mod.TOOLS)
+    registered = set(mod.TOOL_HANDLERS)
+
+    missing = advertised - registered
+    assert not missing, f"已广告但无 handler（调用即 KeyError）: {sorted(missing)}"
+
+    orphan = registered - advertised
+    assert not orphan, f"已注册但未广告（不可达死代码）: {sorted(orphan)}"
+
+
+def test_every_handler_is_callable():
+    """分发表的每个值必须可调用（防误填常量/None）。"""
+    mod = _load_mcp()
+    for name, fn in mod.TOOL_HANDLERS.items():
+        assert callable(fn), f"handler {name!r} 不可调用: {fn!r}"
+
+
+def test_recall_chain_is_dispatchable():
+    """recall_chain 功能冒烟：经 handle() 真调一次，须返回 result 而非 error。
+
+    不 mock 内部逻辑（build_recall_chain 真实执行），仅依赖 conftest 的
+    外部依赖替身。这条是上一节结构性护栏的功能面确认。
+    """
+    mod = _load_mcp()
+    resp = mod.handle(
+        {
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "tools/call",
+            "params": {"name": "recall_chain", "arguments": {"q": "龙井茶"}},
+        }
+    )
+    assert "result" in resp, f"recall_chain 应可派发，实得 {resp}"
+    payload = json.loads(resp["result"]["content"][0]["text"])
+    # 形状由 build_recall_chain 定；此处只确认真调通（非 error 分支）
+    assert isinstance(payload, dict)
+
+
+def test_unknown_tool_gets_clear_error():
+    """未广告工具 → -32602 unknown tool（既有行为，防回归）。"""
+    mod = _load_mcp()
+    resp = mod.handle(
+        {
+            "jsonrpc": "2.0",
+            "id": 98,
+            "method": "tools/call",
+            "params": {"name": "definitely_not_a_tool", "arguments": {}},
+        }
+    )
+    assert resp["error"]["code"] == -32602
+    assert "unknown tool" in resp["error"]["message"]

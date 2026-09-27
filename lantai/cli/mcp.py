@@ -1570,6 +1570,10 @@ TOOL_HANDLERS = {
     "persona_set": handle_persona_set,
     "scratchpad_get": handle_scratchpad_get,
     "scratchpad_write": handle_scratchpad_write,
+    # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
+    # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
+    # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。
+    "recall_chain": handle_recall_chain,
 }
 
 
@@ -1618,8 +1622,20 @@ def handle(msg: dict) -> dict | None:
                 "id": mid,
                 "error": {"code": -32602, "message": f"unknown tool: {name}"},
             }
+        handler = TOOL_HANDLERS.get(name)
+        if handler is None:
+            # 广告了却没有处理器：如实报「缺什么」，不让 KeyError 的 type name
+            # 泄露成毫无信息量的 "internal error: KeyError"（recall_chain 曾如此）。
+            return {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {
+                    "code": -32603,
+                    "message": f"tool {name} is advertised but has no registered handler",
+                },
+            }
         try:
-            result = TOOL_HANDLERS[name](args)
+            result = handler(args)
         except (ValueError, ValidationError) as e:
             return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": str(e)}}
         except Exception as e:
