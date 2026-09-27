@@ -511,8 +511,11 @@ def _hybrid_search_impl(
             )
 
         fts_bm25_results = _get_s(_search_fts_bm25_cb)
-    except Exception:
-        pass
+    except Exception as e:
+        # BM25 通道失守不得静默（票 .scratch/retrieval-silent-failure/01）：
+        # 静默时用户只能看到「结果变少」，无法区分是内容不相关还是索引坏了。
+        # 与上方向量失败的既有留痕（:438）对齐口径。
+        logger.warning(f"BM25 search failed, falling back to FTS hits only: {e}")
 
     # 从 SQLite 加载完整记忆项（Vector, BM25 和 FTS 的并集）
     vector_ids = [r["id"] for r in vector_results]
@@ -846,8 +849,12 @@ def _keyword_fallback(
             )
 
         fts_hits = set(_get_s(_fts_hit_cb))
-    except Exception:
-        pass
+    except Exception as e:
+        # 已处于向量失败后的降级路径，此处再失守即只剩 LIKE 兜底。
+        # 必须留痕：静默时上层看到的是空结果，与「确实没存过」完全同形
+        # （票 .scratch/retrieval-silent-failure/01）。
+        logger.warning(f"FTS hit search failed in keyword fallback, LIKE remains only: {e}")
+        fts_hits = set()
 
     candidate_ids = set(r[0] for r in fts_bm25_results) | fts_hits
 
@@ -885,8 +892,11 @@ def _keyword_fallback(
 
             like_items = _get_s(_like_cb)
             candidate_ids |= set(like_items)
-        except Exception:
-            pass
+        except Exception as e:
+            # 最后一道兜底失守——检索能力已耗尽，即将返回空。
+            # 这条 warning 是「索引全坏」与「确实没存过」唯一可区分的信号，
+            # 不得静默（票 .scratch/retrieval-silent-failure/01）。
+            logger.warning(f"LIKE fallback failed, retrieval exhausted: {e}")
 
     if not candidate_ids:
         if trace:

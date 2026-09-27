@@ -1,5 +1,6 @@
 """FTS5 集成测试：同事务同步 + 检索融合 + 追加召回 + BM25 缓存"""
 
+import sqlite3
 from unittest.mock import Mock, patch
 
 import pytest
@@ -523,3 +524,169 @@ def test_search_fts_and_path_shared_segment_hits(engine):
     # 完全改写查询零命中（AND 全 gram 命中不成立，召回由 OR 路径补）
     rows2 = search_fts(c, "公司的数据库引擎用的什么", top_k=5)
     assert rows2 == []
+
+
+class TestRetrievalSilentFailureIsLogged:
+    """检索链路三处 `except Exception: pass` 必须改为 warning 留痕。
+
+    背景（`.scratch/retrieval-silent-failure/issues/01-*.md`）：
+    hybrid.py:514（主路径 BM25 通道）、:849（_keyword_fallback FTS 命中）、
+    :888（_keyword_fallback LIKE 兜底）三处吞掉失败，无任何日志。
+    用户可感知的唯一现象是 search 返回空——而「索引坏了」与「确实没存过」
+    在返回值和 retrieval_event.zero_result 上完全同形。
+
+    最危险组合：fts.py:31 的 init_fts 吞掉建表失败（仅启动时一条 warning），
+    之后每次查询撞 no such table: memory_fts → :849 → :888 → 永久静默空结果。
+
+    口径：只加留痕，不改降级行为（检索失败仍不抛给调用方，向量→关键词→LIKE
+    的降级顺序是正确设计）。既有向量失败已有留痕（hybrid.py:438），
+    这三处是同文件内的疏漏。
+    """
+
+    @staticmethod
+    def _seed(engine, content="咖啡因摄入记录"):
+        from lantai.storage.fts import sync_fts
+
+        mid = _add_mem(engine, content)
+        with Session(engine) as s:
+            sync_fts(s, mid, content)
+            s.commit()
+        return mid
+
+    def test_bm25_channel_failure_logs_warning_and_still_returns(self, engine, caplog):
+        """:514 主路径 BM25 通道失败 → warning 留痕 + 检索仍返回（降级不炸）。
+
+        注意：必须让向量通道**成功**（返回一条命中）才能走到 :514 所在的
+        主混合路径；向量空则 hybrid_search 会转投 _keyword_fallback，
+        测的就不是这一处了。
+        """
+        import logging
+
+        from lantai.retrieval import hybrid
+
+        fts_id = self._seed(engine)
+
+        with (
+            patch.object(db_module, "get_session", lambda: Session(engine)),
+            patch(
+                "lantai.retrieval.intent.chat_json",
+                return_value={"intent": "fact_lookup", "reason": "test"},
+            ),
+            patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+            patch(
+                "lantai.retrieval.hybrid.get_vector_store",
+                return_value=Mock(search=Mock(return_value=[{"id": fts_id, "distance": 0.1}])),
+            ),
+            patch(
+                "lantai.retrieval.hybrid.search_fts_bm25",
+                side_effect=sqlite3.OperationalError("no such table: memory_fts"),
+            ),
+            caplog.at_level(logging.WARNING, logger="lantai"),
+        ):
+            results, trace_steps = hybrid.hybrid_search(
+                "咖啡因", top_k=5, use_rerank=False, trace=True
+            )
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warnings, "BM25 通道失败必须留痕，不得静默 pass"
+        joined = " | ".join(str(r.getMessage()) for r in warnings)
+        assert "bm25" in joined.lower(), f"warning 须点明是 BM25 通道，实得: {joined}"
+        # 行为不变：向量通道仍命中（BM25 挂了不连带炸掉整次检索）
+        assert fts_id in {r["memory"]["id"] for r in results}
+
+    def test_fts_channel_failure_in_fallback_logs_warning(self, engine, caplog):
+        """:849 _keyword_fallback 的 FTS 通道失败 → warning 留痕。"""
+        import logging
+
+        from lantai.retrieval import hybrid
+
+        self._seed(engine)
+
+        with (
+            patch.object(db_module, "get_session", lambda: Session(engine)),
+            patch(
+                "lantai.retrieval.intent.chat_json",
+                return_value={"intent": "fact_lookup", "reason": "test"},
+            ),
+            patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+            patch(
+                "lantai.retrieval.hybrid.get_vector_store",
+                return_value=Mock(search=Mock(return_value=[])),
+            ),
+            patch(
+                "lantai.retrieval.hybrid.search_fts",
+                side_effect=sqlite3.OperationalError("no such table: memory_fts"),
+            ),
+            caplog.at_level(logging.WARNING, logger="lantai"),
+        ):
+            hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=False)
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warnings, "FTS 通道失败必须留痕，不得静默 pass"
+
+    def test_like_fallback_failure_logs_warning(self, engine, caplog):
+        """:888 LIKE 兜底失败 → warning 留痕（最后一道兜底失守更要可见）。
+
+        构造：向量空 → 进 _keyword_fallback；BM25/FTS 均返回空（不抛），
+        使代码走到 LIKE 分支；再让 session.exec 抛错触发第三处 except。
+        """
+        import logging
+
+        from lantai.retrieval import hybrid
+
+        self._seed(engine)
+
+        real_session_cls = Session
+
+        class BoomSession(real_session_cls):
+            def exec(self, *a, **kw):
+                raise sqlite3.OperationalError("database is locked")
+
+        with (
+            patch.object(db_module, "get_session", lambda: BoomSession(engine)),
+            patch(
+                "lantai.retrieval.intent.chat_json",
+                return_value={"intent": "fact_lookup", "reason": "test"},
+            ),
+            patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+            patch(
+                "lantai.retrieval.hybrid.get_vector_store",
+                return_value=Mock(search=Mock(return_value=[])),
+            ),
+            patch("lantai.retrieval.hybrid.search_fts_bm25", return_value=[]),
+            patch("lantai.retrieval.hybrid.search_fts", return_value=[]),
+            caplog.at_level(logging.WARNING, logger="lantai"),
+        ):
+            hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=False)
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warnings, "LIKE 兜底失败必须留痕，不得静默 pass"
+        joined = " | ".join(str(r.getMessage()) for r in warnings)
+        assert "like" in joined.lower(), f"warning 须点明是 LIKE 兜底，实得: {joined}"
+
+    def test_healthy_retrieval_has_no_warning(self, engine, caplog):
+        """反例护栏：正常检索（各通道均成功）不得有 warning——留痕不能变噪音。"""
+        import logging
+
+        from lantai.retrieval import hybrid
+
+        fts_id = self._seed(engine)
+
+        with (
+            patch.object(db_module, "get_session", lambda: Session(engine)),
+            patch(
+                "lantai.retrieval.intent.chat_json",
+                return_value={"intent": "fact_lookup", "reason": "test"},
+            ),
+            patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+            patch(
+                "lantai.retrieval.hybrid.get_vector_store",
+                return_value=Mock(search=Mock(return_value=[])),
+            ),
+            caplog.at_level(logging.WARNING, logger="lantai"),
+        ):
+            results, _ = hybrid.hybrid_search("咖啡因", top_k=5, use_rerank=False, trace=True)
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not warnings, f"正常检索不应有 warning，实得: {[r.getMessage() for r in warnings]}"
+        assert fts_id in {r["memory"]["id"] for r in results}
