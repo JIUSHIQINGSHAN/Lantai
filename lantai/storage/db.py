@@ -18,6 +18,11 @@ engine = create_engine(settings.DATABASE_URL, echo=False, connect_args={"timeout
 # 毫秒级操作，代码更新与数据重构解耦，异常只记日志不阻断启动（降级而非崩溃）。
 CURRENT_SCHEMA_VERSION = 24
 
+# FTS5 词汇召回通道是否可用（票 .scratch/fts-availability/01）：init_db 内由
+# init_fts 的返回值置位。默认 None = 尚未初始化（测试进程里 init_db 未被调用时
+# 就是 None，此时不得当作「不可用」——无法区分「没查过」与「查了是坏的」）。
+FTS_OK: bool | None = None
+
 
 def _has_column(conn, table: str, column: str) -> bool:
     """查询列是否存在；表不存在视为 True（迁移链不建表，建表归 create_all）。
@@ -533,9 +538,17 @@ def init_db():
     finally:
         if conn is not None:
             conn.close()
-    # 初始化 FTS5
+    # 初始化 FTS5（词汇召回通道）。返回 False 时**不抛**——抛出去会让整个服务
+    # 起不来，而这是「降级但可用」状态（SQLite + 向量召回仍工作）。改为如实留痕，
+    # 并由 /health/deep 的 checks["fts"] 让运维看得见（票 .scratch/fts-availability/01）。
     conn = engine.raw_connection()
-    init_fts(conn)
+    global FTS_OK
+    FTS_OK = init_fts(conn)
+    if not FTS_OK:
+        logger.warning(
+            "FTS5 词汇召回通道不可用（详见上方 error 日志）：检索将退回向量通道，"
+            "中文子串匹配可能全部失效；/health/deep 的 checks.fts 会报告 fail"
+        )
 
 
 def get_session() -> Session:

@@ -47,6 +47,27 @@ def health_deep():
     except Exception as e:
         checks["chromadb"] = f"fail: {e}"
 
+    # FTS5 词汇召回通道（票 .scratch/fts-availability/01）
+    # 只查 sqlite 表存在与 chromadb 可达都探不出 FTS 坏——而 FTS 坏的表现是
+    # 「检索结果变少」，用户会以为记忆没存进去。故必须单独核验
+    # memory_fts 的真实定义（IF NOT EXISTS 对错表是静默 no-op，只能读 sqlite_master）。
+    try:
+        with db.get_session() as s:
+            row = (
+                s.connection()
+                .exec_driver_sql("SELECT sql FROM sqlite_master WHERE name = 'memory_fts'")
+                .fetchone()
+            )
+        ddl = (row[0] or "").lower() if row else ""
+        if row and "fts5" in ddl and "trigram" in ddl:
+            checks["fts"] = "ok"
+        else:
+            checks["fts"] = (
+                "fail: memory_fts missing or not an FTS5/trigram table (lexical recall degraded)"
+            )
+    except Exception as e:
+        checks["fts"] = f"fail: {e}"
+
     # LLM 端点（未配置 key 时跳过，避免每次探活触发外部调用）
     if not settings.OPENAI_API_KEY:
         checks["llm"] = "skipped (no key)"

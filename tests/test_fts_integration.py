@@ -690,3 +690,219 @@ class TestRetrievalSilentFailureIsLogged:
         warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
         assert not warnings, f"正常检索不应有 warning，实得: {[r.getMessage() for r in warnings]}"
         assert fts_id in {r["memory"]["id"] for r in results}
+
+
+class TestInitFtsAvailability:
+    """`init_fts` 的失败必须可见，且「成功」的声称必须诚实（票 .scratch/fts-availability/01）。
+
+    背景：原实现把建表失败降级成一行启动 warning，调用方 `init_db` 不看返回值，
+    `/health` 无条件返回 ok——形成完整静默链。更阴的是 `CREATE VIRTUAL TABLE
+    IF NOT EXISTS` 对「已存在但类型/分词器不对」是**静默 no-op**：SQLite 不报错，
+    列名检查也过，于是日志照样打 `FTS5 + trigram initialized`（假成功）。
+
+    实测两种坏态：
+    - 普通同名表：之后每次查询 `no such column: memory_fts` → 词汇召回全废
+    - FTS5 但 tokenize=unicode61：bm25 查询照样成功，只是中文子串召回永久失效，
+      任何一层都不报错
+
+    修法口径：`init_fts` 返回 bool，CREATE 之后**核验 sqlite_master 里的真实定义**
+    （IF NOT EXISTS 跳过验证，必须自己核），失败 logger.error 留痕。
+    不抛异常——抛出去会连坐整个服务启动，而这是「降级但可用」状态。
+    """
+
+    @staticmethod
+    def _raw_conn():
+        import tempfile
+
+        # 用文件库而非 :memory:：DDL 后要另开连接读 sqlite_master，
+        # 同一连接的未提交状态会干扰断言（且 init_fts 内部会 commit）
+        fd, path = tempfile.mkstemp(suffix=".db")
+        import os
+
+        os.close(fd)
+        return sqlite3.connect(path), path
+
+    def test_plain_table_with_same_columns_is_detected(self, caplog):
+        """坏态一：同名普通表（列名与正确版一致）→ 必须判不可用，不得假成功。"""
+        import logging
+        import os
+
+        conn, path = self._raw_conn()
+        try:
+            conn.execute("CREATE TABLE memory_fts (memory_id TEXT, content TEXT)")
+            conn.commit()
+            with caplog.at_level(logging.ERROR, logger="lantai"):
+                ok = init_fts(conn)
+            assert ok is False, (
+                "普通同名表会让 CREATE ... IF NOT EXISTS 静默 no-op，"
+                "此后每次查询 no such column——必须如实判不可用"
+            )
+            assert any("memory_fts" in r.getMessage() for r in caplog.records), (
+                "须留痕点明是哪张表不可用"
+            )
+        finally:
+            conn.close()
+            os.unlink(path)
+
+    def test_wrong_tokenizer_is_detected(self, caplog):
+        """坏态二：FTS5 但 tokenize 不是 trigram → 必须判不可用（中文召回已废）。"""
+        import logging
+        import os
+
+        conn, path = self._raw_conn()
+        try:
+            conn.execute(
+                "CREATE VIRTUAL TABLE memory_fts USING fts5("
+                "memory_id UNINDEXED, content, tokenize='unicode61')"
+            )
+            conn.commit()
+            with caplog.at_level(logging.ERROR, logger="lantai"):
+                ok = init_fts(conn)
+            assert ok is False, "分词器不对时中文子串召回已永久失效，不得报成功"
+        finally:
+            conn.close()
+            os.unlink(path)
+
+    def test_creation_failure_returns_false_and_logs(self, caplog):
+        """坏态三：建表直接抛异常（如 FTS5 未编译进 sqlite）→ False + error 留痕。
+
+        注意：`sqlite3.Connection.execute` 是只读槽位，patch.object 会在 teardown
+        时炸 AttributeError。故用薄包装对象注入失败（真实连接仍在底层）。
+        """
+        import logging
+        import os
+
+        conn, path = self._raw_conn()
+
+        class BoomConn:
+            """前两次 execute 正常（PRAGMA + 无 DROP），CREATE 那一次抛。"""
+
+            def __init__(self, inner):
+                self._inner = inner
+                self._n = 0
+
+            def execute(self, *a, **kw):
+                self._n += 1
+                if self._n >= 2:  # 第 1 次 PRAGMA table_info，第 2 次即 CREATE
+                    raise sqlite3.OperationalError("no such module: fts5")
+                return self._inner.execute(*a, **kw)
+
+            def commit(self):
+                return self._inner.commit()
+
+        try:
+            with caplog.at_level(logging.ERROR, logger="lantai"):
+                ok = init_fts(BoomConn(conn))
+            assert ok is False
+            errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+            assert errors, "建表失败必须 error 留痕（不是一条滚过去的 warning）"
+        finally:
+            conn.close()
+            os.unlink(path)
+
+    def test_healthy_db_returns_true_and_no_error(self, caplog):
+        """回归护栏：健康库 → True，且不误报 error。"""
+        import logging
+        import os
+
+        conn, path = self._raw_conn()
+        try:
+            with caplog.at_level(logging.ERROR, logger="lantai"):
+                ok = init_fts(conn)
+            assert ok is True
+            assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        finally:
+            conn.close()
+            os.unlink(path)
+
+    def test_legacy_schema_still_recreated(self):
+        """既有行为不变：无 memory_id 列的旧表仍被 DROP 重建，最终可用。"""
+        import os
+
+        conn, path = self._raw_conn()
+        try:
+            conn.execute("CREATE TABLE memory_fts (foo TEXT)")
+            conn.commit()
+            ok = init_fts(conn)
+            assert ok is True
+            row = conn.execute("SELECT sql FROM sqlite_master WHERE name='memory_fts'").fetchone()
+            assert "trigram" in (row[0] or "")
+        finally:
+            conn.close()
+            os.unlink(path)
+
+    def test_idempotent_second_call_still_true(self):
+        """幂等：已初始化的库再调一次仍 True（36 个测试调用点的前提）。"""
+        import os
+
+        conn, path = self._raw_conn()
+        try:
+            assert init_fts(conn) is True
+            assert init_fts(conn) is True
+        finally:
+            conn.close()
+            os.unlink(path)
+
+
+class TestHealthDeepReportsFts:
+    """`/health/deep` 必须单独探 FTS，不得只查 sqlite/chromadb 就报 ok。
+
+    背景：FTS 坏的表现是「检索结果变少」——与 sqlite/chromadb 探活完全正交。
+    原 `/health/deep` 三项全过也照样返回 ok:true，用户据此认为系统健康
+    （票 .scratch/fts-availability/01）。
+    """
+
+    @staticmethod
+    def _client(engine):
+        """内存库 TestClient（db.get_session 指向 engine）。"""
+        from fastapi.testclient import TestClient
+
+        from lantai.api.app import app
+
+        return TestClient(app)
+
+    def test_healthy_fts_reports_ok(self, engine, monkeypatch):
+        """回归护栏：FTS 正常 → checks["fts"] == "ok"，整体 ok 不变 false。"""
+        with (
+            patch.object(db_module, "get_session", lambda: Session(engine)),
+            patch("lantai.storage.vector_store.ChromaVectorStore"),
+        ):
+            client = self._client(engine)
+            resp = client.get("/health/deep")
+        data = resp.json()
+        assert data["checks"]["fts"] == "ok", f"实得 {data['checks'].get('fts')}"
+
+    def test_broken_fts_makes_deep_health_fail(self):
+        """坏态：memory_fts 不是 FTS5/trigram 表 → fts 项 fail 且整体 ok 为 False。"""
+        import os
+        import tempfile
+
+        # 自建库：先塞一张同名普通表，再建其余表（模拟真实坏库）
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        bad_engine = create_engine(
+            f"sqlite:///{path}",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        try:
+            SQLModel.metadata.create_all(bad_engine)
+            raw = bad_engine.raw_connection()
+            raw.execute("DROP TABLE IF EXISTS memory_fts")
+            raw.execute("CREATE TABLE memory_fts (memory_id TEXT, content TEXT)")
+            raw.commit()
+
+            with (
+                patch.object(db_module, "get_session", lambda: Session(bad_engine)),
+                patch("lantai.storage.vector_store.ChromaVectorStore"),
+            ):
+                client = self._client(bad_engine)
+                data = client.get("/health/deep").json()
+
+            assert data["checks"]["fts"].startswith("fail"), (
+                f"FTS 已坏却报 ok——正是本票要堵的静默链；实得 {data['checks']['fts']}"
+            )
+            assert data["ok"] is False, "任一子项 fail 则整体不得 ok"
+        finally:
+            bad_engine.dispose()
+            os.unlink(path)

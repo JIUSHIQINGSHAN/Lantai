@@ -12,8 +12,23 @@ import sqlite3
 from lantai.core.logger import logger
 
 
-def init_fts(conn: sqlite3.Connection):
-    """初始化 FTS5 虚拟表；自动迁移旧 schema。"""
+def init_fts(conn: sqlite3.Connection) -> bool:
+    """初始化 FTS5 虚拟表；自动迁移旧 schema。返回词汇召回通道是否真正可用。
+
+    「可用」的判据不能只看 CREATE 没报错——`CREATE VIRTUAL TABLE IF NOT EXISTS`
+    在目标已存在时是**静默 no-op**：SQLite 不报错，哪怕已存在的是张普通表、
+    或分词器不对的 FTS5 表（列名检查也照样过）。实测两种坏态：
+
+    - 同名普通表：日志仍打 `initialized`，之后每次查询
+      `no such column: memory_fts` → 词汇召回整体消失；
+    - FTS5 但 tokenize≠trigram：bm25 查询照样成功，只是中文子串召回
+      永久失效，**任何一层都不报错**。
+
+    故 CREATE 之后必须回读 sqlite_master 的真实定义核验（票 .scratch/fts-availability/01）。
+    核验不过只报错、不抛异常、不自动重建：抛异常会一路传到 lifespan 让整个
+    服务起不来（而这本是「降级但可用」——SQLite 与向量召回仍工作），DROP 重建
+    则可能误删别人的表。宁 miss 不脏写：如实报告，交人处置。
+    """
     try:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(memory_fts)").fetchall()]
         if cols and "memory_id" not in cols:
@@ -27,9 +42,25 @@ def init_fts(conn: sqlite3.Connection):
             )
         """)
         conn.commit()
-        logger.info("FTS5 + trigram initialized")
     except Exception as e:
-        logger.warning("FTS5 init failed: %s", e)
+        # 升格为 error：这一行滚过日志后，每次查询都会各自报一次
+        # `no such table: memory_fts`，而现象只是「结果变少」。
+        logger.error("FTS5 init failed, lexical recall unavailable: %s", e, exc_info=True)
+        return False
+
+    # IF NOT EXISTS 跳过了类型/分词器校验，此处如实核验后才敢声称成功
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'memory_fts'").fetchone()
+    ddl = (row[0] or "").lower() if row else ""
+    if not row or "fts5" not in ddl or "trigram" not in ddl:
+        logger.error(
+            "memory_fts 存在但并非预期的 FTS5/trigram 表（实际定义 %r）；"
+            "词汇召回已降级——中文子串匹配可能全部失效，需人工修复",
+            (row[0] if row else None),
+        )
+        return False
+
+    logger.info("FTS5 + trigram initialized")
+    return True
 
 
 def sync_fts(session, memory_id: str, content: str | None) -> None:
