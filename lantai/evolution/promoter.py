@@ -20,6 +20,14 @@ from lantai.retrieval.hybrid import delete_memory_item, index_memory_item
 from lantai.storage import db
 from lantai.storage.fts import sync_fts
 
+# 提案类型白名单（票据 `.scratch/proposal-type-whitelist/`）：
+# apply_proposal 的末行兜底 `elif proposal_type == "add" or not existing:`
+# 会吞掉任何未知类型——新建记忆 + trigger 记 gate + 多出 supports 边，
+# 而提案本想做的事一件没做。故类型必须显式枚举，不认识的即拒绝。
+# consolidation 由 consolidation_service 直写产生，必须含；
+# 与 reflector._VALID_TYPES 的差异（后者无 consolidation）是两者产出面不同。
+VALID_PROPOSAL_TYPES = {"add", "update", "merge", "deprecate", "consolidation"}
+
 
 def _make_checkpoint(session, mem: MemoryItem, before: dict, proposal_id: str, trigger: str):
     session.add(
@@ -101,6 +109,24 @@ def apply_proposal(proposal_id: str) -> dict:
         key = patch.get("key")
         content = patch.get("content", "")
         lane = patch.get("lane", settings.DEFAULT_LANE)
+
+        # ── 类型白名单硬门 ──────────────────────────────────────────
+        # 不认识的类型一律拒绝，**不落入下方 add 兜底分支**：那会新建一条
+        # 平行记忆、trigger 记 gate、多出 supports 边与 Evidence，而提案
+        # 本想做的事（折叠/拆分/关联……）一件没做——脏写且不可逆。
+        # 与下方目标寻址硬门同构：显式 REJECTED + 留痕，宁 miss 不脏写。
+        if prop.proposal_type not in VALID_PROPOSAL_TYPES:
+            reason = f"unknown proposal_type: {prop.proposal_type!r}"
+            logger.warning(
+                "提案 %s apply 拒绝：%s（合法类型 %s，宁 miss 不脏写，不降级为 add）",
+                prop.id,
+                reason,
+                sorted(VALID_PROPOSAL_TYPES),
+            )
+            out = _reject_proposal(prop, reason)
+            s.add(prop)
+            s.commit()
+            return out
 
         # ── 目标寻址硬门（update / merge / deprecate）──────────────────
         # add 本就不该有目标；consolidation 的主记忆是新建实体、碎片由 evidence_ids

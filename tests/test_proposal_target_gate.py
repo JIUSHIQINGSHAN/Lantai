@@ -521,3 +521,139 @@ class TestProposerTargetResolution:
             prop = propose_from_candidate("cand_tg", {"decision": "promote_semantic"})
 
         assert prop is None, "archived 目标不得被寻址（不复活、不改写非 active 记忆）"
+
+
+class TestProposalTypeWhitelist:
+    """未知 proposal_type 必须被拒，不得落入 add 分支新建平行记忆。
+
+    背景：`apply_proposal` 末行 `elif prop.proposal_type == "add" or not existing:`
+    的兜底会吞掉任何未知类型——新建记忆 + trigger 记 gate + 多出 supports 边，
+    而提案本想做的事一件没做。`proposer` 侧同样无白名单（reflector 侧有：
+    `_VALID_TYPES` + `:250` 的 continue），两条产出链路一条校验一条不校验。
+    """
+
+    BOGUS_TYPES = ["split", "link", "refine", "Add", "ADD", "updates", ""]
+
+    @staticmethod
+    def _seed_cand(engine, cand_id="cand_tg"):
+        from lantai.models.tables import MemoryCandidate
+
+        with Session(engine) as s:
+            s.add(
+                MemoryCandidate(
+                    id=cand_id,
+                    document_id=f"doc_{cand_id}",
+                    summary="候选摘要",
+                    claims=["声明"],
+                    actions=[],
+                    lane="general",
+                    status="new",
+                )
+            )
+            s.commit()
+
+    @pytest.mark.parametrize("bogus", BOGUS_TYPES)
+    def test_unknown_type_refuses_without_creating(self, param_env, bogus):
+        """未知类型 → 显式拒绝 + 零新 MemoryItem（禁落入 add 分支）。"""
+        sf, _ = param_env
+        with sf() as s:
+            s.add(_mem("mem_seed", "种子键", "种子内容"))
+            s.add(_prop("prop_bogus", bogus, "某个键", "提案正文"))
+            s.commit()
+
+            res = apply_proposal("prop_bogus")
+
+        assert res["ok"] is False, f"未知提案类型 {bogus!r} 必须显式拒绝，不得落入 add 分支"
+        reason = res["reason"]
+        assert "type" in reason.lower() or "类型" in reason, (
+            f"拒绝理由须点明是类型问题，实得: {reason}"
+        )
+
+        with sf() as s:
+            rows = s.exec(select(MemoryItem)).all()
+            assert len(rows) == 1, f"拒绝后不得新建 MemoryItem，实得 {[r.id for r in rows]}"
+            assert rows[0].id == "mem_seed"
+            p = s.get(MemoryProposal, "prop_bogus")
+            assert p.status == ProposalStatus.REJECTED
+            assert p.decision_reason, "拒绝必须留痕（宁 miss 不脏写）"
+            assert p.decided_at is not None
+
+    @pytest.mark.parametrize("ptype", ["add", "update", "merge", "deprecate"])
+    def test_known_types_not_refused_by_whitelist(self, param_env, ptype):
+        """白名单闸不得误伤合法类型（回归护栏：行为与设闸前一致）。
+
+        add 正常新建；update/merge/deprecate 的目标在本用例中可唯一寻址，
+        故同样应成功——证明拒绝只发生在类型不认识时，而非闸门本身写错。
+        """
+        sf, _ = param_env
+        with sf() as s:
+            s.add(_mem("mem_known", "已知键", "已知内容"))
+            s.add(
+                _prop(
+                    "prop_known",
+                    ptype,
+                    "已知键",
+                    "新正文",
+                    target_memory_id="mem_known",
+                    evidence_ids=[],
+                )
+            )
+            s.commit()
+
+            res = apply_proposal("prop_known")
+
+        assert res.get("ok") is True, f"合法类型 {ptype} 不得被白名单误伤：{res}"
+        assert "type" not in str(res.get("reason", "")).lower() or res["ok"]
+
+    def test_consolidation_still_reaches_its_branch(self, param_env):
+        """consolidation 是白名单成员（consolidation_service 直写），不得被拒。"""
+        sf, _ = param_env
+        with sf() as s:
+            s.add(_mem("mem_master_src", "来源键", "来源内容"))
+            s.add(
+                _prop(
+                    "prop_cons",
+                    "consolidation",
+                    "主记忆键",
+                    "主记忆正文",
+                    evidence_ids=["mem_master_src"],
+                )
+            )
+            s.commit()
+
+            res = apply_proposal("prop_cons")
+
+        assert res.get("ok") is True, f"consolidation 不得被白名单拒绝：{res}"
+        assert res.get("folded") == 1, "consolidation 应折叠 1 条碎片（未被降级为 add）"
+
+    @pytest.mark.parametrize("bogus", ["split", "link", "Add"])
+    def test_proposer_discards_unknown_type(self, proposer_env, bogus):
+        """proposer 侧：LLM 返回未知类型 → 整条不生成（不降级为 add）。"""
+        from unittest.mock import patch
+
+        from lantai.evolution.proposer import propose_from_candidate
+
+        self._seed_cand(proposer_env)
+        with patch(
+            "lantai.evolution.proposer.chat_json",
+            return_value={
+                "proposal_type": bogus,
+                "target_key": "",
+                "new_content": "某些内容",
+                "memory_type": "semantic",
+                "reason": "x",
+                "confidence": 0.8,
+            },
+        ):
+            prop = propose_from_candidate("cand_tg", {"decision": "promote_semantic"})
+
+        assert prop is None, f"未知提案类型 {bogus!r} 不得生成提案（宁 miss 不脏写，不降级为 add）"
+
+        with Session(proposer_env) as s:
+            from lantai.models.tables import MemoryCandidate
+            from lantai.models.tables import MemoryProposal as MP
+
+            rows = s.exec(select(MP)).all()
+            assert rows == [], f"未知类型不得落库任何提案，实得 {[r.id for r in rows]}"
+            cand = s.get(MemoryCandidate, "cand_tg")
+            assert cand.status == "gated", f"候选应转 gated，实得 {cand.status}"

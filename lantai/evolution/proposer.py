@@ -2,12 +2,16 @@ from sqlmodel import select
 
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
+from lantai.evolution.promoter import VALID_PROPOSAL_TYPES
 from lantai.llm.client import chat_json
 from lantai.llm.prompts import PROPOSAL_SYS
 from lantai.models.enums import ProposalStatus
 from lantai.models.tables import MemoryCandidate, MemoryItem, MemoryProposal
 from lantai.services.prompt_service import get_prompt
 from lantai.storage import db
+
+# 提案类型白名单：单一来源在 promoter.VALID_PROPOSAL_TYPES（apply 侧是最终
+# 执行者，类型合法性由它定义）。此处复用而非另立一份，避免两处漂移。
 
 
 def _resolve_target_id(session, target_key: str) -> str:
@@ -67,6 +71,22 @@ def propose_from_candidate(candidate_id: str, gate_result: dict) -> MemoryPropos
             }
 
         ptype = data.get("proposal_type", "add")
+        # 类型白名单（票据 `.scratch/proposal-type-whitelist/`）：LLM 自由文本
+        # 不构成约束——模型输出 split/link/大小写变体时，apply 侧兜底分支会把
+        # 它当 add 执行（新建平行记忆 + 多出 supports 边，而本意一件没做）。
+        # 对齐 reflector.propose_from_reflection 的 `_VALID_TYPES` + continue 范式。
+        if ptype not in VALID_PROPOSAL_TYPES:
+            logger.warning(
+                "候选 %s 的提案丢弃：proposal_type %r 不在白名单 %s"
+                "（宁 miss 不脏写，不降级为 add）",
+                candidate_id,
+                ptype,
+                sorted(VALID_PROPOSAL_TYPES),
+            )
+            cand.status = "gated"
+            s.add(cand)
+            s.commit()
+            return None
         # 目标寻址（票据 `.scratch/proposal-target-gap/issues/01-*.md`）：LLM 按
         # PROPOSAL_SYS 返回的是 target_key，而 MemoryProposal 寻址读的是
         # target_memory_id——不在此处解析则非 add 提案的 target 恒为 NULL，
