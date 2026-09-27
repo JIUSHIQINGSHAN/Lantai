@@ -100,6 +100,15 @@ def review_candidate(candidate_id: str, approve: bool, reason: str = "") -> dict
         "reason": reason or "approved by user review",
     }
     prop = propose_from_candidate(candidate_id, gate_result)
+    if prop is None:
+        # 目标不可寻址（update/merge/deprecate 的 target_key 解析不到唯一 active
+        # 记忆）：proposer 已留痕丢弃。如实回报，不伪造 proposal_id，
+        # 不降级为 add（那会新建平行记忆）。
+        return {
+            "ok": False,
+            "error": "proposal discarded: target memory not uniquely resolvable",
+            "candidate_status": "gated",
+        }
     return {
         "ok": True,
         "proposal_id": prop.id,

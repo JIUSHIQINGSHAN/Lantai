@@ -1,6 +1,7 @@
 from sqlmodel import select
 
 from lantai.core.ids import new_id
+from lantai.core.logger import logger
 from lantai.llm.client import chat_json
 from lantai.llm.prompts import PROPOSAL_SYS
 from lantai.models.enums import ProposalStatus
@@ -9,7 +10,28 @@ from lantai.services.prompt_service import get_prompt
 from lantai.storage import db
 
 
-def propose_from_candidate(candidate_id: str, gate_result: dict) -> MemoryProposal:
+def _resolve_target_id(session, target_key: str) -> str:
+    """把 LLM 返回的 target_key 解析为**唯一** active MemoryItem 的 id。
+
+    空 / 解析不到 / 多义（`MemoryItem.key` 无 unique 约束）一律返回 ""，
+    由调用方整条丢弃提案——不在这一层猜（猜即脏写）。
+    """
+    if not target_key:
+        return ""
+    matches = session.exec(
+        select(MemoryItem).where(MemoryItem.key == target_key, MemoryItem.status == "active")
+    ).all()
+    return matches[0].id if len(matches) == 1 else ""
+
+
+def propose_from_candidate(candidate_id: str, gate_result: dict) -> MemoryProposal | None:
+    """候选 → 提案（LLM 产出 + 目标寻址 + 落库）。
+
+    返回 `None` 表示**整条丢弃**：update/merge/deprecate 提案的 `target_key`
+    解析不到唯一 active 记忆（空/无匹配/多义）。调用方须判空——
+    宁 miss 不脏写，不降级为 add（那会新建平行记忆）。
+    详见 `.scratch/proposal-target-gap/issues/01-*.md`。
+    """
     with db.get_session() as s:
         cand = s.get(MemoryCandidate, candidate_id)
         related = s.exec(select(MemoryItem).where(MemoryItem.status == "active")).all()
@@ -43,9 +65,35 @@ def propose_from_candidate(candidate_id: str, gate_result: dict) -> MemoryPropos
                 "description": (cand.summary or "")[:200],
                 "steps": cand.actions,
             }
+
+        ptype = data.get("proposal_type", "add")
+        # 目标寻址（票据 `.scratch/proposal-target-gap/issues/01-*.md`）：LLM 按
+        # PROPOSAL_SYS 返回的是 target_key，而 MemoryProposal 寻址读的是
+        # target_memory_id——不在此处解析则非 add 提案的 target 恒为 NULL，
+        # 下游 promoter 只能拿 key 字符串猜（实证真实库 72 条非 add 提案中 51 条
+        # 无 target，43% 因此新建平行记忆）。
+        target_id = ""
+        if ptype in ("update", "merge", "deprecate"):
+            target_id = _resolve_target_id(s, data.get("target_key") or "")
+            if not target_id:
+                # 解析不到唯一 active 目标 → 整条不生成（对齐 reflector.
+                # propose_from_reflection 的 continue 范式，宁 miss 不脏写）。
+                # **不降级为 add**：那正是平行记忆脏写的成因。
+                logger.warning(
+                    "候选 %s 的 %s 提案丢弃：target_key %r 解析不到唯一 active 记忆"
+                    "（宁 miss 不脏写，不降级为 add）",
+                    candidate_id,
+                    ptype,
+                    data.get("target_key") or "",
+                )
+                cand.status = "gated"
+                s.add(cand)
+                s.commit()
+                return None
         prop = MemoryProposal(
             id=new_id("prop"),
-            proposal_type=data.get("proposal_type", "add"),
+            proposal_type=ptype,
+            target_memory_id=target_id or None,
             candidate_id=candidate_id,
             evidence_ids=[cand.document_id],
             # 来源链继承（v022 票据 01）：出身随候选显式流动，不靠隐式通道

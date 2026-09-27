@@ -30,6 +30,11 @@ def run_evolve_once():
         # 落地实战教训：旧记忆是错误提取（1116GB），新信息正确（16GB）——
         # 系统必须能"以新纠旧"，而不是把正确的纠正当矛盾丢掉。
         prop = propose_from_candidate(cand.id, result)
+        if prop is None:
+            # 目标不可寻址（update/merge/deprecate 的 target_key 解析不到唯一
+            # active 记忆）——proposer 已留痕丢弃，此处继续下一个候选即可。
+            # 不降级为 add：那会新建平行记忆（新旧矛盾脏写）。
+            continue
 
         # 自动应用规则：置信度足够高且无强冲突 → 自动 apply
         if prop.confidence >= 0.7 and not prop.conflict_ids:

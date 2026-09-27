@@ -310,6 +310,11 @@ def run_staged_eval(*, extract_fn=None, top_k: int = 5) -> dict:
             stages["store"]["samples"] += 1
             try:
                 prop = propose_from_candidate(item["cand_id"], item["gate_res"])
+                if prop is None:
+                    # 目标不可寻址：proposer 留痕丢弃（宁 miss 不脏写）。
+                    # 计为 store 段缺口而非崩溃——样本本就不该入库。
+                    _bucket(stages["store"], "store_target_unresolved")
+                    continue
                 applied = apply_proposal(prop.id)
                 if not isinstance(applied, dict) or not applied.get("ok"):
                     _bucket(stages["store"], "store_apply_error")

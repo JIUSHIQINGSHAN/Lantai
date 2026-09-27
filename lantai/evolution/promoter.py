@@ -35,6 +35,60 @@ def _make_checkpoint(session, mem: MemoryItem, before: dict, proposal_id: str, t
     )
 
 
+def _reject_proposal(prop: MemoryProposal, reason: str, detail: dict | None = None) -> dict:
+    """提案落终态 REJECTED（含 decided_at 与 decision_reason）并提交，返回拒绝结果。
+
+    口径同 ADR-0050 决策 3 的 stale 硬门：apply 若仅早退而不改状态，
+    decide_proposal 先置的 APPROVED 将永留，evolve_worker.run_pending_proposals
+    （专捞 APPROVED）每轮重试每次失败＝livelock。故拒绝必须是**终态落库**。
+    decided_at（ADR-0053）：拒绝即系统裁决时刻，与人工 reject 同口径。
+    """
+    prop.status = ProposalStatus.REJECTED
+    prop.decision_reason = reason
+    prop.decided_at = utcnow()
+    return {"ok": False, "reason": reason, "detail": detail or {}}
+
+
+def _resolve_update_target(s, prop: MemoryProposal, key: str | None) -> tuple[object, str]:
+    """为 update / merge / deprecate 解析**唯一** active 目标。
+
+    返回 (existing_or_None, refusal_reason)。refusal_reason 非空即须拒绝。
+
+    寻址口径（票据 `.scratch/proposal-target-gap/issues/02-*.md`，实证真实开发库
+    72 条非 add 提案中 43% 目标寻址失败后静默落入 add 分支新建平行记忆、
+    24% key 多义时任取其一）：
+    1. `target_memory_id` 指向 active 记忆 → 用之（reflect 路径的正规来源）；
+    2. 否则按 `key` 查 active 记忆：**恰好一条** → 用之，并回填
+       `prop.target_memory_id`（留痕本次寻址，供审计追溯）；
+    3. 零条 → 拒绝「目标不存在」。多义 → 拒绝并列全部候选 id 交人工裁决，
+       **不任取其一**（`MemoryItem.key` 无 unique 约束，`.first()` 无 order_by
+       取哪条由执行计划决定，属静默改错目标）。
+
+    宁 miss 不脏写：猜不中就不写，绝不降级为 add 新建平行记忆。
+    """
+    if prop.target_memory_id:
+        existing = s.get(MemoryItem, prop.target_memory_id)
+        if existing is not None and existing.status == "active":
+            return existing, ""
+        return None, "target memory not active"
+
+    if not key:
+        return None, "no target: neither target_memory_id nor proposed_patch.key"
+
+    candidates = s.exec(
+        select(MemoryItem).where(MemoryItem.key == key, MemoryItem.status == "active")
+    ).all()
+    if len(candidates) == 1:
+        # key 回退解析成功：回填 target 留痕（原字段为空即「未记录」的事实状态，
+        # 此处是系统解析结果而非猜测，故如实补记）
+        prop.target_memory_id = candidates[0].id
+        s.add(prop)
+        return candidates[0], ""
+    if len(candidates) > 1:
+        return None, f"ambiguous target: key {key!r} matches {len(candidates)} active memories"
+    return None, f"target not found: no active memory with key {key!r}"
+
+
 def apply_proposal(proposal_id: str) -> dict:
     with db.get_session() as s:
         prop = s.get(MemoryProposal, proposal_id)
@@ -48,15 +102,43 @@ def apply_proposal(proposal_id: str) -> dict:
         content = patch.get("content", "")
         lane = patch.get("lane", settings.DEFAULT_LANE)
 
+        # ── 目标寻址硬门（update / merge / deprecate）──────────────────
+        # add 本就不该有目标；consolidation 的主记忆是新建实体、碎片由 evidence_ids
+        # 寻址，均不经此门。其余三类解析不到唯一 active 目标即显式拒绝，
+        # 不落入下方 add 分支新建平行记忆（新旧矛盾并存即脏写）。
+        needs_target = prop.proposal_type in ("update", "merge", "deprecate")
         existing = None
-        if prop.target_memory_id:
-            existing = s.get(MemoryItem, prop.target_memory_id)
-            if existing and existing.status != "active":
-                existing = None
-        if existing is None and key:
-            existing = s.exec(
-                select(MemoryItem).where(MemoryItem.key == key, MemoryItem.status == "active")
-            ).first()
+        if needs_target:
+            existing, refusal = _resolve_update_target(s, prop, key)
+            if refusal:
+                detail = None
+                if refusal.startswith("ambiguous target"):
+                    cands = s.exec(
+                        select(MemoryItem).where(
+                            MemoryItem.key == key, MemoryItem.status == "active"
+                        )
+                    ).all()
+                    detail = {"candidates": [m.id for m in cands]}
+                logger.warning(
+                    "提案 %s apply 拒绝：%s（type=%s，宁 miss 不脏写，不降级为 add）",
+                    prop.id,
+                    refusal,
+                    prop.proposal_type,
+                )
+                out = _reject_proposal(prop, refusal, detail)
+                s.add(prop)
+                s.commit()
+                return out
+        else:
+            # add / consolidation 保持原有寻址（target 命中或 key 回退，取首个）
+            if prop.target_memory_id:
+                existing = s.get(MemoryItem, prop.target_memory_id)
+                if existing and existing.status != "active":
+                    existing = None
+            if existing is None and key:
+                existing = s.exec(
+                    select(MemoryItem).where(MemoryItem.key == key, MemoryItem.status == "active")
+                ).first()
 
         emb = embed([content])[0] if content else []
         # 分支附加返回（ADR-0050：evidence 三分缺口记入 apply 返回与日志）；其余分支为空
