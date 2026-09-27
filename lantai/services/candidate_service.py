@@ -29,15 +29,66 @@ def enqueue_rejected(candidate_id: str) -> None:
         s.commit()
 
 
-def list_pending_candidates(limit: int = 50) -> dict:
-    """待审候选列表：按 review_due_at 升序（最紧迫在前）。"""
+def _viewer_of(principal) -> str:
+    """读侧收敛到的 user_id（票 .scratch/readside-gaps/02）。
+
+    口径同 `memory_service.get_core_memory` / `work_item_service._viewer_of`：
+    `principal=None`（内部 CLI/worker/MCP）与空 user_id 都收敛到
+    `"default"`，与 `auth.py` DEV MODE 同值，不新造「默认属主」概念。
+    """
+    return (
+        (getattr(principal, "user_id", None) or "default") if principal is not None else "default"
+    )
+
+
+def _owner_scope(principal):
+    """归属过滤条件：非 admin 只见自己的候选；admin/system 全权（返回 None）。
+
+    同 `work_item_service._owner_scope` 口径。**NULL 属主老行一律不可见**：
+    真实库 37 行 memorycandidate 全部 user_id='default'（实测），若把 NULL
+    当"人人可读"，历史候选会漏给任意登录用户。
+    """
+    if principal is not None and bool(getattr(principal, "is_admin", False)):
+        return None
+    return MemoryCandidate.user_id == _viewer_of(principal)
+
+
+def _ensure_can_adjudicate(principal, candidate: MemoryCandidate) -> None:
+    """裁决类操作的归属校验（票 .scratch/readside-gaps/02）。
+
+    **裁决 = 破坏性操作**，同票 ownership-gaps/05 口径，复用
+    `acl.ensure_can_delete` 单一真源（不新造判据）。此前 A 能对 B 的候选
+    review/defer/refine——「宁 miss 不脏写」被击穿：低置信度候选本该由
+    属主裁决，A 一条 `approve:false` 就永久驳回，B 不会收到任何通知。
+
+    principal=None 仅限内部调用（CLI/worker/MCP），不校验——同前两票口径，
+    硬造校验只会把内部流程修废。
+    """
+    if principal is None:
+        return
+    from lantai.core.acl import ensure_can_delete
+
+    ensure_can_delete(
+        principal,
+        resource_user_id=candidate.user_id,
+        resource_tenant_id=candidate.tenant_id,
+        lane=candidate.lane,
+    )
+
+
+def list_pending_candidates(limit: int = 50, *, principal=None) -> dict:
+    """待审候选列表：按 review_due_at 升序（最紧迫在前）。
+
+    归属收窄（票 .scratch/readside-gaps/02）：此前全表捞，`/candidates/pending`
+    把任何用户的待审正文吐给任何持有 API key 的人——而这个端点正是
+    AGENTS.md「宁 miss 不脏写」的裁决入口。
+    """
     with db.get_session() as s:
-        rows = s.exec(
-            select(MemoryCandidate)
-            .where(MemoryCandidate.status == "pending_review")
-            .order_by(MemoryCandidate.review_due_at.asc())
-            .limit(limit)
-        ).all()
+        stmt = select(MemoryCandidate).where(
+            MemoryCandidate.status == "pending_review",
+            *([_owner_scope(principal)] if _owner_scope(principal) is not None else []),
+        )
+        rows = s.exec(stmt.order_by(MemoryCandidate.review_due_at.asc()).limit(limit)).all()
         return {"candidates": [r.model_dump(mode="json") for r in rows]}
 
 
@@ -64,12 +115,16 @@ def _clear_defer_state(candidate: MemoryCandidate) -> None:
     candidate.defer_reason = ""
 
 
-def review_candidate(candidate_id: str, approve: bool, reason: str = "") -> dict:
+def review_candidate(candidate_id: str, approve: bool, reason: str = "", *, principal=None) -> dict:
     """人工审核候选。
 
     approve：用户已裁决，只创建 pending 提案（不再重复走 gate）；
              最终写入必须再次批准提案。
     reject：标记归档（rejected），清空 review_due_at。
+
+    归属校验（票 .scratch/readside-gaps/02）：A 不能替 B 裁决。校验放在
+    **service 层**而非路由——`terminal/merge`、worker 等内部路径也会走到
+    裁决，放路由只堵一个入口（同票 ownership-gaps/02/05 的既定决定）。
     """
     with db.get_session() as s:
         c = s.get(MemoryCandidate, candidate_id)
@@ -77,6 +132,7 @@ def review_candidate(candidate_id: str, approve: bool, reason: str = "") -> dict
             raise ValueError("candidate not found")
         if c.status != "pending_review":
             raise ValueError(f"candidate not pending (status={c.status})")
+        _ensure_can_adjudicate(principal, c)
 
     if not approve:
         if not (reason or "").strip():
@@ -119,9 +175,17 @@ def review_candidate(candidate_id: str, approve: bool, reason: str = "") -> dict
 
 
 def defer_candidate(
-    candidate_id: str, days: int, reason: str = "", expected_review_due_at: datetime | None = None
+    candidate_id: str,
+    days: int,
+    reason: str = "",
+    expected_review_due_at: datetime | None = None,
+    *,
+    principal=None,
 ) -> dict:
-    """延期 3/7 天；最长不超过首次创建后 30 天，保留一次撤销所需旧值。"""
+    """延期 3/7 天；最长不超过首次创建后 30 天，保留一次撤销所需旧值。
+
+    归属校验（票 .scratch/readside-gaps/02）：A 不能改 B 候选的到期日。
+    """
     if days not in (3, 7):
         raise ValueError("days must be 3 or 7")
     with db.get_session() as s:
@@ -130,6 +194,7 @@ def defer_candidate(
             raise ValueError("candidate not found")
         if c.status != "pending_review":
             raise CandidateStateConflict("candidate state changed; refresh and retry")
+        _ensure_can_adjudicate(principal, c)
         if expected_review_due_at is not None and not _same_time(
             c.review_due_at, expected_review_due_at
         ):
@@ -157,14 +222,23 @@ def defer_candidate(
         }
 
 
-def undo_candidate_defer(candidate_id: str, expected_review_due_at: datetime | None = None) -> dict:
-    """撤销最近一次延期；状态或截止时间变化时拒绝覆盖。"""
+def undo_candidate_defer(
+    candidate_id: str,
+    expected_review_due_at: datetime | None = None,
+    *,
+    principal=None,
+) -> dict:
+    """撤销最近一次延期；状态或截止时间变化时拒绝覆盖。
+
+    归属校验（票 .scratch/readside-gaps/02）：同 defer。
+    """
     with db.get_session() as s:
         c = s.get(MemoryCandidate, candidate_id)
         if not c:
             raise ValueError("candidate not found")
         if c.status != "pending_review":
             raise CandidateStateConflict("candidate state changed; refresh and retry")
+        _ensure_can_adjudicate(principal, c)
         if expected_review_due_at is not None and not _same_time(
             c.review_due_at, expected_review_due_at
         ):

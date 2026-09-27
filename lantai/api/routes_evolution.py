@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from lantai.core.auth import get_current_user
 from lantai.models.schemas import FeedbackReq, ProposalDecisionReq
 from lantai.services.evolution_service import (
     decide_proposal,
@@ -37,14 +38,23 @@ def _ok_or_raise(result: dict) -> dict:
 
 
 @router.get("/proposals")
-def list_proposals_route(status: str = "pending", limit: int = 50):
-    return list_proposals(status, limit)
+def list_proposals_route(status: str = "pending", limit: int = 50, ctx=Depends(get_current_user)):
+    """提案列表。
+
+    归属（票 .scratch/readside-gaps/02）：此前不带身份全表捞，`reason`
+    常含记忆正文，任何登录用户都能读到别人的待决内容。
+    """
+    return list_proposals(status, limit, principal=ctx)
 
 
 @router.post("/proposals/{proposal_id}/decide")
-def decide_proposal_route(proposal_id: str, req: ProposalDecisionReq):
+def decide_proposal_route(
+    proposal_id: str, req: ProposalDecisionReq, ctx=Depends(get_current_user)
+):
+    """裁决提案。归属校验在 service 层（票 readside-gaps/02）：approve 会
+    直接 `apply_proposal` 写库，A 点批准就等于能往库里塞内容。"""
     try:
-        return _ok_or_raise(decide_proposal(proposal_id, req))
+        return _ok_or_raise(decide_proposal(proposal_id, req, principal=ctx))
     except RuntimeError as e:
         raise HTTPException(409, str(e)) from e
     except ValueError as e:

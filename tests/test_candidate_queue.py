@@ -26,6 +26,10 @@ def _make_cand(s, cand_id: str, **kw):
     c = MemoryCandidate(
         id=cand_id,
         document_id=kw.get("document_id", "doc_x"),
+        # user_id 必填（票 readside-gaps/02）：`list_pending_candidates` 按
+        # viewer 收窄，NULL 属主的种子会被过滤掉——真实库里 37 行候选
+        # 全部是 'default'，不写就等于造一行谁都不该看见的候选。
+        user_id=kw.get("user_id", "default"),
         summary=kw.get("summary", "candidate summary"),
         extractor_confidence=kw.get("extractor_confidence", 0.3),
         lane=kw.get("lane", "general"),

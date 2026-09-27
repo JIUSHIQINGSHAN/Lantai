@@ -85,8 +85,17 @@ def refine_memory_text(text: str, context: str = "", metadata: dict | None = Non
     }
 
 
-def refine_candidate_record(candidate_id: str, session: Session | None = None) -> dict:
-    """对指定 ID 的候选记录执行精炼并落库。"""
+def refine_candidate_record(
+    candidate_id: str, session: Session | None = None, *, principal=None
+) -> dict:
+    """对指定 ID 的候选记录执行精炼并落库。
+
+    归属校验（票 .scratch/readside-gaps/02）：refine 会改写 B 的 summary、
+    claims、lane，甚至在 `is_valid=false` 时把 status 改成 rejected——**A 对
+    B 的候选点一次"提纯"就可能把它永久驳回**。同 review/defer 口径，复用
+    `acl.ensure_can_delete`；`principal=None` 仅内部调用（CLI/worker/MCP），
+    不校验——硬造校验会把 `run_triage_auto_pilot` 这类无人值守流程修废。
+    """
     cand_id = (candidate_id or "").strip()
     if not cand_id:
         raise ValueError("candidate_id 不能为空")
@@ -95,6 +104,16 @@ def refine_candidate_record(candidate_id: str, session: Session | None = None) -
         cand = s.get(MemoryCandidate, cand_id)
         if not cand:
             raise ValueError(f"候选记录未找到: {cand_id}")
+
+        if principal is not None:
+            from lantai.core.acl import ensure_can_delete
+
+            ensure_can_delete(
+                principal,
+                resource_user_id=cand.user_id,
+                resource_tenant_id=cand.tenant_id,
+                lane=cand.lane,
+            )
 
         raw_text = cand.summary or (cand.claims[0] if cand.claims else "")
         context_str = str(cand.provenance) if cand.provenance else ""
@@ -130,17 +149,31 @@ def batch_refine_candidates(
     max_conf: float = 0.6,
     limit: int = 20,
     session: Session | None = None,
+    *,
+    principal=None,
 ) -> dict:
-    """批量对处于模糊置信度区间的候选执行披沙提纯。"""
+    """批量对处于模糊置信度区间的候选执行披沙提纯。
+
+    归属收窄（票 .scratch/readside-gaps/02）：批量入口此前全表捞模糊区间
+    候选——A 的 `limit=20` 会把 B 的待审候选捞进来改写，甚至改 status。
+    这里按 `viewer` 收窄查询（admin 全权），与
+    `candidate_service.list_pending_candidates` 同口径。
+    """
 
     def _run(s: Session) -> dict:
+        from lantai.services.candidate_service import _owner_scope
+
+        scope = _owner_scope(principal)
+        conditions = [
+            MemoryCandidate.status == "pending_review",
+            MemoryCandidate.extractor_confidence >= min_conf,
+            MemoryCandidate.extractor_confidence <= max_conf,
+        ]
+        if scope is not None:
+            conditions.append(scope)
         candidates = s.exec(
             select(MemoryCandidate)
-            .where(
-                MemoryCandidate.status == "pending_review",
-                MemoryCandidate.extractor_confidence >= min_conf,
-                MemoryCandidate.extractor_confidence <= max_conf,
-            )
+            .where(*conditions)
             .order_by(MemoryCandidate.created_at.desc())
             .limit(limit)
         ).all()

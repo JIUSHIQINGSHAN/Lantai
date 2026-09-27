@@ -164,6 +164,9 @@ class TestRefineEndpointsAndMCP:
             c1 = MemoryCandidate(
                 id="cand_batch_01",
                 document_id="doc_batch",
+                # user_id 必填（票 readside-gaps/02）：`batch_refine_candidates`
+                # 现在按 viewer 收窄，NULL 属主的种子一条都扫不到
+                user_id="default",
                 summary="模糊候选一",
                 claims=["模糊候选一"],
                 status="pending_review",
@@ -172,6 +175,7 @@ class TestRefineEndpointsAndMCP:
             c2 = MemoryCandidate(
                 id="cand_batch_02",
                 document_id="doc_batch",
+                user_id="default",
                 summary="无意义客套废话",
                 claims=["无意义客套废话"],
                 status="pending_review",

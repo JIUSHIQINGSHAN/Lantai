@@ -127,6 +127,15 @@ def plan_distillation(cluster: list[MemoryItem]) -> dict:
             "structure": {},
         },
         "confidence": round(min(1.0, 0.5 + 0.15 * (n - 1)), 4),
+        # 归属继承（票 .scratch/readside-gaps/02）：蒸馏产物归簇内最新记忆的
+        # 属主——与上面 key/content/lane「取 newest」是**同一条判据**，不另造
+        # 规则。此前不落归属，提案 user_id=NULL；`list_proposals` 按 viewer
+        # 收窄后它谁都看不到，autodream「交人工闸门裁决」的前提直接失效
+        # （属主看不到 ≠ 少列一点，是人的判断权被绕过去了）。
+        # 取 newest 而非首次出现的属主：簇内跨属主本就该拦在上游（聚类按
+        # namespace 分），这里只保证「有主」且判据唯一。
+        "user_id": newest.user_id,
+        "tenant_id": newest.tenant_id,
     }
 
 
@@ -168,6 +177,9 @@ def run_autodream_once(
                         confidence=p["confidence"],
                         status=ProposalStatus.PENDING,
                         decided_by="autodream",
+                        # 归属继承（票 readside-gaps/02）：见 plan_distillation
+                        user_id=p.get("user_id"),
+                        tenant_id=p.get("tenant_id"),
                     )
                 )
                 created += 1

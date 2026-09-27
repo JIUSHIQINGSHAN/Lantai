@@ -635,7 +635,7 @@ def mcp_env():
         yield session_factory, engine
 
 
-def _seed_memory(s, mid, content, lane="fact", status="active"):
+def _seed_memory(s, mid, content, lane="fact", status="active", user_id="default"):
     from lantai.models.tables import MemoryItem
 
     now = datetime.now(UTC)
@@ -647,6 +647,9 @@ def _seed_memory(s, mid, content, lane="fact", status="active"):
             content=content,
             lane=lane,
             status=status,
+            # user_id 必填（票 readside-gaps/02）：读侧按 viewer 收窄，
+            # NULL 属主的记忆连它蒸馏出的提案都谁都看不见（提案继承簇的归属）
+            user_id=user_id,
             importance=0.5,
             decay_score=1.0,
             decay_class="episodic",
@@ -887,10 +890,13 @@ def test_triage_mcp_tools(mcp_env):
     from lantai.models.tables import MemoryCandidate
 
     with session_factory() as s:
+        # user_id 必填（票 readside-gaps/02）：MCP 三个工具现在都按 viewer
+        # 收窄，NULL 属主的种子扫不到——MCP 内部调用收敛到 "default"
         s.add(
             MemoryCandidate(
                 id="mcp_cand_1",
                 document_id="doc_mcp_1",
+                user_id="default",
                 summary="哈哈好的",
                 claims=["哈哈好的"],
                 status="pending_review",
@@ -901,6 +907,7 @@ def test_triage_mcp_tools(mcp_env):
             MemoryCandidate(
                 id="mcp_cand_2",
                 document_id="doc_mcp_2",
+                user_id="default",
                 summary="用户固定使用 Chrome 浏览器调试前端页面",
                 claims=["用户固定使用 Chrome 浏览器调试前端页面"],
                 status="pending_review",
@@ -931,6 +938,7 @@ def test_triage_mcp_tools(mcp_env):
             MemoryCandidate(
                 id="mcp_cand_3",
                 document_id="doc_mcp_3",
+                user_id="default",
                 summary="收到！",
                 claims=["收到！"],
                 status="pending_review",

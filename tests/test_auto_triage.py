@@ -47,6 +47,9 @@ def test_run_ai_triage_and_batch_apply():
         c1 = MemoryCandidate(
             id="test_cand_noise",
             document_id="doc_test_1",
+            # user_id 必填（票 readside-gaps/02）：`run_ai_triage` 按 viewer
+            # 收窄，NULL 属主的种子扫不到（内部调用收敛到 "default"）
+            user_id="default",
             summary="嗯嗯好的",
             claims=["嗯嗯好的"],
             status="pending_review",
@@ -55,6 +58,7 @@ def test_run_ai_triage_and_batch_apply():
         c2 = MemoryCandidate(
             id="test_cand_valid",
             document_id="doc_test_2",
+            user_id="default",
             summary="用户经常在晚上 8 点提交代码",
             claims=["用户经常在晚上 8 点提交代码"],
             status="pending_review",

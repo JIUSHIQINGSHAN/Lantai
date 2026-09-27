@@ -127,13 +127,29 @@ def triage_candidates_batch(
     return fallback_output
 
 
-def run_ai_triage(limit: int = 50, session: Session | None = None) -> dict[str, Any]:
-    """扫描数据库中所有 pending_review 的候选并生成 AI 预审建议清单。"""
+def run_ai_triage(
+    limit: int = 50,
+    session: Session | None = None,
+    *,
+    principal=None,
+) -> dict[str, Any]:
+    """扫描数据库中所有 pending_review 的候选并生成 AI 预审建议清单。
+
+    归属收窄（票 .scratch/readside-gaps/02）：`/candidates/ai_triage` 把
+    `text`（候选正文）直接送给 LLM，此前全表捞——A 能借这个端点读到
+    B 的待审候选。同 `list_pending_candidates` 口径按 viewer 收窄。
+    """
 
     def _run(s: Session) -> dict[str, Any]:
+        from lantai.services.candidate_service import _owner_scope
+
+        conditions = [MemoryCandidate.status == "pending_review"]
+        scope = _owner_scope(principal)
+        if scope is not None:
+            conditions.append(scope)
         candidates = s.exec(
             select(MemoryCandidate)
-            .where(MemoryCandidate.status == "pending_review")
+            .where(*conditions)
             .order_by(MemoryCandidate.created_at.desc())
             .limit(limit)
         ).all()
@@ -167,10 +183,18 @@ def run_ai_triage(limit: int = 50, session: Session | None = None) -> dict[str, 
 
 def apply_ai_triage_batch(
     actions: list[dict[str, Any]],
+    *,
+    principal=None,
 ) -> dict[str, Any]:
     """批量执行用户确认的 AI 预审裁决决策。
 
     actions 格式: [{"id": "cand_1", "action": "approve" | "reject" | "refine", "reason": "..."}]
+
+    归属校验（票 .scratch/readside-gaps/02）：这个入口最阴——请求体里的
+    `id` 是**调用方给的**，与预审时返回的建议列表没有任何绑定关系。
+    也就是说 A 根本不需要预审到 B 的候选，直接 POST 一个 `{"id":
+    "cand-B", "action": "reject"}` 就能驳回它。校验下传给 review_candidate
+    / refine_candidate_record（那两处已有），这里只负责传身份。
     """
     applied = {"approved": 0, "rejected": 0, "refined": 0, "failed": 0}
 
@@ -183,13 +207,13 @@ def apply_ai_triage_batch(
 
         try:
             if act == "approve":
-                review_candidate(cid, approve=True, reason=reason)
+                review_candidate(cid, approve=True, reason=reason, principal=principal)
                 applied["approved"] += 1
             elif act == "reject":
-                review_candidate(cid, approve=False, reason=reason)
+                review_candidate(cid, approve=False, reason=reason, principal=principal)
                 applied["rejected"] += 1
             elif act == "refine":
-                refine_candidate_record(cid)
+                refine_candidate_record(cid, principal=principal)
                 applied["refined"] += 1
         except Exception as exc:
             logger.warning("批量应用 AI 预审失败 [%s -> %s]: %s", cid, act, exc)

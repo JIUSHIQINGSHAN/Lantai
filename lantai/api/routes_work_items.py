@@ -59,13 +59,16 @@ def get_work_item_detail_route(kind: str, source_id: str, ctx=Depends(get_curren
 
 
 @router.post("/work-items/batch/reject", response_model=BatchActionResult)
-def batch_reject_route(req: BatchRejectRequest):
-    return batch_reject(req)
+def batch_reject_route(req: BatchRejectRequest, ctx=Depends(get_current_user)):
+    # 归属必须透传（票 .scratch/readside-gaps/02）：批量不放宽单条校验，
+    # 他人候选照样进 `failed`、`ok=False`（同 organize 口径）
+    return batch_reject(req, principal=ctx)
 
 
 @router.post("/work-items/batch/defer", response_model=BatchActionResult)
-def batch_defer_route(req: BatchDeferRequest):
-    return batch_defer(req)
+def batch_defer_route(req: BatchDeferRequest, ctx=Depends(get_current_user)):
+    # 归属必须透传（票 .scratch/readside-gaps/02）：同 batch/reject
+    return batch_defer(req, principal=ctx)
 
 
 @router.post("/work-items/batch/organize", response_model=BatchActionResult)

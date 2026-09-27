@@ -18,8 +18,15 @@ def _error_text(exc: Exception) -> str:
     return str(exc)
 
 
-def batch_reject(req: BatchRejectRequest, *, actor: str = "console") -> BatchActionResult:
-    """跨领域批量拒绝：每项独立提交，诚实返回部分失败。"""
+def batch_reject(
+    req: BatchRejectRequest, *, actor: str = "console", principal=None
+) -> BatchActionResult:
+    """跨领域批量拒绝：每项独立提交，诚实返回部分失败。
+
+    归属（票 .scratch/readside-gaps/02）：批量**不放宽**单条校验——他人的
+    候选/提案照样进 `failed`、`ok=False`（同 `batch_organize` 口径）。
+    parameter / crystal 两个分支无归属列，是系统级运维事实，不按人分。
+    """
     reason = req.reason.strip()
     succeeded: list[dict] = []
     failed: list[dict] = []
@@ -28,12 +35,16 @@ def batch_reject(req: BatchRejectRequest, *, actor: str = "console") -> BatchAct
             if ref.kind == "candidate":
                 from lantai.services.candidate_service import review_candidate
 
-                result = review_candidate(ref.source_id, approve=False, reason=reason)
+                result = review_candidate(
+                    ref.source_id, approve=False, reason=reason, principal=principal
+                )
             elif ref.kind == "proposal":
                 from lantai.services.evolution_service import decide_proposal
 
                 result = decide_proposal(
-                    ref.source_id, ProposalDecisionReq(approve=False, reason=reason)
+                    ref.source_id,
+                    ProposalDecisionReq(approve=False, reason=reason),
+                    principal=principal,
                 )
             elif ref.kind == "parameter":
                 from lantai.parameters.service import decide_suggestion
@@ -51,8 +62,12 @@ def batch_reject(req: BatchRejectRequest, *, actor: str = "console") -> BatchAct
     return BatchActionResult(ok=not failed, succeeded=succeeded, failed=failed)
 
 
-def batch_defer(req: BatchDeferRequest) -> BatchActionResult:
-    """候选批量延期，状态变化的项目单独失败。"""
+def batch_defer(req: BatchDeferRequest, *, principal=None) -> BatchActionResult:
+    """候选批量延期，状态变化的项目单独失败。
+
+    归属（票 .scratch/readside-gaps/02）：同 `batch_reject`——他人的候选
+    进 `failed`，不被改到期日。
+    """
     from lantai.services.candidate_service import defer_candidate
 
     succeeded: list[dict] = []
@@ -60,7 +75,11 @@ def batch_defer(req: BatchDeferRequest) -> BatchActionResult:
     for ref in req.items:
         try:
             result = defer_candidate(
-                ref.candidate_id, req.days, req.reason, ref.expected_review_due_at
+                ref.candidate_id,
+                req.days,
+                req.reason,
+                ref.expected_review_due_at,
+                principal=principal,
             )
             succeeded.append({"kind": "candidate", "source_id": ref.candidate_id, "result": result})
         except Exception as exc:

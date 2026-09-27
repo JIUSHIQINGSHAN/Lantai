@@ -120,6 +120,42 @@ def test_run_autodream_apply_pending(autodream_env):
         assert len(props[0].evidence_ids) == 2
 
 
+def test_run_autodream_proposal_inherits_owner(autodream_env):
+    """蒸馏提案必须继承簇的记忆归属（票 .scratch/readside-gaps/02）。
+
+    现状：提案落库时 user_id=NULL。`list_proposals` 按 viewer 收窄之后，
+    这条提案**谁都看不到**——autodream 的设计前提是「交人工闸门裁决」，
+    属主看不到就等于闸门永远裁不到它，autodream 白干。
+    这不是「少列一点」的宁 miss，是把人的判断权整个绕过去了。
+    """
+    session_factory, _ = autodream_env
+
+    def _owned_mem(content: str, user_id: str, days: int) -> MemoryItem:
+        m = _mem(content, days=days)
+        m.user_id = user_id
+        m.tenant_id = "t1"
+        return m
+
+    with session_factory() as s:
+        s.add_all(
+            [
+                _owned_mem("服务A 端口 8080", "user-old", 3),
+                _owned_mem("服务A 端口 9090", "user-new", 1),
+            ]
+        )
+        s.commit()
+    result = run_autodream_once(dry_run=False)
+    assert result["created"] == 1
+    with session_factory() as s:
+        prop = s.exec(select(MemoryProposal)).one()
+        # 同 plan_distillation 的「新值优先」继承口径：key/content/lane 取
+        # 簇内最新记忆，归属也取它——判据只有一处，不另造规则
+        assert prop.user_id == "user-new", (
+            f"提案没继承归属（user_id={prop.user_id!r}）——属主在 /proposals 里看不到它"
+        )
+        assert prop.tenant_id == "t1"
+
+
 def test_scheduled_worker_creates_pending_and_records_run(autodream_env):
     """周期入口（Fog：7 天周期）：真实库落 pending 提案 + record_run 可观测。
 
