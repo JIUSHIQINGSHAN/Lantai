@@ -13,8 +13,14 @@ def add_edge(
     tenant_id: str | None = None,
     agent_id: str | None = None,
     session_id: str | None = None,
+    principal=None,
 ) -> dict:
-    """创建记忆关系。"""
+    """创建记忆关系。
+
+    principal 用于事前归属校验（票 ownership-gaps/02）：边连的两条记忆
+    都要属于调用者，否则 A 能在 B 的记忆上建 supersedes 边改写其检索排序。
+    校验在 storage/edges.py 的 create_edge 内做，这里只透传。
+    """
     edge = create_edge(
         source_id,
         target_id,
@@ -24,6 +30,7 @@ def add_edge(
         tenant_id=tenant_id,
         agent_id=agent_id,
         session_id=session_id,
+        principal=principal,
     )
     return {"edge_id": edge.id, "relation": edge.relation}
 

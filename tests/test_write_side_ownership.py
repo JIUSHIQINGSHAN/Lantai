@@ -307,8 +307,20 @@ class TestRoutesForwardPrincipalToWriteSide:
         with session_factory() as s:
             s.add_all(
                 [
-                    MemoryItem(id="mem_r_a", content="甲", user_id="u_route", status="active"),
-                    MemoryItem(id="mem_r_b", content="乙", user_id="u_route", status="active"),
+                    MemoryItem(
+                        id="mem_r_a",
+                        content="甲",
+                        user_id="u_route",
+                        lane="fact",
+                        status="active",
+                    ),
+                    MemoryItem(
+                        id="mem_r_b",
+                        content="乙",
+                        user_id="u_route",
+                        lane="fact",
+                        status="active",
+                    ),
                 ]
             )
             s.commit()

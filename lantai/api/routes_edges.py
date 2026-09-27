@@ -21,6 +21,9 @@ def create_edge_route(req: EdgeReq, ctx=Depends(get_current_user)):
     # 归属四元组随 principal 落列（票 .scratch/ownership-gaps/03）：边不带
     # 属主，`DELETE /edges/{id}` 的 ACL 无从校验，supersedes 边改他人召回
     # 排序也无从审计。
+    # principal 同时用于事前校验（票 .scratch/ownership-gaps/02）：两端记忆
+    # 都必须属于调用者，否则 A 能在 B 的记忆上建 supersedes 边，把 B 的
+    # 记忆在 B 自己的检索里压下去（_edge_cb 无用户过滤）。
     return add_edge(
         req.source_memory_id,
         req.target_memory_id,
@@ -30,6 +33,7 @@ def create_edge_route(req: EdgeReq, ctx=Depends(get_current_user)):
         tenant_id=getattr(ctx, "tenant_id", None),
         agent_id=getattr(ctx, "agent_id", None),
         session_id=getattr(ctx, "session_id", None),
+        principal=ctx,
     )
 
 
