@@ -177,9 +177,7 @@ def add_memory(
             req_copy = req.model_copy()
             req_copy.content = combined
             req_copy.session_id = ""
-            return _create_candidate_with_extraction(
-                req_copy, user_id=user_id, tenant_id=tenant_id
-            )
+            return _create_candidate_with_extraction(req_copy, user_id=user_id, tenant_id=tenant_id)
 
     # 默认同步路径
     return _create_candidate_with_extraction(req, user_id=user_id, tenant_id=tenant_id)
@@ -382,7 +380,9 @@ def get_core_memory(namespace: str = "default", principal=None) -> dict:
     状态，不是「属于所有人」，否则要么永远看不见要么人人可读。
     principal=None 仅限内部调用（MCP / 脚本），同样按 "default" 收敛。
     """
-    viewer = (getattr(principal, "user_id", None) or "default") if principal is not None else "default"
+    viewer = (
+        (getattr(principal, "user_id", None) or "default") if principal is not None else "default"
+    )
     is_admin = bool(getattr(principal, "is_admin", False)) if principal is not None else False
     with db.get_session() as s:
         stmt = select(CoreMemoryBlock).where(CoreMemoryBlock.namespace == namespace)
@@ -394,9 +394,7 @@ def get_core_memory(namespace: str = "default", principal=None) -> dict:
         return {"blocks": [b.model_dump(mode="json") for b in blocks]}
 
 
-def put_core_memory(
-    block: str, content: str, namespace: str = "default", principal=None
-) -> dict:
+def put_core_memory(block: str, content: str, namespace: str = "default", principal=None) -> dict:
     """创建或更新 CoreMemoryBlock（归属随 principal 落列，票 ownership-gaps/04）。
 
     非 admin 只能改自己的块：定位不到自己的行时**新建自己名下的块**，

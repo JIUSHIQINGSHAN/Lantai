@@ -126,9 +126,7 @@ def decide(candidate_id: str) -> dict:
                     # 签名变更 / patch 抛错），仍要留下「检不了」的痕迹。
                     # 旧实现此处把异常抹平成 {"contradicts": False}——与
                     # 「检测器说没矛盾」同形，调用方无从区分，只能放行。
-                    logger.warning(
-                        "候选 %s 的矛盾检测调用失败（按检不了处理）: %s", cand.id, e
-                    )
+                    logger.warning("候选 %s 的矛盾检测调用失败（按检不了处理）: %s", cand.id, e)
                     c = {"contradicts": False, "reason": "", "severity": "low"}
                     check_unavailable = True
                 if c.get("contradicts"):

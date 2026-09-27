@@ -92,6 +92,10 @@ def _seed_all_sources(session_factory):
                 status="pending_review",
                 review_due_at=now + timedelta(days=2),
                 extractor_confidence=0.6,
+                # 归属（票 .scratch/readside-gaps/01）：案牍读侧按 user_id
+                # 收窄，种子不写属主就落在 viewer 之外被过滤掉。
+                # NULL 属主 ≠ 属于所有人——真实库 615 行 NULL 老行同理不可见。
+                user_id="default",
             )
         )
         s.add(
@@ -102,6 +106,7 @@ def _seed_all_sources(session_factory):
                 reason="新增知识",
                 proposed_patch={"content": "新内容"},
                 confidence=0.8,
+                user_id="default",
             )
         )
         s.add(
@@ -113,6 +118,7 @@ def _seed_all_sources(session_factory):
                 lane="fact",
                 status="active",
                 tree_path=None,
+                user_id="default",
             )
         )
         s.add(

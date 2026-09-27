@@ -91,7 +91,7 @@ class TestMemoriesRouteForwardsPrincipal:
         """换一个租户的同名 user 也看不到——隔离单位是 tenant+user。"""
         app.dependency_overrides[get_current_user] = lambda: _principal("u1", "t_other")
         resp = client.get("/memories")
-        items = (resp.json().get("memories") or resp.json().get("items") or [])
+        items = resp.json().get("memories") or resp.json().get("items") or []
         ids = {m["id"] for m in items}
         assert not (ids & {"mem_own_a_1", "mem_own_a_2", "mem_own_b_1"}), (
             f"异租户用户读到了他人记忆：{ids}"
@@ -105,7 +105,7 @@ class TestMemoriesRouteForwardsPrincipal:
         """
         app.dependency_overrides[get_current_user] = lambda: _principal("u1", "t1")
         resp = client.get("/memories", params={"limit": 100})
-        items = (resp.json().get("memories") or resp.json().get("items") or [])
+        items = resp.json().get("memories") or resp.json().get("items") or []
         assert all(m["id"].startswith("mem_own_a") for m in items), (
             f"响应里出现非属主 id：{[m['id'] for m in items]}"
         )

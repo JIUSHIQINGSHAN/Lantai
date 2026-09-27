@@ -27,9 +27,7 @@ class WriteScratchpadReq(BaseModel):
 
 @router.get("/scratchpad")
 @router.get("/scratchpad/{session_id}")
-def scratchpad_get_route(
-    session_id: str = "default", ctx=Depends(get_current_user)
-):
+def scratchpad_get_route(session_id: str = "default", ctx=Depends(get_current_user)):
     """读取指定会话的札记便签（按归属收窄，票 ownership-gaps/04）。"""
     content = get_scratchpad(session_id, principal=ctx)
     return {"session_id": session_id, "content": content}

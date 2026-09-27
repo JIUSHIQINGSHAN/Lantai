@@ -21,9 +21,7 @@ def add_memory_route(
     if req.lane not in ctx.allowed_lanes:
         raise HTTPException(status_code=403, detail=f"Lane {req.lane} not allowed for agent")
     if async_mode:
-        return add_memory_async(
-            req, user_id=ctx.user_id or "default", tenant_id=ctx.tenant_id
-        )
+        return add_memory_async(req, user_id=ctx.user_id or "default", tenant_id=ctx.tenant_id)
     return add_memory(req, user_id=ctx.user_id or "default", tenant_id=ctx.tenant_id)
 
 

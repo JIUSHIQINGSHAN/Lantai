@@ -52,7 +52,9 @@ class TestAddMemoryWritesUserId:
 
         session_factory, _ = write_env
         add_memory(
-            AddMemoryReq(title="偏好", content="我喜欢喝浙江新昌的明前大佛龙井茶", lane="preference"),
+            AddMemoryReq(
+                title="偏好", content="我喜欢喝浙江新昌的明前大佛龙井茶", lane="preference"
+            ),
             user_id="u_writer",
         )
         from sqlmodel import select
@@ -82,9 +84,7 @@ class TestAddMemoryWritesUserId:
         with session_factory() as s:
             cands = s.exec(select(MemoryCandidate)).all()
         assert cands, "前置条件：写入了一条候选"
-        assert cands[0].user_id == "u_writer", (
-            f"提取路径候选没落 user_id（{cands[0].user_id!r}）"
-        )
+        assert cands[0].user_id == "u_writer", f"提取路径候选没落 user_id（{cands[0].user_id!r}）"
 
 
 # ── Red 2：add_raw_memory 落 user_id ──────────────────────────────
@@ -110,18 +110,14 @@ class TestAddRawMemoryWritesUserId:
             )
             from lantai.models.tables import Evidence
 
-            ev = s.exec(
-                select(Evidence).where(Evidence.source_memory_id == m.id)
-            ).first()
+            ev = s.exec(select(Evidence).where(Evidence.source_memory_id == m.id)).first()
             assert ev is not None and ev.user_id == "u_writer", "Evidence 属主未同步"
 
     def test_build_verbatim_item_takes_owner(self):
         """纯函数构造器：四元组显式入参（import_service 也走这条）。"""
         from lantai.services.memory_service import build_verbatim_item
 
-        item = build_verbatim_item(
-            "配置项 A=1", "fact", user_id="u_writer", tenant_id="t1"
-        )
+        item = build_verbatim_item("配置项 A=1", "fact", user_id="u_writer", tenant_id="t1")
         assert item.user_id == "u_writer"
         assert item.tenant_id == "t1"
         # 不传则如实 NULL（宁 miss 不脏写：不猜归属）
@@ -194,7 +190,9 @@ class TestWriteThenRecall:
 
         session_factory, _ = write_env
         add_memory(
-            AddMemoryReq(title="偏好", content="我喜欢喝浙江新昌的明前大佛龙井茶", lane="preference"),
+            AddMemoryReq(
+                title="偏好", content="我喜欢喝浙江新昌的明前大佛龙井茶", lane="preference"
+            ),
             user_id="u_writer",
         )
         with session_factory() as s:
@@ -213,9 +211,7 @@ class TestWriteThenRecall:
         applied = apply_proposal(prop.id)
         assert applied["ok"] is True
         with session_factory() as s:
-            mem = s.exec(
-                select(MemoryItem).where(MemoryItem.status == "active")
-            ).first()
+            mem = s.exec(select(MemoryItem).where(MemoryItem.status == "active")).first()
             assert mem is not None
             assert mem.user_id == "u_writer", (
                 f"MemoryItem 没继承 user_id（{mem.user_id!r}）——写完仍搜不到"
@@ -263,9 +259,7 @@ class TestRoutesForwardPrincipalToWriteSide:
             assert cand.user_id == "u_route", (
                 f"路由没把 principal 传下去（候选 user_id={cand.user_id!r}）"
             )
-            assert cand.tenant_id == "t_route", (
-                f"路由没把 tenant 传下去（{cand.tenant_id!r}）"
-            )
+            assert cand.tenant_id == "t_route", f"路由没把 tenant 传下去（{cand.tenant_id!r}）"
 
     def test_add_raw_route_persists_principal_owner(self, write_env):
         """POST /add/raw 同款：verbatim 是条数最多的一类，漏了整类搜不回。"""
@@ -292,9 +286,7 @@ class TestRoutesForwardPrincipalToWriteSide:
         with session_factory() as s:
             m = s.get(MemoryItem, mid)
             assert m is not None
-            assert m.user_id == "u_route", (
-                f"verbatim 没落登录者的 user_id（{m.user_id!r}）"
-            )
+            assert m.user_id == "u_route", f"verbatim 没落登录者的 user_id（{m.user_id!r}）"
 
     def test_edges_route_persists_principal_owner(self, write_env):
         """POST /edges 建的边必须带属主，否则 DELETE 的 ACL 形同虚设。"""
@@ -431,7 +423,11 @@ class TestNoRegression:
         from lantai.services.memory_service import add_memory
 
         session_factory, _ = write_env
-        add_memory(AddMemoryReq(title="偏好", content="我喜欢喝浙江新昌的明前大佛龙井茶", lane="preference"))
+        add_memory(
+            AddMemoryReq(
+                title="偏好", content="我喜欢喝浙江新昌的明前大佛龙井茶", lane="preference"
+            )
+        )
         with session_factory() as s:
             cand = s.exec(select(MemoryCandidate)).first()
             assert cand is not None

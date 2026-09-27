@@ -34,16 +34,26 @@ def list_work_items_route(
     q: str = Query("", max_length=200),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    ctx=Depends(get_current_user),
 ):
+    # 归属必须下传（票 .scratch/readside-gaps/01）：此前不取身份，
+    # `load_work_item_snapshot` 全表捞，memory 分支的 summary 就是
+    # `content` 全文——比 `GET /memories` 漏得更多（那条截断到 160）。
     return list_work_items(
-        section=section, kind=kind, risk=risk, query=q, limit=limit, offset=offset
+        section=section,
+        kind=kind,
+        risk=risk,
+        query=q,
+        limit=limit,
+        offset=offset,
+        principal=ctx,
     )
 
 
 @router.get("/work-items/detail/{kind}/{source_id}", response_model=WorkItemDetailResponse)
-def get_work_item_detail_route(kind: str, source_id: str):
+def get_work_item_detail_route(kind: str, source_id: str, ctx=Depends(get_current_user)):
     try:
-        return get_work_item_detail(kind, source_id)
+        return get_work_item_detail(kind, source_id, principal=ctx)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
 

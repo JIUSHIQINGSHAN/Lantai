@@ -393,8 +393,7 @@ class TestContradictionCheckUnavailable:
             result = decide(cand_id)
 
         assert result["decision"] == "reject", (
-            "检测器不可用不得伪装成『检测器说没矛盾』——"
-            f"应 reject 待审，实得 {result['decision']}"
+            f"检测器不可用不得伪装成『检测器说没矛盾』——应 reject 待审，实得 {result['decision']}"
         )
         assert "contradiction check" in result["reason"].lower()
         assert result.get("check_unavailable") is True
@@ -484,7 +483,9 @@ class TestContradictionCheckUnavailable:
         cand_id = _seed_imp(
             conflict_env, existing_content="用户不会游泳", summary="用户会游泳", importance=0.5
         )
-        with patch("lantai.gate.decision.check_contradiction", side_effect=RuntimeError("llm down")):
+        with patch(
+            "lantai.gate.decision.check_contradiction", side_effect=RuntimeError("llm down")
+        ):
             result = decide(cand_id)
         assert result["decision"] != "archive_conflict"
 

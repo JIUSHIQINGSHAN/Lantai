@@ -133,9 +133,7 @@ class TestBatchOrganizeOwnership:
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["ok"] is False, f"批量改写了他人记忆却报 ok（{data}）"
-        assert [f["source_id"] for f in data["failed"]] == ["memB"], (
-            f"失败条目没如实记录：{data}"
-        )
+        assert [f["source_id"] for f in data["failed"]] == ["memB"], f"失败条目没如实记录：{data}"
         with session_factory() as s:
             from lantai.models.tables import MemoryItem
 

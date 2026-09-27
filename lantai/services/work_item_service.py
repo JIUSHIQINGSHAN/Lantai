@@ -500,13 +500,69 @@ def _current_param_hash(session) -> str:
     return head.after_snapshot_hash if head else snapshot_hash(default_snapshot())
 
 
-def load_work_item_snapshot() -> dict[str, Any]:
-    """从真实领域表读取案牍所需的最小快照。"""
+def _viewer_of(principal) -> str:
+    """读侧收敛到的 user_id（票 .scratch/readside-gaps/01）。
+
+    口径同 `memory_service.get_core_memory`：`principal=None`（内部调用 /
+    MCP / 脚本）与未记录归属都收敛到 `"default"`——与 `auth.py` DEV MODE
+    回落的 user_id 同值，不新造「默认属主」概念。
+
+    **NULL 属主不等于「属于所有人」**：真实库有 615 行 `user_id IS NULL`
+    的 memoryitem（迁移前/脚本直插），判错就是把全库老数据敞开。本函数
+    只回答「以谁的身份看」，不含 NULL 老行的可见性判断——那由
+    `_owner_scope` 决定。
+    """
+    return (
+        (getattr(principal, "user_id", None) or "default") if principal is not None else "default"
+    )
+
+
+def _owner_scope(column, principal):
+    """归属过滤条件：非 admin 只见自己的行（票 .scratch/readside-gaps/01）。
+
+    与 `memory_service.get_core_memory` / `put_core_memory` 逐字同口径：
+    admin/system 全权；否则 `user_id == viewer`。
+
+    **NULL 属主的老行一律不可见**（不像 get_core_memory 那样把 NULL 当
+    "default" 可见）。差别是刻意的：核心记忆块是**单人写入的配置**，把
+    老行判给 default 只是让运维写的那一个块还能被看见；而案牍列的是
+    **全库记忆**，NULL 老行有 615 行，放行等于把越权读取的口子留着。
+    代价是历史行从案牍里消失——那正是「宁 miss 不脏写」的选择：
+    宁可少列，不可错放。
+    """
+    if bool(getattr(principal, "is_admin", False)) if principal is not None else False:
+        return None
+    return column == _viewer_of(principal)
+
+
+def load_work_item_snapshot(principal=None) -> dict[str, Any]:
+    """从真实领域表读取案牍所需的最小快照。
+
+    归属收窄（票 .scratch/readside-gaps/01）：此前全表捞，`/work-items`
+    于是把全库记忆的 `content` 全文（`project_work_items` 的 memory 分支
+    `summary=content[:240]`）、`key`、以及记忆 ULID 一起吐给任何持有
+    API key 的用户。id 本身是攻击材料——`POST /edges`、`/tree/assign`、
+    `/terminal/memory/{id}` 全都要 id（`OBSERVED.txt` 段 D 实证）。
+
+    `principal=None` 仅限内部调用（CLI/worker/MCP），按 `"default"` 收敛。
+    """
     with db.get_session() as s:
+        cand_scope = _owner_scope(MemoryCandidate.user_id, principal)
+        prop_scope = _owner_scope(MemoryProposal.user_id, principal)
+        mem_scope = _owner_scope(MemoryItem.user_id, principal)
+        # 冲突/参数/结晶/worker 是系统级运维事实，无归属列也不按人分（另议）
         candidates = s.exec(
-            select(MemoryCandidate).where(MemoryCandidate.status == "pending_review")
+            select(MemoryCandidate).where(
+                MemoryCandidate.status == "pending_review",
+                *([cand_scope] if cand_scope is not None else []),
+            )
         ).all()
-        proposals = s.exec(select(MemoryProposal).where(MemoryProposal.status == "pending")).all()
+        proposals = s.exec(
+            select(MemoryProposal).where(
+                MemoryProposal.status == "pending",
+                *([prop_scope] if prop_scope is not None else []),
+            )
+        ).all()
         conflicts = s.exec(select(ConflictEvent).where(ConflictEvent.status == "open")).all()
         parameters = s.exec(
             select(ParamSuggestion).where(ParamSuggestion.status == "pending")
@@ -516,6 +572,7 @@ def load_work_item_snapshot() -> dict[str, Any]:
             select(MemoryItem).where(
                 MemoryItem.status == "active",
                 (MemoryItem.tree_path.is_(None)) | (MemoryItem.tree_path == ""),
+                *([mem_scope] if mem_scope is not None else []),
             )
         ).all()
         scheduler_runs = s.exec(select(SchedulerRun)).all()
@@ -550,8 +607,13 @@ def list_work_items(
     query: str = "",
     limit: int = 50,
     offset: int = 0,
+    principal=None,
 ) -> WorkItemListResponse:
-    items = project_work_items(load_work_item_snapshot())
+    """案牍列表（读侧归属收窄见 `load_work_item_snapshot`，票 readside-gaps/01）。
+
+    principal 由路由 `Depends(get_current_user)` 传下；None 表示内部调用。
+    """
+    items = project_work_items(load_work_item_snapshot(principal))
     query_norm = (query or "").strip().casefold()
     filtered = [
         item
@@ -579,8 +641,20 @@ def list_work_items(
     )
 
 
-def get_work_item_detail(kind: str, source_id: str) -> WorkItemDetailResponse:
-    items = project_work_items(load_work_item_snapshot())
+def get_work_item_detail(kind: str, source_id: str, *, principal=None) -> WorkItemDetailResponse:
+    """案牍详情。
+
+    归属校验（票 .scratch/readside-gaps/01）：此前不带身份，A 传 B 的记忆 id
+    就拿到 `MemoryItem.model_dump()` 全部 46 个字段（含 provenance/structure/
+    user_id/tenant_id）。非 admin 且资源不属调用方 → 抛 ValueError，路由按
+    404 语义返回——**不区分「不存在」与「不是你的」**，同札记口径：那个
+    区分本身就是信息泄漏。
+
+    `related["tree"]` 是整树视图（含他人的节点名与挂载计数，票
+    readside-gaps/03），只给 admin 与资源属主；他人拿到 None，**不放宽也
+    不静默给别人的树**。
+    """
+    items = project_work_items(load_work_item_snapshot(principal))
     item = next(
         (value for value in items if value.kind == kind and value.source_id == source_id), None
     )
@@ -650,10 +724,24 @@ def get_work_item_detail(kind: str, source_id: str) -> WorkItemDetailResponse:
             related["memories"] = [memory.model_dump(mode="json") for memory in memories]
         elif kind == "memory":
             row = s.get(MemoryItem, source_id)
+            if row is None:
+                raise ValueError("work item not found or no longer pending")
+            # 归属已由上面的 `load_work_item_snapshot(principal)` 收窄保证：
+            # 能走到这里，说明该 item 出现在调用方的列表里，即
+            # `row.user_id == viewer`（或调用方是 admin）。**不要再判一次**
+            # ——变异验证实测：在这里补判会得到两个抓不死的变异（M2/M6），
+            # 因为该分支在任何输入下都不可达（试过 tenant 不一致、
+            # admin、NULL 属主三种反证路径，snapshot 过滤都已先行拦住）。
+            # 判据只留一处（load_work_item_snapshot），散落多处必然漏。
             source = row.model_dump(mode="json")
-            from lantai.services.tree_service import get_subtree
+            # 整树视图含他人节点名与挂载计数（票 readside-gaps/03），
+            # 只给 admin；普通调用方拿到 None——不放宽也不静默给别人的树。
+            if _owner_scope(MemoryItem.user_id, principal) is None:
+                from lantai.services.tree_service import get_subtree
 
-            related["tree"] = get_subtree(s, "/")
+                related["tree"] = get_subtree(s, "/")
+            else:
+                related["tree"] = None
         else:
             source = {
                 "worker": source_id,
