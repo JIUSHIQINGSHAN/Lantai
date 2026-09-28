@@ -891,7 +891,24 @@ def _keyword_fallback(
                     if getattr(principal, "tenant_id", None):
                         stmt = stmt.where(MemoryItem.tenant_id == principal.tenant_id)
                     if getattr(principal, "user_id", None):
-                        stmt = stmt.where(MemoryItem.user_id == principal.user_id)
+                        # 归属（票 `.scratch/fts-null-owner/03`）：**必须带
+                        # OR IS NULL**。LIKE 是关键词召回的最后一层
+                        # （向量挂了走 FTS，FTS 挂了只剩它），且
+                        # `has_short_tokens`（`hybrid.py:877`）让它在
+                        # **短词查询时必然参与**——中文单字词、缩写、
+                        # 型号（"3080"、"RX"）都 <3 字符。真实库 657 行
+                        # memoryitem 里 636 行是 NULL 属主（96.8%），
+                        # 只写等值匹配等于短词查询下老记忆全体消失。
+                        #
+                        # 与 `fts.py` 两处、向量通道（票 15）、其余读侧
+                        # scope 同一口径；写侧（`ensure_can_delete`）
+                        # 形状不同，不能照抄。
+                        stmt = stmt.where(
+                            or_(
+                                MemoryItem.user_id == principal.user_id,
+                                MemoryItem.user_id.is_(None),
+                            )
+                        )
                     if getattr(principal, "session_id", None):
                         stmt = stmt.where(MemoryItem.session_id == principal.session_id)
                 stmt = stmt.limit(max(fetch_n, p.fts_recall_top_k))

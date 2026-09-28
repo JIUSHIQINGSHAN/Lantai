@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **关键词召回补 `OR IS NULL`——单人部署下不再丢掉 96.8% 的记忆（2026-09-28，票据 `.scratch/fts-null-owner/issues/01-fts-missing-or-is-null.md`）**：
+  - **先说影响**：这是**功能大面积失效**，不是"收紧了点"。`search_fts` / `search_fts_bm25` 的归属条件是裸的 `AND m.user_id = ?`，没有 `OR IS NULL` 半边。真实库 657 行 `memoryitem` 里 **636 行是 NULL 属主（96.8%）**——归属列是后来才加的，老数据全是 NULL。于是带 principal 的关键词召回**只能看到 21 行**，且**越老的记忆越搜不到**。用户感知是"时灵时不灵"而不是"搜不到"，极难排查。实测口径对比：口径 A `user_id=? OR IS NULL` 657 行，口径 B（FTS 现行 SQL）21 行。
+  - **同族修法的第三次，前两次都在别的通道**：`build_memories_page`（VAULT 档案页）、向量通道（`$or[viewer, ""]`——空串是 NULL 属主在 Chroma 里的落点）都补过。读侧每条收窄的统一口径是 `user_id == viewer OR user_id IS NULL`，**FTS 这两处是漏网的**。
+  - **为什么错了一年没人发现**：`git grep -rn -E "search_fts|search_fts_bm25" -- tests/` 共 20 处调用，**没有一处传 `principal`**。带 `principal` 的 SQL 分支从写下来就没被执行过——这是 mock/测试覆盖的盲区，不是逻辑难。
+  - **NULL 是「未记录」不是「属于所有人」**，但必须可见：`test_other_users_row_still_invisible` 同时钉住反方向，B 的行对 A 仍不可见。**放行的是未记录，不是放开隔离。**
+  - **顺带修了 07 号票一处失效断言**：`test_verbatim_search_ownership.py::TestNullOwnerTradeoff::test_null_owner_row_invisible_to_non_admin` 断言"NULL 属主行对非 admin 不可见"——与本票直接冲突。决定性实验（`.scratch/fts-null-owner/probe_decisive.py`：种一条 NULL 属主记忆同时进 FTS 与向量库，`principal=default` 跑完整 `hybrid_search`）证明该断言**从未隔离过 NULL 行**：`_query_items`（`hybrid.py:534`）无任何归属过滤，只要任一通道放行就进最终结果。改为两个方向都锁（NULL 可见 + 别人的行不可见），并在类 docstring 记下废止理由。**教训：断言红时先问"这条断言保护的是哪个洞"，别默认是自己改坏了。**
+  - **测试增量 8 例**（`tests/test_fts_owner_recall.py`，全部不 mock：真内存 SQLite + 真 FTS5 trigram，`_seed` 走真实 `sync_fts`）。含 1 条端到端（关掉向量通道孤立验证关键词通道——否则向量召回会把结果补回来，掩盖 FTS 的漏）。**Red 实证**：4 failed / 4 passed。
+  - **变异验证 5 KILLED / 0 MISSED**（`.scratch/fts-null-owner/mutation_check_01.py`，subprocess 隔离 + 内容指纹还原 + 还原后复核）：V1 删 FTS 的 `OR IS NULL`、V2 删 BM25 的、V3 两处都删、V4 整个归属过滤不要、V5 反转成 `AND user_id IS NULL`。
+  - **踩坑记录**：① 变异目标定位——两个修点的 SQL 字符串完全相同，靠**尾部 ORDER BY 子句**区分（`search_fts` 按 rank、`search_fts_bm25` 按 score）。② `Path.write_text` 在 Windows 写 CRLF，字节哈希还原比对会误报"还原失败"——归一化换行再比。③ 探针里我一度写"`search_fts` 有重复的 `AND m.lane IN` 拼接"，读 `fts.py:148-153` 证明**只出现一次**，是我的 grep 输出看串行，已在票里更正。**判定不可信时先怀疑自己的探针。**
+  - **全量 pytest 1933 passed / 0 failed**；`ruff check` + `ruff format --check` 均过。
+
+- **LIKE 兜底补 `OR IS NULL`——短词查询下老记忆不再被最后一层通道单独抹掉（2026-09-28，票据 `.scratch/fts-null-owner/issues/03-keyword-fallback-like-missing-or-is-null.md`）**：
+  - **先说影响**：LIKE 是关键词召回的**最后一层**（向量挂了走 FTS，FTS 挂了只剩它）。它的触发条件是 `(not candidate_ids or has_short_tokens)`，其中 **`has_short_tokens` 是日常路径**——中文单字词、缩写、型号（"3080"、"RX"）都 <3 字符，trigram 成不了词。此时 FTS 已召回 NULL 属主老行、`candidate_ids` 非空，但 LIKE **另起一条严格 SQL**，把老行从它自己那半边剔掉。探针实证（`.scratch/fts-null-owner/probe_like_fallback.py`，查询词「华硕」2 字符）：三条记忆（NULL 老行 / 别人的行 / 自己的行）只剩自己的那条。
+  - **与 01 号票不是重复**：01 修 `storage/fts.py` 两处原生 SQL，本票修 `retrieval/hybrid.py` 一处 SQLModel `select()`；01 的通道是 FTS 召回 + BM25 打分，本票是 LIKE 兜底。修完 01 后 NULL 属主 id **确实会**流进 `candidate_ids`，但 LIKE 是**平行的另一条 SQL**，它自己不过滤、自己的结果直接并入。两处都要修，缺一不可。
+  - **修法复用同一口径**：`or_(MemoryItem.user_id == principal.user_id, MemoryItem.user_id.is_(None))`，与 `fts.py` / 向量通道 / 其余读侧 scope 一致。写侧（`ensure_can_delete`）形状不同，不能照抄。
+  - **测试增量 3 例**（`tests/test_keyword_fallback_owner_recall.py`，不 mock：真跑 `_keyword_fallback`，显式传 `session=` 内存库避免走宿主真实库）。**Red 实证**：1 failed / 2 passed——红的正是 NULL 老行被滤掉那条。
+  - **变异验证 3/3 被杀**（`.scratch/fts-null-owner/mutation_check_03.py`）：V1 退回严格等值、V2 去掉 NULL 半边、V3 整段归属过滤消失（验证隔离没放松——别人的行不泄漏）。还原校验逐字节一致。
+  - **给后来者的两个坑**：① `_keyword_fallback` 没有 `use_rerank` 形参（降级路径不跑精排）。② 必须显式传 `params=RetrievalParams()`：函数体 `hybrid.py:939` 用的是 `params.temporal_asof_strict` 而**不是**第 824 行算出的 `p`，传 `None` 会 `AttributeError`。这是产品代码里 `p = params or RetrievalParams()` 之后的漏网点，任何直调该函数的测试/探针都会撞上——**非本票范围，但记在这里省下一次排错**。
+  - **全量 pytest 1935 passed / 0 failed**；lint 全绿。中途红过一次 `test_release_check.py::test_lint_gate_passes_on_real_repo`（新测试文件 import 顺序）——**回归哨兵当场干活**，`ruff check --fix` 后复跑全绿。
+
 - **MCP 读侧两个工具不再敞开——`checkpoint_latest` 拿不到 B 的工作现场，`scratchpad_get` 按 id 拿不到 B 的札记（2026-09-28，票据 `.scratch/mcp-identity-gaps/issues/05-mcp-read-side-none-leaks.md`）**：
   - **先说影响**：宿主不透传 `user_id` 时（MCP 没有 HTTP 鉴权层，这是常见形态），两个工具的收窄被 `principal is None` **整条跳过**。`checkpoint_latest` 更糟——它**根本不看 `session_id` 参数**，永远返回全库 `created_at` 最新的那个 session 的完整五段底本（在做/下一步/工作区/决策/待办）。A 只要调一次，就拿到"当前最新的工作现场"，而那个现场很可能是 B 的（B 刚写完底本）。`scratchpad_get` 是按 id 定点取：A 传 B 的 `session_id`，拿到 B 的札记正文——而札记**直接进 LLM 提示**（`format_scratchpad_context`）。实测（`.scratch/mcp-identity-gaps/probe_02_read_scope.py`，真 handler + 内存 SQLite 真建表，库里 2 行 NULL + 2 行 default + 2 行 user-B）。
   - **同批探针的对照说明这是口径分叉，不是普遍现象**：`candidates_pending` 在无身份时收敛到 `"default"`（B 不可见，正常），`mem_recent` 是全表（已知，归 02 号契约票），**只有这两个是"连 id 都按定点取却不过滤"**——它们与 `mem_recent` 的差别是**确定性**：`mem_recent` 是列表，这两个按 id 精确定位，A 知道 id 就能稳定拿到那一条。
