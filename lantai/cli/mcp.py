@@ -73,7 +73,15 @@ def handle_search(params: dict) -> dict:
     import time
 
     t0 = time.perf_counter()
-    results = hybrid_search(query, top_k=top_k, domain=domain, **temporal_kwargs)
+    # 归属（票 `.scratch/mcp-identity-gaps/11`）：`principal` 上面算出来了，
+    # 但**此前只喂给检索事件日志**，`hybrid_search` 一个身份参数都没收到——
+    # 于是宿主透传 `user_id` 的 `search` 调用照样全库召回。这是接线漏
+    # （01a 号票的活），比 None 语义更基础：None 语义那条由同票的
+    # "入口收敛"修，本行修的是"传了身份却不生效"。
+    # 同文件 `handle_verbatim_search`（:832）一直是对的，照它对齐。
+    results = hybrid_search(
+        query, top_k=top_k, domain=domain, principal=principal, **temporal_kwargs
+    )
     latency_ms = int((time.perf_counter() - t0) * 1000)
     event_id = _try_log(
         query, results, latency_ms, gate, session_id=session_id, principal=principal
