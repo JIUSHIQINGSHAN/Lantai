@@ -262,21 +262,38 @@ def get_scene(scene_id: str, principal=None) -> dict:
     推导）。场景是聚类产物，成员可能分属多个用户，所以口径是
     「**任一成员可见即可见**」：
 
-    - admin/system 与 `principal=None`（内部 worker / 脚本 / HTTP 未带
-      身份）：不校验，与改动前逐字一致
-    - 非 admin：一个可见成员都没有 → `ValueError("scene not found")`，
-      **不区分"没有"与"不是你的"**（同 `get_scratchpad` 口径——区分
-      本身就是信息泄漏：能据此探知某 scene_id 是否存在）
+    - admin/system：不校验（与 acl.py 的 admin/system 全权同口径）
+    - 非 admin（**含 `principal=None`**，见下）：一个可见成员都没有 →
+      `ValueError("scene not found")`，**不区分"没有"与"不是你的"**
+      （同 `get_scratchpad` 口径——区分本身就是信息泄漏：能据此探知
+      某 scene_id 是否存在）
 
-    宁 miss 不脏写：纯 B 的簇对 A 直接不存在；混了 B 的成员的簇仍会把
-    B 的正文带出来——那是聚类重建要解决的事，见票 02。
+    **`principal=None` 不再是"不校验"（票 `.scratch/mcp-identity-gaps/09`）**：
+    MCP `scene_get` / `scenes_list` 的宿主不透传 `user_id` 时正是 None
+    （`mcp.py:132` 的 `_principal_from_params` 返回 None），而
+    `principal is not None` 这个判据让 None 整段跳过归属——实测
+    （`.scratch/mcp-identity-gaps/probe_scene_none_semantics.py`）：
+    None 调 `get_scene('sc-B')` 拿到 B 的 summary **和全部成员正文**；
+    None 调 `list_scenes` 把 B 的场景连摘要一起列出来。
+    改为经 `acl.viewer_of` 收敛（None → `"default"`）后照常校验，
+    与票 07 给 `build_memories_page`、04 号票给 `checkpoint_write`
+    同一个真源，不发明第二份口径。
+
+    **单人部署不空转**：真实库唯一非空属主就是 `default`，收敛后
+    照样看得见自己的全部场景（探针 S3/S4 实测带身份收窄正确，
+    admin 仍全权）。
+
+    **`visible` 既是闸门也是过滤器**（:282 判空 + :288 按 id 过滤成员）：
+    纯 B 的簇对 A 直接不存在；混合簇只返回 A 可见的成员。
+    docstring 早年写的"混了 B 的成员的簇仍会把 B 的正文带出来"
+    是 :288 补上**之前**的说法，已过期——探针 S5 实测 A 只见 m-mix-A。
     """
     with db.get_session() as s:
         scene = s.get(MemoryScene, scene_id)
         if not scene:
             raise ValueError("scene not found")
         visible: set[str] | None = None
-        if principal is not None and not bool(getattr(principal, "is_admin", False)):
+        if not bool(getattr(principal, "is_admin", False)):
             visible = _scene_visible_member_ids(s, scene_id, principal)
             if not visible:
                 raise ValueError("scene not found")
@@ -317,10 +334,20 @@ def list_scenes(limit: int = 50, principal=None) -> dict:
     内容生成的摘要——A 刷列表就读到 B 的场景主题。判据同 `get_scene`：
     至少一个可见成员才列（一条 SQL 取全部，避免逐场景 N+1）。
     `member_count` 仍报**场景全量成员数**（场景自身属性，非归属信息）。
+
+    **`principal=None` 收敛到 `"default"` 而不是不校验**（票
+    `.scratch/mcp-identity-gaps/09`）：MCP `scenes_list` 宿主不透传
+    `user_id` 时正是 None，而 `scoped = principal is not None and ...`
+    让 None 时整段跳过——实测 None 调 `list_scenes` 把 B 的场景连
+    LLM 摘要一起列出来（`probe_scene_none_semantics.py` S2）。
+    改法同 `get_scene`：经 `acl.viewer_of` 收敛（None → `"default"`）。
     """
     if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
         raise ValueError("limit must be an int in [1, 500]")
-    scoped = principal is not None and not bool(getattr(principal, "is_admin", False))
+    # 注意：这里是 `not is_admin` 而不是 `principal is not None and not is_admin`
+    # ——`getattr(None, "is_admin", False)` 返回 False，所以 None 照样进收窄分支，
+    # 再由 viewer_of 收敛到 "default"（票 09）。
+    scoped = not bool(getattr(principal, "is_admin", False))
     with db.get_session() as s:
         scenes = s.exec(
             select(MemoryScene).order_by(MemoryScene.heat.desc(), MemoryScene.member_count.desc())
