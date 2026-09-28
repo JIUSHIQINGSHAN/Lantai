@@ -39,11 +39,54 @@ def _ensure_can_decide(principal, proposal: MemoryProposal) -> None:
     裁决 = 破坏性操作，复用 `acl.ensure_can_delete` 单一真源。此前 A 能
     对 B 的提案 decide——**approve 会直接 apply_proposal 写库**，比拒候选
     更重：A 能让 B 的待决内容凭空变成正式记忆。
-    principal=None 仅限内部调用（CLI/worker/MCP），不校验。
+
+    归属（票 `.scratch/mcp-identity-gaps/02`）：`principal=None` 不再
+    "不校验"。MCP `proposal_decide` 在宿主不透传 `user_id` 时正是拿到
+    None，而 `if principal is None: return` 让校验整段跳过——
+    决定性实证（`.scratch/mcp-identity-gaps/probe_02e_decide_proposal.py`）：
+
+    ```
+    S1 None    reject B 的提案 → pending → rejected  ❌ 越权脏写
+    S2 user-A  reject B 的提案 → 403，状态不变        ✅
+    S5 None    approve B 的提案 → pending → rejected  ❌（下游 apply 按归属
+        挡住了内容写入并返回 ok:false，但**状态已改**——decide_proposal
+        先改状态再 commit，下游失败挽不回）
+    ```
+
+    **HTTP 侧不受影响**：`routes_evolution.py:62` 与
+    `routes_work_items.py:65` 都显式传 `ctx`（`get_current_user` 永不
+    返回 None）。这个洞只有 MCP 入口能触发。
+
+    改用 `acl.viewer_of` 收敛：None → `"default"`，与 04 号票给
+    `checkpoint_write` 的修法同一个真源，不发明第二份口径。
+    **单人部署不空转**：真实库唯一非空属主就是 `default`，收敛后
+    照样能裁决自己的全部历史提案（探针 S4 实测）。
+
+    **收敛的是 principal 本身，不是给 `ensure_can_delete` 加形参**——
+    后者是被 27 处写侧共用的承重墙，本票不动它。
     """
-    if principal is None:
+    from lantai.core.acl import ensure_can_delete, viewer_of
+
+    if getattr(principal, "is_admin", False):
         return
-    from lantai.core.acl import ensure_can_delete
+
+    # `viewer_of(None)` → "default"。注意 admin 的真实形态正是
+    # `user_id=None`，故 admin 判定必须在上一步先做（它靠 `is_admin`，
+    # 不靠 user_id，收敛不会误伤）。
+    viewer = viewer_of(principal)
+    if viewer != getattr(principal, "user_id", None):
+        # 只在 None 时构造收敛后的 principal；已有身份的走原对象，
+        # 不改变任何现有行为（含 tenant / agent / allowed_lanes）。
+        from lantai.core.acl import Principal
+
+        principal = Principal(
+            tenant_id=getattr(principal, "tenant_id", None),
+            user_id=viewer,
+            agent_id=getattr(principal, "agent_id", None),
+            session_id=getattr(principal, "session_id", None),
+            role=getattr(principal, "role", "user"),
+            allowed_lanes=getattr(principal, "allowed_lanes", None),
+        )
 
     ensure_can_delete(
         principal,

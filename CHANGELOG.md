@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP `proposal_decide` 不再越权改别人的提案——宿主不透传 `user_id` 时归属校验照常生效（2026-09-28，票据 `.scratch/mcp-identity-gaps/issues/02-mcp-identity-contract.md`）**：
+  - **先说影响**：这是**真脏写**。MCP `proposal_decide` 在宿主不透传 `user_id` 时拿到 `principal=None`，而 `evolution_service._ensure_can_decide` 的第一行是 `if principal is None: return`——**归属校验整段跳过**。决定性实证（`.scratch/mcp-identity-gaps/probe_02e_decide_proposal.py`，真 `decide_proposal` + 内存 SQLite 真建表）：`principal=None` reject B 的提案 → pending **变成 rejected**；`principal=user-A` 同样操作 → 403、状态不变。**同一个函数，带身份就拦，不带身份就放行。**
+  - **`approve` 比 `reject` 更重，而它同样越权**：`approve` 会 `apply_proposal` 直接写库（把待决内容变成正式记忆）。实测 `principal=None` approve B 的提案：下游 `apply_proposal` **确实**按归属挡住了内容写入并返回 `{"ok": false, "reason": "target not owned"}`（宁 miss 不脏写），**但提案状态已经从 pending 变成 rejected**——`decide_proposal` 先改状态再 commit，下游失败挽不回。**"下游有校验"不能替代"上游先校验"**，这是本票最该被记住的一条。
+  - **HTTP 侧不受影响**：grep 实证 `decide_proposal` 全仓 3 个调用方，`routes_evolution.py:62` 与 `routes_work_items.py:65` 都显式传 `ctx`（`get_current_user` 永不返回 None）。**这个洞只有 MCP 入口能触发**——第二个入口面的典型代价，同 04/05 号票。
+  - **修法一行，复用既有收敛真源**：`_ensure_can_decide` 的 None 口径从"不校验"改成经 `acl.viewer_of(principal)` 收敛（None → `"default"`）后照常校验。**收敛的是 principal 本身，不是给 `ensure_can_delete` 加形参**——后者是被 27 处写侧共用的承重墙，本票不动。只在 `viewer != principal.user_id` 时构造新 principal，已有身份的走原对象，现有行为逐字不变。
+  - **单人部署不空转**：真实库唯一非空属主就是 `default`，收敛后照样能裁决自己的全部历史提案（探针 S4 实测：`principal=None` reject `default` 的提案仍成功）。
+  - **admin 早退必须留在收敛之前**：admin 的真实形态正是 `user_id=None`，收敛会把它变成 `"default"`；但 `role` 保留、`is_admin` 仍在，行为不变。保留早退是**可读性选择**（"admin 不校验"写在函数开头，下一个人不用推导 `ensure_can_delete` 内部才敢改这里），不是行为选择。
+  - **测试增量 5 例**（`tests/test_decide_proposal_none_principal.py`，全部不 mock：真 `decide_proposal` + 真 `ensure_can_delete` + 内存 SQLite 真建表 + 真 FTS）。**Red 实证 2 failed / 3 passed**——红的正是 reject / approve 两条越权路径，绿的三个是护栏（default 仍可裁、显式用户仍被挡、admin 仍全权）。
+  - **变异验证 4 KILLED / 1 等价变异（诚实记录）**（`.scratch/mcp-identity-gaps/mutation_check_02.py`，subprocess 隔离 + atexit 还原 + 归一化换行后指纹复核）：V1 退回修前（None 不校验）、V2 整个校验消失、V4 算了 `viewer_of` 却不用、V5 改成硬闸（None 即拒，会把单人部署的 default 提案也挡掉）——四个全杀。**V3（去掉 admin 早退）存活，逐条实证后确认是真等价**：admin 靠 `role` 传 `is_admin`，`viewer_of` 只改 `user_id` 不动 `role`，而 `ensure_can_delete` 自己第一行就判 `is_admin`——实测两者对 B 的资源都放行。未粉饰为"被杀"。
+  - **同票的读侧洞 `mem_recent` 本批未修**（根因 `memory_service.py:733` 的 `if principal:` 让 `viewer_of` 收敛整段不可达，宿主不透传 `user_id` 时全表返回含 B 的正文）。修法已定稿（`viewer_of` 提到 `if` 外面，一行），但它与 `decide_proposal` 是两处独立改动且读侧回归面更大（HTTP VAULT 页 + MCP + 可能的 worker），按 01b 教训**分开提交、分开验证**，下一批做。
+  - **清点方法论（本票最大的副产品）**：`principal=None` 的语义**必须逐函数实测，不能一刀切**。本轮三个探针、两轮自我纠正才得到可信结论：第一版探针没隔离数据目录（读写宿主真实库 + chromadb 日志冲掉 print）；第二版把 `legacy` 露出也当成泄漏，而 legacy 露出正是 `OR IS NULL` 的既定口径，于是把 `mem_recent` 误标成"带身份也没收窄"——与 01a 票的结论直接矛盾，**按 01b 教训先核实再记票**才发现收窄是好的、问题只在 None 那一侧。**判定不可信时先怀疑探针。**
+  - **全量 pytest 1940 passed / 0 failed**；ruff check + format 均过（中途被 `test_lint_gate_passes_on_real_repo` 抓到一次新测试文件格式，已修）。
+
+
 - **关键词召回补 `OR IS NULL`——单人部署下不再丢掉 96.8% 的记忆（2026-09-28，票据 `.scratch/fts-null-owner/issues/01-fts-missing-or-is-null.md`）**：
   - **先说影响**：这是**功能大面积失效**，不是"收紧了点"。`search_fts` / `search_fts_bm25` 的归属条件是裸的 `AND m.user_id = ?`，没有 `OR IS NULL` 半边。真实库 657 行 `memoryitem` 里 **636 行是 NULL 属主（96.8%）**——归属列是后来才加的，老数据全是 NULL。于是带 principal 的关键词召回**只能看到 21 行**，且**越老的记忆越搜不到**。用户感知是"时灵时不灵"而不是"搜不到"，极难排查。实测口径对比：口径 A `user_id=? OR IS NULL` 657 行，口径 B（FTS 现行 SQL）21 行。
   - **同族修法的第三次，前两次都在别的通道**：`build_memories_page`（VAULT 档案页）、向量通道（`$or[viewer, ""]`——空串是 NULL 属主在 Chroma 里的落点）都补过。读侧每条收窄的统一口径是 `user_id == viewer OR user_id IS NULL`，**FTS 这两处是漏网的**。
