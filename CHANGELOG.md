@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **记忆关系星图 `build_graph` 无身份时不再露出别人的记忆节点（2026-09-29，票据 `.scratch/mcp-identity-gaps/issues/12-ops-graph-missing-or-is-null.md`）**：
+  - **先说影响**：`lantai/ops/graph.py` 的 `build_graph`（MCP `graph_view` 与 REST 共用）是 `build_memories_page` **修前**的同族形状——`if principal:` 块内只判 `user_id` 非空就加归属条件，**没有 `is_admin` 豁免、没有 `OR IS NULL`、没有 None 收敛**。票 03 / 07 / 08 三次修正都没跟上这里，三个方向全中：① `principal=None`（MCP 宿主不透传 `user_id`）→ 一个条件都不加 → **星图露出别人的记忆节点**（实测 None 视角 nodes=2 含 user-B）；② 显式 user → 只留自己的行，跨用户边另一端不在池 → 边整个被丢 → **自己的图也空白**；③ admin（`user_id="api_key"`，`auth.py:168` 的真形态）→ 被收窄到 `user_id=='api_key'`，真实库没这个属主 → **星图对管理员空白**。
+  - **修法与仓内多数派逐字一致**（`build_memories_page`、`get_core_memory`、`find_duplicate_verbatim`、`hybrid_search` 均如此），不新造第四种口径：None → 收敛 `viewer_of(None)` + `OR IS NULL`；admin → 一律不加归属过滤；显式 user → `viewer_of(principal)` + `OR IS NULL`。
+  - **边侧无越权暴露（实证后决定不加过滤）**：`probe_12b_edge_ownership.py` 四个视角的 links 端点全部落在自己的 nodes 内——`edges` 查询按 `mem_ids` 取池内边，池已按归属收窄，端点必然在池内。**不需要给边加归属过滤**，省一处无效改动。但探针暴露两个非安全语义后果并已记录：user-A 自己建的跨用户边连 A 自己都看不到；只有跨用户边的记忆，其图对该用户完全空白。
+  - **测试**：`tests/test_graph_principal_scope.py` 6 例，不 mock 冒烟（真内存 SQLite + 真 FTS5 + 真 MemoryItem + 真 MemoryEdge 直调）。**种子设计上一个必要细节**：`build_graph` 节点入选条件是「参与入选边任一端，或携带 scene_id」，只给 `m-A` 连跨用户边则边另一端出池 → 边丢 → `m-A` 无 scene_id → 节点不入选，四种形态全返回空图，**会误判成「没有差异」**。故额外 seed 一条池内边。
+  - **变异门禁 4/4 KILLED**：归属块整个删掉 / None 收敛删掉 / 删 `OR IS NULL` 半边 / admin 豁免失效。**差集诚实记录**：M1（删整个归属块）与 M3（删 `OR IS NULL`）杀的测试集完全重合——M1 是**组合变异体**，同时废掉两个分支，而这两者在显式 user 视角上效果相同。M1 的独立价值不是差集，而是证明「两个分支都必须存在」。为 M2 补了 None 视角的精确集合断言后它与 M1 拉开（1→2 条）。**不伪造分离。**
+
 - **admin 两种构造形态在 VAULT 档案页上看到的数据不再差一整套（2026-09-29，票据 `.scratch/mcp-identity-gaps/issues/08-admin-two-forms-inconsistent.md`）**：
   - **先说影响**：同一个管理员，`Principal(user_id="api_key", role="admin")`（`auth.py:168` HTTP 环境变量 API key 的**真形态**）与 `Principal(user_id=None, role="admin")`（测试/CLI 常写法）在 `build_memories_page` 上看到的数据**差一整套**。实测修前：前者 `total=1`（只剩 NULL 老行）、后者 `total=3`。**票面原判还说轻了**——`viewer_of` 对 `"api_key"` 原样返回（≠ `"default"`），于是管理员连自己 `default` 属主的记忆都看不到，真实库上**档案页基本空白**。方向是"该看的没看到"（运维排障误导，排查"这条记忆去哪了"会得错误结论），不是越权泄漏。
   - **修法**（与仓内既有设计一致，非新造特例）：`if principal:` 块内加 `is_admin` 判定，admin 一律不加 user 归属过滤。同文件**四处**已是这个形状（`_kaogong_scope` :73、`get_core_memory` :498、`put_core_memory` :523、`find_duplicate_verbatim` :640），本处是唯一漏跟的——它靠在 `user_id` 上判空"意外"放过了 `user_id=None` 的 admin。

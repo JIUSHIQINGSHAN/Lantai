@@ -48,16 +48,44 @@ def build_graph(session: Session, limit: int = 150, principal=None) -> dict:
     """
     validate_graph_limit(limit)
 
+    # 归属（票 `.scratch/mcp-identity-gaps/12`）：此前这里是
+    # `build_memories_page` **修前**的同族形状——`if principal:` 块内只判
+    # `user_id` 非空就加归属条件，**没有 `is_admin` 豁免、没有 `OR IS NULL`、
+    # 没有 None 收敛**。票 03 / 07 / 08 三次修正都没跟上这里，三个后果：
+    #   · `principal=None`（MCP 宿主不透传 user_id）→ 一个条件都不加 → **星图
+    #     露出别人的记忆节点**（实测 D 形态 nodes=2 含 user-B）；
+    #   · 显式 user → 只留自己的行，跨用户边另一端不在池 → 边整个被丢 →
+    #     **自己的图也空白**；NULL 属主老边同时断掉（老边人人可读是既定口径）；
+    #   · admin（`user_id="api_key"`，`auth.py:168` 的真形态）→ 被收窄到
+    #     `user_id=='api_key'`，真实库没这个属主 → **星图对管理员空白**。
+    # 修法与仓内多数派逐字一致（`build_memories_page`、`get_core_memory`、
+    # `find_duplicate_verbatim`、`hybrid_search` 均如此），不新造第四种口径。
     stmt = (
         select(MemoryItem)
         .where(MemoryItem.status == "active")
         .order_by(MemoryItem.updated_at.desc())
     )
-    if principal:
+    if principal is None or bool(getattr(principal, "is_admin", False)):
+        # 无身份 → 收敛到 `viewer_of(None)`（"default"）+ NULL 老行；
+        # admin → 一律不加归属过滤（同票 08）。两条都走同一形状：
+        # 收窄到 `user_id == viewer OR IS NULL`，viewer 对 admin 无意义
+        # 故提前分支，不合成一个条件。
+        if principal is None:
+            from lantai.core.acl import viewer_of
+
+            stmt = stmt.where(
+                (MemoryItem.user_id == viewer_of(None)) | (MemoryItem.user_id.is_(None))
+            )
+    else:
         if getattr(principal, "tenant_id", None):
             stmt = stmt.where(MemoryItem.tenant_id == principal.tenant_id)
         if getattr(principal, "user_id", None):
-            stmt = stmt.where(MemoryItem.user_id == principal.user_id)
+            from lantai.core.acl import viewer_of
+
+            # `OR IS NULL`（票 03 口径）：NULL 属主老行人人可读，老边不能断。
+            stmt = stmt.where(
+                (MemoryItem.user_id == viewer_of(principal)) | (MemoryItem.user_id.is_(None))
+            )
         if getattr(principal, "session_id", None):
             stmt = stmt.where(MemoryItem.session_id == principal.session_id)
         if getattr(principal, "agent_id", None):
