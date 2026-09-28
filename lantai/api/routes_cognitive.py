@@ -44,10 +44,21 @@ class ObserveReq(BaseModel):
 
 
 @router.post("/observe")
-def cognitive_observe(req: ObserveReq, db: Session = Depends(get_session)) -> dict:
+def cognitive_observe(
+    req: ObserveReq,
+    db: Session = Depends(get_session),
+    ctx=Depends(get_current_user),
+) -> dict:
     """
     写入一条 Observation 记忆，同时创建对应的 Evidence 记录。
     Evidence 的 reliability × independence 复合权重防止 LLM 自我复读刷高置信度。
+
+    归属（票 `.scratch/cognitive-write-gaps/01`）：此前**一个身份都不取**，
+    落的两行 `MemoryItem` / `Evidence` 全是 `user_id=NULL`——而 NULL 在本仓
+    的口径是"未记录归属的老行，人人可见"，于是 A 写的观测对所有用户可见。
+    `content` 是自由文本，用户往里写什么完全不受控。
+
+    四元组随 `ctx` 落列（`session_id` 不加：认知观测不是会话产物）。
     """
     mem_id = new_id("mem")
     ev_id = new_id("ev")
@@ -57,6 +68,9 @@ def cognitive_observe(req: ObserveReq, db: Session = Depends(get_session)) -> di
         content=req.content,
         role=CognitiveRole.OBSERVATION,
         confidence=req.reliability * req.independence,  # 初始置信度 = 证据质量
+        user_id=getattr(ctx, "user_id", None) or "default",
+        tenant_id=getattr(ctx, "tenant_id", None),
+        agent_id=getattr(ctx, "agent_id", None),
     )
     ev = Evidence(
         id=ev_id,
@@ -67,6 +81,9 @@ def cognitive_observe(req: ObserveReq, db: Session = Depends(get_session)) -> di
         independence=req.independence,
         provenance=req.provenance,
         created_at=utcnow(),
+        user_id=getattr(ctx, "user_id", None) or "default",
+        tenant_id=getattr(ctx, "tenant_id", None),
+        agent_id=getattr(ctx, "agent_id", None),
     )
 
     db.add(mem)
@@ -77,24 +94,36 @@ def cognitive_observe(req: ObserveReq, db: Session = Depends(get_session)) -> di
 
 
 @router.post("/reflect")
-def cognitive_reflect(db: Session = Depends(get_session)) -> dict:
+def cognitive_reflect(
+    db: Session = Depends(get_session),
+    ctx=Depends(get_current_user),
+) -> dict:
     """
     触发一次完整的 Reflection 循环：
     - 扫描重复 Observation → 归纳 Pattern 候选
     - 统计 FailureRecord
     - 检测置信度衰减的 Belief / Rule
     返回结构化的 ReflectionReport。
+
+    归属（票 `.scratch/cognitive-write-gaps/01`）：`run_reflection` 的四个
+    查询此前一个 scope 都没有——统计是全表数、A 与 B 的观测被**一起聚类**、
+    晋升出的候选又是 ownerless 行。现在按 `ctx` 收窄（口径同票 04 的
+    `_digest_scope`：`user_id == viewer OR IS NULL`，NULL 老行可见）。
+    `FailureRecord` 无归属列，`failures` 计数无法收窄，报告里以
+    `failures_scoped: false` 如实标注。
     """
-    engine = ReflectionEngine(db)
+    engine = ReflectionEngine(db, principal=ctx)
     report = engine.run_reflection()
     return {
         "new_patterns": report.new_patterns,
+        "failure_patterns": report.failure_patterns,
         "belief_candidates": report.belief_candidates,
         "rule_candidates": report.rule_candidates,
         "rules_weakened": report.rules_weakened,
         "principles_under_review": report.principles_under_review,
         "contradictions": report.contradictions,
         "failures": report.failures,
+        "failures_scoped": report.failures_scoped,
         "summary": report.summary,
     }
 

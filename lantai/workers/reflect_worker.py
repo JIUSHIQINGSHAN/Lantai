@@ -22,6 +22,9 @@ def run_reflect_once() -> dict:
                 "rule_candidates": report.rule_candidates,
                 "rules_weakened": report.rules_weakened,
                 "failures": report.failures,
+                # 票 cognitive-write-gaps/01：`FailureRecord` 无归属列，
+                # 这个数跨用户——如实标注，别让读 worker 输出的人误判。
+                "failures_scoped": report.failures_scoped,
                 "summary": report.summary,
             }
     except Exception:
