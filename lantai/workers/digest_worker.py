@@ -297,7 +297,14 @@ def collect_digest_stats(day: date | None = None, *, principal=None) -> dict:
         ).one()
         refl = _aggregate_reflection(s, start, end, principal=principal)
     return {
-        "day": day or datetime.now().astimezone().date(),
+        # `day` 统一序列化成 ISO 字符串（票 mcp-identity-gaps/01a）：
+        # MCP 的 `get_digest` 把整个返回值 `json.dumps` 出去，此前这里是
+        # 裸 `date` 对象 → `TypeError: Object of type date is not JSON
+        # serializable` → `-32603 internal error`。**宿主只要已生成过
+        # 当日报告，这个工具就 100% 报错**（`run_digest_once` 那条分支
+        # 恰好先调了 `.isoformat()` 才没暴露）。HTTP 侧不受影响
+        # （FastAPI 的 jsonable_encoder 认 date），所以只有 MCP 侧炸。
+        "day": (day or datetime.now().astimezone().date()).isoformat(),
         "memories": {
             "new": int(new_mem),
             "modified": int(modified_mem),
@@ -323,7 +330,7 @@ def collect_digest_stats(day: date | None = None, *, principal=None) -> dict:
 
 def render_digest_markdown(stats: dict) -> str:
     """报告正文：当日摘要 + 待审候选提醒。"""
-    day = stats["day"]
+    day = stats["day"]  # 已是 ISO 字符串（collect_digest_stats 序列化）
     m, p, a, r = stats["memories"], stats["pending"], stats["archived"], stats["retrieval"]
     rf = stats.get("reflection") or {
         "created": 0,
@@ -521,7 +528,8 @@ def write_digest_report(stats: dict) -> Path:
     """写当日报告文件（YYYY-MM-DD.md），返回路径。"""
     out_dir = _digest_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{stats['day'].isoformat()}.md"
+    # stats["day"] 已是 ISO 字符串（collect_digest_stats 序列化，票 01a）
+    path = out_dir / f"{stats['day']}.md"
     path.write_text(render_digest_markdown(stats), encoding="utf-8")
     return path
 
@@ -540,7 +548,7 @@ def run_digest_once(day: date | None = None, *, principal=None) -> dict:
     record_run("digest")
     return {
         "ok": True,
-        "day": stats["day"].isoformat(),
+        "day": stats["day"],  # 已是 ISO 字符串（collect_digest_stats 序列化）
         "path": path.name,
         "content": render_digest_markdown(stats),
         "stats": stats,

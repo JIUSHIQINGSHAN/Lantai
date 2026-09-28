@@ -186,12 +186,16 @@ def handle_backfill(params: dict) -> dict:
 
 
 def handle_add(params: dict) -> dict:
+    # 归属（票 .scratch/mcp-identity-gaps/01a）：MCP 没有 HTTP 鉴权层，
+    # 宿主透传 `user_id` 才据此收窄去重范围；不透传留 None（与改动前
+    # 逐字一致）——宁 miss 不脏写，不猜身份。
+    principal = _principal_from_params(params)
     req = AddMemoryReq(
         title=params.get("title", ""),
         content=params.get("content", ""),
         lane=params.get("lane", "general"),
     )
-    return add_memory(req)
+    return add_memory(req, user_id=params.get("user_id") or "default", principal=principal)
 
 
 def handle_add_dialogue(params: dict) -> dict:
@@ -213,7 +217,9 @@ def handle_candidates_pending(params: dict) -> dict:
         raise ValueError("limit must be an int in [1, 500]")
     from lantai.services.candidate_service import list_pending_candidates
 
-    return list_pending_candidates(limit)
+    # 归属（票 .scratch/mcp-identity-gaps/01a）：不透传留 None（收敛到
+    # "default"，与改动前逐字一致）
+    return list_pending_candidates(limit, principal=_principal_from_params(params))
 
 
 def handle_candidate_review(params: dict) -> dict:
@@ -227,7 +233,10 @@ def handle_candidate_review(params: dict) -> dict:
         raise ValueError("approve must be a boolean")
     from lantai.services.candidate_service import review_candidate
 
-    return review_candidate(candidate_id, approve=approve, reason=reason)
+    # 归属（票 .scratch/mcp-identity-gaps/01a）：A 不能替 B 裁决候选
+    return review_candidate(
+        candidate_id, approve=approve, reason=reason, principal=_principal_from_params(params)
+    )
 
 
 def handle_candidate_refine(params: dict) -> dict:
@@ -237,7 +246,9 @@ def handle_candidate_refine(params: dict) -> dict:
         raise ValueError("candidate_id must be a non-empty string")
     from lantai.services.refine_service import refine_candidate_record
 
-    return refine_candidate_record(candidate_id.strip())
+    # 归属（票 01a）：refine 会改写 summary/claims/lane，甚至把 status 改成
+    # rejected——A 点一次"提纯"就可能把 B 的候选永久驳回
+    return refine_candidate_record(candidate_id.strip(), principal=_principal_from_params(params))
 
 
 def handle_triage_analyze(params: dict) -> dict:
@@ -247,7 +258,8 @@ def handle_triage_analyze(params: dict) -> dict:
         raise ValueError("limit must be an int in [1, 500]")
     from lantai.services.auto_triage_service import run_ai_triage
 
-    return run_ai_triage(limit=limit)
+    # 归属（票 01a）：预审会把候选正文送给 LLM，A 不能借这个端点读到 B 的候选
+    return run_ai_triage(limit=limit, principal=_principal_from_params(params))
 
 
 def handle_triage_apply(params: dict) -> dict:
@@ -257,7 +269,9 @@ def handle_triage_apply(params: dict) -> dict:
         raise ValueError("actions must be a non-empty list of objects")
     from lantai.services.auto_triage_service import apply_ai_triage_batch
 
-    return apply_ai_triage_batch(actions)
+    # 归属（票 01a）：请求体里的 id 是调用方给的，与预审返回的列表无绑定
+    # 关系——A 可以直接 POST 一个别人的 id 就驳回它
+    return apply_ai_triage_batch(actions, principal=_principal_from_params(params))
 
 
 def handle_triage_auto_pilot(params: dict) -> dict:
@@ -280,21 +294,25 @@ def handle_get_digest(params: dict) -> dict:
     """当日记忆盘点报告（Ticket 03）。"""
     from lantai.workers.digest_worker import load_today_digest
 
-    return load_today_digest()
+    # 归属（票 .scratch/mcp-identity-gaps/01a）：stats 按 viewer 过滤；
+    # 不透传留 None（收敛到 "default"）
+    return load_today_digest(principal=_principal_from_params(params))
 
 
 def handle_kaogong_eval(params: dict) -> dict:
     """考功：执行全库记忆价值演化考评周期（ADR-0031）。"""
     from lantai.services.kaogong_service import run_kaogong_cycle
 
-    return run_kaogong_cycle()
+    # 归属（票 01a）
+    return run_kaogong_cycle(principal=_principal_from_params(params))
 
 
 def handle_memory_consolidate(params: dict) -> dict:
     """沉潜：执行闲时夜梦记忆沉淀与折叠压缩周期（ADR-0036）。"""
     from lantai.services.consolidation_service import run_consolidation_cycle
 
-    return run_consolidation_cycle()
+    # 归属（票 01a）
+    return run_consolidation_cycle(principal=_principal_from_params(params))
 
 
 def handle_consolidation_report(params: dict) -> dict:
@@ -310,7 +328,10 @@ def handle_probe_detect(params: dict) -> dict:
 
     q = params.get("query", "")
     sid = params.get("session_id")
-    probes = detect_memory_probes(query=q, session_id=sid)
+    # 归属（票 .scratch/mcp-identity-gaps/01a）：探针会把别人的冲突正文
+    # 渲染成"顺便向您求证确认下：关于「…」"的问句——那是比列表更直接的
+    # 泄漏面。NULL 属主的老行不可见（宁可漏探，不可错探）。
+    probes = detect_memory_probes(query=q, session_id=sid, principal=_principal_from_params(params))
     return {
         "probes": probes,
         "prompt_context": format_probing_context(probes),
@@ -323,7 +344,11 @@ def handle_probe_resolve(params: dict) -> dict:
 
     cid = params.get("conflict_id", "")
     reply = params.get("user_reply", "")
-    return resolve_probe_response(conflict_id=cid, user_reply=reply)
+    # 归属（票 01a）：肯定分支会把 `incoming_ref` 写进别人的记忆正文——
+    # 全轮最严重的一条
+    return resolve_probe_response(
+        conflict_id=cid, user_reply=reply, principal=_principal_from_params(params)
+    )
 
 
 def handle_feedback(params: dict) -> dict:
@@ -351,7 +376,12 @@ def handle_raw_add(params: dict) -> dict:
         lane=params.get("lane", "general"),
         tags=params.get("tags", []) or [],
     )
-    return add_raw_memory(req)
+    # 归属（票 .scratch/mcp-identity-gaps/01a）：去重范围按 viewer 收窄
+    # （票 readside-gaps/20：此前去重不带归属过滤，A 提交与 B 的 verbatim
+    # 内容 sha256 相同的文本，返回的是 B 的 memory_id）
+    return add_raw_memory(
+        req, user_id=params.get("user_id") or "default", principal=_principal_from_params(params)
+    )
 
 
 def handle_obsidian_sync(params: dict) -> dict:
@@ -362,13 +392,16 @@ def handle_obsidian_sync(params: dict) -> dict:
     content = params.get("content", "")
     if not isinstance(content, str) or not content.strip():
         raise ValueError("content must be a non-empty string")
+    # 归属（票 .scratch/mcp-identity-gaps/01a）：sync 会把 A 的双链实体
+    # 从 B 的记忆行连出去，去重按 user_id 收窄
     return sync_obsidian_note(
         ObsidianSyncReq(
             title=params.get("title", "") or "",
             content=content,
             lane=params.get("lane", "general"),
             tags=params.get("tags", []) or [],
-        )
+        ),
+        principal=_principal_from_params(params),
     )
 
 
@@ -406,7 +439,8 @@ def handle_conflicts_list(params: dict) -> dict:
         raise ValueError("status must be open/resolved/dismissed/all")
     from lantai.services.conflict_service import list_conflict_events
 
-    return list_conflict_events(limit, status)
+    # 归属（票 .scratch/mcp-identity-gaps/01a）
+    return list_conflict_events(limit, status, principal=_principal_from_params(params))
 
 
 def handle_conflict_resolve(params: dict) -> dict:
@@ -422,7 +456,10 @@ def handle_conflict_resolve(params: dict) -> dict:
         raise ValueError("note must be a string")
     from lantai.services.conflict_service import resolve_conflict_event
 
-    return resolve_conflict_event(event_id, decision, note)
+    # 归属（票 01a）
+    return resolve_conflict_event(
+        event_id, decision, note, principal=_principal_from_params(params)
+    )
 
 
 def handle_scene_get(params: dict) -> dict:
@@ -454,7 +491,8 @@ def handle_recall_report(params: dict) -> dict:
         raise ValueError("days must be an int in [1, 365]")
     from lantai.observability.recall_report import recall_report
 
-    return recall_report(days)
+    # 归属（票 .scratch/mcp-identity-gaps/01a）
+    return recall_report(days, principal=_principal_from_params(params))
 
 
 def handle_mem_help(params: dict) -> dict:
@@ -515,7 +553,10 @@ def handle_mem_recent(params: dict) -> dict:
         raise ValueError("limit must be an int in [1, 200]")
     from lantai.services.memory_service import list_memories
 
-    return list_memories(status="active", limit=limit)
+    # 归属（票 .scratch/mcp-identity-gaps/01a）：`build_memories_page` 的
+    # 整个归属块挂在 `if principal:` 下，None 时一个条件都不加——A 调一次
+    # 就拿到全库记忆正文。宿主透传 user_id 才收窄。
+    return list_memories(status="active", limit=limit, principal=_principal_from_params(params))
 
 
 def handle_mem_stats(params: dict) -> dict:
@@ -585,7 +626,8 @@ def handle_proposals_list(params: dict) -> dict:
         raise ValueError("limit must be an int in [1, 500]")
     from lantai.services.evolution_service import list_proposals
 
-    return list_proposals(status, limit)
+    # 归属（票 .scratch/mcp-identity-gaps/01a）
+    return list_proposals(status, limit, principal=_principal_from_params(params))
 
 
 def handle_proposal_decide(params: dict) -> dict:
@@ -602,14 +644,21 @@ def handle_proposal_decide(params: dict) -> dict:
     from lantai.models.schemas import ProposalDecisionReq
     from lantai.services.evolution_service import decide_proposal
 
-    return decide_proposal(proposal_id, ProposalDecisionReq(approve=approve, reason=reason))
+    # 归属（票 .scratch/mcp-identity-gaps/01a）：apply 会把记忆正文写进
+    # 别人的库，A 不能替 B 裁决提案
+    return decide_proposal(
+        proposal_id,
+        ProposalDecisionReq(approve=approve, reason=reason),
+        principal=_principal_from_params(params),
+    )
 
 
 def handle_tree_view(params: dict) -> dict:
     """分类树视图（只读）：节点 + 每节点挂载计数（v0.7 TreeMemory 窄版）。"""
     from lantai.services.tree_service import view_tree
 
-    return view_tree()
+    # 归属（票 .scratch/mcp-identity-gaps/01a）
+    return view_tree(principal=_principal_from_params(params))
 
 
 def handle_tree_add(params: dict) -> dict:
@@ -621,7 +670,8 @@ def handle_tree_add(params: dict) -> dict:
         raise ValueError("name must be a non-empty string")
     from lantai.services.tree_service import add_tree_node
 
-    return add_tree_node(name, parent_path, description)
+    # 归属（票 01a）：新建节点落 principal 的 user_id
+    return add_tree_node(name, parent_path, description, principal=_principal_from_params(params))
 
 
 def handle_tree_assign(params: dict) -> dict:
@@ -634,7 +684,8 @@ def handle_tree_assign(params: dict) -> dict:
         raise ValueError("node_path must be a non-empty string")
     from lantai.services.tree_service import assign_memory_to_node
 
-    return assign_memory_to_node(memory_id, node_path)
+    # 归属（票 01a）：A 不能把 B 的记忆挂到自己的节点上
+    return assign_memory_to_node(memory_id, node_path, principal=_principal_from_params(params))
 
 
 def handle_crystals_list(params: dict) -> dict:
@@ -647,7 +698,8 @@ def handle_crystals_list(params: dict) -> dict:
         raise ValueError("limit must be an int in [1, 500]")
     from lantai.services.crystal_service import list_crystals
 
-    return list_crystals(status, limit)
+    # 归属（票 .scratch/mcp-identity-gaps/01a）
+    return list_crystals(status, limit, principal=_principal_from_params(params))
 
 
 def handle_crystals_detect(params: dict) -> dict:
@@ -657,7 +709,8 @@ def handle_crystals_detect(params: dict) -> dict:
         raise ValueError("dry_run must be a boolean")
     from lantai.services.crystal_service import run_crystal_detect_once
 
-    return run_crystal_detect_once(dry_run=dry_run)
+    # 归属（票 01a）：新建候选落 principal 的 user_id，否则又是无主行
+    return run_crystal_detect_once(dry_run=dry_run, principal=_principal_from_params(params))
 
 
 def handle_crystal_decide(params: dict) -> dict:
@@ -674,7 +727,10 @@ def handle_crystal_decide(params: dict) -> dict:
         raise ValueError("steps must be a list of strings")
     from lantai.services.crystal_service import decide_crystal
 
-    return decide_crystal(crystal_id, approve, steps, reason)
+    # 归属（票 01a）：裁决是破坏性操作，A 不能替 B 批准/驳回技能结晶
+    return decide_crystal(
+        crystal_id, approve, steps, reason, principal=_principal_from_params(params)
+    )
 
 
 def handle_reflect_run(params: dict) -> dict:
@@ -706,7 +762,8 @@ def handle_core_memory_get(params: dict) -> dict:
         raise ValueError("namespace must be a non-empty string")
     from lantai.services.memory_service import get_core_memory
 
-    return get_core_memory(namespace)
+    # 归属（票 .scratch/mcp-identity-gaps/01a）
+    return get_core_memory(namespace, principal=_principal_from_params(params))
 
 
 def handle_verbatim_search(params: dict) -> dict:
@@ -719,7 +776,14 @@ def handle_verbatim_search(params: dict) -> dict:
         raise ValueError("top_k must be an int in [1, 100]")
     from lantai.retrieval.hybrid import hybrid_search
 
-    return hybrid_search(query, top_k=top_k, memory_types=["verbatim"], use_rerank=False)
+    # 归属（票 01a）
+    return hybrid_search(
+        query,
+        top_k=top_k,
+        memory_types=["verbatim"],
+        use_rerank=False,
+        principal=_principal_from_params(params),
+    )
 
 
 def handle_graph_view(params: dict) -> dict:
@@ -728,7 +792,8 @@ def handle_graph_view(params: dict) -> dict:
 
     limit = params.get("limit", 150)
     validate_graph_limit(limit)
-    return get_graph(limit)
+    # 归属（票 01a）
+    return get_graph(limit, principal=_principal_from_params(params))
 
 
 def handle_recall_chain(params: dict) -> dict:
@@ -741,7 +806,10 @@ def handle_recall_chain(params: dict) -> dict:
     min_score = params.get("min_score", 0.3)
     total_max = params.get("total_max", 20)
     validate_chain_params(max_depth, branch, min_score, total_max)
-    return build_recall_chain(q, max_depth, branch, min_score, total_max)
+    # 归属（票 01a）
+    return build_recall_chain(
+        q, max_depth, branch, min_score, total_max, principal=_principal_from_params(params)
+    )
 
 
 def handle_checkpoint_write(params: dict) -> dict:
@@ -754,14 +822,16 @@ def handle_checkpoint_write(params: dict) -> dict:
         raise ValueError("session_id must be a string of >= 3 chars")
     if not isinstance(blocks, dict):
         raise ValueError("blocks must be an object")
-    return write_session_checkpoint(session_id, blocks)
+    # 归属（票 .scratch/mcp-identity-gaps/01a）：快照含会话全文，落 principal 归属
+    return write_session_checkpoint(session_id, blocks, principal=_principal_from_params(params))
 
 
 def handle_checkpoint_latest(params: dict) -> dict:
     """底本：最近一次会话快照（只读）。"""
     from lantai.services.checkpoint_service import get_latest_checkpoint
 
-    return get_latest_checkpoint()
+    # 归属（票 01a）
+    return get_latest_checkpoint(principal=_principal_from_params(params))
 
 
 def handle_cognitive_context(params: dict) -> dict:
@@ -777,8 +847,12 @@ def handle_cognitive_context(params: dict) -> dict:
     from lantai.cognition.context import CognitiveContextBuilder
     from lantai.storage import db
 
+    # 归属（票 .scratch/mcp-identity-gaps/01a）：这个工具的用途正是「把
+    # 记忆喂给 Agent」，此前全表捞——A 调一次就拿到全库最敏感的正文，
+    # 泄漏面直接是模型上下文（票 readside-gaps/03）
+    principal = _principal_from_params(params)
     with db.get_session() as s:
-        builder = CognitiveContextBuilder(s)
+        builder = CognitiveContextBuilder(s, principal=principal)
         ctx = builder.build(task=task, top_k=top_k)
         res = {
             "task": ctx.task,
@@ -799,7 +873,8 @@ def handle_persona_get(params: dict) -> dict:
     """器识：获取当前激活人格基座（只读）。"""
     from lantai.services.persona_service import format_persona_context, get_active_persona
 
-    p = get_active_persona()
+    # 归属（票 .scratch/mcp-identity-gaps/01a）
+    p = get_active_persona(principal=_principal_from_params(params))
     if not p:
         return {"persona": None, "context": ""}
     return {"persona": p.model_dump(mode="json"), "context": format_persona_context(p)}
@@ -810,7 +885,12 @@ def handle_scratchpad_get(params: dict) -> dict:
     session_id = str(params.get("session_id", "default") or "default")
     from lantai.services.scratchpad_service import get_scratchpad
 
-    return {"session_id": session_id, "content": get_scratchpad(session_id)}
+    # 归属（票 ownership-gaps/04 / 01a）：非 admin 只读得到自己写的札记；
+    # 不匹配返回空串（不区分「没有」与「不是你的」）
+    return {
+        "session_id": session_id,
+        "content": get_scratchpad(session_id, principal=_principal_from_params(params)),
+    }
 
 
 def handle_scratchpad_write(params: dict) -> dict:
@@ -819,7 +899,8 @@ def handle_scratchpad_write(params: dict) -> dict:
     content = str(params.get("content", "") or "")
     from lantai.services.scratchpad_service import write_scratchpad
 
-    return write_scratchpad(session_id, content)
+    # 归属（票 01a）：随 principal 落列，不落则读侧无从按归属收窄
+    return write_scratchpad(session_id, content, principal=_principal_from_params(params))
 
 
 def handle_dialogue_add_async(params: dict) -> dict:
@@ -879,6 +960,7 @@ def handle_persona_set(params: dict) -> dict:
         guidelines=str(params.get("guidelines", "")),
         epistemic_facts=str(params.get("epistemic_facts", "")),
         is_active=bool(params.get("is_active", True)),
+        principal=_principal_from_params(params),
     )
     return p.model_dump(mode="json")
 

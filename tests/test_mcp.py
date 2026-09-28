@@ -203,7 +203,10 @@ def test_candidates_pending_ok():
     assert "error" not in resp
     text = resp["result"]["content"][0]["text"]
     assert json.loads(text) == {"candidates": []}
-    m.assert_called_once_with(10)
+    # `principal=None`：宿主没透传 user_id → `_principal_from_params` 返回 None
+    # （票 .scratch/mcp-identity-gaps/01a）。与改动前逐字一致——None 正是
+    # service 的缺省值，不透传时行为不变。
+    m.assert_called_once_with(10, principal=None)
 
 
 def test_candidate_review_ok():
@@ -225,7 +228,7 @@ def test_candidate_review_ok():
             }
         )
     assert "error" not in resp
-    m.assert_called_once_with("cand_1", approve=False, reason="不相关")
+    m.assert_called_once_with("cand_1", approve=False, reason="不相关", principal=None)
 
 
 def test_candidate_review_validation():
@@ -462,7 +465,7 @@ def test_conflicts_list_ok():
             }
         )
     assert "error" not in resp
-    m.assert_called_once_with(10, "open")
+    m.assert_called_once_with(10, "open", principal=None)
 
 
 def test_conflicts_list_validation():
@@ -500,7 +503,7 @@ def test_conflict_resolve_ok():
             }
         )
     assert "error" not in resp
-    m.assert_called_once_with("cfev_1", "resolved", "")
+    m.assert_called_once_with("cfev_1", "resolved", "", principal=None)
 
 
 def test_conflict_resolve_validation():
