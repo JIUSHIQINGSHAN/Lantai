@@ -67,14 +67,32 @@ def write_session_checkpoint(session_id: str, blocks: dict, principal=None) -> d
 
     principal 非 None 时把归属落到每一行（票 09 口径 2）——列一直在
     （`tables.py:658`），只是写入方从不填，读侧收窄就没有判据可用。
-    `principal=None` 的内部调用留 NULL，与改动前逐字一致。
+
+    归属（票 `.scratch/mcp-identity-gaps/04`）：owner 走 `acl.viewer_of`
+    收敛，**不落 NULL**。此前是 `getattr(principal, "user_id", None)`，
+    而读侧 `_checkpoint_scope` 的口径是 `user_id == viewer OR user_id IS
+    NULL`——NULL 行的可见性是"人人可读"。于是宿主不透传 `user_id` 调 MCP
+    `checkpoint_write`（`principal=None`），落一行无主底本，之后**任何**
+    用户调 `checkpoint_latest` 都能读到那五段工作现场。
+
+    docstring 原写"`principal=None` 的内部调用留 NULL"——但 grep 全仓只有
+    HTTP 路由与 MCP 两个调用方，**没有任何 worker / CLI / 脚本调用者**，
+    那条设计对应的场景不存在。同批四个兄弟写工具（`raw_add` /
+    `add_dialogue` / `scratchpad_write`）在不透传身份时全部落 `"default"`，
+    只有这一个落 NULL。
+
+    tenant / agent 保持 `getattr(..., None)`：它们没有"人人可读"的读侧
+    口径，改了只会扩大回归面。`crystal_service.py:84` 的 NULL 是**刻意的**
+    （后台巡检确有调用者），不受本票影响。
     """
     if not session_id or len(session_id.strip()) < 3:
         raise ValueError("session_id 至少 3 字符")
     session_id = session_id.strip()
     valid = validate_blocks(blocks)
     now = utcnow()
-    owner = getattr(principal, "user_id", None)
+    from lantai.core.acl import viewer_of
+
+    owner = viewer_of(principal)
     tenant = getattr(principal, "tenant_id", None)
     agent = getattr(principal, "agent_id", None)
     with db.get_session() as s:

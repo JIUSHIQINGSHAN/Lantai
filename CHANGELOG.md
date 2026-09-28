@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP `checkpoint_write` 不再落无主底本——宿主不透传身份时归 `default`，工作现场不再对所有人敞开（2026-09-28，票据 `.scratch/mcp-identity-gaps/issues/04-checkpoint-write-null-owner.md`）**：
+  - **先说影响**：这是 02 号票第一步清点（60 个 handler 机械枚举）顺带挖出来的洞，形状和前三波都不同——**principal 取了、也传了，但下游在 `principal=None` 时把 owner 落成 NULL**。而底本的读侧口径是 `user_id == viewer OR user_id IS NULL`，**NULL 行的可见性是"人人可读"**。于是宿主不透传 `user_id` 调 MCP `checkpoint_write`，落一行无主的五段快照（在做/下一步/工作区/决策/待办），之后**任何**用户调 `checkpoint_latest` 都能读到它——那是 Agent 的当前工作现场，`readside-gaps/09` 专门说过"把当前工作现场整个吐出"有多严重。
+  - **同批探针的对照组说明这是孤例**：`raw_add` / `add_dialogue` / `scratchpad_write` 在不透传身份时全部落 `"default"`，**只有 `checkpoint_write` 落 NULL**（实测 `.scratch/mcp-identity-gaps/probe_02_write_owner.py`，真 handler + 内存 SQLite 真建表）。
+  - **docstring 里的"内部调用"根本不存在**：`write_session_checkpoint` 原写"`principal=None` 的内部调用留 NULL，与改动前逐字一致"——grep 全仓只有 `routes_checkpoint.py:53`（HTTP）与 `mcp.py:878`（MCP）两个调用方，**没有任何 worker / CLI / 脚本调用者**。那条设计对应的场景不存在，只剩洞。HTTP 侧也一直是好的（`get_current_user` 永不返回 None，DEV MODE 回落 `Principal(user_id="default")`）——**这个洞只有 MCP 入口能触发，第二个入口面的典型代价**。
+  - **修法一行**：owner 从 `getattr(principal, "user_id", None)` 改成 `acl.viewer_of(principal)`（收敛：`None`/空 user_id → `"default"`）。tenant / agent 保持 `getattr(..., None)`——它们没有"人人可读"的读侧口径，改了只会扩大回归面。admin（真形态 `user_id=None`）落 `"default"`，读侧 `== viewer OR IS NULL` 照样放行，**不会把 admin 关在门外**。
+  - **这不违反 02 号票"读操作不收紧"的价值观**：改的是**写入时落哪个属主**，读侧一个条件都没动。`test_null_owner_legacy_rows_still_visible` 专门钉住这点——NULL 属主老底本对任何用户仍可见，单人部署不丢历史。
+  - **未改 `crystal_service.py:84`**：同形状但 NULL 是**刻意的**（docstring 明写"后台巡检留 NULL"，且确有巡检调用者）。同一种代码形状在两处一个是对的、一个是错的，差别只在"设计说的场景是否真实存在"——**这正是要逐个 grep 调用者而不能按形状批量改的原因**。
+  - **测试增量 6 例**（`tests/test_checkpoint_write_owner.py`，全部不 mock：真 handler + 真 service + 内存 SQLite 真建表）。**Red 实证**：3 failed / 3 passed——红的正是三个 NULL 落库路径，绿的三个是回归护栏（不依赖修复）。
+  - **变异验证 3 KILLED / 0 MISSED**（`.scratch/mcp-identity-gaps/mutation_check_04.py`，subprocess 隔离 + atexit 还原 + 还原后逐字节复核）：V1 退回 `getattr`（修前形状）、V2 硬写 `"default"`（不认透传的 user_id）、V3 `owner = None`（落到列默认 NULL）。
+  - **全量 pytest 1894 passed / 0 failed**（03 后基线 1888）。ruff check + format 均过；`scripts/release_check.py` 的 CI lint 门禁与版本一致性均 PASS；gitleaks 本次改动文件 0 命中。
+
 - **VAULT 档案页不再空白——`build_memories_page` 补上 `OR IS NULL`，DEV MODE 从只见 3/650 条恢复为 632/650（2026-09-28，票据 `.scratch/mcp-identity-gaps/issues/03-vault-page-missing-or-is-null.md`）**：
   - **先说影响**：这是**功能不可用**级别的坑，不是"收紧了点"的体验问题。真实库 650 行 `memoryitem` 里 **629 行 `user_id` 是 NULL**（v022 之前写入还没有属主概念），而 `build_memories_page` 的归属条件是裸的 `user_id == principal.user_id`，**没有 `OR IS NULL`**。于是 DEV MODE（或任何显式属主的用户）打开 VAULT 档案页 / 终端图谱 / 让 MCP `mem_recent` 取最近记忆，**只能看到自己那几条，629 行历史记忆全部不可见**。实测：`principal=None` 650/650，DEV MODE **3/650**，user-A 6/650。**单用户部署下档案页基本是空的。**
   - **同文件 5 个收窄点，4 个对 1 个错**：`core memory 读/写`（:503/:532）、`verbatim 去重`（:639/:644）的口径全是 `user_id == viewer OR user_id IS NULL`，**只有 `build_memories_page`（:737）漏了后半截**。根因是它的归属块按字段逐条 `if` 追加（tenant/user/session/agent/allowed_lanes 各一条），写的时候只想着"有这个字段就加条件"，**没走 `viewer_of` 那套收敛口径**——所以既没有 `OR IS NULL`，也没有 admin 分支。
