@@ -59,6 +59,54 @@ def filter_results_by_lanes(results: list, lanes: list[str] | None) -> list:
     return [r for r in results if _lane(r) in allowed]
 
 
+def viewer_of(principal) -> str:
+    """读侧收敛到的 user_id（票 `.scratch/readside-gaps/15`）。
+
+    口径同 `memory_service.get_core_memory` / `work_item_service._viewer_of`：
+    `principal=None`（内部调用 / MCP / 脚本）与未记录归属都收敛到
+    `"default"`——与 `auth.py` DEV MODE 回落的 user_id 同值，
+    不新造「默认属主」概念。
+
+    这是本仓第三次写同一段收敛逻辑，故收到 `core/acl.py` 做单一真源。
+    """
+    return (
+        (getattr(principal, "user_id", None) or "default") if principal is not None else "default"
+    )
+
+
+def vector_owner_filter(principal, extra: dict | None = None) -> dict | None:
+    """Chroma `where` 的归属过滤（票 `.scratch/readside-gaps/15`）。
+
+    `admin` / `principal=None` → `None`（不过滤，worker/CLI 不能空转）。
+    否则 `user_id == viewer OR user_id == ""`——**空串是 NULL 属主在向量库
+    里的落点**（写入侧 `getattr(mem, "user_id", "") or ""`，见
+    `memory_service.index_memory_item` 的 8 键 metadata 契约）。
+
+    **NULL 属主不等于「属于所有人」，但必须可见**：真实库 353 条向量里
+    332 条是空串、636 行 memoryitem 是 `user_id IS NULL`。判「不可见」
+    会让单人部署下的检索整体空转。所以是 `OR ""` 而不是 `== viewer`。
+
+    **Chroma 的 `where` 只接受一个顶层算符**（`$and` / `$or` / 单键），
+    多键并列直接 `ValueError: Expected where to have exactly one operator`。
+    所以多个条件一律塞进 `$and`，不能像 SQL 那样并列写。
+
+    `extra`：lane / domain 等附加条件，同样进 `$and`（调用方传单键 dict）。
+    """
+    if principal is not None and bool(getattr(principal, "is_admin", False)):
+        base: dict | None = None
+    elif principal is None:
+        base = None
+    else:
+        viewer = viewer_of(principal)
+        base = {"$or": [{"user_id": viewer}, {"user_id": ""}]}
+    if base is None:
+        return extra
+    conds = [base]
+    if extra:
+        conds.extend([{k: v} for k, v in extra.items()])
+    return conds[0] if len(conds) == 1 else {"$and": conds}
+
+
 def ensure_can_delete(
     principal,
     *,

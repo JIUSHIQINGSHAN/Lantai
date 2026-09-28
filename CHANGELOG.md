@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **向量检索补归属过滤——A 的一条 `/add` 不再把 B 的记忆正文送进外部 LLM，也不再改写 B 的 `importance`（2026-09-28，票据 `.scratch/readside-gaps/issues/15-vector-search-no-owner-filter.md`）**：
+  - **先说影响**：两处向量检索一个过滤都不带，返回的是**全库最近邻**——`memory_service._apply_dedup` 与 `gate/decision.py`。A 控制新记忆的正文即控制 embedding，反复试探即可命中 B 的最近邻；命中之后每一条下游都越过归属：`_dedup_structural` 把 **B 的正文 + A 的正文一起送进外部 LLM**（内容离开本机即无法撤回）、`_dedup_merge` 改 B 的 `importance`（考功与遗忘的输入）、`_create_update_proposal` 把提案的 `target_memory_id` 钉在 B 的记忆上、`find_similar` 把 B 的 ORM 对象直接交给写者、`decide` 拿 B 的记忆判 A 的候选是否冲突并**降 B 的 importance**、往 B 的记忆上写 `ConflictEvent`。B 全程看不到任何回显。
+  - **票面原计划「照抄范本 `hybrid.py:432-439`」——先实证了一遍，范本本身是坏的**，两处既存失效：① **Chroma 的 `where` 只接受一个顶层算符**，多键平铺直接 `ValueError`，原代码在 `lanes` 与 principal 条件都出现时拼多键 → 整次查询抛错 → 被上层 `except` 吞掉 → **静默降级成纯关键词检索，向量召回整条通道消失**；② **plain equality 滤 `user_id` 会丢 NULL 属主**：探真实库 353 条向量里 **332 条 `user_id == ''`**、0 条具体用户名，657 行 memoryitem 里 636 行 `user_id IS NULL`，admin principal 因此拿到 0 条向量结果。本票把范本修掉再复用。
+  - **新助手 `core.acl.vector_owner_filter(principal, extra=None)` 做单一真源**：`admin` / `principal=None` → 不过滤（worker/CLI 不能空转）；否则 `$or [user_id=viewer, user_id=""]`——**空串是 NULL 属主在向量库里的落点**（写入侧 `getattr(mem, "user_id", "") or ""` 的 8 键 metadata 契约，已实证）。NULL 属主不等于「属于所有人」，但判不可见会让单人部署整体空转，所以是 `OR ""` 而不是 `== viewer`。多个条件一律塞 `$and`（Chroma 限制）。
+  - **`find_similar` 的 `session.get` 盲区单独补判定**：向量层滤对了，按主键直读的那一下仍绕开 SQL scope（票 14 踩过两次）。取到行后过 `_owns`。
+  - **principal 一路下传**：`add_memory` / `add_memory_async` 把已有的 `user_id` / `tenant_id` 经 `_principal_of` 构造成 principal，传到 `_apply_dedup` / `_dedup_structural` / `_dedup_merge` / `_create_update_proposal` / `_create_candidate_direct` / `_create_candidate_with_extraction` / `find_similar` / `decide`。两条路径（fastpath 直书与提取）都要走——漏一个就是半修。
+  - **探针抓到一处票面外越权**：`decide` 在 `principal=None` 时会自行按候选自身属主收敛，所以路由丢掉 `ctx` 后 B 的记忆一行不动、原有断言看不见；但 **B 的裁决结果仍由 A 说了算**——A 拿 B 的 `candidate_id` 打 `/gate`，能让 B 的待决内容晋升成正式记忆。已按票 02 的 `evolution_service._ensure_can_decide` 范式补 `_ensure_can_decide`（复用 `acl.ensure_can_delete` 单一真源，含租户维度）。
+  - **测试增量**：`tests/test_dedup_ownership.py` 42 例。决定性断言落在三处真出口上——LLM 提示词文本、落库行字段值、HTTP 状态码。含多条反向用例保功能没被修废（A 自己的重复内容照常 merge bump、NULL 属主老行照常参与比对、admin 与 `principal=None` 全表）。`_apply_dedup` 与 `hybrid_search` 的「filters 真的传下去了」用**真 Chroma**（临时目录）验，不 mock 检索本身——mock 掉的 store 收不收 filters 都行，断言会退化成「调用签名里有这个 kwarg」。
+  - **顺带修掉两个测试自身的假绿机器**：`test_v022_retrieval.py` 的向量替身 `_respect` 只认平铺键，遇到 `$and` 键 `getattr(row, "$and")` → None → **所有行被滤掉**，「A 检索不到 B 的记忆」退化成「A 什么都检索不到」——绿得毫无意义（已升级为真 Chroma 语义 + `user_id` 走向量库口径 NULL→空串）；`test_coalesce_async.py` 两处精确匹配断言补 `principal` kwarg。
+  - **变异验证 27/27 全杀**（`.scratch/readside-gaps/mutation_check_15.py`，子进程隔离）。第一轮 **11 个 MISSED** 全部对应真实缺口——`_owns` 守卫全被杀，缺的是**下传链**与 `decide` / 路由层（直接用 service 的测试够不着 `add_memory` 内部的管线）；补测试后剩 1 个，探针查出是上面那处票面外越权，补 `_ensure_can_decide` + M26/M27 后全杀。全量 pytest **1668 passed / 0 failed**（基线 1626）。
+  - **等价变异不是覆盖缺口**：M27 最初设计成「裁决校验跳过 admin」，但 `ensure_can_delete` 本就对 admin 早退——该变异与原程序语义等价，任何测试都不可能区分。换成真正会改行为的「丢租户维度」并补跨租户用例。
+
 - **分类树读侧归属——`/tree` 不再把整棵树的节点描述和别人的挂载条数一起吐出来（2026-09-28，票据 `.scratch/readside-gaps/issues/08-tree-edges-readside-no-identity.md`）**：
   - **先说影响**：`GET /tree` 和 `/tree/subtree` 一个身份都不取，返回**整棵树**的节点。漏的不只是节点名——每个节点带一段 `description` 自由文本（第五轮实证 A 打过去 len=189，含 B 的密文），更隐蔽的是**挂载计数**：节点名就算收窄了，计数照样漏，**A 能数出 B 在某个节点下挂了多少条记忆**。两处分开漏，任漏一处都够推出「B 在忙什么」。
   - **`MemoryNode` 此前一个归属列都没有** → 补 `tenant_id` / `user_id` / `agent_id` + 迁移 v26（幂等 `_has_column` 守卫，异常只记日志不阻断启动，同 `SessionCheckpoint` 口径）。真实库 11 行老数据保持 NULL，读侧靠 `OR IS NULL` 兜住——NULL 是「未记录」不是「属于所有人」，判不可见会让整棵树在单人部署下直接消失。

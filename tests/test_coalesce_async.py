@@ -112,8 +112,10 @@ class TestServiceFallback:
         ):
             res = ms.add_memory_async(req, user_id="default")
         # 归属四元组必须一路透传到同步落库（票 .scratch/ownership-gaps/03）：
-        # 降级路径若丢掉 tenant_id，异步写入的内容在按属主过滤的检索里仍不可见
-        m.assert_called_once_with(req, user_id="default", tenant_id=None)
+        # 降级路径若丢掉 tenant_id，异步写入的内容在按属主过滤的检索里仍不可见。
+        # `principal`（票 readside-gaps/15）同理：丢了它，去重链上的归属
+        # 判定就退回按 user_id 收敛，admin/worker 的显式身份会被悄悄覆盖。
+        m.assert_called_once_with(req, user_id="default", tenant_id=None, principal=None)
         assert res["status"] == "synced"
         assert res["document_id"] == "doc1"
         assert len(res["job_id"]) == 16
@@ -129,7 +131,7 @@ class TestServiceFallback:
             patch.object(ms, "add_memory", return_value={}) as m,
         ):
             ms.add_memory_async(req, user_id="u1", tenant_id="t9")
-        m.assert_called_once_with(req, user_id="u1", tenant_id="t9")
+        m.assert_called_once_with(req, user_id="u1", tenant_id="t9", principal=None)
 
     def test_add_memory_async_queues_when_enabled(self):
         from lantai.models.schemas import AddMemoryReq

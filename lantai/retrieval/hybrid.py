@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlmodel import select
 
+from lantai.core.acl import vector_owner_filter
 from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
@@ -420,25 +421,19 @@ def _hybrid_search_impl(
     fetch_n = candidate_n * p.reranker_multiplier
     vector_results = []
     try:
-        filters = {}
+        # lane / domain 附加条件（票 .scratch/readside-gaps/15 前是平铺多键，
+        # 与 principal 条件叠加后超过 Chroma「where 只接受一个顶层算符」的
+        # 限制，整次查询 ValueError → 静默降级成纯关键词检索，向量召回全丢）。
+        extra: dict = {}
         if lanes:
-            if len(lanes) == 1:
-                filters["lane"] = lanes[0]
-            else:
-                filters["lane"] = {"$in": lanes}
+            extra["lane"] = lanes[0] if len(lanes) == 1 else {"$in": lanes}
         if domain and domain != "all":
-            filters["domain"] = domain
+            extra["domain"] = domain
 
-        if principal:
-            if getattr(principal, "tenant_id", None):
-                filters["tenant_id"] = principal.tenant_id
-            if getattr(principal, "user_id", None):
-                filters["user_id"] = principal.user_id
-            if getattr(principal, "session_id", None):
-                filters["session_id"] = principal.session_id
-
-        # Chroma requires $and if there are multiple filters, wait, default is AND if multiple keys
-        # Actually Chroma handles multiple keys as AND automatically.
+        # 归属过滤（票 .scratch/readside-gaps/15）：admin / principal=None →
+        # None（不过滤）；否则 user_id == viewer OR user_id == ""（空串是
+        # NULL 属主在向量库里的落点，332/353 条真实向量都是它）。
+        filters = vector_owner_filter(principal, extra or None)
 
         qv = embed([query])[0]
         vector_store = get_vector_store()

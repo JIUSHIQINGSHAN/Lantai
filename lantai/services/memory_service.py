@@ -38,7 +38,48 @@ from lantai.storage.fts import sync_fts
 from lantai.storage.vector_store import get_vector_store
 
 
-def _apply_dedup(s, content: str, fastpath: bool) -> tuple[str, MemoryItem | None, float]:
+def _principal_of(principal, user_id: str | None = None, tenant_id: str | None = None):
+    """构造读侧 principal（票 `.scratch/readside-gaps/15`）。
+
+    `add_memory` 一直接收 `user_id` / `tenant_id`，但只用来盖**新**候选的
+    归属列，从不下传给去重——于是去重在**全库**范围找最近邻。这里把已有的
+    两个参数补构造 principal：显式传入的优先，否则按 user_id 收敛
+    （同 `_viewer_of` 口径，`None` → `"default"`）。
+
+    **安全默认是收窄而非放行**：此前全库去重，本票之后按属主收敛。
+    要看全库的调用方（admin / worker）显式传 admin principal。
+    """
+    if principal is not None:
+        return principal
+    from lantai.core.auth import Principal
+
+    return Principal(
+        user_id=user_id or "default",
+        tenant_id=tenant_id,
+        allowed_lanes=None,
+    )
+
+
+def _owns(mem, principal) -> bool:
+    """行级归属判定（票 `.scratch/readside-gaps/15`）。
+
+    `session.get` 按主键直读，**绕开一切 SQL 层 scope**（票 14 的 rejecter
+    就是这么漏的）——所以向量层滤对了，这一下仍要单独判。
+
+    NULL 属主（真实库 636/657 行）判「不可见」会让单人部署整体空转，
+    故放行；admin 全权。口径同 `acl.ensure_can_delete`，但不抛异常——
+    调用方要的是「跳过这条」而不是 403。
+    """
+    if principal is None or bool(getattr(principal, "is_admin", False)):
+        return True
+    from lantai.core.acl import viewer_of
+
+    return (mem.user_id or None) in (None, viewer_of(principal))
+
+
+def _apply_dedup(
+    s, content: str, fastpath: bool, principal=None
+) -> tuple[str, MemoryItem | None, float]:
     """余弦预判（ADR-0019 结构判别第一相位）。
 
     返回 (action, target_or_None, sim)：
@@ -46,20 +87,38 @@ def _apply_dedup(s, content: str, fastpath: bool) -> tuple[str, MemoryItem | Non
     - "update"：fastpath 中带 → update 提案（有刹车）
     - "undecided"：提取路径中带 → 提取后交结构判别（relation.py）
     - "insert"：低相似 → 继续正常建候选
+
+    归属（票 `.scratch/readside-gaps/15`）：此前 `search` 一个过滤都不带，
+    返回**全库最近邻**——A 控制新记忆的正文即控制 embedding，反复试探即可
+    命中 B 的记忆，随后 `_dedup_structural` 把 B 的正文送进外部 LLM、
+    `_dedup_merge` 改 B 的 `importance`。现按 `principal` 收敛。
     """
     try:
         qv = embed([content])[0]
-        vec_results = get_vector_store().search(qv, top_k=1)
+        from lantai.core.acl import vector_owner_filter
+
+        filters = vector_owner_filter(principal)
+        vec_results = get_vector_store().search(qv, top_k=1, filters=filters)
         if not isinstance(vec_results, list):
             return "insert", None, 0.0
-        return find_similar(s, vec_results, fastpath=fastpath)
+        return find_similar(s, vec_results, fastpath=fastpath, principal=principal)
     except Exception as e:
         logger.warning("dedup prescreen failed (insert fallback): %s", e)
         return "insert", None, 0.0
 
 
-def _dedup_merge(s, target: MemoryItem, sim: float) -> dict:
-    """merge 直合：仅 bump，不吞新文本（新文本已在更高相似带被排除）。"""
+def _dedup_merge(s, target: MemoryItem, sim: float, principal=None) -> dict | None:
+    """merge 直合：仅 bump，不吞新文本（新文本已在更高相似带被排除）。
+
+    归属（票 `.scratch/readside-gaps/15`）：这里改的是**别人的行**
+    （`importance` +0.1、`last_used_at`），而上游已按主键直读——单独判一次，
+    不放任「上游忘了传 principal」把缺口带到这里。
+    """
+    if not _owns(target, principal):
+        logger.info(
+            "dedup merge: target %s 不归属当前主体，跳过（宁 miss 不脏写）", target.id
+        )
+        return None
     target.last_used_at = utcnow()
     target.importance = min(1.0, target.importance + 0.1)
     s.add(target)
@@ -68,9 +127,18 @@ def _dedup_merge(s, target: MemoryItem, sim: float) -> dict:
 
 
 def _create_update_proposal(
-    s, target: MemoryItem, title: str, content: str, lane: str, sim: float
-) -> dict:
-    """update 提案：待审，可批可拒（知识写入有刹车）。"""
+    s, target: MemoryItem, title: str, content: str, lane: str, sim: float, principal=None
+) -> dict | None:
+    """update 提案：待审，可批可拒（知识写入有刹车）。
+
+    归属（票 `.scratch/readside-gaps/15`）：提案的 `target_memory_id` 钉在
+    这条记忆上，将来 apply 时会改它的正文——不能指向别人的记忆。
+    """
+    if not _owns(target, principal):
+        logger.info(
+            "dedup update: target %s 不归属当前主体，不建提案（宁 miss 不脏写）", target.id
+        )
+        return None
     prop = MemoryProposal(
         id=new_id("prop"),
         target_memory_id=target.id,
@@ -107,41 +175,59 @@ def _llm_judge(old: str, new: str) -> str:
 
 
 def _dedup_structural(
-    s, target_id: str, title: str, content: str, lane: str, sim: float
+    s, target_id: str, title: str, content: str, lane: str, sim: float, principal=None
 ) -> dict | None:
     """结构判别（ADR-0019 第二相位）：提取后对中带样本判类。
 
     返回 None = insert（继续建候选）；merge → 直合；update → 提案。
     规则吃不准（中带）交 LLM 兜底；LLM 缺席/失败 → insert（宁 miss 不脏写）。
+
+    归属（票 `.scratch/readside-gaps/15`）：`target` 按主键直读后必须判归属
+    才准送进 `classify_relation`——那个调用把 **B 的正文 + A 的正文一起
+    发给外部 LLM**（`DEDUP_RELATION_*`），内容离开本机即无法撤回。
+    别人的目标一律当 insert 处理（不改、不提案、不送 LLM）。
     """
     target = s.get(MemoryItem, target_id)
     if target is None or target.status != "active":
         return None
+    if not _owns(target, principal):
+        logger.info(
+            "dedup structural: target %s 不归属当前主体，按 insert 处理（宁 miss 不脏写）",
+            target_id,
+        )
+        return None
     if not settings.DEDUP_STRUCTURAL_ENABLED:
         # 关掉结构判别 → 保守走 update 提案（有刹车，不吞内容）
-        return _create_update_proposal(s, target, title, content, lane, sim)
+        return _create_update_proposal(s, target, title, content, lane, sim, principal)
     from lantai.gate.relation import classify_relation
 
     judge = _llm_judge if settings.DEDUP_STRUCTURAL_LLM_ENABLED else None
     rel = classify_relation(target.content, content, llm_judge=judge)
     if rel == "merge":
-        return _dedup_merge(s, target, sim)
+        return _dedup_merge(s, target, sim, principal)
     if rel == "update":
-        return _create_update_proposal(s, target, title, content, lane, sim)
+        return _create_update_proposal(s, target, title, content, lane, sim, principal)
     return None  # insert
 
 
 def add_memory(
-    req: AddMemoryReq, user_id: str = "default", *, tenant_id: str | None = None
+    req: AddMemoryReq,
+    user_id: str = "default",
+    *,
+    tenant_id: str | None = None,
+    principal=None,
 ) -> dict:
     """创建 RawDocument + MemoryCandidate。
 
     user_id / tenant_id：归属四元组（票 .scratch/ownership-gaps/03）。此前
     参数收了却不落列，`MemoryCandidate.user_id` 恒 NULL → 来源链继承到
-    MemoryItem 也是 NULL → `hybrid.py:435` 的 `filters["user_id"]` 与
-    `fts.py:160` 的 `AND m.user_id = ?` 把**所有人**的检索结果过滤光。
+    MemoryItem 也是 NULL → 属主过滤把**所有人**的检索结果过滤光。
     缺省 "default" 与 DEV MODE principal（auth.py:187）同值，内部调用方
     不传时仍落到可见归属而不是 NULL。
+
+    principal（票 .scratch/readside-gaps/15）：去重范围的归属边界。
+    显式传入优先；否则按 user_id 收敛（`_principal_of`）。REST 路由应传
+    `Depends(get_current_user)` 的 ctx。
     """
     if (req.media_url or "").strip():
         from lantai.services.vision_service import build_vision_memory, vision_provenance_extra
@@ -153,11 +239,14 @@ def add_memory(
             tenant_id=tenant_id,
             provenance_prompt=PROVENANCE_PROMPT_VISION,
             provenance_extra=vision_provenance_extra(req),
+            principal=principal,
         )
     # Fastpath 白名单直写——缓冲前判断
     fp = fastpath_check(req.content)
     if fp:
-        return _create_candidate_direct(req, fp, user_id=user_id, tenant_id=tenant_id)
+        return _create_candidate_direct(
+            req, fp, user_id=user_id, tenant_id=tenant_id, principal=principal
+        )
 
     # Coalesce 开关——true 时走缓冲
     if settings.COALESCE_ENABLED:
@@ -177,10 +266,14 @@ def add_memory(
             req_copy = req.model_copy()
             req_copy.content = combined
             req_copy.session_id = ""
-            return _create_candidate_with_extraction(req_copy, user_id=user_id, tenant_id=tenant_id)
+            return _create_candidate_with_extraction(
+                req_copy, user_id=user_id, tenant_id=tenant_id, principal=principal
+            )
 
     # 默认同步路径
-    return _create_candidate_with_extraction(req, user_id=user_id, tenant_id=tenant_id)
+    return _create_candidate_with_extraction(
+        req, user_id=user_id, tenant_id=tenant_id, principal=principal
+    )
 
 
 def _create_candidate_direct(
@@ -189,15 +282,25 @@ def _create_candidate_direct(
     *,
     user_id: str = "default",
     tenant_id: str | None = None,
+    principal=None,
 ) -> dict:
-    """fastpath 命中——直接创建 RawDocument + MemoryCandidate，不走 LLM"""
+    """fastpath 命中——直接创建 RawDocument + MemoryCandidate，不走 LLM
+
+    principal（票 readside-gaps/15）：下传去重链；未传则按 user_id 收敛
+    （`_principal_of`）。
+    """
     h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
+    p = _principal_of(principal, user_id, tenant_id)
     with db.get_session() as s:
-        action, target, sim = _apply_dedup(s, req.content, fastpath=True)
+        action, target, sim = _apply_dedup(s, req.content, fastpath=True, principal=p)
         if action == "merge" and target is not None:
-            return _dedup_merge(s, target, sim)
-        if action == "update" and target is not None:
-            return _create_update_proposal(s, target, req.title, req.content, req.lane, sim)
+            out = _dedup_merge(s, target, sim, p)
+            if out is not None:
+                return out
+        elif action == "update" and target is not None:
+            out = _create_update_proposal(s, target, req.title, req.content, req.lane, sim, p)
+            if out is not None:
+                return out
         doc = RawDocument(
             id=new_id("doc"),
             source_type=req.source_type,
@@ -244,13 +347,20 @@ def _create_candidate_with_extraction(
     tenant_id: str | None = None,
     provenance_prompt: str | None = None,
     provenance_extra: dict | None = None,
+    principal=None,
 ) -> dict:
-    """LLM 提取路径；provenance_prompt 覆盖默认 extract-v1（如 vision-caption）。"""
+    """LLM 提取路径；provenance_prompt 覆盖默认 extract-v1（如 vision-caption）。
+
+    principal（票 readside-gaps/15）：同 `_create_candidate_direct`。
+    """
     h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
+    p = _principal_of(principal, user_id, tenant_id)
     with db.get_session() as s:
-        action, target, sim = _apply_dedup(s, req.content, fastpath=False)
+        action, target, sim = _apply_dedup(s, req.content, fastpath=False, principal=p)
         if action == "merge" and target is not None:
-            return _dedup_merge(s, target, sim)
+            out = _dedup_merge(s, target, sim, p)
+            if out is not None:
+                return out
         # undecided：提取后交结构判别；insert：正常建候选（仍提取）
         undecided_target_id = target.id if (action == "undecided" and target is not None) else None
 
@@ -259,7 +369,7 @@ def _create_candidate_with_extraction(
     with db.get_session() as s:
         if undecided_target_id is not None:
             structural = _dedup_structural(
-                s, undecided_target_id, req.title, req.content, req.lane, sim
+                s, undecided_target_id, req.title, req.content, req.lane, sim, p
             )
             if structural is not None:
                 return structural
@@ -317,16 +427,22 @@ def _create_candidate_with_extraction(
 
 
 def add_memory_async(
-    req: AddMemoryReq, user_id: str = "default", *, tenant_id: str | None = None
+    req: AddMemoryReq,
+    user_id: str = "default",
+    *,
+    tenant_id: str | None = None,
+    principal=None,
 ) -> dict:
     """异步批量写入（幂等）：COALESCE_ENABLED=false 时降级同步，不丢数据。
 
     COALESCE_ENABLED=true 时入队；若入队即触发冲刷，在此处持久化
     combined_content（缓冲数据绝不静默丢弃），失败则清除指纹允许重试。
+
+    principal（票 readside-gaps/15）：同 `add_memory`，下传去重链。
     """
     buffer = get_coalesce_buffer()
     if not settings.COALESCE_ENABLED:
-        result = add_memory(req, user_id=user_id, tenant_id=tenant_id)
+        result = add_memory(req, user_id=user_id, tenant_id=tenant_id, principal=principal)
         return {
             "status": "synced",
             "job_id": buffer.job_id(user_id, req.lane, req.content),
@@ -339,7 +455,7 @@ def add_memory_async(
         req_copy.content = detail.get("combined_content", req.content)
         try:
             persisted = _create_candidate_with_extraction(
-                req_copy, user_id=user_id, tenant_id=tenant_id
+                req_copy, user_id=user_id, tenant_id=tenant_id, principal=principal
             )
         except Exception:
             buffer.forget_fingerprint(result["job_id"])

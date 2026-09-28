@@ -1,5 +1,6 @@
 from sqlmodel import select
 
+from lantai.core.acl import viewer_of
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.core.settings import settings
@@ -14,31 +15,79 @@ from lantai.storage import db
 from lantai.storage.vector_store import get_vector_store
 
 
-def _load_conflict_candidates(s, summary_text: str) -> list[MemoryItem]:
+def _load_conflict_candidates(s, summary_text: str, principal=None) -> list[MemoryItem]:
     """按向量相似度召回冲突检测候选（DD-03 修复：替代全表 [:10] 插入序抽查）。
 
     降级策略：向量检索失败时回退到全表前 CONFLICT_CHECK_TOP_K 条（宁有偏 miss 不全漏）。
+
+    归属（票 `.scratch/readside-gaps/15`）：此前向量检索与全表兜底**一个
+    过滤都不带**，A 只要构造一条与 B 的记忆关键词相撞的候选，
+    `decide` 就会：把 B 的正文送进矛盾检测 LLM、按 salience **降 B 的
+    importance**、并往 B 的记忆上写 ConflictEvent。三件事 A 都无权做。
+    现按候选自身的属主收敛（候选是谁的，就只与谁的现有记忆比对）。
     """
     top_k = settings.CONFLICT_CHECK_TOP_K
     try:
         qv = embed([summary_text])[0]
         vs = get_vector_store()
-        vec_results = vs.search(qv, top_k=top_k)
+        from lantai.core.acl import vector_owner_filter
+
+        filters = vector_owner_filter(principal)
+        vec_results = vs.search(qv, top_k=top_k, filters=filters)
         if vec_results:
             near_ids = [r["id"] for r in vec_results]
             candidates = s.exec(
                 select(MemoryItem).where(MemoryItem.id.in_(near_ids), MemoryItem.status == "active")
             ).all()
+            candidates = [m for m in candidates if _owns(m, principal)]
             if candidates:
                 return candidates
     except Exception as e:
         logger.warning("conflict vector recall failed, falling back to rowid order: %s", e)
 
     # 降级：向量不可用时按 rowid 取前 top_k（行为与修复前一致但可配置）
-    return s.exec(select(MemoryItem).where(MemoryItem.status == "active").limit(top_k)).all()
+    q = select(MemoryItem).where(MemoryItem.status == "active").limit(top_k)
+    if principal is not None and not bool(getattr(principal, "is_admin", False)):
+        viewer = viewer_of(principal)
+        q = q.where((MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None)))
+    return s.exec(q).all()
 
 
-def decide(candidate_id: str) -> dict:
+def _owns(mem, principal) -> bool:
+    """行级归属判定（同 `memory_service._owns`，见票 readside-gaps/15）。"""
+    if principal is None or bool(getattr(principal, "is_admin", False)):
+        return True
+    return (mem.user_id or None) in (None, viewer_of(principal))
+
+
+def _ensure_can_decide(principal, cand: MemoryCandidate) -> None:
+    """裁决候选的归属校验（票 readside-gaps/15）。
+
+    裁决是**破坏性操作**：`decide` 会往别人的记忆上写 ConflictEvent、
+    按 salience 改 importance、并把候选推到 PROMOTE/WORKING_ONLY。
+    此前 `/gate` 一个身份都不取，A 拿 B 的 `candidate_id` 就能裁 B 的候选
+    ——冲突比对按候选自身属主收敛后，虽然 B 的记忆不再被误伤，但
+    **B 的裁决结果仍由 A 说了算**（A 能让 B 的待决内容凭空晋升）。
+
+    口径同票 02 的 `evolution_service._ensure_can_decide`（复用
+    `acl.ensure_can_delete` 单一真源）：非 admin 只能裁自己的候选，
+    NULL 属主老候选仅 admin 可裁。principal=None 仅限内部调用
+    （worker/CLI/MCP），不校验——那些场景没有登录主体，按候选自身收敛。
+    """
+    if principal is None:
+        return
+    from lantai.core.acl import ensure_can_delete
+
+    ensure_can_delete(
+        principal,
+        resource_user_id=cand.user_id,
+        resource_tenant_id=cand.tenant_id,
+    )
+
+
+def decide(candidate_id: str, principal=None) -> dict:
+    """闸门裁决。principal（票 readside-gaps/15）：冲突比对的归属边界，
+    未传则按候选自身的 `user_id` / `tenant_id` 收敛。"""
     with db.get_session() as s:
         cand = s.get(MemoryCandidate, candidate_id)
         if not cand:
@@ -50,10 +99,24 @@ def decide(candidate_id: str) -> dict:
                 "reason": f"low extractor confidence {cand.extractor_confidence:.2f}",
             }
 
+        # 归属校验：非 admin 不能裁别人的候选（票 readside-gaps/15）。
+        # 放在置信度检查之后、冲突比对之前——越权是 403，与「候选本身
+        # 不合格」是两件事，不该互相掩盖。
+        _ensure_can_decide(principal, cand)
+
+        if principal is None:
+            from lantai.core.auth import Principal
+
+            principal = Principal(
+                user_id=cand.user_id or "default",
+                tenant_id=cand.tenant_id,
+                allowed_lanes=None,
+            )
+
         summary_text = cand.summary or " ".join(cand.claims)[:400]
 
         # DD-03: 用向量召回语义近邻作为冲突检测候选
-        related = _load_conflict_candidates(s, summary_text)
+        related = _load_conflict_candidates(s, summary_text, principal)
         related_texts = [m.content for m in related][: settings.GATE_NOVELTY_SAMPLE_SIZE]
 
         nv = novelty_score(summary_text, related_texts) if related_texts else 1.0

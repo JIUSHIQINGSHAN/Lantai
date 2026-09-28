@@ -6,14 +6,29 @@
 - LLM 提取路径：merge ≥ DEDUP_PRESCREEN_MERGE(0.95)（直合，不提取）；
   undecided ∈ [UPDATE, PRESCREEN)（提取后交结构判别 relation.py）；
   insert < UPDATE。
+
+归属（票 `.scratch/readside-gaps/15`）：`session.get(MemoryItem, r["id"])`
+按主键直读，**绕开一切 SQL 层 scope**；上游向量检索即使已按属主过滤，
+这里仍要单独判一次——否则一个跨属主的 id 就能把别人的 ORM 对象交给
+下游的 merge / update 写者。NULL 属主（真实库 636/657 行）判「不可见」
+会让单人部署整体空转，故放行。
 """
 
 from lantai.core.settings import settings
 from lantai.models.tables import MemoryItem
 
 
+def _owns(mem, principal) -> bool:
+    """行级归属判定（同 `memory_service._owns`，见票 readside-gaps/15）。"""
+    if principal is None or bool(getattr(principal, "is_admin", False)):
+        return True
+    from lantai.core.acl import viewer_of
+
+    return (mem.user_id or None) in (None, viewer_of(principal))
+
+
 def find_similar(
-    session, query_results: list[dict], fastpath: bool = False
+    session, query_results: list[dict], fastpath: bool = False, principal=None
 ) -> tuple[str, MemoryItem | None, float]:
     """对候选与现有 active 记忆做余弦预判。
 
@@ -25,6 +40,8 @@ def find_similar(
     for r in query_results:
         mem = session.get(MemoryItem, r["id"])
         if not mem or mem.status != "active":
+            continue
+        if not _owns(mem, principal):
             continue
         sim = 1.0 - r["distance"]  # cosine 距离 → 相似度
         if sim > best_sim:

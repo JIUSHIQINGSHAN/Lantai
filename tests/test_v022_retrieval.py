@@ -69,6 +69,17 @@ _SEARCH_PATCHES = dict(
 )
 
 
+def _meta_val(row, key):
+    """按向量库 metadata 口径取值：NULL 属主落成**空串**。
+
+    与写入侧 `getattr(mem, "user_id", "") or ""` 逐字对齐
+    （`memory_service.index_memory_item` 的 8 键 metadata 契约）。
+    """
+    if key in ("user_id", "tenant_id", "session_id", "agent_id"):
+        return getattr(row, key, None) or ""
+    return getattr(row, key, None)
+
+
 def _search(engine, query, *, top_k=10, params=None, principal=None, explain=False):
     def _get_test_session():
         return Session(engine)
@@ -79,14 +90,35 @@ def _search(engine, query, *, top_k=10, params=None, principal=None, explain=Fal
         rows = s.exec(select(MemoryItem).where(MemoryItem.status == "active")).all()
 
     def _respect(row, filters):
+        """按 Chroma `where` 的真实语义过滤（含 `$and` / `$or` 嵌套）。
+
+        票 readside-gaps/15 补了两处**替身失真的教训**：
+        ① 旧替身只认平铺键，遇到 `$and` 键 `getattr(row, "$and")` → None，
+           `None != {...}` → 所有行被滤掉。「A 检索不到 B 的记忆」在替身里
+           退化成「A 什么都检索不到」——绿得毫无意义。
+        ② `user_id` 的比较必须走**向量库的口径**：写入侧是
+           `getattr(mem, "user_id", "") or ""`（`memory_service.index_memory_item`
+           的 8 键 metadata 契约），所以 SQL 里的 `NULL` 属主在向量库里是
+           **空串**。直接拿 `row.user_id`（None）比 `""` 会永不相等，
+           把单人部署下 636/657 行的 NULL 属主老数据全判成不可见。
+        真 Chroma 语义已实测：`$and[$or, lane]` 正常，多键平铺直接 ValueError。
+        """
         if not filters:
             return True
-        for k, v in filters.items():
-            val = getattr(row, k, None)
-            if isinstance(v, dict):
-                if val not in v.get("$in", []):
+        for key, val in filters.items():
+            if key == "$and":
+                if not all(_respect(row, sub) for sub in val):
                     return False
-            elif val != v:
+            elif key == "$or":
+                if not any(_respect(row, sub) for sub in val):
+                    return False
+            elif isinstance(val, dict):
+                if "$in" in val:
+                    if _meta_val(row, key) not in val["$in"]:
+                        return False
+                else:
+                    return False
+            elif _meta_val(row, key) != val:
                 return False
         return True
 

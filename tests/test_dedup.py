@@ -18,12 +18,12 @@ def client_fixture(monkeypatch):
     monkeypatch.setattr(db, "engine", engine)
     SQLModel.metadata.create_all(engine)
 
-    def mock_search(content_or_vec, top_k=8, where=None):
+    def mock_search(query_embedding, top_k=8, filters=None):
         return getattr(mock_search, "results", [])
 
     class MockVectorStore:
-        def search(self, content_or_vec, top_k=8, where=None):
-            return mock_search(content_or_vec, top_k, where)
+        def search(self, query_embedding, top_k=8, filters=None):
+            return mock_search(query_embedding, top_k, filters)
 
     monkeypatch.setattr(
         "lantai.services.memory_service.get_vector_store", lambda: MockVectorStore()

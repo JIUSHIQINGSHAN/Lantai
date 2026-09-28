@@ -20,9 +20,16 @@ def add_memory_route(
 ):
     if req.lane not in ctx.allowed_lanes:
         raise HTTPException(status_code=403, detail=f"Lane {req.lane} not allowed for agent")
+    # principal=ctx（票 .scratch/readside-gaps/15）：去重此前在全库范围找
+    # 最近邻，A 构造相似内容即可命中 B 的记忆并把它送进外部 LLM / 改它的
+    # importance。带身份后按属主收敛。
     if async_mode:
-        return add_memory_async(req, user_id=ctx.user_id or "default", tenant_id=ctx.tenant_id)
-    return add_memory(req, user_id=ctx.user_id or "default", tenant_id=ctx.tenant_id)
+        return add_memory_async(
+            req, user_id=ctx.user_id or "default", tenant_id=ctx.tenant_id, principal=ctx
+        )
+    return add_memory(
+        req, user_id=ctx.user_id or "default", tenant_id=ctx.tenant_id, principal=ctx
+    )
 
 
 @router.get("/core-memory")
