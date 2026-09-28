@@ -63,7 +63,41 @@ def read_offload_file(memory_id: str, principal=None) -> dict:
     对 `ConflictEvent` 的过渡推导——资源本身无列时挂到它的载体上判）。
     admin/system 全权；非 admin 只能读自己记忆的全文；记忆不存在或
     无归属（老行）→ 不放行（宁 miss：卸载目录里躺着别人的全文比读不到
-    自己的更危险）。`principal=None`（内部 worker / 脚本）不校验。
+    自己的更危险）。
+
+    **`principal=None` 不再"不校验"（票 `.scratch/mcp-identity-gaps/10`）**：
+    此前整段校验挂在 `if principal is not None:` 下，MCP `offload_read`
+    在宿主不透传 `user_id` 时正是 None（`cli/mcp.py:575` 的
+    `_principal_from_params` 返回 None），于是一次调用拿走别人的
+    卸载全文——**而本函数最后一行是 `path.read_text()`：不限长度、
+    不走 recall budget**。决定性实证
+    （`.scratch/mcp-identity-gaps/probe_offload_none_semantics.py`）：
+
+    ```
+    S0 ensure_can_delete(None, resource_user_id='user-B') → 没抛错  ❌ 空操作
+    S1 read_offload_file('m-B', principal=None)           → B 的全文 ❌ 洞
+    S2 read_offload_file('m-legacy', None)  （NULL 老行）  → 仍可读   ✅ 单人部署
+    S3/S4/S5 带身份与 admin                                   ✅ 护栏
+    ```
+
+    S0 是本票最该记住的一条：**`ensure_can_delete(None, ...)` 是彻底的空
+    操作**——它的每个守卫都要求 principal 的某个字段非空
+    （`getattr(principal,"is_admin",False)` → False 不放行；
+    `p_user = getattr(principal,"user_id",None)` → None，于是
+    `resource_user_id and p_user` 恒假）。**"调用了 ensure_can_delete"
+    不等于"校验过了"**。
+
+    修法同票 02 给 `_ensure_can_decide` 的形状：**收敛 principal 本身，
+    不给 `ensure_can_delete` 加形参**（后者被 27 处写侧共用，是承重墙）。
+    admin 早退必须在收敛之前（admin 的真实形态正是 `user_id=None`，
+    `viewer_of` 会把它变成 `"default"`）。
+
+    **为什么这个形状而不是票 07/09 的 `not is_admin`**：07/09 下游是
+    `viewer_of` 收敛 + `OR IS NULL` 的读侧口径（NULL 老行可见）；
+    本票下游是 `ensure_can_delete`，它的既定语义是"资源标了 user_id
+    且与主体不同 → 403；**资源无归属 → 不视为越权**"——NULL 老行
+    **天然放行**，所以不需要 `OR IS NULL`，只需要让 `p_user` 非空。
+    判据仍是"下游有没有现成的收敛"，只是收敛的落点不同。
     """
     directory = offload_dir().resolve()
     filename = offload_filename(memory_id)
@@ -72,21 +106,41 @@ def read_offload_file(memory_id: str, principal=None) -> dict:
         raise ValueError("memory_id 解析路径超出卸载目录")
     if not path.is_file():
         raise FileNotFoundError(f"offload 文件不存在: {filename}")
-    if principal is not None:
-        from lantai.core.acl import ensure_can_delete
-        from lantai.models.tables import MemoryItem
-        from lantai.storage import db
+    from lantai.core.acl import Principal, ensure_can_delete, viewer_of
+    from lantai.models.tables import MemoryItem
+    from lantai.storage import db
 
-        with db.get_session() as s:
-            item = s.get(MemoryItem, memory_id)
-        if item is None:
-            # 记忆已不存在：无从判归属。卸载文件仍在 = 孤儿文件，
-            # 按「不可见」处理（宁 miss 不脏写）
-            raise FileNotFoundError(f"offload 文件不存在: {filename}")
-        ensure_can_delete(
-            principal,
-            resource_user_id=item.user_id,
-            resource_tenant_id=item.tenant_id,
-            lane=item.lane,
+    with db.get_session() as s:
+        item = s.get(MemoryItem, memory_id)
+    if item is None:
+        # 记忆已不存在：无从判归属。卸载文件仍在 = 孤儿文件，
+        # 按「不可见」处理（宁 miss 不脏写）
+        raise FileNotFoundError(f"offload 文件不存在: {filename}")
+    if getattr(principal, "is_admin", False):
+        return {
+            "memory_id": memory_id,
+            "path": str(path),
+            "content": path.read_text(encoding="utf-8"),
+        }
+    # `viewer_of(None)` → "default"。注意 admin 的真实形态正是
+    # `user_id=None`，故 admin 判定必须在上一步先做（它靠 `is_admin`，
+    # 不靠 user_id，收敛不会误伤）。
+    viewer = viewer_of(principal)
+    if viewer != getattr(principal, "user_id", None):
+        # 只在 None 时构造收敛后的 principal；已有身份的走原对象，
+        # 不改变任何现有行为（含 tenant / agent / allowed_lanes）。
+        principal = Principal(
+            tenant_id=getattr(principal, "tenant_id", None),
+            user_id=viewer,
+            agent_id=getattr(principal, "agent_id", None),
+            session_id=getattr(principal, "session_id", None),
+            role=getattr(principal, "role", "user"),
+            allowed_lanes=getattr(principal, "allowed_lanes", None),
         )
+    ensure_can_delete(
+        principal,
+        resource_user_id=item.user_id,
+        resource_tenant_id=item.tenant_id,
+        lane=item.lane,
+    )
     return {"memory_id": memory_id, "path": str(path), "content": path.read_text(encoding="utf-8")}

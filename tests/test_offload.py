@@ -56,7 +56,17 @@ def test_build_offload_inject_shape():
 
 
 def test_write_read_roundtrip(monkeypatch, tmp_path):
-    """集成：真实 tmp_path 落盘 + 读回（不 mock 文件系统）。"""
+    """集成：真实 tmp_path 落盘 + 读回（不 mock 文件系统）。
+
+    **身份说明（票 `.scratch/mcp-identity-gaps/10`）**：本用例原是
+    `read_offload_file("mem_7")`——靠 `principal=None` 绕过归属校验。
+    10 号票把 None 从"不校验"改成经 `viewer_of` 收敛到 `"default"`
+    后照常校验，于是这里必须显式给身份。**这不是"改测试让代码过"**：
+    本用例的目的是验"write 之后 read 得回来"（写侧 roundtrip），
+    不是验 None 语义；给它一个显式身份，断言与覆盖一字不减。
+    （None 语义由 `tests/test_offload_none_principal.py` 单独覆盖。）
+    """
+    from lantai.core.acl import Principal
     from lantai.services import offload_service
 
     monkeypatch.setattr(offload_service.settings, "OFFLOAD_OUTPUT_DIR", str(tmp_path))
@@ -64,19 +74,84 @@ def test_write_read_roundtrip(monkeypatch, tmp_path):
     path = offload_service.write_offload_file("mem_7", content)
     assert path.parent == tmp_path
     assert path.read_text(encoding="utf-8") == content
-    result = offload_service.read_offload_file("mem_7")
+    # 反查归属用的 MemoryItem 行：conftest 已把 db.engine 指到隔离库，
+    # 这里显式种一行 mem_7，属主就是下面读时用的 user_id。
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import Session, create_engine
+
+    import lantai.storage.db as db_module
+    from lantai.core.time import utcnow
+    from lantai.models.tables import MemoryItem
+
+    eng = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    from sqlmodel import SQLModel
+
+    SQLModel.metadata.create_all(eng)
+    orig = db_module.engine
+    db_module.engine = eng
+    try:
+        now = utcnow()
+        with Session(eng) as s:
+            s.add(
+                MemoryItem(
+                    id="mem_7",
+                    memory_type="semantic",
+                    key="k-mem_7",
+                    content=content[:20],
+                    namespace="default",
+                    status="active",
+                    tier="working",
+                    importance=0.5,
+                    confidence=1.0,
+                    reason="",
+                    role="OBSERVATION",
+                    lane="general",
+                    domain="general",
+                    version=1,
+                    use_count=0,
+                    helpful_count=0,
+                    decay_score=1.0,
+                    decay_class="slow",
+                    event_time_precision="none",
+                    lifecycle_status="ACTIVE",
+                    user_id="user-A",
+                    scene_id=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            s.commit()
+        who = Principal(
+            tenant_id=None,
+            user_id="user-A",
+            agent_id=None,
+            session_id=None,
+            role="user",
+            allowed_lanes=None,
+        )
+        result = offload_service.read_offload_file("mem_7", principal=who)
+    finally:
+        db_module.engine = orig
     assert result["content"] == content
     assert result["memory_id"] == "mem_7"
     assert Path(result["path"]).parent == tmp_path
 
 
 def test_read_offload_missing_file(monkeypatch, tmp_path):
-    """集成：文件不存在 → FileNotFoundError（真实 tmp_path）。"""
+    """集成：文件不存在 → FileNotFoundError（真实 tmp_path）。
+
+    文件都不存在时在归属校验**之前**就返回（路径检查先行），
+    所以身份无所谓——但显式传一个，让"无身份"不再是无意中的默认路径。
+    """
+    from lantai.core.acl import Principal
     from lantai.services import offload_service
 
     monkeypatch.setattr(offload_service.settings, "OFFLOAD_OUTPUT_DIR", str(tmp_path))
+    who = Principal(tenant_id=None, user_id="user-A", agent_id=None, session_id=None, role="user")
     with pytest.raises(FileNotFoundError):
-        offload_service.read_offload_file("mem_nope")
+        offload_service.read_offload_file("mem_nope", principal=who)
 
 
 def test_shell_hook_offload_injection(monkeypatch, tmp_path):
@@ -159,21 +234,82 @@ def test_shell_hook_short_memory_no_offload(monkeypatch, tmp_path):
 
 
 def test_mcp_offload_read_tool(monkeypatch, tmp_path):
-    """MCP 集成：offload_read 返回卸载全文；缺参 -32602。"""
+    """MCP 集成：offload_read 返回卸载全文；缺参 -32602。
+
+    **身份说明（票 `.scratch/mcp-identity-gaps/10`）**：原用例的
+    `arguments` 里没有 `user_id`，即 `principal=None`——那正是 10 号票
+    要堵的洞的触发路径（宿主不透传身份）。修法之后 None 会收敛到
+    `"default"` 并照常校验，所以这里补一个 `user_id`，并在库里种一行
+    属主相同的 `mem_9`。**覆盖一字不减**：仍是同一个 handler 真入口、
+    同样断言返回全文与 id、同样验缺参的 -32602。
+    （None 口径由 `tests/test_offload_none_principal.py` 覆盖。）
+    """
     mod = _load_module(MCP_PATH, "mcp_server_offload")
     from lantai.services import offload_service
 
     monkeypatch.setattr(offload_service.settings, "OFFLOAD_OUTPUT_DIR", str(tmp_path))
     offload_service.write_offload_file("mem_9", "卸载全文内容")
 
-    resp = mod.handle(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": "offload_read", "arguments": {"memory_id": "mem_9"}},
-        }
+    # 种一行 mem_9，属主与调用时传的 user_id 相同（conftest 已隔离 db.engine）
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import Session, SQLModel, create_engine
+
+    import lantai.storage.db as db_module
+    from lantai.core.time import utcnow
+    from lantai.models.tables import MemoryItem
+
+    eng = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
+    SQLModel.metadata.create_all(eng)
+    orig = db_module.engine
+    db_module.engine = eng
+    try:
+        now = utcnow()
+        with Session(eng) as s:
+            s.add(
+                MemoryItem(
+                    id="mem_9",
+                    memory_type="semantic",
+                    key="k-mem_9",
+                    content="卸载全文内容",
+                    namespace="default",
+                    status="active",
+                    tier="working",
+                    importance=0.5,
+                    confidence=1.0,
+                    reason="",
+                    role="OBSERVATION",
+                    lane="general",
+                    domain="general",
+                    version=1,
+                    use_count=0,
+                    helpful_count=0,
+                    decay_score=1.0,
+                    decay_class="slow",
+                    event_time_precision="none",
+                    lifecycle_status="ACTIVE",
+                    user_id="user-A",
+                    scene_id=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            s.commit()
+
+        resp = mod.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "offload_read",
+                    "arguments": {"memory_id": "mem_9", "user_id": "user-A"},
+                },
+            }
+        )
+    finally:
+        db_module.engine = orig
     import json as _json
 
     payload = _json.loads(resp["result"]["content"][0]["text"])

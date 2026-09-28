@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP `offload_read` 无身份时不再读别人的卸载全文——`ensure_can_delete(None)` 是空操作这一层被堵住（2026-09-28，票据 `.scratch/mcp-identity-gaps/issues/10-offload-read-none-unfiltered.md`）**：
+  - **先说影响**：`read_offload_file` 最后一行是 `path.read_text()`——**别人的记忆全文，不限长度、不走 recall budget**。而归属校验整段挂在 `if principal is not None:` 下，宿主不透传 `user_id` 时 `principal=None`，**校验一次都不跑**。这是同族漏洞的第三处（07 `mem_recent`、09 `scene`、本票 `offload_read`），**三处判据各不相同**（`if principal:` / `principal is not None and not is_admin` / `if principal is not None:`），失效方式却相同：None 让整段归属逻辑不可达。
+  - **根因最该记住的一条：`ensure_can_delete(None, ...)` 是彻底的空操作**（探针 S0 实证：传 `resource_user_id='user-B'` 也不抛错）。它的每个守卫都要求 principal 的某个字段非空——`getattr(principal,"is_admin",False)` → False 不放行；`p_user = getattr(principal,"user_id",None)` → None，于是 `resource_user_id and p_user` 恒假。**"调用了 `ensure_can_delete`"不等于"校验过了"**。已由 `test_ensure_can_delete_none_is_noop` 单独钉住这个反直觉事实。
+  - **修法同票 02 给 `_ensure_can_decide` 的形状：收敛 principal 本身，不给 `ensure_can_delete` 加形参**（后者被 27 处写侧共用，是承重墙）。admin 早退必须在收敛之前——admin 的真实形态正是 `user_id=None`（`auth.py:168`），`viewer_of` 会把它变成 `"default"`；靠 `role` 传的 `is_admin` 不受影响，但把"admin 不校验"写在函数开头是**可读性选择**（同票 02）。
+  - **为什么这个形状而不是 07/09 的 `not is_admin`**：07/09 下游是 `viewer_of` 收敛 + `OR IS NULL` 的读侧口径（NULL 老行可见）；本票下游是 `ensure_can_delete`，它的既定语义是"资源标了 user_id 且与主体不同 → 403；**资源无归属 → 不视为越权**"——NULL 老行**天然放行**，所以不需要 `OR IS NULL`，只需要让 `p_user` 非空。**判据仍是"下游有没有现成的收敛"，只是收敛的落点不同。**
+  - **单人部署不空转**（正向检查）：真实库 636/657 行 `memoryitem` 是 NULL 属主，`ensure_can_delete` 对"资源无归属"既定就是放行，探针 S2/S6 双验 NULL 老行与 `default` 自己的行无身份仍可读。错误形态是 `HTTPException(403)`（不是 404）——**区分"存在但不是你的"与"不存在"是对的**，与探针 S3（带身份读 B）同口径。
+  - **两条既有测试显式依赖 None 绕过，本批逐条给依据后改写**：`test_offload.py::test_write_read_roundtrip` 与 `test_mcp_offload_read_tool` 原本都不传身份、库里也不种 `MemoryItem` 行——**它们能过恰恰是因为那个洞**（"孤儿文件 + 无身份"本该按 docstring 里早写着的"记忆不存在/无归属一律不放行"处理，只是对 None 从未可达）。改写方式是给显式身份 + 种对应属主的行，**覆盖一字不减**（同一 handler 真入口、同样断言返回全文与 id、同样验缺参 -32602）。依据链：01b 号票的验收口径只写了"A 读 B 的 memory_id → 拒绝"（显式身份），**没有 None 那一半**——与 07 号票同一种"半修被记成已修"。**教训：验收口径必须同时写"带身份"与"无身份"两种形态。**
+  - **测试增量 6 例**（`tests/test_offload_none_principal.py`，全部不 mock：真 tmp_path 落盘 + 真内存 SQLite 真建表 + 真 `MemoryItem` 行，直调 `read_offload_file`）。**Red 实证 1 failed / 5 passed**——红的正是洞那条（`DID NOT RAISE`），五个是护栏（含"单人部署不空转"与"admin 仍全权"）。
+  - **变异验证 4 KILLED / 0 MISSED**（`.scratch/mcp-identity-gaps/mutation_check_10.py`）：V1 退回修前（None 不校验）、V2 整个校验消失、V3 收敛到别的字符串、V4 算了 `viewer` 却不用（条件改永假）。还原后逐字节一致。
+  - **全量 pytest 1957 passed / 0 failed**；ruff check + format 均过（中途被 `test_lint_gate_passes_on_real_repo` 抓到一次 import 顺序 + 一处格式——**回归哨兵第四次当场干活**）。
+
 - **MCP `scene_get` / `scenes_list` 无身份时不再全表——B 的场景摘要与成员全文守住了（2026-09-28，票据 `.scratch/mcp-identity-gaps/issues/09-scene-tools-none-unfiltered.md`）**：
   - **先说影响**：`MemoryScene` **没有归属列**（`tables.py:174`——场景是聚类产物），归属只能按**成员记忆**反查。而 `get_scene` / `list_scenes` 的判据都是 `principal is not None and not is_admin`——宿主不透传 `user_id` 时 `principal=None`，**整段归属校验跳过**：`get_scene` 返回 B 的场景 `summary`（LLM 依据成员内容生成的摘要）**和全部成员的完整正文**；`list_scenes` 把 B 的场景连摘要一起列出来——A 刷列表就读到 B 的场景主题画像。与票 07（`mem_recent`）**同一个形状**：窄化逻辑本身是对的，问题只在 `None` 那一侧。
   - **决定性实证**（`.scratch/mcp-identity-gaps/probe_scene_none_semantics.py`，8 场景，ZZ 标记认行）：S1 None 下钻纯 B 簇 → B 的 summary + 成员全文（洞）；S2 None 列场景 → 含 sc-B 与 B 的 summary（洞）；S6 None 下钻混合簇 → `m-mix-A` + `m-mix-B`（洞，**最要害**）。**四个护栏修前修后全绿**（S3/S5 带身份收窄正确、S4 列表正确、S7 admin 仍全权），证明改动只动了 None 这一侧。
