@@ -137,40 +137,79 @@ from lantai.evolution.promoter import delete_memory
 from lantai.models.tables import DocumentChunk, MemoryEdge, MemoryItem, RawDocument
 
 
-def delete_document(document_id: str) -> dict:
-    """Cascade delete a document and its exclusively derived memories."""
+def delete_document(document_id: str, principal=None) -> dict:
+    """Cascade delete a document and its exclusively derived memories.
+
+    归属（票 `.scratch/readside-gaps/18`）：文档属于 A，**不等于**它指向的
+    记忆也属于 A——边的另一端是另一张表的另一行，路由那道 `ensure_can_delete`
+    只校验 `RawDocument` 行，够不着这里。票 17 修前 `MemoryEdge` 无归属过滤、
+    票 16 的无归属 apply 也会造跨用户边，所以这条路径真的能把 B 的记忆删掉。
+
+    **宁 miss 不脏写**：任一条目标记忆不属于当前主体 → 整次级联中止，
+    且必须在**任何删除发生之前**中止。原实现在第 4 步就 `s.commit()` 了
+    （文档/分块/候选/边全落库），那时再发现越权已是半途而废——所以这里
+    先把所有权校验做完，再动手删。
+    """
     with db.get_session() as s:
-        # 1. Delete RawDocument
+        # 1. 读文档（先只读不删）
         doc = s.get(RawDocument, document_id)
+
+        # 2. 找边，算出目标记忆集
+        edges = s.exec(select(MemoryEdge).where(MemoryEdge.source_memory_id == document_id)).all()
+        mem_ids_to_check = {e.target_memory_id for e in edges}
+
+        # 3. **删任何东西之前**，逐条校验目标记忆归属
+        #    文档属于 A 不意味着它的边指向的记忆也属于 A
+        forbidden = []
+        for mem_id in sorted(mem_ids_to_check):
+            mem = s.get(MemoryItem, mem_id)
+            if mem is None:
+                continue  # 孤儿边，没有行可删（原行为即跳过）
+            if principal is not None:
+                from fastapi import HTTPException
+
+                from lantai.core.acl import ensure_can_delete
+
+                try:
+                    ensure_can_delete(
+                        principal,
+                        resource_user_id=mem.user_id,
+                        resource_tenant_id=mem.tenant_id,
+                        lane=mem.lane,
+                    )
+                except HTTPException as exc:
+                    forbidden.append(f"{mem_id}: {exc.detail}")
+        if forbidden:
+            # 整体中止——一条都没删，说清是谁拦的
+            noun = "memory" if len(forbidden) == 1 else "memories"
+            return {
+                "ok": False,
+                "reason": f"forbidden: cascade aborted, {len(forbidden)} target "
+                f"{noun} not owned: " + "; ".join(forbidden[:3]),
+                "deleted_document_id": None,
+                "deleted_memories": 0,
+            }
+
+        # 4. 校验全过，开始删
         if doc:
             s.delete(doc)
-
-        # 2. Delete DocumentChunk
-        chunks = s.exec(select(DocumentChunk).where(DocumentChunk.document_id == document_id)).all()
+        chunks = s.exec(
+            select(DocumentChunk).where(DocumentChunk.document_id == document_id)
+        ).all()
         for chunk in chunks:
             s.delete(chunk)
-
-        # 3. Find MemoryCandidates
         candidates = s.exec(
             select(MemoryCandidate).where(MemoryCandidate.document_id == document_id)
         ).all()
         for cand in candidates:
-            # We skip deleting proposals specifically here to save time, they will be orphaned or we can let them be
             s.delete(cand)
-
-        # 4. Find edges originating from this document
-        edges = s.exec(select(MemoryEdge).where(MemoryEdge.source_memory_id == document_id)).all()
-        mem_ids_to_check = set([e.target_memory_id for e in edges])
-
         for e in edges:
             s.delete(e)
+        s.commit()  # 边与文档先落库
 
-        s.commit()  # Commit edge deletions first
-
-        # 5. Check those target memories. If they no longer have any incoming doc edges, delete them.
+        # 5. 删除「没有别的 doc 来源」的目标记忆
         deleted_mems = 0
-        for mem_id in mem_ids_to_check:
-            # Check if there are other doc sources for this memory
+        for mem_id in sorted(mem_ids_to_check):
             remaining_edges = s.exec(
                 select(MemoryEdge).where(MemoryEdge.target_memory_id == mem_id)
             ).all()
@@ -178,8 +217,20 @@ def delete_document(document_id: str) -> dict:
                 e.source_memory_id for e in remaining_edges if e.source_memory_id.startswith("doc_")
             ]
             if not doc_sources:
-                # No more documents supporting this memory, we can delete it
-                delete_memory(mem_id)
-                deleted_mems += 1
+                out = delete_memory(mem_id, principal=principal)
+                if out.get("ok"):
+                    deleted_mems += 1
+                elif "missing" not in str(out.get("reason", "")):
+                    # 已在第 3 步校验过，走到这里只可能是并发变动
+                    return {
+                        "ok": False,
+                        "reason": out.get("reason"),
+                        "deleted_document_id": document_id,
+                        "deleted_memories": deleted_mems,
+                    }
 
-        return {"ok": True, "deleted_document_id": document_id, "deleted_memories": deleted_mems}
+        return {
+            "ok": True,
+            "deleted_document_id": document_id,
+            "deleted_memories": deleted_mems,
+        }

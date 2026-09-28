@@ -19,6 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **级联删除补归属——A 删自己的文档，B 的记忆不再被连带物理删除（2026-09-28，票据 `.scratch/readside-gaps/issues/18-delete-document-cascade-no-owner.md`）**：
+  - **先说影响**：`promoter.delete_memory` 没有任何 principal 形参，`s.get(MemoryItem, id)` 取到就 `s.delete`，再 `sync_fts(None)` + `delete_memory_item` 从 FTS 和向量库除名——**这是全代码库最具破坏性的操作**。它的调用方 `source_service.delete_document` 逐个删除「无更多 doc 来源」的目标记忆，**不检查这个记忆属于谁**。而 `DELETE /documents/{id}` 确实调了 `ensure_can_delete`，但只校验 `RawDocument` 那一行——**边的另一端是另一张表的另一行，路由那道校验够不着它**。探针实证：A 删自己的文档，B 的记忆**行没了、FTS 索引也没了**，无 checkpoint、无 undo、无 audit 事件。这是前 18 票里第一个**物理删除**型越权。
+  - **结构性重排，不是加个 if**：原实现在第 4 步就 `s.commit()`（文档、分块、候选、边全部落库），第 5 步才发现目标记忆不属于 A——那时「整体中止」已不可能，半途删一半比不删更脏。本票把归属校验从删除中途**提到任何删除发生之前**，越权即整体中止，一条都不删。
+  - **纵深防御第二道校验不是装饰**（探针实证）：第 3 步预校验对 `mem is None` 的目标跳过，第 5 步仍会调 `delete_memory`。把预校验的 `s.get` 对 B 蒙混成 None 后，`delete_memory` 那道校验就是**唯一防线**。若 `delete_document` 不把 principal 传下去，B 的记忆会被直接删掉。
+  - **「整体中止」必须连文档一起中止**：第一版断言只查记忆行，一个「先 commit 删文档和边、再校验」的实现能全绿混过——文档和边已经没了。已补文档行 + 边条数断言（D7 变异教会我的）。
+  - **两道校验管的不是同一行**，已在路由 docstring 里写明：本路由这道管 `RawDocument` 行（票 04 既有），service 那道管**级联目标记忆行**。别让后来人以为重复就删掉其中一道。
+  - **`delete_memory` 另补 `if not mem` 分支**：原实现行不存在也返回 `ok: True`——`delete_document` 靠 `"missing"` 字符串决定是否中止，计数会虚高、中止判断会被绕过。
+  - **403 在路由边界翻译**：service 的 `ok: False` 此前以 200 + ok:false 返回给 HTTP 客户端，语义上成功、实际失败（同 `routes_evolution._ok_or_raise` 范式）。forbidden → 403，其他 → 404。
+  - **测试增量**：`tests/test_document_cascade_ownership.py` 15 例，4 个测试类。决定性断言落在**落库行 + FTS 索引 + 向量库除名记录**三处——删索引比删行更难察觉。含反向用例保功能没被修废（A 自己的级联照常删干净、NULL 属主老行照常可删、孤儿边不当中途失败、admin 与 `principal=None` 照常删、跨租户目标被挡），不 mock 冒烟一条。
+  - **顺带修掉一处测试自身的假绿机器**：`tests/test_document_cascade.py` 的 fixture 用 `allowed_lanes=[]`——`[]` 是「绑定了但一条 lane 都不给」，`ensure_can_delete` 的 lane 检查会挡掉**所有**删除。该文件测的是级联语义不是泳道 ACL，改为 `None`（未绑定）。已用 `git checkout` 还原源文件后单独验证：**仅改 fixture、源码保持原样，那 2 个测试照旧通过**——证明 fixture 修正是正交的，不是为了让新代码绿。
+  - **变异验证 13/13 全杀**（`.scratch/readside-gaps/mutation_check_18.py`，子进程隔离）。第一轮 **6 个 MISSED**：D3 锚点撞了 `rollback` 的同名分支（`replace(...,1)` 命中错的那个）、D7/D8 是真实缺口、D4 是锚点缩进不匹配、D13 与另一条是**等价变异**（`ensure_can_delete:127` 本就对 admin 早退；`promoter.delete_memory` 自己也传 `resource_tenant_id`，双重校验下去掉一处行为不变）。全量 pytest **1705 passed / 0 failed**（基线 1701）。
+  - **踩坑**：一次 `git checkout <file>` 把刚写完的实现整个还原了（19 处 principal → 15 处），已按编辑记录完整重写并复验。
+
 - **贯珠图检索补归属——A 的 `/search/graph_expand` 不再沿别人的边展开出 B 的记忆正文（2026-09-28，票据 `.scratch/readside-gaps/issues/17-graph-edges-no-owner-filter.md`）**：
   - **先说影响**：`MemoryEdge` **有**归属四元组（`create_edge` 会填），但**没有任何一条查询按归属过滤边**。`expand_graph_associations` 的边查询一个条件都不带——于是**种子集明明已按 principal 收窄，边这一层照样跨用户**：任何一条从 A 的记忆指向 B 的记忆的边（A 自己建的、B 自己建的、票 16 的无归属 `apply` 造的 `supersedes`、票 18 的 obsidian 造的 `links` 都算）都让 B 的记忆成为 A 种子的「邻居」。随后 `s.get(MemoryItem, neighbor_id)` 按主键直读，**`neighbor_item.content` 原样进 `associated_memories` 返回给 A**。`min_edge_conf=0.5` 轻易满足，两跳足够。此前唯一的过滤是 `allowed_lanes`——那是**泳道**检查不是**归属**检查，A 和 B 通常共用默认泳道集。
   - **两处都要修**（边决定走哪条路，行决定露出什么）：边查询加 `_edge_scope(principal)`，`s.get(MemoryItem, neighbor_id)` 取到行后补 `_owns` 判定。`session.get` 按主键直读、绕开 SQL 层 scope，是票 14 踩过两次的盲区。

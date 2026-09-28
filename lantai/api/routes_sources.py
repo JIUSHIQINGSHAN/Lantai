@@ -47,7 +47,17 @@ def list_candidates_route(status: str = "new", limit: int = 20, ctx=Depends(get_
 
 @router.delete("/documents/{document_id}")
 def delete_document_route(document_id: str, principal=Depends(get_current_user)):
-    """级联删除文档及其独占派生记忆（含归属校验，P0 票04）"""
+    """级联删除文档及其独占派生记忆。
+
+    归属（票 `.scratch/readside-gaps/18`）：**两道校验管的不是同一行**——
+    本路由这道校验 `RawDocument` 行的 `user_id` / `tenant_id`（票 04 既有），
+    service 那道校验**级联目标记忆行**的归属。边的另一端是另一张表的另一行，
+    前者够不着后者。别让后来人以为重复就删掉其中一道。
+
+    403 语义在路由边界翻译（同 `routes_evolution._ok_or_raise`）：service 契约
+    是 dict，形状不能动；HTTP 客户端看到的必须是 403 而不是 200 + ok:false。
+    """
+    from fastapi import HTTPException
     from sqlmodel import select
 
     from lantai.core.acl import ensure_can_delete
@@ -60,4 +70,10 @@ def delete_document_route(document_id: str, principal=Depends(get_current_user))
             ensure_can_delete(
                 principal, resource_user_id=doc.user_id, resource_tenant_id=doc.tenant_id
             )
-    return delete_document(document_id)
+    out = delete_document(document_id, principal=principal)
+    if isinstance(out, dict) and out.get("ok") is False:
+        reason = str(out.get("reason") or "operation failed")
+        if reason.startswith("forbidden"):
+            raise HTTPException(403, reason)
+        raise HTTPException(404, reason)
+    return out

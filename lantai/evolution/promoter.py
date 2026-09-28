@@ -591,13 +591,38 @@ def rollback(memory_id: str, principal=None) -> dict:
         return {"ok": True}
 
 
-def delete_memory(memory_id: str) -> dict:
-    """删除记忆（从 SQLite + 向量存储）"""
+def delete_memory(memory_id: str, principal=None) -> dict:
+    """删除记忆（从 SQLite + 向量存储）
+
+    归属（票 `.scratch/readside-gaps/18`）：此前无 principal，`s.get` 取到就删。
+    这是全代码库最具破坏性的操作，而调用方 `source_service.delete_document`
+    会把它用在**级联目标**上——文档属于 A，不等于它指向的记忆属于 A
+    （票 17 修前 `MemoryEdge` 无归属过滤，票 16 的无归属 apply 也造这种边）。
+    取到行后过 `ensure_can_delete`，同票 04/06/11/13 写侧范式。
+
+    `ok: False` 而非抛异常：service 契约是 dict（被 worker/eval/MCP 多处消费，
+    形状不能动），403 语义在路由边界由 `_ok_or_raise` 翻译（同 `rollback`）。
+    """
     with db.get_session() as s:
         mem = s.get(MemoryItem, memory_id)
-        if mem:
-            s.delete(mem)
-            sync_fts(s, memory_id, None)
-            s.commit()
+        if not mem:
+            return {"ok": False, "reason": "memory missing"}
+        if principal is not None:
+            from fastapi import HTTPException
+
+            from lantai.core.acl import ensure_can_delete
+
+            try:
+                ensure_can_delete(
+                    principal,
+                    resource_user_id=mem.user_id,
+                    resource_tenant_id=mem.tenant_id,
+                    lane=mem.lane,
+                )
+            except HTTPException as exc:
+                return {"ok": False, "reason": f"forbidden: {exc.detail}"}
+        s.delete(mem)
+        sync_fts(s, memory_id, None)
+        s.commit()
     delete_memory_item(memory_id)
     return {"ok": True}

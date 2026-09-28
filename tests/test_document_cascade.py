@@ -33,7 +33,10 @@ def mem_db(monkeypatch):
 def client(mem_db):
     from lantai.core.auth import Principal, get_current_user
 
-    app.dependency_overrides[get_current_user] = lambda: Principal(user_id="test", allowed_lanes=[])
+    # allowed_lanes=None（未绑定）而非 []：[] 是「绑定了但一条都不给」，
+    # ensure_can_delete 的 lane 检查会挡掉所有删除——本文件测的是级联语义，
+    # 不是泳道 ACL（泳道维度由 test_tree_ownership 等覆盖）。
+    app.dependency_overrides[get_current_user] = lambda: Principal(user_id="test", allowed_lanes=None)
     yield TestClient(app)
     # 只摘除本 fixture 的 override；clear() 会连带清掉其他测试注册的依赖覆盖
     app.dependency_overrides.pop(get_current_user, None)
