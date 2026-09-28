@@ -14,13 +14,18 @@ router = APIRouter()
 
 
 @router.post("/sources")
-def add_source_route(req: SourceReq):
-    return add_source(req)
+def add_source_route(req: SourceReq, ctx=Depends(get_current_user)):
+    """创建来源（落归属，票 .scratch/readside-gaps/10）。
+
+    `config` 是连接凭证（token/密码），无主来源等于把凭据公开挂墙上。
+    """
+    return add_source(req, principal=ctx)
 
 
 @router.get("/sources")
-def list_sources_route():
-    return list_sources()
+def list_sources_route(ctx=Depends(get_current_user)):
+    """列出来源（归属收窄 + config 脱敏，票 .scratch/readside-gaps/10）。"""
+    return list_sources(principal=ctx)
 
 
 @router.post("/ingest/run")

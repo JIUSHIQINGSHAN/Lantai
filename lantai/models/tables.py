@@ -444,7 +444,18 @@ class MemoryUsageFeedback(SQLModel, table=True):
 
 
 class Source(SQLModel, table=True):
+    """外部来源（http/rss/obsidian 等）。
+
+    归属（票 .scratch/readside-gaps/10）：`config` 是 JSON 列，按设计放的
+    就是 http header、token、api key 这类连接凭证——`GET /sources`
+    原本一个身份都不取、原样回显。真实库 source 0 行；
+    迁移见 `migrations_v022.apply_v022_migrations`。
+    """
+
     id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
     kind: str
     config: dict = Field(default_factory=dict, sa_column=Column(JSON))
     enabled: bool = True
@@ -552,11 +563,21 @@ class ParamOverride(SQLModel, table=True):
 
 
 class RetrievalEvent(SQLModel, table=True):
-    """检索事件日志（方向二弱标注源）：哪条记忆被召回、当时生效参数、延迟。"""
+    """检索事件日志（方向二弱标注源）：哪条记忆被召回、当时生效参数、延迟。
+
+    归属（票 .scratch/readside-gaps/10）：`query_text` 是用户问过什么——
+    比记忆正文更直接地暴露意图，`GET /retrieval/recent-events` 原本一个
+    身份都不取。真实库 918 行（仅 68 行带 session_id），不回填老行，
+    读侧靠 `OR IS NULL` 兜住；迁移见
+    `migrations_v022.apply_v022_migrations`。
+    """
 
     __tablename__ = "retrieval_event"
 
     id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
     trace_id: str = Field(index=True)
     query_text: str = ""
     query_norm_hash: str = Field(index=True)

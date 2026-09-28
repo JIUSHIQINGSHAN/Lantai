@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **d3 本地兜底**：`ui/d3.v7.min.js`（v7.9.0，279KB）入库，CDN 挂掉时 `document.write` 回退；`routes_ui.py` 资源白名单同步放行 5 个新文件。
   - **测试增量**：`tests/test_console_api_contracts.py` 14 例（不 mock，真实起 FastAPI TestClient 打契约）——覆盖 stats 分组、冲突裁决 body 化与旧 query 拒绝、crystals 路由挂载、资源白名单、limbo 过滤、图展开等。
 
+### Security
+
+- **读侧归属收窄——`/sources` 来源凭证与 `/retrieval/recent-events` 查询词不再跨用户可读；顺带修掉票 11 归属列迁移在真实库从未生效的真 bug（2026-09-28，票据 `.scratch/readside-gaps/issues/10-sources-recent-events-no-identity.md`）**：
+  - **背景实证**（`.scratch/readside-audit/probe_round5.py`）：两个端点一个身份都不取。`GET /sources` 把 `Source.config` 原样吐出——`config` 是 JSON 列，按设计放的就是 http header、token、api key 这类**连接凭证**；`GET /retrieval/recent-events` 吐出 `query_text`——**用户问过什么，比记忆正文更直接暴露意图**，真实库 918 行。探针种一个中一个。
+  - **顺带挖出的真 bug（比本票本身更严重）**：票 11 那次归属列迁移**在真实库上从未生效过**。`migrations_v022.py` 写的表名是 `prompt_template` / `skill_crystal`（带下划线），而真实表叫 `prompttemplate` / `skillcrystal`（SQLModel 默认无下划线拼接）。`_has_column` 对**不存在的表返回 True**，所以写错表名**不报错**，只是那次 `ALTER TABLE` 静默不执行——归属列一个都没加，`/prompts`、`/crystals` 的读侧一查不存在的列就是 500。已修表名，并在**真实库副本**上实证：迁移前四表 `user_id=False`，迁移后全部 True，跑两遍不重复加列，919 行数据不动。
+  - **实现**：`Source` / `RetrievalEvent` 补归属四元组 + 幂等加列迁移（沿用 `apply_v022_migrations`，不新造第二条迁移链，只加列不回填）；读侧 `_source_scope` / `_event_scope` 按 `user_id == viewer OR IS NULL` 收窄（admin 全权；NULL 是「未记录」不是「属于所有人」，单人部署下判不可见会让功能直接消失）；写侧 `add_source` / `log_retrieval` 落 `principal.user_id`。
+  - **两道独立防线**：归属收窄之外，`GET /sources` 另加 `redact_config()`——已知敏感键（token/secret/password/api_key/authorization/cookie 等，大小写不敏感含子串，嵌套 dict 递归）替换为 `***`。**即使归属修好、即使请求方是 admin，也不该把凭证明文回显。** 宁 miss 不脏写：不认识的键原样返回，不做猜测式脱敏（猜错会把正常配置也抹掉，比泄漏更难排查）。
+  - **归属身份顺着调用链取，不另取**：REST 侧两个 `_try_log` 调用点透传 `ctx`；MCP 侧无 HTTP 鉴权层，新增 `_principal_from_params()`——宿主透传 `user_id` 才构造 principal，**不透传留 NULL**。不猜身份（不看环境变量、进程名、`session_id` 推导）——猜错等于把别人的查询词挂到另一个人头上，比 NULL 更难排查。
+  - **测试增量**：`tests/test_sources_recent_events_ownership.py` 14 例 + `tests/test_ownership_migration.py` 扩充至 11 例，均含不 mock 冒烟（真打 FastAPI TestClient、真调 `log_retrieval`、真实 SQLite 文件库跑迁移）。**变异验证 18/18 全杀**（子进程隔离，含「迁移表名退回带下划线」M18 专治票 11 事故重演、「REST/MCP 各两个埋点调用点漏传 principal」M7/M8/M17）。全量 pytest **1561 passed / 0 failed**（基线 1543）。
+  - **探针复验**：`.scratch/readside-audit/probe_round6.py` 显式给种子落 `user_id`（第五轮种子是 NULL 属主，读侧放行本是正确行为，那次 ok 什么都没证明），判据从「有没有泄漏」扩成四条：A 看不到 B / A 看得到自己 / NULL 老行仍可见 / admin 见得到全部。**并反向验证过探针不是空转**——把读侧收窄改坏，探针立刻报 LEAK 退出码 1。
+
 ### Fixed
 
 - **外部 LLM 调用统一替身——162 次真实联网归零，全量测试快 23 倍（2026-09-28，票据 `.scratch/test-env-parity/issues/01-test-isolation-env-dependence.md`，维护者选定方案甲）**：

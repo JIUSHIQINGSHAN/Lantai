@@ -106,17 +106,39 @@ def recall_report(days: int | None = None) -> dict:
     }
 
 
-def recent_retrieval_events(limit: int = 20) -> list[dict]:
+def _event_scope(principal):
+    """检索事件读侧归属条件：admin/`principal=None` → None（不过滤）；
+    否则 `user_id == viewer OR IS NULL`（票 10，NULL 口径同票 03/04/06/09）。
+
+    真实库 918 行老事件全部 NULL 属主——单人部署下判"不可见"会让
+    EVOLVE 看板对唯一真实用户一片空白。NULL 是「未记录」不是「属于所有人」。
+    """
+    if principal is None:
+        return None
+    if bool(getattr(principal, "is_admin", False)):
+        return None
+    from lantai.services.work_item_service import _viewer_of
+
+    viewer = _viewer_of(principal)
+    return (RetrievalEvent.user_id == viewer) | (RetrievalEvent.user_id.is_(None))
+
+
+def recent_retrieval_events(limit: int = 20, principal=None) -> list[dict]:
     """最近 N 条检索事件（新→旧），供 EVOLVE 看板事件流。
 
     与 recall_report 共用 RetrievalEvent；只读聚合，含噪音标记由前端展示。
+
+    归属（票 .scratch/readside-gaps/10）：`query` 字段是用户问过什么，
+    比记忆正文更直接暴露意图，此前一个身份都不取。
     """
     if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 100):
         raise ValueError("limit must be an int in [1, 100]")
     with db.get_session() as s:
-        events = s.exec(
-            select(RetrievalEvent).order_by(RetrievalEvent.created_at.desc()).limit(limit)
-        ).all()
+        q = select(RetrievalEvent).order_by(RetrievalEvent.created_at.desc())
+        scope = _event_scope(principal)
+        if scope is not None:
+            q = q.where(scope)
+        events = s.exec(q.limit(limit)).all()
     return [
         {
             "id": e.id,

@@ -5,9 +5,10 @@
 失败零侵入（返回 404/400，不抛 500 阻断主链路）。
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from lantai.core.auth import get_current_user
 from lantai.observability.recall_report import recall_report, recent_retrieval_events
 from lantai.observability.retrieval_log import backfill_used_ids
 
@@ -36,9 +37,13 @@ def get_recall_report(days: int | None = None) -> dict:
 
 
 @router.get("/recent-events")
-def get_recent_events(limit: int = 20) -> dict:
-    """最近检索事件流（新→旧，EVOLVE 看板用）。"""
+def get_recent_events(limit: int = 20, ctx=Depends(get_current_user)) -> dict:
+    """最近检索事件流（新→旧，EVOLVE 看板用）。
+
+    归属（票 .scratch/readside-gaps/10）：`query` 是用户问过什么，
+    比记忆正文更直接暴露意图，此前一个身份都不取、全表倒序吐。
+    """
     try:
-        return {"events": recent_retrieval_events(limit)}
+        return {"events": recent_retrieval_events(limit, principal=ctx)}
     except ValueError as e:
         raise HTTPException(400, str(e))

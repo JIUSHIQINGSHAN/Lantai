@@ -19,11 +19,17 @@ def apply_v022_migrations(engine) -> None:
 
     DDL 固定字面量（SQLite ALTER TABLE 不支持绑定参数，防注入纪律）。
 
-    归属列（票 .scratch/readside-gaps/11）：`prompt_template` 与
-    `skill_crystal` 原本没有归属四元组，`GET /prompts`、`GET /crystals`
-    一个身份都不取、模板与技能流程全文可读。真实库两表分别 1 / 5 行，
+    归属列（票 .scratch/readside-gaps/11 与 10）：`prompttemplate`、
+    `skillcrystal`、`source`、`retrieval_event` 原本没有归属四元组，
+    对应读端点一个身份都不取、模板/技能流程/来源凭证/查询词全文可读。
     迁移只加列、不回填（老行保持 NULL，读侧靠 `OR IS NULL` 兜住——
     单人部署下判"不可见"会让功能直接消失）。
+
+    表名**必须**与 `Model.__tablename__` 逐字一致（票 11 曾写成
+    `prompt_template` / `skill_crystal`，带下划线——真实库根本没这两张表）。
+    `_has_column` 对不存在的表返回 True，所以写错表名不会报错，
+    只会让那次 `ALTER TABLE` 静默不执行：归属列一个都没加，
+    读侧 `_prompt_scope` / `_crystal_scope` 查不存在的列直接 500。
     """
     conn = None
     try:
@@ -37,14 +43,14 @@ def apply_v022_migrations(engine) -> None:
             )
         except Exception as exc:  # 索引失败不阻断启动
             logger.warning("迁移跳过 ix_retrieval_event_session_id: %s", exc)
-        for table in ("prompt_template", "skill_crystal"):
+        for table in ("prompttemplate", "skillcrystal", "source", "retrieval_event"):
             for col in ("tenant_id", "user_id", "agent_id"):
                 if not _has_column(conn, table, col):
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
         conn.commit()
         logger.info(
             "v022 迁移完成：retrieval_event.session_id（写线活性判据）"
-            "+ prompt_template/skill_crystal 归属列（票 11）"
+            "+ prompttemplate/skillcrystal/source/retrieval_event 归属列（票 11/10）"
         )
     except Exception as exc:
         logger.error("v022 增量迁移异常（服务继续启动）: %s", exc)

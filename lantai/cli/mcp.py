@@ -45,9 +45,13 @@ def handle_search(params: dict) -> dict:
     from lantai.core.text import normalize_session_id
 
     session_id = normalize_session_id(params.get("session_id"), default=None)
+    # 归属（票 .scratch/readside-gaps/10）：MCP 没有 HTTP 鉴权层，宿主若透传
+    # `user_id` 就据此构造 principal 落进检索事件；不透传留 NULL（与改动前逐字
+    # 一致）——宁 miss 不脏写，不拿环境变量或进程名猜一个身份。
+    principal = _principal_from_params(params)
     gate = relevance_check(query)
     if not force and not gate["needs_memory"]:
-        event_id = _try_log(query, [], 0, gate, session_id=session_id)
+        event_id = _try_log(query, [], 0, gate, session_id=session_id, principal=principal)
         return {"results": [], "gate": gate, "event_id": event_id}
     domain = params.get("domain")
     # 更漏（ADR-0048/票 11）：时效视图参数透传——全部缺省 = 现行行为不变
@@ -71,7 +75,9 @@ def handle_search(params: dict) -> dict:
     t0 = time.perf_counter()
     results = hybrid_search(query, top_k=top_k, domain=domain, **temporal_kwargs)
     latency_ms = int((time.perf_counter() - t0) * 1000)
-    event_id = _try_log(query, results, latency_ms, gate, session_id=session_id)
+    event_id = _try_log(
+        query, results, latency_ms, gate, session_id=session_id, principal=principal
+    )
     # Ticket 04: 检索透明——命中来源说明（id + 摘要 + 分数）
     from lantai.retrieval.evidence import build_evidence
 
@@ -113,15 +119,53 @@ def handle_search(params: dict) -> dict:
     return ret
 
 
+def _principal_from_params(params: dict):
+    """从 MCP params 取归属身份（票 .scratch/readside-gaps/10）。
+
+    MCP 没有 HTTP 鉴权层，`handle_search` 拿不到 `Principal`。宿主若在
+    params 里透传 `user_id`，就据此构造一个非 admin principal 落进检索事件；
+    不透传返回 None（埋点留 NULL，读侧靠 `OR IS NULL` 兜住老行）。
+
+    不猜身份（宁 miss 不脏写）：不看环境变量、不看进程名、不看 session_id
+    推导——猜错等于把别人的查询词挂到另一个人头上，比 NULL 更难排查。
+    """
+    user_id = params.get("user_id")
+    if not isinstance(user_id, str):
+        return None
+    user_id = user_id.strip()
+    if not user_id:
+        return None
+    from lantai.core.auth import Principal
+
+    return Principal(
+        tenant_id=None,
+        user_id=user_id,
+        agent_id=None,
+        session_id=None,
+        role="user",
+        allowed_lanes=None,
+    )
+
+
 def _try_log(
-    query: str, results: list, latency_ms: int, gate: dict, session_id: str | None = None
+    query: str,
+    results: list,
+    latency_ms: int,
+    gate: dict,
+    session_id: str | None = None,
+    principal=None,
 ) -> str | None:
     """检索事件埋点（方向二）：失败零侵入。返回 event_id 供生成侧回填 used_ids。"""
     try:
         from lantai.observability.retrieval_log import log_retrieval
 
         return log_retrieval(
-            query, results, latency_ms=latency_ms, gate=gate, session_id=session_id
+            query,
+            results,
+            latency_ms=latency_ms,
+            gate=gate,
+            session_id=session_id,
+            principal=principal,
         )
     except Exception:
         return None

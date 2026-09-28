@@ -8,22 +8,95 @@ from lantai.models.tables import MemoryCandidate, Source
 from lantai.storage import db
 from lantai.workers.ingest_worker import run_ingest_once
 
+# 敏感键子串（大小写不敏感）：来源 config 里这些键的值不回显。
+# 宁 miss 不脏写——只认已知凭证形态，**不认识的键原样返回**，
+# 不做猜测式脱敏（猜错会把正常配置也抹掉，比泄漏更难排查）。
+_SENSITIVE_KEY_PARTS = (
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "api_key",
+    "apikey",
+    "authorization",
+    "cookie",
+    "credential",
+    "private_key",
+)
 
-def add_source(req: SourceReq) -> dict:
-    """创建来源。"""
+_REDACTED = "***"
+
+
+def redact_config(config) -> dict:
+    """脱敏来源配置：已知敏感键的值替换为 `***`，其余原样。
+
+    独立于归属的第二道防线（票 10 口径 4）：即使归属修好、
+    即使请求方是 admin，`GET /sources` 也不该把连接凭证明文回显。
+    非 dict 输入原样返回（宁 miss 不脏写：不猜结构）。
+    """
+    if not isinstance(config, dict):
+        return config
+    out = {}
+    for key, value in config.items():
+        k = str(key).lower()
+        if any(part in k for part in _SENSITIVE_KEY_PARTS):
+            out[key] = _REDACTED
+        elif isinstance(value, dict):
+            out[key] = redact_config(value)  # 嵌套配置同样脱敏
+        else:
+            out[key] = value
+    return out
+
+
+def _source_scope(principal):
+    """读侧归属条件：admin/`principal=None` → None（不过滤）；
+    否则 `user_id == viewer OR IS NULL`（票 10，NULL 口径同票 03/04/06/09）。"""
+    if principal is None:
+        return None
+    if bool(getattr(principal, "is_admin", False)):
+        return None
+    from lantai.services.work_item_service import _viewer_of
+
+    viewer = _viewer_of(principal)
+    return (Source.user_id == viewer) | (Source.user_id.is_(None))
+
+
+def add_source(req: SourceReq, principal=None) -> dict:
+    """创建来源。
+
+    归属（票 10）：新建落 `principal.user_id`，否则又是一条谁都能
+    看见的无主来源。`principal=None` 的内部调用留 NULL，
+    与改动前逐字一致。
+    """
     with db.get_session() as s:
-        src = Source(id=new_id("src"), kind=req.kind, config=req.config, enabled=req.enabled)
+        src = Source(
+            id=new_id("src"),
+            kind=req.kind,
+            config=req.config,
+            enabled=req.enabled,
+            user_id=getattr(principal, "user_id", None),
+            tenant_id=getattr(principal, "tenant_id", None),
+        )
         s.add(src)
         s.commit()
         s.refresh(src)
         return src.model_dump(mode="json")
 
 
-def list_sources() -> dict:
-    """列出所有来源。"""
+def list_sources(principal=None) -> dict:
+    """列出来源（按归属收窄 + config 脱敏）。"""
     with db.get_session() as s:
-        rows = s.exec(select(Source)).all()
-        return {"sources": [r.model_dump(mode="json") for r in rows]}
+        q = select(Source)
+        scope = _source_scope(principal)
+        if scope is not None:
+            q = q.where(scope)
+        rows = s.exec(q).all()
+        out = []
+        for r in rows:
+            dumped = r.model_dump(mode="json")
+            dumped["config"] = redact_config(dumped.get("config"))
+            out.append(dumped)
+        return {"sources": out}
 
 
 def run_ingest() -> dict:

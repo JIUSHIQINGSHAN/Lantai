@@ -60,6 +60,7 @@ def log_retrieval(
     lanes: list[str] | None = None,
     session_id: str | None = None,
     request_id: str | None = None,
+    principal=None,
 ) -> str | None:
     """
     在检索出口记录一次事件。失败仅记日志，绝不抛给主链路。
@@ -67,6 +68,10 @@ def log_retrieval(
 
     session_id：来源链（v022 票据 05）——带 session 的检索才算「真实会话
     读」，写活性判据此计数；不透传则留空（如实 NULL，不猜测）。
+
+    principal：归属（票 .scratch/readside-gaps/10）——`query_text` 是用户
+    问过什么，比记忆正文更直接暴露意图。落 `principal.user_id` 后读侧
+    才能按归属收窄；不透传则留 NULL（后台巡检/内部调用）。
     request_id：回执链（ADR-0049）——一次注入调用的整体标识，由注入侧
     （shell_hook context / 中间件）生成透传；不透传留空（pending 状态照记）。
     """
@@ -85,6 +90,8 @@ def log_retrieval(
             s.add(
                 RetrievalEvent(
                     id=event_id,
+                    user_id=getattr(principal, "user_id", None),
+                    tenant_id=getattr(principal, "tenant_id", None),
                     trace_id=trace_id or "",
                     query_text=query,
                     query_norm_hash=_norm_hash(query),
