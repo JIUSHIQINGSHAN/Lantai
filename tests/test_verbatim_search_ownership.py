@@ -9,14 +9,45 @@
 后果（第三轮探测实测）：A 的身份打 `?q=连接池`，
 拿到整条 B 的 `MemoryItem`——`content` 全文 + ULID `id` + `user_id`。
 
-**修法口径：沿用检索内核既有的严格 `user_id = ?`，不另造 `OR IS NULL`。**
-这与票 03/04 的 `OR IS NULL` 分歧是刻意的，理由见票 07 修法口径第 1 条：
-检索是**按 query 相关性召回**，NULL 老行混进来只会稀释排序；
-认知上下文/日报是**全量装配**，看不见就是失明。
+**修法口径（2026-09-28 修订）：检索内核改回读侧统一口径
+`user_id = viewer OR user_id IS NULL`。**
+
+原口径（严格 `user_id = ?`，不另造 `OR IS NULL`）**已废止**，理由是
+决定性实验实证它从未提供任何隔离，详见票
+`.scratch/fts-null-owner/01` 的「与票 07 的冲突及裁决」：
+
+```
+种一条 NULL 属主记忆，同时写进 SQLite/FTS 与向量库，
+principal=default 跑完整 hybrid_search → 该行进最终结果。
+```
+
+三条通道并集后的加载步 `_query_items`（`hybrid.py:534-538`）**没有任何
+归属过滤**，而向量通道 `vector_owner_filter`（票 15）明确
+`$or[user_id=viewer, ""]`——空串即 NULL 属主在向量库的落点。所以
+FTS 严不严格，对 NULL 属主行**完全无影响**；严格口径的唯一实际效果是
+让单人部署的关键词召回丢掉 96.8% 的记忆（真实库 636/657 行 NULL 属主），
+且**越老的记忆越搜不到**（归属列是后来才加的）。
+
+**原口径依赖的三个前提全部失效**：①「既有行为」——主检索同样在丢 96.8%，
+是同一个 bug 的另一处现场；②「与单一真源自相矛盾」——票 15 已裁决读侧
+一律 `OR IS NULL`（向量通道），FTS 是唯一没跟上的一处；③「写入侧修完
++ 391 行回填后自然成立」——写入侧已修（票 20），但**回填是破坏性数据
+变更，至今未做**，在回填前严格口径只会让检索空转。
+
+**仍未做的正解**：391 行 verbatim 历史回填（票 07「留待下轮」第一条）。
+那是维护者确认范畴的数据变更，不由 Agent 单方面执行。回填后
+`OR IS NULL` 的 NULL 半边会越来越少命中，但**不应删除**——NULL 的含义是
+「未记录」不是「属于所有人」，新出现的 NULL 行（导入、脚本、worker）
+仍应可见。
+
+**`TestNullOwnerTradeoff` 已随之改写**：它原本断言「NULL 属主行对非 admin
+不可见」，锁的正是上面证明无效的口径。现在它断言 NULL 行**可见**、
+而**别人的行（`user_id='user-B'`）依然不可见**——安全方向未放松，
+只是不再误伤该看的 96.8%。
 
 **本文件刻意不设 `tenant_id`**（这是实测出来的关键约束，不是随手写的）：
 `get_current_user` 只在收到 `X-Tenant-Id` 请求头时才给 principal 一个
-tenant（`auth.py:143`），而 `fts.py:156` / `hybrid.py:433` 一旦拿到
+tenant（`auth.py:143`），而 `fts.py` / `hybrid.py:433` 一旦拿到
 tenant 就无条件加 `AND m.tenant_id = ?`——**连 admin 都不豁免**。
 本机真实库 650/650 行 `tenant_id` 全为 NULL（实测），
 于是 `tenant_id="t1"` 的 principal 会把**每一行**都滤掉，包括自己的。
@@ -25,7 +56,7 @@ tenant 就无条件加 `AND m.tenant_id = ?`——**连 admin 都不豁免**。
 真实部署只有两种 tenant 状态：不带头（tenant=None）或带头（tenant 有值）。
 
 **`user_id=None` 的 admin 是另一条真实状态**：`acl.Principal` 允许
-`user_id=None`（`SYSTEM_PRINCIPAL` 就是），此时 `fts.py:158` 的
+`user_id=None`（`SYSTEM_PRINCIPAL` 就是），此时 `fts.py` 的
 `if getattr(principal, "user_id", None)` 不成立 → 不加 user 过滤 →
 admin 全权。这正是 `test_admin_sees_all` 采用的形态。
 写入侧不归本票管：`add_raw_memory` 已有 `user_id` 形参（默认 "default"）。
@@ -210,21 +241,32 @@ class TestVerbatimSearchOwnership:
 
 
 class TestNullOwnerTradeoff:
-    """严格 `user_id = ?` 口径的**已知代价**：NULL 属主行对非 admin 不可见。
+    """NULL 属主老行对非 admin **可见**，别人的行依然不可见。
 
-    这不是缺陷回归，是**刻意的、已记录的取舍**。固化它的意义：
-    哪天有人想给检索内核加 `OR IS NULL`（让老行重新可见），
-    这条会先失败，逼他先读票 07 里那段修正说明——
-    那里记着三条不改的理由，以及真正该修的是写入侧
-    （`obsidian_service.py:98` 不传 `user_id`）+ 391 行历史回填。
+    **本类在 2026-09-28 被整类改写**，原断言是「NULL 属主行对非 admin
+    不可见」。废止原因是决定性实验（票 `.scratch/fts-null-owner/01`）：
 
-    判据必须落在真正会变的量上：直接种一行 NULL 属主的 verbatim，
-    断言非 admin 搜不到、admin 搜得到——而不是泛泛断言"不含机密"。
+    ```
+    种一条 NULL 属主记忆，同时写进 SQLite/FTS 与向量库，
+    principal=default 跑完整 hybrid_search → 该行进最终结果。
+    ```
+
+    并集加载步 `_query_items`（`hybrid.py:534-538`）无归属过滤，
+    向量通道 `vector_owner_filter`（票 15）又明确 `$or[viewer, ""]`，
+    所以严格 FTS 口径在 NULL 属主行上**从未提供任何隔离**——它只让
+    同一批记忆在不同通道给出不同可见集。而它的实际代价是真实库
+    636/657 行（96.8%）关键词召回不到，**越老的记忆越搜不到**。
+
+    改写后的判据落在两个方向上，缺一不可：
+    - NULL 属主老行**必须可见**（否则单人部署检索空转）
+    - **别人的行（`user_id='user-B'`）必须不可见**（安全方向没放松）
+
+    只断言前者会变成「谁都能看」，只断言后者则是原来的假绿。
     """
 
-    def test_null_owner_row_invisible_to_non_admin(self, verbatim_env):
+    def test_null_owner_row_visible_to_non_admin(self, verbatim_env):
+        """NULL 属主老行对非 admin 可见——真实库 391/391 行 verbatim 都是它。"""
         session_factory, _ = verbatim_env
-        # 直接落库绕开 add_raw_memory 的默认值，精确构造 NULL 属主
         from lantai.core.ids import new_id
         from lantai.core.time import utcnow
         from lantai.models.tables import MemoryItem
@@ -249,13 +291,31 @@ class TestNullOwnerTradeoff:
             s.commit()
 
         texts = _search(_principal("default"))
-        assert texts == [], f"NULL 属主行对非 admin 竟然可见：{texts}"
+        assert any("连接池 888" in t for t in texts), (
+            f"NULL 属主老行对非 admin 不可见了（单人部署 verbatim 通道空转）：{texts}"
+        )
+
+    def test_other_users_row_still_invisible(self, verbatim_env):
+        """安全方向未放松：别人的 verbatim 行非 admin 依然看不到。
+
+        与上一条成对：`OR IS NULL` 放行的是「未记录」，不是「属于所有人」。
+        """
+        session_factory, _ = verbatim_env
+        add_raw_memory(
+            RawMemoryReq(content="B 的原文：连接池 100"),
+            user_id="user-B",
+        )
+
+        texts = _search(_principal("default"))
+        assert not any("连接池 100" in t for t in texts), (
+            f"非 admin 看到了别人的 verbatim 行：{texts}"
+        )
 
     def test_null_owner_row_visible_to_admin(self, verbatim_env):
         """同一行 NULL 属主，admin（user_id=None 形态）必须看得见。
 
-        上一条 + 这一条一起证明：不可见的成因是"归属不匹配"，
-        而不是 FTS 索引坏了或测试种子没写进去。
+        这条 + `test_null_owner_row_visible_to_non_admin` 一起证明：
+        行确实在库里、FTS 索引没坏，两种身份都拿得到——只是别人的行拿不到。
         """
         session_factory, _ = verbatim_env
         from lantai.core.ids import new_id

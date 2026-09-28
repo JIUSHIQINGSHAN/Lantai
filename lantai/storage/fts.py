@@ -156,7 +156,16 @@ def search_fts(
                 sql += " AND m.tenant_id = ?"
                 params.append(principal.tenant_id)
             if getattr(principal, "user_id", None):
-                sql += " AND m.user_id = ?"
+                # 归属（票 `.scratch/fts-null-owner/01`）：**必须带 OR IS NULL**。
+                # 读侧每条收窄都靠这半边保命（票 03/04/05/06/15 的
+                # `user_id == viewer OR user_id IS NULL`）。此前只写等值匹配，
+                # 真实库 657 行 memoryitem 里 636 行是 NULL 属主 → 单人部署下
+                # 关键词召回丢掉 96.8% 的记忆，且**越老的记忆越搜不到**
+                # （归属列是后来才加的，老数据全是 NULL）。
+                #
+                # 与 `ensure_can_delete` 形状不同却曾被当同一形状抄：写侧
+                # 不需要 OR IS NULL（写不存在的行本来就要拒），读侧必须。
+                sql += " AND (m.user_id = ? OR m.user_id IS NULL)"
                 params.append(principal.user_id)
             if getattr(principal, "session_id", None):
                 sql += " AND m.session_id = ?"
@@ -202,7 +211,10 @@ def search_fts_bm25(
                 sql += " AND m.tenant_id = ?"
                 params.append(principal.tenant_id)
             if getattr(principal, "user_id", None):
-                sql += " AND m.user_id = ?"
+                # 同 `search_fts`：读侧归属必须有 OR IS NULL 半边
+                # （票 `.scratch/fts-null-owner/01`）。两个函数是同一处手写
+                # 的同一段，改一处漏一处等于没改。
+                sql += " AND (m.user_id = ? OR m.user_id IS NULL)"
                 params.append(principal.user_id)
             if getattr(principal, "session_id", None):
                 sql += " AND m.session_id = ?"
