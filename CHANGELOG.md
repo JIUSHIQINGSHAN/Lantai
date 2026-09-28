@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **监控面板不再把宿主机指纹与全库统计吐给任意持 key 者（2026-09-28，票据 `.scratch/readside-gaps/issues/05-monitor-leaks-host-internals.md`）**：
+  - **先说影响**：`/monitor/*` 五个 handler 一个身份都不取（模块 docstring 自称"CORE_ROUTERS 注册即鉴权"——**这句注释与事实不符**，`CORE_ROUTERS` 只决定挂不挂载，不注入身份）。于是任意持 key 者一次请求拿到：宿主机绝对路径（**含操作系统用户名** `C:\Users\Asus\...`）、python 完整版本串（`3.13.14`，够直接查 CVE）、`pid`/`uptime_seconds`/`cpu_seconds`/`open_fds`、OS 指纹（Windows 11 / AMD64 / 16 核）、鉴权拓扑（`host`/`port`/`api_keys_*`/`effective_auth`）、LLM 与 reranker 端点地址、**全库**记忆/候选/提案计数、以及**别人**的请求日志。复现实证：`.scratch/readside-gaps/probe_05_monitor_leak.py`（子进程隔离 + 真实 `build_monitor_snapshot` + 内存 SQLite）。
+  - **修法分两路不混**。①**宿主机指纹**按身份分档：`process.python` → 只留 `major.minor`（`3.13`），`pid`/`open_fds`/`cpu_seconds`/`uptime_seconds` 撤回，`storage.*.path` → 只回文件名，`security.host`/`port`/`api_keys_*`/`effective_auth`、`dependency.platform` 与两个 `base_url` 撤回。**键保留、值置 `None`**——前端 `monitor.js` 直接模板串 `security.host`/`process.rss_mb`，删键会让 JS 抛异常，脱敏不能把运维修废。②**计数与日志**按归属收窄，口径同票 04 的 `_digest_scope`：`user_id == viewer OR IS NULL`（NULL 老行可见——单人部署 629/650 行是 NULL，判不可见等于报表归零）。
+  - **单一判据两个理由**：`_monitor_full_view(principal)` = `principal is None or is_admin`，归属轴与指纹轴共用。`None` 不过滤，是因为内部 worker/CLI/MCP 不带身份，一过滤就空转；指纹轴上 `None` 全量不是 fail-open——**HTTP 路径上 `get_current_user` 永远返回 Principal，`None` 在这条路上产生不出来**。**DEV MODE 特例**：无凭证时回落到 `Principal(user_id="default", role="user")`——**不是 None**，于是照常脱敏（"无凭证的本机请求"与"内部 worker"是两回事，前者是任意持 key 者）。
+  - **`operation_logs` 多兜两个哨兵**：遥测写 `row["user_id"] or "anonymous"`（`telemetry.py:103`），真实库 171 行。若只按 `OR IS NULL` 兜老行，这 171 行对任何非 admin 都看不见——那恰是扫描器踩点最可能留下痕迹的一段，**藏它比露它更危险**。
+  - **Red 测试顺手揪出的邻近泄漏**：`safe_settings_view()` 原先打码 `DATABASE_URL` 却不打码 `LANTAI_HOME`（同一个目录、同样含操作系统用户名）。现在两个名字走同一条 `_mask_path`。
+  - **Prometheus 副作用如实记录**：`gauge()` 对 `None` 直接 return，撤值的指标**整行消失**而非输出空 gauge。这是对的（抓取方会把空值读成 0 或 `nan`）；断言因此分两类：仍在的指标名必须在，已撤的必须不在。
+  - **测试增量 29 例**（`tests/test_monitor_ownership.py`，全部不 mock：真实建表的内存 SQLite + `patch db.get_session` + 真 `evaluate_alerts` + 路由层真 `TestClient`）。变异验证 **20/20 全杀**（`.scratch/readside-gaps/mutation_check_05.py`，subprocess 隔离 + timeout + atexit 还原）；第一轮 3 个 MISSED 全是夹具没种 `RetrievalEvent`/`provenance`/`session_id` 导致判据永不成立，补种子后全杀。复现探针前后对比：A 的 `pid` `21732→None`、`python` `3.13.14→3.13`、`storage.database.path` 绝对路径→`remembrance.db`、`platform` 整块→`None`、`memories.total` `3→2`、`logs` `2 条→1 条`；admin 视角原样保留。全量 pytest **1825 passed / 0 failed**。
+
 ### Added
 
 - **控制台前端模块化拆分 + 认知终端/案牍审阅/沉淀工作台启用（2026-09-28）**：

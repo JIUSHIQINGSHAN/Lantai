@@ -17,6 +17,23 @@ from lantai.models.tables import RetrievalEvent
 from lantai.storage import db
 
 
+def _recall_scope(principal):
+    """检索事件的归属过滤条件（票 `.scratch/readside-gaps/05`）。
+
+    口径同票 04 的 `_digest_scope`：`user_id == viewer OR IS NULL`。
+    真实库 918 行里多数 NULL（埋点早于归属改造），判不可见会让报表归零。
+
+    `principal=None`（内部 worker / MCP / 脚本）与 admin 全量：定时任务
+    不带身份，一过滤就空转。
+    """
+    if principal is None or bool(getattr(principal, "is_admin", False)):
+        return None
+    from lantai.core.acl import viewer_of
+
+    viewer = viewer_of(principal)
+    return (RetrievalEvent.user_id == viewer) | (RetrievalEvent.user_id.is_(None))
+
+
 def estimate_tokens(text: str) -> int:
     """零依赖 token 粗估：CJK 字符按 1 token/字，其余按 4 字符/词元。
 
@@ -48,14 +65,24 @@ def _tokens_from_results(results: list[dict]) -> int:
     return total
 
 
-def recall_report(days: int | None = None) -> dict:
-    """最近 N 天零召回率监控报告（窗口默认 RECALL_MONITOR_WINDOW_DAYS）。"""
+def recall_report(days: int | None = None, *, principal=None) -> dict:
+    """最近 N 天零召回率监控报告（窗口默认 RECALL_MONITOR_WINDOW_DAYS）。
+
+    归属（票 `.scratch/readside-gaps/05`）：`build_monitor_snapshot` 复用
+    本函数，而面板此前把全库检索统计吐给任何持 key 者。现在按 viewer
+    收窄，口径同票 04 的 `_digest_scope`（`user_id == viewer OR IS NULL`，
+    NULL 老行可见）。`principal=None` / admin 全量。
+    """
     window = days if days is not None else settings.RECALL_MONITOR_WINDOW_DAYS
     if not isinstance(window, int) or isinstance(window, bool) or not (1 <= window <= 365):
         raise ValueError("days must be an int in [1, 365]")
     start = utcnow() - timedelta(days=window)
+    scope = _recall_scope(principal)
+    query = select(RetrievalEvent).where(RetrievalEvent.created_at >= start)
+    if scope is not None:
+        query = query.where(scope)
     with db.get_session() as s:
-        events = s.exec(select(RetrievalEvent).where(RetrievalEvent.created_at >= start)).all()
+        events = s.exec(query).all()
     total = len(events)
     noise = sum(1 for e in events if e.is_system_noise)
     real = [e for e in events if not e.is_system_noise]

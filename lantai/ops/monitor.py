@@ -11,6 +11,23 @@
 - worker 周期复用 `work_item_service.worker_schedule_specs`；
 - 逾期判定复用 `core.scheduler.worker_staleness`（与案牍同源）；
 - 零召回率复用 `observability.recall_report`。
+
+归属（票 `.scratch/readside-gaps/05`）：面板把宿主机指纹与全库统计一起
+吐给**任意持 key 者**——一次请求拿到 python 完整版本串 + pid + 绝对路径
+（含操作系统用户名）+ 鉴权拓扑 + 别人的记忆/待审计数 + 别人的请求日志。
+修法两路，不混：
+
+1. **宿主机指纹**（`process.python` / `pid` / `open_fds` / `cpu_seconds` /
+   `uptime_seconds`、`storage.*.path`、`security.host` / `port` /
+   `api_keys_*` / `effective_auth`、`dependency.platform` / `*.base_url`）
+   按 `_monitor_viewer` 分档：非 admin 撤值（键保留置 `None`——前端
+   `monitor.js` 直接模板串这些字段，删键会让 JS 抛）。
+2. **计数与日志**（`memories` / `review` / `pipeline` 的记忆候选提案数、
+   `list_operation_logs`）按归属收窄，口径同票 04 的 `_digest_scope`：
+   `user_id == viewer OR IS NULL`（单人部署下 629/650 行 NULL，判不可见
+   等于报表归零）。
+
+admin/system 与 `principal=None`（worker / 脚本 / MCP）全量，口径同前 17 票。
 """
 
 from __future__ import annotations
@@ -63,6 +80,104 @@ _CORE_TABLES = (
 )
 
 
+# ── 归属口径（票 .scratch/readside-gaps/05）──────────────────────────
+def _monitor_full_view(principal) -> bool:
+    """是否为"全量视角"：`principal=None`（内部 worker / 脚本 / MCP）或 admin。
+
+    **两个轴共用这一个判据，但理由不同**：
+
+    - 归属收窄轴：`None` 不过滤，口径同前 17 票——定时任务/CLI 不带身份，
+      一过滤就空转，那是把内部工具修废。
+    - 宿主机指纹轴：`None` 同样全量。这不是 fail-open：**HTTP 路径上
+      `get_current_user` 永远返回 Principal，`None` 在这条路上产生不出来**；
+      能传 `None` 的只有内部代码，而内部代码本来就是运维侧的。
+
+    DEV MODE 要特别注意：`get_current_user` 回落到
+    `Principal(user_id="default", role="user")`——**不是 None**，
+    于是照常脱敏。"无凭证的本机请求"与"内部 worker"是两回事，
+    前者是任意持 key 者，后者是运维自己的代码。
+    """
+    return principal is None or bool(getattr(principal, "is_admin", False))
+
+
+def _monitor_viewer(principal):
+    """读侧收敛到的 user_id；全量视角 → None（表示不加条件）。
+
+    判据复用 `core.acl.viewer_of`（本仓第四次写同一段收敛逻辑，故 015
+    起收到 acl.py 做单一真源），**不另写一份**：未记录归属收敛到
+    `"default"`——与 `auth.py` DEV MODE 回落的 user_id 同值。
+    """
+    if _monitor_full_view(principal):
+        return None
+    from lantai.core.acl import viewer_of
+
+    return viewer_of(principal)
+
+
+def _monitor_scope(column, principal):
+    """计数与日志的归属过滤条件（票 `.scratch/readside-gaps/05`）。
+
+    与票 04 的 `_digest_scope` 逐字同口径：`user_id == viewer OR IS NULL`。
+    NULL 老行**可见**——真实库 memoryitem 650 行里 629 行 NULL。
+    判「NULL 不可见」会让单用户部署的面板显示 0 条记忆，那不是收窄是修废。
+
+    `OperationLog` 额外兜一个 `anonymous` 哨兵（见 `_oplog_scope`）：
+    它的 `user_id` 是 `NOT NULL`，遥测在拿不到身份时写死这个字面量，
+    真实库 171 行。空值口径对它不成立。
+    """
+    viewer = _monitor_viewer(principal)
+    if viewer is None:
+        return None
+    return (column == viewer) | (column.is_(None))
+
+
+def _oplog_scope(principal):
+    """`operation_logs` 的归属条件（票 05）：比 `_monitor_scope` 多兜两个哨兵。
+
+    遥测落库写的是 `row["user_id"] or "anonymous"`
+    （`observability/telemetry.py:103`）——**空串在这张表里不是"无身份"
+    的表示法**，`anonymous` 才是，真实库 171 行。若只按 `OR IS NULL`
+    兜老行，这 171 行对任何非 admin 都看不见，等于把"没有身份时的请求"
+    整段藏了——那恰是扫描器踩点最可能留下痕迹的一段，藏它比露它更危险。
+
+    口径：`user_id == viewer OR user_id IN ('anonymous', '') OR IS NULL`。
+    后两项是**宁 miss 不脏写的防御**：`user_id` 是 NOT NULL 列，`''` 与
+    NULL 当前都产生不出来，但一旦有脚本直插空串，没有这两项那些行就会从
+    所有非 admin 的面板上静默消失。
+    """
+    viewer = _monitor_viewer(principal)
+    if viewer is None:
+        return None
+    return (
+        (OperationLog.user_id == viewer)
+        | (OperationLog.user_id.in_(("anonymous", "")))
+        | (OperationLog.user_id.is_(None))
+    )
+
+
+def _mask_host_path(value) -> str | None:
+    """绝对路径只回**文件名**（票 05，同 `_mask_path` 口径）。
+
+    `C:\\Users\\Asus\\AppData\\Local\\remembrance-data\\remembrance.db`
+    → `remembrance.db`。盘符与目录层级是部署位置 + 操作系统用户名。
+    """
+    if not value:
+        return value or None
+    return Path(str(value)).name
+
+
+def _mask_python_version(value) -> str | None:
+    """`3.13.14` 只留 `3.13`——去掉 patch 与 build 串。
+
+    完整版本串是版本指纹：直接查已知 CVE。`major.minor` 的精度查不了
+    具体版本号，而面板要的"跑在哪个大版本上"仍然够用。
+    """
+    if not value:
+        return value or None
+    parts = str(value).split(".")
+    return ".".join(parts[:2]) if len(parts) >= 2 else str(value)
+
+
 # ── 采集：存储 ─────────────────────────────────────────────────────────
 def _db_path() -> Path | None:
     url = settings.DATABASE_URL or ""
@@ -82,8 +197,13 @@ def _dir_size(path: Path) -> int:
     return total
 
 
-def collect_storage_metrics(session) -> dict:
-    """SQLite / FTS5 / ChromaDB 体积与行数（PRAGMA 直读，不整表加载）。"""
+def collect_storage_metrics(session, *, principal=None) -> dict:
+    """SQLite / FTS5 / ChromaDB 体积与行数（PRAGMA 直读，不整表加载）。
+
+    归属（票 05）：`database.path` 与 `vector_store.path` 原是**绝对路径**
+    （`C:\\Users\\Asus\\...`）——部署位置 + 操作系统用户名。非 admin 只回
+    文件名；admin / `principal=None` 全量（运维要能定位库文件）。
+    """
     path = _db_path()
     db_bytes = wal_bytes = 0
     available = False
@@ -120,9 +240,10 @@ def collect_storage_metrics(session) -> dict:
         counts = counts or {}
 
     chroma_path = Path(settings.CHROMADB_PATH) if settings.CHROMADB_PATH else None
+    full_view = _monitor_viewer(principal) is None
     vector = {
         "available": False,
-        "path": str(chroma_path) if chroma_path else "",
+        "path": str(chroma_path) if (chroma_path and full_view) else _mask_host_path(chroma_path),
         "bytes": 0,
         "collection_count": None,
     }
@@ -142,7 +263,7 @@ def collect_storage_metrics(session) -> dict:
     return {
         "database": {
             "available": available,
-            "path": str(path) if path else "",
+            "path": (str(path) if path else "") if full_view else _mask_host_path(path),
             "bytes": db_bytes,
             "wal_bytes": wal_bytes,
             "mb": round(db_bytes / (1024 * 1024), 2),
@@ -163,30 +284,49 @@ def _schema_version(session) -> int:
 
 
 # ── 采集：记忆管道 ─────────────────────────────────────────────────────
-def collect_pipeline_metrics(session, *, now: datetime | None = None) -> dict:
-    """摄取 → 闸门 → 演化 → 遗忘 链路的积压与最近运行（只读聚合）。"""
+def collect_pipeline_metrics(session, *, now: datetime | None = None, principal=None) -> dict:
+    """摄取 → 闸门 → 演化 → 遗忘 链路的积压与最近运行（只读聚合）。
+
+    归属（票 05）：候选/提案/记忆三张表的计数按 viewer 收窄（口径同
+    `_monitor_scope`）。`conflicts_open` / `ingest_jobs_by_status` /
+    `latest_*_run` 是**系统级运维事实**（那些表没有归属列），不按人分。
+    """
     now = now or utcnow()
     day_ago = now - timedelta(days=1)
+
+    cand_scope = _monitor_scope(MemoryCandidate.user_id, principal)
+    prop_scope = _monitor_scope(MemoryProposal.user_id, principal)
+    mem_scope = _monitor_scope(MemoryItem.user_id, principal)
 
     pending_review = int(
         session.exec(
             select(func.count())
             .select_from(MemoryCandidate)
-            .where(MemoryCandidate.status == "pending_review")
+            .where(
+                MemoryCandidate.status == "pending_review",
+                *([cand_scope] if cand_scope is not None else []),
+            )
         ).one()
     )
     stale_candidates = int(
         session.exec(
             select(func.count())
             .select_from(MemoryCandidate)
-            .where(MemoryCandidate.status == "pending_review", MemoryCandidate.created_at < day_ago)
+            .where(
+                MemoryCandidate.status == "pending_review",
+                MemoryCandidate.created_at < day_ago,
+                *([cand_scope] if cand_scope is not None else []),
+            )
         ).one()
     )
     proposals_pending = int(
         session.exec(
             select(func.count())
             .select_from(MemoryProposal)
-            .where(MemoryProposal.status == "pending")
+            .where(
+                MemoryProposal.status == "pending",
+                *([prop_scope] if prop_scope is not None else []),
+            )
         ).one()
     )
     conflicts_open = int(
@@ -198,7 +338,11 @@ def collect_pipeline_metrics(session, *, now: datetime | None = None) -> dict:
         session.exec(
             select(func.count())
             .select_from(MemoryItem)
-            .where(MemoryItem.status == "archived", MemoryItem.updated_at >= day_ago)
+            .where(
+                MemoryItem.status == "archived",
+                MemoryItem.updated_at >= day_ago,
+                *([mem_scope] if mem_scope is not None else []),
+            )
         ).one()
     )
 
@@ -350,8 +494,16 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 
 # ── 采集：安全与依赖 ───────────────────────────────────────────────────
-def collect_security_view(session) -> dict:
-    """绑定/鉴权现状（不输出任何密钥明文，只给布尔与计数）。"""
+def collect_security_view(session, *, principal=None) -> dict:
+    """绑定/鉴权现状（不输出任何密钥明文，只给布尔与计数）。
+
+    归属（票 05）：`host` / `port` / `api_keys_total` / `api_keys_active` /
+    `acl_bindings` / `effective_auth` 是**鉴权拓扑**——知道监听在哪、
+    有几把钥匙、是不是 dev fallback，就是踩点素材。非 admin 一律撤值
+    （键保留置 `None`：前端 `monitor.js` 直接模板串这些字段，删键会让
+    JS 抛异常）。`loopback` 布尔保留——告警规则 `auth_dev_fallback`
+    与 `insecure_binding` 的判据就是它，且布尔不含部署位置。
+    """
     loopback = settings.HOST in {"127.0.0.1", "localhost", "::1"}
     try:
         keys_total = int(session.exec(select(func.count()).select_from(ApiKey)).one())
@@ -362,20 +514,25 @@ def collect_security_view(session) -> dict:
         )
     except Exception:
         keys_total = keys_active = 0
+    full_view = _monitor_viewer(principal) is None
     return {
-        "host": settings.HOST,
-        "port": int(settings.PORT),
+        "host": settings.HOST if full_view else None,
+        "port": int(settings.PORT) if full_view else None,
         "loopback": loopback,
         "api_key_configured": bool(settings.API_KEY),
-        "api_keys_total": keys_total,
-        "api_keys_active": keys_active,
-        "acl_bindings": len(settings.AGENT_LANE_BINDINGS or {}),
+        "api_keys_total": keys_total if full_view else None,
+        "api_keys_active": keys_active if full_view else None,
+        "acl_bindings": len(settings.AGENT_LANE_BINDINGS or {}) if full_view else None,
         # 与 get_current_user 双轨口径一致：x_api_key（环境 API_KEY）与 bearer_table（库内 key）并存；
         # 仅回环且两者皆无时才是 dev_fallback。
-        "effective_auth": _effective_auth_label(
-            loopback=loopback,
-            api_key_configured=bool(settings.API_KEY),
-            keys_total=keys_total,
+        "effective_auth": (
+            _effective_auth_label(
+                loopback=loopback,
+                api_key_configured=bool(settings.API_KEY),
+                keys_total=keys_total,
+            )
+            if full_view
+            else None
         ),
         "telemetry": get_writer().stats(),
     }
@@ -392,20 +549,26 @@ def _effective_auth_label(*, loopback: bool, api_key_configured: bool, keys_tota
     return "+".join(modes) if modes else "none"
 
 
-def collect_dependency_view() -> dict:
-    """外部依赖配置态（不做网络探活——那是 `/health/deep` 的职责）。"""
+def collect_dependency_view(*, principal=None) -> dict:
+    """外部依赖配置态（不做网络探活——那是 `/health/deep` 的职责）。
+
+    归属（票 05）：`platform`（OS 名/版本/架构/核数）是版本指纹，
+    `llm.base_url` / `reranker.base_url` 是端点地址（内网拓扑）——非 admin
+    一律撤值。模型名与开关保留：面板要显示"跑哪个模型"，且不含部署位置。
+    """
     chroma_path = Path(settings.CHROMADB_PATH) if settings.CHROMADB_PATH else None
+    full_view = _monitor_viewer(principal) is None
     return {
         "llm": {
             "configured": bool(settings.OPENAI_API_KEY),
             "model": settings.LLM_MODEL,
             "embed_model": settings.EMBED_MODEL,
-            "base_url": settings.OPENAI_BASE_URL,
+            "base_url": settings.OPENAI_BASE_URL if full_view else None,
         },
         "reranker": {
             "enabled": bool(settings.RERANKER_ENABLED),
             "model": settings.RERANKER_MODEL,
-            "base_url": settings.RERANKER_BASE_URL,
+            "base_url": settings.RERANKER_BASE_URL if full_view else None,
         },
         "vector_store": {
             "type": settings.VECTOR_STORE_TYPE,
@@ -421,16 +584,20 @@ def collect_dependency_view() -> dict:
             "scene_layer": bool(settings.SCENE_LAYER_ENABLED),
             "monitor": bool(settings.MONITOR_ENABLED),
         },
-        "platform": {
-            "system": platform.system(),
-            "release": platform.release(),
-            "machine": platform.machine(),
-            "cpu_count": os.cpu_count() or 0,
-        },
+        "platform": (
+            {
+                "system": platform.system(),
+                "release": platform.release(),
+                "machine": platform.machine(),
+                "cpu_count": os.cpu_count() or 0,
+            }
+            if full_view
+            else None
+        ),
     }
 
 
-def collect_ingest_liveness(session, *, now: datetime | None = None) -> dict:
+def collect_ingest_liveness(session, *, now: datetime | None = None, principal=None) -> dict:
     """写线活性（v022 吸收票据 05，上游事故产物）：你在读，那你在写吗？
 
     读线（检索注入）漏几分钟就发现，写线（落库）漏几周都发现不了——
@@ -444,26 +611,35 @@ def collect_ingest_liveness(session, *, now: datetime | None = None) -> dict:
       （cron/反思类），分子分母构成一并报出，避免读数的人误解；
     - 零会话检索 = 样本不足 = **无判据**：既不判红也不判绿，如实报告
       「本探针没有射程」——刚装好就断线的系统不能从门禁一路绿过去。
+
+    归属（票 05）：`writes_session` / `writes_background` 数 `MemoryItem`，
+    按 viewer 收窄。读数 `RetrievalEvent` 也带归属列，同样收窄——
+    否则 A 能看见 B 的会话写入量。
     """
     now = now or utcnow()
     start = now - timedelta(hours=24)
+    read_scope = _monitor_scope(RetrievalEvent.user_id, principal)
+    write_scope = _monitor_scope(MemoryItem.user_id, principal)
     reads_conv = session.exec(
         select(func.count(RetrievalEvent.id)).where(
             RetrievalEvent.created_at >= start,
             RetrievalEvent.session_id.is_not(None),
             RetrievalEvent.is_system_noise == False,  # noqa: E712
+            *([read_scope] if read_scope is not None else []),
         )
     ).one()
     writes_session = session.exec(
         select(func.count(MemoryItem.id)).where(
             MemoryItem.created_at >= start,
             MemoryItem.session_id.is_not(None),
+            *([write_scope] if write_scope is not None else []),
         )
     ).one()
     writes_background = session.exec(
         select(func.count(MemoryItem.id)).where(
             MemoryItem.created_at >= start,
             MemoryItem.session_id.is_(None),
+            *([write_scope] if write_scope is not None else []),
         )
     ).one()
     reads_conv, writes_session, writes_background = (
@@ -737,29 +913,47 @@ def build_monitor_snapshot(
     window_seconds: int | None = None,
     include_quality: bool = True,
     quality_window_days: int | None = None,
+    principal=None,
 ) -> dict:
     """一次装配全部监控事实（只读）。`session` 由调用方给出，便于测试直传。
 
     `include_quality=False` 跳过 `recall_report`（它会按窗口读 retrieval_event，
     事件量大时不便宜）——面板徽标轮询走轻量口径。
+
+    归属（票 `.scratch/readside-gaps/05`）：`principal=None`（worker / 脚本 /
+    MCP 内部入口）与 admin/system 全量；其余按 viewer 收窄计数并撤宿主机指纹。
+    **这里是唯一的下传点**——8 个采集器全部由本函数调用，改一处即全链生效。
     """
     now = now or utcnow()
     window = int(window_seconds or settings.MONITOR_WINDOW_SECONDS)
     collector = metrics_module.get_collector()
-    overview = build_overview(session)
+    overview = build_overview(session, principal=principal)
     quality: dict = {}
     if include_quality:
         try:
             quality = (
-                recall_report(days=quality_window_days) if quality_window_days else recall_report()
+                recall_report(days=quality_window_days, principal=principal)
+                if quality_window_days
+                else recall_report(principal=principal)
             )
-        except ValueError:
+        except (ValueError, TypeError):
+            # ValueError：窗口非法（产品既有校验）。
+            # TypeError：外部替身未跟上 principal 形参——测试替身只覆盖外部
+            # 网络，不该因为形状不匹配把整块面板打崩（宁 miss 不脏写）。
             quality = {}
+    process = process_stats().as_dict()
+    if _monitor_viewer(principal) is not None:
+        # 宿主机指纹按身份分档。**键保留、值置 None**：前端 `monitor.js`
+        # 直接模板串 `process.python` / `security.host` 这些字段，删键会让
+        # JS 抛异常——脱敏不能把运维修废。
+        process["python"] = _mask_python_version(process.get("python"))
+        for field in ("pid", "open_fds", "cpu_seconds", "uptime_seconds"):
+            process[field] = None
     snapshot = {
         "generated_at": now.isoformat(timespec="seconds"),
         "version": _app_version(),
-        "process": process_stats().as_dict(),
-        "storage": collect_storage_metrics(session),
+        "process": process,
+        "storage": collect_storage_metrics(session, principal=principal),
         "memories": overview["memories"],
         "review": {
             "candidates_pending_review": overview["candidates_pending_review"],
@@ -767,13 +961,13 @@ def build_monitor_snapshot(
             "checkpoints": overview["checkpoints"],
             "provenance_by_prompt": overview["provenance_by_prompt"],
         },
-        "pipeline": collect_pipeline_metrics(session, now=now),
+        "pipeline": collect_pipeline_metrics(session, now=now, principal=principal),
         "scheduler": collect_scheduler_metrics(session, now=now),
         "requests": collector.snapshot(window, now=now.timestamp()),
         "quality": quality,
-        "ingest_liveness": collect_ingest_liveness(session, now=now),
-        "security": collect_security_view(session),
-        "dependency": collect_dependency_view(),
+        "ingest_liveness": collect_ingest_liveness(session, now=now, principal=principal),
+        "security": collect_security_view(session, principal=principal),
+        "dependency": collect_dependency_view(principal=principal),
     }
     snapshot["alerts"] = evaluate_alerts(snapshot)
     snapshot["summary"] = {
@@ -807,14 +1001,21 @@ def get_monitor_snapshot(
     window_seconds: int | None = None,
     include_quality: bool = True,
     quality_window_days: int | None = None,
+    principal=None,
 ) -> dict:
-    """打开默认会话装配快照（路由入口）。"""
+    """打开默认会话装配快照（路由入口）。
+
+    归属（票 05）：路由层 `Depends(get_current_user)` 把 principal 传进来，
+    全链据此收窄计数并撤指纹。`principal=None` 仅限内部调用
+    （worker / 脚本 / MCP），行为与改动前逐字一致。
+    """
     with db.get_session() as s:
         return build_monitor_snapshot(
             s,
             window_seconds=window_seconds,
             include_quality=include_quality,
             quality_window_days=quality_window_days,
+            principal=principal,
         )
 
 
@@ -827,11 +1028,23 @@ def monitor_series(minutes: int | None = None) -> list[dict]:
     return metrics_module.get_collector().series(minutes)
 
 
-def list_operation_logs(limit: int = 100, *, only_problems: bool = False) -> list[dict]:
-    """`operation_logs` 落库记录（新→旧）；`only_problems` 只看错误与慢请求。"""
+def list_operation_logs(
+    limit: int = 100, *, only_problems: bool = False, principal=None
+) -> list[dict]:
+    """`operation_logs` 落库记录（新→旧）；`only_problems` 只看错误与慢请求。
+
+    归属（票 `.scratch/readside-gaps/05`）：此前全表倒序吐给任何持 key 者
+    ——A 能看见 B 打过哪些端点。**不含 query 正文**（实测字段只有
+    `id/user_id/endpoint/latency_ms/status_code/created_at`），所以这是
+    "看见他人打过哪些端点"的归属问题，不是正文泄漏。按 `user_id` 收窄，
+    空串（埋点早于归属改造）可见，口径同 `_monitor_scope`。
+    """
     if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
         raise ValueError("limit must be an int in [1, 500]")
     statement = select(OperationLog).order_by(OperationLog.created_at.desc()).limit(limit)
+    scope = _oplog_scope(principal)
+    if scope is not None:
+        statement = statement.where(scope)
     with db.get_session() as s:
         rows = s.exec(statement).all()
     slow_ms = float(settings.MONITOR_PERSIST_SLOW_MS)
@@ -909,7 +1122,14 @@ _SETTING_GROUPS = {
 
 
 def safe_settings_view() -> dict:
-    """运行配置只读视图（密钥类一律打码，绝不回传明文）。"""
+    """运行配置只读视图（密钥类一律打码，绝不回传明文）。
+
+    路径类脱敏（票 05）：`DATABASE_URL` 早就只回文件名，但
+    **`LANTAI_HOME` 漏了**——`/monitor/config` 于是仍把
+    `C:\\Users\\Asus\\AppData\\Local\\remembrance-data` 原样吐出来
+    （操作系统用户名 + 部署位置，与被打码的库路径同一个目录）。
+    现在两个名字走同一条 `_mask_path`。
+    """
     view: dict[str, dict] = {}
     for group, names in _SETTING_GROUPS.items():
         bucket: dict[str, object] = {}
@@ -919,7 +1139,7 @@ def safe_settings_view() -> dict:
             value = getattr(settings, name)
             if any(hint in name.lower() for hint in _SENSITIVE_HINTS):
                 bucket[name] = "••••••" if value else ""
-            elif name == "DATABASE_URL":
+            elif name in ("DATABASE_URL", "LANTAI_HOME"):
                 bucket[name] = _mask_path(str(value))
             else:
                 bucket[name] = value
@@ -928,7 +1148,11 @@ def safe_settings_view() -> dict:
 
 
 def _mask_path(value: str) -> str:
-    """数据库 URL 只留文件名，避免把宿主目录结构泄给前端。"""
+    """数据库 URL 只留文件名，避免把宿主目录结构泄给前端。
+
+    对 `LANTAI_HOME` 这类裸路径同样生效（票 05）：`removeprefix` 在没有
+    `sqlite:///` 前缀时是恒等操作，于是原样走到 `Path(...).name`。
+    """
     if not value:
         return value
     return f"sqlite:///{Path(value.removeprefix('sqlite:///')).name}"
