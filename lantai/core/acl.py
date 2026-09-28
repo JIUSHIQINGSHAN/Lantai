@@ -94,10 +94,22 @@ def is_system_viewer(principal) -> bool:
 def vector_owner_filter(principal, extra: dict | None = None) -> dict | None:
     """Chroma `where` 的归属过滤（票 `.scratch/readside-gaps/15`）。
 
-    `admin` / `principal=None` → `None`（不过滤，worker/CLI 不能空转）。
-    否则 `user_id == viewer OR user_id == ""`——**空串是 NULL 属主在向量库
-    里的落点**（写入侧 `getattr(mem, "user_id", "") or ""`，见
-    `memory_service.index_memory_item` 的 8 键 metadata 契约）。
+    `admin` / `principal=None` / **显式系统身份 `SYSTEM_VIEWER`** → `None`
+    （不过滤）。否则 `user_id == viewer OR user_id == ""`——**空串是 NULL
+    属主在向量库里的落点**（写入侧 `getattr(mem, "user_id", "") or ""`，
+    见 `memory_service.index_memory_item` 的 8 键 metadata 契约）。
+
+    **SYSTEM_VIEWER 分支是补的一致性洞**（票
+    `.scratch/mcp-identity-gaps/11`）：SQL 侧六个 service
+    （reflector / crystal / kaogong / persona / reflect_worker /
+    worker_operation）早就把 `viewer == SYSTEM_VIEWER` 当"全表"放行，
+    向量侧却漏了。后果不是"多看到东西"而是**worker 全量批处理被误滤**：
+    显式系统身份的向量召回会变成
+    `{"$or":[{user_id:"__system__"},{user_id:""}]}`——真实库没有
+    `"__system__"` 属主的向量，于是只剩空串那半（恰是 NULL 属主那批），
+    **有归属的语料全丢**。评测（eval 三处）与 genglou 集成测试正是
+    被这一条挡住的：它们的向量 metadata 是手搓的、没有 `user_id` 键，
+    `$or` 半边都匹配不上。
 
     **NULL 属主不等于「属于所有人」，但必须可见**：真实库 353 条向量里
     332 条是空串、636 行 memoryitem 是 `user_id IS NULL`。判「不可见」
@@ -111,7 +123,11 @@ def vector_owner_filter(principal, extra: dict | None = None) -> dict | None:
     """
     if principal is not None and bool(getattr(principal, "is_admin", False)):
         base: dict | None = None
-    elif principal is None:
+    elif principal is None or viewer_of(principal) == SYSTEM_VIEWER:
+        # `principal=None`：worker/CLI 内部调用，全表（15 号票既有契约）。
+        # `SYSTEM_VIEWER`：显式系统身份，全表（06 号票立项理由）。
+        # 两者都不过滤，但**语义来源不同**——None 是"没声明身份"，
+        # SYSTEM_VIEWER 是"声明了要全表"，故分开写不合并。
         base = None
     else:
         viewer = viewer_of(principal)

@@ -20,6 +20,7 @@ roadmap P1-1 验收口径：**30+ 时间/更新用例，当前/历史证据选�
 import hashlib
 from datetime import UTC, datetime, timedelta, timezone
 
+from lantai.core.acl import SYSTEM_VIEWER, Principal
 from lantai.core.ids import new_id
 from lantai.models.tables import MemoryItem
 from lantai.retrieval.temporal import _ensure_utc
@@ -291,6 +292,15 @@ def run_e2_temporal_eval(*, top_k: int = 5) -> dict:
                 # E2 证据选择口径用严格模式：未命中 as-of 的条目剔除（排除面可断言）；
                 # I4 仍生效——fuzzy / event_time IS NULL 软放行不剔除（spec §3.3）
                 param_overrides={"TEMPORAL_ASOF_STRICT": True},
+                # 种子记忆不带归属（`build_seed_items` 不设 `user_id` → NULL），
+                # 但**必须显式给系统身份**（票 `.scratch/mcp-identity-gaps/11`）：
+                # 入口现在把 `None` 收敛成 `"default"`，而本文件 ④ 段的向量
+                # metadata 是手搓的 5 键（memory_id/key/memory_type/lane/domain，
+                # **没有 `user_id`**），收敛后
+                # `{"$or":[{user_id:default},{user_id:""}]}` 匹配不到它 →
+                # 向量通道整条失效。`SYSTEM_VIEWER` 是显式"全表"形态
+                # （06 号票立项理由），SQL 侧靠 `OR IS NULL` 召回 NULL 语料。
+                principal=Principal(user_id=SYSTEM_VIEWER),
             )
             if isinstance(results, tuple):
                 results = results[0]

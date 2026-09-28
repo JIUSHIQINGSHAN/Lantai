@@ -116,7 +116,15 @@ def _seed(engine, content: str, *, user_id: str = "u1") -> str:
 
 
 def _hybrid_ids(query: str, top_k: int = 8) -> set[str]:
-    return {r["memory"]["id"] for r in hybrid_search(query, top_k=top_k, use_rerank=False)}
+    # 归属（票 `.scratch/mcp-identity-gaps/11`）：本文件的种子默认
+    # `user_id="u1"`（`_seed` 的默认值），而 `hybrid_search` 入口现在把
+    # `principal=None` 收敛成 `"default"`——不显式传身份的话三条通道
+    # 全去召回 default 属主 + NULL 老行，本文件每条断言都会空转。
+    # 传 `_principal("u1")` 与 `_seed` 默认属主对齐。
+    return {
+        r["memory"]["id"]
+        for r in hybrid_search(query, top_k=top_k, use_rerank=False, principal=_principal("u1"))
+    }
 
 
 def _fts_ids(engine, query: str) -> list[str]:

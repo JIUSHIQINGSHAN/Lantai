@@ -14,6 +14,7 @@ import lantai.evolution.promoter as promoter_mod
 import lantai.retrieval.hybrid as hybrid_mod
 import lantai.storage.db as db_module
 import lantai.storage.vector_store as vs_module
+from lantai.core.acl import SYSTEM_VIEWER, Principal
 from lantai.core.ids import new_id
 from lantai.models.tables import MemoryItem
 from lantai.retrieval.temporal import (
@@ -198,11 +199,24 @@ def retrieval_env(tmp_path, monkeypatch):
 
 class TestHybridTemporalIntegration:
     def test_as_of_view_via_hybrid(self, retrieval_env, monkeypatch):
-        """U1/U2 语义级：as_of 激活时过期记忆退出当前召回面（集成冒烟）。"""
+        """U1/U2 语义级：as_of 激活时过期记忆退出当前召回面（集成冒烟）。
+
+        归属（票 `.scratch/mcp-identity-gaps/11`）：三次 `hybrid_search`
+        都显式传 `Principal(user_id=SYSTEM_VIEWER)`。理由不是"顺手补个参数"：
+        本测试的语料**只进向量库、从不 `sync_fts`**（全文一次都没调过），
+        且手搓 metadata 只有 `{"memory_id": mid}`——**没有 `user_id` 键**。
+        入口把 `None` 收敛成 `"default"` 后，向量通道的
+        `{"$or":[{user_id:default},{user_id:""}]}` 匹配不到这条元数据，
+        而 SQL 通道又没有对应 FTS 行可救 → 三条断言里的两条会空转。
+        `SYSTEM_VIEWER` 是 `vector_owner_filter` 认的显式"全表"形态
+        （同 06 号票立项理由），本测试验的是**时间语义**不是归属，
+        不该被归属收敛误伤。
+        """
         from datetime import datetime as dt
 
         from lantai.retrieval.hybrid import index_memory_item
 
+        sys_principal = Principal(user_id=SYSTEM_VIEWER)
         with db_module.get_session() as s:
             old = _mem(
                 id="evs-old1",
@@ -226,6 +240,7 @@ class TestHybridTemporalIntegration:
             use_rerank=False,
             as_of=dt(2026, 9, 10, tzinfo=UTC),
             param_overrides={"TEMPORAL_ASOF_STRICT": True},
+            principal=sys_principal,
         )
         got = {r["memory"]["id"] for r in results if isinstance(r, dict) and "memory" in r}
         assert mid not in got
@@ -236,12 +251,15 @@ class TestHybridTemporalIntegration:
             top_k=5,
             use_rerank=False,
             as_of=dt(2026, 3, 15, tzinfo=UTC),
+            principal=sys_principal,
         )
         got_in = {r["memory"]["id"] for r in results_in if isinstance(r, dict) and "memory" in r}
         assert mid in got_in
 
         # 不带时间参数 → 零回归（现行行为：active 记忆正常召回）
-        results_plain = hybrid_mod.hybrid_search("用户的主数据库是什么", top_k=5, use_rerank=False)
+        results_plain = hybrid_mod.hybrid_search(
+            "用户的主数据库是什么", top_k=5, use_rerank=False, principal=sys_principal
+        )
         got_plain = {
             r["memory"]["id"] for r in results_plain if isinstance(r, dict) and "memory" in r
         }

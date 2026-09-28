@@ -222,19 +222,35 @@ class TestVerbatimSearchOwnership:
         assert any(SECRET in t for t in texts), f"admin 看不到全部：{texts}"
 
     def test_internal_call_unfiltered(self, verbatim_env):
-        """principal=None（内部调用 / MCP）不加过滤——不改变既有行为。
+        """系统身份检索 verbatim 原文不加过滤——不改变既有行为。
 
-        `cli/mcp.py:671` 的 verbatim 工具没有调用方身份，传 None 时
-        `hybrid_search` 不加 `AND m.user_id = ?`，与现在逐字一致。
+        **2026-09-28 改写**：原断言是 `principal=None`（内部调用 / MCP）
+        不加过滤。那条口径已被票 `.scratch/mcp-identity-gaps/11` 废止——
+        `hybrid_search` 入口现在把 `None` 收敛成 `"default"`，
+        无身份调用只召回 default 属主 + NULL 老行。
+
+        **原断言打的正是被修掉的那个洞**：种子是 `user_id="user-B"` 的
+        SECRET，若沿用 None，这条测试会把"无身份可见别人的私有记忆"
+        这个行为**固定下来**。故改为显式系统身份 `SYSTEM_VIEWER`：
+        verbatim 工具的语义本来就是"内部/系统读原文全文"，
+        与 06 号票给 `SYSTEM_VIEWER` 的立项理由一致（全表口径从
+        "歧义的 None" 搬到 "显式的 SYSTEM_VIEWER"，不是消失）。
         """
         session_factory, _ = verbatim_env
         _seed(session_factory)
 
+        from lantai.core.acl import SYSTEM_VIEWER, Principal
         from lantai.retrieval.hybrid import hybrid_search
 
-        results = hybrid_search("连接池", top_k=5, memory_types=["verbatim"], use_rerank=False)
+        results = hybrid_search(
+            "连接池",
+            top_k=5,
+            memory_types=["verbatim"],
+            use_rerank=False,
+            principal=Principal(user_id=SYSTEM_VIEWER),
+        )
         texts = [r.get("memory", {}).get("content", "") for r in results]
-        assert any(SECRET in t for t in texts), f"内部调用被收窄了（行为被改变）：{texts}"
+        assert any(SECRET in t for t in texts), f"系统身份被收窄了（行为被改变）：{texts}"
 
 
 # ── 已知代价的固化（票 07 修法口径第 1 条的 2026-09-28 修正）──────────

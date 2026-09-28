@@ -107,7 +107,14 @@ def _add(engine, content: str, **kw) -> str:
 
 
 def _hybrid_ids(query: str) -> set[str]:
-    return {r["memory"]["id"] for r in hybrid.hybrid_search(query, top_k=5, use_rerank=False)}
+    # 归属（票 `.scratch/mcp-identity-gaps/11`）：`_add` 默认
+    # `user_id="u1"`，而 `hybrid_search` 入口现在把 `principal=None`
+    # 收敛成 `"default"`——不显式传身份的话本文件的"可召回"断言
+    # 全部空转（种子不在 default 名下）。
+    return {
+        r["memory"]["id"]
+        for r in hybrid.hybrid_search(query, top_k=5, use_rerank=False, principal=_principal("u1"))
+    }
 
 
 def _fts_hits(conn, query: str) -> list[str]:

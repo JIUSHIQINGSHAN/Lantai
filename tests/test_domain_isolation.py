@@ -9,8 +9,15 @@
 from fastapi.testclient import TestClient
 
 from lantai.api.app import app
+from lantai.core.acl import Principal
 from lantai.models.tables import MemoryItem
 from lantai.retrieval.hybrid import hybrid_search
+
+# 归属（票 `.scratch/mcp-identity-gaps/11`）：下面三条种子都是
+# `user_id="u1"`，而 `hybrid_search` 入口现在把 `principal=None` 收敛成
+# `"default"`——不显式传身份的话域过滤断言会全部空转（种子不在
+# default 名下）。本文件验的是**辨域**不是归属，故按种子属主显式传。
+_DOMAIN_VIEWER = Principal(user_id="u1")
 
 
 class TestDomainIsolationDB:
@@ -56,28 +63,36 @@ class TestDomainIsolationDB:
             s.commit()
 
             # 1. 过滤 user 域
-            res_user = hybrid_search("茶 端口 冒烟测试", session=s, domain="user")
+            res_user = hybrid_search(
+                "茶 端口 冒烟测试", session=s, domain="user", principal=_DOMAIN_VIEWER
+            )
             res_ids = [m.get("id") or m.get("memory", {}).get("id") for m in res_user]
             assert "mem_user_01" in res_ids
             assert "mem_session_01" not in res_ids
             assert "mem_agent_01" not in res_ids
 
             # 2. 过滤 session 域
-            res_sess = hybrid_search("茶 端口 冒烟测试", session=s, domain="session")
+            res_sess = hybrid_search(
+                "茶 端口 冒烟测试", session=s, domain="session", principal=_DOMAIN_VIEWER
+            )
             res_ids = [m.get("id") or m.get("memory", {}).get("id") for m in res_sess]
             assert "mem_session_01" in res_ids
             assert "mem_user_01" not in res_ids
             assert "mem_agent_01" not in res_ids
 
             # 3. 过滤 agent 域
-            res_agent = hybrid_search("茶 端口 冒烟测试", session=s, domain="agent")
+            res_agent = hybrid_search(
+                "茶 端口 冒烟测试", session=s, domain="agent", principal=_DOMAIN_VIEWER
+            )
             res_ids = [m.get("id") or m.get("memory", {}).get("id") for m in res_agent]
             assert "mem_agent_01" in res_ids
             assert "mem_user_01" not in res_ids
             assert "mem_session_01" not in res_ids
 
             # 4. 全域召回 (domain=None)
-            res_all = hybrid_search("茶 端口 冒烟测试", session=s, domain=None)
+            res_all = hybrid_search(
+                "茶 端口 冒烟测试", session=s, domain=None, principal=_DOMAIN_VIEWER
+            )
             res_ids = [m.get("id") or m.get("memory", {}).get("id") for m in res_all]
             assert "mem_user_01" in res_ids
             assert "mem_session_01" in res_ids

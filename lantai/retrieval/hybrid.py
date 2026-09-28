@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, timedelta
 from typing import Any
 
+from sqlalchemy import or_
 from sqlmodel import select
 
 from lantai.core.acl import vector_owner_filter
@@ -310,6 +311,41 @@ def _apply_supersedes_order(
     return out
 
 
+def _is_system_viewer(principal) -> bool:
+    """显式系统身份判定（`acl.is_system_viewer` 的本地转发）。
+
+    单独包一层而不直接 import `is_system_viewer`：`acl.py` 顶部
+    `from fastapi import ...`，而本模块在部分只装检索依赖的环境里被
+    导入（`lantai/retrieval/` 被 `eval/offline.py` 独立引用）。
+    """
+    return (getattr(principal, "user_id", None) or "") == "__system__"
+
+
+def _converge_principal(principal):
+    """把 `principal=None` 收敛成显式的 default 属主（票 `.scratch/mcp-identity-gaps/11`）。
+
+    None 在**两个入口面语义相反**：MCP 侧是"宿主没透传身份"，
+    worker 侧却被当成"内部调用，不过滤"——同一个 None 两种解释，
+    于是无身份的 MCP 调用继承了 worker 的全表权限（票 04/05/06
+    连续三票同一根因，见 `acl.py` 里 `SYSTEM_VIEWER` 的注释）。
+
+    **admin 与显式系统身份原样返回**（`is_admin` 靠 `role`，本函数
+    不碰 `role`；`SYSTEM_VIEWER` 的全表口径不搬家）。
+
+    这是本仓第四次写同一段收敛逻辑（`acl.viewer_of` /
+    `memory_service.get_core_memory` / `work_item_service._viewer_of`
+    / `crystal_service._crystal_scope`），但**只有这里需要把 None 换成
+    一个 Principal 对象**而不是只取 user_id 字符串——因为下游三条通道
+    读的是整个 principal 的 `tenant_id` / `user_id` / `session_id`。
+    故不并进 `acl.viewer_of`（那是"取字符串"的单一真源），在这里包一层。
+    """
+    if principal is None:
+        from lantai.core.acl import Principal
+
+        return Principal(role="user", user_id="default")
+    return principal
+
+
 def hybrid_search(
     query: str,
     top_k: int = 5,
@@ -336,7 +372,29 @@ def hybrid_search(
 
     param_overrides: 临时覆盖 settings 检索参数（如 {"RETRIEVAL_W_VECTOR": 0.7}）。
     通过局部快照 RetrievalParams 注入，不再修改全局 settings 单例（并发安全，F3）。
+
+    principal（票 `.scratch/mcp-identity-gaps/11`）：**在入口收敛一次**，
+    下游三条召回通道因此全部自动生效，不必逐处改：
+
+    - `principal=None`（MCP 宿主没透传身份 / 内部调用）→ 收敛成
+      `Principal(user_id="default")`，即**只看到 default 属主 + NULL 老行**。
+      此前 None 一路放行：向量通道 `vector_owner_filter` 对 None 明确
+      `return None`（不过滤）、FTS 与 LIKE 的 `if principal:` 一个条件都不加、
+      最终合并步 `_query_items` 压根没有归属条件——三条通道一层都没滤，
+      无身份调用照样全库召回别人的私有记忆。
+    - `is_admin` / `SYSTEM_VIEWER` 原样通过，全表口径不搬家（worker/
+      scheduler 全量批处理显式传 `acl.SYSTEM_VIEWER`，同 06 号票）。
+
+    **为什么收敛到 `"default"` 而不是一律拒**：真实库 636/657 行
+    memoryitem 是 NULL 属主（96.8%，归属列是后来才加的），判不可见
+    等于单人部署下检索整体空转。同 07/09/10 三票口径。
+
+    **为什么不动 `vector_owner_filter` 的 None 分支**：它 docstring 明写
+    "admin / principal=None → None（不过滤，worker/CLI 不能空转）"，
+    那是 15 号票**刻意**写的通用契约。判据同 10 号票：
+    **不动承重墙，在调用方收敛**——worker 直调它仍全表，本路径被收窄。
     """
+    principal = _converge_principal(principal)
     effective_params = params or RetrievalParams.from_overrides(param_overrides)
     return _hybrid_search_impl(
         query,
@@ -534,11 +592,25 @@ def _hybrid_search_impl(
         return []
 
     def _query_items(s):
-        return s.exec(
+        stmt = (
             select(MemoryItem)
             .where(MemoryItem.id.in_(list(all_ids)))
             .where(MemoryItem.status == "active")
-        ).all()
+        )
+        # 最后一道归属过滤（票 `.scratch/mcp-identity-gaps/11`）：
+        # **这一层是"任一通道放行就进最终结果"的那个漏洞面**——
+        # 上面三条通道各自过滤，但并集之后若这里不再滤一次，
+        # 任一通道的漏就直通最终结果（fts-null-owner 票正是靠这一层
+        # 让"修好了"的假象过关）。同族做法（`fts.py` 两处 + `_like_cb`
+        # + 向量通道）就是每条读侧都补一遍，不依赖上游"应该已经滤过"。
+        #
+        # admin / SYSTEM_VIEWER 不滤（全表口径不搬家，见入口 docstring）。
+        # `OR IS NULL` 半边保命：真实库 636/657 行是 NULL 属主，
+        # 只写等值匹配等于单人部署下老记忆全体消失。
+        if not bool(getattr(principal, "is_admin", False)) and not _is_system_viewer(principal):
+            viewer = getattr(principal, "user_id", None) or "default"
+            stmt = stmt.where(or_(MemoryItem.user_id == viewer, MemoryItem.user_id.is_(None)))
+        return s.exec(stmt).all()
 
     if session is not None:
         items = _query_items(session)

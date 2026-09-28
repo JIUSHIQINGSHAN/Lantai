@@ -7,6 +7,7 @@ import time
 
 from sqlmodel import select
 
+from lantai.core.acl import SYSTEM_VIEWER, Principal
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.core.time import utcnow
@@ -104,6 +105,16 @@ def run_dry_run(
                 top_k=top_k,
                 use_rerank=use_rerank,
                 param_overrides=param_overrides,
+                # 评测语料不带归属（`user_id` 全 NULL），但**必须显式给
+                # 系统身份**（票 `.scratch/mcp-identity-gaps/11`）：
+                # `hybrid_search` 入口现在把 `principal=None` 收敛成
+                # `"default"`，评测的向量 metadata 又是手搓的、没有
+                # `user_id` 键，收敛后 `{"$or":[{user_id:default},{user_id:""}]}`
+                # 匹配不到它 → 向量通道整条失效。`SYSTEM_VIEWER` 是
+                # `vector_owner_filter` 与 `_query_items` 都认的"全表"
+                # 显式形态（同 06 号票立项理由），且 SQL 侧靠
+                # `OR IS NULL` 召回 NULL 语料。
+                principal=Principal(user_id=SYSTEM_VIEWER),
             )
             if isinstance(results, tuple):  # trace=True 不可能在这里，防御
                 results = results[0]

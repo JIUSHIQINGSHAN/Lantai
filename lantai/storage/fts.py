@@ -11,6 +11,21 @@ import sqlite3
 
 from lantai.core.logger import logger
 
+# 显式系统身份的 user_id（票 `.scratch/mcp-identity-gaps/06`）。本地字面量
+# 而不 import `acl.SYSTEM_VIEWER`：`acl.py` 顶部 `from fastapi import ...`，
+# 而本模块被 `eval/offline.py` 等只装检索依赖的环境引用，减少耦合。
+# 单一真源仍是 `acl.SYSTEM_VIEWER`（值 "__system__"），此处只做等价判定。
+_SYSTEM_VIEWER = "__system__"
+
+
+def _is_system_viewer(principal) -> bool:
+    """是否为显式系统身份（worker/scheduler 全量批处理专用）。
+
+    同 `retrieval/hybrid.py::_is_system_viewer`：两处都需要这个判定，
+    但都不值得为它引入对 `acl` 的依赖（见上方 `_SYSTEM_VIEWER` 注释）。
+    """
+    return (getattr(principal, "user_id", None) or "") == _SYSTEM_VIEWER
+
 
 def init_fts(conn: sqlite3.Connection) -> bool:
     """初始化 FTS5 虚拟表；自动迁移旧 schema。返回词汇召回通道是否真正可用。
@@ -151,7 +166,7 @@ def search_fts(
         if domain and domain != "all":
             sql += " AND m.domain = ?"
             params.append(domain)
-        if principal:
+        if principal and not _is_system_viewer(principal):
             if getattr(principal, "tenant_id", None):
                 sql += " AND m.tenant_id = ?"
                 params.append(principal.tenant_id)
@@ -165,6 +180,13 @@ def search_fts(
                 #
                 # 与 `ensure_can_delete` 形状不同却曾被当同一形状抄：写侧
                 # 不需要 OR IS NULL（写不存在的行本来就要拒），读侧必须。
+                #
+                # **显式系统身份整段跳过**（票 `.scratch/mcp-identity-gaps/11`）：
+                # worker/scheduler 显式传 `acl.SYSTEM_VIEWER` 表示"要全表"，
+                # SQL 侧六个 service（reflector/crystal/kaogong/persona/
+                # reflect_worker/worker_operation）早就这么放行，本函数却
+                # 漏了 → `AND m.user_id = '__system__'` 匹配不到任何行，
+                # **全量批处理被误滤成空集**（不是"多看到"，是"什么都看不到"）。
                 sql += " AND (m.user_id = ? OR m.user_id IS NULL)"
                 params.append(principal.user_id)
             if getattr(principal, "session_id", None):
@@ -206,7 +228,7 @@ def search_fts_bm25(
         if domain and domain != "all":
             sql += " AND m.domain = ?"
             params.append(domain)
-        if principal:
+        if principal and not _is_system_viewer(principal):
             if getattr(principal, "tenant_id", None):
                 sql += " AND m.tenant_id = ?"
                 params.append(principal.tenant_id)
@@ -214,6 +236,11 @@ def search_fts_bm25(
                 # 同 `search_fts`：读侧归属必须有 OR IS NULL 半边
                 # （票 `.scratch/fts-null-owner/01`）。两个函数是同一处手写
                 # 的同一段，改一处漏一处等于没改。
+                #
+                # 显式系统身份整段跳过（票 `.scratch/mcp-identity-gaps/11`）：
+                # 同 `search_fts` 的注释——`SYSTEM_VIEWER` 是"要全表"的
+                # 显式声明，SQL 侧六个 service 早就放行，这里漏了会让
+                # worker 全量批处理被误滤成空集。
                 sql += " AND (m.user_id = ? OR m.user_id IS NULL)"
                 params.append(principal.user_id)
             if getattr(principal, "session_id", None):

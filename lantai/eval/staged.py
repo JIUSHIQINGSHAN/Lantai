@@ -19,6 +19,7 @@ import hashlib
 
 from sqlmodel import select
 
+from lantai.core.acl import SYSTEM_VIEWER, Principal
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.core.time import utcnow
@@ -430,7 +431,19 @@ def run_staged_eval(*, extract_fn=None, top_k: int = 5) -> dict:
         for qid, qtext, ref in STAGED_QUERIES:
             stages["retrieve"]["samples"] += 1
             try:
-                results = hybrid_search(qtext, top_k=top_k)
+                results = hybrid_search(
+                    qtext,
+                    top_k=top_k,
+                    # 评测语料不带归属（candidate 不设 `user_id` → NULL，
+                    # promoter 只在 `src_cand.user_id` 真值时继承），但
+                    # **必须显式给系统身份**（票 `.scratch/mcp-identity-gaps/11`）：
+                    # 入口现在把 `None` 收敛成 `"default"`，而本模块
+                    # ④ 段的向量 metadata 是 `{"memory_id": mid}`（**没有
+                    # `user_id` 键**），收敛后匹配不到 → 向量通道失效。
+                    # `SYSTEM_VIEWER` 是显式"全表"形态（06 号票立项理由），
+                    # SQL 侧靠 `OR IS NULL` 召回 NULL 语料。
+                    principal=Principal(user_id=SYSTEM_VIEWER),
+                )
                 if isinstance(results, tuple):
                     results = results[0]
                 got = set()
