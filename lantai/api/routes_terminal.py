@@ -129,13 +129,17 @@ async def terminal_chat_stream(req: ChatReq, principal=Depends(get_current_user)
         edges = []
         for n in nodes[:20]:  # 最多查前 20 个节点的边
             try:
-                node_edges = list_edges(n["id"])
-                for e in node_edges if isinstance(node_edges, list) else []:
+                # 归属（票 .scratch/readside-gaps/22）：`list_edges` 返回的是
+                # dict `{"edges": [...]}`，此前写 `isinstance(node_edges, list)`
+                # 恒为 False——循环体一次都没执行过，边推送是死代码，
+                # 却照样 yield 一个空 `{"edges": []}`。
+                node_edges = list_edges(n["id"], principal=principal).get("edges") or []
+                for e in node_edges:
                     edges.append(
                         {
                             "id": e.get("id", ""),
-                            "source": e.get("source_memory_id", ""),
-                            "target": e.get("target_memory_id", ""),
+                            "source": e.get("source", ""),
+                            "target": e.get("target", ""),
                             "relation": e.get("relation", "related"),
                             "confidence": e.get("confidence", 0.5),
                         }
@@ -197,16 +201,19 @@ def terminal_graph(domain: str = "", limit: int = 100, principal=Depends(get_cur
     seen = set()
     for n in nodes[:50]:
         try:
-            node_edges = list_edges(n["id"])
-            for e in node_edges if isinstance(node_edges, list) else []:
+            # 归属（票 .scratch/readside-gaps/22）：同 `terminal_chat_stream`
+            # Step 4——`list_edges` 返回 dict，此前 `isinstance(..., list)`
+            # 恒 False，循环体从未执行。两处一起修，只修一处等于修活一半。
+            node_edges = list_edges(n["id"], principal=principal).get("edges") or []
+            for e in node_edges:
                 eid = e.get("id", "")
                 if eid not in seen:
                     seen.add(eid)
                     edges.append(
                         {
                             "id": eid,
-                            "source": e.get("source_memory_id", ""),
-                            "target": e.get("target_memory_id", ""),
+                            "source": e.get("source", ""),
+                            "target": e.get("target", ""),
                             "relation": e.get("relation", "related"),
                             "confidence": e.get("confidence", 0.5),
                         }

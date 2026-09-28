@@ -38,13 +38,19 @@ def create_edge_route(req: EdgeReq, ctx=Depends(get_current_user)):
 
 
 @router.get("/edges/{memory_id}")
-def list_edges_route(memory_id: str, relation: str | None = None):
-    return list_edges(memory_id, relation)
+def list_edges_route(memory_id: str, relation: str | None = None, ctx=Depends(get_current_user)):
+    # 归属必须下传（票 .scratch/readside-gaps/22）：此前一个身份都不取，
+    # `get_edges` 按 source/target 直查全表——A 拿 B 的 memory_id 就能列出
+    # B 的每一条边的 id/source/target/relation/confidence。同票 19/20 的
+    # 形状：本文件 POST 与 DELETE 都校验了归属，只有这两条读路由漏了。
+    return list_edges(memory_id, relation, principal=ctx)
 
 
 @router.get("/edges/{memory_id}/supersed-chain")
-def supersed_chain_route(memory_id: str):
-    return get_chain(memory_id)
+def supersed_chain_route(memory_id: str, ctx=Depends(get_current_user)):
+    # 归属必须下传（票 .scratch/readside-gaps/22）：链比边更值钱——它直接
+    # 告诉 A「B 的这条记忆被谁取代了」，superseded_by 就是下一步该读的 id。
+    return get_chain(memory_id, principal=ctx)
 
 
 @router.delete("/edges/{edge_id}")

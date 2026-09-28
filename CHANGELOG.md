@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **边读侧补归属——A 不再能列出 B 的记忆关系图与取代链（2026-09-28，票据 `.scratch/readside-gaps/issues/22-edges-list-chain-readside-no-identity.md`）**：
+  - **先说影响**：`GET /edges/{memory_id}` 与 `GET /edges/{memory_id}/supersed-chain` **一个身份都不取**。`routes_edges.py` 四条路由里 `POST /edges` 与 `DELETE /edges/{id}` 都取了身份并校验，只有这两条读路由漏了——同票 19/20 的形状「同一个文件里修了一条、漏了旁边那条」。A 拿 B 的 memory_id 就能列出 B 每条边的 id/source/target/relation/confidence；supersedes 链更值钱：它直接告诉 A「B 的这条记忆被谁取代了」，`superseded_by` 就是下一步该读哪条——**一条链把 B 的整条取代路径摊开**。
+  - **归属必须按端点记忆判，不按边自身判**（实测推翻票面最初设想，`.scratch/readside-gaps/probe_22_edge_owner_dist.py`）：真实库 **76/76 条边 `user_id` 全 NULL**。按边自身过滤对全库一条都不生效——修了等于没修。归属信息只在端点记忆上，口径同票 17 的 `graph_retriever._owns`：两端属主 `NULL`（历史行）或等于 viewer 才放行，**两端有一个不可见就整条隐藏**（露出一半等于告诉 A「B 有条边连到某个 id」）。
+  - **顺手抓到一处静默失效：terminal 两处边推送是死代码**（`.scratch/readside-gaps/probe_22_*.py`）：`routes_terminal.py:132` / `:200` 写 `for e in node_edges if isinstance(node_edges, list) else []`，而 `list_edges` 返回的是 **dict** `{"edges": [...]}`——`isinstance` 恒 False，**两个循环体一次都没执行过**。terminal 的「正在加载记忆关系图谱」那步一条边都没送出过，却照样 yield 一个空 `{"edges": []}`。用户看到空图谱，代码看起来在跑。已改成 `.get("edges") or []` 并下传 `principal`，两处一起修（只修一处等于修活一半）。
+  - **真实库另有一层脏数据**：74/76 条边的 `source_memory_id` 是 `doc_*`（`evolution/promoter.py:487` 的 `evidence_ids` 里混着文档 id），在 `memoryitem` 里**不存在**。这类边判不可见——露出幽灵 id 没有意义，而 id 本身是票 19 记录过的攻击材料。**不回溯补 76 条边的属主**（宁 miss 不脏写）。
+  - **变异验证 11/11 全杀**（`.scratch/readside-gaps/mutation_check_22.py`，子进程隔离 + timeout + atexit 还原）。第一轮 **5 条 MISSED**，逐条定性全部是「测试输入形状让条件永远不求值」而非覆盖缺口：M5 只查一端点（测试里 target 端从不构成判据）、M8/M9 chain 路由不过滤（用例里 B 不是任何边的 source，链本来就空）、M10/M11 terminal（nodes 恒空，spy 从未被调用）。补了「source 是 A / target 是 B」与「target 是 A / source 是 B」两条对偶、一条 B 自己的两跳非空链、以及 patch `hybrid_search` 让 nodes 非空后才全杀。
+  - **测试增量 17 例**（`tests/test_edges_readside_ownership.py` 11 + `tests/test_terminal_edges_deadcode.py` 4，另有 2 例来自票 23 同批跑），全部不 mock：真实 in-memory SQLite + `init_fts` + `patch db.get_session`。全量 pytest **1768 passed / 0 failed**。
+
 - **supersedes 取代链修自指环——`as_target` 默认值吃掉调用方意图，链尾不再出现「自己被自己取代」（2026-09-28，票据 `.scratch/readside-gaps/issues/23-supersed-chain-self-loop.md`）**：
   - **先说影响**：`GET /edges/{memory_id}/supersed-chain` 会返回**错的链**。`get_supersed_chain` 只想沿 source 方向走（`current` 是被取代的旧值，边指向新值），但 `get_edges` 的 `as_target` **默认 True**，两个都 True 就让查询走 OR 分支——每一步都把「指向 current 的边」也取回来，于是链尾出现 `superseded_by == memory_id` 的自指环，且让链**多跳一步**。`visited` 集合只挡住了无限循环，挡不住**已经追加的假条目**，所以不崩溃、只是静默给出错数据。
   - **真实库实证**（`.scratch/readside-gaps/probe_22_exploit.py`）：`get_chain('mem_01KZRNAJHTXJQCBJ8K10TBHRCQ')` 返回一条 `superseded_by` 等于自身的链，而 `source == 该 id` 的 supersedes 边实测 **0 条**——这条链根本不该存在。3 条 supersedes 边里 2 条中招。
