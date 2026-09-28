@@ -27,6 +27,57 @@ def _is_system_viewer(principal) -> bool:
     return (getattr(principal, "user_id", None) or "") == _SYSTEM_VIEWER
 
 
+def _owner_filter_clause(principal) -> tuple[str, str] | None:
+    """读侧归属 SQL 片段与参数（票 `.scratch/mcp-identity-gaps/13`）。
+
+    返回 `(sql_fragment, param)`；`None` 表示**不加归属过滤**。
+
+    三个调用点（`search_fts` 与 `search_fts_bm25` 各一处，形状逐字相同）
+    共用这一个函数——此前两处各自手写，票 11 只改到其中一处、
+    差点漏另一处，故收到这里做单一真源。
+
+    **身份收敛**（本票修的那半边）：`principal=None` 与 `user_id=""` 都经
+    `acl.viewer_of` 收敛到 `"default"`，与 DEV MODE 同值。此前两道判据
+    （`if principal and ...` 与 `if getattr(principal,"user_id",None):`）
+    各自漏半边：
+      · `None` → 整个归属块跳过 → **全表召回别人的私有记忆**
+        （票 11 只在 `hybrid_search` 入口收敛，函数本身没有；换条路径进来就漏）；
+      · 空串 → `getattr(..., None)` 为假 → 同样跳过。而 `viewer_of` 对空串
+        **会**收敛到 `"default"`（`acl.py:62` 的 `user_id or "default"`），
+        空串身份是真实可达的：`auth.py:157` `make_principal(api_key.user_id, ...)`
+        的 `api_key.user_id` 是数据库列。
+
+    **不加过滤的两种身份**：
+      · `SYSTEM_VIEWER`（票 11）：worker/scheduler 显式要全表；
+      · admin（票 08）：观测/排障面一律全表，同 `_kaogong_scope` /
+        `get_core_memory` / `find_duplicate_verbatim` / `build_memories_page`
+        四处既有形状。此前这里漏了 admin 豁免，`user_id="api_key"` 的真形态
+        （`auth.py:168`）被收窄成 `user_id=='api_key'`，真实库没这个属主
+        → **关键词召回对管理员基本空白**。
+
+    注意 `None` **不是**"不加过滤"：本仓的口径（票 07/11/12 三次确立）是
+    `None` → 收敛到 `"default"`，只因为 `_is_system_viewer` 与 admin 才放全表。
+    """
+    if principal is None:
+        # 票 06 契约（`tests/test_fts_owner_recall.py::test_none_principal_unchanged`
+        # 钉住）：`principal=None` 在**本函数**的语义是「不过滤」——worker /
+        # 定时反思直调它不能空转。这与 `hybrid_search` 入口把 None 收敛成
+        # `default`（票 11）是**两个不同层次**的决定：入口收敛保护 MCP 调用方，
+        # 函数本身保留 worker 契约。改这里须先改那条测试，属承重墙，不擅动。
+        return None
+    if _is_system_viewer(principal):
+        return None
+    if bool(getattr(principal, "is_admin", False)):
+        return None
+
+    from lantai.core.acl import viewer_of
+
+    # `OR IS NULL` 半边不可删（票 fts-null-owner/01、03/04/05/06/15 同一口径）：
+    # 真实库 96.8% 的 memoryitem 是 NULL 属主，只写等值匹配等于单人部署下
+    # 关键词召回丢掉几乎全部历史。
+    return " AND (m.user_id = ? OR m.user_id IS NULL)", viewer_of(principal)
+
+
 def init_fts(conn: sqlite3.Connection) -> bool:
     """初始化 FTS5 虚拟表；自动迁移旧 schema。返回词汇召回通道是否真正可用。
 
@@ -166,29 +217,17 @@ def search_fts(
         if domain and domain != "all":
             sql += " AND m.domain = ?"
             params.append(domain)
-        if principal and not _is_system_viewer(principal):
+        if principal is not None and not _is_system_viewer(principal):
             if getattr(principal, "tenant_id", None):
                 sql += " AND m.tenant_id = ?"
                 params.append(principal.tenant_id)
-            if getattr(principal, "user_id", None):
-                # 归属（票 `.scratch/fts-null-owner/01`）：**必须带 OR IS NULL**。
-                # 读侧每条收窄都靠这半边保命（票 03/04/05/06/15 的
-                # `user_id == viewer OR user_id IS NULL`）。此前只写等值匹配，
-                # 真实库 657 行 memoryitem 里 636 行是 NULL 属主 → 单人部署下
-                # 关键词召回丢掉 96.8% 的记忆，且**越老的记忆越搜不到**
-                # （归属列是后来才加的，老数据全是 NULL）。
-                #
-                # 与 `ensure_can_delete` 形状不同却曾被当同一形状抄：写侧
-                # 不需要 OR IS NULL（写不存在的行本来就要拒），读侧必须。
-                #
-                # **显式系统身份整段跳过**（票 `.scratch/mcp-identity-gaps/11`）：
-                # worker/scheduler 显式传 `acl.SYSTEM_VIEWER` 表示"要全表"，
-                # SQL 侧六个 service（reflector/crystal/kaogong/persona/
-                # reflect_worker/worker_operation）早就这么放行，本函数却
-                # 漏了 → `AND m.user_id = '__system__'` 匹配不到任何行，
-                # **全量批处理被误滤成空集**（不是"多看到"，是"什么都看不到"）。
-                sql += " AND (m.user_id = ? OR m.user_id IS NULL)"
-                params.append(principal.user_id)
+            # 归属（票 `.scratch/mcp-identity-gaps/13`）：身份收敛 + admin 豁免
+            # 都收到 `_owner_filter_clause` 单一真源，两个 FTS 函数共用。
+            # 此前此处手写，票 11 只改到其中一处、差点漏另一处。
+            owner = _owner_filter_clause(principal)
+            if owner is not None:
+                sql += owner[0]
+                params.append(owner[1])
             if getattr(principal, "session_id", None):
                 sql += " AND m.session_id = ?"
                 params.append(principal.session_id)
@@ -228,21 +267,17 @@ def search_fts_bm25(
         if domain and domain != "all":
             sql += " AND m.domain = ?"
             params.append(domain)
-        if principal and not _is_system_viewer(principal):
+        if principal is not None and not _is_system_viewer(principal):
             if getattr(principal, "tenant_id", None):
                 sql += " AND m.tenant_id = ?"
                 params.append(principal.tenant_id)
-            if getattr(principal, "user_id", None):
-                # 同 `search_fts`：读侧归属必须有 OR IS NULL 半边
-                # （票 `.scratch/fts-null-owner/01`）。两个函数是同一处手写
-                # 的同一段，改一处漏一处等于没改。
-                #
-                # 显式系统身份整段跳过（票 `.scratch/mcp-identity-gaps/11`）：
-                # 同 `search_fts` 的注释——`SYSTEM_VIEWER` 是"要全表"的
-                # 显式声明，SQL 侧六个 service 早就放行，这里漏了会让
-                # worker 全量批处理被误滤成空集。
-                sql += " AND (m.user_id = ? OR m.user_id IS NULL)"
-                params.append(principal.user_id)
+            # 归属（票 `.scratch/mcp-identity-gaps/13`）：与 `search_fts` 共用
+            # `_owner_filter_clause` 单一真源——两个函数是同一处手写的同一段，
+            # 改一处漏一处等于没改（票 11 就差点只改到一处）。
+            owner = _owner_filter_clause(principal)
+            if owner is not None:
+                sql += owner[0]
+                params.append(owner[1])
             if getattr(principal, "session_id", None):
                 sql += " AND m.session_id = ?"
                 params.append(principal.session_id)
