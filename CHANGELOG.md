@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP 读侧两个工具不再敞开——`checkpoint_latest` 拿不到 B 的工作现场，`scratchpad_get` 按 id 拿不到 B 的札记（2026-09-28，票据 `.scratch/mcp-identity-gaps/issues/05-mcp-read-side-none-leaks.md`）**：
+  - **先说影响**：宿主不透传 `user_id` 时（MCP 没有 HTTP 鉴权层，这是常见形态），两个工具的收窄被 `principal is None` **整条跳过**。`checkpoint_latest` 更糟——它**根本不看 `session_id` 参数**，永远返回全库 `created_at` 最新的那个 session 的完整五段底本（在做/下一步/工作区/决策/待办）。A 只要调一次，就拿到"当前最新的工作现场"，而那个现场很可能是 B 的（B 刚写完底本）。`scratchpad_get` 是按 id 定点取：A 传 B 的 `session_id`，拿到 B 的札记正文——而札记**直接进 LLM 提示**（`format_scratchpad_context`）。实测（`.scratch/mcp-identity-gaps/probe_02_read_scope.py`，真 handler + 内存 SQLite 真建表，库里 2 行 NULL + 2 行 default + 2 行 user-B）。
+  - **同批探针的对照说明这是口径分叉，不是普遍现象**：`candidates_pending` 在无身份时收敛到 `"default"`（B 不可见，正常），`mem_recent` 是全表（已知，归 02 号契约票），**只有这两个是"连 id 都按定点取却不过滤"**——它们与 `mem_recent` 的差别是**确定性**：`mem_recent` 是列表，这两个按 id 精确定位，A 知道 id 就能稳定拿到那一条。
+  - **根因是同一个形状**：两个函数都把 `principal=None` 当成"内部 worker，不过滤"，而 MCP 入口的 None 语义是"宿主没透传身份"——**不是**"内部 worker"。`get_latest_checkpoint` 的 `_checkpoint_scope(None)` 直接 `return None`，一条 `where` 都不加（它的 docstring 写"scope 加在挑 newest 那一跳上，不是只加在取行那一跳"——**作者预判了"先挑 newest 再取行"这个绕路，没预判 None 会整条跳过**）。`get_scratchpad` 的 `if principal is not None and not is_admin` 把归属判断整块跳过，而上一行 `_owner_of(None)` 已经算出 viewer=`"default"`——**算好了却不用**。
+  - **真实库清点决定了修法**：82 行底本 **100% 是 NULL 属主**（都在 04 号票之前写的），全库只有 `default` 一个真实用户。所以"读收敛到 `default` + `OR IS NULL`"对当前部署**零影响**（82 行老底本照常可见），同时挡住未来的 B。**04 号票是这个修法能成立的前提**：无身份**写入**现在也落 `"default"`，读写正好配对，不会出现"自己写了读不到"。
+  - **契约变更，改了一条既有测试**：`test_checkpoint_ownership.py::TestCheckpointInternalCall::test_internal_call_unfiltered` 断言 `principal=None` 仍能读 `user-B` 的底本——**那正是本票要关的洞**。grep 实证该场景不存在：`get_checkpoint` 全仓唯一调用方是 `routes_checkpoint.py:43`（HTTP，`get_current_user` 永不返回 None），**没有任何 worker / CLI / 脚本调用者**。改成 3 条新断言（读不到 B 的、仍读 NULL 老行、仍读 default 属主），并在类 docstring 写明这是契约变更 + 实证过程。**同票 04 的教训第二次应验：docstring 说的场景要 grep 过才算数。**
+  - **`inject_checkpoint_context` 的自动注入路径没断**（内部 worker 传 `principal=None`）：收紧后它收敛到 `"default"`，而 04 号票让无身份写也落 `"default"`——`test_checkpoint_service.py:119` 那条"无身份写 + 无身份读"的组合继续绿，全量 1905 passed 实证。
+  - **`mem_recent` 的 unfiltered 语义不在本票修**：那是 02 号契约票的核心决定（收紧会把现有客户端全打断）。本票只修两个按 id 定点取的工具。
+  - **测试增量 9 例**（`tests/test_mcp_read_side_none_leaks.py`，全部不 mock：真 handler + 真 service + 内存 SQLite 真建表）。**Red 实证**：3 failed / 6 passed——红的正是三个泄漏路径，绿的六个是护栏（admin 全量、透传用户见自己的、NULL 老行可见、注入链不断）。
+  - **变异验证 5 KILLED / 0 MISSED**（`.scratch/mcp-identity-gaps/mutation_check_05.py`，**两个目标文件**——两个函数的缺口各占一半，subprocess 隔离 + atexit 还原 + 还原后逐字节复核）：V1 None 不过滤（退回修前）、V2 丢 `OR IS NULL`（老行不可见）、V3 admin 也收敛（把关起来）、V4 恢复 `principal is not None` 前置、V5 去掉 admin 分支。
+  - **探针自己的 bug 冒充"基线红"**：`mutation_check_05.py` 第一轮报"基线: FAIL"，直接跑同一批测试却全绿。真因是 `TESTS` 写成 `"a.py b.py"` 一个字符串，subprocess 不当拆分 → pytest 返回 `rc=4`（**用法错误**，不是测试失败），被我当成 FAIL。改成列表 + 显式判 `rc == 4` 后正常。**教训：判定不可信时先怀疑探针。**
+  - **全量 pytest 1905 passed / 0 failed**（04 后基线 1894）。中途红过一次——`test_release_check.py::test_lint_gate_passes_on_real_repo` 抓到新测试文件没 `ruff format`，**回归哨兵当场干活**，format 后复跑全绿。ruff check + format 均过；gitleaks 本次改动文件 0 命中。
+
 - **MCP `checkpoint_write` 不再落无主底本——宿主不透传身份时归 `default`，工作现场不再对所有人敞开（2026-09-28，票据 `.scratch/mcp-identity-gaps/issues/04-checkpoint-write-null-owner.md`）**：
   - **先说影响**：这是 02 号票第一步清点（60 个 handler 机械枚举）顺带挖出来的洞，形状和前三波都不同——**principal 取了、也传了，但下游在 `principal=None` 时把 owner 落成 NULL**。而底本的读侧口径是 `user_id == viewer OR user_id IS NULL`，**NULL 行的可见性是"人人可读"**。于是宿主不透传 `user_id` 调 MCP `checkpoint_write`，落一行无主的五段快照（在做/下一步/工作区/决策/待办），之后**任何**用户调 `checkpoint_latest` 都能读到它——那是 Agent 的当前工作现场，`readside-gaps/09` 专门说过"把当前工作现场整个吐出"有多严重。
   - **同批探针的对照组说明这是孤例**：`raw_add` / `add_dialogue` / `scratchpad_write` 在不透传身份时全部落 `"default"`，**只有 `checkpoint_write` 落 NULL**（实测 `.scratch/mcp-identity-gaps/probe_02_write_owner.py`，真 handler + 内存 SQLite 真建表）。

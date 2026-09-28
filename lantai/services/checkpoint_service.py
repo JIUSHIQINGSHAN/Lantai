@@ -44,21 +44,33 @@ def validate_blocks(blocks: dict) -> list[tuple[str, str]]:
 
 
 def _checkpoint_scope(principal):
-    """底本读侧归属条件：admin/`principal=None` → None（不过滤）；
+    """底本读侧归属条件：admin → None（不过滤）；
     否则 `user_id == viewer OR user_id IS NULL`。
 
     票 .scratch/readside-gaps/09 口径 3。NULL 口径同票 03/04/06：
     单人部署下老行 `user_id` 为 NULL，判"不可见"会让
     `/checkpoint/latest` 对唯一真实用户返回空，`inject_checkpoint_context`
     拿不到快照 → 下次会话丢失工作现场。NULL 是「未记录」不是「属于所有人」。
+
+    **`principal=None` 收敛到 `"default"`，不再返回 None（不过滤）**
+    （票 `.scratch/mcp-identity-gaps/05`）：MCP 入口的 None 语义是
+    「宿主没透传身份」，**不是**「内部 worker 要全量」。此前 None 直接
+    return None，于是 `get_latest_checkpoint` 一条 where 都不加，
+    返回**全库 newest** 的完整五段底本——而它连 `session_id` 参数都不看，
+    A 调一次就拿到当前最新的工作现场（很可能是 B 刚写的）。
+
+    收敛到 `"default"` 的安全性由票 04 保证：无身份**写入**现在也落
+    `"default"`（`viewer_of(None)`），读写正好配对，不会出现
+    「自己写了读不到」。真实库 82 行底本 **100% 是 NULL 属主**，
+    靠 `OR IS NULL` 照常可见——对当前部署零影响。
+
+    admin 仍全量（`is_admin` 分支）：运维排查需要看全库 newest。
     """
-    if principal is None:
-        return None
     if bool(getattr(principal, "is_admin", False)):
         return None
-    from lantai.services.work_item_service import _viewer_of
+    from lantai.core.acl import viewer_of
 
-    viewer = _viewer_of(principal)
+    viewer = viewer_of(principal)
     return (SessionCheckpoint.user_id == viewer) | (SessionCheckpoint.user_id.is_(None))
 
 

@@ -329,12 +329,60 @@ class TestCheckpointWriteOwnership:
 
 
 class TestCheckpointInternalCall:
-    def test_internal_call_unfiltered(self, cp_env):
-        """principal=None（内部/CLI）不加过滤，与改动前逐字一致。"""
+    """`principal=None` 的口径（票 `.scratch/mcp-identity-gaps/05`）。
+
+    **本类是契约变更，不是回归**：此前 `_checkpoint_scope(None)` 返回
+    None（不过滤），实测证明那正是 MCP 侧的泄漏路径——
+    `get_latest_checkpoint` 一条 where 都不加，返回**全库 newest** 的
+    完整五段底本，而它连 `session_id` 参数都不看。A 调一次就拿到当前
+    最新的工作现场（很可能是 B 的）。
+
+    MCP 入口的 None 语义是「宿主没透传身份」，**不是**「内部 worker 要
+    全量」。改成收敛到 `viewer_of(None) == "default"` + `OR IS NULL`。
+    安全性由票 04 保证：无身份**写入**现在也落 `"default"`，读写配对。
+
+    全仓 grep 确认：`get_checkpoint` 的唯一调用方是
+    `routes_checkpoint.py:43`（HTTP，`get_current_user` 永不返回 None），
+    **没有任何 worker / CLI / 脚本调用者**——原测试设想的"内部/CLI
+    全量读"场景在真实代码里不存在。同票 04 的教训：docstring 说的
+    场景要 grep 过才算数。
+    """
+
+    def test_none_principal_no_longer_reads_others(self, cp_env):
+        """决定性：`principal=None` 读不到 `user-B` 的底本。"""
         sf = cp_env
         _write(sf, "sess-B", "user-B")
 
         from lantai.services.checkpoint_service import get_checkpoint
 
-        cp = get_checkpoint("sess-B")
-        assert cp is not None and cp["session_id"] == "sess-B", "内部调用被收窄了"
+        assert get_checkpoint("sess-B") is None, (
+            "principal=None 还能读到 user-B 的底本——MCP 侧就是这么漏的"
+        )
+
+    def test_none_principal_still_reads_null_owner(self, cp_env):
+        """`principal=None` 仍读得到 NULL 属主老行（单人部署不能修废）。"""
+        sf = cp_env
+        _write(sf, "sess-legacy", None)
+
+        from lantai.services.checkpoint_service import get_checkpoint
+
+        cp = get_checkpoint("sess-legacy")
+        assert cp is not None and cp["session_id"] == "sess-legacy", (
+            "NULL 属主老底本对无身份调用不可见了——单人部署丢失工作现场"
+        )
+
+    def test_none_principal_reads_default_owner(self, cp_env):
+        """`principal=None` 读得到 `default` 属主的底本。
+
+        这条钉住票 04 与本票的**配对关系**：无身份写落 `default`，
+        无身份读收敛到 `default`——否则会出现"自己写了读不到"。
+        """
+        sf = cp_env
+        _write(sf, "sess-def", "default")
+
+        from lantai.services.checkpoint_service import get_checkpoint
+
+        cp = get_checkpoint("sess-def")
+        assert cp is not None and cp["session_id"] == "sess-def", (
+            "无身份写落 default 后读不到——读写没配对"
+        )

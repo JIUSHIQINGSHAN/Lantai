@@ -63,9 +63,16 @@ def get_scratchpad(
         sp = s.get(SessionScratchpad, sid)
         if sp is None:
             return ""
-        if principal is not None and not getattr(principal, "is_admin", False):
+        if not getattr(principal, "is_admin", False):
             # 归属不匹配即视为不存在（不区分「没有」与「不是你的」——
             # 区分本身就是信息泄漏：能据此探知某 session_id 是否被占用）
+            #
+            # 不再要求 `principal is not None`（票 `.scratch/mcp-identity-gaps/05`）：
+            # MCP 入口的 None 语义是「宿主没透传身份」，不是「内部 worker 全量」。
+            # 此前 None 把整个判断跳过，A 传 B 的 session_id 就拿到 B 的札记正文，
+            # 而札记直接进 LLM 提示（`format_scratchpad_context`）。
+            # `_owner_of(None)` 上一行已经算出 viewer=`"default"`——**算好了却不用**。
+            # 收敛到 "default" 的安全性同票 04：无身份写入也落 "default"，读写配对。
             if sp.user_id != user_id:
                 return ""
         return sp.content
