@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **supersedes 取代链修自指环——`as_target` 默认值吃掉调用方意图，链尾不再出现「自己被自己取代」（2026-09-28，票据 `.scratch/readside-gaps/issues/23-supersed-chain-self-loop.md`）**：
+  - **先说影响**：`GET /edges/{memory_id}/supersed-chain` 会返回**错的链**。`get_supersed_chain` 只想沿 source 方向走（`current` 是被取代的旧值，边指向新值），但 `get_edges` 的 `as_target` **默认 True**，两个都 True 就让查询走 OR 分支——每一步都把「指向 current 的边」也取回来，于是链尾出现 `superseded_by == memory_id` 的自指环，且让链**多跳一步**。`visited` 集合只挡住了无限循环，挡不住**已经追加的假条目**，所以不崩溃、只是静默给出错数据。
+  - **真实库实证**（`.scratch/readside-gaps/probe_22_exploit.py`）：`get_chain('mem_01KZRNAJHTXJQCBJ8K10TBHRCQ')` 返回一条 `superseded_by` 等于自身的链，而 `source == 该 id` 的 supersedes 边实测 **0 条**——这条链根本不该存在。3 条 supersedes 边里 2 条中招。
+  - **修法是显式 `as_source=True, as_target=False`，不改 `get_edges` 的默认值**：默认值没错，错的是调用处依赖了一个会反转语义的默认。改默认值会连带改动 `list_edges`（`/edges/{id}` 的语义是「进出都要」）与 terminal 两处，把一次定向修复变成全签名重构。
+  - **影响面已核实只有这一个端点**：`hybrid.py:248` 的 `_edge_cb` 用自己的查询（source 与 target 都在候选集里），不走 `get_edges`，supersedes 检索排序未受影响；全仓 `get_supersed_chain` 只有这一条调用路径。
+  - **变异验证 6/6 全杀**（`.scratch/readside-gaps/mutation_check_23.py`，子进程隔离）：M1 还原 bug、M2 方向写反、M3 两方向都查、M4 取 `edges[-1]`、M5 拆掉 `visited`、M6 去掉 relation 过滤。其中 M4/M5/M6 第一轮 **MISSED**——原因是测试输入形状让变异等价（每步只有一条边时 `edges[0]` 与 `edges[-1]` 恒等；数据里没有 supports 边；没有环），**不是覆盖缺口**。补了「同 source 多条出边」「supports 边不得进链」「A↔B 环必须两跳后停」三条后全杀。M5 是被**超时拦下死循环**杀掉的——测试挂死同样是「没放过它」，所以变异脚本必须带 timeout（上一轮没带，脚本被外部杀掉，被测文件被留在变异状态，靠 `atexit` 还原才救回来）。
+  - **测试增量 8 例**（`tests/test_supersed_chain_selfloop.py`，全部不 mock：真实 in-memory SQLite + `init_fts` + 直调 `get_supersed_chain`）。Red 阶段失败信息精确显示假尾巴 `('mem-C', 'mem-C')`。全量 pytest **1751 passed / 0 failed**（+8 = 本票新测试）。
+
 - **CI 格式门禁二次失守收口 + `release_check` 加 lint 自查——全量测试不再被 lint 静默拦停（2026-09-28，票据 `.scratch/readside-gaps/issues/21-ci-format-gate-regression.md`）**：
   - **先说影响**：`.github/workflows/tests.yml` 的 test job 里 lint 步骤**排在**全量 pytest 与遗忘质量门禁**前面**。`ruff format --check` 自 `6c07da7d` 起一直红，累积 9 个不合规文件，所以最近 5 个提交的 CI 上**全量测试和遗忘门禁一步都没跑过**——「本地 pytest 全绿」从来不等于「CI 绿」。这是记忆里 `ci-lint-blocks-test-gate` 那条教训的二次发作（上次是 `ruff check` 的 73 条违规，修于 `.scratch/ci-lint-gate/`）。
   - **逐提交实测定位，不靠推理**：用**干净 worktree**（`git worktree add --detach`）逐个提交跑 `ruff format --check`，差分得出每个提交单独引入的违规——`6c07da7d` 1 个文件（就此开始红）、`fda5cbd6` +3、`9964a343` +3、`622da8ef` +2，累积到 9。**教训：脏工作区上 `git checkout` 会静默失败**，第一轮我就在脏工作区里 bisect，得到 5 个提交主题全同、数字全错的结论。

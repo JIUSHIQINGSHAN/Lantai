@@ -102,13 +102,20 @@ def delete_edge(edge_id: str) -> bool:
 
 
 def get_supersed_chain(memory_id: str) -> list[dict]:
-    """获取完整的 supersedes 链（追溯取代历史）"""
+    """获取完整的 supersedes 链（追溯取代历史）
+
+    只沿 source 方向走（票 .scratch/readside-gaps/23）：`current` 是被取代的
+    旧值，边指向新值。`as_target` 必须显式 False——它的默认值是 True，
+    两个都 True 会让 `get_edges` 走 OR 分支，每一步都把「指向 current 的边」
+    也取回来，链尾于是出现 `superseded_by == memory_id` 的自指环，
+    且让链多跳一步。`visited` 只挡无限循环，挡不住已经追加的假条目。
+    """
     chain = []
     current = memory_id
     visited = set()
     while current and current not in visited:
         visited.add(current)
-        edges = get_edges(current, relation="supersedes", as_source=True)
+        edges = get_edges(current, relation="supersedes", as_source=True, as_target=False)
         if not edges:
             break
         chain.append(
