@@ -19,6 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **反思全表扫描——A 触发一次，B 的记忆正文不再被送进外部 LLM 提示词（2026-09-28，票据 `.scratch/readside-gaps/issues/14-reflect-leaks-cross-user.md`）**：
+  - **先说影响**：前十三票治的都是「A 从本系统读到 B 的数据」；这一票是**A 能把 B 的数据送到系统外的 LLM**。`health_scan` 三处全表扫描一个身份都不取，`_curate()` 把候选拼进 user prompt 调 `chat_json`——spy 直证 B 的记忆正文原样出现在发给外部 LLM 的提示词里：`<memory_data id="m-B">B 的银行密码是 9527</memory_data>`。**内容离开本机边界，且无法撤回。**
+  - **`wrap_as_data` 的围栏只防注入、不防归属**：它假设「拼进提示词的内容本来就是有权看的」。所以围栏照旧，归属另修——这是本票与「提示词安全」最容易混为一谈的地方。
+  - **四条扫描路径，同批修**（分开修会留下「以为修完了」的错觉）：候选集（`health_scan`）、related 记忆、theme 触发（水位达标时全表扫新记忆）、**rejecter 的 `evidence_ids`**。前三处是票面预判的；**第四处是探针实测抓到的**——`prop.evidence_ids` 来自 LLM 输出，是**攻击者可控字段**，curator 只要回一个别人的记忆 id，该正文就被 `s.get(MemoryItem, eid)` 按主键直读出来拼进 rejecter 提示词。四处统一过 `_reflect_scope(principal)`，口径与票 12 的 `_consolidation_scope` / `_kaogong_scope` 逐字一致。
+  - **`session.get` 是归属盲区，本票踩了两次**：`health_scan` 的 open 冲突账本、rejecter 的 `evidence_ids`，都是按主键直读、绕开 SQL 层 scope。凡是 `session.get(MemoryItem, ...)` 的取值点都要单独补判定。
+  - **`principal=None` 保持全表**（scheduler / worker）：反思是系统行为，收窄成空转会让 open 冲突账本与陈旧记忆永远没人处理。**这个口径是刻意的**，已写进 `_reflect_scope` docstring，别让后来人以为漏了。
+  - **MCP 不猜身份**：`handle_reflect_run` 复用票 10 的 `_principal_from_params`——宿主透传 `user_id` 才收窄，不透传留 NULL 不过滤。
+  - **测试增量**：`tests/test_reflect_ownership.py` 16 例。**决定性断言落在提示词文本上**——只看 candidates 列表等于只看中间量，提示词才是内容真正离开本机的出口。含三条「反向」用例保功能没被修废（A 自己的 superseded 记忆照常进提示词、NULL 属主老行照常进、A 自己的证据照常进 rejecter），以及 admin 与 `principal=None` 两条全表用例。
+  - **踩坑：`patch(...) as spy` 让断言整体空转（本票最险的一处）**：`patch("...chat_json", side_effect=PromptSpy()) as spy` 绑到的 `spy` 是 **MagicMock**，于是 `spy.prompts` 也是 MagicMock、`spy.prompts[0]` 还是 MagicMock，而 `SECRET in <MagicMock>` 恒为 False——`not any(...)` 恒真，测试一片绿且**看不出任何异常**。theme 路径那条就是这样骗过第一轮变异验证的（3 个 MISSED）。修法：spy 必须是独立变量，`patch(..., side_effect=spy)` 不写 `as`。**同源坑**：断言只查「4xx 满足」而 422 也算 4xx（票 13 已踩）。
+  - **探针第一轮也抓到同一处**：第九轮探针最初只种 B 的记忆，收窄正确时 A 的候选集为空、反思直接 idle、**LLM 一次都不调**——「没进提示词」是因为什么都没跑。补种 A 自己的候选后才暴露出 rejecter 那条真泄漏。**「没观察到」和「没发生」必须分开证**，两边都栽了同一个跟头。
+  - **变异验证 13/13 全杀**（`.scratch/readside-gaps/mutation_check_14.py`，子进程隔离）：四条扫描路径各一条、scope 本体三条（恒不收窄 / 忽略 admin / 丢 `OR IS NULL`）、形参链四条、MCP 一条。第一轮 **3 个 MISSED** 全部源于上述 spy 空转，补好后全杀。全量 pytest **1612 passed / 0 failed**（基线 1596）。
+  - **探针复验**：`probe_round9.py` 三条判据全 ok（evolve 不改写 B、候选集不含 B、LLM 提示词不含 B 的正文），且 LLM 路径**真的跑起来了**（1 次 curator 调用；rejecter 因证据被正确收窄而按「无证据」判 high，不再调 LLM——这正是宁 miss 不脏写）。
+  - **待实证**：`lantai/cognition/reflection.py` 的 `ReflectionEngine`（`POST /cognitive/reflect`）是**另一套**反思引擎，作用于 Observation/Pattern/Belief 表、不碰 `MemoryItem` 正文、不调 LLM 送内容，本票未覆盖。
+
 - **定点写入口归属——`rollback` 与 `feedback` 不再跨用户改写单条记忆（2026-09-28，票据 `.scratch/readside-gaps/issues/13-rollback-feedback-cross-user.md`）**：
   - **背景实证**（`.scratch/readside-audit/probe_round8.py`）：票 12 修完三个「全库演化」入口后，本轮改查**按 id 定点**的写入口——它们不扫全表，票 12 的候选集收窄对它们完全无效。两个中：`POST /memory/{id}/rollback` 让 A 把 B 的正文**整条覆盖成历史任意版本**（`prev.after` 逐字段 `setattr`，且没有 undo 入口）；`POST /feedback` 让 A 刷 B 的 `use_count`/`helpful_count`/`importance`。判据四条（A 改 B / A 改自己 / admin 改任意 / 行为不变）在两端点上正确区分——**探针不是空转的**。
   - **feedback 为什么也算严重**：那三个字段正是**考功与遗忘的输入**（票 12 刚修的两处即按它们决策）。刷它们等于间接操控别人的演化结果——不是直接写正文，但效果等价且更难察觉。

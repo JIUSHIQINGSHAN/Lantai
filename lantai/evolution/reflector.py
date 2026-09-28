@@ -139,8 +139,38 @@ def _cand(mem: MemoryItem, signal: str, extra: dict | None = None) -> dict:
     return c
 
 
-def health_scan(session) -> dict:
+def _reflect_scope(principal):
+    """反思扫描的归属条件（票 .scratch/readside-gaps/14）。
+
+    admin / `principal=None` → None（不过滤）；否则
+    `user_id == viewer OR IS NULL`，口径与票 12 的
+    `_consolidation_scope` / `_kaogong_scope` 逐字一致。
+
+    NULL 口径同票 03/04/06/09/10：真实库 615 行 `user_id IS NULL` 的
+    memoryitem，判「不可见」会让单人部署下的反思整体空转。NULL 是
+    「未记录」不是「属于所有人」。
+
+    `principal=None`（scheduler 定时任务 / worker）保持全表：反思是系统
+    行为，收窄成空转会让 open 冲突账本与陈旧记忆永远没人处理。**这个
+    口径是刻意的**，别让后来人以为漏了（同票据口径 4）。
+    """
+    if principal is None:
+        return None
+    if bool(getattr(principal, "is_admin", False)):
+        return None
+    from lantai.services.work_item_service import _viewer_of
+
+    viewer = _viewer_of(principal)
+    return (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
+
+
+def health_scan(session, principal=None) -> dict:
     """健康扫描：问题驱动反思输入（零 LLM，纯 SQL）。
+
+    归属（票 .scratch/readside-gaps/14）：此前三处扫描全表、一个身份都
+    不取——A 触发一次反思，B 的记忆正文就被拼进 `_curate` 的 user prompt
+    发往外部 LLM。`wrap_as_data` 的围栏只防注入不防归属，所以这里必须
+    收窄候选集本身。
 
     规则 R1-R3 默认开（superseded 残留 / 过期时间窗 / open 冲突账本），
     R4/R5 受 REFLECT_STALE_SCAN_ENABLED 控制（低帮助率 / 低价值陈旧）。
@@ -151,8 +181,15 @@ def health_scan(session) -> dict:
     for e in session.exec(select(MemoryEdge).where(MemoryEdge.relation == "supersedes")).all():
         superseded_by.setdefault(e.target_memory_id, e.source_memory_id)
 
+    scope = _reflect_scope(principal)
+    from lantai.services.work_item_service import _viewer_of
+
+    viewer = None if scope is None else _viewer_of(principal)
+    q = select(MemoryItem).where(MemoryItem.status == "active")
+    if scope is not None:
+        q = q.where(scope)
     candidates: list[dict] = []
-    for m in session.exec(select(MemoryItem).where(MemoryItem.status == "active")).all():
+    for m in session.exec(q).all():
         if m.id in superseded_by:
             candidates.append(_cand(m, "superseded", {"superseded_by": superseded_by[m.id]}))
             continue
@@ -179,7 +216,15 @@ def health_scan(session) -> dict:
 
     for ev in session.exec(select(ConflictEvent).where(ConflictEvent.status == "open")).all():
         m = session.get(MemoryItem, ev.memory_id)
-        if m:
+        # `session.get` 走主键直读，绕开上面的 scope——open 冲突账本会
+        # 指向任何人的记忆，这里必须补一次归属判定（宁 miss 不脏写）。
+        # scope 非 None 时 viewer 一定已算出（`_reflect_scope` 的两条
+        # 早退路径都返回 None），故这里不必重复判 admin。
+        if (
+            m
+            and m.status == "active"
+            and (scope is None or m.user_id == viewer or m.user_id is None)
+        ):
             candidates.append(
                 _cand(m, "open_conflict", {"conflict_event_id": ev.id, "detail": ev.detail})
             )
@@ -208,12 +253,16 @@ def health_scan(session) -> dict:
     return {"snapshot": snapshot, "candidates": batch}
 
 
-def _importance_waterline(session) -> float:
+def _importance_waterline(session, principal=None) -> float:
     """近窗口新增记忆 importance 累加（水位触发；无持久化时间戳，近似实现）。"""
     now = utcnow()
     start = now - timedelta(days=settings.REFLECT_IMPORTANCE_WINDOW_DAYS)
     total = 0.0
-    for m in session.exec(select(MemoryItem)).all():
+    q = select(MemoryItem)
+    scope = _reflect_scope(principal)
+    if scope is not None:
+        q = q.where(scope)
+    for m in session.exec(q).all():
         created = _as_utc(m.created_at)
         if created is not None and created >= start:
             total += m.importance
@@ -341,27 +390,37 @@ def _record_reflect_run(run_at=None, **fields) -> None:
         logger.warning("reflect_run 落库失败（审计留痕不静默）: %s", exc, exc_info=True)
 
 
-def _safe_waterline() -> float:
+def _safe_waterline(principal=None) -> float:
     """异常路径尽力补水位（读取失败不阻断留痕，宁 miss 不静默）。"""
     try:
         with db.get_session() as s:
-            return round(_importance_waterline(s), 2)
+            return round(_importance_waterline(s, principal=principal), 2)
     except Exception:
         return 0.0
 
 
-def run_reflect_once(source: str = "unknown") -> dict:
-    """反思主入口（异常留痕后原样抛出，供调度器日志/下轮重试）。"""
+def run_reflect_once(source: str = "unknown", principal=None) -> dict:
+    """反思主入口（异常留痕后原样抛出，供调度器日志/下轮重试）。
+
+    归属（票 .scratch/readside-gaps/14）：`principal` 是**可选**形参——
+    scheduler / worker 不传（保持全表，见 `_reflect_scope` 口径注释），
+    REST / MCP 入口传（按 `user_id` 收窄）。默认 None 保证所有既有内部
+    调用方行为逐字不变。
+    """
     if source not in _REFLECT_RUN_SOURCES:
         raise ValueError(f"invalid reflect run source: {source}")
     try:
-        return _run_reflect_once(source=source)
+        return _run_reflect_once(source=source, principal=principal)
     except Exception as exc:
-        _record_reflect_run(source=source, waterline=_safe_waterline(), error=str(exc))
+        _record_reflect_run(
+            source=source,
+            waterline=_safe_waterline(principal=principal),
+            error=str(exc),
+        )
         raise
 
 
-def _run_reflect_once(source: str) -> dict:
+def _run_reflect_once(source: str, principal=None) -> dict:
     """反思主入口：健康扫描 →（水位触发新记忆蒸馏）→ curator → 提案 → 裁决。
 
     自动应用（需 REFLECT_AUTO_APPLY=True，默认 False）：confidence >=
@@ -369,11 +428,22 @@ def _run_reflect_once(source: str) -> dict:
     risk=medium 强制 pending；accept=false / risk=high 丢弃（宁 miss）。
     ADR-0050 决策 7a：默认关——后台合成产物不自动生效，人工闸门不被绕过。
     返回统计 + 健康快照前后对比（自证）。
+
+    归属（票 .scratch/readside-gaps/14）：**四处**扫描（候选集 / related /
+    theme 触发 / rejecter 的 evidence_ids）必须同批过 scope。只收窄候选集
+    是不够的——后三处都是独立路径，漏一处 B 的正文仍会经它们进提示词。
+    其中 evidence_ids 来自 LLM 输出、是**攻击者可控字段**，curator 回一个
+    别人的记忆 id 就能把那条正文送出去，故改成 `id.in_(...)` + scope 查询，
+    不再按主键 `session.get` 直读（那是归属盲区）。
     """
     with db.get_session() as s:
-        scan = health_scan(s)
-        waterline = _importance_waterline(s)
-        related = s.exec(select(MemoryItem).where(MemoryItem.status == "active")).all()
+        scan = health_scan(s, principal=principal)
+        waterline = _importance_waterline(s, principal=principal)
+        q = select(MemoryItem).where(MemoryItem.status == "active")
+        scope = _reflect_scope(principal)
+        if scope is not None:
+            q = q.where(scope)
+        related = s.exec(q).all()
         related_texts = "\n".join(f"- ({m.memory_type}) {m.key}: {m.content}" for m in related[:20])
 
     candidates = scan["candidates"]
@@ -391,7 +461,10 @@ def _run_reflect_once(source: str) -> dict:
     if theme_triggered:
         start = utcnow() - timedelta(days=settings.REFLECT_IMPORTANCE_WINDOW_DAYS)
         with db.get_session() as s:
-            for m in s.exec(select(MemoryItem)).all():
+            tq = select(MemoryItem)
+            if scope is not None:
+                tq = tq.where(scope)
+            for m in s.exec(tq).all():
                 created = _as_utc(m.created_at)
                 if created is None or created < start:
                     continue
@@ -409,9 +482,15 @@ def _run_reflect_once(source: str) -> dict:
     auto_applied = pending = discarded = rejecter_failed = 0
     for prop in props:
         with db.get_session() as s:
-            evidence_texts = "\n".join(
-                m.content for eid in prop.evidence_ids if (m := s.get(MemoryItem, eid)) is not None
-            )
+            # 归属（票 14，第四条扫描路径）：`prop.evidence_ids` 来自 LLM 输出，
+            # 是**攻击者可控字段**——curator 只要回一个别人的记忆 id，这条正文
+            # 就被拼进 rejecter 的提示词送出去。候选集收窄管不到这里，
+            # 必须同样过 scope（宁 miss 不脏写：越权证据直接不取，
+            # rejecter 拿到空文本会按 no evidence text 判 high 风险丢弃）。
+            eq = select(MemoryItem).where(MemoryItem.id.in_(prop.evidence_ids))
+            if scope is not None:
+                eq = eq.where(scope)
+            evidence_texts = "\n".join(m.content for m in s.exec(eq).all())
         verdict = _reject(prop, evidence_texts)
         if verdict.get("unavailable"):
             rejecter_failed += 1
@@ -448,7 +527,7 @@ def _run_reflect_once(source: str) -> dict:
             pending += 1  # 保持 pending，进 /proposals 待审
 
     with db.get_session() as s:
-        scan_after = health_scan(s)
+        scan_after = health_scan(s, principal=principal)
 
     record_run("reflect")
     _record_reflect_run(

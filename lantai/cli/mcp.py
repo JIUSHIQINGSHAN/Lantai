@@ -678,10 +678,15 @@ def handle_crystal_decide(params: dict) -> dict:
 
 
 def handle_reflect_run(params: dict) -> dict:
-    """执行一轮反思：健康扫描 -> 提案 -> 裁决（高置信 auto-apply，中风险落 pending，宁 miss 不脏写）。"""
+    """执行一轮反思：健康扫描 -> 提案 -> 裁决（高置信 auto-apply，中风险落 pending，宁 miss 不脏写）。
+
+    归属（票 .scratch/readside-gaps/14）：反思会把记忆正文拼进 curator 的
+    user prompt 发往外部 LLM。宿主透传 `user_id` 时据此收窄扫描范围；
+    不透传留 None（全表，scheduler 口径）——不猜身份。
+    """
     from lantai.evolution.reflector import run_reflect_once
 
-    return run_reflect_once(source="manual")
+    return run_reflect_once(source="manual", principal=_principal_from_params(params))
 
 
 def handle_mem_usage(params: dict) -> dict:
