@@ -69,12 +69,48 @@ def evaluate_memory_item_grade(memory: MemoryItem) -> dict:
     }
 
 
-def run_kaogong_cycle(session: Session | None = None) -> dict:
-    """全库执行一次考功评定周期。"""
+def _kaogong_scope(principal):
+    """考功候选集的归属条件（票 .scratch/readside-gaps/12）。
+
+    admin / `principal=None` → None（不过滤）；否则
+    `user_id == viewer OR IS NULL`。
+
+    NULL 口径同票 03/04/06/09/10：真实库 615 行 `user_id IS NULL` 的
+    memoryitem（迁移前/脚本直插），判"不可见"会让单人部署下的考功直接
+    空转。NULL 是「未记录」不是「属于所有人」。
+
+    `principal=None`（worker/CLI/scheduler）保持全表——定时任务是系统行为，
+    收窄成空转会让衰减与晋升整体停摆。这个口径是刻意的，见票据口径 4。
+    """
+    if principal is None:
+        return None
+    if bool(getattr(principal, "is_admin", False)):
+        return None
+    from lantai.services.work_item_service import _viewer_of
+
+    viewer = _viewer_of(principal)
+    return (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
+
+
+def run_kaogong_cycle(session: Session | None = None, principal=None) -> dict:
+    """执行一次考功评定周期。
+
+    归属（票 .scratch/readside-gaps/12）：此前候选集是全表
+    `select(MemoryItem).where(status=="active")`，一个身份都不取——
+    任何持有 API key 者都能借此改写**别人**记忆的
+    `tier` / `decay_class` / `importance`（第七轮实证 0.9 → 0.1，
+    且 importance 降下去没有回滚路径）。读侧缺口只是"看到"，
+    这里是真改，所以宁 miss 不脏写：收窄后没有可评估的记忆就返回
+    全 0 报告，不去动别人的。
+    """
     global _LATEST_KAOGONG_REPORT
 
     def _run(s: Session) -> dict:
-        items = s.exec(select(MemoryItem).where(MemoryItem.status == "active")).all()
+        q = select(MemoryItem).where(MemoryItem.status == "active")
+        scope = _kaogong_scope(principal)
+        if scope is not None:
+            q = q.where(scope)
+        items = s.exec(q).all()
 
         promoted_count = 0
         demoted_count = 0

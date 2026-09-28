@@ -78,11 +78,15 @@ def evolve_run_route():
 
 
 @router.post("/evolution/kaogong")
-def kaogong_run_route():
-    """考功（ADR-0031）：执行一次全库记忆价值演化考评周期。"""
+def kaogong_run_route(ctx=Depends(get_current_user)):
+    """考功（ADR-0031）：执行一次记忆价值演化考评周期。
+
+    归属（票 .scratch/readside-gaps/12）：此前一个身份都不取，候选集是全表——
+    任何持 key 者都能借此改写**别人**记忆的 tier/importance（不可逆）。
+    """
     from lantai.services.kaogong_service import run_kaogong_cycle
 
-    return run_kaogong_cycle()
+    return run_kaogong_cycle(principal=ctx)
 
 
 @router.get("/evolution/kaogong/report")
@@ -94,11 +98,14 @@ def kaogong_report_route():
 
 
 @router.post("/evolution/consolidate")
-def consolidate_run_route():
-    """沉潜（ADR-0036）：执行一次闲时夜梦记忆沉淀与折叠压缩周期。"""
+def consolidate_run_route(ctx=Depends(get_current_user)):
+    """沉潜（ADR-0036）：执行一次闲时夜梦记忆沉淀与折叠压缩周期。
+
+    归属（票 .scratch/readside-gaps/12）：此前一个身份都不取，全表折叠/裁剪。
+    """
     from lantai.services.consolidation_service import run_consolidation_cycle
 
-    return run_consolidation_cycle()
+    return run_consolidation_cycle(principal=ctx)
 
 
 @router.get("/evolution/consolidate/report")

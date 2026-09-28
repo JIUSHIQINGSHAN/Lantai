@@ -16,7 +16,28 @@ def _lane_strength(importance: float, use_count: int, lane: str) -> float:
     return base_s + boost * importance + 2 * math.log1p(use_count)
 
 
-def apply_forgetting():
+def _forgetting_scope(principal):
+    """遗忘候选集的归属条件（票 .scratch/readside-gaps/12）。
+
+    admin / `principal=None` → None（不过滤）；否则
+    `user_id == viewer OR IS NULL`。NULL 口径同票 03/04/06/09/10：
+    真实库 615 行 NULL 属主 memoryitem，判不可见会让单人部署下的
+    衰减与自动归档整体空转。
+
+    `principal=None`（定时任务）保持全表——衰减是系统行为，
+    收窄成空转会让 archive 门槛永不触发。口径刻意如此，见票据口径 4。
+    """
+    if principal is None:
+        return None
+    if bool(getattr(principal, "is_admin", False)):
+        return None
+    from lantai.services.work_item_service import _viewer_of
+
+    viewer = _viewer_of(principal)
+    return (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
+
+
+def apply_forgetting(principal=None):
     """衰减 + 自动归档。
 
     - 计算每条记忆的 decay_score（指数衰减）
@@ -25,12 +46,20 @@ def apply_forgetting():
     - decay 低于 ARCHIVE_DECAY_THRESHOLD 时自动转 archived
     - working memory 超过 TTL 且无帮助时转 archived
     - archived 记忆不参与检索（WHERE status='active'），但物理不删
+
+    归属（票 .scratch/readside-gaps/12）：此前候选集是全表，一个身份都不取——
+    任何持 key 者都能把**别人**的记忆改成 archived，而 archived 没有 undo
+    入口。宁 miss 不脏写：收窄后没有可处理的记忆就空跑，不动别人的。
     """
     now = utcnow()
     batch_size = 100
     with db.get_session() as s:
         batch_count = 0
-        for m in s.exec(select(MemoryItem).where(MemoryItem.status == "active")).all():
+        q = select(MemoryItem).where(MemoryItem.status == "active")
+        scope = _forgetting_scope(principal)
+        if scope is not None:
+            q = q.where(scope)
+        for m in s.exec(q).all():
             changed = False
             # procedural 永不衰减：跳过衰减与归档判定，铁律天然浮顶
             if m.decay_class == "procedural":

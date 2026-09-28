@@ -114,17 +114,43 @@ def _proposal_quadruple(cluster_items: list[MemoryItem]) -> dict:
     }
 
 
+def _consolidation_scope(principal):
+    """沉潜在选集的归属条件（票 .scratch/readside-gaps/12）。
+
+    admin / `principal=None` → None（不过滤）；否则
+    `user_id == viewer OR IS NULL`。NULL 口径同票 03/04/06/09/10：
+    单人部署下 NULL 属主行必须仍参与，否则沉潜整体空转。
+    `principal=None`（定时任务/worker）保持全表，口径见票据口径 4。
+    """
+    if principal is None:
+        return None
+    if bool(getattr(principal, "is_admin", False)):
+        return None
+    from lantai.services.work_item_service import _viewer_of
+
+    viewer = _viewer_of(principal)
+    return (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
+
+
 def find_consolidation_clusters(
-    session: Session, min_cluster_size: int | None = None
+    session: Session, min_cluster_size: int | None = None, principal=None
 ) -> list[list[MemoryItem]]:
     """扫描活跃记忆，按 domain/lane 与主题聚类出可折叠的碎片记忆集。
 
     min_cluster_size 缺省取 settings.CONSOLIDATION_MIN_CLUSTER_SIZE（ADR-0002 零硬编码）。
+
+    归属（票 .scratch/readside-gaps/12）：此前候选集是全表，一个身份都不取——
+    任何持 key 者都能借此把**别人**的记忆折叠/提纯/改写。作用在**所有模式**上
+    （off/shadow/enforce）：shadow 的报告同样不该汇总别人的记忆。
     """
     if min_cluster_size is None:
         min_cluster_size = settings.CONSOLIDATION_MIN_CLUSTER_SIZE
     """扫描活跃记忆，按 domain/lane 与主题聚类出可折叠的碎片记忆集。"""
-    active_items = session.exec(select(MemoryItem).where(MemoryItem.status == "active")).all()
+    q = select(MemoryItem).where(MemoryItem.status == "active")
+    scope = _consolidation_scope(principal)
+    if scope is not None:
+        q = q.where(scope)
+    active_items = session.exec(q).all()
 
     # 1. 按 (domain, lane) 分组
     group_map = defaultdict(list)
@@ -424,21 +450,32 @@ def consolidate_cluster(
         return _execute(s)
 
 
-def prune_decayed_synapses(threshold: float | None = None, session: Session | None = None) -> int:
+def prune_decayed_synapses(
+    threshold: float | None = None,
+    session: Session | None = None,
+    principal=None,
+) -> int:
     """自动修剪极度衰减的边缘碎片（转为 archived 休眠）。
 
     threshold 缺省取 settings.CONSOLIDATION_PRUNE_THRESHOLD（ADR-0002 零硬编码）。
+
+    归属（票 .scratch/readside-gaps/12）：archived 没有 undo 入口，
+    此前任何持 key 者都能借此把别人的记忆休眠。宁 miss 不脏写。
     """
     if threshold is None:
         threshold = settings.CONSOLIDATION_PRUNE_THRESHOLD
 
     def _prune(s: Session) -> int:
-        decayed_items = s.exec(
+        q = (
             select(MemoryItem)
             .where(MemoryItem.status == "active")
             .where(MemoryItem.decay_score < threshold)
             .where(MemoryItem.helpful_count == 0)
-        ).all()
+        )
+        scope = _consolidation_scope(principal)
+        if scope is not None:
+            q = q.where(scope)
+        decayed_items = s.exec(q).all()
 
         pruned = 0
         for item in decayed_items:
@@ -550,8 +587,14 @@ def _refused_report(mode: str, error: str) -> dict:
     }
 
 
-def run_consolidation_cycle(session: Session | None = None) -> dict:
-    """运行一次完整的沉潜夜梦沉淀周期（ADR-0050：产物生效通道随模式分流）。"""
+def run_consolidation_cycle(session: Session | None = None, principal=None) -> dict:
+    """运行一次完整的沉潜夜梦沉淀周期（ADR-0050：产物生效通道随模式分流）。
+
+    归属（票 .scratch/readside-gaps/12）：此前一个身份都不取，聚类与裁剪
+    的候选集都是全表——任何持 key 者都能借此折叠/提纯/休眠**别人**的记忆
+    （archived 不可撤销）。作用在 off/shadow/enforce **所有模式**上：
+    shadow 的报告同样不该汇总别人的记忆。
+    """
 
     def _run(s: Session) -> dict:
         global _LAST_CONSOLIDATION_REPORT
@@ -603,7 +646,7 @@ def run_consolidation_cycle(session: Session | None = None) -> dict:
             _LAST_CONSOLIDATION_REPORT = report
             return report
 
-        clusters = find_consolidation_clusters(s)
+        clusters = find_consolidation_clusters(s, principal=principal)
         new_count = 0
         proposals_created = 0
         purified_ok = 0
@@ -637,7 +680,7 @@ def run_consolidation_cycle(session: Session | None = None) -> dict:
                     # report 契约：proposals_created 在 shadow 期 = 影子提案数 = 直写数
                     proposals_created += 1
 
-        pruned = prune_decayed_synapses(session=s)
+        pruned = prune_decayed_synapses(session=s, principal=principal)
         # status 判定扩展（ADR-0050 决策 3）：只产提案的运行不再误报 idle
         status = "success" if (new_count + proposals_created + pruned) > 0 else "idle"
 

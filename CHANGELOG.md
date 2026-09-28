@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **演化类写侧归属——考功/沉潜/遗忘不再批量改写别人的记忆（2026-09-28，票据 `.scratch/readside-gaps/issues/12-kaogong-writes-cross-user.md`）**：
+  - **背景实证**（`.scratch/readside-audit/probe_round7.py` 实证 + 落库字段核验）：三个「全库演化」入口一个身份都不取，候选集是全表 `select(MemoryItem).where(status=="active")`。考功把 B 的 `importance` 从 **0.9 改写成 0.1**、`tier` 从 `working` 改成 `longterm`、`decay_class` 一并改；沉潜把别人的碎片标成 `consolidated` 并**新生成一条带别人正文的主记忆**；遗忘改 `decay_score` 并把低衰减记忆置 `archived`。**读侧缺口只是「看到」，这里是真改，而且多数不可逆**——`importance` 降了没有回滚路径，`archived` 没有 undo 入口。这正是「宁 miss 不脏写」要防的：宁可漏一次考功，不能错改别人的权重。
+  - **三处同构一并修**（分开修会留下「以为修完了」的错觉）：`run_kaogong_cycle` / `find_consolidation_clusters` + `prune_decayed_synapses` / `apply_forgetting` 全部新增 `principal=None` 形参，各配一个 `_*_scope(principal)` 助手；`run_consolidation_cycle` 把 principal 分别透传给聚类与裁剪两条候选集。口径与票 03/04/06/09/10 逐字一致：**admin / `principal=None` → 不过滤**，否则 `user_id == viewer OR IS NULL`。
+  - **NULL 属主必须可见**：真实库 615 行 `memoryitem` 是 `user_id IS NULL`（迁移前/脚本直插）。判「不可见」会让单人部署下的考功晋升、衰减归档、碎片折叠整体空转。NULL 是「未记录」不是「属于所有人」。
+  - **`principal=None` 保持全表**（worker/CLI/scheduler/定时任务）：演化是系统行为，收窄成空转会让 archive 门槛永不触发、晋升停摆。这个口径是刻意的，票据口径 4 有记录。
+  - **路由层**：`POST /evolution/kaogong` 与 `POST /evolution/consolidate` 补 `ctx=Depends(get_current_user)` 并下传。此前这两个端点连身份都不取——任何持 key 者都能借 REST 触发别人的权重改写。
+  - **测试增量**：`tests/test_evolution_write_ownership.py` 18 例，三个 service 各一组 + 路由层一组。每条决定性断言都落在**落库行的字段值**上（`importance` / `status` / `decay_score` / `tier`），不只看报告计数——计数为 0 可能有一堆别的原因（没数据、样本不足、状态不对）。含三条「反向」用例保功能没被修废：A 自己的记忆照常降权/晋升/归档、NULL 属主老行照常处理、admin 与 `principal=None` 仍全表。**不 mock 内部逻辑**：jieba 聚类、TrustMem 校验、衰减公式全部真实执行，只替 LLM 提纯段与外部向量存储。
+  - **踩坑记录（两条都会让测试变空转，已写进代码注释）**：① `patch("lantai.retrieval.hybrid.index_memory_item")` 不生效——`consolidation_service` 是 `from lantai.retrieval.hybrid import index_memory_item` 的模块级绑定，必须 patch `lantai.services.consolidation_service.index_memory_item`；单跑时 Chroma 单例维度是 8 所以静默通过，**进了全量套件才暴露**（全量先跑者把单例建成 1024 维 → `InvalidDimensionException`）。② 不替 `chat_json` 时真实 LLM 失败 → `consolidate_cluster` 返回 None → 什么都不折叠 → 身份传没传都一片绿。另：`ew_env` fixture 须自建 FTS5 虚表（`create_all` 不建它，少了它整笔折叠回滚）。
+  - **变异验证 13/13 全杀**（`.scratch/readside-gaps/mutation_check_12.py`，子进程隔离）：含「候选集不收窄」「作用域忽略 admin」「NULL 判不可见」「形参丢失」「路由不取身份」「周期不透传 principal 给聚类/裁剪」六类。第一轮 5 个 MISSED 全部对应上述真实缺口（NULL 口径、聚类路径、周期透传、路由层、admin 口径），补测试后全杀。全量 pytest **1579 passed / 0 failed**（基线 1577）。
+
 - **读侧归属收窄——`/sources` 来源凭证与 `/retrieval/recent-events` 查询词不再跨用户可读；顺带修掉票 11 归属列迁移在真实库从未生效的真 bug（2026-09-28，票据 `.scratch/readside-gaps/issues/10-sources-recent-events-no-identity.md`）**：
   - **背景实证**（`.scratch/readside-audit/probe_round5.py`）：两个端点一个身份都不取。`GET /sources` 把 `Source.config` 原样吐出——`config` 是 JSON 列，按设计放的就是 http header、token、api key 这类**连接凭证**；`GET /retrieval/recent-events` 吐出 `query_text`——**用户问过什么，比记忆正文更直接暴露意图**，真实库 918 行。探针种一个中一个。
   - **顺带挖出的真 bug（比本票本身更严重）**：票 11 那次归属列迁移**在真实库上从未生效过**。`migrations_v022.py` 写的表名是 `prompt_template` / `skill_crystal`（带下划线），而真实表叫 `prompttemplate` / `skillcrystal`（SQLModel 默认无下划线拼接）。`_has_column` 对**不存在的表返回 True**，所以写错表名**不报错**，只是那次 `ALTER TABLE` 静默不执行——归属列一个都没加，`/prompts`、`/crystals` 的读侧一查不存在的列就是 500。已修表名，并在**真实库副本**上实证：迁移前四表 `user_id=False`，迁移后全部 True，跑两遍不重复加列，919 行数据不动。
