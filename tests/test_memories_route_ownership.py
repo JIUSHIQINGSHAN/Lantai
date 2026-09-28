@@ -126,7 +126,19 @@ class TestNoRegression:
         assert "mem_own_b_1" not in ids, f"图谱越权返回了他人的记忆（{ids}）"
 
     def test_service_still_supports_principal_none(self, param_env):
-        """`principal=None`（CLI/eval/worker 内部调用）语义不变：不过滤、全量返回。"""
+        """`principal=None`（MCP 宿主不透传）收敛到 `default`，**不是全表**。
+
+        本测试原断言"None 不过滤、全量返回"（含 B 的 `mem_own_b_1`），
+        按票 `.scratch/mcp-identity-gaps/02` 清点结果改写。依据：
+        `mem_recent` 是 20 个读工具里唯一被实证的洞（None → 含 B 的正文；
+        带 user_id → 各只见自己 + NULL 老行），票面定的是**改收敛口径**
+        而非收紧/放开。三条种子里没有 NULL 属主行，收敛后只剩
+        `default` 名下——**这条断言从"能看全部"改成"收敛生效"**，
+        不是把失败抹掉。
+
+        同批另一处护栏（`test_vault_null_owner_rows.py`）已同步改写，
+        两处不再互相矛盾。
+        """
         from lantai.services.memory_service import list_memories
 
         session_factory, _ = param_env
@@ -134,17 +146,22 @@ class TestNoRegression:
         page = list_memories(limit=100, principal=None)
         items = page.get("memories") or page.get("items") or []
         ids = {m["id"] for m in items}
-        assert {"mem_own_a_1", "mem_own_a_2", "mem_own_b_1"} <= ids, (
-            f"principal=None 的全量语义被破坏（返回 {ids}）"
-        )
+
+        assert "mem_own_a_1" not in ids, f"无身份调用读到了 A 的记忆：{ids}"
+        assert "mem_own_b_1" not in ids, f"无身份调用读到了 B 的记忆：{ids}"
 
     def test_row_exposes_owner_fields(self, param_env):
-        """顺带：`_row` 补 user_id/tenant_id，让调用方能自查归属。"""
+        """顺带：`_row` 补 user_id/tenant_id，让调用方能自查归属。
+
+        **改用显式 principal 取行**：原先用 `principal=None` 纯为图方便，
+        现在 None 会收敛到 `default`，取不到 `u1` 那条（见上一条）。
+        要验证的是"行里有 user_id/tenant_id"，与身份取哪条无关。
+        """
         from lantai.services.memory_service import list_memories
 
         session_factory, _ = param_env
         _seed(session_factory)
-        page = list_memories(limit=100, principal=None)
+        page = list_memories(limit=100, principal=_principal("u1", "t1"))
         items = page.get("memories") or page.get("items") or []
         assert items, "前置条件：有数据"
         row = next(m for m in items if m["id"] == "mem_own_a_1")

@@ -730,6 +730,34 @@ def build_memories_page(
     if memory_type:
         conds.append(MemoryItem.memory_type == memory_type)
 
+    # 归属·无身份（票 `.scratch/mcp-identity-gaps/02` 续）：`principal=None`
+    # 时**此前一个归属条件都不加**——整个块挂在下面的 `if principal:` 里，
+    # 同文件 :752 那段精心写的 `viewer_of` 收敛 + `OR IS NULL` 整段不可达。
+    # MCP `mem_recent` 的宿主不透传 `user_id` 时正是 None
+    # （`mcp.py:132` 的 `_principal_from_params` 返回 None），于是一次调用
+    # 拿走全库记忆正文。实测（`.scratch/mcp-identity-gaps/
+    # probe_02c_three_way.py`）：None → 4 条（含 B 的私有记忆正文），
+    # user-A → 2 条，user-B → 2 条。
+    #
+    # 收敛到 `"default"` 而不是一律拒，也不是保持全表：
+    # · 保持全表 = 上面那个洞，不修；
+    # · 一律拒 = MCP 客户端（普遍不传 user_id）的 `mem_recent` 全部空转；
+    # · 收敛到 default = 与同文件 :503/:532/:644 三处、`cognitive_context`、
+    #   `candidates_pending`、`build_overview` 同一口径（那些实测都是
+    #   None → default），不新造第四种。
+    # 真实库唯一非空属主就是 `default`，单人部署收敛后照见自己的全部历史。
+    #
+    # **只改 None 这一种形态**，显式 principal 与 admin 逐字不动：
+    # admin 走 HTTP 时是 `user_id="api_key", role="admin"`
+    # （`auth.py:168`），本来就落进下面的 user 分支被收窄；admin 带
+    # `user_id=None` 时则靠下面的 user 判空**意外**绕过收窄。两种形态行为
+    # 不同是既存事实，统一它属于另一处改动（已另开票），本票不夹带——
+    # 按 01b 教训分开提交、分开验证。
+    if principal is None:
+        from lantai.core.acl import viewer_of
+
+        conds.append((MemoryItem.user_id == viewer_of(None)) | (MemoryItem.user_id.is_(None)))
+
     if principal:
         if getattr(principal, "tenant_id", None):
             conds.append(MemoryItem.tenant_id == principal.tenant_id)
