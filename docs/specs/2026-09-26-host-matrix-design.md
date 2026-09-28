@@ -74,13 +74,13 @@ lantai/integrations/host_adapters.py   ← 各宿主帧翻译（薄，只做字�
 ```python
 @dataclass(frozen=True)
 class HostRequest:
-    action: str                 # "query" | "dialogue" | "backfill" | "checkpoint" | "checkpoint_write"
+    action: str  # "query" | "dialogue" | "backfill" | "checkpoint" | "checkpoint_write"
     query: str = ""
     session_id: str = ""
-    turn: int | None = None     # 1-based；非法（0/负数/非 int/bool）→ None（宁 miss）
-    text: str = ""              # dialogue 用
+    turn: int | None = None  # 1-based；非法（0/负数/非 int/bool）→ None（宁 miss）
+    text: str = ""  # dialogue 用
     event_id: str = ""
-    used_ids: tuple[str, ...] = ()   # backfill 用；空/含非 str → 视为无效回执
+    used_ids: tuple[str, ...] = ()  # backfill 用；空/含非 str → 视为无效回执
     request_id: str | None = None
     blocks: dict = field(default_factory=dict)
 ```

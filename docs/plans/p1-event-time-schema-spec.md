@@ -73,10 +73,12 @@ MemoryCheckpoint 变更快照               event_time_precision  时刻的释�
 模型落点（`lantai/models/tables.py`，紧邻现有 `valid_from`/`valid_to` 两行改写 + 新增两行）：
 
 ```python
-event_time: datetime | None = Field(default=None, index=True)   # 事件轴：现实发生时刻
-event_time_precision: str = Field(default="")                   # year/month/day/hour/minute/second/fuzzy
-valid_from: datetime | None = Field(default_factory=utcnow, index=True)  # 主张有效期起点（语义必填）
-valid_to: datetime | None = Field(default=None, index=True)     # 主张有效期终点（NULL=未失效）
+event_time: datetime | None = Field(default=None, index=True)  # 事件轴：现实发生时刻
+event_time_precision: str = Field(default="")  # year/month/day/hour/minute/second/fuzzy
+valid_from: datetime | None = Field(
+    default_factory=utcnow, index=True
+)  # 主张有效期起点（语义必填）
+valid_to: datetime | None = Field(default=None, index=True)  # 主张有效期终点（NULL=未失效）
 ```
 
 > `datetime` 导入与 `utcnow` 已在该文件顶部可用（`lantai/models/tables.py:33-37`）。
@@ -257,24 +259,12 @@ if user_version < 21:
     if not _has_column(conn, "memoryitem", "event_time"):
         conn.execute("ALTER TABLE memoryitem ADD COLUMN event_time DATETIME")
     if not _has_column(conn, "memoryitem", "event_time_precision"):
-        conn.execute(
-            "ALTER TABLE memoryitem ADD COLUMN event_time_precision TEXT DEFAULT ''"
-        )
+        conn.execute("ALTER TABLE memoryitem ADD COLUMN event_time_precision TEXT DEFAULT ''")
     # DML 常量字面量回填（无外部输入，无注入面；UPDATE 语义见 §5.3）
-    conn.execute(
-        "UPDATE memoryitem SET valid_from = created_at WHERE valid_from IS NULL"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS ix_memoryitem_event_time "
-        "ON memoryitem (event_time)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS ix_memoryitem_valid_from "
-        "ON memoryitem (valid_from)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS ix_memoryitem_valid_to ON memoryitem (valid_to)"
-    )
+    conn.execute("UPDATE memoryitem SET valid_from = created_at WHERE valid_from IS NULL")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_memoryitem_event_time ON memoryitem (event_time)")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_memoryitem_valid_from ON memoryitem (valid_from)")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_memoryitem_valid_to ON memoryitem (valid_to)")
     conn.execute("PRAGMA user_version = 21")
     conn.commit()
     logger.info("数据库增量迁移 v21 完成（更漏双时间轴）")

@@ -44,9 +44,9 @@ pending（事件落库默认） ──backfill──▶ acked（receipt_at=回�
 ### 3. Schema 变更（`RetrievalEvent`）
 
 ```python
-request_id: str | None      # 索引；一次注入调用标识
-receipt_status: str         # "pending"/"acked"/"missed"，默认 "pending"，索引
-receipt_at: datetime | None # 回执状态落定时刻
+request_id: str | None  # 索引；一次注入调用标识
+receipt_status: str  # "pending"/"acked"/"missed"，默认 "pending"，索引
+receipt_at: datetime | None  # 回执状态落定时刻
 ```
 
 迁移 `db.py` 链 **v21 → v22**（表存在守卫 + `_has_column` 幂等 + 两枚索引，纪律同 v21）。

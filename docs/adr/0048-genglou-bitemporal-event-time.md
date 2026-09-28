@@ -33,7 +33,7 @@
 
 ```python
 event_time: datetime | None = Field(default=None, index=True)
-event_time_precision: str = Field(default="")            # year/month/day/hour/minute/second/fuzzy
+event_time_precision: str = Field(default="")  # year/month/day/hour/minute/second/fuzzy
 valid_from: datetime | None = Field(default_factory=utcnow, index=True)
 valid_to: datetime | None = Field(default=None, index=True)
 ```

@@ -24,7 +24,9 @@
 
 ```python
 # 沉潜过审（ADR-0050/票 07）：巩固产物过审开关（默认 off = 现行行为零漂移）
-CONSOLIDATION_AUDIT_MODE: str = "off"  # off/shadow/enforce；非法值 fail-loud：拒绝执行巩固并 ERROR 留痕
+CONSOLIDATION_AUDIT_MODE: str = (
+    "off"  # off/shadow/enforce；非法值 fail-loud：拒绝执行巩固并 ERROR 留痕
+)
 ```
 
 落点：settings.py 沉潜相关段（autodream 段 :312-317 后新开小节），同段附三个运营参数：`CONSOLIDATION_SHADOW_MAX_DAYS`（决策 4）、`CONSOLIDATION_REJECTED_COOLDOWN_DAYS`（决策 3）、`CONSOLIDATION_AGGREGATE_MASTER_MIN_SOURCES`（聚合主记忆判定阈值，`find_consolidation_clusters` 用于跳过已聚合主记忆防无限递归折叠；ADR-0002 零硬编码，settings.py:319-322）。取互斥单枚三值（与更漏三布尔正交面不同构）；**服务内消费**（`consolidate_cluster`/`run_consolidation_cycle` 读 settings），调度注册与 job id 不动（`scheduler.py:346-356`；`tests/test_scheduler.py:243` 的 job id 集合断言不破）。合并时默认 `off`；影子跑一周后由维护者决定切 `enforce`（硬时限见决策 4）。
