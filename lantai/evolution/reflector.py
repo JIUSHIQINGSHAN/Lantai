@@ -164,6 +164,23 @@ def _reflect_scope(principal):
     return (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
 
 
+def _reflect_owns(mem, principal) -> bool:
+    """行级归属判定（票 `.scratch/proposal-apply-gaps/issues/16-*.md`）。
+
+    口径同 `memory_service._owns`：`session.get` 按主键直读，**绕开一切 SQL
+    层 scope**（票 14 的 rejecter 就是这么漏的）——所以 `propose_from_reflection`
+    的 evidence 走了 `id.in_` + scope，这里 target 仍要单独判一次。
+
+    NULL 属主判「不可见」会让单人部署下的反思整体空转，故放行；
+    admin / `principal=None` 全权。
+    """
+    if principal is None or bool(getattr(principal, "is_admin", False)):
+        return True
+    from lantai.services.work_item_service import _viewer_of
+
+    return (mem.user_id or None) in (None, _viewer_of(principal))
+
+
 def health_scan(session, principal=None) -> dict:
     """健康扫描：问题驱动反思输入（零 LLM，纯 SQL）。
 
@@ -316,12 +333,21 @@ def _reject(prop: MemoryProposal, evidence_texts: str) -> dict:
         }
 
 
-def propose_from_reflection(session, candidates: list[dict], curated: dict) -> list[MemoryProposal]:
+def propose_from_reflection(
+    session, candidates: list[dict], curated: dict, principal=None
+) -> list[MemoryProposal]:
     """curator 输出 → MemoryProposal（证据存在性校验 + 置信过滤）。
 
     证据校验：evidence_ids 必须指向库中真实存在的 MemoryItem（防编造 id）；
     update/merge/deprecate 必须携带证据（宁 miss）；add 允许无证据。
     返回已 refresh 的提案列表（脱离 session 后可安全读取）。
+
+    归属（票 `.scratch/proposal-apply-gaps/issues/16-*.md`）：「存在」不等于
+    「属于当前主体」。curator 的 evidence_ids 与 target_memory_id 都是
+    **LLM 输出即不可信输入**，回一个别人的记忆 id，这条 id 就进了提案的
+    evidence_ids——apply 时它会被归档 + 从 FTS 与向量库除名（无 undo）。
+    故存在性校验同时校验归属：别人的 id 一律不取进提案（宁 miss 不脏写，
+    不改成指向别处）。口径同票 12 的 `_reflect_scope`（admin / None 不过滤）。
     """
     props: list[MemoryProposal] = []
     for p in curated.get("proposals", []):
@@ -331,9 +357,17 @@ def propose_from_reflection(session, candidates: list[dict], curated: dict) -> l
         conf = float(p.get("confidence", 0.0))
         if conf < settings.REFLECT_MIN_CONFIDENCE:
             continue
-        evidence = [
-            e for e in (p.get("evidence_ids") or []) if session.get(MemoryItem, e) is not None
-        ]
+        # 归属过滤：一次 SQL 查全部 evidence，别人的 id 不进提案。
+        # 用 `id.in_(...)` + scope 而不是逐条 `session.get` 后判——后者正是
+        # 票 14 踩过两次的盲区（主键直读绕开 SQL 层 scope）。
+        evidence = []
+        raw_evidence = [e for e in (p.get("evidence_ids") or []) if e]
+        if raw_evidence:
+            eq = select(MemoryItem).where(MemoryItem.id.in_(raw_evidence))
+            scope = _reflect_scope(principal)
+            if scope is not None:
+                eq = eq.where(scope)
+            evidence = [m.id for m in session.exec(eq).all()]
         if ptype != "add" and not evidence:
             continue
         target = p.get("target_memory_id") or ""
@@ -343,6 +377,10 @@ def propose_from_reflection(session, candidates: list[dict], curated: dict) -> l
                 continue
             target_mem = session.get(MemoryItem, target)
             if not target_mem or target_mem.status != "active":
+                continue
+            # 归属：target 指向别人的记忆即整条丢弃（宁 miss 不脏写）。
+            # add 分支的 target 不寻址，故不判（其 evidence 已在上方过滤）。
+            if ptype != "add" and not _reflect_owns(target_mem, principal):
                 continue
             target = target_mem.id
         content = p.get("new_content", "")
@@ -476,7 +514,7 @@ def _run_reflect_once(source: str, principal=None) -> dict:
 
     curated = _curate(candidates, related_texts)
     with db.get_session() as s:
-        props = propose_from_reflection(s, candidates, curated)
+        props = propose_from_reflection(s, candidates, curated, principal=principal)
 
     cand_by_id = {c["memory_id"]: c for c in candidates}
     auto_applied = pending = discarded = rejecter_failed = 0
@@ -510,7 +548,7 @@ def _run_reflect_once(source: str, principal=None) -> dict:
         ):
             from lantai.evolution.promoter import apply_proposal
 
-            res = apply_proposal(prop.id)
+            res = apply_proposal(prop.id, principal=principal)
             if res.get("ok"):
                 auto_applied += 1
                 src = cand_by_id.get(prop.target_memory_id)

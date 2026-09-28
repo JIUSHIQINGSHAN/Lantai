@@ -92,7 +92,12 @@ def decide_proposal(proposal_id: str, req: ProposalDecisionReq, *, principal=Non
             prop.decided_by = "user"
             s.add(prop)
             s.commit()
-            return apply_proposal(proposal_id)
+            # principal 下传到 apply（票 .scratch/proposal-apply-gaps/issues/16）：
+            # approve 会 `apply_proposal` 直接写库，而提案的三个寻址字段全部
+            # 来自 LLM 输出——A 批准一条指向 B 的记忆的提案，就等于能改写
+            # B 的记忆（deprecate 归档 / merge 除名 / consolidation 折叠，
+            # 均无 undo）。归属校验在 service 层（worker/MCP 也走这条路）。
+            return apply_proposal(proposal_id, principal=principal)
         else:
             prop.status = ProposalStatus.REJECTED
             prop.decided_by = "user"

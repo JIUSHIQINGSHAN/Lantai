@@ -98,12 +98,108 @@ def _resolve_update_target(s, prop: MemoryProposal, key: str | None) -> tuple[ob
     return None, f"target not found: no active memory with key {key!r}"
 
 
-def apply_proposal(proposal_id: str) -> dict:
+def _target_ids(prop: MemoryProposal) -> list[str]:
+    """本提案要**写**的全部目标 id（寻址字段全来自 LLM 输出，见票 16）。
+
+    三类寻址字段都要算进去，一个都不能漏：
+    - `target_memory_id`：reflect/向量/寻址硬门的正规来源；
+    - `evidence_ids`：merge 证据环与 consolidation 折叠的**删除对象**，
+      add 分支则为它建 supports 边；
+    - `proposed_patch["key"]`：`_resolve_update_target` 的 key 回退解析结果
+      （`target_memory_id` 为空时它才是真正的目标，单看前者判不出问题）。
+
+    去重保序：同一 id 既是 target 又是 evidence 是常见形状（merge 的自引用）。
+    """
+    ids: list[str] = []
+    if prop.target_memory_id:
+        ids.append(prop.target_memory_id)
+    for eid in prop.evidence_ids or []:
+        if eid and eid not in ids:
+            ids.append(eid)
+    key = (prop.proposed_patch or {}).get("key")
+    if key and not prop.target_memory_id:
+        # key 只在 target 为空时参与寻址（`_resolve_update_target` 的优先级）
+        ids.append(f"__key__{key}")
+    return ids
+
+
+def _ensure_targets_owned(s, prop: MemoryProposal, principal) -> str:
+    """apply 边界的归属硬门（票 `.scratch/proposal-apply-gaps/issues/16-*.md`）。
+
+    **为什么是一道门而不是逐个 `session.get` 后补判定**：merge / consolidation
+    一次写多个目标。逐条补判定时，evidence 环那条照样能删别人的记忆（票 14 的
+    rejecter 就是这么漏的），或者先把自己的应用了、再把别人的跳过了——半 apply
+    比不 apply 更脏（A 的记忆已被折叠且没有 undo）。故在动手之前**一次性**解析
+    全部目标 id 并统一校验，任一条不属于即整体拒绝。
+
+    返回空串 = 全部通过；否则返回拒绝理由（调用方落 REJECTED + 留痕）。
+
+    归属口径同前 14 票：admin / `principal=None` 全不过滤（worker/CLI/scheduler
+    收窄成空转会让演化与遗忘整体停摆）；非 admin 要求 `user_id == viewer`
+    或 `user_id IS NULL`（真实库 636/657 行是 NULL 属主，判不可见会让单人部署
+    整体空转——NULL 是「未记录」不是「属于所有人」）。
+    """
+    if principal is None or bool(getattr(principal, "is_admin", False)):
+        return ""
+    from lantai.core.acl import viewer_of
+
+    viewer = viewer_of(principal)
+    ids = _target_ids(prop)
+    if not ids:
+        return ""
+    rows = s.exec(select(MemoryItem).where(MemoryItem.id.in_(ids))).all()
+    by_id = {m.id: m for m in rows}
+    # key 回退：按 key 查 active 记忆（与 _resolve_update_target 同口径）。
+    # 必须在 SQL 层做，因为这条路径本来就没有 target_memory_id 可判。
+    key_ids = [i[len("__key__") :] for i in ids if i.startswith("__key__")]
+    if key_ids:
+        for m in s.exec(
+            select(MemoryItem).where(MemoryItem.key.in_(key_ids), MemoryItem.status == "active")
+        ).all():
+            by_id.setdefault(m.id, m)
+    foreign = [mid for mid, m in by_id.items() if (m.user_id or None) not in (None, viewer)]
+    if foreign:
+        return (
+            f"target not owned: {len(foreign)} of {len(ids)} target(s) belong to "
+            f"another user (宁 miss 不脏写，不降级为 add)"
+        )
+    # 目标 id 一个都没解析到：不在这里拒绝——寻址硬门会按自己的口径报
+    # 「target not found」/「ambiguous」（那两条的拒绝理由信息量更大）。
+    return ""
+
+
+def apply_proposal(proposal_id: str, principal=None) -> dict:
+    """应用提案。
+
+    `principal`（票 `.scratch/proposal-apply-gaps/issues/16-*.md`）：apply 是
+    **写**不是读，而三个寻址字段（`target_memory_id` / `evidence_ids` /
+    `proposed_patch["key"]`）全部来自 LLM 输出——curator 回一个别人的记忆 id，
+    这里就按主键直读然后改写它（deprecate 归档、merge 证据环从 FTS 与向量库
+    除名、consolidation 折叠），且都没有 undo 入口。故在动手之前一次性校验
+    全部目标归属，任一条不属于即整体拒绝。口径同前 14 票：admin /
+    `principal=None`（worker/CLI/scheduler）不过滤。
+    """
     with db.get_session() as s:
         prop = s.get(MemoryProposal, proposal_id)
         # 可应用状态：PENDING（evolve 自动路径）或 APPROVED（人工审批/补跑路径）
         if not prop or prop.status not in (ProposalStatus.PENDING, ProposalStatus.APPROVED):
             return {"ok": False, "reason": "not applicable"}
+
+        # ── 归属硬门（先于一切分支，见 docstring）──────────────────────
+        # 放在类型白名单之前：越权与「类型不合法」是两件事，但越权更严重，
+        # 且此时一个字段都还没解析过，是全链唯一「还没写任何东西」的时刻。
+        refusal = _ensure_targets_owned(s, prop, principal)
+        if refusal:
+            logger.warning(
+                "提案 %s apply 拒绝：%s（type=%s，宁 miss 不脏写，不降级为 add）",
+                prop.id,
+                refusal,
+                prop.proposal_type,
+            )
+            out = _reject_proposal(prop, refusal)
+            s.add(prop)
+            s.commit()
+            return out
 
         patch = prop.proposed_patch
         mem_type = patch.get("memory_type", "semantic")

@@ -14,27 +14,44 @@ from lantai.storage import db
 # 执行者，类型合法性由它定义）。此处复用而非另立一份，避免两处漂移。
 
 
-def _resolve_target_id(session, target_key: str) -> str:
+def _resolve_target_id(session, target_key: str, principal=None) -> str:
     """把 LLM 返回的 target_key 解析为**唯一** active MemoryItem 的 id。
 
     空 / 解析不到 / 多义（`MemoryItem.key` 无 unique 约束）一律返回 ""，
     由调用方整条丢弃提案——不在这一层猜（猜即脏写）。
+
+    归属（票 `.scratch/proposal-apply-gaps/issues/16-*.md`）：LLM 输出是
+    **不可信输入**，与 HTTP 参数同级对待。库里只有 B 的一条用这个 key 时，
+    解析结果就是 B 的记忆 id——提案的 `target_memory_id` 钉在别人的记忆上，
+    将来 apply 即越权写。故按归属收窄（口径同票 12 的 `_kaogong_scope`：
+    `user_id == viewer OR IS NULL`，NULL 老行放行，admin / None 不过滤）。
     """
     if not target_key:
         return ""
-    matches = session.exec(
-        select(MemoryItem).where(MemoryItem.key == target_key, MemoryItem.status == "active")
-    ).all()
+    q = select(MemoryItem).where(MemoryItem.key == target_key, MemoryItem.status == "active")
+    if principal is not None and not bool(getattr(principal, "is_admin", False)):
+        from lantai.services.work_item_service import _viewer_of
+
+        viewer = _viewer_of(principal)
+        q = q.where((MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None)))
+    matches = session.exec(q).all()
     return matches[0].id if len(matches) == 1 else ""
 
 
-def propose_from_candidate(candidate_id: str, gate_result: dict) -> MemoryProposal | None:
+def propose_from_candidate(
+    candidate_id: str, gate_result: dict, principal=None
+) -> MemoryProposal | None:
     """候选 → 提案（LLM 产出 + 目标寻址 + 落库）。
 
     返回 `None` 表示**整条丢弃**：update/merge/deprecate 提案的 `target_key`
     解析不到唯一 active 记忆（空/无匹配/多义）。调用方须判空——
     宁 miss 不脏写，不降级为 add（那会新建平行记忆）。
     详见 `.scratch/proposal-target-gap/issues/01-*.md`。
+
+    `principal`（票 `.scratch/proposal-apply-gaps/issues/16-*.md`）：目标
+    寻址的归属边界。LLM 的 `target_key` 是不可信输入——它指向别人的记忆时
+    必须整条丢弃，而不是生成一条越权提案。admin / `principal=None`
+    （worker/CLI/scheduler）不过滤。
     """
     with db.get_session() as s:
         cand = s.get(MemoryCandidate, candidate_id)
@@ -94,7 +111,7 @@ def propose_from_candidate(candidate_id: str, gate_result: dict) -> MemoryPropos
         # 无 target，43% 因此新建平行记忆）。
         target_id = ""
         if ptype in ("update", "merge", "deprecate"):
-            target_id = _resolve_target_id(s, data.get("target_key") or "")
+            target_id = _resolve_target_id(s, data.get("target_key") or "", principal)
             if not target_id:
                 # 解析不到唯一 active 目标 → 整条不生成（对齐 reflector.
                 # propose_from_reflection 的 continue 范式，宁 miss 不脏写）。
