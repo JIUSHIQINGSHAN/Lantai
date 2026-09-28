@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **admin 两种构造形态在 VAULT 档案页上看到的数据不再差一整套（2026-09-29，票据 `.scratch/mcp-identity-gaps/issues/08-admin-two-forms-inconsistent.md`）**：
+  - **先说影响**：同一个管理员，`Principal(user_id="api_key", role="admin")`（`auth.py:168` HTTP 环境变量 API key 的**真形态**）与 `Principal(user_id=None, role="admin")`（测试/CLI 常写法）在 `build_memories_page` 上看到的数据**差一整套**。实测修前：前者 `total=1`（只剩 NULL 老行）、后者 `total=3`。**票面原判还说轻了**——`viewer_of` 对 `"api_key"` 原样返回（≠ `"default"`），于是管理员连自己 `default` 属主的记忆都看不到，真实库上**档案页基本空白**。方向是"该看的没看到"（运维排障误导，排查"这条记忆去哪了"会得错误结论），不是越权泄漏。
+  - **修法**（与仓内既有设计一致，非新造特例）：`if principal:` 块内加 `is_admin` 判定，admin 一律不加 user 归属过滤。同文件**四处**已是这个形状（`_kaogong_scope` :73、`get_core_memory` :498、`put_core_memory` :523、`find_duplicate_verbatim` :640），本处是唯一漏跟的——它靠在 `user_id` 上判空"意外"放过了 `user_id=None` 的 admin。
+  - **只统一 `user_id` 这一处**（两种形态差异的唯一来源）：`tenant` / `session` / `agent` / `allowed_lanes` 是调用方显式传的收窄条件，不属身份差异；顺带放开会把「admin 全表」扩大成「admin 无条件」，那是另一个决定，不夹带。**不动 `viewer_of`**（仓内唯一收敛真源，在调用点判）。
+  - **测试**：`tests/test_memories_page_admin_two_forms.py` 6 例，不 mock 冒烟（真内存 SQLite + 真 FTS5 + 真 `MemoryItem` 行）。护栏三条：显式 user 收窄逐字不变、`principal=None` 的票 07 收敛口径不互踩、票 03 的 `OR IS NULL` 半边不丢。
+  - **变异门禁 4/4 KILLED 且差集两两不重合**（2/7/5/5）：admin 分支整个关掉 / 反转判据 / **豁免过度扩大**（`is_admin` 恒真——杀的是显式 user 的 5 条，与 M1 不重合；原写的 `not False` 与 M1 判据完全重合，已替换）/ 删 `OR IS NULL` 半边。
+  - **本轮一个自律**：变异探针最初放了一个 old == new 的"占位变异体"，靠 docstring 解释为何跳过——这是假动作，会让"N 个变异体"看起来比实证过的多。已删除，反方向改写为独立探针真跑。
+
 - **主检索路径 `hybrid_search` 无身份时不再召回别人的私有记忆，同时补出 `SYSTEM_VIEWER` 在检索三通道里的三个洞（2026-09-28，票据 `.scratch/mcp-identity-gaps/issues/11-hybrid-search-none-unfiltered.md`）**：
   - **先说影响**：`hybrid_search` 是**每一次提问都会走的主干路径**（MCP `search` 与 `verbatim_search` 都走它）。`principal=None` 时**三条召回通道 + 最终合并步一层归属过滤都没有**——别人的私有记忆直接进最终结果。前三处（07 `mem_recent` / 09 `scene` / 10 `offload`）都是旁路，这一处是主干。同族形状、判据各不相同（`if principal:` / `vector_owner_filter` 的 None 分支 / `_query_items` 压根没有条件）。
   - **两个 commit 分开提交**（按 01b 教训）：**A. 接线**——`handle_search` 把已算出的 `principal` 传给 `hybrid_search`（它在 `:52` 算出来却只用在检索事件日志里，调用一个身份参数都没有；这是比 None 语义更基础的漏）。**B. None 收敛**——入口把 `None` 收敛成 `Principal(user_id="default")`（经 `acl.viewer_of` 单一真源），三通道的 `if principal:` 收敛后恒真、**自动生效，不需要逐通道改**，将来新增通道也自动被覆盖。

@@ -759,9 +759,26 @@ def build_memories_page(
         conds.append((MemoryItem.user_id == viewer_of(None)) | (MemoryItem.user_id.is_(None)))
 
     if principal:
+        # 归属·admin（票 `.scratch/mcp-identity-gaps/08`）：admin 一律不加
+        # user 归属过滤，与同文件 :73（`_kaogong_scope`）/ :498
+        # （`get_core_memory`）/ :523（`put_core_memory`）/ :640
+        # （`find_duplicate_verbatim`）四处形状逐字一致——那四处都显式
+        # `is_admin` → 不加 scope，只有本站靠在 `user_id` 上判空"意外"放过了
+        # `user_id=None` 的 admin，`user_id="api_key"` 的 admin（`auth.py:168`
+        # HTTP 环境变量 API key 的真形态）则被收窄到 `user_id=='api_key'
+        # OR IS NULL`——真实库没有这个属主的行，**档案页基本空白**，
+        # 排查"这条记忆去哪了"会得到错误结论。
+        # 实测（`.scratch/mcp-identity-gaps/probe_08_admin_two_forms.py`，修前）：
+        #   user_id='api_key' → total=1（只剩 NULL 老行）
+        #   user_id=None      → total=3
+        # **只统一 user_id 这一处**（两种形态差异的唯一来源）：tenant /
+        # session / agent / allowed_lanes 是调用方显式传的收窄条件，不属
+        # 身份差异；顺带放开会把「admin 全表」扩大成「admin 无条件」，
+        # 那是另一个决定，不夹带在本票。
+        is_admin = bool(getattr(principal, "is_admin", False))
         if getattr(principal, "tenant_id", None):
             conds.append(MemoryItem.tenant_id == principal.tenant_id)
-        if getattr(principal, "user_id", None):
+        if getattr(principal, "user_id", None) and not is_admin:
             # 归属（票 .scratch/mcp-identity-gaps/03）：补 `OR IS NULL`，
             # 与同文件 :503/:532/:644 三处口径逐字一致。此前这里是裸
             # `== principal.user_id`——NULL 属主老行（v022 之前写入没有
