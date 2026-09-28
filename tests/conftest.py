@@ -359,3 +359,20 @@ def _sanitize_api_key(monkeypatch):
     覆盖（晚于本 fixture 生效，撕卸后自动还原）。
     """
     monkeypatch.setattr(settings, "API_KEY", "")
+
+
+@pytest.fixture(autouse=True)
+def _disable_reranker(monkeypatch):
+    """纵深防御：宿主 .env 的 RERANKER_ENABLED 与代码默认值不一致，测试内一律关闭。
+
+    背景：`RERANKER_ENABLED` 的代码默认是 **True**（settings.py:176），而本地
+    `.env` 写 `false`。此前各用例靠手写 `use_rerank=False` 或显式
+    `patch.object(settings, "RERANKER_ENABLED", ...)` 单独兜底——任何新用例
+    漏写一次，CI（无 .env）上精排就会按代码默认启用，经 httpx 发**真实网络
+    请求**（这也是 09-26「本地绿 CI 红」那一类病根：本地靠 .env 恰好关掉了，
+    CI 用默认值打开了）。
+
+    需要真实启用精排的用例在测试体内自行 monkeypatch 覆盖（晚于本 fixture
+    生效，撕卸后自动还原），与 `_sanitize_api_key` 同一口径。
+    """
+    monkeypatch.setattr(settings, "RERANKER_ENABLED", False)
