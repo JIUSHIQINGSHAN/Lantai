@@ -53,10 +53,17 @@ def write_offload_file(memory_id: str, content: str) -> Path:
     return path
 
 
-def read_offload_file(memory_id: str) -> dict:
+def read_offload_file(memory_id: str, principal=None) -> dict:
     """读取卸载全文（MCP offload_read 用）。
 
     路径安全：文件名白名单 + 解析后必须仍在卸载目录内（防穿越）。
+
+    归属校验（票 `.scratch/mcp-identity-gaps/01b`）：文件系统没有归属列，
+    判据按 `memory_id` 反查 `MemoryItem.user_id`（同 `resolve_probe_response`
+    对 `ConflictEvent` 的过渡推导——资源本身无列时挂到它的载体上判）。
+    admin/system 全权；非 admin 只能读自己记忆的全文；记忆不存在或
+    无归属（老行）→ 不放行（宁 miss：卸载目录里躺着别人的全文比读不到
+    自己的更危险）。`principal=None`（内部 worker / 脚本）不校验。
     """
     directory = offload_dir().resolve()
     filename = offload_filename(memory_id)
@@ -65,4 +72,21 @@ def read_offload_file(memory_id: str) -> dict:
         raise ValueError("memory_id 解析路径超出卸载目录")
     if not path.is_file():
         raise FileNotFoundError(f"offload 文件不存在: {filename}")
+    if principal is not None:
+        from lantai.core.acl import ensure_can_delete
+        from lantai.models.tables import MemoryItem
+        from lantai.storage import db
+
+        with db.get_session() as s:
+            item = s.get(MemoryItem, memory_id)
+        if item is None:
+            # 记忆已不存在：无从判归属。卸载文件仍在 = 孤儿文件，
+            # 按「不可见」处理（宁 miss 不脏写）
+            raise FileNotFoundError(f"offload 文件不存在: {filename}")
+        ensure_can_delete(
+            principal,
+            resource_user_id=item.user_id,
+            resource_tenant_id=item.tenant_id,
+            lane=item.lane,
+        )
     return {"memory_id": memory_id, "path": str(path), "content": path.read_text(encoding="utf-8")}

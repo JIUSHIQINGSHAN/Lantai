@@ -207,6 +207,12 @@ def handle_add_dialogue(params: dict) -> dict:
         raise ValueError("text must be a non-empty string")
     from lantai.ingestion.dialogue import ingest_dialogue
 
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：`user_id` 直接落到
+    # `MemoryCandidate.user_id`（`_create_candidate` 里 `user_id or None`），
+    # 所以身份来源就是它本身——补一个**显式缺省**：宿主没传时保持
+    # "default"（与改动前逐字一致），传了就用透传值。
+    # 不能改成 `params.get("user_id") or "default"` 之外的形式：那会让
+    # `_principal_from_params` 的 None 与本函数的 "default" 分叉。
     return ingest_dialogue(text, user_id=user_id, source=source)
 
 
@@ -426,7 +432,12 @@ def handle_revive_consolidated(params: dict) -> dict:
         raise ValueError("reason is required for revival (同 retract 口径：撤销/恢复均须留痕)")
     from lantai.services.record_ops_service import revive_consolidated
 
-    return revive_consolidated(memory_id, reason=reason.strip())
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：主记忆形态会改写整簇，
+    # A 不能起复 B 的巩固产物。校验已下沉到 service（HTTP 侧顺带受益），
+    # 这里只负责把宿主透传的身份递下去。
+    return revive_consolidated(
+        memory_id, reason=reason.strip(), principal=_principal_from_params(params)
+    )
 
 
 def handle_conflicts_list(params: dict) -> dict:
@@ -469,7 +480,10 @@ def handle_scene_get(params: dict) -> dict:
         raise ValueError("scene_id must be a non-empty string")
     from lantai.services.scene_service import get_scene
 
-    return get_scene(scene_id)
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：场景无归属列，判据按成员
+    # 记忆反查——`get_scene` 返回的 members 带**完整正文**，A 下钻 B 的
+    # 场景就整簇读走
+    return get_scene(scene_id, principal=_principal_from_params(params))
 
 
 def handle_scenes_list(params: dict) -> dict:
@@ -479,7 +493,9 @@ def handle_scenes_list(params: dict) -> dict:
         raise ValueError("limit must be an int in [1, 500]")
     from lantai.services.scene_service import list_scenes
 
-    return list_scenes(limit)
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：列表虽只给名/摘要/热度，
+    # 摘要由 LLM/代表内容生成——A 能读到 B 的场景主题画像
+    return list_scenes(limit, principal=_principal_from_params(params))
 
 
 def handle_recall_report(params: dict) -> dict:
@@ -506,7 +522,10 @@ def handle_mem_sync(params: dict) -> dict:
     """mem:sync——刷新注入资产：scene 增量聚类补跑 + 今日 digest 重算。"""
     from lantai.services.mem_command import mem_sync
 
-    return mem_sync()
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：digest 重算此前是全库
+    # 快照（A 刷一次就看到 B 的当日统计），scene 补跑会把 B 的记忆聚进
+    # A 的场景。不透传留 None（与改动前逐字一致）
+    return mem_sync(principal=_principal_from_params(params))
 
 
 def handle_mem_create_skill(params: dict) -> dict:
@@ -523,7 +542,16 @@ def handle_mem_create_skill(params: dict) -> dict:
         raise ValueError("steps must be a non-empty list")
     if not all(isinstance(x, str) and x.strip() for x in steps):
         raise ValueError("steps must be a list of non-empty strings")
-    return create_skill(name=name, description=description, steps=steps, tags=tags)
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：此前落的 MemoryItem 四元组
+    # 一个都不填，user_id 恒 NULL——按 viewer 收窄的读侧把这类技能全部
+    # 滤掉，等于沉淀了却检索不到
+    return create_skill(
+        name=name,
+        description=description,
+        steps=steps,
+        tags=tags,
+        principal=_principal_from_params(params),
+    )
 
 
 def handle_offload_read(params: dict) -> dict:
@@ -533,7 +561,10 @@ def handle_offload_read(params: dict) -> dict:
         raise ValueError("memory_id must be a non-empty string")
     from lantai.services.offload_service import read_offload_file
 
-    return read_offload_file(memory_id)
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：卸载目录里躺着的是
+    # **完整原文**，此前一个身份都不取——A 报 B 的 memory_id 就全文读走。
+    # 校验按 memory_id 反查 MemoryItem 归属（服务内做）
+    return read_offload_file(memory_id, principal=_principal_from_params(params))
 
 
 def handle_wiki_read(params: dict) -> dict:
@@ -543,7 +574,10 @@ def handle_wiki_read(params: dict) -> dict:
         raise ValueError("slug must be a non-empty string")
     from lantai.services.wiki_service import read_wiki_page
 
-    return read_wiki_page(slug)
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：wiki 页是场景/技能的
+    # 渲染产物，成员记忆正文（截断）+ 摘要都在里面。slug 无法反查单一
+    # 属主（一页聚合多人的成员），判据见 read_wiki_page 文档
+    return read_wiki_page(slug, principal=_principal_from_params(params))
 
 
 def handle_mem_recent(params: dict) -> dict:
@@ -563,7 +597,10 @@ def handle_mem_stats(params: dict) -> dict:
     """记忆概览（只读聚合）：总数/分布/待审候选/检查点/待审提案。"""
     from lantai.ops.overview import get_overview
 
-    return get_overview()
+    # 归属（票 .scratch/mcp-identity-gaps/01a）：`build_overview` 本来就有
+    # principal 形参（票 05），此前 `get_overview` 没往下传——于是无论宿主
+    # 传不传 user_id 都是全量计数。不透传留 None（与改动前逐字一致）。
+    return get_overview(principal=_principal_from_params(params))
 
 
 def handle_mem_health(params: dict) -> dict:
@@ -600,14 +637,19 @@ def handle_autodream_report(params: dict) -> dict:
         raise ValueError("limit must be an int in [1, 5000]")
     from lantai.evolution.autodream import run_autodream_once
 
-    return run_autodream_once(dry_run=True, limit=limit)
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：聚类输入按 viewer 收窄，
+    # 否则 A 与 B 的记忆会聚成同一个簇，蒸馏出的提案 content 是两条
+    # 正文的拼接——A 一次调用就读到 B 的原文
+    return run_autodream_once(dry_run=True, limit=limit, principal=_principal_from_params(params))
 
 
 def handle_autodream_trigger(params: dict) -> dict:
     """执行一轮蒸馏：聚类 → 规划 → 落 pending 提案（宁 miss 不脏写：低置信度进 skipped，人工裁决后才应用）。"""
     from lantai.evolution.autodream import run_autodream_once
 
-    return run_autodream_once(dry_run=False)
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：同 autodream_report——
+    # 簇不跨用户，落库提案继承簇内最新记忆的属主
+    return run_autodream_once(dry_run=False, principal=_principal_from_params(params))
 
 
 def handle_proposals_list(params: dict) -> dict:
@@ -752,7 +794,9 @@ def handle_mem_usage(params: dict) -> dict:
         raise ValueError("days must be an int in [1, 365]")
     from lantai.ops.usage import collect_usage
 
-    return collect_usage(days=days)
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：每日计数此前全表——
+    # A 能看见 B 每天写了多少记忆（行为画像素材）
+    return collect_usage(days=days, principal=_principal_from_params(params))
 
 
 def handle_core_memory_get(params: dict) -> dict:
@@ -910,6 +954,10 @@ def handle_dialogue_add_async(params: dict) -> dict:
     source = str(params.get("source", "dialogue"))
     from lantai.services.async_ingest_service import submit_async_dialogue
 
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：`user_id` 落到 _TASKS
+    # 的任务记录，`get_task_status` 据此比对——所以这里的缺省值与
+    # `_principal_from_params` 的 None 是同一个身份口径：宿主不透传
+    # 时任务归 "default"，状态查询收敛到 "default" viewer
     return submit_async_dialogue(text=text, user_id=user_id, source=source)
 
 
@@ -918,7 +966,10 @@ def handle_dialogue_task_status(params: dict) -> dict:
     task_id = str(params.get("task_id", "")).strip()
     from lantai.services.async_ingest_service import get_task_status
 
-    return get_task_status(task_id)
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：`_TASKS` 的 result 带着
+    # 摄取结果的完整 payload，A 不能拿 B 的 task_id 读到 B 的提取结果。
+    # 不匹配回 not_found（不区分「没有」与「不是你的」）
+    return get_task_status(task_id, principal=_principal_from_params(params))
 
 
 def handle_graph_expand_search(params: dict) -> dict:

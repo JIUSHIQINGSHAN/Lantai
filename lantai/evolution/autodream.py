@@ -140,20 +140,38 @@ def plan_distillation(cluster: list[MemoryItem]) -> dict:
 
 
 def run_autodream_once(
-    namespace: str = "default", *, dry_run: bool = True, limit: int | None = None
+    namespace: str = "default", *, dry_run: bool = True, limit: int | None = None, principal=None
 ) -> dict:
     """执行一轮蒸馏：聚类 → 规划 → 落 pending 提案（dry_run 不写库）。
+
+    归属（票 `.scratch/mcp-identity-gaps/01b`）：聚类输入按 viewer 收窄。
+    此前 `select(MemoryItem)` 全表 active，MCP 的 `autodream_trigger` 于是
+    **把 A 与 B 的记忆聚成同一个簇**，蒸馏出的提案 `content` 是两条记忆
+    正文的拼接——A 一次调用就读到 B 的原文（`proposed_patch.content`）。
+    口径同票 05 的 `_overview_scope`：`user_id == viewer OR IS NULL`
+    （NULL 老行可见——单人部署下 629/650 行 NULL，判不可见等于蒸馏空转）。
+    `principal=None`（内部 worker）与 admin 全量。
+
+    落库提案的属主仍由 `plan_distillation` 继承簇内最新记忆的属主（票
+    readside-gaps/02）——那一步不变，这里只保证**簇不跨用户**。
 
     返回 {"clusters", "plans", "created", "skipped"}；低置信度不静默丢弃，
     进 skipped 报告（宁 miss 不脏写）。
     """
     if not settings.AUTODREAM_ENABLED:
         return {"clusters": 0, "plans": 0, "created": 0, "skipped": ["AUTODREAM_ENABLED=false"]}
+    scope = None
+    if principal is not None and not bool(getattr(principal, "is_admin", False)):
+        from lantai.core.acl import viewer_of
+
+        scope = (MemoryItem.user_id == viewer_of(principal)) | MemoryItem.user_id.is_(None)
     with db.get_session() as s:
         q = select(MemoryItem).where(
             MemoryItem.status == "active",
             MemoryItem.namespace == namespace,
         )
+        if scope is not None:
+            q = q.where(scope)
         if limit:
             q = q.limit(limit)
         items = s.exec(q).all()

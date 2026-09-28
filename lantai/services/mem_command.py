@@ -46,12 +46,19 @@ def mem_help() -> dict:
     return {"ok": True, "command": "mem:help", "text": MEM_HELP_TEXT}
 
 
-def mem_sync() -> dict:
+def mem_sync(principal=None) -> dict:
     """刷新会话注入资产（借鉴腾讯 mem:sync）。
 
     scene 增量聚类补跑（SCENE_LAYER_ENABLED 时）+ 今日 digest 快照重算；
     子步骤异常只记日志不阻断（宁 miss 不脏写）。
-    返回 {"ok", "scene", "digest", "took_ms"}。
+    返回 {"ok", "scene", "digest", "wiki", "took_ms"}。
+
+    归属（票 `.scratch/mcp-identity-gaps/01b`）：digest 重算不带身份时是
+    全库统计，MCP 的 `mem_sync` 于是让 A 刷一次就看到 B 当日写了多少
+    记忆。`run_digest_once` 已有 `principal` 形参，这里透传。
+    scene 补跑（`assign_unassigned`）**不传**——那是分类动作不是读，
+    聚类本身按 namespace 分（跨用户聚类见票 02）。
+    `principal=None`（scheduler / CLI）与改动前逐字一致。
     """
     started = time.monotonic()
     scene_res: dict = {}
@@ -74,7 +81,7 @@ def mem_sync() -> dict:
     try:
         from lantai.workers.digest_worker import run_digest_once
 
-        digest_res = run_digest_once()
+        digest_res = run_digest_once(principal=principal)
     except Exception as exc:
         logger.warning("mem_sync digest 重算失败（继续）: %s", exc)
         digest_res = {"ok": False, "error": str(exc)}
@@ -100,7 +107,11 @@ def mem_sync() -> dict:
 
 
 def create_skill(
-    name: str, description: str = "", steps: list[str] | None = None, tags: list[str] | None = None
+    name: str,
+    description: str = "",
+    steps: list[str] | None = None,
+    tags: list[str] | None = None,
+    principal=None,
 ) -> dict:
     """显式沉淀 Skill 资产（借鉴腾讯 mem:create-skill）。
 
@@ -108,6 +119,13 @@ def create_skill(
     + decay_class="procedural"（永不衰减），进向量库 + FTS5，可被 shell_hook 以
     ## Skill 块注入。幂等：内容 sha256 作 key，重复沉淀返回既有记忆。
     校验失败（name/steps 非法）不落库（宁 miss 不脏写）。
+
+    归属（票 `.scratch/mcp-identity-gaps/01b`）：此前落的 `MemoryItem`
+    四元组一个都不填，`user_id` 恒 NULL——按 viewer 收窄的读侧（`fts.py`
+    的 `AND m.user_id = ?`）把这类技能**全部滤掉**，等于沉淀了却检索不到。
+    去重查询同步按归属收窄（票 readside-gaps/20 同款：A 提交与 B 的
+    技能 sha256 相同的内容，返回的是 B 的 memory_id）。`principal=None`
+    留 NULL，与改动前逐字一致。
     """
     name = (name or "").strip()
     steps = [str(x).strip() for x in (steps or []) if str(x).strip()]
@@ -118,12 +136,23 @@ def create_skill(
     description = (description or "").strip()
     content = f"{name}\n{description}\n" + "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
     h = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    # 归属三元组（票 01b）。**不用 `scratchpad_service._owner_of`**——那个
+    # 对 `principal=None` 返回 `(None, "default", None)`，会把本函数「None
+    # 留 NULL」的既有行为改成落 "default"。这里要的是字面透传：有身份才落。
+    if principal is None:
+        tenant_id = user_id = agent_id = None
+    else:
+        tenant_id = getattr(principal, "tenant_id", None)
+        user_id = getattr(principal, "user_id", None)
+        agent_id = getattr(principal, "agent_id", None)
+    dedup_scope = [MemoryItem.user_id == user_id] if user_id else []
     with db.get_session() as s:
         existing = s.exec(
             select(MemoryItem).where(
                 MemoryItem.memory_type == "skill",
                 MemoryItem.key == h,
                 MemoryItem.status == "active",
+                *dedup_scope,
             )
         ).first()
         if existing:
@@ -141,6 +170,9 @@ def create_skill(
             confidence=1.0,
             importance=0.5,
             decay_class="procedural",  # 技能资产常青，永不衰减
+            tenant_id=tenant_id,
+            user_id=user_id,
+            agent_id=agent_id,
         )
         s.add(mem)
         s.flush()

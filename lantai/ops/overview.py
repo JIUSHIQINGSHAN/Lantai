@@ -6,15 +6,16 @@
 - 检查点（Checkpoint）版本数、待审提案（pending）数
 
 build_overview(session) 是纯函数（测试直传临时 session，不 mock 内部逻辑）；
-get_overview() 打开默认会话执行。
+get_overview(principal=None) 打开默认会话执行。
 
 归属（票 `.scratch/readside-gaps/05）：`build_overview` 被
 `build_monitor_snapshot` 复用，此前全表不带身份——`/monitor/overview`
 于是把全库记忆总量与待审积压吐给任何持 key 者。现在按 viewer 收窄，
 口径同票 04 的 `_digest_scope`（`user_id == viewer OR IS NULL`，NULL 老行
 可见：单人部署下 629/650 行 NULL，判不可见等于报表归零）。
-`principal=None` / admin 全量（口径同前 18 票）。`get_overview()` 是 MCP
-入口，不传 principal——MCP 没有 HTTP 鉴权层，口径同票 10。
+`principal=None` / admin 全量（口径同前 18 票）。`get_overview(principal)`
+是 MCP `mem_stats` 入口（票 `.scratch/mcp-identity-gaps/01a`）：宿主透传
+`user_id` 才收窄，不透传留 `None` 全量——与改动前逐字一致。
 """
 
 from datetime import UTC, datetime
@@ -144,7 +145,12 @@ def build_overview(session, *, principal=None) -> dict:
     }
 
 
-def get_overview() -> dict:
-    """打开默认会话执行概览（只读）。"""
+def get_overview(principal=None) -> dict:
+    """打开默认会话执行概览（只读）。
+
+    归属（票 .scratch/mcp-identity-gaps/01a）：`build_overview` 本来就有
+    `principal` 形参与收窄逻辑（票 05），这里只是没往下传——于是 MCP 的
+    `mem_stats` 无论宿主传不传 `user_id` 都是全量计数。补一个形参透传。
+    """
     with db.get_session() as s:
-        return build_overview(s)
+        return build_overview(s, principal=principal)

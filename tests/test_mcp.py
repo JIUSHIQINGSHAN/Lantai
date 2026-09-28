@@ -979,7 +979,9 @@ def test_revive_consolidated_ok():
             }
         )
     assert "error" not in resp
-    m.assert_called_once_with("mem_1", reason="提纯丢失关键细节")
+    # principal=None：宿主没透传 user_id（票 .scratch/mcp-identity-gaps/01b
+    # 接线后多了这个关键字，值是不透传时的既有语义——不猜身份）
+    m.assert_called_once_with("mem_1", reason="提纯丢失关键细节", principal=None)
     body = json.loads(resp["result"]["content"][0]["text"])
     assert body["ok"] is True and body["scope"] == "cluster"
 

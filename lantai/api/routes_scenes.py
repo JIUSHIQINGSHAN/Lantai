@@ -6,8 +6,10 @@ GET  /scenes            场景列表（heat 降序）
 GET  /scenes/{scene_id} 场景 + 成员详情（MCP scene_get 下钻同源）
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from lantai.core.acl import Principal
+from lantai.core.auth import get_current_user
 from lantai.services import scene_service
 
 router = APIRouter(prefix="/scenes", tags=["scenes"])
@@ -25,16 +27,18 @@ def assign_unassigned(limit: int = 50, threshold: float | None = None) -> dict:
 
 
 @router.get("")
-def list_scenes(limit: int = 50) -> dict:
+def list_scenes(limit: int = 50, principal: Principal = Depends(get_current_user)) -> dict:
     try:
-        return scene_service.list_scenes(limit)
+        # 归属（票 .scratch/mcp-identity-gaps/01b）：service 层补了 principal
+        # 形参（MCP scenes_list 收窄），HTTP 侧同源受益
+        return scene_service.list_scenes(limit, principal=principal)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
 @router.get("/{scene_id}")
-def get_scene(scene_id: str) -> dict:
+def get_scene(scene_id: str, principal: Principal = Depends(get_current_user)) -> dict:
     try:
-        return scene_service.get_scene(scene_id)
+        return scene_service.get_scene(scene_id, principal=principal)
     except ValueError as e:
         raise HTTPException(404, str(e))

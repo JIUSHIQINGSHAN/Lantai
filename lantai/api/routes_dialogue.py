@@ -55,11 +55,14 @@ def dialogue_async_route(req: DialogueIngestReq, ctx: Principal = Depends(get_cu
 
 
 @router.get("/dialogue/tasks/{task_id}")
-def dialogue_task_status_route(task_id: str):
+def dialogue_task_status_route(task_id: str, ctx: Principal = Depends(get_current_user)):
     """潜移（ADR-0033）：查询异步对话摄取任务的状态与结果。"""
     from lantai.services.async_ingest_service import get_task_status
 
-    res = get_task_status(task_id)
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：service 层补了 principal
+    # 形参（MCP dialogue_task_status 收窄），HTTP 侧同源受益——A 不能
+    # 拿 B 的 task_id 读到 B 的提取结果
+    res = get_task_status(task_id, principal=ctx)
     if res.get("status") == "not_found":
         raise HTTPException(404, "任务未找到")
     return res

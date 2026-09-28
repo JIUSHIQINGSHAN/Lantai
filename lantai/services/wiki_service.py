@@ -303,8 +303,52 @@ def _collect_pages_from_scenes(scenes: list, skills: list) -> list:
     return briefs
 
 
-def read_wiki_page(slug: str) -> dict:
-    """读取 Wiki 页（MCP wiki_read 用）：slug 白名单化 + 仅允许 pages 目录内。"""
+def _wiki_page_owner_ok(page_slug: str, principal) -> bool:
+    """slug 反查来源归属（票 `.scratch/mcp-identity-gaps/01b`）。
+
+    Wiki 页是**渲染产物**，本身没有归属列；归属要看它的来源：
+
+    - 场景页：`slugify(scene.name)` 命中的场景，判据同
+      `scene_service.get_scene`——至少一个可见成员（`user_id == viewer
+      OR IS NULL`）
+    - 技能页：`slugify(title)` 命中的 skill 记忆，判据同普通记忆读侧
+
+    一条来源都反查不到 → `False`（宁 miss：不可见）。这不是"页面不存在"
+    与"不是你的"的区分依据——两者都回 `FileNotFoundError`（同
+    `get_scratchpad` 口径，区分本身就是信息泄漏）。
+    """
+    from lantai.core.acl import viewer_of
+    from lantai.services.scene_service import _scene_visible_member_ids
+
+    viewer = viewer_of(principal)
+    with db.get_session() as s:
+        for sc in s.exec(select(MemoryScene)).all():
+            if slugify(sc.name) == page_slug and _scene_visible_member_ids(s, sc.id, principal):
+                return True
+        skills = s.exec(
+            select(MemoryItem).where(
+                MemoryItem.memory_type == "skill", MemoryItem.status == "active"
+            )
+        ).all()
+        for item in skills:
+            st = item.structure or {}
+            title = st.get("name") or item.key or "技能"
+            if slugify(title) != page_slug:
+                continue
+            if item.user_id is None or item.user_id == viewer:
+                return True
+    return False
+
+
+def read_wiki_page(slug: str, principal=None) -> dict:
+    """读取 Wiki 页（MCP wiki_read 用）：slug 白名单化 + 仅允许 pages 目录内。
+
+    归属校验（票 `.scratch/mcp-identity-gaps/01b`）：页面正文里有成员记忆
+    的截断正文 + 场景摘要，此前一个身份都不取——A 报 B 的场景 slug 就
+    读到 B 的记忆片段。判据见 `_wiki_page_owner_ok`（按来源反查）。
+    admin/system 与 `principal=None`（内部 worker / 脚本）不校验，
+    与改动前逐字一致。
+    """
     page_slug = slugify(slug) if isinstance(slug, str) else "page"
     pages_dir = (wiki_dir() / "pages").resolve()
     path = (pages_dir / f"{page_slug}.md").resolve()
@@ -312,4 +356,7 @@ def read_wiki_page(slug: str) -> dict:
         raise ValueError("slug 解析路径超出 wiki pages 目录")
     if not path.is_file():
         raise FileNotFoundError(f"wiki 页面不存在: {page_slug}.md")
+    if principal is not None and not bool(getattr(principal, "is_admin", False)):
+        if not _wiki_page_owner_ok(page_slug, principal):
+            raise FileNotFoundError(f"wiki 页面不存在: {page_slug}.md")
     return {"slug": page_slug, "path": str(path), "content": path.read_text(encoding="utf-8")}

@@ -181,7 +181,13 @@ def decide_crystal(
             raise ValueError("approve requires non-empty steps (宁 miss 不脏写)")
         from lantai.services.mem_command import create_skill
 
-        result = create_skill(name=skill_name, description=trigger_rule, steps=steps)
+        # 归属（票 .scratch/mcp-identity-gaps/01b）：create_skill 补了
+        # principal 形参后，这里要把裁决者的身份递下去——否则 MCP
+        # `crystal_decide` 落的技能仍是 user_id=NULL，读侧按 viewer 收窄
+        # 时谁都检索不到（沉淀了却看不见）。HTTP 侧原本就带 ctx，顺带受益。
+        result = create_skill(
+            name=skill_name, description=trigger_rule, steps=steps, principal=principal
+        )
         if not result.get("ok"):
             raise ValueError(result.get("error", "create_skill failed"))
     elif not (reason or "").strip():

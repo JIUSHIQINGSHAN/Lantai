@@ -507,8 +507,11 @@ def revive_consolidated_route(memory_id: str, req: RetractReq, principal=Depends
         _check_ownership(session, memory_id, principal)
     finally:
         session.close()
+    # 归属校验下沉到 service（票 .scratch/mcp-identity-gaps/01b）：上面的
+    # `_check_ownership` 保留（路由层原有判据，先拦一道），service 内按同一
+    # `ensure_can_delete` 再判一次——MCP 没有路由层，靠 service 那道兜住
     result = record_ops_service.revive_consolidated(
-        memory_id, reason=req.reason.strip(), actor=principal.user_id or ""
+        memory_id, reason=req.reason.strip(), actor=principal.user_id or "", principal=principal
     )
     if not result["ok"]:
         raise HTTPException(404 if result["error"] == "memory not found" else 409, result["error"])

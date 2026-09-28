@@ -381,9 +381,29 @@ def correct_memory(
 
 
 def revive_consolidated(
-    memory_id: str, *, reason: str = "", actor: str = "", session: Session | None = None
+    memory_id: str,
+    *,
+    reason: str = "",
+    actor: str = "",
+    session: Session | None = None,
+    principal=None,
 ) -> dict:
     """起复（ADR-0052）：巩固撤销面——碎片恢复 active，或主记忆撤销全簇。
+
+    归属校验（票 `.scratch/mcp-identity-gaps/01b`）：HTTP 侧
+    `revive_consolidated_route`（routes_terminal.py:495）自己在路由层调
+    `_check_ownership`，service 层一个身份都不取。MCP 没有路由层——
+    `handle_revive_consolidated` 直接调本函数，于是**宿主传不传
+    user_id 都能起复别人的记忆**。把校验下沉到 service：HTTP 侧顺带
+    受益（少一处可能漏调的路由级校验），MCP 侧也不必另写一份判据。
+
+    口径复用 `acl.ensure_can_delete` 单一真源（同票 02）：admin/system
+    全权；非 admin 只能动自己记忆；NULL 属主老行只受 lane 约束。
+    `principal=None` 仅限内部调用（worker/CLI），不校验——硬造校验会把
+    无人值守的巡检流程修废。
+
+    403 必须发生在任何 `s.commit()` 之前：不允许"拒绝了但已经落库"
+    （同 `decide_crystal` / `resolve_probe_response` 口径）。
 
     输入二义性按形态判别（宁 miss 不脏写，不猜用户意图）：
       - **主记忆**（`source_ids` 非空，promoter 巩固 apply 的落库标记，
@@ -440,6 +460,20 @@ def revive_consolidated(
         item = s.get(MemoryItem, memory_id)
         if item is None:
             return dict(_NOT_FOUND)
+
+        # 归属校验在任何写操作之前（票 .scratch/mcp-identity-gaps/01b）：
+        # 403 不能伴随落库。主记忆形态会改写**整簇**（全部 consolidated
+        # 碎片恢复 active + 删 supersedes 边），所以按主记忆的归属判——
+        # 碎片从主记忆来，判据不该分叉。
+        if principal is not None:
+            from lantai.core.acl import ensure_can_delete
+
+            ensure_can_delete(
+                principal,
+                resource_user_id=item.user_id,
+                resource_tenant_id=item.tenant_id,
+                lane=item.lane,
+            )
 
         # ① 主记忆形态：source_ids 非空即巩固产物（apply 时 promoter 落库的标记，
         #    不依赖边是否还在——边可能已被部分清理）

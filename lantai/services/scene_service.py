@@ -235,17 +235,58 @@ def assign_unassigned(limit: int = 50, threshold: float | None = None) -> dict:
     return {"ok": True, "scanned": len(unassigned), "assigned": assigned, "missed": missed}
 
 
-def get_scene(scene_id: str) -> dict:
-    """场景 + 成员详情（MCP scene_get / REST GET /scenes/{id} 下钻同源）。"""
+def _scene_visible_member_ids(s, scene_id: str, principal) -> set[str]:
+    """场景内对 `principal` 可见的成员 id 集合（票 `.scratch/mcp-identity-gaps/01b`）。
+
+    可见 = `user_id == viewer OR IS NULL`（同 `_overview_scope` 口径：NULL
+    老行可见——单人部署下大部分行无属主，判不可见等于场景全空）。
+    """
+    from lantai.core.acl import viewer_of
+
+    viewer = viewer_of(principal)
+    rows = s.exec(
+        select(MemoryItem.id).where(
+            MemoryItem.scene_id == scene_id,
+            MemoryItem.status == "active",
+            (MemoryItem.user_id == viewer) | MemoryItem.user_id.is_(None),
+        )
+    ).all()
+    return set(rows)
+
+
+def get_scene(scene_id: str, principal=None) -> dict:
+    """场景 + 成员详情（MCP scene_get / REST GET /scenes/{id} 下钻同源）。
+
+    归属（票 `.scratch/mcp-identity-gaps/01b`）：`MemoryScene` 没有归属列，
+    判据按**成员记忆**反查（同 `read_offload_file` 对 `MemoryItem` 的过渡
+    推导）。场景是聚类产物，成员可能分属多个用户，所以口径是
+    「**任一成员可见即可见**」：
+
+    - admin/system 与 `principal=None`（内部 worker / 脚本 / HTTP 未带
+      身份）：不校验，与改动前逐字一致
+    - 非 admin：一个可见成员都没有 → `ValueError("scene not found")`，
+      **不区分"没有"与"不是你的"**（同 `get_scratchpad` 口径——区分
+      本身就是信息泄漏：能据此探知某 scene_id 是否存在）
+
+    宁 miss 不脏写：纯 B 的簇对 A 直接不存在；混了 B 的成员的簇仍会把
+    B 的正文带出来——那是聚类重建要解决的事，见票 02。
+    """
     with db.get_session() as s:
         scene = s.get(MemoryScene, scene_id)
         if not scene:
             raise ValueError("scene not found")
+        visible: set[str] | None = None
+        if principal is not None and not bool(getattr(principal, "is_admin", False)):
+            visible = _scene_visible_member_ids(s, scene_id, principal)
+            if not visible:
+                raise ValueError("scene not found")
         members = s.exec(
             select(MemoryItem)
             .where(MemoryItem.scene_id == scene_id, MemoryItem.status == "active")
             .order_by(MemoryItem.use_count.desc())
         ).all()
+        if visible is not None:
+            members = [m for m in members if m.id in visible]
         return {
             "scene": {
                 "id": scene.id,
@@ -269,14 +310,37 @@ def get_scene(scene_id: str) -> dict:
         }
 
 
-def list_scenes(limit: int = 50) -> dict:
-    """场景列表（heat 降序，heat 并列按成员数降序）。"""
+def list_scenes(limit: int = 50, principal=None) -> dict:
+    """场景列表（heat 降序，heat 并列按成员数降序）。
+
+    归属（票 `.scratch/mcp-identity-gaps/01b`）：`summary` 是 LLM 依据成员
+    内容生成的摘要——A 刷列表就读到 B 的场景主题。判据同 `get_scene`：
+    至少一个可见成员才列（一条 SQL 取全部，避免逐场景 N+1）。
+    `member_count` 仍报**场景全量成员数**（场景自身属性，非归属信息）。
+    """
     if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
         raise ValueError("limit must be an int in [1, 500]")
+    scoped = principal is not None and not bool(getattr(principal, "is_admin", False))
     with db.get_session() as s:
         scenes = s.exec(
             select(MemoryScene).order_by(MemoryScene.heat.desc(), MemoryScene.member_count.desc())
         ).all()
+        if scoped:
+            from lantai.core.acl import viewer_of
+
+            viewer = viewer_of(principal)
+            visible_scene_ids = set(
+                s.exec(
+                    select(MemoryItem.scene_id)
+                    .where(
+                        MemoryItem.status == "active",
+                        MemoryItem.scene_id.is_not(None),
+                        (MemoryItem.user_id == viewer) | MemoryItem.user_id.is_(None),
+                    )
+                    .distinct()
+                ).all()
+            )
+            scenes = [sc for sc in scenes if sc.id in visible_scene_ids]
         return {
             "scenes": [
                 {

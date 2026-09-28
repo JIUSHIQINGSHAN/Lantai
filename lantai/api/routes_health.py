@@ -1,7 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from sqlmodel import select
 
 from lantai.core import scheduler
+from lantai.core.auth import Principal, get_current_user
 from lantai.core.settings import settings
 from lantai.ingestion.coalesce import get_coalesce_buffer
 from lantai.models.tables import MemoryItem
@@ -139,8 +140,11 @@ def stats():
 
 
 @protected_router.get("/usage")
-def usage():
+def usage(ctx: Principal = Depends(get_current_user)):
     """最近 7 天每日新增记忆数——单条 GROUP BY，不整表加载；缺日补零。"""
     from lantai.ops.usage import collect_usage
 
-    return collect_usage(days=7)
+    # 归属（票 .scratch/mcp-identity-gaps/01b）：service 层补了 principal
+    # 形参（MCP mem_usage 收窄），HTTP 侧同源受益——A 不能看见 B 每天
+    # 写了多少记忆（行为画像素材）
+    return collect_usage(days=7, principal=ctx)
