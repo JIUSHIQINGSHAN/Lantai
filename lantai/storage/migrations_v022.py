@@ -11,7 +11,7 @@
 import contextlib
 
 from lantai.core.logger import logger
-from lantai.storage.db import _has_column
+from lantai.storage.migrations import _has_column
 
 
 def apply_v022_migrations(engine) -> None:

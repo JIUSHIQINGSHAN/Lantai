@@ -80,6 +80,28 @@ def health_deep():
         except Exception as e:
             checks["llm"] = f"fail: {e}"
 
+    # 迁移链是否跑到头（票 .scratch/migration-chain/01）
+    # 原来是 25 个线性 if 块，任何一步抛异常后续全部静默跳过、服务照常启动，
+    # 坏了半个月没人知道，直到某个功能 500 才顺藤摸到这里。同 fts 的形状：
+    # sqlite 能连、chromadb 能读都探不出迁移没跑完——缺表缺列只在用到的
+    # 那一刻炸。故单独核验 version 是否到达目标版本，并把失败跳报出来。
+    try:
+        with db.get_session() as s:
+            current = s.connection().exec_driver_sql("PRAGMA user_version").scalar()
+        failures = db.get_migration_failures()
+        if failures:
+            detail = "; ".join(f"v{f['version']}: {f['error']}" for f in failures)
+            checks["migrations"] = f"fail: {len(failures)} block(s) failed ({detail})"
+        elif current < db.TARGET_SCHEMA_VERSION:
+            checks["migrations"] = (
+                f"fail: schema at v{current}, target v{db.TARGET_SCHEMA_VERSION} "
+                "(migration chain did not complete)"
+            )
+        else:
+            checks["migrations"] = "ok"
+    except Exception as e:
+        checks["migrations"] = f"fail: {e}"
+
     all_ok = all(v in ("ok", "skipped (no key)") for v in checks.values())
     return {"ok": all_ok, "checks": checks}
 

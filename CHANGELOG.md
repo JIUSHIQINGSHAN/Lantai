@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **迁移链中途失败不再静默跳过后续全部迁移——坏了现在 `/health/deep` 看得见（2026-09-28，票据 `.scratch/migration-chain/issues/01-chain-break-silent-skip.md`）**：
+  - **先说影响**：`apply_migrations` 里 25 个迁移块，**任何一块抛异常，它后面所有迁移都不跑**——但服务照常启动，日志里只有一行 error。实证（`.scratch/readside-gaps/probe_24_chain_break.py`，子进程隔离）：在 v9 块收尾前注入一次异常 → `version` 停在 **8**、只有 4 张表，`reflect_run`（v10）/`session_checkpoint`（v12）/`memorynode.user_id`（v26）**全部缺席**。之后每次查新表都是 `no such table` / `no such column`，服务"起来了但半边是坏的"。瞬时失败（锁竞争）下次启动会自愈；**持久失败（DDL 写错、表被外部改坏）永久卡死且无任何信号**。
+  - **根因**：`PRAGMA user_version = N` 写在**块尾**，抛在它之前 version 就停在 N-1，后面所有 `if user_version < M` 全部不成立；外层 `except` 只 `logger.error` 一行，不记失败位置、不暴露给健康检查。25 块里 19 块连内层保护都没有。
+  - **修法**（三条同时成立，不改"失败不阻断启动"的既定行为）：① 迁移链拆到 `lantai/storage/migrations.py`，25 个块变成 `_migrate_vN(conn)` + `MIGRATIONS` 表驱动，**逐块 try/except**——一块失败不影响后面的块，version 只在块真成功后推进（失败的跳下次启动重试）；② **单一版本真源** `TARGET_SCHEMA_VERSION`（原来 `db.py` 自己硬编码一份 26、迁移链里又散落 25 个 `if user_version < N`，两处真相改版本时漏改哪边都不报错）；③ `/health/deep` 新增 `checks["migrations"]`，version 没到目标或有失败记录时报 `fail` 并附上失败跳与原因——同 `fts-availability/01` 的形状（sqlite 能连、chromadb 能读都探不出迁移没跑完，缺表缺列只在用到的那一刻才炸）。
+  - **等价性验证先行**（`.scratch/migration-chain/verify_equiv.py`）：重构前后在 5 个起始版本（0/1/8/13/25）上各跑一遍，比对 `user_version` + 42 张表的列集合 + 130 个索引——**全部一致**。过程中抓到两个真 bug：循环里的 version **局部快照**不推进（pragma 推进了但判断仍用初始值），以及 `_has_column` 随拆分移走却漏改 `migrations_v022.py` 与 `tests/test_ownership_migration.py` 的导入路径（后者正是"宁 miss 不脏写"对重构同样成立的例子——`db.py` 保留兼容再导出）。
+  - **变异验证 7/7 全杀**（`.scratch/migration-chain/mutation_check_01.py`，子进程隔离 + timeout + atexit 还原）。第一轮 3 条 MISSED，逐条定性：M8 是真实的断言缺口（health 的 `if failures:` 分支从没被求值过——缺"有失败记录时调 health"这条输入），已补测试杀掉；M2（快照不推进）经实证是**等价变异**——`>=` 用旧值只会让块重复执行而非跳过，25 个块全幂等故结果完全相同，已从清单移除并写明理由，没去写一条自欺欺人的测试。
+  - **测试增量 11 例**（`tests/test_migration_chain_isolation.py`，全部不 mock：真实临时 SQLite 库 + 真实 `apply_migrations` + 真实 `health_deep`）。覆盖逐块隔离、失败记录带版本号与原因、失败块不推进 version（用 spy 记录 pragma 写入序列——光看最终值杀不掉这个变异）、从中间版本起跑能补到目标、health 的两个 fail 分支与 ok 分支、以及"失败不阻断启动"这条硬约束。全量 pytest **1779 passed / 0 failed**。
+
 - **边读侧补归属——A 不再能列出 B 的记忆关系图与取代链（2026-09-28，票据 `.scratch/readside-gaps/issues/22-edges-list-chain-readside-no-identity.md`）**：
   - **先说影响**：`GET /edges/{memory_id}` 与 `GET /edges/{memory_id}/supersed-chain` **一个身份都不取**。`routes_edges.py` 四条路由里 `POST /edges` 与 `DELETE /edges/{id}` 都取了身份并校验，只有这两条读路由漏了——同票 19/20 的形状「同一个文件里修了一条、漏了旁边那条」。A 拿 B 的 memory_id 就能列出 B 每条边的 id/source/target/relation/confidence；supersedes 链更值钱：它直接告诉 A「B 的这条记忆被谁取代了」，`superseded_by` 就是下一步该读哪条——**一条链把 B 的整条取代路径摊开**。
   - **归属必须按端点记忆判，不按边自身判**（实测推翻票面最初设想，`.scratch/readside-gaps/probe_22_edge_owner_dist.py`）：真实库 **76/76 条边 `user_id` 全 NULL**。按边自身过滤对全库一条都不生效——修了等于没修。归属信息只在端点记忆上，口径同票 17 的 `graph_retriever._owns`：两端属主 `NULL`（历史行）或等于 viewer 才放行，**两端有一个不可见就整条隐藏**（露出一半等于告诉 A「B 有条边连到某个 id」）。
