@@ -734,7 +734,23 @@ def build_memories_page(
         if getattr(principal, "tenant_id", None):
             conds.append(MemoryItem.tenant_id == principal.tenant_id)
         if getattr(principal, "user_id", None):
-            conds.append(MemoryItem.user_id == principal.user_id)
+            # 归属（票 .scratch/mcp-identity-gaps/03）：补 `OR IS NULL`，
+            # 与同文件 :503/:532/:644 三处口径逐字一致。此前这里是裸
+            # `== principal.user_id`——NULL 属主老行（v022 之前写入没有
+            # 属主概念，真实库 650 行里 629 行）对 DEV MODE 与任何显式
+            # 属主用户**全部不可见**，单用户部署的 VAULT 档案页基本空白。
+            # 实测：修前 DEV MODE 只见 3/650，修后 632/650。
+            #
+            # `OR IS NULL` 不是"放开隔离"：B 的行仍然不可见（老行人人可读，
+            # 他人新行不可读），测试 `test_explicit_owner_sees_null_rows_but_not_others`
+            # 专门锁这条，防"把条件整个删掉"的变异。
+            #
+            # 用 `acl.viewer_of` 收敛而非直接取 `principal.user_id`：前者对
+            # 空 user_id 回落到 "default"，与 DEV MODE 同值，不新造默认属主。
+            from lantai.core.acl import viewer_of
+
+            viewer = viewer_of(principal)
+            conds.append((MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None)))
         if getattr(principal, "session_id", None):
             conds.append(MemoryItem.session_id == principal.session_id)
         if getattr(principal, "agent_id", None):
