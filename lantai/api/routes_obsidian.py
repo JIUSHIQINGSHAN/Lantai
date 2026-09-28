@@ -15,12 +15,36 @@ router = APIRouter()
 
 
 @router.post("/obsidian/sync")
-def obsidian_sync_route(req: ObsidianSyncReq):
-    """笔记原文直存 + [[双链]] 实体/边沉淀（content_hash + 实体名幂等）。"""
-    try:
-        return sync_obsidian_note(req)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+def obsidian_sync_route(req: ObsidianSyncReq, ctx=Depends(get_current_user)):
+    """笔记原文直存 + [[双链]] 实体/边沉淀（content_hash + 实体名幂等）。
+
+    归属（票 `.scratch/readside-gaps/20`）：此前**一个身份都不取**——`EXT_ROUTER`
+    带 `dependencies=AUTH` 所以认证了某人，却把身份丢掉了。同文件的
+    `/verbatim/search` 本来就 `Depends(get_current_user)`，只有这一条漏了
+    （形状同票 19：**同一个文件里一条修了一条没修**）。
+
+    缺了身份，A 提交一段与 B 的 verbatim 内容 sha256 相同的文本，`add_raw_memory`
+    的去重无归属过滤 → 返回 **B 的** `memory_id` → 本路由把它当 `note_id`
+    交回前端，A 拿到别人的 ULID；`sync_obsidian_note` 还会拿这个 id 取到 B 的行，
+    于是 **A 的双链实体从 B 的记忆行连出去**，污染 B 的图邻域。
+
+    lane 校验**必须在路由层先做**（同 `routes_memory.add_raw_memory_route` 的
+    第一行）：service 里那道 `ensure_can_delete` 是在 `add_raw_memory`
+    **写完之后**才判 lane 的（`.scratch/readside-gaps/probe_m5_lane.py` 实测：
+    越 lane 请求返回 403，可 verbatim 行**已经落库**）。先写后拒的语义是
+    「调用方以为失败了，数据却留下了」——所以这里在进 service 之前就挡掉。
+
+    `allowed_lanes is None` 是「未绑定、不限泳道」（`acl.ensure_can_delete`
+    同口径），不是「零泳道」——所以判空前先判 None。
+    """
+    if ctx.allowed_lanes is not None and req.lane not in ctx.allowed_lanes:
+        raise HTTPException(status_code=403, detail=f"Lane {req.lane} not allowed for agent")
+    result = sync_obsidian_note(req, principal=ctx)
+    if isinstance(result, dict) and result.get("ok") is False:
+        reason = result.get("reason", "")
+        status = 403 if str(reason).startswith("forbidden") else 400
+        raise HTTPException(status, reason)
+    return result
 
 
 @router.get("/verbatim/search")

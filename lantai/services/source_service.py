@@ -193,9 +193,7 @@ def delete_document(document_id: str, principal=None) -> dict:
         # 4. 校验全过，开始删
         if doc:
             s.delete(doc)
-        chunks = s.exec(
-            select(DocumentChunk).where(DocumentChunk.document_id == document_id)
-        ).all()
+        chunks = s.exec(select(DocumentChunk).where(DocumentChunk.document_id == document_id)).all()
         for chunk in chunks:
             s.delete(chunk)
         candidates = s.exec(

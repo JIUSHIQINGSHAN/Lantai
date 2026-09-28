@@ -17,7 +17,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **d3 本地兜底**：`ui/d3.v7.min.js`（v7.9.0，279KB）入库，CDN 挂掉时 `document.write` 回退；`routes_ui.py` 资源白名单同步放行 5 个新文件。
   - **测试增量**：`tests/test_console_api_contracts.py` 14 例（不 mock，真实起 FastAPI TestClient 打契约）——覆盖 stats 分组、冲突裁决 body 化与旧 query 拒绝、crystals 路由挂载、资源白名单、limbo 过滤、图展开等。
 
+### Changed
+
+- **CI 格式门禁二次失守收口 + `release_check` 加 lint 自查——全量测试不再被 lint 静默拦停（2026-09-28，票据 `.scratch/readside-gaps/issues/21-ci-format-gate-regression.md`）**：
+  - **先说影响**：`.github/workflows/tests.yml` 的 test job 里 lint 步骤**排在**全量 pytest 与遗忘质量门禁**前面**。`ruff format --check` 自 `6c07da7d` 起一直红，累积 9 个不合规文件，所以最近 5 个提交的 CI 上**全量测试和遗忘门禁一步都没跑过**——「本地 pytest 全绿」从来不等于「CI 绿」。这是记忆里 `ci-lint-blocks-test-gate` 那条教训的二次发作（上次是 `ruff check` 的 73 条违规，修于 `.scratch/ci-lint-gate/`）。
+  - **逐提交实测定位，不靠推理**：用**干净 worktree**（`git worktree add --detach`）逐个提交跑 `ruff format --check`，差分得出每个提交单独引入的违规——`6c07da7d` 1 个文件（就此开始红）、`fda5cbd6` +3、`9964a343` +3、`622da8ef` +2，累积到 9。**教训：脏工作区上 `git checkout` 会静默失败**，第一轮我就在脏工作区里 bisect，得到 5 个提交主题全同、数字全错的结论。
+  - **根因不是「又脏了」，是缺一个提交前自查**：上一轮收口时门禁是绿的（`be0f407e` 实测 0 违规），之后 12 个提交里 4 个把格式带回红。**一次性收口不等于长期收口。** 所以本票除了修文件，把自查做成了自动的。
+  - **`scripts/release_check.py` 新增 `lint_gate_issues()`**：跑 `ruff check` + `ruff format --check`，且**排在版本一致性检查之前**——lint 红 = CI 的全量测试一步不跑，这时查版本/tag 没有意义。`_find_ruff()` 三级回退：本仓 `.venv` → 系统 PATH → **当前解释器同目录**（第三级专为测试造的 tmp_path 准备；第一版只查 `repo_root/.venv`，在 tmp_path 下必然 SKIP，三条新测试两条假红）。
+  - **自查函数当场抓到自己**：写完第一次跑 `release_check.py`，它报的是**我刚写的那段 `subprocess.run` 没 format**。这正是它该有的行为——先写后格式化会漏，提交前跑一遍不会。
+  - **「纯风格」用 AST 验，不用 `tr -d` 验**：`.scratch/readside-gaps/verify_21_style_only.py` 把源码解析成语法树、丢掉全部位置属性再序列化，只有**词法与结构**变化才会显形。第一版用 `tr -d '[:space:]'` 比对，分不清「删了一个空行」和「删了换行」，把任何变化都判成实质变化——**判据本身要先验过再用**。结果 8/9 AST 完全一致；`memory_service.py` 不一致是**预期的**（含票 20 的真实逻辑改动，`git diff` 逐行确认）。
+  - **测试增量 3 例**（`tests/test_release_check.py`，全部真跑 ruff 不 mock）：`test_lint_gate_passes_on_real_repo` 是**回归哨兵**（任何人提交了没 format 过的代码，这里立刻红，不用等 CI）；`test_lint_gate_catches_unformatted_file` 是**决定性**的——造一个必然不合规的文件断言 issues 非空，没有这条，自查函数可以是恒空返回 `[]` 的摆设；`test_lint_gate_catches_lint_violation` 锁 `ruff check` 维度。
+  - **验收**：`ruff check` → All checks passed；`ruff format --check` → **388 files already formatted**（修复前 9 files would be reformatted）；`release_check.py` → `[PASS] CI lint 门禁`；全量 pytest **1743 passed / 0 failed**（+3 = 本票新测试）。
+
 ### Security
+
+- **Obsidian 同步补身份 + verbatim 去重补归属 + 实体/边补归属——A 的哈希碰撞不再污染 B 的图邻域（2026-09-28，票据 `.scratch/readside-gaps/issues/20-obsidian-sync-verbatim-dedup-no-owner.md`）**：
+  - **先说影响**：`POST /obsidian/sync` **一个身份都不取**——`EXT_ROUTER` 带 `dependencies=AUTH` 所以认证了某人，却把身份丢掉了（同文件的 `/verbatim/search` 本来就 `Depends(get_current_user)`，只有这一条漏了，形状同票 19「同一个文件里一条修了一条没修」）。而 `add_raw_memory` 的 verbatim 去重是 `memory_type + key + status` 三条件、**无任何归属过滤**。两者叠起来：A 提交一段与 B 的 verbatim 内容 sha256 相同的文本（读同一篇公开文档即可构造），返回的就是 **B 的** `memory_id`——**A 拿到别人的记忆 ULID**，而 ULID 是票 15/16/17 都需要的前置预言机；`sync_obsidian_note` 还会拿这个 id 取到 B 的行，于是 **A 的双链实体名从 B 的记忆行连出去**，污染 B 的图邻域，再经 `expand_graph_associations` 影响 B 自己的召回。
+  - **票面把方向写反了，实测严重度低一档**：`_link(note.id, ent.id)` 的方向是「**笔记 → 实体**」，不是「笔记 → B 的记忆」。所以第一次 sync 时 `note` 就是 B 的记忆行，边从 B 的记忆**连出去**指向实体——场景 1 的 `links_created=2` 是笔记→实体那两条，票面把它们当成了笔记→B。真正的污染在**第二次** sync：B 的行成了 `note`，A 的实体名从 B 的记忆连出去。第一版探针查 `target=B` 得出「没污染」的错结论，改成查 `source=B` 才看见。
+  - **票面「根治点在票 17」是错的，实测票 17 挡不住**（`.scratch/readside-gaps/probe_round14b.py`）：A 两次 sync 后，**B 自己** `expand_graph_associations(["v-B"])` 照样展开出 A 的实体。根因不是边——`_get_or_create_entity` 造实体时**一个归属列都不填**，实体行 `user_id` 恒 NULL，`_owns` 判「NULL 属主可见」就放行。**污染通道是「无主实体 + NULL 可见口径」**：票 17 修的是「沿**别人的**边走」，这里是「沿**自己的**边走到**无主**实体」，两回事。所以修法必须加第三条：实体行与边都落 `user_id` / `tenant_id` / `agent_id`。
+  - **NULL 属主 verbatim 判「重复」不判「新建」，理由实测**：真实库 **391 条 verbatim 全部 `user_id` 为 NULL**。verbatim 是**内容寻址**（sha256 即 id 语义），同一段文本就是同一条记忆，属主只是标注、不是身份判据。判「新建」会让每一条既有无主 verbatim 都无法去重，同一内容每 sync 一次就多存一份——**把内容寻址退化成多份存储**。这不是理论选项，是数据现状决定的。
+  - **实体/边的幂等查重不按属主**：实体是全局图谱节点（同名 `[[链接]]` 在全库是同一个概念），按属主过滤会让同一实体名在每人名下各建一份、把图谱拆碎；边同理。既有无主实体行继续可复用，**不回溯补属主**——补属主要猜「原本属于谁」，猜错比留 NULL 更脏（宁 miss 不脏写）。
+  - **实施中发现一处票面没写的形状问题：先写后拒**（`.scratch/readside-gaps/probe_m5_lane.py` 实测）：`ensure_can_delete` 同时查 lane，而它在 `sync_obsidian_note` 里排在 `add_raw_memory` **之后**——越 lane 请求返回 403，可 verbatim 行**已经落库**。「调用方以为失败了，数据却留下了」。所以 lane 校验**前移到路由层**（同 `routes_memory.add_raw_memory_route` 第一行），service 里那条留作纵深防御。
+  - **`allowed_lanes is None` 是「未绑定、不限泳道」，不是「零泳道」**（`acl.ensure_can_delete` 同口径）：写成 `req.lane not in (ctx.allowed_lanes or [])` 会把所有未绑定主体（含 worker/脚本）全拒。
+  - **`add_raw_memory` 的归属四元组必须一起传**：它的形参默认 `user_id="default"`，不传的话 A 建的 verbatim 行属主恒为 "default"，下一步的 `ensure_can_delete` 会把 **A 自己刚建的笔记**拒掉（M9 变异实测，5 个测试红）。
+  - **M5 第一次 MISSED，靠穷举 + spy 定性，不是靠推理**：`probe_m5_reachability.py` 装 spy 到 `acl.ensure_can_delete` 上跑 6 种形状，实证 **user 维度结构不可达**——M1 的去重归属收窄已堵死「A 拿到 B 的非空属主行」，guard 拿到的 `resource_user_id` 只会是 NULL 或自己的 id。**不是覆盖缺口**。但 lane 维度可达，于是补了两条测试锁它（含一条对偶用例：少了它，把条件写成 `lane not in lanes` 也能让越权那条绿）。教训同票 19 的 M6/M7：**一条判断若在测试的输入形状下永远不求值，它对应的变异就杀不掉；而「结构不可达」不等于「可以删」。**
+  - **测试增量**：`tests/test_obsidian_sync_ownership.py` 13 例。Red 1 决定性断言落在返回的 `note_id` **字段值**上（不只看「没建边」——没建边可能因为别的原因）；Red 2b 决定性锁「B 自己的图检索不展开出 A 的实体」；Red 6 路由层含「403 **且零落库**」双断言。**变异验证 11/11 全杀**（`.scratch/readside-gaps/mutation_check_20.py`，子进程隔离）。全量 pytest **1743 passed / 0 failed**。
 
 - **检查点历史补归属——A 拉不走 B 的记忆全部历史版本（2026-09-28，票据 `.scratch/readside-gaps/issues/19-checkpoint-history-no-owner.md`）**：
   - **先说影响**：`routes_checkpoint.py` 的 handler **取了身份却没往下传**——`session_id` 分支传了 `principal=ctx`（票 09 修的），`memory_id` 分支没有。`evolution_service.list_checkpoints(memory_id, limit)` 按 `memory_id` 直查全表，无任何归属过滤，把每个 checkpoint 的 `model_dump(mode="json")` 全量吐出。而 `MemoryCheckpoint.before` / `.after` 是**完整行快照**（`content` / `title` / `structure` 全在里面），所以 **A 调 `GET /checkpoint?memory_id=<B 的记忆 id>` 就能拿到 B 这条记忆的每一次变更前后全文**。这比读当前版本更糟：当前版本可能已经被改过，**历史版本不会**。而 checkpoint 是回滚的原料——先拉历史、再挑一个版本回滚（票 13 已修 rollback 的归属，读侧这道口子一直开着）。探针实证：A 拉 B 的记忆，2 条 checkpoint 的 `before`/`after` 全文到手。

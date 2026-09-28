@@ -115,9 +115,7 @@ def _dedup_merge(s, target: MemoryItem, sim: float, principal=None) -> dict | No
     不放任「上游忘了传 principal」把缺口带到这里。
     """
     if not _owns(target, principal):
-        logger.info(
-            "dedup merge: target %s 不归属当前主体，跳过（宁 miss 不脏写）", target.id
-        )
+        logger.info("dedup merge: target %s 不归属当前主体，跳过（宁 miss 不脏写）", target.id)
         return None
     target.last_used_at = utcnow()
     target.importance = min(1.0, target.importance + 0.1)
@@ -135,9 +133,7 @@ def _create_update_proposal(
     这条记忆上，将来 apply 时会改它的正文——不能指向别人的记忆。
     """
     if not _owns(target, principal):
-        logger.info(
-            "dedup update: target %s 不归属当前主体，不建提案（宁 miss 不脏写）", target.id
-        )
+        logger.info("dedup update: target %s 不归属当前主体，不建提案（宁 miss 不脏写）", target.id)
         return None
     prop = MemoryProposal(
         id=new_id("prop"),
@@ -607,6 +603,7 @@ def add_raw_memory(
     user_id: str = "default",
     tenant_id: str | None = None,
     agent_id: str | None = None,
+    principal=None,
 ) -> dict:
     """原文直存（verbatim 记忆）：零 LLM、不走提取/闸门/演化，直接写 MemoryItem。
 
@@ -615,17 +612,38 @@ def add_raw_memory(
     归属四元组（票 .scratch/ownership-gaps/03）：此前签名里没有这些参数，
     verbatim 是条数最多的一类（本机真实库 391/635 条），属主恒 NULL 让
     `fts.py:160` 的 `AND m.user_id = ?` 把它们全部滤掉。
+
+    去重补归属（票 `.scratch/readside-gaps/20`）：去重查询此前
+    `memory_type + key + status` 三个条件、**不带任何归属过滤**——A 提交
+    一段与 B 的 verbatim 内容 sha256 相同的文本（读同一篇公开文档即可构造），
+    返回的就是 **B 的** `memory_id`。调用方 `obsidian_service.sync_obsidian_note`
+    拿这个 id 去 `s.get(MemoryItem, note_id)`，于是 A 的下一次 sync 会把
+    **A 的双链实体从 B 的记忆行连出去**（`links` 边方向是「笔记 → 实体」）。
+    所以去重按 `user_id == viewer OR IS NULL` 收窄。
+
+    **NULL 属主判「重复」不判「新建」**：这是本函数唯一需要拍价值观的地方，
+    实测支撑——真实库 391 条 verbatim **全部** `user_id` 为 NULL。verbatim 是
+    **内容寻址**（sha256 即 id 语义），同一段文本就是同一条记忆，属主只是
+    标注、不是身份判据。判「新建」会让每一条既有无主 verbatim 都无法去重，
+    同一内容每 sync 一次就多存一份——把内容寻址退化成多份存储。
     """
     h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
     lane = req.lane or settings.RAW_MEMORY_DEFAULT_LANE
     with db.get_session() as s:
-        existing = s.exec(
-            select(MemoryItem).where(
-                MemoryItem.memory_type == "verbatim",
-                MemoryItem.key == h,
-                MemoryItem.status == "active",
+        q = select(MemoryItem).where(
+            MemoryItem.memory_type == "verbatim",
+            MemoryItem.key == h,
+            MemoryItem.status == "active",
+        )
+        # 去重归属（票 20）：admin / principal=None → 不过滤（worker/MCP 不能空转）；
+        # 否则收窄到 `user_id == viewer OR IS NULL`（NULL 老行判重复，见 docstring）。
+        if principal is not None and not bool(getattr(principal, "is_admin", False)):
+            from lantai.core.acl import viewer_of
+
+            q = q.where(
+                (MemoryItem.user_id == viewer_of(principal)) | (MemoryItem.user_id.is_(None))
             )
-        ).first()
+        existing = s.exec(q).first()
         if existing:
             return {"memory_id": existing.id, "dedup": True, "verbatim": True}
         emb = embed([req.content])[0]

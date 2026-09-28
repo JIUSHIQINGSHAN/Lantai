@@ -27,9 +27,7 @@ def add_memory_route(
         return add_memory_async(
             req, user_id=ctx.user_id or "default", tenant_id=ctx.tenant_id, principal=ctx
         )
-    return add_memory(
-        req, user_id=ctx.user_id or "default", tenant_id=ctx.tenant_id, principal=ctx
-    )
+    return add_memory(req, user_id=ctx.user_id or "default", tenant_id=ctx.tenant_id, principal=ctx)
 
 
 @router.get("/core-memory")

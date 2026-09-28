@@ -94,3 +94,38 @@ def test_git_online_reports_remote_tag(clean_repo, tmp_path):
     _git(clean_repo, "push", "origin", "v0.3.8")
     issues = RC.git_issues(clean_repo, "0.3.8", allow_dirty=False, online=True)
     assert any("远程 origin 已存在 tag v0.3.8" in i for i in issues)
+
+
+# ── CI lint 门禁自查（票 21）──────────────────────────────────
+# 真实跑 ruff，不 mock——「mock 掉 ruff 让测试绿」等于什么都没测。
+
+
+def test_lint_gate_passes_on_real_repo():
+    """本仓当前状态必须双绿（否则这条红，别先改测试）。
+
+    这条同时是**回归哨兵**：任何人提交了没 `ruff format` 过的代码，
+    这里立刻红，不用等 CI 才发现 lint 拦着全量测试不让跑。
+    """
+    issues = RC.lint_gate_issues(RC.REPO_ROOT)
+    assert issues == [], "CI lint 门禁未通过：\n" + "\n".join(issues)
+
+
+def test_lint_gate_catches_unformatted_file(tmp_path):
+    """决定性：lint 自查**真的能抓到**格式违规（不是恒空的摆设）。
+
+    造一个必然不合规的文件（ruff format 会重排的写法），跑真 ruff，
+    断言 issues 非空且点名了 `ruff format`。
+    """
+    (tmp_path / "lantai").mkdir()
+    (tmp_path / "lantai" / "bad.py").write_text("x = { 'a':1,\n  'b':2 }\n", encoding="utf-8")
+    issues = RC.lint_gate_issues(tmp_path)
+    assert issues, "格式违规没被抓到——lint 自查是恒空的摆设"
+    assert any("ruff format" in i for i in issues), f"没点名 format 步骤：{issues}"
+
+
+def test_lint_gate_catches_lint_violation(tmp_path):
+    """`ruff check` 维度也要能抓到（未使用的导入）。"""
+    (tmp_path / "lantai").mkdir()
+    (tmp_path / "lantai" / "bad.py").write_text("import os\nx = 1\n", encoding="utf-8")
+    issues = RC.lint_gate_issues(tmp_path)
+    assert any("ruff check" in i for i in issues), f"没抓到 lint 违规：{issues}"

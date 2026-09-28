@@ -139,9 +139,11 @@ def _row(engine, mid):
 
 def _fts_hit(engine, mid):
     with Session(engine) as s:
-        r = s.connection().exec_driver_sql(
-            "SELECT count(*) FROM memory_fts WHERE memory_id = ?", (mid,)
-        ).fetchone()
+        r = (
+            s.connection()
+            .exec_driver_sql("SELECT count(*) FROM memory_fts WHERE memory_id = ?", (mid,))
+            .fetchone()
+        )
         return bool(r and r[0])
 
 
@@ -173,14 +175,10 @@ class TestDocumentCascadeNoCrossUserDelete:
         assert out.get("ok") is False, f"B 的记忆没有被整体中止挡住：{out}"
         assert "forbidden" in str(out.get("reason", "")), f"中止原因不是越权：{out}"
         b = _row(engine, "m-B")
-        assert b is not None and SECRET_B in b.content, (
-            f"B 的记忆行被物理删除了：{b}"
-        )
+        assert b is not None and SECRET_B in b.content, f"B 的记忆行被物理删除了：{b}"
         assert _fts_hit(engine, "m-B"), "B 的记忆从 FTS 索引里被删了（删索引比删行更难察觉）"
         assert "m-B" not in vs.deleted, f"B 的记忆被向量库除名了：{vs.deleted}"
-        assert out.get("deleted_memories") != 2, (
-            f"两条都被当成可删目标了：{out}"
-        )
+        assert out.get("deleted_memories") != 2, f"两条都被当成可删目标了：{out}"
         # 文档与边也必须完好——中止就是什么都没动
         with Session(engine) as s:
             assert s.get(RawDocument, "doc-A") is not None, "中止了文档却被删掉"
@@ -231,9 +229,7 @@ class TestDocumentCascadeNoCrossUserDelete:
 
         delete_document("doc-A", principal=_principal("user-A"))
 
-        assert "m-B" not in vs.deleted, (
-            f"B 的记忆还在库里，却被向量库除名了：{vs.deleted}"
-        )
+        assert "m-B" not in vs.deleted, f"B 的记忆还在库里，却被向量库除名了：{vs.deleted}"
 
 
 # ── Red 3 / 4 / 5 / 6：不能修废 ─────────────────────────────────
@@ -395,11 +391,23 @@ class TestPromoterDeleteMemoryOwnership:
 
             s.add(
                 MemoryItem(
-                    id="m-T", user_id="user-A", tenant_id="tenant-X", memory_type="preference",
-                    key="k-m-T", title="m-T", content="别租户的记忆", lane="preference",
-                    domain="user", status="active", importance=0.5, decay_score=0.9,
-                    tier="working", use_count=0, helpful_count=0,
-                    created_at=utcnow(), updated_at=utcnow(),
+                    id="m-T",
+                    user_id="user-A",
+                    tenant_id="tenant-X",
+                    memory_type="preference",
+                    key="k-m-T",
+                    title="m-T",
+                    content="别租户的记忆",
+                    lane="preference",
+                    domain="user",
+                    status="active",
+                    importance=0.5,
+                    decay_score=0.9,
+                    tier="working",
+                    use_count=0,
+                    helpful_count=0,
+                    created_at=utcnow(),
+                    updated_at=utcnow(),
                 )
             )
             s.commit()

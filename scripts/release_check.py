@@ -10,8 +10,11 @@
 """
 
 import argparse
+import os
 import re
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -93,6 +96,63 @@ def _git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", *args], cwd=repo_root, capture_output=True, text=True)
 
 
+def _find_ruff(repo_root: Path) -> str:
+    """定位 ruff：本仓 .venv → 系统 PATH → 当前解释器的 Scripts 目录。
+
+    第三个来源是为了让**临时目录**（测试造的 tmp_path）也能找到本仓的
+    ruff——`sys.executable` 在测试里就是 `.venv/Scripts/python.exe`，
+    同目录下的 `ruff.exe` 就是同一个环境装的那一个。
+    """
+    candidates = [
+        repo_root / ".venv" / "Scripts" / "ruff.exe",
+        repo_root / ".venv" / "bin" / "ruff",
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    found = shutil.which("ruff")
+    if found:
+        return found
+    beside = Path(sys.executable).parent / ("ruff.exe" if os.name == "nt" else "ruff")
+    return str(beside) if beside.exists() else ""
+
+
+def lint_gate_issues(repo_root: Path) -> list[str]:
+    """CI 门禁自查：`ruff check` + `ruff format --check`（票 21）。
+
+    为什么加这一步：`.github/workflows/tests.yml` 的 test job 里 lint 步骤
+    **排在**全量 pytest 与遗忘质量门禁**前面**。lint 一红，后面两步一步都不跑
+    ——所以「本地 pytest 全绿」从来不等于「CI 绿」。上一轮 `.scratch/ci-lint-gate/`
+    把 73 条违规清零让门禁第一次真跑起来，之后 4 个提交又把格式带回红
+    （`6c07da7d` 起，累积 9 个文件），全量测试在 CI 上又静默停跑了 5 个提交。
+
+    只查 `ruff` 是否可用 + 是否干净；ruff 未安装时 SKIP 而不是 FAIL
+    （发布检查不该因为缺一个开发期工具就拦下上传）。
+    """
+    ruff = _find_ruff(repo_root)
+    if not ruff:
+        print(f"[{SKIP}] ruff 不可用 — 跳过 lint 自查（装 dev 依赖可启用）")
+        return []
+
+    issues: list[str] = []
+    for label, args in (
+        ("ruff check", ["check", "lantai/", "tests/", "scripts/"]),
+        ("ruff format --check", ["format", "--check", "lantai/", "tests/", "scripts/"]),
+    ):
+        r = subprocess.run(
+            [str(ruff), *args],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if r.returncode != 0:
+            tail = "\n".join((r.stdout or "").splitlines()[-12:])
+            issues.append(f"{label} 未通过（CI 的 lint 步骤会红，其后 pytest 一步不跑）：\n{tail}")
+    return issues
+
+
 def git_issues(repo_root: Path, version: str, allow_dirty: bool, online: bool = False) -> list[str]:
     issues: list[str] = []
     branch = _git(repo_root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
@@ -127,6 +187,14 @@ def main(argv: list[str] | None = None) -> int:
         "--online", action="store_true", help="联网检查远程 origin 是否已存在同名 tag"
     )
     args = parser.parse_args(argv)
+
+    # lint 自查放在最前（票 21）：它红 = CI 的全量测试一步不跑，
+    # 这时再查版本/tag 没有意义——先让人看见门禁本身是红的。
+    lint_failures = lint_gate_issues(REPO_ROOT)
+    for issue in lint_failures:
+        check("CI lint 门禁", False, issue)
+    if not lint_failures:
+        check("CI lint 门禁", True, "ruff check + ruff format --check 均通过")
 
     refs = collect_version_refs(REPO_ROOT)
     pyproject_version = next((v for label, _, v in refs if label == "pyproject.toml"), "")

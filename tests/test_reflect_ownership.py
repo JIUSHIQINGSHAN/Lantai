@@ -399,8 +399,12 @@ class TestRejecterEvidenceScope:
 
         # A 自己的证据必须让 rejecter 真的跑起来（第 2 次调用）——
         # 否则"没泄漏"又是因为什么都没跑，证明不了 scope 只挡了别人。
-        assert len(spy.prompts) >= 2, f"rejecter 没被调用（自己的证据也没取到）：{len(spy.prompts)} 次"
-        assert any("A 的证据正文" in p for p in spy.prompts), "A 自己的证据没进 rejecter 提示词（被误收窄？）"
+        assert len(spy.prompts) >= 2, (
+            f"rejecter 没被调用（自己的证据也没取到）：{len(spy.prompts)} 次"
+        )
+        assert any("A 的证据正文" in p for p in spy.prompts), (
+            "A 自己的证据没进 rejecter 提示词（被误收窄？）"
+        )
 
 
 # ── MCP 层 ─────────────────────────────────────────────────────

@@ -190,7 +190,5 @@ def list_checkpoints(memory_id: str, limit: int = 20, principal=None) -> dict:
                     (MemoryItem.tenant_id == viewer_tenant) | (MemoryItem.tenant_id.is_(None))
                 )
             q = q.join(MemoryItem, MemoryItem.id == MemoryCheckpoint.memory_id).where(cond)
-        rows = (
-            s.exec(q.order_by(MemoryCheckpoint.version.desc()).limit(limit)).all()
-        )
+        rows = s.exec(q.order_by(MemoryCheckpoint.version.desc()).limit(limit)).all()
         return {"checkpoints": [r.model_dump(mode="json") for r in rows]}

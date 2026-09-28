@@ -156,7 +156,12 @@ class TestDedupNoCrossUserLLM:
             patch("lantai.llm.client.chat_json", side_effect=spy_a),
         ):
             out_a = memory_service._dedup_structural(
-                Session(engine), "m-B", "A 的标题", "A 的正文", "preference", 0.93,
+                Session(engine),
+                "m-B",
+                "A 的标题",
+                "A 的正文",
+                "preference",
+                0.93,
                 principal=_principal("user-A"),
             )
         assert not spy_a.prompts, (
@@ -171,7 +176,12 @@ class TestDedupNoCrossUserLLM:
             patch("lantai.llm.client.chat_json", side_effect=spy_b),
         ):
             out_b = memory_service._dedup_structural(
-                Session(engine), "m-B", "B 的标题", "B 的新表述", "preference", 0.93,
+                Session(engine),
+                "m-B",
+                "B 的标题",
+                "B 的新表述",
+                "preference",
+                0.93,
                 principal=_principal("user-B"),
             )
         assert spy_b.prompts, "属主自己也没走到 LLM——第一半的「没调」与归属无关，测试是空转的"
@@ -196,7 +206,12 @@ class TestDedupNoCrossUserLLM:
             patch("lantai.llm.client.chat_json", side_effect=spy),
         ):
             out = memory_service._dedup_structural(
-                Session(engine), "m-A", "A 的标题", "A 也喜欢咖啡", "preference", 0.93,
+                Session(engine),
+                "m-A",
+                "A 的标题",
+                "A 也喜欢咖啡",
+                "preference",
+                0.93,
                 principal=_principal("user-A"),
             )
 
@@ -224,7 +239,9 @@ class TestDedupNoCrossUserMutation:
         after = _row(engine, "m-B")
 
         assert out is None, f"跨属主 merge 还是返回了结果：{out}"
-        assert after.importance == 0.5, f"B 的 importance 被改了：{before.importance} → {after.importance}"
+        assert after.importance == 0.5, (
+            f"B 的 importance 被改了：{before.importance} → {after.importance}"
+        )
 
     def test_update_proposal_not_pinned_to_other_users_memory(self, dd_env):
         """**Red 3**：不生成 `target_memory_id` 指向 B 的提案。"""
@@ -233,7 +250,12 @@ class TestDedupNoCrossUserMutation:
         target = _row(engine, "m-B")
 
         out = memory_service._create_update_proposal(
-            Session(engine), target, "A 的标题", "A 的正文", "preference", 0.93,
+            Session(engine),
+            target,
+            "A 的标题",
+            "A 的正文",
+            "preference",
+            0.93,
             principal=_principal("user-A"),
         )
         assert out is None, f"跨属主 update 提案还是建了：{out}"
@@ -277,7 +299,12 @@ class TestDedupOwnerBoundary:
             patch("lantai.llm.client.chat_json", side_effect=spy),
         ):
             out = memory_service._dedup_structural(
-                Session(engine), "m-legacy", "A 的标题", "A 的正文", "preference", 0.93,
+                Session(engine),
+                "m-legacy",
+                "A 的标题",
+                "A 的正文",
+                "preference",
+                0.93,
                 principal=_principal("user-A"),
             )
 
@@ -346,16 +373,12 @@ class TestVectorOwnerFilter:
         import chromadb
         from chromadb.config import Settings as ChromaSettings
 
-        monkeypatch.setattr(
-            "lantai.core.settings.settings.CHROMADB_PATH", str(tmp_path / "chroma")
-        )
+        monkeypatch.setattr("lantai.core.settings.settings.CHROMADB_PATH", str(tmp_path / "chroma"))
         client = chromadb.PersistentClient(
             path=str(tmp_path / "chroma"),
             settings=ChromaSettings(anonymized_telemetry=False),
         )
-        coll = client.create_collection(
-            "lantai_vectors", metadata={"hnsw:space": "cosine"}
-        )
+        coll = client.create_collection("lantai_vectors", metadata={"hnsw:space": "cosine"})
         coll.add(
             ids=["m-A", "m-B", "m-legacy"],
             embeddings=[[0.5] * 4] * 3,
@@ -392,7 +415,9 @@ class TestFindSimilarOwnerBoundary:
 
         with Session(engine) as s:
             action, target, sim = find_similar(
-                s, [{"id": "m-B", "distance": 0.05}], fastpath=True,
+                s,
+                [{"id": "m-B", "distance": 0.05}],
+                fastpath=True,
                 principal=_principal("user-A"),
             )
         assert action == "insert", f"跨属主的行被当成 merge/update 目标了：action={action}"
@@ -409,7 +434,9 @@ class TestFindSimilarOwnerBoundary:
         for mid in ("m-A", "m-legacy"):
             with Session(engine) as s:
                 action, target, sim = find_similar(
-                    s, [{"id": mid, "distance": 0.05}], fastpath=True,
+                    s,
+                    [{"id": mid, "distance": 0.05}],
+                    fastpath=True,
                     principal=_principal("user-A"),
                 )
             assert action == "merge", f"{mid} 没能成为 merge 目标（功能被修废）：action={action}"
@@ -452,9 +479,7 @@ class TestApplyDedupPassesFilters:
         client = chromadb.PersistentClient(
             path=path, settings=ChromaSettings(anonymized_telemetry=False)
         )
-        coll = client.create_collection(
-            "lantai_vectors", metadata={"hnsw:space": "cosine"}
-        )
+        coll = client.create_collection("lantai_vectors", metadata={"hnsw:space": "cosine"})
         # 三条同向量的记忆：A 自己的、B 的、NULL 属主的老行
         coll.add(
             ids=["m-A", "m-B", "m-legacy"],
@@ -529,9 +554,16 @@ class TestFastpathOwnerBoundary:
         ):
             out = memory_service._create_candidate_direct(
                 req,
-                {"topic": [], "summary": "s", "claims": [], "methods": [],
-                 "constraints": [], "actions": [], "extractor_confidence": 0.9,
-                 "lane": "preference"},
+                {
+                    "topic": [],
+                    "summary": "s",
+                    "claims": [],
+                    "methods": [],
+                    "constraints": [],
+                    "actions": [],
+                    "extractor_confidence": 0.9,
+                    "lane": "preference",
+                },
                 user_id="user-A",
                 principal=_principal("user-A"),
             )
@@ -557,9 +589,16 @@ class TestFastpathOwnerBoundary:
         with patch("lantai.services.memory_service.get_vector_store", lambda: VS()):
             out = memory_service._create_candidate_direct(
                 req,
-                {"topic": [], "summary": "s", "claims": [], "methods": [],
-                 "constraints": [], "actions": [], "extractor_confidence": 0.9,
-                 "lane": "preference"},
+                {
+                    "topic": [],
+                    "summary": "s",
+                    "claims": [],
+                    "methods": [],
+                    "constraints": [],
+                    "actions": [],
+                    "extractor_confidence": 0.9,
+                    "lane": "preference",
+                },
                 user_id="user-A",
                 principal=_principal("user-A"),
             )
@@ -762,9 +801,7 @@ class TestGateDecideOwnerBoundary:
 
     def _demoted_events(self, engine, mem_id):
         with Session(engine) as s:
-            evs = s.exec(
-                select(ConflictEvent).where(ConflictEvent.memory_id == mem_id)
-            ).all()
+            evs = s.exec(select(ConflictEvent).where(ConflictEvent.memory_id == mem_id)).all()
         return [e for e in evs if e.kind == "salience_demote"]
 
     def test_cross_owner_weak_memory_is_not_demoted(self, demote_env):
@@ -860,9 +897,9 @@ class TestFilterThreading:
             "`_apply_dedup` 没给 `vector_store.search` 传 filters"
             "——检索层仍是全库最近邻（票 15 的主病灶没修）"
         )
-        assert captured["filters"] == {
-            "$or": [{"user_id": "user-A"}, {"user_id": ""}]
-        }, f"filters 形状不对：{captured['filters']}"
+        assert captured["filters"] == {"$or": [{"user_id": "user-A"}, {"user_id": ""}]}, (
+            f"filters 形状不对：{captured['filters']}"
+        )
 
     def test_apply_dedup_admin_gets_no_filter(self, dd_env):
         """admin / principal=None 必须无过滤（worker 不能空转）。"""
@@ -900,15 +937,19 @@ class TestFilterThreading:
             from lantai.retrieval.hybrid import hybrid_search
 
             hybrid_search(
-                "查询词", top_k=5, lanes=["preference"],
-                principal=_principal("user-A"), use_rerank=False,
+                "查询词",
+                top_k=5,
+                lanes=["preference"],
+                principal=_principal("user-A"),
+                use_rerank=False,
             )
 
         assert captured.get("filters") is not None, (
             "`hybrid_search` 没把 filters 交给向量检索——A 的查询能召回 B 的记忆"
         )
-        expect = {"$and": [{"$or": [{"user_id": "user-A"}, {"user_id": ""}]},
-                           {"lane": "preference"}]}
+        expect = {
+            "$and": [{"$or": [{"user_id": "user-A"}, {"user_id": ""}]}, {"lane": "preference"}]
+        }
         assert captured["filters"] == expect, (
             f"filters 形状不对：{captured['filters']}\n期望：{expect}"
             "（多键并列会被 Chroma 拒掉并静默降级成纯关键词检索）"
@@ -1010,9 +1051,7 @@ class TestGateRouteIdentity:
         finally:
             app.dependency_overrides.pop(get_current_user, None)
 
-        assert r.status_code == 200, (
-            f"admin 裁别人的候选被拒：{r.status_code} {r.text[:200]}"
-        )
+        assert r.status_code == 200, f"admin 裁别人的候选被拒：{r.status_code} {r.text[:200]}"
 
     def test_decide_rejects_cross_owner_candidate_directly(self, gate_env):
         """service 层同口径：MCP / CLI 传了 principal 也一样拒。"""
@@ -1069,8 +1108,7 @@ class TestGateRouteIdentity:
         with pytest.raises(HTTPException) as ei:
             decide("cand-other-tenant", principal=_principal("user-A", tenant_id="T1"))
         assert ei.value.status_code == 403, (
-            f"跨租户裁决没被拒：{ei.value.status_code}"
-            "——user_id 重名时租户墙被拆穿"
+            f"跨租户裁决没被拒：{ei.value.status_code}——user_id 重名时租户墙被拆穿"
         )
 
     def test_decide_null_owner_candidate_policy(self, gate_env):

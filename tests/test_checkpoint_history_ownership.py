@@ -175,9 +175,7 @@ class TestCheckpointHistoryNoCrossUserRead:
         assert r.status_code == 200, f"HTTP 路径报错：{r.status_code} {r.text[:200]}"
         leaked = [c for c in _contents(r.json()) if SECRET_B in c]
         assert not leaked, f"HTTP 路径把 B 的历史正文给了 A：{leaked}"
-        assert r.json().get("checkpoints") == [], (
-            f"HTTP 路径返回了 B 的 checkpoint：{r.json()}"
-        )
+        assert r.json().get("checkpoints") == [], f"HTTP 路径返回了 B 的 checkpoint：{r.json()}"
 
     def test_own_history_still_returned(self, ck_env):
         """Red 2：A 查自己的记忆 → 照常返回全部 checkpoint（不能修废）。"""
@@ -190,9 +188,7 @@ class TestCheckpointHistoryNoCrossUserRead:
         out = list_checkpoints("m-A", 20, principal=_principal("user-A"))
 
         assert len(out.get("checkpoints", [])) == 2, f"A 自己的历史拿不全：{out}"
-        assert any(SECRET_A in c for c in _contents(out)), (
-            f"A 自己的正文没回来：{_contents(out)}"
-        )
+        assert any(SECRET_A in c for c in _contents(out)), f"A 自己的正文没回来：{_contents(out)}"
 
     def test_mixed_users_own_still_visible(self, ck_env):
         """Red 8：join 条件写反会把 A 也滤掉。A 与 B 都有 checkpoint 时，
@@ -207,9 +203,7 @@ class TestCheckpointHistoryNoCrossUserRead:
         out = list_checkpoints("m-A", 20, principal=_principal("user-A"))
 
         assert len(out.get("checkpoints", [])) == 1, f"A 自己被误伤了：{out}"
-        assert any(SECRET_A in c for c in _contents(out)), (
-            f"A 自己的正文没回来：{_contents(out)}"
-        )
+        assert any(SECRET_A in c for c in _contents(out)), f"A 自己的正文没回来：{_contents(out)}"
 
     def test_cross_tenant_checkpoint_not_returned(self, ck_env):
         """同 user_id 不同租户 → 仍要挡住（租户是独立维度）。
@@ -229,9 +223,7 @@ class TestCheckpointHistoryNoCrossUserRead:
         _mem(ck_env, "m-T", "user-A", "别租户的记忆", tenant_id="tenant-X")
         _ckpt(ck_env, "ck-T", "m-T", 1, "别租户的记忆")
 
-        out = list_checkpoints(
-            "m-T", 20, principal=_principal("user-A", tenant_id="tenant-Y")
-        )
+        out = list_checkpoints("m-T", 20, principal=_principal("user-A", tenant_id="tenant-Y"))
 
         assert out.get("checkpoints") == [], f"跨租户的历史没挡住：{out}"
 
@@ -245,9 +237,7 @@ class TestCheckpointHistoryNoCrossUserRead:
         _mem(ck_env, "m-T", "user-A", "自己租户的记忆", tenant_id="tenant-X")
         _ckpt(ck_env, "ck-T", "m-T", 1, "自己租户的记忆")
 
-        out = list_checkpoints(
-            "m-T", 20, principal=_principal("user-A", tenant_id="tenant-X")
-        )
+        out = list_checkpoints("m-T", 20, principal=_principal("user-A", tenant_id="tenant-X"))
 
         assert len(out.get("checkpoints", [])) == 1, (
             f"同租户自己的历史看不见了（租户过滤写死了）：{out}"
@@ -286,9 +276,7 @@ class TestCheckpointHistoryNoCrossUserRead:
         _mem(ck_env, "m-legacy", "user-A", "老行：租户为 NULL")
         _ckpt(ck_env, "ck-legacy", "m-legacy", 1, "老行：租户为 NULL")
 
-        out = list_checkpoints(
-            "m-legacy", 20, principal=_principal("user-A", tenant_id="tenant-X")
-        )
+        out = list_checkpoints("m-legacy", 20, principal=_principal("user-A", tenant_id="tenant-X"))
 
         assert len(out.get("checkpoints", [])) == 1, (
             f"带了租户 header 就看不到自己 NULL 租户的老行了（租户过滤写太死）：{out}"
@@ -385,9 +373,7 @@ class TestCheckpointHistoryOwnerBoundary:
         )
 
         out2 = list_checkpoints("m-gone", 20, principal=_principal("a", role="admin"))
-        assert len(out2.get("checkpoints", [])) == 1, (
-            f"admin 看不到孤儿 checkpoint：{out2}"
-        )
+        assert len(out2.get("checkpoints", [])) == 1, f"admin 看不到孤儿 checkpoint：{out2}"
 
     def test_internal_call_principal_none_unfiltered(self, ck_env):
         """Red 4 另一半：`principal=None`（worker/CLI/MCP）不过滤。"""
@@ -412,13 +398,9 @@ class TestCheckpointHistoryOwnerBoundary:
 
         _ckpt(ck_env, "ck-cluster", "cluster_consolidation", 1, CLUSTER_SECRET)
 
-        out = list_checkpoints(
-            "cluster_consolidation", 20, principal=_principal("user-A")
-        )
+        out = list_checkpoints("cluster_consolidation", 20, principal=_principal("user-A"))
 
-        assert out.get("checkpoints") == [], (
-            f"普通用户看到了沉潜伪 id 的 checkpoint：{out}"
-        )
+        assert out.get("checkpoints") == [], f"普通用户看到了沉潜伪 id 的 checkpoint：{out}"
         assert not [c for c in _contents(out) if CLUSTER_SECRET in c], (
             f"普通用户看到了整簇提纯正文：{_contents(out)}"
         )
