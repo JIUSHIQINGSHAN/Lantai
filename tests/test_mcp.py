@@ -167,7 +167,9 @@ def test_backfill_ok():
     assert payload["ok"] is True
     assert payload["event_id"] == "ev_1"
     assert payload["used_count"] == 2
-    m.assert_called_once_with("ev_1", ["mem_1", "mem_2"])
+    # 归属（票 01c）：handler 现在透传 principal。宿主没给 user_id →
+    # `_principal_from_params` 返回 None（内部 worker 口径，收敛 "default"）。
+    m.assert_called_once_with("ev_1", ["mem_1", "mem_2"], principal=None)
 
 
 def test_backfill_validation():

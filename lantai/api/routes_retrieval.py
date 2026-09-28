@@ -21,9 +21,16 @@ class BackfillReq(BaseModel):
 
 
 @router.post("/backfill")
-def backfill(req: BackfillReq) -> dict:
-    """回填 used_ids：把生成侧实际用到的记忆 id 关联到检索事件。"""
-    backfill_used_ids(req.event_id, req.used_ids)
+def backfill(req: BackfillReq, ctx=Depends(get_current_user)) -> dict:
+    """回填 used_ids：把生成侧实际用到的记忆 id 关联到检索事件。
+
+    归属（票 `.scratch/mcp-identity-gaps/01c`）：此前**一个身份都不取**
+    ——A 拿 B 的 `event_id` 就能把 B 的回执从 `pending` 改成 `acked`
+    并覆盖成 A 给的值。这不是读泄漏，是**脏写**：回执链是 ADR-0049
+    弱标注的地基。`get_current_user` 本就在本模块 import 着（:11），
+    只是这条路由没用它——同票 24「签名有、函数体不用」的形状。
+    """
+    backfill_used_ids(req.event_id, req.used_ids, principal=ctx)
     return {"ok": True, "event_id": req.event_id, "used_count": len(req.used_ids)}
 
 

@@ -118,12 +118,39 @@ def log_retrieval(
         return None
 
 
-def backfill_used_ids(event_id: str, used_ids: list[str], request_id: str | None = None) -> None:
+def _backfill_owner_ok(ev, principal) -> bool:
+    """回执写入口的归属判据（票 `.scratch/mcp-identity-gaps/01c`）。
+
+    口径与读侧收敛**逐字一致**：`user_id == viewer OR IS NULL`。NULL 属主
+    是 v022 之前的历史行（真实库 918 条检索事件里只有 68 条带 session_id），
+    若把 NULL 当"他人资源"挡掉，单人部署的回执链整体失效——那是把老行
+    全判越权，属"宁 miss 不脏写"的反面（把该写的写没了）。
+    """
+    if principal is None or bool(getattr(principal, "is_admin", False)):
+        return True
+    from lantai.core.acl import viewer_of
+
+    viewer = viewer_of(principal)
+    return ev.user_id is None or ev.user_id == viewer
+
+
+def backfill_used_ids(
+    event_id: str, used_ids: list[str], request_id: str | None = None, *, principal=None
+) -> None:
     """宿主回执：哪些被召回的记忆真正被用进回答（整体覆盖语义）。
 
     回执链一等化（ADR-0049）：回执成功 → receipt_status="acked" + receipt_at 落定。
     request_id 提供时与事件列核对——不一致如实记日志（不拒绝、不改状态；
     宁 miss 不脏写，回执归属以 event_id 为准）。
+
+    归属（票 `.scratch/mcp-identity-gaps/01c`）：此前**一个身份都不取**——
+    A 拿 B 的 `event_id` 就能把 B 的回执从 `pending` 改成 `acked` 并覆盖成
+    A 给的值。这不是读泄漏，是**脏写**：回执链是 ADR-0049 弱标注的地基，
+    被污染后 dry-run 的 weak_hit_rate 算的就是假数。
+
+    越权时**不抛异常**：宿主在生成链路上，抛错会打断主流程。如实记
+    warning 后返回（不写），调用方从 `used_count` 之外没有别的信号，
+    所以日志是唯一可观测处——这正是"宁 miss 不脏写"的形态。
     """
     try:
         with db.get_session() as s:
@@ -136,6 +163,9 @@ def backfill_used_ids(event_id: str, used_ids: list[str], request_id: str | None
                         ev.request_id,
                         request_id,
                     )
+                if not _backfill_owner_ok(ev, principal):
+                    logger.warning("receipt backfill refused (owner mismatch): ev=%s", event_id)
+                    return
                 ev.used_ids = list(used_ids)
                 ev.receipt_status = "acked"
                 ev.receipt_at = utcnow()

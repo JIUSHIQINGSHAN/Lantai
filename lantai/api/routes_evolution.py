@@ -125,7 +125,14 @@ def consolidate_run_route(ctx=Depends(get_current_user)):
 
 @router.get("/evolution/consolidate/report")
 def consolidate_report_route():
-    """沉潜（ADR-0036）：获取最新夜梦沉淀审计报告。"""
+    """沉潜（ADR-0036）：获取最新夜梦沉淀审计报告。
+
+    不按调用方收窄（票 `.scratch/mcp-identity-gaps/01c`）：报告是
+    count-only（候选数/合并数/衰减数/耗时），不含正文、id 或 user_id，
+    定级 P2。与 MCP `consolidation_report` 共用同一个
+    `get_consolidation_report()`，两个入口口径一致——不存在"HTTP 宽、
+    MCP 窄"的分裂。
+    """
     from lantai.services.consolidation_service import get_consolidation_report
 
     return get_consolidation_report()

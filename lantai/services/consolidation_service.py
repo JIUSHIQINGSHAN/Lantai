@@ -811,5 +811,18 @@ def consolidation_audit_report(window_days: int = 7) -> dict:
 
 
 def get_consolidation_report() -> dict:
-    """获取最近一次沉潜运行报告。"""
+    """获取最近一次沉潜运行报告。
+
+    **只读进程内 `_LAST_CONSOLIDATION_REPORT`，不取身份、不查库**
+    （票 `.scratch/mcp-identity-gaps/01c`）。两个入口（HTTP
+    `/evolution/consolidate-report` 与 MCP `consolidation_report`）
+    都走本函数，口径一致。
+
+    内容经逐键核对是**计数与阈值**（候选数/合并数/衰减数/耗时/参数），
+    不含任何记忆正文、id 或 user_id，所以定级 P2 而非 P1：泄漏的是
+    "系统里大概有多少记忆在被治理"这类统计，不是内容本身。
+
+    真正按调用方收窄属于**契约级决定**（收了等于单人部署看不到全局
+    治理状况），归 02 号票，不在这条修。
+    """
     return _LAST_CONSOLIDATION_REPORT

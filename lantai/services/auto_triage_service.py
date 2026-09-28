@@ -227,6 +227,8 @@ def run_triage_auto_pilot(
     max_reject_conf: float = 0.25,
     limit: int = 50,
     dry_run: bool = False,
+    *,
+    principal=None,
 ) -> dict[str, Any]:
     """「持节」· 智能体案牍巡检官一键自治（Auto-Pilot）：
 
@@ -236,8 +238,23 @@ def run_triage_auto_pilot(
     4. 自动提纯中段模糊事实；
     5. 自动批准确凿高价值记忆（>= min_approve_conf）；
     6. 返回全流程治理统计报告。
+
+    归属（票 `.scratch/mcp-identity-gaps/01c`）：本函数此前四个参数一个
+    身份都不收，而它内部两步都踩在已修好的收窄逻辑上——`run_ai_triage`
+    与 `apply_ai_triage_batch` **都已有** `principal` 形参（票
+    readside-gaps/02），只是没往下传。同一个函数三个入口两种口径：
+    HTTP `/candidates/ai_triage` 与 MCP `triage_analyze` 都按调用方
+    收窄，auto-pilot 这一路是 `principal=None`。
+
+    **影响面按探针实测，不要按代码形状推算**：`_owner_scope(None)` 经
+    `_viewer_of(None)` **收敛到字面量 `"default"`，不是全表**。所以泄漏
+    的是"任意调用方裁决 `user_id == 'default'` 的那批候选"——真实库
+    37 行 memorycandidate 全部是 'default'，单用户部署下这一路摸到的
+    正是全部历史候选。B（显式属主）的候选被收敛挡住了，是安全的。
+
+    `principal=None`（内部 worker/CLI）保持原状——同族口径。
     """
-    triage_result = run_ai_triage(limit=limit)
+    triage_result = run_ai_triage(limit=limit, principal=principal)
     recommendations = triage_result.get("recommendations", [])
 
     actions_to_apply = []
@@ -289,7 +306,7 @@ def run_triage_auto_pilot(
             )
 
     if not dry_run and actions_to_apply:
-        applied_stats = apply_ai_triage_batch(actions_to_apply)
+        applied_stats = apply_ai_triage_batch(actions_to_apply, principal=principal)
         summary["applied_stats"] = applied_stats
 
     return summary

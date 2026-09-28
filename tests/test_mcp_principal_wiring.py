@@ -378,12 +378,12 @@ class TestStructuralGuard:
             # 运维探针：宿主机挂了要能看出来，memory_count 语义上就是全库
             # （同 build_overview 保留全量口径，内部 worker 不能被打断）
             "handle_mem_health": "运维探针，全库计数是既定语义",
-            # 以下三个是 01c 票范围内的真缺口，尚未修——留在这里是为了
-            # 让「未修」是显式的、有人 review 的，而不是默默漏掉。
-            # 01c 修完一个删一个。
-            "handle_triage_auto_pilot": "01c：run_triage_auto_pilot 丢了 principal",
-            "handle_backfill": "01c：RetrievalEvent 有 user_id 列但没比对",
-            "handle_consolidation_report": "01c：读侧无归属口径（计数-only，P2）",
+            # 01c 修完的两个（triage_auto_pilot / backfill）已从本清单删除。
+            # consolidation_report 是真缺口但定级 P2：内容是 count-only
+            # （候选数/合并数/衰减数/耗时），不含正文、id 或 user_id，按
+            # 调用方收窄属契约级决定，归 02 号票。**留在这里是为了让"未修"
+            # 是显式的、有人 review 的**，01c 修完一个删一个。
+            "handle_consolidation_report": "01c：读侧计数-only，收紧归 02 号票",
         }
 
         src = Path(mcp_mod.__file__).read_text(encoding="utf-8")
@@ -950,3 +950,287 @@ class TestMemSyncScoped:
         assert memories.get("total") == 2, (
             f"A 的 mem_sync 统计了别人的记忆（该 2，实际 {memories.get('total')}）：{stats}"
         )
+
+
+class TestTriageAutoPilotScoped:
+    """`triage_auto_pilot`（票 `.scratch/mcp-identity-gaps/01c`）。
+
+    根因：`run_triage_auto_pilot`（auto_triage_service.py:225）四个参数
+    一个身份都不收，而它内部两步都踩在已修好的收窄逻辑上——
+    `run_ai_triage(limit=limit)` 与 `apply_ai_triage_batch(...)` 都**已经**
+    有 `principal` 形参（票 readside-gaps/02），只是没往下传。
+
+    探针实测的影响面（不是我初判的"全表"）：`_owner_scope(None)` 经
+    `_viewer_of(None)` **收敛到字面量 `"default"`**，不是全表。所以真实
+    泄漏是"任意调用方裁决 `user_id == 'default'` 的那批候选"——而真实库
+    37 行 memorycandidate 全部是 'default'。**用例必须按这个口径写**，
+    拿一个不会发生的场景当 Red 是自欺欺人。
+    """
+
+    def test_auto_pilot_scans_only_own_candidates(self, env):
+        """A 带 user_id 调 → 只扫到 A 的候选，`"default"` 那条不该进来。"""
+        session_factory, _ = env
+        now = datetime.now(UTC)
+        with session_factory() as s:
+            from lantai.models.tables import MemoryCandidate
+
+            for cid, uid in (("ap-A", "user-A"), ("ap-default", "default")):
+                s.add(
+                    MemoryCandidate(
+                        id=cid,
+                        document_id=f"doc-{cid}",
+                        user_id=uid,
+                        summary=f"{uid} 的待审候选",
+                        claims=[f"{uid} 的主张"],
+                        status="pending_review",
+                        review_due_at=now,
+                        created_at=now,
+                    )
+                )
+            s.commit()
+
+        out = _call_ok(_load_mcp(), "triage_auto_pilot", {"dry_run": True, "user_id": "user-A"})
+        ids = [d.get("id") for d in out.get("details") or []]
+        assert ids == ["ap-A"], f"A 的 auto-pilot 扫到了别人的候选（该只有 ap-A）：{ids}"
+
+    def test_auto_pilot_does_not_adjudicate_others(self, env):
+        """决定性：A 跑 auto-pilot（非 dry-run）→ 别人的候选状态不变。
+
+        `apply_ai_triage_batch` 对每个候选调 `review_candidate` /
+        `refine_candidate_record`，那两处已有归属校验会抛异常被
+        `except Exception` 吞掉、计入 `failed`——**光看统计数字分不清
+        "没扫到"与"扫到了但被拒"**，所以直接查库。
+        """
+        session_factory, _ = env
+        now = datetime.now(UTC)
+        with session_factory() as s:
+            from lantai.models.tables import MemoryCandidate
+
+            s.add(
+                MemoryCandidate(
+                    id="ap-victim",
+                    document_id="doc-victim",
+                    user_id="default",
+                    summary="别人的待审候选",
+                    claims=["别人的主张"],
+                    status="pending_review",
+                    review_due_at=now,
+                    created_at=now,
+                )
+            )
+            s.commit()
+
+        # 非 dry_run：真的会走 apply 分支。LLM 走降级规则（无 key），
+        # 低置信度候选会被判 reject
+        _call_ok(
+            _load_mcp(),
+            "triage_auto_pilot",
+            {"dry_run": False, "user_id": "user-A", "max_reject_conf": 0.9},
+        )
+
+        with session_factory() as s:
+            from lantai.models.tables import MemoryCandidate
+
+            victim = s.get(MemoryCandidate, "ap-victim")
+            assert victim.status == "pending_review", (
+                f"A 的 auto-pilot 改掉了别人的候选状态（该仍 pending_review，"
+                f"实际 {victim.status}）——宁 miss 不脏写被击穿"
+            )
+
+    def test_auto_pilot_adjudicate_respects_lane_binding(self, env):
+        """决定性（service 层）：lane 绑定挡住越权裁决——杀 C2 变异体。
+
+        为什么必须单独写这条：MCP 的 `_principal_from_params` 把
+        `allowed_lanes` 写死 `None`，所以走 MCP 入口时
+        `_owner_scope`（只判 user_id）与 `ensure_can_delete`（判 user_id
+        + tenant + lane）**判据完全重合**——`actions_to_apply` 里只会有
+        `user_id == viewer` 的候选，而那批候选 `ensure_can_delete` 一律
+        放行。实测（探针 probe_c2.py）：C2 变异体走 MCP 入口与基线
+        逐字节一致，**不可观测**。
+
+        但 `ensure_can_delete` 的 lane 判据是真实存在的约束
+        （acl.py:133），`_owner_scope` 没管它。service 层直接传一个
+        lane 绑定的 Principal 就能让缺口显形：候选 user_id 与主体相同
+        （扫描命中）但 lane 不在主体 allowed_lanes 内（裁决该被挡）。
+
+        这正是"修两个函数不是冗余"的实证：`run_ai_triage` 的收窄与
+        `apply_ai_triage_batch` 的收窄判据不同，各挡一类越权。
+        """
+        session_factory, _ = env
+        now = datetime.now(UTC)
+        with session_factory() as s:
+            from lantai.models.tables import MemoryCandidate
+
+            s.add(
+                MemoryCandidate(
+                    id="ap-lane",
+                    document_id="doc-lane",
+                    user_id="user-A",
+                    summary="A 的越 lane 候选",
+                    claims=["A 的主张"],
+                    status="pending_review",
+                    review_due_at=now,
+                    created_at=now,
+                    extractor_confidence=0.1,
+                    lane="dream",
+                )
+            )
+            s.commit()
+
+        from lantai.core.acl import Principal
+        from lantai.services.auto_triage_service import run_triage_auto_pilot
+
+        principal = Principal(user_id="user-A", role="user", allowed_lanes=["fact"])
+        out = run_triage_auto_pilot(
+            dry_run=False, max_reject_conf=0.9, limit=50, principal=principal
+        )
+
+        # 扫到了（user_id 匹配）但被 lane 挡住 → failed，而不是 rejected
+        stats = out.get("applied_stats") or {}
+        assert stats.get("rejected") == 0, (
+            f"lane 绑定没挡住裁决（该 failed=1/rejected=0，实际 {stats}）——宁 miss 不脏写被击穿"
+        )
+        assert stats.get("failed") == 1, f"越权裁决没被记为失败（该 failed=1）：{stats}"
+
+        with session_factory() as s:
+            from lantai.models.tables import MemoryCandidate
+
+            cand = s.get(MemoryCandidate, "ap-lane")
+            assert cand.status == "pending_review", (
+                f"lane 外的候选被改掉了（该仍 pending_review，实际 {cand.status}）"
+            )
+
+
+class TestBackfillScoped:
+    """`backfill`：A 不能往 B 的检索事件上写回执。
+
+    `backfill_used_ids`（retrieval_log.py:121）按 `event_id` 直接
+    `s.get(RetrievalEvent, ...)` 然后改 `used_ids` / `receipt_status` /
+    `receipt_at`，此前一个身份都不取。这不是读泄漏，是**脏写**：
+    回执链是 ADR-0049 弱标注的地基，被污染后 dry-run 的 weak_hit_rate
+    算的就是假数。
+
+    越权时**不抛异常**（宿主在生成链路上，抛错会打断主流程），只记
+    warning 后返回——"宁 miss 不脏写：如实说没写"。
+    """
+
+    def _seed_event(self, s, event_id: str, user_id: str | None) -> None:
+        from lantai.models.tables import RetrievalEvent
+
+        now = datetime.now(UTC)
+        s.add(
+            RetrievalEvent(
+                id=event_id,
+                query_text=f"{event_id} 的查询",
+                user_id=user_id,
+                # trace_id / query_norm_hash 都是 NOT NULL（tables.py:588/590），
+                # 少一个就 IntegrityError——与 param_snapshot_hash 同一类坑
+                trace_id=f"tr-{event_id}",
+                query_norm_hash=f"q-{event_id}",
+                param_snapshot_hash=f"p-{event_id}",
+                created_at=now,
+                receipt_status="pending",
+            )
+        )
+
+    def test_backfill_rejects_others_event(self, env):
+        """A 带 user_id 回填 B 的事件 → 事件原样不动。"""
+        session_factory, _ = env
+        with session_factory() as s:
+            self._seed_event(s, "ev-B", "user-B")
+            s.commit()
+
+        out = _call_ok(
+            _load_mcp(),
+            "backfill",
+            {"event_id": "ev-B", "used_ids": ["mem-x"], "user_id": "user-A"},
+        )
+        # 接口层仍然返回 ok（宁 miss 不脏写：不抛异常打断宿主），
+        # 但库里必须没写
+        assert out.get("ok") is True
+
+        with session_factory() as s:
+            from lantai.models.tables import RetrievalEvent
+
+            ev = s.get(RetrievalEvent, "ev-B")
+            assert ev.receipt_status == "pending", f"A 把 B 的回执改成 {ev.receipt_status} 了——脏写"
+            assert list(ev.used_ids or []) == [], f"A 覆盖了 B 的 used_ids：{ev.used_ids}"
+
+    def test_backfill_allows_own_event(self, env):
+        """A 回填自己的事件 → 正常写入（不能把该写的修没了）。"""
+        session_factory, _ = env
+        with session_factory() as s:
+            self._seed_event(s, "ev-A", "user-A")
+            s.commit()
+
+        _call_ok(
+            _load_mcp(),
+            "backfill",
+            {"event_id": "ev-A", "used_ids": ["mem-1", "mem-2"], "user_id": "user-A"},
+        )
+
+        with session_factory() as s:
+            from lantai.models.tables import RetrievalEvent
+
+            ev = s.get(RetrievalEvent, "ev-A")
+            assert ev.receipt_status == "acked", f"自己的回执没写上：{ev.receipt_status}"
+            assert list(ev.used_ids or []) == ["mem-1", "mem-2"], f"used_ids 不对：{ev.used_ids}"
+
+    def test_backfill_allows_null_owner_event(self, env):
+        """NULL 属主的历史行仍可回填——单人部署的回执链不能整体失效。
+
+        真实库 918 条检索事件里只有 68 条带 session_id，绝大多数
+        user_id 是 NULL（v022 之前埋点没记身份）。若把 NULL 当"他人
+        资源"挡掉，等于把老行全判越权，单人部署的回执链直接断。
+        杀 C4 变异体（scope 去掉 `OR IS NULL`）。
+        """
+        session_factory, _ = env
+        with session_factory() as s:
+            self._seed_event(s, "ev-null", None)
+            s.commit()
+
+        _call_ok(
+            _load_mcp(),
+            "backfill",
+            {"event_id": "ev-null", "used_ids": ["mem-9"], "user_id": "user-A"},
+        )
+
+        with session_factory() as s:
+            from lantai.models.tables import RetrievalEvent
+
+            ev = s.get(RetrievalEvent, "ev-null")
+            assert ev.receipt_status == "acked", (
+                f"NULL 属主的老行回执被挡了（该 acked，实际 {ev.receipt_status}）"
+                "——单人部署的回执链会整体失效"
+            )
+            assert list(ev.used_ids or []) == ["mem-9"]
+
+    def test_backfill_admin_can_write_any_event(self, env):
+        """admin 可回填任意事件（service 层直接验）。
+
+        为什么走 service 层：`_principal_from_params`（mcp.py:122）把
+        `role` 硬编码为 `"user"`，**忽略 params 里的 `is_admin`**——这是
+        既定设计（MCP 没有鉴权层，不猜身份），所以 MCP 入口构造不出
+        admin principal。admin 口径只能在 service 层验。
+        """
+        session_factory, _ = env
+        with session_factory() as s:
+            self._seed_event(s, "ev-B2", "user-B")
+            s.commit()
+
+        from lantai.core.acl import Principal
+        from lantai.observability.retrieval_log import backfill_used_ids
+
+        backfill_used_ids(
+            "ev-B2",
+            ["mem-admin"],
+            principal=Principal(user_id="admin-1", role="admin"),
+        )
+
+        with session_factory() as s:
+            from lantai.models.tables import RetrievalEvent
+
+            ev = s.get(RetrievalEvent, "ev-B2")
+            assert ev.receipt_status == "acked", (
+                f"admin 回填别人的事件被挡了（该 acked）：{ev.receipt_status}"
+            )

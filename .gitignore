@@ -1,5 +1,7 @@
 # 环境变量（含密钥）
 .env
+# CI/测试留下的 .env 备份（test_release_check 等会临时造一个）
+.env.bak*
 
 # SQLite 数据库
 remembrance.db

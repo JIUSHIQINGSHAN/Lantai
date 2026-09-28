@@ -181,7 +181,9 @@ def handle_backfill(params: dict) -> dict:
         raise ValueError("used_ids must be a list of strings")
     from lantai.observability.retrieval_log import backfill_used_ids as _bf
 
-    _bf(event_id, used_ids)
+    # 归属（票 .scratch/mcp-identity-gaps/01c）：A 拿 B 的 event_id 就能把
+    # B 的回执改成 acked——脏写，不是读泄漏。服务层拒写并记 warning。
+    _bf(event_id, used_ids, principal=_principal_from_params(params))
     return {"ok": True, "event_id": event_id, "used_count": len(used_ids)}
 
 
@@ -288,11 +290,17 @@ def handle_triage_auto_pilot(params: dict) -> dict:
     dry_run = bool(params.get("dry_run", False))
     from lantai.services.auto_triage_service import run_triage_auto_pilot
 
+    # 归属（票 .scratch/mcp-identity-gaps/01c）：`run_triage_auto_pilot` 此前
+    # 四个参数一个身份都不收，而它内部两步都踩在已修好的收窄逻辑上
+    # （`run_ai_triage` / `apply_ai_triage_batch` 都有 principal 形参，
+    # 票 readside-gaps/02），只是没往下传。宿主不透传 user_id → None，
+    # 走内部 worker 口径（收敛 "default"，不是全表）。
     return run_triage_auto_pilot(
         min_approve_conf=min_approve,
         max_reject_conf=max_reject,
         limit=limit,
         dry_run=dry_run,
+        principal=_principal_from_params(params),
     )
 
 
