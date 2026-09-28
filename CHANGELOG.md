@@ -19,6 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **定点写入口归属——`rollback` 与 `feedback` 不再跨用户改写单条记忆（2026-09-28，票据 `.scratch/readside-gaps/issues/13-rollback-feedback-cross-user.md`）**：
+  - **背景实证**（`.scratch/readside-audit/probe_round8.py`）：票 12 修完三个「全库演化」入口后，本轮改查**按 id 定点**的写入口——它们不扫全表，票 12 的候选集收窄对它们完全无效。两个中：`POST /memory/{id}/rollback` 让 A 把 B 的正文**整条覆盖成历史任意版本**（`prev.after` 逐字段 `setattr`，且没有 undo 入口）；`POST /feedback` 让 A 刷 B 的 `use_count`/`helpful_count`/`importance`。判据四条（A 改 B / A 改自己 / admin 改任意 / 行为不变）在两端点上正确区分——**探针不是空转的**。
+  - **feedback 为什么也算严重**：那三个字段正是**考功与遗忘的输入**（票 12 刚修的两处即按它们决策）。刷它们等于间接操控别人的演化结果——不是直接写正文，但效果等价且更难察觉。
+  - **三条入口同一处代码**，只修一处会留下「以为修完了」的错觉：REST 路由、MCP 工具、service 层（还被 worker/eval 消费）一并修。`promoter.rollback` / `reflector.record_feedback` 加 `principal=None`，取到行后过 `acl.ensure_can_delete` 单一真源（同票 04/06/11 写侧范式），传 `resource_user_id` / `resource_tenant_id` / `lane` 三项（与 `routes_terminal.py:252` 同口径）。
+  - **`ok: False` 而非抛异常**：service 契约是 dict（被 worker/eval/MCP 多处消费，形状不能动），403 语义只在路由边界翻译。**`_ok_or_raise` 因此新增 `forbidden` → 403 分支**——原本会落进 422，而 422 是「请求格式有问题」，会让调用方以为自己的 body 写错了，实际是权限不足。
+  - **MCP 不猜身份**：两个 handler 复用票 10 的 `_principal_from_params`——宿主透传 `user_id` 才校验，不透传留 NULL 不过滤。不看环境变量/进程名/session_id 推导。
+  - **测试增量**：`tests/test_pointwrite_ownership.py` 17 例。除七条 Red 外另加**跨租户**与**泳道越权**两例——`ensure_can_delete` 的这两个分支在单用户部署下不触发，必须显式造一个不同 tenant / 不含该 lane 的主体，否则分支被遮住、变异杀不掉。每条决定性断言落在**落库行字段值**上（`content` / `use_count` / `importance`），不只看返回的 `ok`。
+  - **回归修补**：`tests/test_mcp.py::test_rollback_ok` 原本断言 `assert_called_once_with("mem_1")`，MCP 现在多传 `principal=None`。已改为显式钉住这个 kwarg——**顺带让「漏传 identity」在这条既有测试上现形**。
+  - **探针复验**：两个 LEAK 全部转 ok，返回 `403 forbidden: resource belongs to another user`；「A 改自己」「admin 改任意」两条仍 ok。
+  - **踩坑（与票 12 重复，第二次踩）**：探针的 `create_all` 建不出 FTS5 虚表，`rollback` 路径 `sync_fts` 缺表整笔回滚，须显式 `init_fts`。另：只 patch `db_module.engine` 不够——`get_session` 内部绑模块级 `engine` 名字，必须整体替换 `db_module.get_session`。
+  - **变异验证 13/13 全杀**（`.scratch/readside-gaps/mutation_check_13.py`，子进程隔离）。第一轮 **4 个 MISSED** 全对应真实缺口（跨租户分支、泳道分支、403 翻译、MCP feedback），补测试后全杀。全量 pytest **1596 passed / 0 failed**（基线 1579）。
+  - **待实证**：`POST /evolve/run` 本轮只覆盖「没有可提案的输入」一种情况，proposer/reflector 都是全表扫描，**不等于安全**；`MemoryUsageFeedback` 只有 `session_id`，`FailureRecord` / `ActionOutcome` 零归属列。
+
 - **演化类写侧归属——考功/沉潜/遗忘不再批量改写别人的记忆（2026-09-28，票据 `.scratch/readside-gaps/issues/12-kaogong-writes-cross-user.md`）**：
   - **背景实证**（`.scratch/readside-audit/probe_round7.py` 实证 + 落库字段核验）：三个「全库演化」入口一个身份都不取，候选集是全表 `select(MemoryItem).where(status=="active")`。考功把 B 的 `importance` 从 **0.9 改写成 0.1**、`tier` 从 `working` 改成 `longterm`、`decay_class` 一并改；沉潜把别人的碎片标成 `consolidated` 并**新生成一条带别人正文的主记忆**；遗忘改 `decay_score` 并把低衰减记忆置 `archived`。**读侧缺口只是「看到」，这里是真改，而且多数不可逆**——`importance` 降了没有回滚路径，`archived` 没有 undo 入口。这正是「宁 miss 不脏写」要防的：宁可漏一次考功，不能错改别人的权重。
   - **三处同构一并修**（分开修会留下「以为修完了」的错觉）：`run_kaogong_cycle` / `find_consolidation_clusters` + `prune_decayed_synapses` / `apply_forgetting` 全部新增 `principal=None` 形参，各配一个 `_*_scope(principal)` 助手；`run_consolidation_cycle` 把 principal 分别透传给聚类与裁剪两条候选集。口径与票 03/04/06/09/10 逐字一致：**admin / `principal=None` → 不过滤**，否则 `user_id == viewer OR IS NULL`。

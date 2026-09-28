@@ -1,3 +1,4 @@
+from fastapi import HTTPException
 from sqlmodel import select
 
 from lantai.core.ids import new_id
@@ -541,7 +542,16 @@ def apply_proposal(proposal_id: str) -> dict:
         return {"ok": True, "proposal_id": prop.id, **apply_extra}
 
 
-def rollback(memory_id: str) -> dict:
+def rollback(memory_id: str, principal=None) -> dict:
+    """回滚记忆到上一版本（Checkpoint 快照）。
+
+    归属（票 .scratch/readside-gaps/13）：此前只按 id 取行、一个身份都不取——
+    `prev.after` 逐字段 `setattr` 覆盖，**能把别人的正文整条换成历史任意版本**，
+    且没有 undo 入口。三个入口（REST / MCP / worker）共用此处，只修一处不够。
+    校验复用 `acl.ensure_can_delete` 单一真源（同票 04/06/11 写侧范式）。
+
+    `principal=None`（worker/CLI/scheduler）保持全表，与已修各票逐字一致。
+    """
     with db.get_session() as s:
         ckpts = s.exec(
             select(MemoryCheckpoint)
@@ -554,6 +564,20 @@ def rollback(memory_id: str) -> dict:
         mem = s.get(MemoryItem, memory_id)
         if not mem:
             return {"ok": False, "reason": "memory missing"}
+        if principal is not None:
+            from lantai.core.acl import ensure_can_delete
+
+            try:
+                ensure_can_delete(
+                    principal,
+                    resource_user_id=mem.user_id,
+                    resource_tenant_id=mem.tenant_id,
+                    lane=mem.lane,
+                )
+            except HTTPException as exc:
+                # service 契约是 dict（被 worker/eval/MCP 多处消费，形状不能动），
+                # 403 语义在路由边界由 _ok_or_raise 翻译；这里只报「不允许」。
+                return {"ok": False, "reason": f"forbidden: {exc.detail}"}
         before = mem.model_dump(mode="json")
         for k, v in prev.after.items():
             if hasattr(mem, k) and k != "id":

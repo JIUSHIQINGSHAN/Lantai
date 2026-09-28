@@ -23,6 +23,11 @@ def _ok_or_raise(result: dict) -> dict:
     """
     if isinstance(result, dict) and result.get("ok") is False:
         reason = str(result.get("reason") or "operation failed")
+        # 归属越权（票 .scratch/readside-gaps/13）：service 层过 ensure_can_delete
+        # 被拒时返回 forbidden 前缀。必须译成 403 而不是 422——422 是「请求格式
+        # 有问题」，会让调用方以为是自己的 body 写错了，实际是权限不足。
+        if reason.startswith("forbidden"):
+            raise HTTPException(403, reason)
         if "not found" in reason or "missing" in reason:
             raise HTTPException(404, reason)
         if (
@@ -63,13 +68,23 @@ def decide_proposal_route(
 
 
 @router.post("/memory/{memory_id}/rollback")
-def do_rollback_route(memory_id: str):
-    return _ok_or_raise(do_rollback(memory_id))
+def do_rollback_route(memory_id: str, ctx=Depends(get_current_user)):
+    """回滚记忆到上一版本。
+
+    归属（票 .scratch/readside-gaps/13）：此前一个身份都不取，按 id 就能把
+    **别人**的正文整条覆盖成历史任意版本，且没有 undo 入口。
+    """
+    return _ok_or_raise(do_rollback(memory_id, principal=ctx))
 
 
 @router.post("/feedback")
-def feedback_route(req: FeedbackReq):
-    return _ok_or_raise(record_feedback_entry(req))
+def feedback_route(req: FeedbackReq, ctx=Depends(get_current_user)):
+    """登记检索反馈并回写记忆权重。
+
+    归属（票 .scratch/readside-gaps/13）：`use_count`/`helpful_count`/`importance`
+    是考功与遗忘的**输入**，刷别人的这三个字段等于间接操控别人的演化结果。
+    """
+    return _ok_or_raise(record_feedback_entry(req, principal=ctx))
 
 
 @router.post("/evolve/run")

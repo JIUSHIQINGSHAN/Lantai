@@ -101,15 +101,28 @@ def decide_proposal(proposal_id: str, req: ProposalDecisionReq, *, principal=Non
             return {"ok": True}
 
 
-def do_rollback(memory_id: str) -> dict:
-    """回滚记忆。"""
-    return rollback(memory_id)
+def do_rollback(memory_id: str, principal=None) -> dict:
+    """回滚记忆。
+
+    归属（票 .scratch/readside-gaps/13）：下传 principal 到 promoter.rollback，
+    越权时该处返回 `{"ok": False, "reason": "forbidden: ..."}`。
+    `principal=None`（worker/CLI/scheduler）保持全表。
+    """
+    return rollback(memory_id, principal=principal)
 
 
-def record_feedback_entry(req: FeedbackReq) -> dict:
-    """记录反馈。"""
+def record_feedback_entry(req: FeedbackReq, principal=None) -> dict:
+    """记录反馈。
+
+    归属（票 .scratch/readside-gaps/13）：同上，下传 principal。
+    """
     return record_feedback(
-        req.memory_id, req.query, req.helped, req.user_accepted, req.hallucination_risk
+        req.memory_id,
+        req.query,
+        req.helped,
+        req.user_accepted,
+        req.hallucination_risk,
+        principal=principal,
     )
 
 

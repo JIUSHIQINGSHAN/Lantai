@@ -1,3 +1,5 @@
+from fastapi import HTTPException
+
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem, MemoryUsageFeedback
@@ -5,12 +7,40 @@ from lantai.storage import db
 
 
 def record_feedback(
-    memory_id: str, query: str, helped: bool, user_accepted: bool, hallucination_risk: float
+    memory_id: str,
+    query: str,
+    helped: bool,
+    user_accepted: bool,
+    hallucination_risk: float,
+    principal=None,
 ) -> dict:
+    """登记检索反馈并回写记忆权重。
+
+    归属（票 .scratch/readside-gaps/13）：此前只按 id 取行、一个身份都不取——
+    任何持 key 者都能刷别人的 `use_count` / `helpful_count` / `importance`，
+    而这三个字段正是考功与遗忘的**输入**（改它们等于间接操控别人的演化结果）。
+    校验复用 `acl.ensure_can_delete` 单一真源（同票 04/06/11 写侧范式）。
+
+    `principal=None`（worker/CLI/scheduler）保持全表，与已修各票逐字一致。
+    """
     with db.get_session() as s:
         mem = s.get(MemoryItem, memory_id)
         if not mem:
             return {"ok": False}
+        if principal is not None:
+            from lantai.core.acl import ensure_can_delete
+
+            try:
+                ensure_can_delete(
+                    principal,
+                    resource_user_id=mem.user_id,
+                    resource_tenant_id=mem.tenant_id,
+                    lane=mem.lane,
+                )
+            except HTTPException as exc:
+                # service 契约是 dict（被 worker/eval/MCP 多处消费，形状不能动），
+                # 403 语义在路由边界由 _ok_or_raise 翻译；这里只报「不允许」。
+                return {"ok": False, "reason": f"forbidden: {exc.detail}"}
         delta = (
             (0.1 if helped else -0.05) + (0.1 if user_accepted else 0) - 0.2 * hallucination_risk
         )

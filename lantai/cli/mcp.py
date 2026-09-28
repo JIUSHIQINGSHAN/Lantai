@@ -333,7 +333,8 @@ def handle_feedback(params: dict) -> dict:
         helped=params.get("helped", False),
         user_accepted=params.get("user_accepted", False),
     )
-    return record_feedback_entry(req)
+    # 归属（票 .scratch/readside-gaps/13）：宿主透传 user_id 才校验，不透传不过滤
+    return record_feedback_entry(req, principal=_principal_from_params(params))
 
 
 def handle_raw_add(params: dict) -> dict:
@@ -378,7 +379,8 @@ def handle_rollback(params: dict) -> dict:
         raise ValueError("memory_id must be a non-empty string")
     from lantai.evolution.promoter import rollback as _rollback
 
-    return _rollback(memory_id)
+    # 归属（票 .scratch/readside-gaps/13）：宿主透传 user_id 才校验，不透传不过滤
+    return _rollback(memory_id, principal=_principal_from_params(params))
 
 
 def handle_revive_consolidated(params: dict) -> dict:

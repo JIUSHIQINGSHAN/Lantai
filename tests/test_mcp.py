@@ -411,7 +411,12 @@ def test_raw_add_validation():
 
 
 def test_rollback_ok():
-    """rollback 工具：合法输入 → 调用 promoter.rollback。"""
+    """rollback 工具：合法输入 → 调用 promoter.rollback。
+
+    归属（票 .scratch/readside-gaps/13）：不透传 `user_id` 时
+    `_principal_from_params` 返回 None，rollback 收到的 principal=None
+    （不过滤）。断言里显式钉住这个 kwargs——漏传 identity 会在这里现形。
+    """
     mod = _load_mcp()
     with patch("lantai.evolution.promoter.rollback", return_value={"ok": True}) as m:
         resp = mod.handle(
@@ -423,7 +428,7 @@ def test_rollback_ok():
             }
         )
     assert "error" not in resp
-    m.assert_called_once_with("mem_1")
+    m.assert_called_once_with("mem_1", principal=None)
 
 
 def test_rollback_validation():
