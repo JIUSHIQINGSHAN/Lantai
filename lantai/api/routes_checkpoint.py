@@ -41,7 +41,11 @@ def list_checkpoints_route(
 ):
     if session_id:
         return get_checkpoint(session_id, principal=ctx)
-    return list_checkpoints(memory_id, limit)
+    # 归属（票 .scratch/readside-gaps/19）：这条分支此前不传身份，A 按
+    # memory_id 就能拉走 B 的记忆全部历史版本（before/after 是完整行快照）。
+    # 同一个 handler 两条分支、一条修了一条没修——正是「以为修完了」的形状。
+    # 收窄到空就返回空列表，**不译 403**（读侧口径同票 09 get_checkpoint 返回 None）。
+    return list_checkpoints(memory_id, limit, principal=ctx)
 
 
 @router.post("/checkpoint")

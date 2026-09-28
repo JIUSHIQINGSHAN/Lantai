@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **检查点历史补归属——A 拉不走 B 的记忆全部历史版本（2026-09-28，票据 `.scratch/readside-gaps/issues/19-checkpoint-history-no-owner.md`）**：
+  - **先说影响**：`routes_checkpoint.py` 的 handler **取了身份却没往下传**——`session_id` 分支传了 `principal=ctx`（票 09 修的），`memory_id` 分支没有。`evolution_service.list_checkpoints(memory_id, limit)` 按 `memory_id` 直查全表，无任何归属过滤，把每个 checkpoint 的 `model_dump(mode="json")` 全量吐出。而 `MemoryCheckpoint.before` / `.after` 是**完整行快照**（`content` / `title` / `structure` 全在里面），所以 **A 调 `GET /checkpoint?memory_id=<B 的记忆 id>` 就能拿到 B 这条记忆的每一次变更前后全文**。这比读当前版本更糟：当前版本可能已经被改过，**历史版本不会**。而 checkpoint 是回滚的原料——先拉历史、再挑一个版本回滚（票 13 已修 rollback 的归属，读侧这道口子一直开着）。探针实证：A 拉 B 的记忆，2 条 checkpoint 的 `before`/`after` 全文到手。
+  - **票面优先级是反的，改选 join 而非「先取记忆行再过 `ensure_can_delete`」**：`consolidation_service.py:357` 故意写 `memory_id="cluster_consolidation"` 这个**伪 id** 做沉潜留痕对账键，它**没有 `MemoryItem` 行**。「先取记忆行」在它身上必然拿到 None，此时 403（把「没有这条记忆」说成越权）、404（改变响应形状）、放行（泄漏）三个答案全是错的——**这是该方案的结构性缺陷，不是实现细节**。join 天然处理两类无主行：伪 id 与**孤儿 checkpoint**（`delete_memory` 不级联删 checkpoint，历史比行活得久），匹配不上就不返回。对非 admin 这正是「宁 miss 不脏写」：没有属主可判，放行等于把已删记忆的编年史敞开。
+  - **同一个 handler 两条分支、一条修了一条没修**——正是「以为修完了」的典型形状。已在路由写明：本分支管记忆历史，`session_id` 分支管会话底本，别让后来人以为重复。
+  - **不需要第二道行级校验**：票 17「边决定走哪条路、行决定露出什么」的两层结构在这里**塌缩成一层**——归属判定就在 SQL 的 join 条件里，读路径上**没有** `session.get(MemoryItem, …)` 这种按主键绕开 scope 的直读（票 14 踩过两次的盲区）。别照票 17 的样子再补一个 `_owns`，那是重复判据。
+  - **全库第一次给读侧加租户维度，口径写清**：「**双方都非空且不同才挡**」，同写侧 `ensure_can_delete`。不能写成严格 `tenant_id == viewer_tenant`——`auth.py:143` 的 tenant 是**客户端 header 自报**的，没有租户注册表、没有校验，严格相等会让同一个人**不带 header** 时连自己 NULL 租户的老行都看不见（`.scratch/readside-gaps/probe_tenant_semantics.py` 实证：`X-Tenant-Id=None` 时 m-1 凭空消失）。NULL 老行一律照旧可见。
+  - **读侧收窄静默返回空，不译 403**：同票 09 `get_checkpoint` 返回 None 的形状。admin 与 `principal=None`（worker/CLI/MCP）**连 join 都不写**，所以孤儿 checkpoint 与伪 id 对它们照见——沉潜对账与运维排查看的就是这两类。
+  - **测试增量**：`tests/test_checkpoint_history_ownership.py` 23 例，6 个测试类。决定性断言落在 `checkpoints[*].after.content` / `before.content` 上，不只看列表长度。含反向用例保功能没被修废（A 自己的历史照常全返、NULL 属主老记忆照常可见、admin 与 `principal=None` 照见全部含伪 id 与孤儿、同租户照常可见、`limit`/倒序/返回形状不变），双分支回归（票 09 的 `session_id` 用例继续通过、且**仍然**挡别人），HTTP 层与 service 层两条出口，不 mock 冒烟两条。
+  - **两个 MISSED 都是真缺口，不是等价变异**（`.scratch/readside-gaps/probe_m6_m7_diff.py` 逐个实证）：**M6**（租户严格相等）——我第一版用例用的是「**不带** header」的主体，而 M6 在那种主体下 `viewer_tenant` 本就是 None、条件整段不生效，**用例根本测不到它**；真正能区分的形状是「header 非空 + 行租户为 NULL」。**M7**（`viewer_tenant or "__never__"` 恒生效）——非 admin 且不带 header 的主体连自己**有租户标签**的行都看不见，而 NULL 用例靠 `IS NULL` 侥幸漏过、杀不掉它。教训：**给一个条件写用例时，要问「这个条件在什么输入下真的会求值」**。
+  - **变异验证 13/13 全杀**（`.scratch/readside-gaps/mutation_check_19.py`，子进程隔离）：含 M13「改回票面原优先项」，3 个测试红。全量 pytest **1727 passed / 0 failed**（基线 1705）。
+
 - **级联删除补归属——A 删自己的文档，B 的记忆不再被连带物理删除（2026-09-28，票据 `.scratch/readside-gaps/issues/18-delete-document-cascade-no-owner.md`）**：
   - **先说影响**：`promoter.delete_memory` 没有任何 principal 形参，`s.get(MemoryItem, id)` 取到就 `s.delete`，再 `sync_fts(None)` + `delete_memory_item` 从 FTS 和向量库除名——**这是全代码库最具破坏性的操作**。它的调用方 `source_service.delete_document` 逐个删除「无更多 doc 来源」的目标记忆，**不检查这个记忆属于谁**。而 `DELETE /documents/{id}` 确实调了 `ensure_can_delete`，但只校验 `RawDocument` 那一行——**边的另一端是另一张表的另一行，路由那道校验够不着它**。探针实证：A 删自己的文档，B 的记忆**行没了、FTS 索引也没了**，无 checkpoint、无 undo、无 audit 事件。这是前 18 票里第一个**物理删除**型越权。
   - **结构性重排，不是加个 if**：原实现在第 4 步就 `s.commit()`（文档、分块、候选、边全部落库），第 5 步才发现目标记忆不属于 A——那时「整体中止」已不可能，半途删一半比不删更脏。本票把归属校验从删除中途**提到任何删除发生之前**，越权即整体中止，一条都不删。
