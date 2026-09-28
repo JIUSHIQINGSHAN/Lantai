@@ -80,7 +80,11 @@ class GraphExpandReq(BaseModel):
 
 @router.post("/search/graph_expand")
 def search_graph_expand(req: GraphExpandReq, ctx: Principal = Depends(get_current_user)):
-    """贯珠（ADR-0035）：图增强混合检索。"""
+    """贯珠（ADR-0035）：图增强混合检索。
+
+    归属（票 `.scratch/readside-gaps/17`）：`ctx` 此前只取了
+    `allowed_lanes`（泳道检查，不是归属检查），人本身没往下传。
+    """
     from lantai.retrieval.graph_retriever import graph_augmented_search
 
     return graph_augmented_search(
@@ -90,6 +94,7 @@ def search_graph_expand(req: GraphExpandReq, ctx: Principal = Depends(get_curren
         min_edge_conf=req.min_edge_conf,
         domain=req.domain,
         allowed_lanes=ctx.allowed_lanes,
+        principal=ctx,
     )
 
 

@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **贯珠图检索补归属——A 的 `/search/graph_expand` 不再沿别人的边展开出 B 的记忆正文（2026-09-28，票据 `.scratch/readside-gaps/issues/17-graph-edges-no-owner-filter.md`）**：
+  - **先说影响**：`MemoryEdge` **有**归属四元组（`create_edge` 会填），但**没有任何一条查询按归属过滤边**。`expand_graph_associations` 的边查询一个条件都不带——于是**种子集明明已按 principal 收窄，边这一层照样跨用户**：任何一条从 A 的记忆指向 B 的记忆的边（A 自己建的、B 自己建的、票 16 的无归属 `apply` 造的 `supersedes`、票 18 的 obsidian 造的 `links` 都算）都让 B 的记忆成为 A 种子的「邻居」。随后 `s.get(MemoryItem, neighbor_id)` 按主键直读，**`neighbor_item.content` 原样进 `associated_memories` 返回给 A**。`min_edge_conf=0.5` 轻易满足，两跳足够。此前唯一的过滤是 `allowed_lanes`——那是**泳道**检查不是**归属**检查，A 和 B 通常共用默认泳道集。
+  - **两处都要修**（边决定走哪条路，行决定露出什么）：边查询加 `_edge_scope(principal)`，`s.get(MemoryItem, neighbor_id)` 取到行后补 `_owns` 判定。`session.get` 按主键直读、绕开 SQL 层 scope，是票 14 踩过两次的盲区。
+  - **差分探针实测推翻了票据里的一句想当然**（`.scratch/readside-gaps/probe_edge_scope_leak.py`）：穷举 3^3 种邻居行属主 × 3^3 种边属主共 729 种形状，把 `_edge_scope` 打回恒 `None` 后——**正文泄露形状 0 种**（行层 `_owns` 一个人挡住了全部跨用户正文，因为被拒的邻居在 `queue.append` 之前就 `continue`，B 的行永远不会变成 `curr_id` 去带出下一跳），**遍历范围有差异 266 种**。所以边层是**纵深防御**而非唯一防线，其可观测价值是**收窄遍历**：没有它，A 会沿着不属于自己的边走下去，把本该止步的图走到第三跳。测试据此锁**遍历边界**而不是「B 的正文没出现」——**初版 7 个测试全部锁错了对象，边层三个变异一个都杀不掉（3/13 MISSED）**。
+  - **为防将来重排代码埋了护栏**：`TestGraphRejectedNeighborNeverBecomesNextHop` 锁住「先判归属、后入队」这个顺序。行层之所以一个人就够用，全靠 `queue.append` 在 `_owns` 判定之后；若有人把它挪到前面，行层会瞬间不够用，那条测试立刻红。票据的「只滤行不滤边也会漏」在当前结构下不成立，但**成立与否依赖代码顺序**——这正是护栏存在的原因。
+  - **NULL 属主老边必须可通行**：口径同前 14 票（`user_id == viewer OR IS NULL`）。真实库的边绝大多数是迁移前的历史行，判不可见会让整张图在单人部署下断连。
+  - **principal 一路下传**：`graph_augmented_search` 要传给**两处**——`hybrid_search` 与 `expand_graph_associations`，此前一处都不传：初筛结果本身就没收窄（票 15 的 `vector_owner_filter` 到不了这里），种子集带着别人的记忆，图那一层再漏一次。路由 `/search/graph_expand` 补 `principal=ctx`（此前只取 `ctx.allowed_lanes`，人本身没往下传）；MCP 复用票 10 的 `_principal_from_params`——宿主透传 `user_id` 才构造 principal，否则留 `None`，**不猜身份**。
+  - **测试增量**：`tests/test_graph_ownership.py` 22 例，5 个测试类。含多条反向用例保功能没被修废（A 自己的两跳照常展开、NULL 属主老边与老行照常可通行、泳道过滤照常生效、admin 与 `principal=None` 全图），路由层与 MCP 两条出口复现，不 mock 冒烟一条。
+  - **变异验证 13/13 全杀**（`.scratch/readside-gaps/mutation_check_17.py`，子进程隔离）：边层 scope 四条、行层三条、形参链四条、路由层与 MCP 各一条。全量 pytest **1690 passed / 0 failed**（基线 1668）。
+  - **票据第 4 条已核实无需改动**：`hybrid.py:248-253` 的 `_edge_cb` 只取边的 `relation`/`confidence` 做排序加分，不读记忆正文、不返回邻居行，无泄露面。`record_ops_service.py:448` / `source_service.py:161-163` 两处边查询已在票 14/16 的归属审计中处理，不重复。
+
 - **向量检索补归属过滤——A 的一条 `/add` 不再把 B 的记忆正文送进外部 LLM，也不再改写 B 的 `importance`（2026-09-28，票据 `.scratch/readside-gaps/issues/15-vector-search-no-owner-filter.md`）**：
   - **先说影响**：两处向量检索一个过滤都不带，返回的是**全库最近邻**——`memory_service._apply_dedup` 与 `gate/decision.py`。A 控制新记忆的正文即控制 embedding，反复试探即可命中 B 的最近邻；命中之后每一条下游都越过归属：`_dedup_structural` 把 **B 的正文 + A 的正文一起送进外部 LLM**（内容离开本机即无法撤回）、`_dedup_merge` 改 B 的 `importance`（考功与遗忘的输入）、`_create_update_proposal` 把提案的 `target_memory_id` 钉在 B 的记忆上、`find_similar` 把 B 的 ORM 对象直接交给写者、`decide` 拿 B 的记忆判 A 的候选是否冲突并**降 B 的 importance**、往 B 的记忆上写 `ConflictEvent`。B 全程看不到任何回显。
   - **票面原计划「照抄范本 `hybrid.py:432-439`」——先实证了一遍，范本本身是坏的**，两处既存失效：① **Chroma 的 `where` 只接受一个顶层算符**，多键平铺直接 `ValueError`，原代码在 `lanes` 与 principal 条件都出现时拼多键 → 整次查询抛错 → 被上层 `except` 吞掉 → **静默降级成纯关键词检索，向量召回整条通道消失**；② **plain equality 滤 `user_id` 会丢 NULL 属主**：探真实库 353 条向量里 **332 条 `user_id == ''`**、0 条具体用户名，657 行 memoryitem 里 636 行 `user_id IS NULL`，admin principal 因此拿到 0 条向量结果。本票把范本修掉再复用。

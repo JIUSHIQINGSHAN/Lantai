@@ -841,7 +841,11 @@ def handle_dialogue_task_status(params: dict) -> dict:
 
 
 def handle_graph_expand_search(params: dict) -> dict:
-    """贯珠：图增强混合检索（初筛 + 拓扑二度联想，ADR-0035）。"""
+    """贯珠：图增强混合检索（初筛 + 拓扑二度联想，ADR-0035）。
+
+    归属（票 `.scratch/readside-gaps/17`）：复用票 10 的 `_principal_from_params`
+    ——宿主透传 `user_id` 才收窄，不透传留 `None` 不过滤。不猜身份。
+    """
     query = str(params.get("query", "")).strip()
     if not query:
         raise ValueError("query 不能为空")
@@ -857,6 +861,7 @@ def handle_graph_expand_search(params: dict) -> dict:
         max_hops=max_hops,
         min_edge_conf=min_edge_conf,
         domain=domain,
+        principal=_principal_from_params(params),
     )
 
 
