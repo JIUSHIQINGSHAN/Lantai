@@ -74,6 +74,23 @@ def viewer_of(principal) -> str:
     )
 
 
+# 显式系统身份（票 `.scratch/mcp-identity-gaps/06`）：worker / scheduler
+# 要"全表"时**显式传这个 user_id**，不再靠 `principal=None` 蒙混过关。
+#
+# 为什么需要它：`principal=None` 在 MCP 入口面的语义是「宿主没透传身份」，
+# 在 worker 里却被当成"内部调用，不过滤"——同一个 None 两种解释，
+# 于是无身份的 MCP 调用继承了 worker 的全表权限（票 04/05/06 连续三票
+# 同一根因）。分开之后：
+#   - worker/scheduler：`Principal(user_id=SYSTEM_VIEWER)` → 全表（刻意）
+#   - MCP 无身份：`None` → 收敛到 `"default"`（只看到默认属主 + NULL 老行）
+SYSTEM_VIEWER = "__system__"
+
+
+def is_system_viewer(principal) -> bool:
+    """是否为显式系统身份（worker/scheduler 全量批处理专用）。"""
+    return viewer_of(principal) == SYSTEM_VIEWER
+
+
 def vector_owner_filter(principal, extra: dict | None = None) -> dict | None:
     """Chroma `where` 的归属过滤（票 `.scratch/readside-gaps/15`）。
 

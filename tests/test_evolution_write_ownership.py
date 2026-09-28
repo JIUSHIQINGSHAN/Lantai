@@ -195,7 +195,17 @@ class TestKaogongWriteOwnership:
         assert _row(sf, "mem-B").importance == 0.1
 
     def test_internal_call_unfiltered(self, ew_env):
-        """Red 7：principal=None（worker/CLI/scheduler）行为不变，仍全表。"""
+        """principal=None 收敛到 `"default"`，不再全表（票 mcp-identity-gaps/06）。
+
+        **为什么改这条断言**（原断言是 `run_kaogong_cycle()` 无参调用评估全库
+        2 条）：grep `run_kaogong_cycle` 的调用方只有
+        `routes_evolution.py:104`（HTTP，`principal=ctx`）与 `mcp.py:321`
+        （MCP，`principal=_principal_from_params(params)`）——**没有
+        worker/scheduler/CLI**。docstring 里"worker/CLI/scheduler 保持全表"
+        的场景不存在，这条断言实际保护的是无身份 MCP 调用改写全库
+        tier/importance 的洞（探针实测 0.9 → 0.1）。定时考功要全表
+        显式传 `acl.SYSTEM_VIEWER`，见 `test_system_viewer_still_unfiltered`。
+        """
         sf = ew_env
         _add(sf, "mem-A", "user-A", **DEMOTING)
         _add(sf, "mem-B", "user-B", **DEMOTING)
@@ -205,7 +215,31 @@ class TestKaogongWriteOwnership:
         with patch.object(db_module, "get_session", sf):
             report = run_kaogong_cycle()
 
-        assert report["evaluated"] == 2, f"内部调用被收窄了：{report}"
+        assert report["evaluated"] == 0, f"无身份调用评估了别人的记忆：{report}"
+        assert _row(sf, "mem-B").importance != 0.1, "无身份调用改写了 B 的 importance"
+
+    def test_system_viewer_still_unfiltered(self, ew_env):
+        """显式系统身份仍全表（全表口径搬家到 SYSTEM_VIEWER，不是消失）。"""
+        sf = ew_env
+        _add(sf, "mem-A", "user-A", **DEMOTING)
+        _add(sf, "mem-B", "user-B", **DEMOTING)
+
+        from lantai.core.acl import SYSTEM_VIEWER, Principal
+        from lantai.services.kaogong_service import run_kaogong_cycle
+
+        with patch.object(db_module, "get_session", sf):
+            report = run_kaogong_cycle(
+                principal=Principal(
+                    tenant_id=None,
+                    user_id=SYSTEM_VIEWER,
+                    agent_id=None,
+                    session_id=None,
+                    role="system",
+                    allowed_lanes=None,
+                )
+            )
+
+        assert report["evaluated"] == 2, f"系统身份被收窄了：{report}"
         assert _row(sf, "mem-B").importance == 0.1
 
     def test_own_memory_still_promoted(self, ew_env):

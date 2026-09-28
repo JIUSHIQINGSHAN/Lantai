@@ -366,11 +366,44 @@ class TestPersonaWriteOwnership:
         assert _row(session_factory, "persona-B").is_active is True
 
     def test_internal_call_unfiltered(self, persona_env):
-        """principal=None（内部/CLI）不加过滤，与改动前逐字一致。"""
+        """`principal=None` 收敛到 `"default"`，不再列出 B 的画像（票 06）。
+
+        **为什么改这条断言**（原断言是 `list_personas()` 无参调用返回
+        A/B/null 三份）：grep `list_personas` 的调用方**只有一个**——
+        `routes_persona.py:41`，且 `principal=ctx`（`Depends(get_current_user)`，
+        永不返回 None）。所谓"内部/CLI 全量"的调用方不存在，
+        这条断言实际保护的是无身份 MCP 调用拿到别人人格基座的路径
+        （`mcp.py:929` 的 `handle_persona_get`）。NULL 老行仍可见——
+        单人部署下唯一一行 persona 就是 NULL 属主。
+        """
         session_factory = persona_env
         _seed(session_factory)
 
         from lantai.services.persona_service import list_personas
 
         ids = sorted(p.id for p in list_personas())
-        assert ids == ["persona-A", "persona-B", "persona-null"], f"内部调用被收窄了：{ids}"
+        assert "persona-B" not in ids, f"principal=None 列出了别人的画像：{ids}"
+        assert "persona-null" in ids, f"NULL 属主老行被漏掉了：{ids}"
+
+    def test_system_viewer_still_unfiltered(self, persona_env):
+        """显式系统身份仍全表（全表口径搬家到 SYSTEM_VIEWER，不是消失）。"""
+        session_factory = persona_env
+        _seed(session_factory)
+
+        from lantai.core.acl import SYSTEM_VIEWER, Principal
+        from lantai.services.persona_service import list_personas
+
+        ids = sorted(
+            p.id
+            for p in list_personas(
+                principal=Principal(
+                    tenant_id=None,
+                    user_id=SYSTEM_VIEWER,
+                    agent_id=None,
+                    session_id=None,
+                    role="system",
+                    allowed_lanes=None,
+                )
+            )
+        )
+        assert ids == ["persona-A", "persona-B", "persona-null"], f"系统身份被收窄了：{ids}"

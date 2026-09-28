@@ -118,15 +118,24 @@ def run_crystal_detect_once(
 
 
 def _crystal_scope(principal):
-    """读侧归属条件：admin/`principal=None` → None（不过滤）；
-    否则 `user_id == viewer OR user_id IS NULL`（票 11，NULL 口径同票 03/04/06/09）。"""
-    if principal is None:
-        return None
-    if bool(getattr(principal, "is_admin", False)):
-        return None
+    """读侧归属条件：admin/系统身份 → None（不过滤）；
+    否则 `user_id == viewer OR user_id IS NULL`（票 11，NULL 口径同票 03/04/06/09）。
+
+    **`principal=None` 收敛到 `"default"`，不再返回 None**（票
+    `.scratch/mcp-identity-gaps/06`）：旧 docstring 声称 None 是"后台巡检"，
+    但 grep 实证 `list_crystals` 的调用方只有 `routes_crystals.py:21`（HTTP）
+    与 `mcp.py:752`（MCP），**没有 worker/scheduler**——`crystals_detect`
+    走的是另一条路。旧口径让无身份的 MCP 调用列出全库结晶
+    （探针实测返回 `cry-B`）。系统批处理要全表显式传 `acl.SYSTEM_VIEWER`。
+    """
+    from lantai.core.acl import SYSTEM_VIEWER
     from lantai.services.work_item_service import _viewer_of
 
+    if bool(getattr(principal, "is_admin", False)):
+        return None
     viewer = _viewer_of(principal)
+    if viewer == SYSTEM_VIEWER:
+        return None
     return (SkillCrystal.user_id == viewer) | (SkillCrystal.user_id.is_(None))
 
 

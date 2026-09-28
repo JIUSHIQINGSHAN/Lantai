@@ -199,7 +199,21 @@ class TestReflectPromptLeak:
         assert spy.leaked(), "admin 下 B 的记忆没进提示词（被误收窄？）"
 
     def test_internal_call_unfiltered(self, rf_env):
-        """Red 5：`principal=None`（scheduler 定时任务）→ 全表，行为不变。"""
+        """`principal=None` 收敛到 `"default"`，不再全表（票 mcp-identity-gaps/06）。
+
+        **为什么改这条断言**（原断言是 `run_reflect_once(source="scheduled")`
+        能扫到 B 的记忆）：grep `run_reflect_once` 的调用方只有三类——
+        `mcp.py:795`（MCP，None 表示"宿主没透传身份"）、
+        `scheduler.py:233,326` 与 `worker_operation_service.py:25`
+        （worker）。本测试**直接裸调** `run_reflect_once`，绕过了 worker，
+        于是它锁的是"None = 全表"这条旧口径——而那正是无身份 MCP 调用
+        继承 worker 全表权限的根因（票 04/05/06 同一形状）。
+
+        定时反思的全表需求改由 worker 显式传 `acl.SYSTEM_VIEWER` 满足
+        （见 `lantai/workers/reflect_worker.py`），不再占用一个
+        "None = 内部调用"的歧义值。故本测试改锁新口径：
+        None 只看到 default + NULL 老行，看不到 user-B。
+        """
         sf = rf_env
         _add(sf, "mem-B", "user-B", SECRET)
         _add(sf, "mem-B-new", "user-B", "B 的更正正文")
@@ -211,8 +225,59 @@ class TestReflectPromptLeak:
         with patch("lantai.evolution.reflector.chat_json", side_effect=spy):
             run_reflect_once(source="scheduled")
 
+        assert not spy.leaked(), "principal=None 时 B 的记忆正文仍进了提示词"
+
+    def test_system_viewer_still_unfiltered(self, rf_env):
+        """显式系统身份（worker/scheduler 专用）仍全表——定时反思不能空转。
+
+        与上一条配对：全表口径没有消失，只是从"歧义的 None"搬到
+        "显式的 SYSTEM_VIEWER"。
+        """
+        sf = rf_env
+        _add(sf, "mem-B", "user-B", SECRET)
+        _add(sf, "mem-B-new", "user-B", "B 的更正正文")
+        _supersede(sf, "mem-B", "mem-B-new")
+
+        from lantai.core.acl import SYSTEM_VIEWER, Principal
+        from lantai.evolution.reflector import run_reflect_once
+
+        spy = PromptSpy()
+        with patch("lantai.evolution.reflector.chat_json", side_effect=spy):
+            run_reflect_once(
+                source="scheduled",
+                principal=Principal(
+                    tenant_id=None,
+                    user_id=SYSTEM_VIEWER,
+                    agent_id=None,
+                    session_id=None,
+                    role="system",
+                    allowed_lanes=None,
+                ),
+            )
+
         assert spy.prompts, "反思一次 LLM 都没调"
-        assert spy.leaked(), "定时任务下 B 的记忆没进提示词（被误收窄？）"
+        assert spy.leaked(), "系统身份下 B 的记忆没进提示词（被误收窄？）"
+
+    def test_reflect_worker_passes_system_identity(self, rf_env):
+        """`workers/reflect_worker.py` 必须显式传系统身份（变异 M6 的守门测试）。
+
+        只改 reflector 不改 worker 的话，定时反思会静默退化成"只看 default"——
+        没有报错、没有日志，只是别人的记忆永远没人反思。故这里直调 worker
+        入口断言它传的身份确实通到 scope。
+        """
+        sf = rf_env
+        _add(sf, "mem-B", "user-B", SECRET)
+        _add(sf, "mem-B-new", "user-B", "B 的更正正文")
+        _supersede(sf, "mem-B", "mem-B-new")
+
+        from lantai.workers.reflect_worker import run_reflect_once as worker_run
+
+        spy = PromptSpy()
+        with patch("lantai.evolution.reflector.chat_json", side_effect=spy):
+            worker_run()
+
+        assert spy.prompts, "反思一次 LLM 都没调"
+        assert spy.leaked(), "worker 没传系统身份，定时反思被收窄成 default"
 
 
 # ── 三条扫描路径逐条埋断言 ──────────────────────────────────────
@@ -432,7 +497,16 @@ class TestReflectMcpIdentity:
         assert not spy.leaked(), "经 MCP 触发反思把 B 的记忆正文送进了提示词"
 
     def test_mcp_handler_without_user_id_unfiltered(self, rf_env):
-        """MCP 不透传 user_id → 不过滤（不猜身份，票 10 口径）。"""
+        """MCP 不透传 user_id → 收敛到 `"default"`，看不到 B（票 mcp-identity-gaps/06）。
+
+        **为什么改这条断言**（原断言是"不透传身份时 B 的正文仍进提示词"）：
+        `handle_reflect_run` 的 None 来自 `_principal_from_params`，语义是
+        「宿主没透传身份」；同一批 `handle_probe_detect` 等工具在 None 时都
+        收敛（票 01a/05），只有反思还按"scheduler 口径"全表——**同一个入口面
+        None 的语义不统一**。原断言把"不猜身份"（不编一个 user_id）和
+        "因此可以看全表"（拿到所有人的数据）混为一谈：前者是宁 miss 不脏写，
+        后者恰是脏读。收紧后：不猜身份 ≠ 获得全表权限，只看到 default + NULL 老行。
+        """
         sf = rf_env
         _add(sf, "mem-B", "user-B", SECRET)
         _add(sf, "mem-B-new", "user-B", "B 的更正正文")
@@ -444,8 +518,7 @@ class TestReflectMcpIdentity:
         with patch("lantai.evolution.reflector.chat_json", side_effect=spy):
             handle_reflect_run({"source": "manual"})
 
-        assert spy.prompts, "反思一次 LLM 都没调"
-        assert spy.leaked(), "不透传身份时被误收窄了"
+        assert not spy.leaked(), "MCP 无身份调用把 B 的记忆正文送进了提示词"
 
 
 # ── 前后快照口径一致 ───────────────────────────────────────────
@@ -519,7 +592,14 @@ class TestHealthScanScope:
         assert "mem-null" in ids, f"NULL 属主老记忆被漏掉了：{ids}"
 
     def test_health_scan_internal_call_unfiltered(self, rf_env):
-        """`principal=None` → 全表（scheduler 口径）。"""
+        """`principal=None` 收敛到 `"default"`，看不到 B（票 mcp-identity-gaps/06）。
+
+        原断言是 `health_scan()` 无参调用能扫到 B 的记忆。grep `health_scan`
+        的调用方：`reflector.py` 内部（principal 透传）与测试，**没有 worker
+        /scheduler 裸调它**——定时反思走的是 `run_reflect_once`（经 worker，
+        现在显式传系统身份）。所以"内部调用全表"这个场景不存在，
+        这条断言实际保护的是 MCP 无身份路径的洞。
+        """
         sf = rf_env
         _add(sf, "mem-B", "user-B", SECRET)
         _add(sf, "mem-B-new", "user-B", "B 的更正正文")
@@ -530,4 +610,29 @@ class TestHealthScanScope:
         with sf() as s:
             scan = health_scan(s)
         ids = [c["memory_id"] for c in scan["candidates"]]
-        assert "mem-B" in ids, f"内部调用被收窄了：{ids}"
+        assert "mem-B" not in ids, f"principal=None 扫到了别人的记忆：{ids}"
+
+    def test_health_scan_system_viewer_unfiltered(self, rf_env):
+        """显式系统身份仍全表（与上一条配对，锁住"全表口径搬家"而非消失）。"""
+        sf = rf_env
+        _add(sf, "mem-B", "user-B", SECRET)
+        _add(sf, "mem-B-new", "user-B", "B 的更正正文")
+        _supersede(sf, "mem-B", "mem-B-new")
+
+        from lantai.core.acl import SYSTEM_VIEWER, Principal
+        from lantai.evolution.reflector import health_scan
+
+        with sf() as s:
+            scan = health_scan(
+                s,
+                principal=Principal(
+                    tenant_id=None,
+                    user_id=SYSTEM_VIEWER,
+                    agent_id=None,
+                    session_id=None,
+                    role="system",
+                    allowed_lanes=None,
+                ),
+            )
+        ids = [c["memory_id"] for c in scan["candidates"]]
+        assert "mem-B" in ids, f"系统身份被收窄了：{ids}"

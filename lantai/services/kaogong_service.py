@@ -70,25 +70,33 @@ def evaluate_memory_item_grade(memory: MemoryItem) -> dict:
 
 
 def _kaogong_scope(principal):
-    """考功候选集的归属条件（票 .scratch/readside-gaps/12）。
+    """考功候选集的归属条件（票 .scratch/readside-gaps/12；None 口径见票
+    `.scratch/mcp-identity-gaps/06`）。
 
-    admin / `principal=None` → None（不过滤）；否则
-    `user_id == viewer OR IS NULL`。
+    非 admin：`user_id == viewer OR IS NULL`；admin / 显式系统身份 `__system__`
+    → None（不过滤）。
 
     NULL 口径同票 03/04/06/09/10：真实库 615 行 `user_id IS NULL` 的
     memoryitem（迁移前/脚本直插），判"不可见"会让单人部署下的考功直接
     空转。NULL 是「未记录」不是「属于所有人」。
 
-    `principal=None`（worker/CLI/scheduler）保持全表——定时任务是系统行为，
-    收窄成空转会让衰减与晋升整体停摆。这个口径是刻意的，见票据口径 4。
+    **`principal=None` 收敛到 `"default"`，不再返回 None**（票 06）：
+    旧 docstring 声称 None 是"worker/CLI/scheduler 保持全表"，
+    grep 实证**这些调用方一个都不存在**——`run_kaogong_cycle` 的全部调用方
+    只有 `routes_evolution.py:104`（HTTP）与 `mcp.py:321`（MCP）。
+    MCP 入口的 None 语义是「宿主没透传身份」，**不是**「内部 worker 全量」，
+    按旧口径走就是让无身份调用改写全库每条记忆的 tier/importance。
+    定时考功若要全表，显式传 `Principal(user_id="__system__")`——见
+    `run_kaogong_cycle` 与 `test_mcp_none_scope_leaks.py`。
     """
-    if principal is None:
-        return None
-    if bool(getattr(principal, "is_admin", False)):
-        return None
+    from lantai.core.acl import SYSTEM_VIEWER
     from lantai.services.work_item_service import _viewer_of
 
+    if bool(getattr(principal, "is_admin", False)):
+        return None
     viewer = _viewer_of(principal)
+    if viewer == SYSTEM_VIEWER:
+        return None
     return (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
 
 
@@ -111,7 +119,6 @@ def run_kaogong_cycle(session: Session | None = None, principal=None) -> dict:
         if scope is not None:
             q = q.where(scope)
         items = s.exec(q).all()
-
         promoted_count = 0
         demoted_count = 0
         kept_count = 0

@@ -39,15 +39,23 @@ def _persona_scope(principal):
     不是「属于所有人」，口径同 `memory_service.get_core_memory`
     （`memory_service.py:391`）与票 03/04。
 
-    `principal=None`（内部 CLI/MCP/worker）不加过滤，与改动前逐字一致。
+    **`principal=None` 收敛到 `"default"`，不再返回 None**（票
+    `.scratch/mcp-identity-gaps/06`）：旧 docstring 声称 None 是
+    "内部 CLI/MCP/worker"，但 grep 实证 `get_active_persona` 的调用方只有
+    `routes_persona.py:26`（HTTP）、`mcp.py:929`（MCP）与
+    `persona_service.py:296`（内部，principal 透传）——**没有 worker**。
+    旧口径让无身份的 MCP 调用拿到别人的整份人格基座，含 E 层认知底色
+    （探针实测返回 `per-B` 及其 `epistemic_facts`）。
+    系统批处理要全表显式传 `acl.SYSTEM_VIEWER`。
     """
-    if principal is None:
-        return None
-    if bool(getattr(principal, "is_admin", False)):
-        return None
+    from lantai.core.acl import SYSTEM_VIEWER
     from lantai.services.work_item_service import _viewer_of
 
+    if bool(getattr(principal, "is_admin", False)):
+        return None
     viewer = _viewer_of(principal)
+    if viewer == SYSTEM_VIEWER:
+        return None
     return (PersonaProfile.user_id == viewer) | (PersonaProfile.user_id.is_(None))
 
 

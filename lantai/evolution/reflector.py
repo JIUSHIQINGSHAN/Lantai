@@ -140,27 +140,35 @@ def _cand(mem: MemoryItem, signal: str, extra: dict | None = None) -> dict:
 
 
 def _reflect_scope(principal):
-    """反思扫描的归属条件（票 .scratch/readside-gaps/14）。
+    """反思扫描的归属条件（票 .scratch/readside-gaps/14；None 口径见票
+    `.scratch/mcp-identity-gaps/06`）。
 
-    admin / `principal=None` → None（不过滤）；否则
-    `user_id == viewer OR IS NULL`，口径与票 12 的
+    非 admin：`user_id == viewer OR IS NULL`，口径与票 12 的
     `_consolidation_scope` / `_kaogong_scope` 逐字一致。
 
     NULL 口径同票 03/04/06/09/10：真实库 615 行 `user_id IS NULL` 的
     memoryitem，判「不可见」会让单人部署下的反思整体空转。NULL 是
     「未记录」不是「属于所有人」。
 
-    `principal=None`（scheduler 定时任务 / worker）保持全表：反思是系统
-    行为，收窄成空转会让 open 冲突账本与陈旧记忆永远没人处理。**这个
-    口径是刻意的**，别让后来人以为漏了（同票据口径 4）。
+    **`principal=None` 收敛到 `"default"`，不再返回 None**（票 06）：
+    旧 docstring 声称 None 是"scheduler 定时任务保持全表"，但 MCP 入口的
+    None 语义是「宿主没透传身份」——`handle_reflect_run`
+    （`mcp.py:795`）正是这么调的，于是无身份调用把全库记忆正文扫进候选集、
+    拼进 curator prompt 发往外部 LLM（探针实测：`principal=None` 时
+    `batch_total=1` 且候选带 B 的正文，`principal=user-A` 时 0）。
+
+    定时反思**确有** worker 调用方（`scheduler.py:233,326` 与
+    `worker_operation_service.py:25`，与票 04/05 不同），所以不能简单砍掉
+    全表口径——改为显式系统身份：`acl.SYSTEM_VIEWER`（`"__system__"`）。
     """
-    if principal is None:
-        return None
-    if bool(getattr(principal, "is_admin", False)):
-        return None
+    from lantai.core.acl import SYSTEM_VIEWER
     from lantai.services.work_item_service import _viewer_of
 
+    if bool(getattr(principal, "is_admin", False)):
+        return None
     viewer = _viewer_of(principal)
+    if viewer == SYSTEM_VIEWER:
+        return None
     return (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
 
 
