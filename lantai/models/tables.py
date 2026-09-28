@@ -297,6 +297,13 @@ class MemoryNode(SQLModel, table=True):
     description: str = ""
     namespace: str = Field(index=True, default="default")
     created_at: datetime = Field(default_factory=utcnow)
+    # 归属四元组（票 .scratch/readside-gaps/08）：此前一个归属列都没有，
+    # 而 /tree、/tree/subtree 一个身份都不取——A 能读到整棵树的节点描述
+    # （自由文本）与每节点挂载计数。session_id 不加：节点是跨会话共享的
+    # 分类结构，按 session 归属会让每次新会话都看不到自己建的节点。
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None)
 
 
 class SkillCrystal(SQLModel, table=True):

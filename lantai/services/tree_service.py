@@ -56,25 +56,67 @@ def compute_attachments(rows: list[tuple[str | None, int]], nodes: list) -> dict
     return result
 
 
-def get_subtree(session, root_path: str = "/") -> dict:
-    """取子树（含根）节点 + 每节点挂载计数；根不存在返回空。"""
+def _node_scope(principal):
+    """树节点读侧的归属条件（票 .scratch/readside-gaps/08）。
+
+    admin / `principal=None` → None（不过滤）；否则
+    `user_id == viewer OR IS NULL`，口径同票 03/04/06/09。
+
+    NULL 口径：真实库 11 行全是老数据，判「不可见」会让整棵树消失。
+    NULL 是「未记录」不是「属于所有人」。
+    """
+    if principal is None:
+        return None
+    if bool(getattr(principal, "is_admin", False)):
+        return None
+    from lantai.services.work_item_service import _viewer_of
+
+    viewer = _viewer_of(principal)
+    return (MemoryNode.user_id == viewer) | (MemoryNode.user_id.is_(None))
+
+
+def _memory_scope(principal):
+    """挂载计数读侧的归属条件（同 `_node_scope`，但作用在 MemoryItem 上）。
+
+    节点名收窄了、计数照样会漏——A 能数出 B 在某节点下挂了多少条记忆。
+    两处必须同批收窄。
+    """
+    if principal is None:
+        return None
+    if bool(getattr(principal, "is_admin", False)):
+        return None
+    from lantai.services.work_item_service import _viewer_of
+
+    viewer = _viewer_of(principal)
+    return (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
+
+
+def get_subtree(session, root_path: str = "/", principal=None) -> dict:
+    """取子树（含根）节点 + 每节点挂载计数；根不存在返回空。
+
+    归属（票 .scratch/readside-gaps/08）：此前一个身份都不取，返回整棵树的
+    节点（`description` 是自由文本）与每节点挂载计数。两处都收窄——
+    节点名与计数分开漏，任漏一处 A 都能推出 B 在哪个节点下有多少记忆。
+    """
     root = normalize_path(root_path)
     prefix = "/%" if root == "/" else root + "/%"
-    nodes = list(
-        session.exec(
-            select(MemoryNode)
-            .where((MemoryNode.node_path == root) | (MemoryNode.node_path.like(prefix)))
-            .order_by(MemoryNode.depth, MemoryNode.name)
-        ).all()
+    nq = (
+        select(MemoryNode)
+        .where((MemoryNode.node_path == root) | (MemoryNode.node_path.like(prefix)))
+        .order_by(MemoryNode.depth, MemoryNode.name)
     )
-    rows = session.exec(
-        select(MemoryItem.tree_path, func.count())
-        .where(
-            MemoryItem.status == "active",
-            MemoryItem.tree_path.is_not(None),
-        )
-        .group_by(MemoryItem.tree_path)
-    ).all()
+    nscope = _node_scope(principal)
+    if nscope is not None:
+        nq = nq.where(nscope)
+    nodes = list(session.exec(nq).all())
+    mq = select(MemoryItem.tree_path, func.count()).where(
+        MemoryItem.status == "active",
+        MemoryItem.tree_path.is_not(None),
+    )
+    mscope = _memory_scope(principal)
+    if mscope is not None:
+        mq = mq.where(mscope)
+    rows = session.exec(mq.group_by(MemoryItem.tree_path)).all()
     counts = compute_attachments([(r[0], r[1]) for r in rows], nodes)
     return {
         "root": None if not nodes else nodes[0].node_path,
@@ -94,9 +136,19 @@ def get_subtree(session, root_path: str = "/") -> dict:
 
 
 def add_node(
-    session, name: str, parent_path: str = "/", description: str = "", namespace: str = "default"
+    session,
+    name: str,
+    parent_path: str = "/",
+    description: str = "",
+    namespace: str = "default",
+    principal=None,
 ) -> dict:
-    """新增节点（宁 miss 不脏写）：父缺失/同级重名/非法名 -> ValueError。"""
+    """新增节点（宁 miss 不脏写）：父缺失/同级重名/非法名 -> ValueError。
+
+    归属（票 .scratch/readside-gaps/08）：新建节点落 `principal` 的
+    `user_id` / `tenant_id` / `agent_id`。`principal=None`（内部/脚本）
+    留 NULL——「未记录」的事实状态，读侧靠 `OR IS NULL` 兜住。
+    """
     node_path, depth = build_node_path(parent_path, name)
     if session.exec(select(MemoryNode).where(MemoryNode.node_path == node_path)).first():
         raise ValueError(f"node already exists: {node_path}")
@@ -116,6 +168,9 @@ def add_node(
         depth=depth,
         description=(description or "").strip(),
         namespace=namespace,
+        user_id=None if principal is None else principal.user_id,
+        tenant_id=None if principal is None else principal.tenant_id,
+        agent_id=None if principal is None else getattr(principal, "agent_id", None),
     )
     session.add(node)
     session.commit()
@@ -176,14 +231,19 @@ def unassign_memory(session, memory_id: str, *, principal=None) -> dict:
 # ── 默认会话包装（供 REST/MCP 调用）────────────────────────
 
 
-def view_tree() -> dict:
+def view_tree(principal=None) -> dict:
     with db.get_session() as s:
-        return get_subtree(s, "/")
+        return get_subtree(s, "/", principal=principal)
 
 
-def add_tree_node(name: str, parent_path: str = "/", description: str = "") -> dict:
+def add_tree_node(
+    name: str,
+    parent_path: str = "/",
+    description: str = "",
+    principal=None,
+) -> dict:
     with db.get_session() as s:
-        return add_node(s, name, parent_path, description)
+        return add_node(s, name, parent_path, description, principal=principal)
 
 
 def assign_memory_to_node(memory_id: str, node_path: str, *, principal=None) -> dict:

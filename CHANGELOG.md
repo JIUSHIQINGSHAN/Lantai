@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **分类树读侧归属——`/tree` 不再把整棵树的节点描述和别人的挂载条数一起吐出来（2026-09-28，票据 `.scratch/readside-gaps/issues/08-tree-edges-readside-no-identity.md`）**：
+  - **先说影响**：`GET /tree` 和 `/tree/subtree` 一个身份都不取，返回**整棵树**的节点。漏的不只是节点名——每个节点带一段 `description` 自由文本（第五轮实证 A 打过去 len=189，含 B 的密文），更隐蔽的是**挂载计数**：节点名就算收窄了，计数照样漏，**A 能数出 B 在某个节点下挂了多少条记忆**。两处分开漏，任漏一处都够推出「B 在忙什么」。
+  - **`MemoryNode` 此前一个归属列都没有** → 补 `tenant_id` / `user_id` / `agent_id` + 迁移 v26（幂等 `_has_column` 守卫，异常只记日志不阻断启动，同 `SessionCheckpoint` 口径）。真实库 11 行老数据保持 NULL，读侧靠 `OR IS NULL` 兜住——NULL 是「未记录」不是「属于所有人」，判不可见会让整棵树在单人部署下直接消失。
+  - **两处同批收窄**：节点查询和挂载计数查询各配一个 scope（`_node_scope` / `_memory_scope`），口径与票 03/04/06/09 逐字一致（admin / `principal=None` → 不过滤；否则 `user_id == viewer OR IS NULL`）。`session_id` 不加——节点是跨会话共享的分类结构，按 session 归属会让每次新会话都看不到自己建的节点。
+  - **写侧**：`add_node` 新建节点落 `principal` 的三个归属列；`principal=None`（内部/脚本）留 NULL。三个 handler（`/tree`、`/tree/nodes`、`/tree/subtree`）补 `Depends(get_current_user)` 并下传——直接调 service 只证明 service 修好了，宿主打的是 HTTP，路由少取一次身份泄漏照样发生（票 12/13 都在路由层栽过）。
+  - **测试增量**：`tests/test_tree_ownership.py` 14 例。Red 1 的断言落在 `node_path` 与 `description` 上而不只是「机密不在响应里」——后者会因为节点本来就叫别的名字而空过。含三条反向用例保功能没被修废（NULL 属主老节点照常可见、A 自己的挂载照常计数、owner 对自己的记忆照旧能挂），admin 与 `principal=None` 两条全表用例，路由层三条 HTTP 出口复现，迁移幂等一条。
+  - **变异验证 16/16 全杀**（`.scratch/readside-gaps/mutation_check_08.py`，子进程隔离）：scope 本体五条（恒不收窄 / 丢 `OR IS NULL` / 计数不收窄）、节点与计数两条查询不加 scope、形参链五条、路由层六条。全量 pytest **1626 passed / 0 failed**（基线 1612）。
+  - **连带修正**：`CURRENT_SCHEMA_VERSION` 升到 26 时漏改常量，24 个迁移测试当场红——升 schema 版本号必须同步改 `lantai/storage/db.py:19` 的常量，否则 `PRAGMA user_version` 链断在最后一环。
+
 - **反思全表扫描——A 触发一次，B 的记忆正文不再被送进外部 LLM 提示词（2026-09-28，票据 `.scratch/readside-gaps/issues/14-reflect-leaks-cross-user.md`）**：
   - **先说影响**：前十三票治的都是「A 从本系统读到 B 的数据」；这一票是**A 能把 B 的数据送到系统外的 LLM**。`health_scan` 三处全表扫描一个身份都不取，`_curate()` 把候选拼进 user prompt 调 `chat_json`——spy 直证 B 的记忆正文原样出现在发给外部 LLM 的提示词里：`<memory_data id="m-B">B 的银行密码是 9527</memory_data>`。**内容离开本机边界，且无法撤回。**
   - **`wrap_as_data` 的围栏只防注入、不防归属**：它假设「拼进提示词的内容本来就是有权看的」。所以围栏照旧，归属另修——这是本票与「提示词安全」最容易混为一谈的地方。

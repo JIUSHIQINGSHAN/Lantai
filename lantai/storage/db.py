@@ -16,7 +16,7 @@ engine = create_engine(settings.DATABASE_URL, echo=False, connect_args={"timeout
 # PRAGMA user_version 记录数据库结构版本；未版本化库（全新库或 v0.5 及以前
 # 老库）自动基线为 v1，增量补丁按版本号依次执行。ALTER TABLE ADD COLUMN 为
 # 毫秒级操作，代码更新与数据重构解耦，异常只记日志不阻断启动（降级而非崩溃）。
-CURRENT_SCHEMA_VERSION = 25
+CURRENT_SCHEMA_VERSION = 26
 
 # FTS5 词汇召回通道是否可用（票 .scratch/fts-availability/01）：init_db 内由
 # init_fts 的返回值置位。默认 None = 尚未初始化（测试进程里 init_db 未被调用时
@@ -549,6 +549,36 @@ def apply_migrations(conn) -> None:
             conn.execute("PRAGMA user_version = 25")
             conn.commit()
             logger.info("Migrated v25: core memory block ownership (ownership-gaps/04)")
+
+        # v25 -> v26: 记忆分类树节点补归属列（票 .scratch/readside-gaps/08）
+        # （MemoryNode 此前一个归属列都没有，而 /tree、/tree/subtree 一个身份都
+        #  不取——A 能读到整棵树的节点描述（自由文本）与每节点挂载计数。老行
+        #  留 NULL：读侧按 `user_id == viewer OR IS NULL` 收窄，不猜归属、不回填，
+        #  否则单人部署下整棵树会消失。session_id 不加：节点是跨会话共享的分类
+        #  结构，按 session 归属会让每次新会话都看不到自己建的节点）
+        if user_version < 26:
+            has_mn = bool(
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memorynode'"
+                ).fetchone()
+            )
+            if has_mn:
+                if not _has_column(conn, "memorynode", "tenant_id"):
+                    conn.execute("ALTER TABLE memorynode ADD COLUMN tenant_id TEXT")
+                if not _has_column(conn, "memorynode", "user_id"):
+                    conn.execute("ALTER TABLE memorynode ADD COLUMN user_id TEXT")
+                if not _has_column(conn, "memorynode", "agent_id"):
+                    conn.execute("ALTER TABLE memorynode ADD COLUMN agent_id TEXT")
+                try:
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS ix_memorynode_owner "
+                        "ON memorynode (user_id, namespace)"
+                    )
+                except Exception as exc:  # 索引失败不阻断启动，但必须留痕
+                    logger.warning("迁移跳过 ix_memorynode_owner: %s", exc)
+            conn.execute("PRAGMA user_version = 26")
+            conn.commit()
+            logger.info("Migrated v26: tree node ownership (readside-gaps/08)")
 
     except Exception as exc:
         logger.error("数据库增量迁移异常（服务继续启动）: %s", exc)

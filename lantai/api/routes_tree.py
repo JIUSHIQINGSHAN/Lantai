@@ -18,25 +18,32 @@ router = APIRouter()
 
 
 @router.get("/tree")
-def tree_view_route():
-    """整树视图：节点 + 每节点挂载计数（只读）。"""
-    return tree_service.view_tree()
+def tree_view_route(ctx=Depends(get_current_user)):
+    """整树视图：节点 + 每节点挂载计数（只读）。
+
+    归属（票 .scratch/readside-gaps/08）：此前一个身份都不取，返回整棵树的
+    节点描述（自由文本）与每节点挂载计数。按 `ctx` 收窄。
+    """
+    return tree_service.view_tree(principal=ctx)
 
 
 @router.post("/tree/nodes")
-def tree_add_node_route(req: TreeAddNodeReq):
-    """新增节点（父缺失/重名/非法名 -> 422，宁 miss 不脏写）。"""
+def tree_add_node_route(req: TreeAddNodeReq, ctx=Depends(get_current_user)):
+    """新增节点（父缺失/重名/非法名 -> 422，宁 miss 不脏写）。
+
+    归属（票 .scratch/readside-gaps/08）：新节点落 `ctx` 的 user_id。
+    """
     try:
-        return tree_service.add_tree_node(req.name, req.parent_path, req.description)
+        return tree_service.add_tree_node(req.name, req.parent_path, req.description, principal=ctx)
     except ValueError as e:
         raise HTTPException(422, str(e))
 
 
 @router.get("/tree/subtree")
-def tree_subtree_route(path: str = "/"):
-    """子树视图（含根）+ 挂载计数。"""
+def tree_subtree_route(path: str = "/", ctx=Depends(get_current_user)):
+    """子树视图（含根）+ 挂载计数（归属收窄同 /tree，票 readside-gaps/08）。"""
     with db.get_session() as s:
-        return tree_service.get_subtree(s, path)
+        return tree_service.get_subtree(s, path, principal=ctx)
 
 
 @router.post("/tree/assign")
