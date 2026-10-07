@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **潮波缓冲按会话分键——多会话消息不再混并，来源链全链打通（2026-10-07，票据 `.scratch/coalesce-session-key/issues/01-coalesce-session-key.md`，上游 aiduMEM f0.3 同款修复吸收）**：
+  - **先说影响**：潮波缓冲键此前是 `user_id:lane` 不含会话——同一个用户的 A、B 两个会话消息会混进同一批一起提炼（上游 f0.3 正是生产上发现「记忆串场」后修的同款）：轻则 A 的话被并进 B 的记忆，重则 A 的私密内容被提炼后挂在无出身的候选上混进检索面。冲刷端还被迫把出身写成空串（「宁 miss 不脏写」的妥协）。现在缓冲按 `user_id:lane:session_id` 分键：只混同会话的消息，出身（session_id）从入队、冲刷、worker 持久化全链透传，两处空串妥协删除。
+  - **兼容**：键尾部两段固定为 `lane:session`（user_id 可含冒号，rsplit 解析）；不传 session 的旧调用行为逐字不变；进程热升级窗口里残留的旧格式键也能解析不炸。
+  - **变异门禁 2/2 KILLED，其一实为测试空洞补全（诚实记录）**：M2「worker 丢弃 session 出身」首跑存活（6 passed）——查实是测试只断言了键解析、没覆盖 worker 持久化路径；补 `test_worker_persists_session_lineage`（真 worker 直调 + 桩捕获 AddMemoryReq）后 M2 被杀。变异门禁的价值正在于此。
+  - **测试**：`tests/test_coalesce_session_key.py` 7 例（不 mock 冒烟：真缓冲、真键、真解析）。全量门禁 2006 passed 零回归。
+
+
+
 - **进程级 LLM 并发闸门（2026-10-07，票据 `.scratch/llm-concurrency-gate/issues/01-llm-concurrency-gate.md`，上游 aiduMEM f0.3 同款能力吸收）**：
   - **先说影响**：`chat_json` / `vision_caption` / `embed` 三个外呼通道此前零并发防护——高峰期潮波冲刷、反思定时器、检索意图分类同时触发时，对外部 LLM API 的并发不设防（上游 f0.3 正是生产被打爆后补的同款闸门）。现在三通道共用一个进程级 `BoundedSemaphore`（`LLM_MAX_CONCURRENCY`，默认 4），等位超过 `LLM_ACQUIRE_TIMEOUT`（默认 30s）即抛 `LLMConcurrencyTimeout` 放弃，不排队到死。
   - **三通道同闸**（上游教训：只闸一个通道等于没闸——提取与向量索引会在同一次潮波冲刷里先后触发）；惰性单例按 settings 构造，配置变更自动重建，零硬编码（ADR-0002）。

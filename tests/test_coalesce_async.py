@@ -192,11 +192,12 @@ class TestServiceFallback:
             ms.add_memory_async(req1, user_id="userA")
             ms.add_memory_async(req2, user_id="userB")
 
-        # 检查 active keys 是否有两个
+        # 检查 active keys 是否有两个（会话分键后键尾带 :session，票据
+        # .scratch/coalesce-session-key/01——默认空 session 尾段为空串）
         wl = buf.water_level()
         assert wl["active_keys"] == 2
-        assert "userA:general" in buf._buffers
-        assert "userB:general" in buf._buffers
+        assert "userA:general:" in buf._buffers
+        assert "userB:general:" in buf._buffers
 
     def test_add_memory_async_flush_failure_forgets_fingerprint(self):
         """持久化失败 → 清除指纹 + 该批消息锁内恢复，允许重试（不丢数据）"""
@@ -231,7 +232,7 @@ class TestIdleConsumer:
         buf.add("u", "general", "第一条足够长的异步内容")
         buf.add("u", "general", "第二条足够长的异步内容")
         with buf._lock:
-            buf._timestamps["u:general"] = 0.0  # 空闲超时已到
+            buf._timestamps["u:general:"] = 0.0  # 空闲超时已到（键含 session 尾段）
 
         with (
             patch("lantai.ingestion.coalesce.get_coalesce_buffer", return_value=buf),
@@ -255,7 +256,7 @@ class TestIdleConsumer:
         for i in range(7):
             buf.add("u", "general", f"消息{i}足够长的异步内容")
         with buf._lock:
-            buf._timestamps["u:general"] = 0.0
+            buf._timestamps["u:general:"] = 0.0
 
         with (
             patch("lantai.ingestion.coalesce.get_coalesce_buffer", return_value=buf),

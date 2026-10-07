@@ -32,19 +32,27 @@ class CoalesceBuffer:
         self._last_flush_ts: float | None = None
         self._lock = threading.Lock()
 
-    def _key(self, user_id: str, lane: str) -> str:
-        return f"{user_id}:{lane}"
+    def _key(self, user_id: str, lane: str, session_id: str = "") -> str:
+        # 会话分键（票据 .scratch/coalesce-session-key/01，上游 f0.3 同款）：
+        # 同 user 多会话消息不混并——A 会话的私密内容不会被提炼进 B 的批次。
+        # session 是键的尾部段（worker 用 rsplit 解析），user_id 可含冒号。
+        return f"{user_id}:{lane}:{session_id or ''}"
 
     def _profile(self, lane: str) -> dict:
         return settings.LANE_COALESCE_PROFILES.get(lane, settings.LANE_COALESCE_PROFILES["general"])
 
     @staticmethod
-    def job_id(user_id: str, lane: str, content: str) -> str:
-        return hashlib.sha256(f"{user_id}:{lane}:{content}".encode()).hexdigest()[:16]
+    def job_id(user_id: str, lane: str, content: str, session_id: str = "") -> str:
+        # 幂等指纹随会话分键：同内容不同 session 不误判 duplicate
+        return hashlib.sha256(
+            f"{user_id}:{lane}:{session_id or ''}:{content}".encode()
+        ).hexdigest()[:16]
 
-    def add(self, user_id: str, lane: str, content: str, title: str = "") -> dict:
+    def add(
+        self, user_id: str, lane: str, content: str, title: str = "", session_id: str = ""
+    ) -> dict:
         """将消息加入缓冲。返回 {'buffered': True, 'count': N} 或 {'flushed': [...]}"""
-        key = self._key(user_id, lane)
+        key = self._key(user_id, lane, session_id)
         now = time.time()
         profile = self._profile(lane)
 
@@ -77,16 +85,18 @@ class CoalesceBuffer:
         # 锁内算好返回值，避免并发下读到已冲刷的空表
         return {"buffered": True, "count": count}
 
-    def add_async(self, user_id: str, lane: str, content: str, title: str = "") -> dict:
+    def add_async(
+        self, user_id: str, lane: str, content: str, title: str = "", session_id: str = ""
+    ) -> dict:
         """异步入队（幂等）：TTL 内相同内容返回同一 job_id，不重复入队。"""
-        jid = self.job_id(user_id, lane, content)
+        jid = self.job_id(user_id, lane, content, session_id)
         now = time.time()
         with self._lock:
             prev = self._seen.get(jid)
             if prev is not None and (now - prev) < self.IDEMPOTENT_TTL:
                 return {"status": "queued", "job_id": jid, "duplicate": True}
         try:
-            result = self.add(user_id, lane, content, title)
+            result = self.add(user_id, lane, content, title, session_id)
         except Exception:
             # 入队失败不留假指纹：否则 TTL 内重试会误判 duplicate 且消息丢失
             with self._lock:
@@ -129,7 +139,12 @@ class CoalesceBuffer:
             for k in stale:
                 del self._seen[k]
             for key in list(self._buffers.keys()):
-                profile = self._profile(key.split(":")[-1])
+                # 键尾部两段 = lane:session（会话分键后 user 可含冒号）
+                try:
+                    _, lane = key.rsplit(":", 2)[0], key.rsplit(":", 2)[1]
+                except ValueError:
+                    lane = key.split(":")[-1]
+                profile = self._profile(lane)
                 if (now - self._timestamps[key]) >= profile["idle_timeout"]:
                     result = self._flush(key)
                     if isinstance(result, dict) and "items" in result:
@@ -146,9 +161,18 @@ class CoalesceBuffer:
         combined = "\n".join(m["content"] for m in messages)
         self._flush_count += 1
         self._last_flush_ts = time.time()
+        # 键尾部两段 = lane:session（user_id 可能含冒号，rsplit 解析）
+        try:
+            _, lane_part, session_part = key.rsplit(":", 2)
+        except ValueError:
+            # 兼容无 session 的旧键（进程热升级窗口内存量键）
+            parts = key.split(":", 1)
+            lane_part, session_part = (parts[0], "") if len(parts) == 1 else (parts[1], "")
         return {
             "flushed": True,
             "key": key,
+            "lane": lane_part,
+            "session_id": session_part,
             "count": len(messages),
             "combined_content": combined,
             "items": messages,

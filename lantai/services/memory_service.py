@@ -252,16 +252,18 @@ def add_memory(
             lane=req.lane,
             content=req.content,
             title=req.title,
+            # 会话分键（票据 .scratch/coalesce-session-key/01）：同 user 多
+            # 会话不混并；出身随键透传，冲刷端不再被迫留空
+            session_id=(getattr(req, "session_id", "") or ""),
         )
         if result.get("buffered"):
             return {"buffered": True, "count": result.get("count", 0)}
-        # 缓冲冲刷——批量提取；合并内容可能跨多个 session，
-        # 出身宁可留空也不错误归属（宁 miss 不脏写）
+        # 缓冲冲刷——批量提取；分键后合并内容同 session，出身如实落列
         if result.get("flushed"):
             combined = result.get("combined_content", req.content)
             req_copy = req.model_copy()
             req_copy.content = combined
-            req_copy.session_id = ""
+            req_copy.session_id = result.get("session_id") or req.session_id or ""
             return _create_candidate_with_extraction(
                 req_copy, user_id=user_id, tenant_id=tenant_id, principal=principal
             )
@@ -441,14 +443,16 @@ def add_memory_async(
         result = add_memory(req, user_id=user_id, tenant_id=tenant_id, principal=principal)
         return {
             "status": "synced",
-            "job_id": buffer.job_id(user_id, req.lane, req.content),
+            "job_id": buffer.job_id(user_id, req.lane, req.content, req.session_id),
             **result,
         }
-    result = buffer.add_async(user_id, req.lane, req.content, req.title)
+    result = buffer.add_async(user_id, req.lane, req.content, req.title, session_id=req.session_id)
     if result.get("status") == "flushed":
         detail = result.get("detail") or {}
         req_copy = req.model_copy()
         req_copy.content = detail.get("combined_content", req.content)
+        # 会话分键（票据 .scratch/coalesce-session-key/01）：出身随键透传
+        req_copy.session_id = detail.get("session_id") or req.session_id or ""
         try:
             persisted = _create_candidate_with_extraction(
                 req_copy, user_id=user_id, tenant_id=tenant_id, principal=principal

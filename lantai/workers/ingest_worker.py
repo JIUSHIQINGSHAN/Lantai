@@ -129,10 +129,15 @@ def run_coalesce_idle():
         if not result.get("flushed"):
             continue
         combined = result.get("combined_content", "")
-        key = result.get("key", "default:general")
-        lane = key.split(":", 1)[-1]
+        key = result.get("key", "default:general:")
+        # 会话分键（票据 .scratch/coalesce-session-key/01）：键尾部两段 =
+        # lane:session（user_id 可能含冒号，rsplit 解析；_flush 已带回解析结果）
+        lane = result.get("lane") or key.rsplit(":", 2)[-2]
+        session_id = result.get("session_id") or ""
         try:
-            req = AddMemoryReq(title="coalesced", content=combined, lane=lane)
+            req = AddMemoryReq(
+                title="coalesced", content=combined, lane=lane, session_id=session_id
+            )
             ms._create_candidate_with_extraction(req)
         except Exception:
             logger.exception("coalesce flush persist failed for key=%s", key)
