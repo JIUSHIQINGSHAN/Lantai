@@ -83,6 +83,11 @@ def ingest_dialogue(
         raise ValueError("empty dialogue text")
     if len(text) > 50000:
         raise ValueError("dialogue text too long (max 50000)")
+    # 獬豸（票据 .scratch/xiezhi-injection-guard/01）：写入侧注入检测，命中
+    # 整条拒——检测在 fastpath 之前，「记住：<注入>」不因白名单直通而漏闸
+    from lantai.security.injection_guard import assert_no_prompt_injection
+
+    assert_no_prompt_injection(text)
 
     # 1) fastpath 白名单直通——绕过 LLM 提取
     fp = fastpath_check(text)

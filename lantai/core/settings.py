@@ -279,6 +279,11 @@ class Settings(BaseSettings):
     # 声明（OWASP LLM01 纵深防御）。默认开；关 = 行为退回无围栏（off 对照测试锚定）
     DATA_FENCE_ENABLED: bool = True
 
+    # 獬豸（票据 .scratch/xiezhi-injection-guard/01，上游 f0.3++ injection_guard
+    # 同款）：写入侧三层注入检测（原始特征 / NFKC 归一 / 重复行轰炸），命中
+    # 整条拒不改写。默认开；关 = 行为退回无检测（off 对照测试锚定）。
+    INJECTION_GUARD_ENABLED: bool = True
+
     # 记忆 Wiki（借鉴 TencentDB Agent Memory LLM-Wiki）：场景/技能 → 持续维护的页面
     # docs/memory-wiki/{index.md, overview.md, pages/}；overview 综述 + [[wikilink]] 下钻
     WIKI_ENABLED: bool = True

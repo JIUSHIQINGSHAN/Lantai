@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **獬豸——写入侧注入检测三层闸，注入内容进不了库（2026-10-07，票据 `.scratch/xiezhi-injection-guard/issues/01-injection-guard.md`，上游 aiduMEM f0.3++ injection_guard 检测层同款移植）**：
+  - **先说影响**：此前记忆入库对内容不做任何注入面检查——宿主喂进来的网页/文档若埋着「ignore previous instructions」类指令，会原样进 FTS/向量，之后每次召回都把注入文本拼进上下文。樊篱（出口包裹）只能声明「数据不是指令」，拦不住它先入库。现在六个写入漏斗（对话、verbatim 直存、核心记忆、add 家族、异步、纠错）入库前过三层检测：原始特征正则（指令覆盖/角色劫持/ChatML 标记，中英）→ NFKC 归一去标点匹配（粉碎 `i.g.n.o.r.e` / 全角 / 空格分隔变体）→ 重复行轰炸识别（剔结构性重复行后 count≥10 且 ratio>0.6）；命中**整条拒、不改一字**（宁 miss 不脏写，拒绝信息只给层名不给模式全文）。
+  - **上游两处真缺口实测抓到并修复**：①归一化层中文模式漏「的」字组（第一层有第二层没有），空格变体第二层接不住；②`disregard all previous instructions` 经典短语两层都接不住（`all` 与 `previous` 同组二选一）。模式表抄的是上游外审修正后的版本（裸 `<system>`/`[section]`/表格分隔行/3 行相同日志全部放行——他们的误拒教训直接变成兰台的误拒红线测试）。
+  - **闸位关键裁决（防毒丸死循环）**：add 家族在 coalesce 缓冲**入口**拦、不在冲刷端拦——冲刷 worker 对 ValueError 会 `buffer.requeue` 无限重试，注入载荷若到冲刷端才被拒会变成永久重试批。
+  - **命名**：按 ADR-0013 登记「獬豸」——法兽辨曲直、以角触不直者，只指出可疑不代笔改文，与「只检测不改写」同构。
+  - **测试**：`tests/test_injection_guard.py` 26 例（不 mock 冒烟：真三层直调 + 真漏斗真库直调，误拒红线夹具锚死）。**变异门禁 4/4 KILLED**（M1 回退外审前宽松判据——首跑存活暴露测试空洞，补「10 行日志 5 行相同」夹具后杀掉 / M2 删 NFKC / M3 摘 dialogue 接线 / M4 删去标点归一）。
+
 - **MCP 工具循环守卫——同一调用反复失败时熔断，宿主不再白撞故障服务（2026-10-07，票据 `.scratch/mcp-loop-guard/issues/01-mcp-loop-guard.md`，上游 aiduMEM f0.3++ `418c3c3` LoopGuard 同款移植）**：
   - **先说影响**：兰台服务故障时（如 LLM 掉线），宿主 Agent 会陷入「调用同一工具→失败→下一轮再调」的死循环——每轮烧 token、每轮同样报错，MCP 上下文被 -32603 垃圾占满。现在同一「工具+参数指纹」在 60s 窗口内失败满 5 次 → 熔断 30s，冷却期内拒绝并带 `retry_after`（宿主得到明确的「别再试」信号）；冷却结束放**单个探针**请求，探针成功即恢复、失败续断；成功调用永远不限流、清零全部状态；在途调用永不取消。
   - **接线**：`lantai/cli/mcp.py` 的 `handle()` tools/call 分支统一收口（60 个 handler 逐个装饰要动全表，一处收口是票 13 教训）。拒绝返回标准 MCP error 帧 `code=-32005`；失败判定 = handler 抛异常（-32602/-32603 照常返回，响应形态零漂移）。参数指纹剥离 `request_id`/`trace_id` 等易变顶层键——换 request_id 重试逃不过熔断；同工具不同参数各自计数不连坐。守卫自身故障时放行（不放大火）。配置 `MCP_LOOP_GUARD_ENABLED/THRESHOLD/WINDOW_S/COOLDOWN_S`，写错值回落默认。

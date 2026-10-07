@@ -27,7 +27,13 @@ def add_memory_route(
         return add_memory_async(
             req, user_id=ctx.user_id or "default", tenant_id=ctx.tenant_id, principal=ctx
         )
-    return add_memory(req, user_id=ctx.user_id or "default", tenant_id=ctx.tenant_id, principal=ctx)
+    try:
+        return add_memory(
+            req, user_id=ctx.user_id or "default", tenant_id=ctx.tenant_id, principal=ctx
+        )
+    except ValueError as e:
+        # 獬豸注入拒绝走 ValueError（同 dialogue 路由 422 范式）
+        raise HTTPException(422, str(e))
 
 
 @router.get("/core-memory")
@@ -55,12 +61,16 @@ def add_raw_memory_route(req: RawMemoryReq, ctx: Principal = Depends(get_current
     # 归属四元组必须随 principal 落列（票 .scratch/ownership-gaps/03）：
     # verbatim 是库里条数最多的一类，属主恒 NULL 会让按属主过滤的检索
     # （fts.py:160 的 `AND m.user_id = ?`）把它整类滤光。
-    return add_raw_memory(
-        req,
-        user_id=ctx.user_id or "default",
-        tenant_id=ctx.tenant_id,
-        agent_id=ctx.agent_id,
-    )
+    try:
+        return add_raw_memory(
+            req,
+            user_id=ctx.user_id or "default",
+            tenant_id=ctx.tenant_id,
+            agent_id=ctx.agent_id,
+        )
+    except ValueError as e:
+        # 獬豸注入拒绝走 ValueError（同 dialogue 路由 422 范式）
+        raise HTTPException(422, str(e))
 
 
 @router.get("/memories")

@@ -225,6 +225,12 @@ def add_memory(
     显式传入优先；否则按 user_id 收敛（`_principal_of`）。REST 路由应传
     `Depends(get_current_user)` 的 ctx。
     """
+    # 獬豸（票据 .scratch/xiezhi-injection-guard/01）：必须在 coalesce 缓冲
+    # **之前**拦——冲刷端 worker 对 ValueError 会 buffer.requeue 无限重试，
+    # 注入载荷若进缓冲会变成毒丸批死循环；入口拦干净，缓冲里只有已过闸内容。
+    from lantai.security.injection_guard import assert_no_prompt_injection
+
+    assert_no_prompt_injection(req.content)
     if (req.media_url or "").strip():
         from lantai.services.vision_service import build_vision_memory, vision_provenance_extra
 
@@ -438,6 +444,10 @@ def add_memory_async(
 
     principal（票 readside-gaps/15）：同 `add_memory`，下传去重链。
     """
+    # 獬豸：同 add_memory——异步路径必须在入缓冲前拦（毒丸批防死循环）
+    from lantai.security.injection_guard import assert_no_prompt_injection
+
+    assert_no_prompt_injection(req.content)
     buffer = get_coalesce_buffer()
     if not settings.COALESCE_ENABLED:
         result = add_memory(req, user_id=user_id, tenant_id=tenant_id, principal=principal)
@@ -518,6 +528,11 @@ def put_core_memory(block: str, content: str, namespace: str = "default", princi
     """
     if block not in ("identity", "task", "policy"):
         raise ValueError("invalid block")
+    # 獬豸（票据 .scratch/xiezhi-injection-guard/01）：核心记忆内容直接进 prompt，
+    # 是注入文本的特权位——直写前先过写入侧注入检测
+    from lantai.security.injection_guard import assert_no_prompt_injection
+
+    assert_no_prompt_injection(content)
     if principal is None:
         tenant_id, user_id, agent_id = None, "default", None
     else:
@@ -633,6 +648,11 @@ def add_raw_memory(
     """
     h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
     lane = req.lane or settings.RAW_MEMORY_DEFAULT_LANE
+    # 獬豸（票据 .scratch/xiezhi-injection-guard/01）：verbatim 原样进 FTS+向量，
+    # 是注入文本直达检索面的最短路径——sha256/去重之前先过写入侧注入检测
+    from lantai.security.injection_guard import assert_no_prompt_injection
+
+    assert_no_prompt_injection(req.content)
     with db.get_session() as s:
         q = select(MemoryItem).where(
             MemoryItem.memory_type == "verbatim",

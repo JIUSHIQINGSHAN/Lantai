@@ -303,6 +303,14 @@ def correct_memory(
         text = (new_content or "").strip()
         if not text:
             return {"ok": False, "error": "content is required"}
+        # 獬豸（票据 .scratch/xiezhi-injection-guard/01）：纠错是内容改写面，
+        # 新文会覆盖原正文进 FTS+向量——同族同闸
+        from lantai.security.injection_guard import assert_no_prompt_injection
+
+        try:
+            assert_no_prompt_injection(text)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
         if text == item.content:
             return {"ok": False, "error": "content unchanged"}
         if item.status == STATUS_RETRACTED:
