@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     LLM_MAX_CONCURRENCY: int = 4
     LLM_ACQUIRE_TIMEOUT: float = 30.0
 
+    # MCP 工具循环守卫（票据 .scratch/mcp-loop-guard/01，上游 f0.3++ LoopGuard 同款）：
+    # 同一工具+参数指纹在 window_s 秒内失败 threshold 次 → 熔断 cooldown_s 秒，
+    # 冷却结束放单个探针请求恢复。宿主 LLM 陷「调工具→失败→再调」死循环时的止损。
+    MCP_LOOP_GUARD_ENABLED: bool = True
+    MCP_LOOP_GUARD_THRESHOLD: int = 5
+    MCP_LOOP_GUARD_WINDOW_S: float = 60.0
+    MCP_LOOP_GUARD_COOLDOWN_S: float = 30.0
+
     INGEST_CRON_MINUTES: int = 60
     EVOLVE_CRON_MINUTES: int = 30
     FORGET_CRON_HOURS: int = 24

@@ -4,9 +4,15 @@
 标准 MCP JSON-RPC 2.0 协议
 """
 
+import hashlib
 import json
+import math
 import os
 import sys
+import threading
+import time
+from collections import OrderedDict, deque
+from dataclasses import dataclass, field
 
 # 使子进程无论 cwd 在哪都能 import lantai（Hermes 拉 MCP 时 cwd 不可控）
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -23,6 +29,7 @@ except (AttributeError, ValueError):
 
 from pydantic import ValidationError
 
+from lantai.core.settings import settings as _settings
 from lantai.gate.prefilter import relevance_check
 from lantai.models.schemas import AddMemoryReq, FeedbackReq
 from lantai.retrieval.hybrid import hybrid_search
@@ -30,6 +37,149 @@ from lantai.services.evolution_service import record_feedback_entry
 from lantai.services.memory_service import add_memory
 
 PROTOCOL_VERSION = "2024-11-05"
+
+# ── MCP 工具循环守卫（票据 .scratch/mcp-loop-guard/01，上游 f0.3++ LoopGuard 同款）──
+# 解决：宿主 LLM 陷「调同一工具→失败→下轮再调」死循环，每轮烧 token、同样的错。
+# 形状：同工具+参数指纹在窗口内失败达阈值 → 熔断一个冷却期；冷却结束放单个探针
+# 请求（probing）——探针成功即恢复清零，失败续断。成功调用不限流；
+# 在途调用永不取消。键只含 sha256 指纹，无参数原文落盘。
+
+# 每次传输尝试都会变、但业务操作不变的顶层参数键——不剥离会把同一操作的
+# 重试误判成不同操作（照抄上游 _VOLATILE_ARGUMENT_KEYS）。
+_VOLATILE_ARGUMENT_KEYS = frozenset({"request_id", "trace_id", "tracking_id", "correlation_id"})
+
+
+def _canonicalize_args(value: dict) -> dict:
+    """剥掉顶层易变键；嵌套业务参数保持原义不折叠。"""
+    return {
+        str(k): v
+        for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))
+        if str(k).lower() not in _VOLATILE_ARGUMENT_KEYS
+    }
+
+
+def _fingerprint(tool: str, arguments: dict) -> str:
+    raw = json.dumps(
+        [str(tool), _canonicalize_args(arguments)],
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+@dataclass
+class _GuardState:
+    failures: deque = field(default_factory=deque)
+    open_until: float = 0.0
+    probing: bool = False
+
+
+class LoopGuard:
+    """有界、进程内的重复失败工具调用守卫（上游 f0.3++ 同款移植）。
+
+    状态容量有界（capacity 淘汰最旧指纹）；全部判定线程安全（stdio 单连接
+    但 handler 内部可能起线程）。时钟可注入（测试用 fake clock 驱动窗口/冷却）。
+    """
+
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        threshold: int = 5,
+        window_s: float = 60.0,
+        cooldown_s: float = 30.0,
+        capacity: int = 256,
+        clock=time.monotonic,
+    ):
+        if (
+            threshold < 2
+            or capacity < 1
+            or not all(
+                isinstance(v, (int, float)) and math.isfinite(v) and v > 0
+                for v in (window_s, cooldown_s)
+            )
+        ):
+            raise ValueError("Invalid loop guard configuration")
+        self.enabled = enabled
+        self.threshold = threshold
+        self.window_s = window_s
+        self.cooldown_s = cooldown_s
+        self.capacity = capacity
+        self.clock = clock
+        self._states: OrderedDict[str, _GuardState] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def begin(self, key: str):
+        """调用前置检：返回 (token, rejection)。rejection 非 None = 应拒绝。"""
+        with self._lock:
+            now = self.clock()
+            state = self._states.setdefault(key, _GuardState())
+            self._states.move_to_end(key)
+            while len(self._states) > self.capacity:
+                self._states.popitem(last=False)
+            if state.open_until:
+                if now < state.open_until or state.probing:
+                    retry_after = max(1, math.ceil(state.open_until - now))
+                    return None, {
+                        "code": -32005,
+                        "message": f"circuit_open: retry_after={retry_after}s",
+                    }
+                # 冷却结束：放行本调用为单探针；探针结果决定恢复还是续断
+                state.probing = True
+            return (key, state, state.probing), None
+
+    def finish(self, token, failed: bool) -> None:
+        """调用后记账：failed=True 计一次失败（窗口滑动），失败满阈值断路。"""
+        if token is None:
+            return
+        with self._lock:
+            key, state, probe = token
+            if self._states.get(key) is not state:
+                return  # 在途期间被容量淘汰：不复活陈旧状态
+            if not failed:
+                state.failures.clear()
+                state.open_until = 0.0
+                state.probing = False
+                return
+            now = self.clock()
+            while state.failures and state.failures[0] <= now - self.window_s:
+                state.failures.popleft()
+            state.failures.append(now)
+            # 并发调用可能在断路后才 finish：保持有界
+            while len(state.failures) > self.threshold:
+                state.failures.popleft()
+            if probe or len(state.failures) >= self.threshold:
+                state.open_until = now + self.cooldown_s
+                state.probing = False
+
+    def cancel(self, token) -> None:
+        """在途调用被取消时释放探针位，不把未完成的调用计成失败。"""
+        if token is None:
+            return
+        with self._lock:
+            key, state, probe = token
+            if probe and self._states.get(key) is state:
+                state.probing = False
+
+
+def _get_guard() -> LoopGuard:
+    """进程级守卫单例：配置取 settings（env 可覆写），值非法回落默认。"""
+    global _guard_instance
+    try:
+        guard = LoopGuard(
+            enabled=_settings.MCP_LOOP_GUARD_ENABLED,
+            threshold=_settings.MCP_LOOP_GUARD_THRESHOLD,
+            window_s=_settings.MCP_LOOP_GUARD_WINDOW_S,
+            cooldown_s=_settings.MCP_LOOP_GUARD_COOLDOWN_S,
+        )
+    except (ValueError, OverflowError):
+        guard = LoopGuard()
+    _guard_instance = guard
+    return guard
+
+
+_guard_instance: LoopGuard | None = None
 
 
 def handle_search(params: dict) -> dict:
@@ -1839,16 +1989,35 @@ def handle(msg: dict) -> dict | None:
                     "message": f"tool {name} is advertised but has no registered handler",
                 },
             }
+        # 循环守卫（票据 .scratch/mcp-loop-guard/01）：同工具+参数指纹窗口内
+        # 失败达阈值即熔断；拒绝时 handler 不执行，宿主收到带 retry_after 的
+        # 明确信号，不再每轮白撞。成功调用不限流（上游原义）。
+        guard = _get_guard() if _guard_instance is None else _guard_instance
+        token = None
+        rejection = None
+        if guard.enabled:
+            try:
+                token, rejection = guard.begin(_fingerprint(name, args))
+            except Exception:
+                token, rejection = None, None  # 守卫自身故障不放大火：放行
+        if rejection is not None:
+            return {"jsonrpc": "2.0", "id": mid, "error": rejection}
         try:
             result = handler(args)
         except (ValueError, ValidationError) as e:
+            if token is not None:
+                guard.finish(token, failed=True)
             return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": str(e)}}
         except Exception as e:
+            if token is not None:
+                guard.finish(token, failed=True)
             return {
                 "jsonrpc": "2.0",
                 "id": mid,
                 "error": {"code": -32603, "message": f"internal error: {type(e).__name__}"},
             }
+        if token is not None:
+            guard.finish(token, failed=False)
         return {
             "jsonrpc": "2.0",
             "id": mid,

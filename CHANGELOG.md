@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **MCP 工具循环守卫——同一调用反复失败时熔断，宿主不再白撞故障服务（2026-10-07，票据 `.scratch/mcp-loop-guard/issues/01-mcp-loop-guard.md`，上游 aiduMEM f0.3++ `418c3c3` LoopGuard 同款移植）**：
+  - **先说影响**：兰台服务故障时（如 LLM 掉线），宿主 Agent 会陷入「调用同一工具→失败→下一轮再调」的死循环——每轮烧 token、每轮同样报错，MCP 上下文被 -32603 垃圾占满。现在同一「工具+参数指纹」在 60s 窗口内失败满 5 次 → 熔断 30s，冷却期内拒绝并带 `retry_after`（宿主得到明确的「别再试」信号）；冷却结束放**单个探针**请求，探针成功即恢复、失败续断；成功调用永远不限流、清零全部状态；在途调用永不取消。
+  - **接线**：`lantai/cli/mcp.py` 的 `handle()` tools/call 分支统一收口（60 个 handler 逐个装饰要动全表，一处收口是票 13 教训）。拒绝返回标准 MCP error 帧 `code=-32005`；失败判定 = handler 抛异常（-32602/-32603 照常返回，响应形态零漂移）。参数指纹剥离 `request_id`/`trace_id` 等易变顶层键——换 request_id 重试逃不过熔断；同工具不同参数各自计数不连坐。守卫自身故障时放行（不放大火）。配置 `MCP_LOOP_GUARD_ENABLED/THRESHOLD/WINDOW_S/COOLDOWN_S`，写错值回落默认。
+  - **测试**：`tests/test_mcp_loop_guard.py` 10 例（不 mock 冒烟：真 `handle()` 直调 + 真 handler 抛异常 + fake clock 驱动窗口/冷却/单探针）。**变异门禁 3/3 KILLED**（阈值 `>=`→`>` / 探针成功不清熔断 / finish 忽略失败标记；子进程隔离 + 快照逐字还原复核）。
+  - **诚实记录**：全量门禁第一轮 8 个失败全部为「门禁进行中并发改源码」的一次性误报（`inspect.getsource` 行号切片错位），干净静止代码下复跑 2029 passed 零失败。
+
 - **注入帧带事件时间——宿主能看到记忆「何时发生」，双轴优先级钉死（2026-10-07，票据 `.scratch/inject-frame-time/issues/01-inject-frame-time.md`，上游 aiduMEM f0.1 同款能力吸收）**：
   - **先说影响**：此前召回注入只有「相关度分数」没有时间——「项目上线」这条记忆不管是一年前还是昨天记的，注入出来一个样，宿主 Agent 无法区分过时信息与新鲜事。现在每条注入条目头部带 `YYYY-MM-DD HH:MM`（可配置粒度），时间取自**事件时间轴**（`event_time`，ADR-0048）优先、回退**主张时间轴**（`valid_from`）——两个轴的语义不同（「现实何时发生」vs「系统何时确信」），调换会静默颠倒注入时间轴的含义。取不到时间就不显示，不硬造。
   - **覆盖四条注入通道**：shell_hook 召回注入、卸载条目、认知上下文（`to_prompt`）、shell_hook 兜底格式化，单一真源 `lantai/core/time.py` `render_event_time()`。粒度 `SHELL_HOOK_INJECT_DATE: day(默认)|minute|off`，写错值回落 day——带不带时间、带到什么粒度是使用者偏好，不是系统的判断。
