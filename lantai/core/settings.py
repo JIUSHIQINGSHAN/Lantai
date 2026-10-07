@@ -252,6 +252,10 @@ class Settings(BaseSettings):
     SHELL_HOOK_MAX_CHARS_PER_MEMORY: int = 200
     SHELL_HOOK_MAX_TOTAL_CHARS: int = 1500
     SHELL_HOOK_TOOLS_GUIDE: bool = True
+    # 注入帧带时间（票据 .scratch/inject-frame-time/01，上游 f0.1 同款）：
+    # 召回条目带不带事件时间、带到什么粒度，是使用者的偏好不是系统的判断——
+    # day(默认,只到天)|minute(到分,区分同一天先后)|off。写错值回落 day。
+    SHELL_HOOK_INJECT_DATE: str = "day"
     # 上下文卸载（借鉴 TencentDB Agent Memory offload_server/compact 窄版）：
     # 超长记忆全文落文件，上下文只注入摘要 + 路径；需要时经 MCP offload_read 取全文
     SHELL_HOOK_OFFLOAD_CHARS: int = 2000  # 记忆内容超过此长度 → 落文件 + 摘要注入

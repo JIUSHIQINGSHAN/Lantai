@@ -22,6 +22,7 @@ from lantai.core.ids import new_id
 from lantai.core.settings import settings
 from lantai.core.text import apply_recall_budget as _apply_recall_budget
 from lantai.core.text import truncate_codepoints as _truncate_codepoints
+from lantai.core.time import render_event_time
 from lantai.integrations.host_adapters import adapt_response
 from lantai.integrations.host_protocol import (
     ACTION_BACKFILL,
@@ -66,11 +67,22 @@ def _build_tools_guide(truncated: bool) -> str:
 
 
 def _format_memory_entry(
-    content: str, score: float, max_chars: int, suffix: str
+    content: str, score: float, max_chars: int, suffix: str, time_str: str = ""
 ) -> tuple[str, str]:
-    """格式化单条记忆行 + 截断后内容（evidence 与注入行保持一致）。"""
+    """格式化单条记忆行 + 截断后内容（evidence 与注入行保持一致）。
+
+    time_str 非空时行首带事件时间（`- [2026-09-20 | score 0.87] 正文`）——
+    模型看得见「什么时候」（票据 .scratch/inject-frame-time/01，上游 f0.1 同款）；
+    空串 = 无时间出身的旧行为逐字不变（`- [0.87] 正文`）。
+    """
     truncated = _truncate_codepoints(content, max_chars, suffix)
-    return f"- [{score}] {truncated}", truncated
+    head = f"{time_str} | score {score}" if time_str else str(score)
+    return f"- [{head}] {truncated}", truncated
+
+
+def _event_time_str(item) -> str:
+    """单条记忆的时间段渲染（粒度由 SHELL_HOOK_INJECT_DATE 决定；空串=不带）。"""
+    return render_event_time(item, settings.SHELL_HOOK_INJECT_DATE)
 
 
 def _format_offload_entry(item, score: float, max_chars: int) -> tuple[str, str]:
@@ -79,11 +91,16 @@ def _format_offload_entry(item, score: float, max_chars: int) -> tuple[str, str]
     对应腾讯 offload_server/compact 的窄版落点：上下文只注入摘要 + 全文路径，
     需要时经 MCP offload_read 取完整原文。
     """
+    time_str = _event_time_str(item)
     try:
         path = write_offload_file(item.id, item.content)
-        return build_offload_inject(item.content, score, max_chars, _OFFLOAD_SUFFIX, path)
+        return build_offload_inject(
+            item.content, score, max_chars, _OFFLOAD_SUFFIX, path, time_str=time_str
+        )
     except Exception:
-        return _format_memory_entry(item.content, score, max_chars, _RECALL_TRUNCATION_SUFFIX)
+        return _format_memory_entry(
+            item.content, score, max_chars, _RECALL_TRUNCATION_SUFFIX, time_str=time_str
+        )
 
 
 def _is_skill_item(item) -> bool:
@@ -166,7 +183,11 @@ def build_context(query: str, session_id: str | None = None) -> dict:
                         line, content = _format_offload_entry(m, score, per_memory)
                     else:
                         line, content = _format_memory_entry(
-                            m.content, score, per_memory, _RECALL_TRUNCATION_SUFFIX
+                            m.content,
+                            score,
+                            per_memory,
+                            _RECALL_TRUNCATION_SUFFIX,
+                            time_str=_event_time_str(m),
                         )
                     entries.append((line, content, score, m.id))
                     break

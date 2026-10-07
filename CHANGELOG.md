@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **注入帧带事件时间——宿主能看到记忆「何时发生」，双轴优先级钉死（2026-10-07，票据 `.scratch/inject-frame-time/issues/01-inject-frame-time.md`，上游 aiduMEM f0.1 同款能力吸收）**：
+  - **先说影响**：此前召回注入只有「相关度分数」没有时间——「项目上线」这条记忆不管是一年前还是昨天记的，注入出来一个样，宿主 Agent 无法区分过时信息与新鲜事。现在每条注入条目头部带 `YYYY-MM-DD HH:MM`（可配置粒度），时间取自**事件时间轴**（`event_time`，ADR-0048）优先、回退**主张时间轴**（`valid_from`）——两个轴的语义不同（「现实何时发生」vs「系统何时确信」），调换会静默颠倒注入时间轴的含义。取不到时间就不显示，不硬造。
+  - **覆盖四条注入通道**：shell_hook 召回注入、卸载条目、认知上下文（`to_prompt`）、shell_hook 兜底格式化，单一真源 `lantai/core/time.py` `render_event_time()`。粒度 `SHELL_HOOK_INJECT_DATE: day(默认)|minute|off`，写错值回落 day——带不带时间、带到什么粒度是使用者偏好，不是系统的判断。
+  - **实施中的真发现（SQLModel 陷阱）**：`valid_from = Field(default_factory=utcnow)` 会在 flush 时**覆盖显式传入的 `None`**——测试里「造 NULL 行」必须物理 raw-UPDATE，内存构造无效。真实库实证：total=731，`valid_from` NULL 仅 31 条（迁移前的 legacy 行），`event_time` NULL 731 条。
+  - **测试**：`tests/test_inject_frame_time.py` 13 例（不 mock 冒烟：真引擎种子行 + 真 shell_hook 渲染，含 raw-UPDATE 造 NULL 行）。**变异门禁 2/2 KILLED**（M1 双轴优先级对调 / M2 渲染层丢时间参数；快照逐字还原复核 + `__pycache__` 清理——等长替换+同 mtime 分辨率会让陈旧 pyc 复活，独立教训已记）。
+
 - **潮波缓冲按会话分键——多会话消息不再混并，来源链全链打通（2026-10-07，票据 `.scratch/coalesce-session-key/issues/01-coalesce-session-key.md`，上游 aiduMEM f0.3 同款修复吸收）**：
   - **先说影响**：潮波缓冲键此前是 `user_id:lane` 不含会话——同一个用户的 A、B 两个会话消息会混进同一批一起提炼（上游 f0.3 正是生产上发现「记忆串场」后修的同款）：轻则 A 的话被并进 B 的记忆，重则 A 的私密内容被提炼后挂在无出身的候选上混进检索面。冲刷端还被迫把出身写成空串（「宁 miss 不脏写」的妥协）。现在缓冲按 `user_id:lane:session_id` 分键：只混同会话的消息，出身（session_id）从入队、冲刷、worker 持久化全链透传，两处空串妥协删除。
   - **兼容**：键尾部两段固定为 `lane:session`（user_id 可含冒号，rsplit 解析）；不传 session 的旧调用行为逐字不变；进程热升级窗口里残留的旧格式键也能解析不炸。

@@ -32,15 +32,24 @@ def offload_filename(memory_id: str) -> str:
 
 
 def build_offload_inject(
-    content: str, score: float, max_chars: int, suffix: str, path: Path | str
+    content: str,
+    score: float,
+    max_chars: int,
+    suffix: str,
+    path: Path | str,
+    time_str: str = "",
 ) -> tuple[str, str]:
     """超长记忆 → (注入块, evidence 摘要)：摘要行 + 全文路径行（纯函数）。
 
     注入块与 evidence 同源（都是截断摘要），路径行让 Agent 按需取全文，
     与腾讯 offload 的「上下文只放摘要 + 引用」一致。
+
+    time_str 非空时行首带事件时间（与 shell_hook 注入行同形态——
+    票据 .scratch/inject-frame-time/01）；空串 = 旧行为逐字不变。
     """
     summary = truncate_codepoints(content, max_chars, suffix)
-    block = f"- [{score}] {summary}\n  全文: {path}"
+    head = f"{time_str} | score {score}" if time_str else str(score)
+    block = f"- [{head}] {summary}\n  全文: {path}"
     return block, summary
 
 

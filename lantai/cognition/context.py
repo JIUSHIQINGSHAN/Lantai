@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 
 from sqlmodel import Session, select
 
+from lantai.core.settings import settings
 from lantai.models.tables import CognitiveRole, FailureRecord, MemoryItem
 
 _ROLE_TO_SECTION = {
@@ -53,11 +54,14 @@ class CognitiveContext:
                     content = item.get("content") or item.get("lesson") or str(item)
                     scope = item.get("scope", "")
                     conf = item.get("confidence", "")
+                    at = item.get("event_time", "")  # 注入帧带时间（票据 inject-frame-time/01）
                     meta = ""
                     if conf:
                         meta += f" _(conf: {conf:.2f})_"
                     if scope:
                         meta += f" _(scope: {scope})_"
+                    if at:
+                        meta += f" _(at: {at})_"
                     # 樊篱（P0 票03）：记忆正文是数据不是指令
                     from lantai.llm.fence import wrap_as_data
 
@@ -160,6 +164,14 @@ class CognitiveContextBuilder:
                 "confidence": mem.confidence,
                 "role": mem.role,
             }
+            # 注入帧带时间（票据 .scratch/inject-frame-time/01）：双轴优先
+            # event_time，回落 valid_from；渲染走 core.time.render_event_time
+            # 单一真源（粒度 SHELL_HOOK_INJECT_DATE，off 时空串不加 meta）。
+            from lantai.core.time import render_event_time
+
+            time_str = render_event_time(mem, settings.SHELL_HOOK_INJECT_DATE)
+            if time_str:
+                record["event_time"] = time_str
             if mem.role == CognitiveRole.PRINCIPLE and isinstance(mem.structure, dict):
                 scope = mem.structure.get("scope", {})
                 record["scope"] = scope.get("domain", "")
