@@ -833,6 +833,11 @@ def delete_memory_item(memory_id: str):
     get_vector_store().delete([memory_id])
 
 
+def has_memory_item(memory_id: str) -> bool:
+    """向量条目在场核查（复原路径三层自查用；不做嵌入计算）"""
+    return bool(get_vector_store().has(memory_id))
+
+
 def _chronos_filter(items: list) -> list:
     """Chronos 双时间过滤：未到 valid_from 的剔除，已过 valid_to 的衰减到 0.3 倍。"""
     from lantai.core.time import utcnow

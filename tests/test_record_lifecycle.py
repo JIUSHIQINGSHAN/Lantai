@@ -63,6 +63,9 @@ class FakeVectorStore:
         self.deleted.extend(ids)
         self.ids.difference_update(ids)
 
+    def has(self, id):
+        return id in self.ids
+
 
 @pytest.fixture()
 def fake_vs():
@@ -266,6 +269,108 @@ class TestArchive:
         ops.retract_memory(mid, reason="x")
         res = ops.archive_memory(mid)
         assert res["ok"] is False and "active" in res["error"]
+
+
+class TestUnarchiveLayerReceipts:
+    """复原三层自查（票 .scratch/restore-three-layer/01）：unarchive 盲信
+    「归档保留索引」不核查不回报 = 造假 True 同族病。核查-补漏-回报。"""
+
+    def test_unarchive_indexes_intact_no_resync(self, engine, fake_vs, fake_embed):
+        """常态复原：两层在场 → present=True 双绿、resynced=False 双零、无告警。"""
+        mid = _add(engine, "索引完好的归档复原记忆")
+        fake_vs.ids.add(mid)
+        ops.archive_memory(mid)
+        res = ops.unarchive_memory(mid)
+        assert res["ok"]
+        assert res["fts_present"] is True and res["vector_present"] is True
+        assert res["fts_resynced"] is False and res["vector_resynced"] is False
+        assert res["warnings"] == []
+
+    def test_unarchive_missing_layers_detected_and_backfilled(self, engine, fake_vs, fake_embed):
+        """缺层复原（上游 f0.3 restore 漏向量层事故的兰台变体）：挖哪层补哪层。"""
+        mid = _add(engine, "归档前索引就丢了的复原记忆")
+        ops.archive_memory(mid)
+        # 模拟「归档前同步本就失败」：FTS 与向量双双缺位
+        with Session(engine) as s:
+            sync_fts(s, mid, None)
+            s.commit()
+        res = ops.unarchive_memory(mid)
+        assert res["ok"]
+        assert res["fts_present"] is True and res["vector_present"] is True  # 补齐后的终态
+        assert res["fts_resynced"] is True and res["vector_resynced"] is True  # 如实认账
+        # 补后该层真可召回（不 mock 内部逻辑，直查索引本体）
+        with engine.connect() as conn:
+            assert _fts_hits(conn, "归档前索引就丢了") == [mid]
+        assert mid in fake_vs.ids
+        assert mid in _hybrid_ids("归档前索引就丢了")
+
+    def test_unarchive_fts_only_missing_resyncs_fts_only(self, engine, fake_vs, fake_embed):
+        """单层缺：只补 FTS，向量不花 embed 钱（常态零成本假设不破）。"""
+        mid = _add(engine, "只有FTS缺层的复原记忆")
+        fake_vs.ids.add(mid)
+        ops.archive_memory(mid)
+        with Session(engine) as s:
+            sync_fts(s, mid, None)
+            s.commit()
+        res = ops.unarchive_memory(mid)
+        assert res["fts_resynced"] is True and res["vector_resynced"] is False
+        assert res["vector_present"] is True
+        assert res["warnings"] == []
+
+    def test_unarchive_resync_failure_warned_not_blocked(self, engine, fake_vs, fake_embed):
+        """补同步失败不静默不阻断：present=False 如实上报，主语义照常 active。"""
+        mid = _add(engine, "补同步失败仍复原的记忆")
+        ops.archive_memory(mid)
+        with Session(engine) as s:
+            sync_fts(s, mid, None)
+            s.commit()
+        with (
+            patch("lantai.retrieval.hybrid.has_memory_item", side_effect=RuntimeError("vs down")),
+            patch("lantai.retrieval.hybrid.index_memory_item", side_effect=RuntimeError("vs down")),
+        ):
+            res = ops.unarchive_memory(mid)
+        assert res["ok"]  # 主语义不被索引故障阻断（SQL status 权威过滤面约法）
+        assert res["fts_present"] is True and res["fts_resynced"] is True
+        assert res["vector_present"] is False and res["vector_resynced"] is True
+        assert res["warnings"]  # 如实可见
+
+    def test_unarchive_receipt_shape_zero_content(self, engine, fake_vs, fake_embed):
+        """回执形状守卫：回执只含层状态布尔，正文不进响应字段。"""
+        mid = _add(engine, "回执形状守卫用的机密正文不该出现在回执")
+        fake_vs.ids.add(mid)
+        ops.archive_memory(mid)
+        res = ops.unarchive_memory(mid)
+        assert set(res) == {
+            "ok",
+            "fts_present",
+            "fts_resynced",
+            "vector_present",
+            "vector_resynced",
+            "warnings",
+        }
+        assert "机密正文" not in str(res)
+
+
+class TestReviveReceipts:
+    def test_fragment_revive_receipts_report_sync_result(self, engine, fake_vs, fake_embed):
+        """碎片起复回执与 unretract 同族：fts_synced/vector_synced 进响应。"""
+        master_id, frag_ids = _seed_consolidated_cluster(engine)
+        frag = frag_ids[0]
+        res = ops.revive_consolidated(frag, reason="r")
+        assert res["ok"] and res["scope"] == "fragment"
+        assert res["fts_synced"] is True and res["vector_synced"] is True
+        assert frag in fake_vs.ids
+
+    def test_fragment_revive_vector_failure_reported(self, engine, fake_vs, fake_embed):
+        """向量重同步失败不静默：回执如实 False + warnings（宁 miss 不脏写）。"""
+        _, frag_ids = _seed_consolidated_cluster(engine)
+        frag = frag_ids[0]
+        with patch(
+            "lantai.retrieval.hybrid.index_memory_item", side_effect=RuntimeError("vs down")
+        ):
+            res = ops.revive_consolidated(frag, reason="r")
+        assert res["ok"] and res["fts_synced"] is True and res["vector_synced"] is False
+        assert res["warnings"]
 
 
 class TestCorrect:

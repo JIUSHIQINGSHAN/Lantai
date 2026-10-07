@@ -77,8 +77,8 @@
 |---|---|---|---|
 | **S1 LLM 并发闸门（G1）** | 进程级 `threading.BoundedSemaphore` + `LLM_MAX_CONCURRENCY` 配置（默认 4）+ 等位超时；chat/vision/embed 三通道共用同一闸 | **已完成（10-07）**：6 例测试 + 4/4 变异 KILLED，见 `.scratch/llm-concurrency-gate/` | ✅ |
 | ~~S2 入口限长第一刀~~ | **10-07 勘误取消**：实施核实 `ingest_dialogue` 服务层自带 50k 上限（`dialogue.py:86`）+ REST Pydantic 限长，MCP 三入口全走服务层——限长已覆盖，调研时查浅了。有界正则（G5 第二刀）仍挂票 08 | — | ❌ |
-| S3 删除面盘点（P-a） | AST 全扫删除/清空入口，出报告；有全量入口才开 confirm 票 | 1 小时 | W3 |
-| S4 恢复路径三层自查（P-b） | `unretract/unarchive/revive_consolidated` 逐个核验 SQL/FTS/向量三层齐 + 回执；缺层补 | 半天 | 11 月 |
+| S3 删除面盘点（P-a） | AST 全扫删除/清空入口，出报告；有全量入口才开 confirm 票 | **已完成（10 月，报告 `docs/research/deletion-surface-audit-2026-10.md`）** | ✅ |
+| S4 恢复路径三层自查（P-b） | `unretract/unarchive/revive_consolidated` 逐个核验 SQL/FTS/向量三层齐 + 回执；缺层补 | **已完成（10-07）**：unarchive 补核查-补漏回执、revive 碎片补回执；测试 +7、真 Chroma 冒烟扩段、变异 4/4 KILLED，见 `.scratch/restore-three-layer/` | ✅ |
 
 ### P2 / 11 月以后
 

@@ -246,6 +246,23 @@ def test_archive_reversible_and_search_filter(bixiao_env):
         assert s.get(MemoryItem, mid).status == "active"
     assert mid in _hybrid_ids(query)  # 可逆：恢复后照常命中
 
+    # 复原三层自查回执（票 .scratch/restore-three-layer/01）：真 Chroma 上的
+    # has 原语与常态回执（不 mock 冒烟纪律：向量替身之外的真存储路径）
+    assert get_vector_store().has(mid) is True
+    res = ops.unarchive_memory(mid)  # 幂等重入受状态闸拦，走 not-archived 分支
+    assert res["ok"] is False
+    assert ops.sync_vector_delete(mid) is True
+    assert get_vector_store().has(mid) is False
+    with Session(bixiao_env) as s:  # 复位为 archived 再复原，验证缺层补漏回执
+        item = s.get(MemoryItem, mid)
+        item.status = "archived"
+        s.add(item)
+        s.commit()
+    res = ops.unarchive_memory(mid, reason="缺层补漏")
+    assert res["ok"] and res["fts_present"] is True
+    assert res["vector_present"] is True and res["vector_resynced"] is True
+    assert get_vector_store().has(mid) is True  # 真向量库条目补回
+
 
 # ── 4. 删除：隐私擦净 + 无正文审计 ──────────────────────────────────────
 

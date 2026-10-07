@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **复原路径三层自查——归档复原核查索引在场，缺层补漏如实回报（2026-10-07，票据 `.scratch/restore-three-layer/issues/01-restore-three-layer.md`，上游 aiduMEM f0.3 `2b90cee` restore 漏向量层事故的同族预防）**：
+  - **先说影响**：归档设计是「索引保留、复原零成本」，但「保留」是归档侧的承诺——若归档前索引同步本就失败过（当时有告警，用户可能没看），复原后该记忆 active 且**静默只剩单层可搜**：正文明明在库里，向量检索就是找不到，没有任何报错提示。这正是上游 f0.3 修的那类「看似在实则不在」。现在恢复归档时先核查 FTS/向量两层在场（`has` 原语，不做嵌入计算），缺了才补同步（罕见路径才花 embed 钱，常态保持零成本），结果如实进回执：`fts_present/vector_present`（层终态）+ `fts_resynced/vector_resynced`（本次是否补过缺层）。
+  - **同族枚举闭环**：全仓把状态翻回 active 的赋值面只有 `record_ops_service` 三处（unretract/unarchive/revive）。unretract 已有完整回执（`fts_synced/vector_synced`）；revive 碎片路径本次补齐同族回执（簇形态不加聚合布尔——多碎片下 `all()` 聚合说不清谁败，失败明细已在 warnings，宁缺不糊）。
+  - **裁决**：核查失败与缺层同途（补同步是更直接的二次信号，不给「未知」态留静默通道）；回执语义不与 unretract 撞名（unarchive 没做的操作不得谎称 synced，retract 幂等分支「如实不造假 True」先例）；`has()` 进 VectorStore ABC 抽象面（与 add/search/delete 同列）。
+  - **测试**：`tests/test_record_lifecycle.py` 新增 7 例 + `tests/test_bixiao_deterministic.py` 真 Chroma 不 mock 冒烟扩一段（has 原语 + 缺层补漏回执全真链路）。**变异门禁 4/4 KILLED**（FTS 核查谎报恒在场 / 向量核查谎报恒在场 / revive 丢回执键 / 核查异常谎报在场——四个变异各打各的判据，子进程隔离 + bak 快照逐字还原复核）。
+
 - **勘合——潜移异步摄取幂等回执，宿主重试不再重复入库（2026-10-07，票据 `.scratch/kanhe-idempotency/issues/01-idempotency-receipt.md`，上游 aiduMEM f0.3 `2b90cee` 异步幂等同款移植）**：
   - **先说影响**：潜移提交即返回 task_id，但宿主网络重试（超时重发/断线重连）每次都新造 task_id 重复提交——同一段话提纯入库两遍、LLM 白烧一遍。现在提交经幂等键原子抢占：同键同文在回执 TTL 内重放**原 task_id**（响应多 `replayed: true` 标记，宿主当普通 submit 响应轮询原任务即可）；同键不同文 422 拒收；任务失败自动释放键（失败的任务永远不得重放——上游 S-2/S-8 事故教训）；回执表**零正文**（白名单制，本表寿命长于记忆删除动作，正文进回执等于删除后仍可捞）。
   - **两种键两段语义**（对上游的关键分歧）：显式键（宿主传 `idempotency_key`，MCP/REST 均已透传）全语义 done 回执保留 `IDEMPOTENCY_TTL_DAYS`（默认 7 天）跨重启有效；未传键用内容指纹自动键，只护 600s 重试窗、成功不落 done——MCP 入口不透传 session/turn，自动指纹长期保留会把「同一段话隔天再说」误判成重试拒收，重试发生在秒-分钟尺度，长期去重是显式键的职责。

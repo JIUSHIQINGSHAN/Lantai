@@ -118,6 +118,9 @@ def param_env():
             def delete(self, *args, **kwargs):
                 pass
 
+            def has(self, *args, **kwargs):
+                return True
+
         dummy_vs = DummyVS()
         mp.setattr(vector_store_module, "get_vector_store", lambda: dummy_vs)
         mp.setattr(hybrid_module, "get_vector_store", lambda: dummy_vs)

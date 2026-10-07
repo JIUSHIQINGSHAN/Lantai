@@ -19,6 +19,11 @@ class VectorStore(ABC):
     @abstractmethod
     def delete(self, ids: list[str]): ...
 
+    @abstractmethod
+    def has(self, id: str) -> bool:
+        """条目在场核查（复原路径三层自查用；不做任何嵌入计算）。"""
+        ...
+
 
 class ChromaVectorStore(VectorStore):
     """ChromaDB 内嵌向量存储，无需外部服务"""
@@ -66,6 +71,10 @@ class ChromaVectorStore(VectorStore):
     def delete(self, ids: list[str]):
         if ids:
             self._collection.delete(ids=ids)
+
+    def has(self, id: str) -> bool:
+        found = self._collection.get(ids=[id])
+        return bool(found and found.get("ids"))
 
 
 # 全局单例

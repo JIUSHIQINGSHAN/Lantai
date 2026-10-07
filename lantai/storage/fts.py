@@ -146,6 +146,17 @@ def sync_fts(session, memory_id: str, content: str | None) -> None:
         )
 
 
+def fts_has_row(session, memory_id: str) -> bool:
+    """FTS 行在场核查（复原路径三层自查用；同连接面，不做任何查询匹配）。"""
+    from sqlalchemy import text
+
+    conn = session.connection()
+    row = conn.execute(
+        text("SELECT 1 FROM memory_fts WHERE memory_id = :id LIMIT 1"), {"id": memory_id}
+    ).first()
+    return row is not None
+
+
 def index_fts(conn: sqlite3.Connection, memory_id: str, content: str):
     """索引单条（独立连接场景；生产路径用 sync_fts，此函数仅供测试/脚本）。"""
     try:

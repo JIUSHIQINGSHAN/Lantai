@@ -75,6 +75,33 @@ def audit_event(
     )
 
 
+def sync_vector_has(memory_id: str) -> bool | None:
+    """向量条目在场核查（复原路径三层自查用）；异常返回 None=核查不可用。
+
+    与 sync_vector_upsert/delete 同族 best-effort 原语：核查结果 True/False
+    如实回报，核查本身失败按「无法确认在场」处理——调用方走缺层补漏路径
+    （补同步是更直接的二次信号，见复原票裁决 3）。
+    """
+    try:
+        from lantai.retrieval.hybrid import has_memory_item
+
+        return has_memory_item(memory_id)
+    except Exception:
+        logger.exception("vector presence check failed (reported, not silent)")
+        return None
+
+
+def _fts_row_present(s: Session, memory_id: str) -> bool:
+    """FTS 行在场核查；异常按缺层处理（补同步是更直接的二次信号）。"""
+    try:
+        from lantai.storage.fts import fts_has_row
+
+        return fts_has_row(s, memory_id)
+    except Exception:
+        logger.exception("fts presence check failed (treated as absent)")
+        return False
+
+
 def sync_vector_delete(memory_id: str) -> bool:
     """向量库删除（best-effort）；失败返回 False 由调用方如实上报。"""
     try:
@@ -256,7 +283,14 @@ def archive_memory(
 def unarchive_memory(
     memory_id: str, *, actor: str = "", reason: str = "", session: Session | None = None
 ) -> dict:
-    """恢复归档：archived→active；仅归档态可恢复。"""
+    """恢复归档：archived→active；仅归档态可恢复。
+
+    归档不动索引（复原零成本），但「保留」是归档侧的承诺——若归档前索引
+    同步本就失败过，复原后该记忆会静默只剩单层可搜（上游 f0.3 restore
+    漏向量层事故的兰台变体）。故复原时核查两层在场：缺了补同步并如实进
+    回执（fts_present/vector_present=层状态，fts_resynced/vector_resynced=
+    本次是否补了缺层），补同步失败不阻断主语义（SQL status 权威过滤面约法）。
+    """
 
     def _run(s: Session) -> dict:
         item = s.get(MemoryItem, memory_id)
@@ -264,6 +298,22 @@ def unarchive_memory(
             return dict(_NOT_FOUND)
         if item.status != STATUS_ARCHIVED:
             return {"ok": False, "error": f"memory is not archived (status={item.status})"}
+        warnings: list[str] = []
+        fts_present = _fts_row_present(s, memory_id)
+        fts_resynced = False
+        if not fts_present:
+            fts_resynced = True
+            fts_present, fts_warn = _sync_fts(s, memory_id, item.content)
+            warnings.extend(fts_warn)
+        vector_present = sync_vector_has(memory_id) is True
+        vector_resynced = False
+        if not vector_present:
+            vector_resynced = True
+            vector_present = sync_vector_upsert(memory_id, item)
+            if not vector_present:
+                warnings.append(
+                    "vector resync failed; memory active but not searchable until resync"
+                )
         item.status = STATUS_ACTIVE
         item.updated_at = utcnow()
         audit_event(
@@ -276,7 +326,14 @@ def unarchive_memory(
             version_at=item.version,
         )
         s.commit()
-        return {"ok": True}
+        return {
+            "ok": True,
+            "fts_present": fts_present,
+            "fts_resynced": fts_resynced,
+            "vector_present": vector_present,
+            "vector_resynced": vector_resynced,
+            "warnings": warnings,
+        }
 
     if session is not None:
         return _run(session)
@@ -429,8 +486,12 @@ def revive_consolidated(
         区别于普通 active 记忆与晚更正 supersedes 旧值）→ `already_active`。
     """
 
-    def _revive_one(s: Session, item: MemoryItem, warnings: list[str]) -> None:
-        """单条 consolidated → active：重同步索引 + checkpoint + 审计。"""
+    def _revive_one(s: Session, item: MemoryItem, warnings: list[str]) -> tuple[bool, bool]:
+        """单条 consolidated → active：重同步索引 + checkpoint + 审计。
+
+        返回 (fts_synced, vector_synced) 供碎片形态回执（与 unretract 同族）；
+        簇形态多碎片失败明细已在 warnings，聚合布尔说不清谁败（宁缺不糊），不取。
+        """
         from lantai.evolution.promoter import _make_checkpoint
 
         fts_synced, fts_warn = _sync_fts(s, item.id, item.content)
@@ -458,6 +519,7 @@ def revive_consolidated(
             content=item.content,
             version_at=item.version,
         )
+        return fts_synced, vector_synced
 
     def _run(s: Session) -> dict:
         from sqlmodel import select
@@ -561,12 +623,14 @@ def revive_consolidated(
         # ② 碎片形态：consolidated → active
         if item.status == STATUS_CONSOLIDATED:
             warnings = []
-            _revive_one(s, item, warnings)
+            fts_synced, vector_synced = _revive_one(s, item, warnings)
             s.commit()
             return {
                 "ok": True,
                 "scope": "fragment",
                 "memory_id": memory_id,
+                "fts_synced": fts_synced,
+                "vector_synced": vector_synced,
                 "warnings": warnings,
             }
 
