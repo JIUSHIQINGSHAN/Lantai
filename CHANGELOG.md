@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **进程级 LLM 并发闸门（2026-10-07，票据 `.scratch/llm-concurrency-gate/issues/01-llm-concurrency-gate.md`，上游 aiduMEM f0.3 同款能力吸收）**：
+  - **先说影响**：`chat_json` / `vision_caption` / `embed` 三个外呼通道此前零并发防护——高峰期潮波冲刷、反思定时器、检索意图分类同时触发时，对外部 LLM API 的并发不设防（上游 f0.3 正是生产被打爆后补的同款闸门）。现在三通道共用一个进程级 `BoundedSemaphore`（`LLM_MAX_CONCURRENCY`，默认 4），等位超过 `LLM_ACQUIRE_TIMEOUT`（默认 30s）即抛 `LLMConcurrencyTimeout` 放弃，不排队到死。
+  - **三通道同闸**（上游教训：只闸一个通道等于没闸——提取与向量索引会在同一次潮波冲刷里先后触发）；惰性单例按 settings 构造，配置变更自动重建，零硬编码（ADR-0002）。
+  - **超出票面的真发现**：tenacity `@retry` 默认重试一切异常——闸门等位超时会被重试 3 次、每次再白等 30s 等位。三处装饰器补 `retry=retry_if_not_exception_type(LLMConcurrencyTimeout)`，超时立即冒泡。
+  - **测试**：`tests/test_llm_concurrency_gate.py` 6 例（不 mock 冒烟：真实 Semaphore + 真实函数体 + 本地计数桩网络层）。**变异门禁 4/4 KILLED**（闸门全摘 / 归还句柄失效 / 超时静默降级 / 只摘单通道，子进程隔离 + sha256 还原复核）。
+
 ### Fixed
 
 - **FTS 关键词召回不再被空串身份与 admin 形态绕过归属过滤，两处手写收成单一真源（2026-09-29，票据 `.scratch/mcp-identity-gaps/issues/13-search-fts-none-and-empty-identity.md`）**：

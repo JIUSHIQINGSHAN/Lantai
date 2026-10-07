@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     )  # 目识截屏：data URI 解码后大小上限（10MB）  # 目识（vision）多模态模型；空 = 回退 LLM_MODEL
     EMBED_MODEL: str = "BAAI/bge-m3"
 
+    # LLM 并发闸门（票据 .scratch/llm-concurrency-gate/01，上游 f0.3 同款）：
+    # chat_json / vision_caption / embed 三通道共用一个进程级 BoundedSemaphore；
+    # 等位超过 LLM_ACQUIRE_TIMEOUT 秒即放弃，不排队到死。
+    LLM_MAX_CONCURRENCY: int = 4
+    LLM_ACQUIRE_TIMEOUT: float = 30.0
+
     INGEST_CRON_MINUTES: int = 60
     EVOLVE_CRON_MINUTES: int = 30
     FORGET_CRON_HOURS: int = 24
