@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-07 - 司门（Simen · 六道出入查验闸收口）
+
+> 版本代号「司门」：《周礼》地官司徒属官，掌王城门关的开闭与出入稽察，「凡货物出入门关，必司门勘验」。贴合本版主题：六道新闸全是「出入必经查验」——獬豸拦注入入库（入）、勘合防重试重复（入）、循环守卫拦宿主撞墙（入）、并发闸限外呼（出）、复原自查核索引在场（出入核验）、会话分键稽归属（归属稽查）。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7。
+
 ### Added
 
 - **复原路径三层自查——归档复原核查索引在场，缺层补漏如实回报（2026-10-07，票据 `.scratch/restore-three-layer/issues/01-restore-three-layer.md`，上游 aiduMEM f0.3 `2b90cee` restore 漏向量层事故的同族预防）**：
