@@ -284,6 +284,11 @@ class Settings(BaseSettings):
     # 整条拒不改写。默认开；关 = 行为退回无检测（off 对照测试锚定）。
     INJECTION_GUARD_ENABLED: bool = True
 
+    # 勘合（票据 .scratch/kanhe-idempotency/01，上游 f0.3 `2b90cee` 同款）：
+    # 潜移异步写入幂等回执的 done 态寿命（天）。accepted 租约（600s）是机制
+    # 常量不在此列；自动指纹键只受租约约束，与此值无关。
+    IDEMPOTENCY_TTL_DAYS: int = 7
+
     # 记忆 Wiki（借鉴 TencentDB Agent Memory LLM-Wiki）：场景/技能 → 持续维护的页面
     # docs/memory-wiki/{index.md, overview.md, pages/}；overview 综述 + [[wikilink]] 下钻
     WIKI_ENABLED: bool = True

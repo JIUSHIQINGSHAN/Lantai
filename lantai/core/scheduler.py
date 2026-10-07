@@ -363,6 +363,11 @@ def start_scheduler():
             run_coalesce_idle, "interval", seconds=2, id="coalesce_idle", replace_existing=True
         )
 
+    # 勘合（票 .scratch/kanhe-idempotency/01）：幂等回执 TTL 清扫，每小时一次
+    from lantai.core.idempotency import purge_expired
+
+    _scheduler.add_job(purge_expired, "interval", hours=1, id="kanhe_purge", replace_existing=True)
+
     _scheduler.start()
     logger.info("Scheduler started with ingest/evolve/forget jobs")
     _catch_up_daily_jobs()

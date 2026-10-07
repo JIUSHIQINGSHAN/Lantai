@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **勘合——潜移异步摄取幂等回执，宿主重试不再重复入库（2026-10-07，票据 `.scratch/kanhe-idempotency/issues/01-idempotency-receipt.md`，上游 aiduMEM f0.3 `2b90cee` 异步幂等同款移植）**：
+  - **先说影响**：潜移提交即返回 task_id，但宿主网络重试（超时重发/断线重连）每次都新造 task_id 重复提交——同一段话提纯入库两遍、LLM 白烧一遍。现在提交经幂等键原子抢占：同键同文在回执 TTL 内重放**原 task_id**（响应多 `replayed: true` 标记，宿主当普通 submit 响应轮询原任务即可）；同键不同文 422 拒收；任务失败自动释放键（失败的任务永远不得重放——上游 S-2/S-8 事故教训）；回执表**零正文**（白名单制，本表寿命长于记忆删除动作，正文进回执等于删除后仍可捞）。
+  - **两种键两段语义**（对上游的关键分歧）：显式键（宿主传 `idempotency_key`，MCP/REST 均已透传）全语义 done 回执保留 `IDEMPOTENCY_TTL_DAYS`（默认 7 天）跨重启有效；未传键用内容指纹自动键，只护 600s 重试窗、成功不落 done——MCP 入口不透传 session/turn，自动指纹长期保留会把「同一段话隔天再说」误判成重试拒收，重试发生在秒-分钟尺度，长期去重是显式键的职责。
+  - **claim 即回执**：抢占与回执同一行——提交前生成的 task_id 随原子 INSERT 落库，重试方在租约窗内拿到的就是原任务号，上游 P1-10 的 SELECT→INSERT 竞态与「抢占到 finalize 之间」的 pending 窗口不存在；过期行条件接管按 created_at 令牌（并发双发现只一个赢，worker 迟到结算找不到自己那条 claim 不覆盖新主）。时间一律 epoch 浮点，避开 sqlmodel aware/naive 跨版本漂移。
+  - **fail-open 带告警**：幂等层 DB 故障记 error 后按无幂等放行——去重层故障不挡写入主路；冲突（同键不同文）不 fail-open，如实 422。purge 挂 scheduler 每小时清扫（done 超 TTL / accepted 超租约）。
+  - **命名**：按 ADR-0013 登记「勘合」——明代符契剖分、双方勘对相合方为真；重试持同一符契而来，勘合比对原契而应。
+  - **测试**：`tests/test_idempotency_receipt.py` 25 例（不 mock 冒烟：真 SQLite + 真线程池 worker + 真 ingest_dialogue）。**变异门禁 5/5 KILLED**（删冲突判定 / 删失败释放 / settle 丢令牌 / 自动键落 done / 回执白名单失守——最后一条首跑存活暴露「只验证白名单键在、没验证正文不在」的测试空洞，补零正文断言后杀掉）。**夹具实证教训**：内存 SQLite + StaticPool 单连接被测试主线程与 worker 线程并发抢，cursor 交错间歇炸 worker → settle 释放键 → 幂等断言随线程时序漂移；改 tmp_path 文件库每 Session 独立连接后 10/10 稳定。
+
 - **獬豸——写入侧注入检测三层闸，注入内容进不了库（2026-10-07，票据 `.scratch/xiezhi-injection-guard/issues/01-injection-guard.md`，上游 aiduMEM f0.3++ injection_guard 检测层同款移植）**：
   - **先说影响**：此前记忆入库对内容不做任何注入面检查——宿主喂进来的网页/文档若埋着「ignore previous instructions」类指令，会原样进 FTS/向量，之后每次召回都把注入文本拼进上下文。樊篱（出口包裹）只能声明「数据不是指令」，拦不住它先入库。现在六个写入漏斗（对话、verbatim 直存、核心记忆、add 家族、异步、纠错）入库前过三层检测：原始特征正则（指令覆盖/角色劫持/ChatML 标记，中英）→ NFKC 归一去标点匹配（粉碎 `i.g.n.o.r.e` / 全角 / 空格分隔变体）→ 重复行轰炸识别（剔结构性重复行后 count≥10 且 ratio>0.6）；命中**整条拒、不改一字**（宁 miss 不脏写，拒绝信息只给层名不给模式全文）。
   - **上游两处真缺口实测抓到并修复**：①归一化层中文模式漏「的」字组（第一层有第二层没有），空格变体第二层接不住；②`disregard all previous instructions` 经典短语两层都接不住（`all` 与 `previous` 同组二选一）。模式表抄的是上游外审修正后的版本（裸 `<system>`/`[section]`/表格分隔行/3 行相同日志全部放行——他们的误拒教训直接变成兰台的误拒红线测试）。

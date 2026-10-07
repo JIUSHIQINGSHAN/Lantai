@@ -1118,13 +1118,18 @@ def handle_dialogue_add_async(params: dict) -> dict:
     text = str(params.get("text", "")).strip()
     user_id = str(params.get("user_id", "default"))
     source = str(params.get("source", "dialogue"))
+    # 勘合幂等键（票 .scratch/kanhe-idempotency/01）：可选透传。同键同文在
+    # 回执 TTL 内重放原 task_id，同键不同文 422；不传用内容指纹自动键
+    idempotency_key = str(params.get("idempotency_key", "") or "")
     from lantai.services.async_ingest_service import submit_async_dialogue
 
     # 归属（票 .scratch/mcp-identity-gaps/01b）：`user_id` 落到 _TASKS
     # 的任务记录，`get_task_status` 据此比对——所以这里的缺省值与
     # `_principal_from_params` 的 None 是同一个身份口径：宿主不透传
     # 时任务归 "default"，状态查询收敛到 "default" viewer
-    return submit_async_dialogue(text=text, user_id=user_id, source=source)
+    return submit_async_dialogue(
+        text=text, user_id=user_id, source=source, idempotency_key=idempotency_key
+    )
 
 
 def handle_dialogue_task_status(params: dict) -> dict:
@@ -1276,13 +1281,17 @@ TOOLS = {
         },
     },
     "dialogue_add_async": {
-        "description": "潜移：异步对话写通道，立即返回 task_id，后台静默提纯入库（ADR-0033）",
+        "description": "潜移：异步对话写通道，立即返回 task_id，后台静默提纯入库（ADR-0033）。建议传 idempotency_key 使网络重试不重复入库",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "text": {"type": "string", "description": "对话文本"},
                 "user_id": {"type": "string", "default": "default"},
                 "source": {"type": "string", "default": "dialogue"},
+                "idempotency_key": {
+                    "type": "string",
+                    "description": "勘合幂等键（可选）：同键同文在回执 TTL 内重放原任务，同键不同文拒收；不传则按内容指纹只防短窗重试",
+                },
             },
             "required": ["text"],
         },

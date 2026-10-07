@@ -798,3 +798,27 @@ class MemoryAuditEvent(SQLModel, table=True):
     content_len: int = 0
     version_at: int = 0
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class IdempotencyKey(SQLModel, table=True):
+    """勘合（票据 .scratch/kanhe-idempotency/01，潜移异步幂等回执）。
+
+    写入键原子抢占防宿主重试重复入库。三种态：
+    - accepted：租约窗内 provisional（自动指纹键终身 accepted 到过期；
+      显式键由 worker settle 成 done）；
+    - done：显式键持久回执（TTL 见 settings.IDEMPOTENCY_TTL_DAYS）；
+    - 行被删除 = 失败释放，重试可重新执行。
+    回执零正文：response_json 只存白名单标量——本表寿命长于记忆删除动作，
+    正文进回执等于删除后仍可捞（宁 miss 不脏写）。时间一律 epoch 浮点秒
+    （避 sqlmodel aware/naive 跨版本漂移）。
+    """
+
+    __tablename__ = "idempotency_keys"
+
+    key: str = Field(primary_key=True)
+    user_id: str = Field(primary_key=True)
+    tenant_id: str = Field(primary_key=True, default="")
+    fingerprint: str = ""
+    response_json: str | None = None
+    state: str = "accepted"
+    created_at: float = Field(default_factory=lambda: utcnow().timestamp(), index=True)

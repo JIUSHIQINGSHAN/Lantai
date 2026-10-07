@@ -19,6 +19,9 @@ class DialogueIngestReq(BaseModel):
     # 来源链显式透传（v022 票据 01）：出身由写入方声明，不靠隐式通道
     session_id: str = Field(default="", max_length=128)
     turn: int | None = Field(default=None, ge=0)
+    # 勘合幂等键（票据 .scratch/kanhe-idempotency/01）：可选。同键同文在回执
+    # TTL 内重放原 task_id，同键不同文 422；不传用内容指纹自动键（只护租约窗）
+    idempotency_key: str = Field(default="", max_length=200)
 
 
 @router.post("/dialogue")
@@ -49,6 +52,8 @@ def dialogue_async_route(req: DialogueIngestReq, ctx: Principal = Depends(get_cu
             source=req.source,
             session_id=req.session_id,
             turn=req.turn,
+            idempotency_key=req.idempotency_key,
+            tenant_id=ctx.tenant_id or "",
         )
     except ValueError as e:
         raise HTTPException(422, str(e))
