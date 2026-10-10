@@ -28,9 +28,10 @@ class TestRefinePureLogic:
         with patch("lantai.llm.client.chat_json", side_effect=RuntimeError("LLM offline")):
             res = refine_memory_text("大哥喜欢喝绿茶", context="会话片段")
             assert res["refined_text"] == "大哥喜欢喝绿茶"
-            assert res["confidence"] == 0.5
+            assert res["confidence"] == 0.0
+            assert res["llm_failed"] is True
             assert res["is_valid"] is True
-            assert "LLM offline" in res["reason"] or "降级" in res["reason"]
+            assert "保持原候选不变" in res["reason"]
 
     def test_refine_success(self):
         """测试正常 LLM 精炼解析。"""

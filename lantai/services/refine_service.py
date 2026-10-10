@@ -77,11 +77,12 @@ def refine_memory_text(text: str, context: str = "", metadata: dict | None = Non
     # 优雅降级（宁 miss 不脏写）
     return {
         "refined_text": raw_text,
-        "confidence": 0.5,
+        "confidence": 0.0,
         "is_valid": True,
+        "llm_failed": True,
         "lane": "general",
         "tags": [],
-        "reason": "LLM 调用异常，优雅降级保持原候选文本",
+        "reason": "LLM 调用异常,保持原候选不变",
     }
 
 
@@ -118,6 +119,9 @@ def refine_candidate_record(
         raw_text = cand.summary or (cand.claims[0] if cand.claims else "")
         context_str = str(cand.provenance) if cand.provenance else ""
         res = refine_memory_text(raw_text, context=context_str)
+        if res.get("llm_failed"):
+            logger.warning("披沙:候选【%s】LLM 不可用,保持原样待重试", cand.id)
+            return cand.model_dump(mode="json")
 
         if not res["is_valid"] or res["confidence"] <= 0.0:
             cand.status = "rejected"
@@ -184,6 +188,8 @@ def batch_refine_candidates(
             raw_text = cand.summary or (cand.claims[0] if cand.claims else "")
             context_str = str(cand.provenance) if cand.provenance else ""
             res = refine_memory_text(raw_text, context=context_str)
+            if res.get("llm_failed"):
+                continue
             if not res["is_valid"] or res["confidence"] <= 0.0:
                 cand.status = "rejected"
                 rejected_count += 1
