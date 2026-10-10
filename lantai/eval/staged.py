@@ -407,8 +407,10 @@ def run_staged_eval(*, extract_fn=None, top_k: int = 5) -> dict:
                 )
 
         # 预埋锚点「索引前删档」：SQLite 删行不触索引 → 对账必须发现 FTS 残行（Index Desync 可见性）
-        if indexed:
-            victim = indexed[-1]
+        # 删档锚点不占用 f1:f1 是围栏逃逸探针,被删后注入段无样本,两锚点互相遮蔽
+        desync_pool = [i for i in indexed if i["sid"] != "f1"]
+        if desync_pool:
+            victim = desync_pool[-1]
             row = s.get(MemoryItem, victim["mid"])
             if row:
                 s.delete(row)
@@ -493,7 +495,17 @@ def run_staged_eval(*, extract_fn=None, top_k: int = 5) -> dict:
         # ⑥ 注入段：通过召回的样本 → wrap_as_data 全出口包裹 → 围栏校验
         from lantai.llm.fence import DATA_FENCE_CLOSE, DATA_FENCE_OPEN
 
-        injectable = [i for i in indexed if i["sid"] == "f1"] or indexed[:1]
+        injectable = [i for i in indexed if i["sid"] == "f1"]
+        if not injectable:
+            f1_fault = next((c["first_fault"] for c in chains if c["sid"] == "f1"), "unknown")
+            anchors.append(
+                {
+                    "name": "fence_escape",
+                    "expected_stage": "inject",
+                    "achieved": False,
+                    "redirected": f1_fault,
+                }
+            )
         for item in injectable:
             stages["inject"]["samples"] += 1
             neutralized = neutralize_fence_escapes(item["content"])

@@ -180,3 +180,38 @@ class TestStagedEvalHarness:
             assert stage in report
         assert "预埋锚点核对" in report
         assert "PASS" in report
+
+
+def test_fence_escape_probe_reaches_inject_stage(staged_env):
+    """冒烟(不 mock 被测段):围栏逃逸探针 f1 须真实进入注入段且锚点达成。"""
+    from lantai.eval.staged import run_staged_eval
+
+    result = run_staged_eval()
+    inject = next(st for st in result["stages"] if st["stage"] == "inject")
+    assert inject["samples"] >= 1
+    fence = [a for a in result["anchors"] if a["name"] == "fence_escape"]
+    assert fence and all(a["achieved"] for a in fence)
+
+
+def test_fence_escape_redirect_names_real_fault_stage(staged_env):
+    """冒烟(不 mock 被测段):f1 在提取段被丢时,锚点须如实指向 extract,而非固定串。"""
+    from lantai.eval.staged import default_extract_fn, run_staged_eval
+
+    def drop_f1(sid, text, expect):
+        if sid == "f1":
+            return []
+        return default_extract_fn(sid, text, expect)
+
+    result = run_staged_eval(extract_fn=drop_f1)
+    fence = [a for a in result["anchors"] if a["name"] == "fence_escape"]
+    assert fence and fence[0]["achieved"] is False
+    assert fence[0]["redirected"] == "extract"
+
+
+def test_inject_counts_only_fence_probe(staged_env):
+    """注入段只计围栏探针 f1,其他已索引样本不得混入注入样本数。"""
+    from lantai.eval.staged import run_staged_eval
+
+    result = run_staged_eval()
+    inject = next(st for st in result["stages"] if st["stage"] == "inject")
+    assert inject["samples"] == 1
