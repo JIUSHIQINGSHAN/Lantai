@@ -377,3 +377,14 @@ class TestSystemViewerChannels:
         with engine.connect() as conn:
             raw = conn.connection.driver_connection
             assert "m-B" not in search_fts(raw, "报价底牌", principal=_principal("user-A"))
+
+
+class TestHybridEmptyStringPrincipal:
+    """空串 user_id(如客户端发送空 X-User-Id 头)不得被当成「不过滤」。"""
+
+    def test_empty_string_user_sees_no_other_owner(self, engine, no_vector):
+        _seed(engine)
+        results = _run(engine, "报价", _principal(""))
+        assert not any("对家报价底牌" in c for c in _contents(results)), (
+            f"空串 user_id 召回了他人私有记忆:{_contents(results)}"
+        )

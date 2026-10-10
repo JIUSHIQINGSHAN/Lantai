@@ -967,7 +967,9 @@ def _keyword_fallback(
                 if principal:
                     if getattr(principal, "tenant_id", None):
                         stmt = stmt.where(MemoryItem.tenant_id == principal.tenant_id)
-                    if getattr(principal, "user_id", None):
+                    if not bool(getattr(principal, "is_admin", False)) and not _is_system_viewer(
+                        principal
+                    ):
                         # 归属（票 `.scratch/fts-null-owner/03`）：**必须带
                         # OR IS NULL**。LIKE 是关键词召回的最后一层
                         # （向量挂了走 FTS，FTS 挂了只剩它），且
