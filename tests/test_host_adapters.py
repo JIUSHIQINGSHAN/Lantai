@@ -104,6 +104,7 @@ class TestWiredThroughShellHook:
         spec = importlib.util.spec_from_file_location("shell_hook", path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
+        monkeypatch.setattr(mod.settings, "API_KEY", "test-hook-key")
         return mod
 
     def test_claude_code_env_wraps_context(self, monkeypatch):

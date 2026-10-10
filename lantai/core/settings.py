@@ -284,6 +284,9 @@ class Settings(BaseSettings):
     # 整条拒不改写。默认开；关 = 行为退回无检测（off 对照测试锚定）。
     INJECTION_GUARD_ENABLED: bool = True
 
+    # 密钥熔断(票 K 第一道闸):off=不检测;shadow=只记录不转待审;enforce=命中转待审
+    SECRET_GUARD_MODE: str = "off"
+
     # 勘合（票据 .scratch/kanhe-idempotency/01，上游 f0.3 `2b90cee` 同款）：
     # 潜移异步写入幂等回执的 done 态寿命（天）。accepted 租约（600s）是机制
     # 常量不在此列；自动指纹键只受租约约束，与此值无关。

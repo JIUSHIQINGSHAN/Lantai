@@ -204,4 +204,5 @@ def _load_hook_module(monkeypatch):
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
+    monkeypatch.setattr(mod.settings, "API_KEY", "test-hook-key")
     return mod

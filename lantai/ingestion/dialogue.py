@@ -10,6 +10,7 @@
 """
 
 import hashlib
+import logging
 import re
 from datetime import timedelta
 
@@ -31,6 +32,8 @@ from lantai.parsing.extractor import extract_candidate
 from lantai.parsing.fastpath import fastpath_check
 from lantai.services.candidate_service import enqueue_rejected
 from lantai.storage import db
+
+logger = logging.getLogger("lantai.ingestion")
 
 # 对话入口的 lane 预判（宽松 search；fastpath 整段 match 语义保持不变）
 _PREFERENCE_RE = re.compile(r"我.{0,8}?(?:喜欢|不喜欢|讨厌|偏爱|偏好)")
@@ -89,10 +92,16 @@ def ingest_dialogue(
 
     assert_no_prompt_injection(text)
 
+    from lantai.security.secret_guard import find_secret_shapes
+
+    secret_hits = find_secret_shapes(text) if settings.SECRET_GUARD_MODE != "off" else []
+    if secret_hits:
+        logger.warning("密钥熔断命中(mode=%s): %s", settings.SECRET_GUARD_MODE, secret_hits)
+
     # 1) fastpath 白名单直通——绕过 LLM 提取
     fp = fastpath_check(text)
     if fp:
-        return _create_candidate(
+        result = _create_candidate(
             text,
             lane=fp["lane"],
             fp_data=fp,
@@ -103,6 +112,7 @@ def ingest_dialogue(
             session_id=session_id,
             turn=turn,
         )
+        return _secret_guard_route(result, secret_hits)
 
     # 2) 闲聊 → 直接 rejected（沙汰，ADR-0026），不进待审队列
     if _is_chitchat(text):
@@ -132,6 +142,10 @@ def ingest_dialogue(
         session_id=session_id,
         turn=turn,
     )
+    if secret_hits and settings.SECRET_GUARD_MODE == "enforce":
+        enqueue_rejected(result["candidate_id"])
+        result["status"] = "pending_review"
+        return result
     if data["extractor_confidence"] < settings.DIALOGUE_MIN_EXTRACTOR_CONF:
         if data["extractor_confidence"] < settings.CANDIDATE_MIN_CONFIDENCE:
             # 沙汰：低于地板信噪门 → 直接 rejected（ADR-0026）
@@ -148,6 +162,13 @@ def ingest_dialogue(
             # 低置信度 / 提取失败兜底 → 待审队列（不丢数据，交用户裁决）
             enqueue_rejected(result["candidate_id"])
             result["status"] = "pending_review"
+    return result
+
+
+def _secret_guard_route(result: dict, secret_hits: list[str]) -> dict:
+    if secret_hits and settings.SECRET_GUARD_MODE == "enforce":
+        enqueue_rejected(result["candidate_id"])
+        result["status"] = "pending_review"
     return result
 
 

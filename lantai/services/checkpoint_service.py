@@ -31,6 +31,9 @@ BLOCK_LABELS: dict[str, str] = {
 }
 
 
+_BACKGROUND_LOG_PREFIX = "[IMPORTANT: Background process"
+
+
 def validate_blocks(blocks: dict) -> list[tuple[str, str]]:
     """过滤非法/过短块，返回 [(key, content)] 合法块（纯函数，可测）。"""
     out: list[tuple[str, str]] = []
@@ -39,6 +42,8 @@ def validate_blocks(blocks: dict) -> list[tuple[str, str]]:
     for key, label in BLOCK_LABELS.items():  # noqa: B007 label 保留可读性
         c = blocks.get(key)
         if isinstance(c, str) and len(c.strip()) >= settings.CHECKPOINT_MIN_CONTENT:
+            if c.lstrip().startswith(_BACKGROUND_LOG_PREFIX):
+                continue
             out.append((key, c.strip()[: settings.CHECKPOINT_MAX_CONTENT]))
     return out
 

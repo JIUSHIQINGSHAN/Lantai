@@ -361,6 +361,15 @@ def _run_with_timeout(func, timeout, *args):
     return t.result
 
 
+class HookAuthError(RuntimeError):
+    pass
+
+
+def assert_hook_api_key_configured() -> None:
+    if not settings.API_KEY:
+        raise HookAuthError("shell hook 拒绝运行:未配置 API_KEY(禁止 DEV MODE 回退)")
+
+
 def _handle_one(raw: str) -> dict:
     """解析单个输入，返回字典结果（宿主适配后的最终输出帧）。
 
@@ -372,6 +381,7 @@ def _handle_one(raw: str) -> dict:
     宿主由环境变量 `LANTAI_HOST` 指定（宿主调用钩子时设置）；缺省 = 直通兰台
     自有形状，故既有断言零改动即证明等价。
     """
+    assert_hook_api_key_configured()
     return adapt_response(os.environ.get("LANTAI_HOST") or None, _dispatch_one(raw))
 
 

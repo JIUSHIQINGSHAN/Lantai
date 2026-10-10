@@ -18,6 +18,7 @@ def _load_hook(monkeypatch, embed_delay=0.0, timeout=0.2):
 
     # Patch settings timeout (singleton already loaded)
     monkeypatch.setattr(mod.settings, "SHELL_HOOK_TIMEOUT", timeout)
+    monkeypatch.setattr(mod.settings, "API_KEY", "test-hook-key")
 
     # Patch os._exit to raise SystemExit (so pytest can catch it)
     def fake_exit(code=0):

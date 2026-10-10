@@ -128,8 +128,8 @@ def param_env():
 
         import lantai.llm.client as llm_client
 
-        mp.setattr(llm_client, "embed", lambda texts: [[0.1] * 1536 for _ in texts])
-        mp.setattr(hybrid_module, "embed", lambda texts: [[0.1] * 1536 for _ in texts])
+        mp.setattr(llm_client, "embed", _fake_embed)
+        mp.setattr(hybrid_module, "embed", _fake_embed)
         mp.setattr(llm_client, "chat_json", lambda *args, **kwargs: {"candidate_n": 5, "lanes": []})
         import lantai.retrieval.intent as intent_module
 

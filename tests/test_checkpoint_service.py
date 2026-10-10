@@ -46,6 +46,7 @@ def ckpt_env(monkeypatch):
 
     monkeypatch.setattr(db_module, "engine", engine)
     monkeypatch.setattr(db_module, "get_session", session_factory)
+    monkeypatch.setattr(settings, "API_KEY", "test-hook-key")
     return session_factory
 
 
@@ -60,6 +61,15 @@ def test_validate_blocks_pure():
     long = validate_blocks({"cp_current_work": "长" * (settings.CHECKPOINT_MAX_CONTENT + 50)})
     assert len(long[0][1]) == settings.CHECKPOINT_MAX_CONTENT
     assert validate_blocks(None) == []
+
+
+def test_validate_blocks_rejects_background_process_log():
+    """后台进程通知/命令回显不是会话意图,整块丢弃(宁 miss 不脏写)。"""
+    log = "[IMPORTANT: Background process proc_5b4a83bc0a12 exited (exit code 1). Command: npx wrangler deploy]"
+    ok = validate_blocks({"cp_active_intent": log, "cp_next_action": "实现底本五段会话快照"})
+    keys = [k for k, _ in ok]
+    assert "cp_active_intent" not in keys
+    assert "cp_next_action" in keys
 
 
 def test_write_get_roundtrip_upsert(ckpt_env):
