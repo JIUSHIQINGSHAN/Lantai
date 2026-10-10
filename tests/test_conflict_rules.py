@@ -192,7 +192,7 @@ def test_decide_negation_candidate_llm_no_conflict(conflict_env):
 
 
 def test_decide_negation_llm_failure_passes(conflict_env):
-    """否定候选 + LLM 失败 → 放行（宁 miss，不因探测引入假冲突）。"""
+    """否定候选 + LLM 失败 → 不放行:按「检不了」进待审(票 gate-fail-open/01)。"""
     session_factory, engine = conflict_env
     from lantai.gate.decision import decide
 
@@ -201,7 +201,30 @@ def test_decide_negation_llm_failure_passes(conflict_env):
     )
     with patch("lantai.gate.decision.check_contradiction", side_effect=RuntimeError("llm down")):
         result = decide(cand_id)
-    assert result["decision"] != "archive_conflict"
+    assert result["decision"] == "reject"
+    assert result.get("check_unavailable") is True
+
+
+def test_decide_negation_only_failure_still_rejects(conflict_env):
+    """隔离否定分支:主路径正常返回「无矛盾」,只有否定分支 LLM 抛错 → 仍须进待审。"""
+    from lantai.gate.decision import decide
+
+    cand_id = _seed_imp(
+        conflict_env, existing_content="用户不会游泳", summary="用户会游泳", importance=0.5
+    )
+    calls = {"n": 0}
+
+    def fake_check(new_claim, existing):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"contradicts": False, "reason": "", "severity": "low"}
+        raise RuntimeError("negation llm down")
+
+    with patch("lantai.gate.decision.check_contradiction", side_effect=fake_check):
+        result = decide(cand_id)
+    assert calls["n"] >= 2
+    assert result["decision"] == "reject"
+    assert result.get("check_unavailable") is True
 
 
 # ── salience 冲突降权（ADR-0020）────────────────────────
@@ -477,7 +500,7 @@ class TestContradictionCheckUnavailable:
         assert result.get("check_unavailable") is not True
 
     def test_negation_site_2_unchanged(self, conflict_env):
-        """ADR-0024 不动：否定候选 + LLM 失败 → 仍放行（宁 miss），不因新标记改判。"""
+        """否定候选 + LLM 失败 → 按「检不了」进待审,不放行(票 gate-fail-open/01 修订 ADR-0024)。"""
         from lantai.gate.decision import decide
 
         cand_id = _seed_imp(
@@ -487,7 +510,8 @@ class TestContradictionCheckUnavailable:
             "lantai.gate.decision.check_contradiction", side_effect=RuntimeError("llm down")
         ):
             result = decide(cand_id)
-        assert result["decision"] != "archive_conflict"
+        assert result["decision"] == "reject"
+        assert result.get("check_unavailable") is True
 
 
 class TestContradictionUnavailableReachesPendingReview:

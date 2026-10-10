@@ -203,6 +203,30 @@ def decide(candidate_id: str, principal=None) -> dict:
                 elif c.get("check_unavailable"):
                     check_unavailable = True
 
+        # ADR-0024：单字否定对候选（是/不是、会/不会…）→ LLM 裁决。
+        # 候选不落硬规则；LLM 判非矛盾/失败 → 放行（宁 miss）。
+        if settings.CONFLICT_NEGATION_ENABLED:
+            for m in related:
+                if check_negation_pairs(summary_text, m.content):
+                    try:
+                        c = check_contradiction(summary_text, m.content)
+                    except Exception as e:
+                        logger.warning(
+                            "候选 %s 的否定候选矛盾检测失败(按检不了处理): %s", cand.id, e
+                        )
+                        c = {"contradicts": False, "reason": "", "severity": "low"}
+                        check_unavailable = True
+                    if c.get("check_unavailable"):
+                        check_unavailable = True
+                    if c.get("contradicts"):
+                        conflicts.append(
+                            {
+                                "memory_id": m.id,
+                                "severity": c.get("severity", "low"),
+                                "reason": f"negation candidate: {c.get('reason', '')}",
+                            }
+                        )
+
         # 「检不了」≠「没矛盾」（票 .scratch/gate-fail-open/01）
         #
         # LLM 矛盾检测失败（超时/429/5xx/非 JSON/未配 key）时，旧链路把
@@ -229,24 +253,6 @@ def decide(candidate_id: str, principal=None) -> dict:
                 "conflicts": conflicts,
                 "novelty": nv,
             }
-
-        # ADR-0024：单字否定对候选（是/不是、会/不会…）→ LLM 裁决。
-        # 候选不落硬规则；LLM 判非矛盾/失败 → 放行（宁 miss）。
-        if settings.CONFLICT_NEGATION_ENABLED:
-            for m in related:
-                if check_negation_pairs(summary_text, m.content):
-                    try:
-                        c = check_contradiction(summary_text, m.content)
-                    except Exception:
-                        c = {"contradicts": False, "reason": "", "severity": "low"}
-                    if c.get("contradicts"):
-                        conflicts.append(
-                            {
-                                "memory_id": m.id,
-                                "severity": c.get("severity", "low"),
-                                "reason": f"negation candidate: {c.get('reason', '')}",
-                            }
-                        )
 
         if demoted:
             s.commit()  # 降权 + Checkpoint + resolved 账本持久化（宁 miss 不脏写：有迹可溯）
