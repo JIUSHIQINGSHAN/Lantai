@@ -7,7 +7,7 @@
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
-from lantai.llm.fence import FENCE_DECLARATION, DATA_FENCE_CLOSE
+from lantai.llm.fence import DATA_FENCE_CLOSE, FENCE_DECLARATION
 from tests.test_shell_hook import _load_hook
 
 

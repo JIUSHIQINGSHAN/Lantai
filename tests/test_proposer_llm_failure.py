@@ -44,9 +44,7 @@ def test_llm_failure_does_not_fabricate_add_proposal(llm_fail_env):
     """复现:LLM 抛错时,不得凭候选摘要造一条 add 提案落库。"""
     from lantai.evolution.proposer import propose_from_candidate
 
-    with patch(
-        "lantai.evolution.proposer.chat_json", side_effect=RuntimeError("llm down")
-    ):
+    with patch("lantai.evolution.proposer.chat_json", side_effect=RuntimeError("llm down")):
         result = propose_from_candidate("cand_x", {"decision": "promote_semantic"})
 
     with Session(llm_fail_env) as s:
