@@ -55,7 +55,15 @@ def propose_from_candidate(
     """
     with db.get_session() as s:
         cand = s.get(MemoryCandidate, candidate_id)
-        related = s.exec(select(MemoryItem).where(MemoryItem.status == "active")).all()
+        related_q = select(MemoryItem).where(MemoryItem.status == "active")
+        if principal is not None and not bool(getattr(principal, "is_admin", False)):
+            from lantai.services.work_item_service import _viewer_of
+
+            viewer = _viewer_of(principal)
+            related_q = related_q.where(
+                (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
+            )
+        related = s.exec(related_q).all()
         existing_snippets = "\n".join(
             f"- ({m.memory_type}) {m.key}: {m.content}" for m in related[:20]
         )
