@@ -76,14 +76,15 @@ def propose_from_candidate(
         try:
             data = chat_json(get_prompt("PROPOSAL_SYS", PROPOSAL_SYS), user)
         except Exception:
-            data = {
-                "proposal_type": "add",
-                "target_key": "",
-                "new_content": cand.summary,
-                "memory_type": "semantic",
-                "reason": "fallback add",
-                "confidence": 0.4,
-            }
+            logger.warning(
+                "候选 %s 的提案生成失败(LLM 不可用),转待审队列(宁 miss 不脏写,不伪造提案)",
+                candidate_id,
+                exc_info=True,
+            )
+            cand.status = "pending_review"
+            s.add(cand)
+            s.commit()
+            return None
 
         # Skill 资产化：提取的 actions（步骤）沉淀为 structure，随提案落库
         # （proposer → promoter 全链路保留，否则步骤在提案应用后丢失）
