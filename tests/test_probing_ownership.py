@@ -278,3 +278,24 @@ class TestProbingIndexUpdateBrokenImport:
 
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module("lantai.retrieval.embed")
+
+
+class TestProbingReplyMatching:
+    def test_fact_statement_with_affirmative_substring_does_not_rewrite(self, probing_env):
+        """owner 的答复只是陈述事实(含"是""对"子串),不是确认探针:不得改写正文。
+
+        当前实现用 re.search 子串匹配,"对接的是另一个系统"会同时命中肯定词
+        "对"与"是",走肯定分支把记忆正文覆盖成探针的 incoming_ref。
+        """
+        session_factory = probing_env
+        _seed(session_factory)
+        before = _content_of(session_factory, "mem-B")
+
+        from lantai.services.probing_service import resolve_probe_response
+
+        with session_factory() as s:
+            resolve_probe_response(
+                "conf-B", "对接的是另一个系统", session=s, principal=_principal("user-B")
+            )
+
+        assert _content_of(session_factory, "mem-B") == before, "陈述句被当成确认,正文被改写"

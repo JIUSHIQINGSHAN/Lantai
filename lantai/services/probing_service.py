@@ -148,6 +148,15 @@ def format_probing_context(probes: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _is_affirmative_reply(reply: str) -> bool:
+    """整句确认才算肯定:以肯定词开头,其后接结束、标点或"的"等确认语气,而非另一个词。"""
+    body = re.sub(r"^[\s。,.!?~!?,、]+|[\s。,.!?~!?,、]+$", "", reply)
+    for pat in _AFFIRMATIVE_PATTERNS:
+        if re.match(rf"(?:{pat})(?:$|[\s,.!?~,。!?、的啊呀吧呢])", body, re.IGNORECASE):
+            return True
+    return False
+
+
 def resolve_probe_response(
     conflict_id: str,
     user_reply: str,
@@ -201,7 +210,7 @@ def resolve_probe_response(
 
         # 1. 优先匹配否定词（否定意图优先）
         is_neg = any(re.search(pat, clean_reply, re.IGNORECASE) for pat in _NEGATIVE_PATTERNS)
-        is_aff = any(re.search(pat, clean_reply, re.IGNORECASE) for pat in _AFFIRMATIVE_PATTERNS)
+        is_aff = _is_affirmative_reply(clean_reply)
 
         if is_neg:
             conf.status = "dismissed"
