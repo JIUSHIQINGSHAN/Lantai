@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-10-11 - 司门补丁
+
+### Fixed
+
+- **老库补 `memoryitem.reason` 列,修复记忆列表 500**:`bea001c1` 给模型加了 `reason` 字段,但迁移链漏写 `ADD COLUMN`,从 0.3.6 升级的老库查询时报 `no such column: memoryitem.reason`,记忆列表接口返回 500。新增 v27 迁移补列(幂等,不动已有数据),并加不 mock 的回归测试。
+
 ## [0.23.0] - 2026-10-07 - 司门（Simen · 六道出入查验闸收口）
 
 > 版本代号「司门」：《周礼》地官司徒属官，掌王城门关的开闭与出入稽察，「凡货物出入门关，必司门勘验」。贴合本版主题：六道新闸全是「出入必经查验」——獬豸拦注入入库（入）、勘合防重试重复（入）、循环守卫拦宿主撞墙（入）、并发闸限外呼（出）、复原自查核索引在场（出入核验）、会话分键稽归属（归属稽查）。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7。
