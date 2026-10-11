@@ -659,3 +659,23 @@ class TestServiceApproveCarriesPrincipal:
 
         assert res.get("ok") is False, f"approve 一条指向 B 的记忆的提案必须被拒：{res}"
         assert _row(apply_env, "mem_B17")["content"] == "B 的原始正文", "B 的正文不得被覆盖"
+
+
+def test_add_proposal_with_existing_key_is_held_for_review(apply_env):
+    """add 遇到同 key 的既有 active 记忆:不新建平行记忆,落 REJECTED 并标注待人工复核。"""
+    from lantai.evolution.promoter import apply_proposal
+
+    with Session(apply_env) as s:
+        s.add(_mem("mem_exist", "k_exist", "既有内容", user_id="u_A"))
+        s.add(_prop("prop_add_exist", "add", "k_exist", "新内容"))
+        s.commit()
+
+    out = apply_proposal("prop_add_exist", principal=A)
+
+    with Session(apply_env) as s:
+        prop = s.get(MemoryProposal, "prop_add_exist")
+        same_key = s.exec(select(MemoryItem).where(MemoryItem.key == "k_exist")).all()
+    assert out["ok"] is False
+    assert prop.status == ProposalStatus.REJECTED
+    assert "待人工复核" in (prop.decision_reason or "")
+    assert len(same_key) == 1, f"add 仍新建了平行记忆:{[m.id for m in same_key]}"

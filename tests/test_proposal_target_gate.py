@@ -582,7 +582,7 @@ class TestProposalTypeWhitelist:
     def test_known_types_not_refused_by_whitelist(self, param_env, ptype):
         """白名单闸不得误伤合法类型（回归护栏：行为与设闸前一致）。
 
-        add 正常新建；update/merge/deprecate 的目标在本用例中可唯一寻址，
+        add 用未占用的新 key 正常新建(同 key 已存在时转待审,见 test_add_proposal_with_existing_key_is_held_for_review)；update/merge/deprecate 的目标在本用例中可唯一寻址，
         故同样应成功——证明拒绝只发生在类型不认识时，而非闸门本身写错。
         """
         sf, _ = param_env
@@ -592,9 +592,9 @@ class TestProposalTypeWhitelist:
                 _prop(
                     "prop_known",
                     ptype,
-                    "已知键",
+                    "已知键" if ptype != "add" else "新键",
                     "新正文",
-                    target_memory_id="mem_known",
+                    target_memory_id=None if ptype == "add" else "mem_known",
                     evidence_ids=[],
                 )
             )

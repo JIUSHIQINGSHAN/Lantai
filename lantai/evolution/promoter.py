@@ -262,6 +262,15 @@ def apply_proposal(proposal_id: str, principal=None) -> dict:
                 existing = s.exec(
                     select(MemoryItem).where(MemoryItem.key == key, MemoryItem.status == "active")
                 ).first()
+            if existing is not None and prop.proposal_type == "add":
+                out = _reject_proposal(
+                    prop,
+                    "add 的 key 已有 active 记忆,待人工复核(宁 miss 不脏写,不新建平行记忆)",
+                    {"existing_id": existing.id},
+                )
+                s.add(prop)
+                s.commit()
+                return out
 
         emb = embed([content])[0] if content else []
         # 分支附加返回（ADR-0050：evidence 三分缺口记入 apply 返回与日志）；其余分支为空
