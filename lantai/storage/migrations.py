@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 26
+TARGET_SCHEMA_VERSION = 27
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -526,6 +526,13 @@ def _migrate_v26(conn) -> None:
 
 # 迁移块表：按版本顺序执行。新增迁移时在末尾追加 `_migrate_vN` 并把
 # TARGET_SCHEMA_VERSION 提到 N。
+def _migrate_v27(conn) -> None:
+    """v26 -> v27: memoryitem 补 reason 列(模型加入后迁移链漏写,老库列表查询 500)"""
+    if not _has_column(conn, "memoryitem", "reason"):
+        conn.execute("ALTER TABLE memoryitem ADD COLUMN reason TEXT DEFAULT ''")
+    logger.info("Migrated v27: memoryitem.reason column")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -552,6 +559,7 @@ MIGRATIONS = [
     (24, _migrate_v24),
     (25, _migrate_v25),
     (26, _migrate_v26),
+    (27, _migrate_v27),
 ]
 
 
