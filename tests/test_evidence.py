@@ -58,3 +58,29 @@ class TestBuildEvidence:
         results = [{"score": 1.0, "memory": {"id": "mem_1", "content": long_text}}]
         ev = build_evidence(results)
         assert len(ev[0]["content"]) == 200
+
+
+class TestEvidenceOwnerScope:
+    def test_rerank_document_does_not_resolve_other_owners_id(self, param_env):
+        """同文本两属主时,反查 id 不得落到他人的记忆上。"""
+        session_factory, _ = param_env
+        text = "同一句话:本周五发版"
+        with session_factory() as s:
+            s.add(
+                MemoryItem(
+                    id="mem_other_owner",
+                    memory_type="semantic",
+                    key="k_other",
+                    content=text,
+                    status="active",
+                    user_id="user-B",
+                )
+            )
+            s.commit()
+
+        from lantai.core.acl import Principal
+        from lantai.retrieval.evidence import build_evidence
+
+        viewer = Principal(role="user", user_id="user-A")
+        ev = build_evidence([{"score": 0.7, "document": text}], principal=viewer)
+        assert ev[0]["id"] != "mem_other_owner", f"反查拿到了他人记忆的 id:{ev}"

@@ -243,7 +243,7 @@ def handle_search(params: dict) -> dict:
         "results": results,
         "gate": gate,
         "event_id": event_id,
-        "evidence": build_evidence(results),
+        "evidence": build_evidence(results, principal=principal),
     }
     # 樊篱（P0 票03）：正文是数据不是指令——主结果与 evidence 各自围栏
     # （evidence 独立包裹，避免先包裹再截断切开闭合标记）

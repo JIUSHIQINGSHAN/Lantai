@@ -7,13 +7,15 @@
 - 空/异常 → 空列表，零侵入。
 """
 
+from sqlalchemy import or_
 from sqlmodel import select
 
+from lantai.core.acl import viewer_of
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
 
 
-def build_evidence(results: list, limit: int = 10) -> list:
+def build_evidence(results: list, limit: int = 10, principal=None) -> list:
     """检索结果 → 来源说明列表。"""
     if not results:
         return []
@@ -38,11 +40,15 @@ def build_evidence(results: list, limit: int = 10) -> list:
             with db.get_session() as s:
                 for r in docs_to_resolve:
                     doc = r["document"]
-                    m = s.exec(
-                        select(MemoryItem).where(
-                            MemoryItem.content == doc, MemoryItem.status == "active"
+                    stmt = select(MemoryItem).where(
+                        MemoryItem.content == doc, MemoryItem.status == "active"
+                    )
+                    if principal is not None:
+                        viewer = viewer_of(principal)
+                        stmt = stmt.where(
+                            or_(MemoryItem.user_id == viewer, MemoryItem.user_id.is_(None))
                         )
-                    ).first()
+                    m = s.exec(stmt).first()
                     evidence.append(
                         {
                             "id": m.id if m is not None else None,

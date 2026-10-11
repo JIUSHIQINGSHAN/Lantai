@@ -58,7 +58,7 @@ def search(
     event_id = _try_log(req, results, latency_ms, gate, session_id=ctx.session_id, principal=ctx)
     from lantai.retrieval.evidence import build_evidence
 
-    evidence = build_evidence(results)
+    evidence = build_evidence(results, principal=ctx)
     if trace and isinstance(result, tuple):
         return {
             "results": results,
