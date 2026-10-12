@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 27
+TARGET_SCHEMA_VERSION = 28
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -533,6 +533,13 @@ def _migrate_v27(conn) -> None:
     logger.info("Migrated v27: memoryitem.reason column")
 
 
+def _migrate_v28(conn) -> None:
+    """v27 -> v28: memoryedge 补 reason 列(模型声明了但迁移链漏写,老库 supersedes 查询报错)"""
+    if not _has_column(conn, "memoryedge", "reason"):
+        conn.execute("ALTER TABLE memoryedge ADD COLUMN reason TEXT DEFAULT ''")
+    logger.info("Migrated v28: memoryedge.reason column")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -560,6 +567,7 @@ MIGRATIONS = [
     (25, _migrate_v25),
     (26, _migrate_v26),
     (27, _migrate_v27),
+    (28, _migrate_v28),
 ]
 
 

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.2] - 2026-10-12
+
+### Fixed
+
+- 老库 `memoryedge` 补 `reason` 列(迁移 v28,schema 版本 27 → 28)。0.23.1 只补了 `memoryitem.reason`,supersedes / contradicts 边查询在老库上仍报 `no such column: memoryedge.reason`,整段降级为不排序。
+
 ## [0.23.1] - 2026-10-11 - 司门补丁
 
 ### Fixed
