@@ -31,6 +31,9 @@ jobs:
           ruff check lantai/ tests/ scripts/
           ruff format --check lantai/ tests/ scripts/
       - name: Full test suite with coverage
+        env:
+          # shell hook 子进程测试要求非空 API_KEY(禁止 DEV MODE 回退);CI 无 .env
+          API_KEY: test-key
         run: pytest tests/ -q --cov=lantai --cov-report=term-missing
       - name: Forgetting quality gate (chinese-memory-v2)
         env:
