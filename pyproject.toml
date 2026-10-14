@@ -1,6 +1,6 @@
 [project]
 name = "lantai"
-version = "0.23.2"
+version = "0.23.3"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",
@@ -64,6 +64,9 @@ filterwarnings = [
 
 [tool.setuptools.packages.find]
 include = ["lantai*"]
+
+[tool.setuptools.package-data]
+"lantai.api" = ["ui/*"]
 
 [tool.ruff]
 target-version = "py311"

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.3] - 2026-10-14
+
+### Fixed
+
+- wheel 补打 Web UI 静态文件(`lantai/api/ui/*`)。此前 `pyproject.toml` 未声明 `package-data`,setuptools 只打 `.py`,`/ui/` 因 `index.html` 缺失返回 500。新增 `tests/test_wheel_ships_ui.py` 真实构建 wheel 校验。
+
 ## [0.23.2] - 2026-10-12
 
 ### Fixed
