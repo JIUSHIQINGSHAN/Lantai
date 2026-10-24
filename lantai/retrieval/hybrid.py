@@ -415,31 +415,6 @@ def hybrid_search(
     )
 
 
-def _param_override(overrides: dict | None):
-    """上下文管理器：临时覆盖 settings 属性，退出恢复。"""
-    import contextlib
-
-    @contextlib.contextmanager
-    def _ctx():
-        if not overrides:
-            yield
-            return
-        saved = {}
-        for key, val in overrides.items():
-            if hasattr(settings, key):
-                saved[key] = getattr(settings, key)
-                with contextlib.suppress(Exception):
-                    setattr(settings, key, val)
-        try:
-            yield
-        finally:
-            for key, val in saved.items():
-                with contextlib.suppress(Exception):
-                    setattr(settings, key, val)
-
-    return _ctx()
-
-
 def _hybrid_search_impl(
     query: str,
     top_k: int = 5,
@@ -542,7 +517,6 @@ def _hybrid_search_impl(
     # Step 3: FTS5 子串召回（ADR-0008）与 BM25 召回（F2 重构）
     fts_hits: set[str] = set()
     fts_bm25_results = []
-    fts_hits: set[str] = set()
     try:
 
         def _get_s(cb):

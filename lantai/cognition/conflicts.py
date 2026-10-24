@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 class ConflictResolution(StrEnum):
     WIN_A = "WIN_A"
     WIN_B = "WIN_B"
-    COEXIST = "COEXIST"
     EXCEPTION = "EXCEPTION"
     UNRESOLVED = "UNRESOLVED"
 
@@ -136,8 +135,6 @@ class ConflictEngine:
         resolution: ConflictResolution,
     ) -> str:
         """生成自然语言裁决理由（模板化，无 LLM）。"""
-        if resolution == ConflictResolution.COEXIST:
-            return "两者适用范围互斥（task_types 不相交），可共存。"
         if resolution == ConflictResolution.UNRESOLVED:
             return (
                 f"评分差距过小无法裁决（A={score_a:.3f}, B={score_b:.3f}）。"
@@ -187,28 +184,8 @@ class ConflictEngine:
         item_b: MemoryItem,
         session: Session | None = None,
     ) -> ConflictResult:
-        # --- COEXIST: mutually exclusive task_types (original logic preserved) ---
-        scope_a = self._extract_scope(item_a)
-        scope_b = self._extract_scope(item_b)
-
-        if scope_a and scope_b:
-            tasks_a = set(scope_a.get("task_types", []))
-            tasks_b = set(scope_b.get("task_types", []))
-            if tasks_a and tasks_b and tasks_a.isdisjoint(tasks_b):
-                trace = DecisionTrace(
-                    item_a_score=0.0,
-                    item_b_score=0.0,
-                    score_delta=0.0,
-                    decision="COEXIST",
-                    reason="两者适用范围互斥（task_types 不相交），可共存。",
-                )
-                return ConflictResult(
-                    resolution=ConflictResolution.COEXIST,
-                    winner_id=None,
-                    reason=trace.reason,
-                    decision_trace=trace,
-                )
-
+        # 「双侧 scope.task_types 互斥即共存」预检已弃用删除——全链路无
+        # task_types 写入方，自诞生从未生效（ADR-0054）。六维评分「直断」主体不动。
         # --- 6-dim scoring (or simplified confidence-only when no session) ---
         if session is not None:
             score_a, comps_a = self._score_with_components(item_a, session)

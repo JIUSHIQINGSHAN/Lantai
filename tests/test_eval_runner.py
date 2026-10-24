@@ -163,21 +163,3 @@ class TestRunDryRun:
             s.commit()
         run = run_dry_run(qs, top_k=3)
         assert run.metrics["weak_hit_rate"] == 1.0
-
-
-class TestParamOverrideContext:
-    def test_override_restores_settings(self):
-        """param_overrides 调用后 settings 恢复原值（不污染全局）。"""
-        from lantai.core.settings import settings
-        from lantai.retrieval.hybrid import _param_override
-
-        original = settings.RETRIEVAL_W_VECTOR
-        with _param_override({"RETRIEVAL_W_VECTOR": 0.99}):
-            assert settings.RETRIEVAL_W_VECTOR == 0.99
-        assert original == settings.RETRIEVAL_W_VECTOR
-
-    def test_none_override_noop(self):
-        from lantai.retrieval.hybrid import _param_override
-
-        with _param_override(None):
-            pass  # 不抛即通过

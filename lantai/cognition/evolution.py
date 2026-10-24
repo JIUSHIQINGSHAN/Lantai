@@ -1,6 +1,6 @@
 from collections import Counter
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
@@ -43,7 +43,14 @@ class EvolutionEngine:
         对 Experience 列表做语义词袋特征签名聚类。
         提取核心实词集合签名（忽略标点与常见停用虚词），
         当经验在核心实词集合或前缀签名重合 >= 2 次时生成 CognitivePattern。
+
+        幂等去重（票 .scratch/review-fixes-2026-10/02）：以聚类签名的
+        sha256 前 16 位为自然键（dedup_key），落库前查同键——已存在则
+        只 touch updated_at（last_seen），不重复插行，也不再向下游重复
+        发同一模式（返回列表只含**新**模式；每晚反思对同一输入零新增）。
+        存量库 v29 迁移前的旧行 dedup_key 为 NULL，NULL 不参与匹配（宁 miss）。
         """
+        import hashlib
         import re
 
         _STOPWORDS = {
@@ -98,6 +105,21 @@ class EvolutionEngine:
         for sig, items in buckets.items():
             if len(items) < 2:
                 continue
+            # 自然键取聚类签名本身（排序后的核心实词，语序扰动不变），
+            # 不含 pattern_type——failure/observation 两条链路对同一文本
+            # 归纳出的是同一个模式，先落者胜（宁 miss：不因链路不同而重复插行）。
+            dedup_key = hashlib.sha256(sig.encode("utf-8")).hexdigest()[:16]
+            if self.db is not None:
+                existing = self.db.exec(
+                    select(CognitivePattern).where(CognitivePattern.dedup_key == dedup_key)
+                ).first()
+                if existing is not None:
+                    # 同键已存在：只更新 last_seen（updated_at），不重复插行
+                    existing.updated_at = now
+                    self.db.add(existing)
+                    self.db.commit()
+                    continue
+
             occurrence_count = len(items)
             source_ids = [sid for item in items for sid in (item.source_ids or [])]
             independent_source_count = len(set(source_ids))
@@ -112,6 +134,7 @@ class EvolutionEngine:
                 independent_source_count=independent_source_count,
                 confidence=confidence,
                 status="candidate",
+                dedup_key=dedup_key,
                 created_at=now,
                 updated_at=now,
             )

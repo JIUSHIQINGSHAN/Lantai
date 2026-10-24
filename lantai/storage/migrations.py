@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 28
+TARGET_SCHEMA_VERSION = 29
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -540,6 +540,23 @@ def _migrate_v28(conn) -> None:
     logger.info("Migrated v28: memoryedge.reason column")
 
 
+def _migrate_v29(conn) -> None:
+    """v28 -> v29: cognitivepattern 补 dedup_key 列（反思写库幂等去重，票 .scratch/review-fixes-2026-10/02）"""
+    if not _has_column(conn, "cognitivepattern", "dedup_key"):
+        conn.execute("ALTER TABLE cognitivepattern ADD COLUMN dedup_key TEXT")
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cognitivepattern'"
+    ).fetchone():
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_cognitivepattern_dedup_key"
+                " ON cognitivepattern (dedup_key)"
+            )
+        except Exception as exc:  # 索引失败不阻断启动，但必须留痕（同 v17/v20 口径）
+            logger.warning("迁移 v29 索引创建跳过 ix_cognitivepattern_dedup_key: %s", exc)
+    logger.info("Migrated v29: cognitivepattern.dedup_key column（反思幂等去重）")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -568,6 +585,7 @@ MIGRATIONS = [
     (26, _migrate_v26),
     (27, _migrate_v27),
     (28, _migrate_v28),
+    (29, _migrate_v29),
 ]
 
 

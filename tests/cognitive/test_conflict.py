@@ -15,35 +15,6 @@ except ImportError:
     utcnow = None
 
 
-def test_conflict_engine_coexist():
-    """Verify ConflictEngine returns COEXIST when scopes differ."""
-    assert ConflictEngine is not None
-
-    # Principle 1 applies to task_types: small_project
-    p1 = MemoryItem(
-        id="p1",
-        role=CognitiveRole.PRINCIPLE,
-        structure={"scope": {"task_types": ["small_project"]}},
-    )
-
-    # Principle 2 applies to task_types: enterprise_app
-    p2 = MemoryItem(
-        id="p2",
-        role=CognitiveRole.PRINCIPLE,
-        structure={"scope": {"task_types": ["enterprise_app"]}},
-    )
-
-    engine = ConflictEngine()
-    result = engine.resolve(p1, p2)
-
-    assert result.resolution == ConflictResolution.COEXIST
-    assert (
-        "task_types" in result.reason or "scope" in result.reason.lower() or "共存" in result.reason
-    )
-    assert result.decision_trace is not None
-    assert result.decision_trace.decision == "COEXIST"
-
-
 def test_conflict_engine_win_a():
     """Verify ConflictEngine resolves by evidence strength/confidence."""
     assert ConflictEngine is not None

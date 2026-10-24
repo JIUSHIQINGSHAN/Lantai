@@ -55,7 +55,10 @@ def propose_from_candidate(
     """
     with db.get_session() as s:
         cand = s.get(MemoryCandidate, candidate_id)
-        related_q = select(MemoryItem).where(MemoryItem.status == "active")
+        # 票 `.scratch/review-fixes-2026-10/07`：EXISTING 只拼前 20 条，全表加载
+        # 是 run_evolve_once 每候选一次的 N+1 根源。limit 下推取到的就是同一批
+        # 前 20 行（无 ORDER BY 的自然序两者一致），prompt 逐字不变。
+        related_q = select(MemoryItem).where(MemoryItem.status == "active").limit(20)
         if principal is not None and not bool(getattr(principal, "is_admin", False)):
             from lantai.services.work_item_service import _viewer_of
 
@@ -64,9 +67,7 @@ def propose_from_candidate(
                 (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
             )
         related = s.exec(related_q).all()
-        existing_snippets = "\n".join(
-            f"- ({m.memory_type}) {m.key}: {m.content}" for m in related[:20]
-        )
+        existing_snippets = "\n".join(f"- ({m.memory_type}) {m.key}: {m.content}" for m in related)
         user = (
             f"CANDIDATE SUMMARY:\n{cand.summary}\n"
             f"CLAIMS:\n{cand.claims}\nACTIONS:\n{cand.actions}\n\n"

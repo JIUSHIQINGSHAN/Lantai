@@ -228,6 +228,11 @@ class CognitivePattern(SQLModel, table=True):
 
     status: str = "candidate"
 
+    # 幂等去重自然键（票 .scratch/review-fixes-2026-10/02）：聚类核心实词签名的
+    # sha256 前 16 位；同键已存在则不再插行（每晚反思对同一输入零新增）。
+    # 迁移链 v29 之前的存量行为 NULL，NULL 不参与匹配（宁 miss 不脏写）。
+    dedup_key: str | None = Field(default=None, index=True)
+
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 

@@ -105,7 +105,7 @@ def record_feedback(
 # ── 反思/蒸馏（spec: docs/plans/reflection-module-spec.md）─────────────
 from datetime import UTC, timedelta
 
-from sqlmodel import select
+from sqlmodel import func, select
 
 from lantai.core.logger import logger
 from lantai.core.scheduler import record_run
@@ -279,19 +279,22 @@ def health_scan(session, principal=None) -> dict:
 
 
 def _importance_waterline(session, principal=None) -> float:
-    """近窗口新增记忆 importance 累加（水位触发；无持久化时间戳，近似实现）。"""
+    """近窗口新增记忆 importance 累加（水位触发；无持久化时间戳，近似实现）。
+
+    SQL 聚合下推（票 `.scratch/review-fixes-2026-10/07`）：SUM + 窗口过滤在库端
+    一行完成，不再全表物化 ORM 行。口径与旧逐行实现逐字一致——不筛 status
+    （旧实现就不过滤）、`created_at IS NULL` 行不计（NULL 比较不为真）；
+    写法同 digest_worker 的水位查询（`func.coalesce(func.sum(...), 0.0)`）。
+    """
     now = utcnow()
     start = now - timedelta(days=settings.REFLECT_IMPORTANCE_WINDOW_DAYS)
-    total = 0.0
-    q = select(MemoryItem)
+    q = select(func.coalesce(func.sum(MemoryItem.importance), 0.0)).where(
+        MemoryItem.created_at >= start
+    )
     scope = _reflect_scope(principal)
     if scope is not None:
         q = q.where(scope)
-    for m in session.exec(q).all():
-        created = _as_utc(m.created_at)
-        if created is not None and created >= start:
-            total += m.importance
-    return total
+    return float(session.exec(q).one())
 
 
 def _curate(candidates: list[dict], related_texts: str) -> dict:
@@ -485,12 +488,15 @@ def _run_reflect_once(source: str, principal=None) -> dict:
     with db.get_session() as s:
         scan = health_scan(s, principal=principal)
         waterline = _importance_waterline(s, principal=principal)
-        q = select(MemoryItem).where(MemoryItem.status == "active")
+        # 票 `.scratch/review-fixes-2026-10/07`：related 只为拼 prompt 前 20 条，
+        # limit 下推免全表加载（scope 条件先于 limit 生效，越权行不会因截断混入；
+        # 无 ORDER BY 的自然序与旧版 `related[:20]` 一致，prompt 逐字不变）。
+        q = select(MemoryItem).where(MemoryItem.status == "active").limit(20)
         scope = _reflect_scope(principal)
         if scope is not None:
             q = q.where(scope)
         related = s.exec(q).all()
-        related_texts = "\n".join(f"- ({m.memory_type}) {m.key}: {m.content}" for m in related[:20])
+        related_texts = "\n".join(f"- ({m.memory_type}) {m.key}: {m.content}" for m in related)
 
     candidates = scan["candidates"]
     theme_triggered = waterline >= settings.REFLECT_IMPORTANCE_POOL

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import HTTPException
 from sqlmodel import select
 
@@ -5,7 +7,7 @@ from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.core.provenance import PROVENANCE_PROMPT_DIALOGUE_IMPORT
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.time import parse_iso_utc, utcnow
 from lantai.llm.client import embed
 from lantai.memory.decay_class import infer_decay_class
 from lantai.models.enums import MemoryTier, ProposalStatus
@@ -166,6 +168,19 @@ def _ensure_targets_owned(s, prop: MemoryProposal, principal) -> str:
     # 目标 id 一个都没解析到：不在这里拒绝——寻址硬门会按自己的口径报
     # 「target not found」/「ambiguous」（那两条的拒绝理由信息量更大）。
     return ""
+
+
+def _is_datetime_column(name: str) -> bool:
+    """MemoryItem 字段是否 datetime 型列（含 Optional[datetime]）。
+
+    rollback 快照还原用：`prev.after` 是 `model_dump(mode="json")` 的 JSON
+    形态（datetime→ISO 串），还原时只对该形态的字段做 parse_iso_utc。
+    """
+    info = MemoryItem.model_fields.get(name)
+    if info is None:
+        return False
+    ann = info.annotation
+    return ann is datetime or datetime in getattr(ann, "__args__", ())
 
 
 def apply_proposal(proposal_id: str, principal=None) -> dict:
@@ -684,7 +699,24 @@ def rollback(memory_id: str, principal=None) -> dict:
                 # 403 语义在路由边界由 _ok_or_raise 翻译；这里只报「不允许」。
                 return {"ok": False, "reason": f"forbidden: {exc.detail}"}
         before = mem.model_dump(mode="json")
-        for k, v in prev.after.items():
+        # 快照类型还原（票 .scratch/review-fixes-2026-10/issues/04 测试实证的另一根因）：
+        # `prev.after` 是 `model_dump(mode="json")` 的 JSON 形态——datetime 字段是
+        # ISO 字符串。直接 setattr 回 datetime 列会在 commit 时被 sqlmodel 的
+        # UTCDateTime 拒写（StatementError: 'str' object has no attribute 'utcoffset'），
+        # 真实 checkpoint（全字段快照）的回滚整笔 500。先经 `parse_iso_utc`
+        # （lantai.core.time 为「时间字符串写回 datetime 列」场景的既定入口）还原；
+        # 非法时间戳拒绝回滚、一个字段都不写（宁 miss 不脏写）。
+        try:
+            restored = {
+                k: (parse_iso_utc(v) if isinstance(v, str) and _is_datetime_column(k) else v)
+                for k, v in prev.after.items()
+            }
+        except ValueError as e:
+            logger.warning(
+                "回滚 %s 拒绝：checkpoint 快照时间戳非法（宁 miss 不脏写）：%s", memory_id, e
+            )
+            return {"ok": False, "reason": f"corrupt checkpoint snapshot: {e}"}
+        for k, v in restored.items():
             if hasattr(mem, k) and k != "id":
                 setattr(mem, k, v)
         mem.version += 1
@@ -692,8 +724,24 @@ def rollback(memory_id: str, principal=None) -> dict:
         s.add(mem)
         _make_checkpoint(s, mem, before, proposal_id="", trigger="rollback")
         sync_fts(s, mem.id, mem.content)
+        # 向量重建（票 .scratch/review-fixes-2026-10/issues/04）：此前回滚只还原
+        # SQL 与 FTS，Chroma 里仍是回滚前正文的 embedding——同文件 add/update/
+        # merge/consolidation 分支均有 index_memory_item，唯 rollback 没有，回滚
+        # 后语义召回错位。复用 `record_ops_service.sync_vector_upsert`（既有等价
+        # 惯例：同款 index_memory_item + 8 键 metadata 契约）；失败降级留痕不静默
+        # （exception 日志 + vector_synced=False 如实回报，不阻断回滚主语义，
+        # 口径同笔削四分法 record_ops_service 的降级面）。延迟 import：record_ops_
+        # service 亦延迟引用本模块，避免顶层循环。
+        from lantai.services.record_ops_service import sync_vector_upsert
+
+        vector_synced = sync_vector_upsert(mem.id, mem)
         s.commit()
-        return {"ok": True}
+        if not vector_synced:
+            logger.warning(
+                "回滚 %s：向量重建失败，向量库仍为回滚前正文（SQL/FTS 已回滚，留痕不静默）",
+                mem.id,
+            )
+        return {"ok": True, "vector_synced": vector_synced}
 
 
 def delete_memory(memory_id: str, principal=None) -> dict:

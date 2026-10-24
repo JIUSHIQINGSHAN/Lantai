@@ -340,8 +340,10 @@ def test_assign_unassigned_scans_only_unassigned(mem_db, monkeypatch):
         s.add(m7)  # 已有归属 → 不重复扫描
         s.commit()
 
+    # fake 按**每条文本**给向量（票 07 批量 embed 后单次调用入参是整批文本，
+    # 逐条给向量的写法只对旧的逐条调用形态成立）
     def fake_embed(texts):
-        return [[0.99, 0.0, 0.0] if "content9" in texts[0] else [0.0, 1.0, 0.0] for _ in texts]
+        return [[0.99, 0.0, 0.0] if "content9" in t else [0.0, 1.0, 0.0] for t in texts]
 
     from lantai.services.scene_service import assign_unassigned
 
@@ -354,6 +356,76 @@ def test_assign_unassigned_scans_only_unassigned(mem_db, monkeypatch):
         assert s.get(MemoryItem, "m9").scene_id == "scene_x"
         assert s.get(MemoryItem, "m8").scene_id is None
         assert s.get(MemoryScene, "scene_x").member_count == 2  # m7 + m9
+
+
+def test_assign_unassigned_batches_embed_into_one_call(mem_db, monkeypatch):
+    """票 07（红→绿）：assign_unassigned 整批一次 embed 调用（旧实现逐条 N 次 API）。
+
+    归属判定只依赖场景质心（`_refresh_scene_stats` 只刷 heat/member_count，
+    不动 centroid），故批量前后命中/未命中口径不变；断言落在调用次数与
+    入参形态上——修复前 embed 被逐条调 3 次（红），修复后 1 次且入参为
+    全部待归属文本（绿）。
+    """
+    from unittest.mock import patch
+
+    session_factory, _ = mem_db
+    with session_factory() as s:
+        s.add(
+            MemoryScene(
+                id="scene_x",
+                name="部署",
+                summary="",
+                heat=1,
+                member_count=1,
+                centroid=[1.0, 0.0, 0.0],
+            )
+        )
+        s.add(
+            MemoryScene(
+                id="scene_y",
+                name="运维",
+                summary="",
+                heat=0,
+                member_count=0,
+                centroid=[0.0, 1.0, 0.0],
+            )
+        )
+        s.add(_item(9, use_count=2))  # 无归属 → 命中 scene_x
+        s.add(_item(10, use_count=1))  # 无归属 → 命中 scene_y
+        s.add(_item(8, use_count=5))  # 无归属 → 离群未命中
+        s.commit()
+
+    calls: list[list[str]] = []
+
+    def fake_embed(texts):
+        calls.append(list(texts))
+        out = []
+        for t in texts:
+            if "content9" in t:
+                out.append([0.99, 0.0, 0.0])
+            elif "content10" in t:
+                out.append([0.0, 0.99, 0.0])
+            else:
+                out.append([0.0, 0.0, 1.0])  # 离群：两质心都够不着
+        return out
+
+    from lantai.services.scene_service import assign_unassigned
+
+    with patch("lantai.llm.client.embed", side_effect=fake_embed):
+        result = assign_unassigned(limit=50, threshold=0.8)
+
+    assert result["scanned"] == 3
+    assert result["assigned"] == 2
+    assert result["missed"] == 1
+    # 批量 embed：一次调用携带全部待归属文本（50 条 → 1 次 API）
+    assert len(calls) == 1, f"embed 调用 {len(calls)} 次，应为整批 1 次"
+    assert sorted(calls[0]) == sorted(["content8", "content9", "content10"])
+    with session_factory() as s:
+        assert s.get(MemoryItem, "m9").scene_id == "scene_x"
+        assert s.get(MemoryItem, "m10").scene_id == "scene_y"
+        assert s.get(MemoryItem, "m8").scene_id is None  # 宁 miss 不脏写
+        assert s.get(MemoryScene, "scene_x").member_count == 1  # m9
+        assert s.get(MemoryScene, "scene_y").member_count == 1  # m10
 
 
 def test_get_scene_and_list(mem_db, monkeypatch):

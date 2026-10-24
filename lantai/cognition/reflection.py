@@ -81,6 +81,28 @@ class ReflectionEngine:
         self.db = db
         self.principal = principal
 
+    def _candidate_exists(self, item: MemoryItem) -> bool:
+        """晋升候选的自然键查重（票 `.scratch/review-fixes-2026-10/02`）。
+
+        自然键 = (role, content)。同键行**任一状态**（candidate 待审 /
+        active 已生效 / rejected 已否决 / archived 已退役）都算已存在——
+        已否决的候选次日不得复活（宁 miss 不脏写）。每晚反思对同一批
+        输入重复晋升时由此挡住，与 pattern 侧 dedup_key 双保险（存量库
+        旧行 dedup_key 为 NULL 时 pattern 会重插，候选侧仍不脏写）。
+
+        不复用 ingest 侧校雠（gate/dedup.py 余弦三态）：那依赖向量检索
+        与 embedding 网络，且语义是「相似归并」；这里是确定性自然键
+        「相同跳过」，零外部依赖。归属口径同 `_reflection_scope`
+        （user_id == viewer OR IS NULL；worker/admin/内部调用全表）。
+        """
+        q = select(MemoryItem).where(
+            MemoryItem.role == item.role, MemoryItem.content == item.content
+        )
+        scope = _reflection_scope(MemoryItem.user_id, self.principal)
+        if scope is not None:
+            q = q.where(scope)
+        return self.db.exec(q).first() is not None
+
     def _failures_to_observations(self, failures: list[FailureRecord]) -> list[MemoryItem]:
         """
         将 FailureRecord 的 lesson/cause 字段转化为临时 OBSERVATION，
@@ -129,7 +151,11 @@ class ReflectionEngine:
                 from lantai.cognition.evolution import EvolutionEngine
 
                 evo = EvolutionEngine(self.db)
-                # failure_pattern 不写入 DB（内存聚类），仅用于晋升
+                # failure_pattern 与普通 pattern 同走 detect_patterns 落库
+                # （票 review-fixes-2026-10/02 修正注释：原注释称「不写入 DB
+                # （内存聚类）」与实际行为相反——pattern_type 先按默认 recurrence
+                # 落库，下方循环改为 failure_pattern 后由 run_reflection 末尾
+                # commit 持久化）。重复落库由 dedup_key 幂等去重挡住。
                 failure_patterns = evo.detect_patterns(failure_obs)
                 report.failure_patterns = len(failure_patterns)
 
@@ -143,14 +169,18 @@ class ReflectionEngine:
                         failure_patterns,
                         promotion_threshold=self.FAILURE_PROMOTION_THRESHOLD,
                     )
+                    fb_added: list[MemoryItem] = []
                     for b in fb_cands:
                         # 覆盖 promoted_from 标注来源
                         if b.promotion_trace:
                             b.promotion_trace["promoted_from"] = "failure_pattern"
                         _stamp_owner(b, self.principal)
+                        if self._candidate_exists(b):
+                            continue  # 票 02：同自然键候选已存在，不重复插行
                         self.db.add(b)
-                    failure_belief_candidates = fb_cands
-                    report.failure_belief_candidates = fb_cands
+                        fb_added.append(b)
+                    failure_belief_candidates = fb_added
+                    report.failure_belief_candidates = fb_added
 
         # 步骤 2：查找重复 Observation，归纳 Pattern 候选（复用 EvolutionEngine 词袋与语义签名聚类）
         # 归属（票 01）：按 viewer 收窄，否则 A 与 B 的观测会被**一起聚类**
@@ -193,17 +223,25 @@ class ReflectionEngine:
 
             evo = EvolutionEngine(self.db)
             b_cands = evo.propose_beliefs(report.proposed_patterns)
-            report.belief_candidates = len(b_cands)
+            b_added = []
             for b in b_cands:
                 _stamp_owner(b, self.principal)
+                if self._candidate_exists(b):
+                    continue  # 票 02：同自然键候选已存在，不重复插行
                 self.db.add(b)
+                b_added.append(b)
+            report.belief_candidates = len(b_added)
 
             if beliefs:
                 r_cands = evo.propose_rules(beliefs)
-                report.rule_candidates = len(r_cands)
+                r_added = []
                 for r in r_cands:
                     _stamp_owner(r, self.principal)
+                    if self._candidate_exists(r):
+                        continue  # 票 02：同自然键候选已存在，不重复插行
                     self.db.add(r)
+                    r_added.append(r)
+                report.rule_candidates = len(r_added)
 
         if report.new_patterns > 0 or report.failures > 0 or report.failure_patterns > 0:
             report.summary = (

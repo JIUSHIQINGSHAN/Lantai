@@ -15,8 +15,9 @@ from ulid import ULID
 from lantai.core.logger import logger
 from lantai.core.time import utcnow
 from lantai.models.tables import ConflictEvent, MemoryCheckpoint, MemoryItem
-from lantai.retrieval.hybrid import index_memory_item
+from lantai.services.record_ops_service import sync_vector_upsert
 from lantai.storage import db
+from lantai.storage.fts import sync_fts
 
 # 肯定与否定词库模式
 _AFFIRMATIVE_PATTERNS = [
@@ -245,29 +246,25 @@ def resolve_probe_response(
             conf.resolved_at = utcnow()
             s.add(conf)
             s.add(item)
+
+            # FTS 同事务强一致（ADR-0008，同 correct_memory / promoter update 口径，
+            # 票 .scratch/review-fixes-2026-10/01）：正文已替换而 FTS 停留旧文 =
+            # 可命中旧事实的脏索引。sync_fts 异常随本事务回滚——正文停在旧值、
+            # 冲突保持 open（宁 miss 不脏写），不再吞成 warning。
+            sync_fts(s, item.id, item.content)
+
             s.commit()
 
-            # 同步更新索引
-            try:
-                from lantai.retrieval.embed import embed
-
-                emb = embed([item.key])[0]
-                index_memory_item(
-                    item.id,
-                    emb,
-                    {
-                        "key": item.key,
-                        "memory_type": item.memory_type,
-                        "lane": getattr(item, "lane", "general") or "general",
-                        "domain": getattr(item, "domain", "user") or "user",
-                        "tenant_id": getattr(item, "tenant_id", "") or "",
-                        "user_id": getattr(item, "user_id", "") or "",
-                        "session_id": getattr(item, "session_id", "") or "",
-                        "agent_id": getattr(item, "agent_id", "") or "",
-                    },
-                )
-            except Exception as exc:
-                logger.warning("探颐：索引更新异常（数据已落库）: %s", exc)
+            # 向量库独立于 SQL 事务：对**替换后的新正文**重建（票 01 修前 import 自
+            # 不存在的 lantai.retrieval.embed 且 embed 的是 item.key 而非新正文）。
+            # 复用 record_ops_service 的 best-effort 重同步原语（embed + 8 键
+            # metadata 契约 + 失败如实回报），失败不静默：回执如实暴露（宁 miss
+            # 不脏写——正文已改而索引失败必须在返回体/warning 里看得见）。
+            vector_synced = sync_vector_upsert(item.id, item)
+            warnings: list[str] = []
+            if not vector_synced:
+                warnings.append("vector resync failed; content updated in SQL/FTS only")
+                logger.warning("探颐：消解后向量重同步失败（正文与 FTS 已更新）memory=%s", item.id)
 
             logger.info("探颐：用户肯定探针，已成功消解冲突并更新记忆 %s", item.id)
             return {
@@ -275,6 +272,8 @@ def resolve_probe_response(
                 "action": "applied",
                 "conflict_id": conflict_id,
                 "memory_id": item.id,
+                "vector_synced": vector_synced,
+                "warnings": warnings,
             }
 
         else:

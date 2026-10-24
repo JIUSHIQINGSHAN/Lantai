@@ -101,7 +101,7 @@ class CognitiveContextBuilder:
         self.principal = principal
 
     def _owned_memory_stmt(self):
-        """带归属条件的 MemoryItem 查询（票 .scratch/readside-gaps/03）。
+        """带归属与状态条件的 MemoryItem 查询（票 .scratch/readside-gaps/03）。
 
         判据复用 `work_item_service._viewer_of`（同一仓里已有现成的，
         不另写一份——票 01 的既有决定），但**可见性口径与票 01/02 刻意
@@ -114,17 +114,22 @@ class CognitiveContextBuilder:
         NULL 是「未记录」的事实状态，不是「属于所有人」——同
         `memory_service.get_core_memory` 那一支的口径。
 
-        admin/system 全权（不走本函数）。
+        status 过滤（票 review-fixes-2026-10/06）：与全库读侧口径对齐，
+        只注入 `status == "active"`——撤回/归档/已巩固的主张不得再进
+        Agent 提示词（同 `hybrid.py` 读侧三处的无条件 active 过滤，
+        admin 也不例外：retracted 对 admin 同样是"已停止使用"）。
+        归档例外白名单若将来有产品诉求，须开票明列。
+
+        admin/system 全权（不走本函数的归属半边）。
         """
         from lantai.services.work_item_service import _viewer_of
 
+        stmt = select(MemoryItem).where(MemoryItem.status == "active")
         principal = self.principal
         if principal is not None and bool(getattr(principal, "is_admin", False)):
-            return select(MemoryItem)
+            return stmt
         viewer = _viewer_of(principal)
-        return select(MemoryItem).where(
-            (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
-        )
+        return stmt.where((MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None)))
 
     @staticmethod
     def _task_relevance(content: str, task: str) -> float:

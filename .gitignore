@@ -56,3 +56,10 @@ docs/memory-quality/*.md
 
 .uv-cache/
 .mimosa/
+
+# 工具缓存 / 本地工作区（release 门禁需工作区干净）
+.ruff_cache/
+.worktrees/
+.mirasim/
+.mrdayone/
+.claude/

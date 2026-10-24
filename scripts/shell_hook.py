@@ -2,6 +2,7 @@
 
 契约：stdin JSON → stdout {context} 或 {}；2s 硬超时；异常静默降级。"""
 
+import contextlib
 import os
 import sys
 
@@ -428,7 +429,21 @@ def _dispatch_one(raw: str) -> dict:
     return {}
 
 
+def _prewarm() -> None:
+    """启动即初始化向量库连接（best-effort，失败不阻断启动）。
+
+    首帧预算 SHELL_HOOK_TIMEOUT 仅 2s，而向量库客户端冷启动（Chroma
+    client/collection 首次创建）实测约 2.2s——留在首帧的 build_context
+    里才初始化，首帧必然超时返回空注入。常驻进程的本意就是消除冷启动
+    （见 main 的 serve 注释）；启动时提前建连，把该项成本移出首帧预算。
+    失败降级交由帧内既有异常零侵入路径逐帧处理。
+    """
+    with contextlib.suppress(Exception):
+        get_vector_store()
+
+
 def main():
+    _prewarm()
     if "--serve" in sys.argv:
         # 守护模式：NDJSON 循环，每行一个请求 → 每行一个响应。
         # 常驻进程消除冷启动开销（chromadb/jieba 只加载一次），

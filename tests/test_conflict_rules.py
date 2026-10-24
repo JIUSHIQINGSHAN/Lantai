@@ -15,7 +15,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import lantai.storage.db as db_module
 from lantai.core.ids import new_id
 from lantai.core.settings import settings
-from lantai.models.tables import ConflictEvent, MemoryCandidate, MemoryItem
+from lantai.models.tables import ConflictEvent, MemoryCandidate, MemoryCheckpoint, MemoryItem
 
 
 @pytest.fixture()
@@ -558,6 +558,75 @@ class TestContradictionUnavailableReachesPendingReview:
             c = s.get(MemoryCandidate, "cand_llm_down")
             assert c.status == "pending_review", "检不了必须进待审队列，不得静默丢弃"
             assert c.review_due_at is not None
+
+
+# ── 闸门账本早退路径必须落库（票 .scratch/review-fixes-2026-10/03）──────
+
+
+class TestCheckUnavailableEarlyExitKeepsLedger:
+    """`check_unavailable` REJECT 早退前，已 add 的账本/降权留痕不得随回滚丢失。
+
+    票 03：确定性规则命中的 ConflictEvent 已 `s.add`，但早退路径不 commit，
+    session 关闭即回滚——审计行静默丢失。触发组合：候选同时命中确定性规则
+    （status_switch：启用/禁用）+ 否定对候选（be_notbe：是/不是）且 LLM 失败。
+
+    同场还有其余已 add 未 commit 对象（票 03 修复要求 2）：低 salience 旧记忆的
+    降权三件套（Checkpoint + resolved 账本 + importance 变更）在早退路径上同样
+    被回滚。mock 仅外部 LLM（check_contradiction），闸门裁决逻辑全真实。
+    """
+
+    def test_rule_hit_plus_negation_llm_fail_keeps_conflict_ledger(self, conflict_env):
+        """确定性规则命中 + 否定对 LLM 失败 → REJECT 早退，open 账本行仍在库。"""
+        session_factory, _ = conflict_env
+        from lantai.gate.decision import decide
+
+        cand_id = _seed_imp(
+            conflict_env,
+            existing_content="服务不是禁用状态",
+            summary="服务是启用状态",
+            importance=0.5,
+        )
+        with patch(
+            "lantai.gate.decision.check_contradiction", side_effect=RuntimeError("llm down")
+        ):
+            result = decide(cand_id)
+
+        assert result["decision"] == "reject"
+        assert result.get("check_unavailable") is True
+        # 造境自校验：确定性规则确已命中（账本在会话内已 add），行数缺失即回滚所致
+        assert any(c.get("rule_name") == "status_switch" for c in result["conflicts"])
+        with session_factory() as s:
+            evs = s.exec(select(ConflictEvent)).all()
+            assert len(evs) == 1, f"ConflictEvent 被早退回滚丢失（票 03）：在库 {len(evs)} 行"
+            assert evs[0].status == "open"
+            assert evs[0].rule_name == "status_switch"
+
+    def test_demote_plus_check_unavailable_keeps_checkpoint_and_ledger(self, conflict_env):
+        """低 salience 降权 + 否定对 LLM 失败同场 → 早退不得回滚降权三件套。"""
+        session_factory, _ = conflict_env
+        from lantai.gate.decision import decide
+
+        cand_id = _seed_imp(
+            conflict_env,
+            existing_content="服务不是禁用状态",
+            summary="服务是启用状态",
+            importance=0.3,
+        )
+        with patch(
+            "lantai.gate.decision.check_contradiction", side_effect=RuntimeError("llm down")
+        ):
+            result = decide(cand_id)
+
+        assert result["decision"] == "reject"
+        assert result.get("check_unavailable") is True
+        with session_factory() as s:
+            evs = s.exec(select(ConflictEvent)).all()
+            assert len(evs) == 1, f"resolved 账本被早退回滚丢失（票 03）：在库 {len(evs)} 行"
+            assert evs[0].kind == "salience_demote"
+            assert evs[0].status == "resolved"
+            assert s.exec(select(MemoryCheckpoint)).first() is not None, "Checkpoint 被早退回滚丢失"
+            mem = s.exec(select(MemoryItem)).first()
+            assert abs(mem.importance - 0.1) < 1e-9, "降权（0.3→0.1）被早退回滚"
 
 
 def test_conflict_service_resolve(conflict_env):

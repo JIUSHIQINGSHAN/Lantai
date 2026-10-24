@@ -12,7 +12,7 @@ import hmac
 import secrets
 from dataclasses import dataclass
 
-from fastapi import Header, HTTPException, Request
+from fastapi import HTTPException, Request
 from pydantic import BaseModel
 from sqlmodel import select
 
@@ -78,25 +78,6 @@ def dev_mode_allowed() -> bool:
     except Exception:
         logger.exception("dev_mode_allowed: db check failed, deny DEV MODE")
         return False
-
-
-async def verify_api_key(
-    x_api_key: str = Header(None, alias="X-API-Key"),
-) -> str:
-    """验证 X-API-Key header（恒时比较，防时序侧信道）。
-
-    保留供旧调用方使用；业务路由统一走 `get_current_user`（双轨并入）。
-    """
-    if not settings.API_KEY:
-        return "no-auth"
-
-    if not x_api_key:
-        raise HTTPException(status_code=401, detail="Missing X-API-Key header")
-
-    if not match_env_api_key(x_api_key):
-        raise HTTPException(status_code=403, detail="Invalid API Key")
-
-    return x_api_key
 
 
 @dataclass(frozen=True)

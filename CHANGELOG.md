@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **检索/演化链路去 N+1 与全表加载（行为零变更）**：proposer/reflector 的相关记忆查询 `limit(20)` 下推 SQL（无 ORDER BY 自然序与旧 `[:20]` 切片一致，prompt 逐字不变）；`_importance_waterline` 由全表物化改 SQL `coalesce(sum)` 聚合（不筛 status、NULL 行不计等口径逐字保留）；scene `assign_unassigned` 逐条 embed 改整批一次（50 次 API → 1 次，归属判定只依赖质心故与逐条口径一致，批前失败零副作用更合「宁 miss 不脏写」）。基准（2000 条、7 次取中位）：proposer 73.9→5.3ms、水位 58.3→0.8ms（返回值前后一致）、reflect 空闲 259.7→66.1ms、scene 690.7→122.3ms 且 embed 50 次→1 次。新增行为 pin 测试 4 例（修复前后均绿）。票据 `.scratch/review-fixes-2026-10/issues/07-retrieval-full-table-loads.md`（第 4 项 forgetting 分页游标另行排期，本批未动）。
+
+### Removed
+
+- **弃用从未生效的 COEXIST 冲突共存裁决**：全仓实证不存在 `scope.task_types` 写入方，该机制自诞生从未生效——拆除 `gate/decision.py` 的 ConflictEngine 死仲裁块（硬冲突直断 `s.commit()` + ARCHIVE_CONFLICT，行为零变更，基线测试零改动通过佐证）、`cognition/conflicts.py` 的 `ConflictResolution.COEXIST` 枚举成员、`resolve()` 预检分支与文案分支（六维「直断」主体不动），并删除只测死机制的 `test_conflict_engine_coexist`。决策、证据链与重启条件见 [ADR-0054](docs/adr/0054-deprecate-coexist.md)。票据 `.scratch/review-fixes-2026-10/issues/08-coexist-dead-branch.md`。
+
+### Fixed
+
+- **探颐消解后双索引永不更新**：删除死 import（`lantai.retrieval.embed`）与吞异常 try/except，消解后 FTS 走 commit 前同事务 `sync_fts`（ADR-0008 强一致，失败随事务回滚宁 miss 不脏写），向量重建复用 `record_ops_service.sync_vector_upsert`（替换后新正文），同步结果以 `vector_synced`/`warnings` 如实进回执。新增真栈冒烟 `tests/test_probing_resolution_smoke.py`。票据 `.scratch/review-fixes-2026-10/issues/01-probing-index-resync.md`。
+- **每日反思 detect_patterns 无限重复写库**：pattern 侧以聚类核心实词签名 sha256 前 16 位为新列 `cognitivepattern.dedup_key`（迁移 v29，存量行 NULL 宁 miss），同键只 touch `updated_at` 不重复插行、不向下游重发；候选侧以 (role, content) 自然键去重（已否决候选不复活）；修正与行为相反的错误注释。新增 `tests/cognitive/test_pattern_dedup.py` 与 `tests/test_migration_v29_pattern_dedup_key.py`。票据 `.scratch/review-fixes-2026-10/issues/02-reflect-pattern-dedup.md`。
+- **闸门冲突账本两条路径静默丢失**：`check_unavailable` 早退前补条件 `s.commit()`（顺带救回同场被回滚的降权 Checkpoint/resolved 账本/importance），COEXIST 放行分支补同粒度 commit；用例 B 经维护者裁决放弃构造（死分支不可达，另立票 08 留痕）。`tests/test_conflict_rules.py` 新增 2 例。票据 `.scratch/review-fixes-2026-10/issues/03-gate-ledger-commit.md`。
+- **promoter 回滚不重建向量索引**：rollback 复用 `record_ops_service.sync_vector_upsert` 重建向量（失败 `logger.exception` 留痕 + `vector_synced=False` 如实回报，不阻断回滚主语义）；附带修复快照 datetime 还原（`parse_iso_utc`，非法时间戳拒绝回滚不写半笔）。新增 `tests/test_promoter_rollback_vector.py`。票据 `.scratch/review-fixes-2026-10/issues/04-promoter-rollback-vector.md`。
+- **卫生清扫**：删除死代码 `verify_api_key`、`_param_override` 与 `fts_hits` 重复赋值（连同只测死机制的 `TestParamOverrideContext`），`.gitignore` 补 5 目录、`.env.example` 补 3 变量（无真实密钥）；纯删除零行为变更。票据 `.scratch/review-fixes-2026-10/issues/05-hygiene-sweep.md`。
+- **认知上下文注入已撤回/归档记忆**：`CognitiveContextBuilder._owned_memory_stmt` 基座统一补 `status == "active"`（admin 分支不豁免，口径同 `hybrid.py` 读侧三处），retracted/archived/consolidated/superseded 记忆不再进入 `/cognitive/context` 与 `/context/prompt` 注入 Agent 提示词；top_k 下推 SQL 经评估不做（Jaccard 为 Python 分词后计算且按 role 切面截断，SQL 无法表达）。新增 `tests/test_cognitive_context_active_filter.py` 3 例（撤回走真实 `retract_memory` 全链路不 mock，断言行仍在库证明是过滤而非删除）。票据 `.scratch/review-fixes-2026-10/issues/06-cognitive-context-active-filter.md`。
+
 ## [0.23.3] - 2026-10-14
 
 ### Fixed

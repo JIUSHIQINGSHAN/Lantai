@@ -166,3 +166,61 @@ def test_proposal_prompt_excludes_other_owner_memory(owner_env):
         )
 
     assert _B_SECRET_TEXT not in captured["user"]
+
+
+def test_proposal_prompt_caps_existing_at_first_twenty(owner_env):
+    """票 07 行为 pin:EXISTING 只拼前 20 条 active(related 查询 limit 下推后语义不变)。
+
+    25 条 active 下第 20 条必须在 prompt、第 21 条起不得出现——
+    下推前后此断言逐字不变(prompt 不因全表加载改 limit 而漂移)。
+    """
+    from lantai.evolution.proposer import propose_from_candidate
+
+    now = utcnow()
+    with Session(owner_env) as s:
+        s.add(
+            MemoryCandidate(
+                id="cand_cap",
+                document_id="doc_cand_cap",
+                summary="上限 pin 候选",
+                claims=[],
+                actions=[],
+                lane="general",
+                status="new",
+            )
+        )
+        for i in range(25):
+            s.add(
+                MemoryItem(
+                    id=f"cap_{i:02d}",
+                    key=f"capkey{i:02d}",
+                    content=f"cap正文{i:02d}",
+                    lane="general",
+                    status="active",
+                    importance=0.5,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        s.commit()
+
+    captured = {}
+
+    def fake_chat_json(system, user):
+        captured["user"] = user
+        return {
+            "proposal_type": "add",
+            "target_key": "",
+            "new_content": "新记忆",
+            "memory_type": "semantic",
+            "reason": "new fact",
+            "confidence": 0.8,
+        }
+
+    with patch("lantai.evolution.proposer.chat_json", side_effect=fake_chat_json):
+        prop = propose_from_candidate("cand_cap", {"decision": "promote_semantic"})
+
+    assert prop is not None
+    assert "cap正文19" in captured["user"]  # 第 20 条在
+    assert "cap正文20" not in captured["user"]  # 第 21 条起不在
+    assert "cap正文24" not in captured["user"]

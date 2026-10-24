@@ -3,7 +3,7 @@
 POST /verification        记录一次人工验证（venue_class + passed）
 GET  /verification/stats  查看各信号类别可靠性统计与当前降权系数
 
-无内嵌鉴权：由 api_server 统一注入 verify_api_key（与 routes_retrieval 一致）。
+无内嵌鉴权：由 app.py 统一挂 AUTH 依赖（Depends(get_current_user)），与其他路由一致。
 """
 
 from fastapi import APIRouter

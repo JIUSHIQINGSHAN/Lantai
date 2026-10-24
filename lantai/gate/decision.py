@@ -10,7 +10,7 @@ from lantai.gate.contradiction import check_contradiction
 from lantai.gate.scorer import novelty_score
 from lantai.llm.client import embed
 from lantai.models.enums import GateDecision
-from lantai.models.tables import CognitiveRole, ConflictEvent, MemoryCandidate, MemoryItem
+from lantai.models.tables import ConflictEvent, MemoryCandidate, MemoryItem
 from lantai.storage import db
 from lantai.storage.vector_store import get_vector_store
 
@@ -246,6 +246,12 @@ def decide(candidate_id: str, principal=None) -> dict:
         # 不新加 GateDecision 成员——staged scorer 对未知成员会静默错算，
         # evolve_worker 的 `== "reject"` 分支也会漏接。
         if check_unavailable:
+            # 票 review-fixes/03：早退回滚前先落已记的账本——确定性规则命中的
+            # ConflictEvent（open）与 salience 降权留痕（Checkpoint + resolved
+            # 账本 + importance 变更）都已 add 进本事务，session 关闭即回滚。
+            # REJECT 进待审的同时，已判定的冲突必须可溯源（宁 miss 不脏写）。
+            if conflicts or demoted:
+                s.commit()
             return {
                 "decision": GateDecision.REJECT,
                 "reason": "contradiction check unavailable, needs human review",
@@ -258,41 +264,15 @@ def decide(candidate_id: str, principal=None) -> dict:
             s.commit()  # 降权 + Checkpoint + resolved 账本持久化（宁 miss 不脏写：有迹可溯）
 
         if conflicts and any(c["severity"] == "high" for c in conflicts):
-            # 引入 ConflictEngine 仲裁：检验候选与冲突现有记忆是否能 COEXIST（例如适用场景/任务边界互斥）
-            from lantai.cognition.conflicts import ConflictEngine, ConflictResolution
-
-            engine = ConflictEngine()
-            cand_dummy = MemoryItem(
-                id="cand_probe",
-                content=summary_text,
-                role=CognitiveRole.OBSERVATION,
-                confidence=cand.extractor_confidence,
-                structure={"scope": {"domain": getattr(cand, "lane", "general")}},
-            )
-            all_coexist = True
-            for c_info in conflicts:
-                if c_info["severity"] == "high":
-                    exist_mem = s.get(MemoryItem, c_info["memory_id"])
-                    if exist_mem:
-                        c_res = engine.resolve(cand_dummy, exist_mem, session=s)
-                        if c_res.resolution != ConflictResolution.COEXIST:
-                            all_coexist = False
-                            break
-                    else:
-                        all_coexist = False
-                        break
-
-            if all_coexist and conflicts:
-                # 冲突双方适用任务/边界条件互斥，允许作为互斥分支共存（COEXIST），不作 ARCHIVE_CONFLICT 阻断
-                logger.info("ConflictEngine resolved conflict as COEXIST for candidate %s", cand.id)
-            else:
-                s.commit()  # 账本落库
-                return {
-                    "decision": GateDecision.ARCHIVE_CONFLICT,
-                    "reason": "hard contradiction with existing memory",
-                    "conflicts": conflicts,
-                    "novelty": nv,
-                }
+            # 硬冲突直断 archive_conflict（ADR-0054：原「边界互斥可共存」引擎仲裁
+            # 块因 dummy 侧永无 task_types 而恒走本分支，属从未生效的死代码，已拆）。
+            s.commit()  # 账本落库
+            return {
+                "decision": GateDecision.ARCHIVE_CONFLICT,
+                "reason": "hard contradiction with existing memory",
+                "conflicts": conflicts,
+                "novelty": nv,
+            }
 
         if nv < settings.GATE_NOVELTY_THRESHOLD:
             # 语义高度重叠 ≠ 丢弃：可能有增量信息（如新配置项）。

@@ -193,6 +193,43 @@ class TestHealthScan:
         assert scan["snapshot"]["batch_total"] == settings.REFLECT_MAX_BATCH
 
 
+# ── _importance_waterline（票 07：SQL 聚合下推后口径 pin）─────
+
+
+class TestImportanceWaterline:
+    def test_sql_sum_matches_row_sum(self, reflect_env):
+        """票 07 冒烟（不 mock，纯 DB）：水位只累加近窗行——窗外不计、跨 status
+        都计（旧实现无 status 过滤）。SQL 下推前后此断言逐字不变。"""
+        session_factory, _ = reflect_env
+        now = utcnow()
+        old = now - timedelta(days=40)
+        _seed(
+            session_factory,
+            [
+                _mem(id="wl_r1", content="近窗1", importance=0.5, created_at=now),
+                _mem(
+                    id="wl_r2", content="近窗2", importance=0.9, created_at=now - timedelta(days=1)
+                ),
+                _mem(id="wl_r3", content="近窗3", importance=0.3, created_at=now),
+                _mem(id="wl_o1", content="窗外1", importance=0.9, created_at=old),
+                _mem(id="wl_o2", content="窗外2", importance=0.9, created_at=old),
+                # archived 近窗行也计入（旧实现不筛 status，pin 住这个口径）
+                _mem(
+                    id="wl_arch",
+                    content="归档近窗",
+                    importance=0.4,
+                    status="archived",
+                    created_at=now,
+                ),
+            ],
+        )
+        from lantai.evolution.reflector import _importance_waterline
+
+        with session_factory() as s:
+            # 0.5 + 0.9 + 0.3 + 0.4 = 2.1（两行窗外 0.9 不计入）
+            assert _importance_waterline(s) == pytest.approx(2.1)
+
+
 # ── propose_from_reflection ──────────────────────────────────
 
 
@@ -534,6 +571,44 @@ class TestRunReflectOnce:
 
         assert result["skipped"] == "idle"
         mock_chat.assert_not_called()
+
+    def test_related_texts_capped_at_first_twenty(self, reflect_env):
+        """票 07 行为 pin：related 只拼前 20 条 active（limit 下推后语义不变）。
+
+        25 条 active + 1 个 superseded 候选（保证反思真的走到 _curate）；
+        第 20 条必须在 prompt、第 21 条起不得出现——下推前后此断言逐字不变。
+        """
+        session_factory, _ = reflect_env
+        rows = []
+        for i in range(25):
+            rows.append(
+                _mem(id=f"rel_{i:02d}", key=f"relkey{i:02d}", content=f"related正文{i:02d}")
+            )
+        rows.append(
+            MemoryEdge(
+                id="edge_rel",
+                source_memory_id="rel_01",
+                target_memory_id="rel_00",
+                relation="supersedes",
+                confidence=0.9,
+            )
+        )
+        _seed(session_factory, rows)
+        prompts: list[str] = []
+
+        def spy_chat(_sys, user):
+            prompts.append(user)
+            return {"proposals": []}
+
+        from lantai.evolution.reflector import run_reflect_once
+
+        with patch("lantai.evolution.reflector.chat_json", side_effect=spy_chat):
+            run_reflect_once(source="manual")
+
+        assert prompts, "反思一次 LLM 都没调"
+        assert "related正文19" in prompts[0]  # 第 20 条在
+        assert "related正文20" not in prompts[0]  # 第 21 条起不在
+        assert "related正文24" not in prompts[0]
 
 
 # ── 运行结果落库（观察期可审计）──────────────────────

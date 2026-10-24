@@ -214,8 +214,13 @@ def assign_new_memory(memory_id: str, threshold: float | None = None) -> dict:
 
 
 def assign_unassigned(limit: int = 50, threshold: float | None = None) -> dict:
-    """补跑增量聚类：扫描无 scene_id 的 active 记忆逐条归属（消化期与手动同源）。
+    """补跑增量聚类：扫描无 scene_id 的 active 记忆批量归属（消化期与手动同源）。
 
+    批量 embed（票 `.scratch/review-fixes-2026-10/07`）：整批一次 embed 调用
+    （旧实现逐条调外部 API，50 条 = 50 次往返）。归属判定只依赖场景质心
+    （`_refresh_scene_stats` 只刷 heat/member_count，不动 centroid），批内
+    归属互不影响，故决策与逐条口径逐字一致；写路径仍逐条独立 session 落库
+    （与 `assign_new_memory` 单条提交粒度一致）。
     不建新场景（宁 miss 不脏写）；返回 {"ok", "scanned", "assigned", "missed"}。
     """
     thr = threshold if threshold is not None else settings.SCENE_CLUSTER_THRESHOLD
@@ -225,13 +230,38 @@ def assign_unassigned(limit: int = 50, threshold: float | None = None) -> dict:
             .where(MemoryItem.status == "active", MemoryItem.scene_id.is_(None))
             .limit(limit)
         ).all()
+        if not unassigned:
+            return {"ok": True, "scanned": 0, "assigned": 0, "missed": 0}
+        scenes = s.exec(select(MemoryScene)).all()
+        if not scenes:
+            # 无场景可归属：全部计 miss（与逐条实现口径一致），且一次 embed 都不调。
+            return {
+                "ok": True,
+                "scanned": len(unassigned),
+                "assigned": 0,
+                "missed": len(unassigned),
+            }
+        from lantai.llm.client import embed  # 外部依赖：允许 mock
+
+        vectors = embed([m.content for m in unassigned])
+    centroids = [sc.centroid or [] for sc in scenes]
     assigned, missed = 0, 0
-    for m in unassigned:
-        r = assign_new_memory(m.id, threshold=thr)
-        if r.get("assigned"):
-            assigned += 1
-        else:
+    for m, vector in zip(unassigned, vectors, strict=False):
+        idx, _best_sim = incremental_cluster(vector, centroids, thr)
+        if idx is None:
             missed += 1
+            continue
+        with db.get_session() as s:
+            mem = s.get(MemoryItem, m.id)
+            scene = s.get(MemoryScene, scenes[idx].id)
+            if not mem or mem.status != "active" or not scene:
+                missed += 1
+                continue
+            mem.scene_id = scene.id
+            _refresh_scene_stats(s, scene)
+            s.add(mem)
+            s.commit()
+        assigned += 1
     return {"ok": True, "scanned": len(unassigned), "assigned": assigned, "missed": missed}
 
 
