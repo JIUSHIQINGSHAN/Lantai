@@ -11,7 +11,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from lantai.core.ids import new_id
-from lantai.models.tables import ConflictEvent, MemoryEdge, MemoryItem
+from lantai.models.tables import ConflictEvent, MemoryCheckpoint, MemoryEdge, MemoryItem
 from lantai.storage.fts import init_fts
 
 
@@ -134,6 +134,141 @@ class TestSupersedeCorrection:
                 select(ConflictEvent).where(ConflictEvent.memory_id == "evs-old2")
             ).first()
             assert cfev.detail["anchor_raw"] == "2026-01-01T00:00:00+00:00"
+
+
+class TestCreatedAtFallbackAnchor:
+    """票 13：created_at 兜底锚必须归一 UTC（同 event_time/valid_from 分支口径），
+    不得让 naive 值流入 anchor 比较面/落库面后静默失败。"""
+
+    def test_created_at_fallback_anchor_is_utc(self, correction_env):
+        """红→绿主证据：new 无 event_time、valid_from=None、created_at 为 naive
+        （无偏移 ISO 串解析产物，未过 ensure_aware 的直传形态）→ 兜底锚须过
+        _ensure_utc。修复前返回裸 naive，与 DB 读回的 aware old.valid_from 比较
+        抛 TypeError，被 except 吞成 {"ok": False}——替换型更正静默失败。"""
+        from datetime import datetime
+
+        from lantai.cognition.late_correction import correction_anchor
+
+        new = _mem(
+            "evs-anchor-naive",
+            event_time=None,
+            valid_from=None,
+            created_at=datetime(2026, 10, 25),  # naive
+        )
+        anchor = correction_anchor(new)
+        assert anchor.tzinfo is not None, "created_at 兜底锚未归一 UTC（票 13）"
+        assert anchor.replace(tzinfo=None) == datetime(2026, 10, 25)
+
+    def test_created_at_fallback_correction_succeeds(self, correction_env):
+        """票据冒烟口径（真库）：new 无 event_time、valid_from=NULL（内存态，
+        ORM 列默认不触发）→ created_at 兜底锚，替换型更正成功、三轴落位。
+        （注：经 ORM 落库的 valid_from=NULL 不可达——列默认在 INSERT 时回填
+        utcnow，故 DB 读回形态的 NULL valid_from 走不到 created_at 分支。）"""
+        from datetime import datetime
+
+        from lantai.cognition.late_correction import apply_supersede_correction
+
+        with db_module.get_session() as s:
+            old = _mem(
+                "evs-fb-old",
+                content="用户的主数据库是 PostgreSQL 15",
+                valid_from=datetime(2026, 8, 1, tzinfo=UTC),
+                created_at=datetime(2026, 8, 1, tzinfo=UTC),
+            )
+            new = _mem(
+                "evs-fb-new",
+                content="用户的主数据库是 PostgreSQL 16",
+                event_time=None,
+                valid_from=None,
+                created_at=datetime(2026, 10, 25, tzinfo=UTC),
+            )
+            assert new.created_at.tzinfo is not None
+            s.add(old)
+            s.commit()
+
+            res = apply_supersede_correction(old, new, session=s, reason="版本升级")
+            assert res["ok"] is True, f"created_at 兜底锚更正失败: {res}"
+            assert res["approximated"] is True and res["clamped"] is False
+            s.refresh(old)
+            # 事件轴：锚定到 created_at（兜底分支），三轴各归其位
+            assert old.valid_to.replace(tzinfo=None) == datetime(2026, 10, 25)
+            assert old.lifecycle_status == "superseded"
+            assert old.superseded_by == "evs-fb-new"
+
+
+class TestCheckpointSnapshot:
+    """票 13：checkpoint before 不得为空 dict——回滚该版本才有 before 可依
+    （对照 promoter 各分支均存突变前真实快照的既有口径）。"""
+
+    def test_supersede_checkpoint_before_real_snapshot(self, correction_env):
+        from datetime import datetime
+
+        from lantai.cognition.late_correction import apply_supersede_correction
+
+        with db_module.get_session() as s:
+            old = _mem(
+                "evs-ck-old",
+                content="服务器在 A 机房",
+                valid_from=datetime(2026, 8, 1, tzinfo=UTC),
+                created_at=datetime(2026, 8, 1, tzinfo=UTC),
+            )
+            new = _mem(
+                "evs-ck-new",
+                content="服务器从 9 月起换到 B 机房",
+                event_time=datetime(2026, 9, 1, tzinfo=UTC),
+                event_time_precision="day",
+            )
+            s.add_all([old, new])
+            s.commit()
+
+            res = apply_supersede_correction(old, new, session=s, reason="机房迁移")
+            assert res["ok"] is True
+            ckpt = s.exec(
+                select(MemoryCheckpoint).where(
+                    MemoryCheckpoint.memory_id == "evs-ck-old",
+                    MemoryCheckpoint.trigger == "late_correction",
+                )
+            ).first()
+            assert ckpt is not None
+            # before = 突变前真实快照（JSON 形态，promoter 同款）
+            assert ckpt.before, "checkpoint before 为空快照（票 13）"
+            assert ckpt.before["lifecycle_status"] == "active"
+            assert ckpt.before["superseded_by"] is None
+            assert ckpt.before["valid_to"] is None
+            assert ckpt.before["content"] == "服务器在 A 机房"
+            # after 为突变后状态，before/after 成对可回滚
+            assert ckpt.after["lifecycle_status"] == "superseded"
+            assert ckpt.after["superseded_by"] == "evs-ck-new"
+
+    def test_expire_checkpoint_before_real_snapshot(self, correction_env):
+        from datetime import datetime
+
+        from lantai.cognition.late_correction import apply_expire_correction
+
+        with db_module.get_session() as s:
+            old = _mem(
+                "evs-ck-exp",
+                content="签证 10 月 31 日到期",
+                valid_from=datetime(2026, 10, 1, tzinfo=UTC),
+            )
+            s.add(old)
+            s.commit()
+
+            res = apply_expire_correction(
+                old, valid_to=datetime(2026, 10, 31, tzinfo=UTC), reason="签证到期", session=s
+            )
+            assert res["ok"] is True
+            ckpt = s.exec(
+                select(MemoryCheckpoint).where(
+                    MemoryCheckpoint.memory_id == "evs-ck-exp",
+                    MemoryCheckpoint.trigger == "late_correction",
+                )
+            ).first()
+            assert ckpt is not None
+            assert ckpt.before, "失效型 checkpoint before 为空快照（票 13）"
+            assert ckpt.before["valid_to"] is None
+            assert ckpt.before["content"] == "签证 10 月 31 日到期"
+            assert ckpt.after["valid_to"] is not None
 
 
 class TestRecencyAxis:

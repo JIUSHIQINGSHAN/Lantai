@@ -154,7 +154,11 @@ def temporal_view_filter(
         if matched_by in ("unknown_soft",) or (
             m.event_time is not None and m.event_time_precision == "fuzzy"
         ):
-            m.decay_score *= fuzzy_penalty  # 软降权（I4：降权不剔除）
+            # 软降权（I4：降权不剔除）作用在**本地副本**上（票
+            # `.scratch/review-fixes-2026-10/10`，同 hybrid._chronos_filter）：
+            # 带 session 的检索调用一旦 commit，原地 `*=` 会把读路径的临时
+            # 降权永久写回库；副本与原对象唯一差异是 decay_score。
+            m = m.model_copy(update={"decay_score": m.decay_score * fuzzy_penalty})
         if matched_by:
             explain_map[m.id] = {
                 "view": "as_of" if as_of_dt else "window",

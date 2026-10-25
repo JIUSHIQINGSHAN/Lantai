@@ -65,12 +65,30 @@ def rerank(query: str, documents: list[str], top_k: int) -> list[dict]:
 
 
 def _parse_response(data: dict, original_docs: list[str], top_k: int) -> list[dict]:
-    """解析硅基流 reranker 响应"""
+    """解析硅基流 reranker 响应
+
+    审查 M11（票 15）：缺失/越界 index 的返回项跳过并记 warning 留痕，
+    不默认 0、不脏配候选；全部缺失时返回空列表，由调用方走既有降级链
+    （拾遗 ADR-0028 口径：宁降级不脏写）。
+    """
     results = data.get("results", [])
+    window = results[:top_k]
     reranked = []
-    for item in results[:top_k]:
-        idx = item.get("index", 0)
+    skipped = 0
+    for item in window:
+        idx = item.get("index")
+        # index 必须是指向 original_docs 的有效整型下标；bool 是 int 子类，
+        # 一并排除（防 false→0 重演脏配第 0 号候选）
+        if not isinstance(idx, int) or isinstance(idx, bool) or not 0 <= idx < len(original_docs):
+            skipped += 1
+            continue
         score = item.get("score", 0.0)
-        doc_text = item.get("document", original_docs[idx] if idx < len(original_docs) else "")
+        doc_text = item.get("document", original_docs[idx])
         reranked.append({"score": score, "document": doc_text, "index": idx})
+    if skipped:
+        logger.warning(
+            "Rerank response: skipped %d/%d result(s) with missing or out-of-range index",
+            skipped,
+            len(window),
+        )
     return reranked

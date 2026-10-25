@@ -37,7 +37,7 @@ def _forgetting_scope(principal):
     return (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
 
 
-def apply_forgetting(principal=None):
+def apply_forgetting(principal=None, *, page_size: int = 500):
     """衰减 + 自动归档。
 
     - 计算每条记忆的 decay_score（指数衰减）
@@ -47,60 +47,85 @@ def apply_forgetting(principal=None):
     - working memory 超过 TTL 且无帮助时转 archived
     - archived 记忆不参与检索（WHERE status='active'），但物理不删
 
+    分页游标（票 .scratch/review-fixes-2026-10/09，审查 M9-4）：候选集按 id 序
+    keyset 分批加载（每批 `page_size` 条，默认 500），不再 `all()` 一次性全表——
+    内存与单查询耗时随批大小而非库容增长。判定逻辑、衰减公式、归档阈值与
+    全量加载口径逐字一致；id 是带前缀 ULID（new_id），字典序即稳定全序，
+    游标比较全部在库内完成。批间 commit 延续既有「每 100 条变更一 commit」
+    语义（batch_size），页尾把不足 100 的余量落库并释放本页对象。
+
     归属（票 .scratch/readside-gaps/12）：此前候选集是全表，一个身份都不取——
     任何持 key 者都能把**别人**的记忆改成 archived，而 archived 没有 undo
     入口。宁 miss 不脏写：收窄后没有可处理的记忆就空跑，不动别人的。
     """
+    if page_size < 1:
+        raise ValueError(f"page_size 必须 ≥ 1，得到 {page_size}")
     now = utcnow()
     batch_size = 100
     with db.get_session() as s:
         batch_count = 0
-        q = select(MemoryItem).where(MemoryItem.status == "active")
+        base_q = select(MemoryItem).where(MemoryItem.status == "active")
         scope = _forgetting_scope(principal)
         if scope is not None:
-            q = q.where(scope)
-        for m in s.exec(q).all():
-            changed = False
-            # procedural 永不衰减：跳过衰减与归档判定，铁律天然浮顶
-            if m.decay_class == "procedural":
-                if m.decay_score != 1.0:
-                    m.decay_score = 1.0
-                    changed = True
-            else:
-                last = m.last_used_at or m.created_at
-                if last.tzinfo is not None and now.tzinfo is None:
-                    last = last.replace(tzinfo=None)
-                elif last.tzinfo is None and now.tzinfo is not None:
-                    last = last.replace(tzinfo=now.tzinfo)
-                days = max(0.0, (now - last).total_seconds() / 86400.0)
-                strength = _lane_strength(m.importance, m.use_count, m.lane)
-                new_decay = math.exp(-days / strength)
+            base_q = base_q.where(scope)
+        last_id: str | None = None
+        while True:
+            q = base_q
+            if last_id is not None:
+                q = q.where(MemoryItem.id > last_id)
+            page = s.exec(q.order_by(MemoryItem.id).limit(page_size)).all()
+            if not page:
+                break
+            # 游标在任何 commit 之前捕获：commit 会 expire 页内对象
+            last_id = page[-1].id
+            for m in page:
+                changed = False
+                # procedural 永不衰减：跳过衰减与归档判定，铁律天然浮顶
+                if m.decay_class == "procedural":
+                    if m.decay_score != 1.0:
+                        m.decay_score = 1.0
+                        changed = True
+                else:
+                    last = m.last_used_at or m.created_at
+                    if last.tzinfo is not None and now.tzinfo is None:
+                        last = last.replace(tzinfo=None)
+                    elif last.tzinfo is None and now.tzinfo is not None:
+                        last = last.replace(tzinfo=now.tzinfo)
+                    days = max(0.0, (now - last).total_seconds() / 86400.0)
+                    strength = _lane_strength(m.importance, m.use_count, m.lane)
+                    new_decay = math.exp(-days / strength)
 
-                # Ticket 2.4 [DD-06]: 跳过极微小更新
-                if abs(m.decay_score - new_decay) >= 0.001:
-                    m.decay_score = new_decay
-                    changed = True
+                    # Ticket 2.4 [DD-06]: 跳过极微小更新
+                    if abs(m.decay_score - new_decay) >= 0.001:
+                        m.decay_score = new_decay
+                        changed = True
 
-                # 自动归档：decay 极低 或 working memory 过期且无用
-                if (
-                    m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD
-                    and m.status != "archived"
-                    or (
-                        m.tier == "working"
-                        and days > settings.WORKING_MEMORY_TTL_DAYS
-                        and m.helpful_count == 0
+                    # 自动归档：decay 极低 或 working memory 过期且无用
+                    if (
+                        m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD
                         and m.status != "archived"
-                    )
-                ):
-                    m.status = "archived"
-                    changed = True
+                        or (
+                            m.tier == "working"
+                            and days > settings.WORKING_MEMORY_TTL_DAYS
+                            and m.helpful_count == 0
+                            and m.status != "archived"
+                        )
+                    ):
+                        m.status = "archived"
+                        changed = True
 
-            if changed:
-                s.add(m)
-                batch_count += 1
-                if batch_count >= batch_size:
-                    s.commit()
-                    batch_count = 0
+                if changed:
+                    s.add(m)
+                    batch_count += 1
+                    if batch_count >= batch_size:
+                        s.commit()
+                        batch_count = 0
 
-        if batch_count > 0:
-            s.commit()
+            # 批间 commit：页尾把不足 100 的余量落库（延续既有分批语义）
+            if batch_count > 0:
+                s.commit()
+                batch_count = 0
+            if len(page) < page_size:
+                break
+            # 释放已处理页的对象：会话不随周期累积全表引用，内存有界
+            s.expunge_all()

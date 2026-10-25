@@ -11,6 +11,7 @@
 （inject_checkpoint_context）；陈旧（> CHECKPOINT_STALENESS_DAYS）注入自动标注。
 宁 miss 不脏写：块内容 < CHECKPOINT_MIN_CONTENT 不落、非法 block_key 拒绝、
 session_id < 3 字符拒绝；同 session 重写即替换（upsert）。
+全短重写不清空旧快照（票 14：新内容不合格 = 本次不写，保留旧快照并返回拒绝明细）。
 """
 
 from datetime import UTC, datetime, timedelta
@@ -34,18 +35,41 @@ BLOCK_LABELS: dict[str, str] = {
 _BACKGROUND_LOG_PREFIX = "[IMPORTANT: Background process"
 
 
+def _classify_blocks(blocks) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """把输入块分为（合法, 拒绝明细）两组（纯函数，可测）。
+
+    票 14：write_session_checkpoint 校验前置需要拒绝明细——全部新块被拒时
+    保留旧快照并如实返回，而不是删旧写零。合法组语义与旧 validate_blocks
+    完全一致（五段白名单且有序、过短不落、后台通知整块丢弃、超长截断）；
+    拒绝组只进返回体明细，不影响落库行为。未提供的键不算拒绝。
+    """
+    valid: list[tuple[str, str]] = []
+    rejected: list[tuple[str, str]] = []
+    if not isinstance(blocks, dict):
+        return valid, rejected
+    for key in BLOCK_LABELS:
+        c = blocks.get(key)
+        if c is None:
+            continue
+        if not isinstance(c, str):
+            rejected.append((key, "内容非字符串"))
+        elif len(c.strip()) < settings.CHECKPOINT_MIN_CONTENT:
+            rejected.append(
+                (key, f"内容过短（< CHECKPOINT_MIN_CONTENT={settings.CHECKPOINT_MIN_CONTENT}）")
+            )
+        elif c.lstrip().startswith(_BACKGROUND_LOG_PREFIX):
+            rejected.append((key, "后台进程通知非会话内容"))
+        else:
+            valid.append((key, c.strip()[: settings.CHECKPOINT_MAX_CONTENT]))
+    for key in blocks:
+        if key not in BLOCK_LABELS:
+            rejected.append((key, "非法 block_key（五段白名单之外）"))
+    return valid, rejected
+
+
 def validate_blocks(blocks: dict) -> list[tuple[str, str]]:
     """过滤非法/过短块，返回 [(key, content)] 合法块（纯函数，可测）。"""
-    out: list[tuple[str, str]] = []
-    if not isinstance(blocks, dict):
-        return out
-    for key, label in BLOCK_LABELS.items():  # noqa: B007 label 保留可读性
-        c = blocks.get(key)
-        if isinstance(c, str) and len(c.strip()) >= settings.CHECKPOINT_MIN_CONTENT:
-            if c.lstrip().startswith(_BACKGROUND_LOG_PREFIX):
-                continue
-            out.append((key, c.strip()[: settings.CHECKPOINT_MAX_CONTENT]))
-    return out
+    return _classify_blocks(blocks)[0]
 
 
 def _checkpoint_scope(principal):
@@ -101,11 +125,23 @@ def write_session_checkpoint(session_id: str, blocks: dict, principal=None) -> d
     tenant / agent 保持 `getattr(..., None)`：它们没有"人人可读"的读侧
     口径，改了只会扩大回归面。`crystal_service.py:84` 的 NULL 是**刻意的**
     （后台巡检确有调用者），不受本票影响。
+
+    票 14：校验前置——全部新块被 validate 拒绝（全短/全非法/空 blocks）时，
+    旧快照原样保留、不碰库，返回 `status="rejected"` + 拒绝明细（新内容
+    不合格 = 本次不写，而非删旧写零清空历史）；只有存在合法新块才走
+    delete+insert（同一事务，upsert 语义不变）。
     """
     if not session_id or len(session_id.strip()) < 3:
         raise ValueError("session_id 至少 3 字符")
     session_id = session_id.strip()
-    valid = validate_blocks(blocks)
+    valid, rejected = _classify_blocks(blocks)
+    if not valid:
+        return {
+            "session_id": session_id,
+            "blocks_written": 0,
+            "status": "rejected",
+            "rejected": rejected,
+        }
     now = utcnow()
     from lantai.core.acl import viewer_of
 

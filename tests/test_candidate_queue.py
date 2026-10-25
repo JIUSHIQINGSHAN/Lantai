@@ -19,6 +19,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
 from lantai.core.settings import settings
+from lantai.models.enums import ProposalStatus
 from lantai.models.tables import MemoryCandidate, MemoryProposal
 
 
@@ -262,6 +263,72 @@ class TestEvolveWorkerIntegration:
             c = s.get(MemoryCandidate, "cand_low")
             assert c.status == "pending_review"
             assert c.review_due_at is not None
+
+
+class TestEvolveAutoApplyConf:
+    """票 16 L3：自动应用阈值 0.7 硬编码 → `settings.EVOLVE_AUTO_APPLY_CONF`。
+
+    命名对照 reflector 同类阈值（`REFLECT_AUTO_APPLY_CONF`，settings.py 注释
+    明写「与 evolve 自动应用阈值一致」——本次正是把那个 0.7 迁入 settings）。
+    行为口径：候选经真 decide/propose 链（conftest 替身只替外部 LLM API，
+    闸门裁决/提案落库/晋升应用全是真代码），prop.confidence=0.9：
+
+    - 默认 0.7 → 自动 apply（proposal → APPLIED，回归护栏：默认行为不变）；
+    - 阈值调高 0.95 → 0.9 < 0.95 → 保持 PENDING 进人工待审
+      （改前硬编码 0.7 会照样 apply → 红）。
+    """
+
+    _PROPOSAL = {
+        "proposal_type": "add",
+        "target_key": "发布流程约定",
+        "new_content": "团队约定发布流程先全量测试再打包",
+        "memory_type": "semantic",
+        "reason": "r",
+        "confidence": 0.9,
+    }
+
+    @pytest.fixture(autouse=True)
+    def _pinned_settings(self, monkeypatch):
+        """锚定闸门置信度门槛（同 test_distill 口径：不让宿主 .env 决定测试走哪条分支）。"""
+        monkeypatch.setattr(settings, "GATE_MIN_EXTRACTOR_CONF", 0.25)
+
+    def _seed_and_run(self, session_factory, monkeypatch, auto_apply_conf):
+        from unittest.mock import patch
+
+        with session_factory() as s:
+            _make_cand(s, "cand_hi", status="new", extractor_confidence=0.9)
+
+        with (
+            patch(
+                "lantai.evolution.proposer.chat_json",
+                return_value=dict(self._PROPOSAL),
+            ),
+            patch.object(settings, "EVOLVE_AUTO_APPLY_CONF", auto_apply_conf),
+        ):
+            from lantai.workers.evolve_worker import run_evolve_once
+
+            run_evolve_once()
+
+        with session_factory() as s:
+            return s.exec(
+                select(MemoryProposal).where(MemoryProposal.candidate_id == "cand_hi")
+            ).first()
+
+    def test_default_threshold_still_auto_applies(self, param_env):
+        """回归护栏：默认阈值 0.7 下 0.9 置信提案照旧自动 apply。"""
+        session_factory, _ = param_env
+        prop = self._seed_and_run(session_factory, None, 0.7)
+        assert prop is not None, "高置信候选应产出提案"
+        assert prop.status == ProposalStatus.APPLIED, f"默认阈值应自动应用：{prop.status}"
+
+    def test_raised_threshold_defers_to_human_review(self, param_env):
+        """阈值可配置：调高到 0.95 → 0.9 不再自动 apply，保持 PENDING 待人工裁决。"""
+        session_factory, _ = param_env
+        prop = self._seed_and_run(session_factory, None, 0.95)
+        assert prop is not None, "高置信候选应产出提案"
+        assert prop.status == ProposalStatus.PENDING, (
+            f"调高阈值后应进人工待审而不是自动应用：{prop.status}"
+        )
 
 
 # ── REST 路由测试 ──────────────────────────────────────────────

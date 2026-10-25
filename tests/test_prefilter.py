@@ -241,3 +241,62 @@ class TestGateUserIsolation:
         res_a2 = relevance_check("继续说", user_id="userA", now=3.0)
         assert res_a2["needs_memory"] is True
         assert res_a2["reason"] == "session_followup_hot"
+
+
+class TestGateUserCacheBounded:
+    """票 16 L2：`_USER_GATE_DECISIONS` 按 user_id 无界增长——多用户长跑进程
+    内存单调涨。修复口径对照 coalesce `_seen` 的 TTL 清扫既有写法：条目超
+    TTL 未活跃即清，另设容量上限兜底（超限按 last-seen 最旧先逐）。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_user_caches(self, monkeypatch):
+        import lantai.gate.prefilter as pf
+
+        monkeypatch.setattr(pf, "_USER_GATE_DECISIONS", {})
+
+    def test_expired_entries_swept(self):
+        import lantai.gate.prefilter as pf
+
+        relevance_check("上次我们聊的项目", user_id="u1", now=1.0)
+        relevance_check("上次我们聊的项目", user_id="u2", now=1.0)
+        assert len(pf._USER_GATE_DECISIONS) == 2
+
+        # 新用户在 TTL 之后进入 → 顺带清扫两个早已不活跃的条目
+        late_now = 1.0 + pf._GATE_USER_CACHE_TTL + 1.0
+        relevance_check("上次我们聊的项目", user_id="u3", now=late_now)
+        assert "u1" not in pf._USER_GATE_DECISIONS, "超 TTL 条目应被清扫"
+        assert "u2" not in pf._USER_GATE_DECISIONS, "超 TTL 条目应被清扫"
+        assert "u3" in pf._USER_GATE_DECISIONS
+
+    def test_fresh_entries_not_swept(self):
+        import lantai.gate.prefilter as pf
+
+        relevance_check("上次我们聊的项目", user_id="u1", now=1.0)
+        relevance_check("上次我们聊的项目", user_id="u2", now=2.0)
+        relevance_check("上次我们聊的项目", user_id="u3", now=3.0)
+        assert len(pf._USER_GATE_DECISIONS) == 3, "TTL 内的活跃条目不得误清"
+
+    def test_capacity_cap_evicts_oldest(self, monkeypatch):
+        import lantai.gate.prefilter as pf
+
+        monkeypatch.setattr(pf, "_GATE_USER_CACHE_MAX", 3)
+        for i in range(3):
+            relevance_check("上次我们聊的项目", user_id=f"u{i}", now=10.0 + i)
+        assert len(pf._USER_GATE_DECISIONS) == 3
+
+        # 第 4 个用户进入 → 超容量上限 → last-seen 最旧的 u0 被逐出
+        relevance_check("上次我们聊的项目", user_id="u3", now=13.0)
+        assert len(pf._USER_GATE_DECISIONS) <= 3, "容量上限必须有界"
+        assert "u0" not in pf._USER_GATE_DECISIONS, "超限应先逐最旧条目"
+        assert "u3" in pf._USER_GATE_DECISIONS
+
+    def test_capacity_cap_keeps_active_users(self, monkeypatch):
+        """回归护栏：超限逐出最旧后，近期活跃用户的热缓存仍在（追问沿用不受损）。"""
+        import lantai.gate.prefilter as pf
+
+        monkeypatch.setattr(pf, "_GATE_USER_CACHE_MAX", 2)
+        relevance_check("上次我们聊的项目", user_id="old", now=1.0)
+        relevance_check("上次我们聊的项目", user_id="new", now=100.0)
+        relevance_check("上次我们聊的项目", user_id="newcomer", now=101.0)
+        assert pf._USER_GATE_DECISIONS["new"]["time"] == 100.0, "活跃用户热缓存不得被误逐"

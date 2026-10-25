@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, delete, select
 
 import lantai.models.tables  # noqa: F401  注册全部表
 import lantai.storage.db as db_module
@@ -96,6 +96,39 @@ def test_write_validation(ckpt_env):
         write_session_checkpoint("   ", _BLOCKS)
 
 
+def test_rewrite_all_short_keeps_old_snapshot(ckpt_env):
+    """票 14：全短内容重写不清空旧快照（validate 前置，宁 miss 不脏写）。
+
+    旧实现先 delete 再 insert，新块全被 validate 拒绝时删旧写零、快照无提示
+    清空。新语义：新内容不合格 = 本次不写（返回体含拒绝明细），旧快照原样
+    保留；之后合法内容重写仍正常替换（upsert）。
+    """
+    write_session_checkpoint("sess-01", _BLOCKS)
+    r = write_session_checkpoint("sess-01", {"cp_active_intent": "清", "cp_next_action": "短"})
+    assert r["status"] == "rejected"
+    assert r["blocks_written"] == 0
+    assert {k for k, _ in r["rejected"]} == {"cp_active_intent", "cp_next_action"}
+    cp = get_checkpoint("sess-01")
+    assert cp is not None, "全短重写不应清空旧快照"
+    assert len(cp["blocks"]) == 5
+    assert cp["blocks"]["cp_active_intent"] == _BLOCKS["cp_active_intent"]
+    # 合法内容重写 → 正常替换
+    r2 = write_session_checkpoint("sess-01", {"cp_active_intent": "新一轮合法意图"})
+    assert r2["status"] == "ok"
+    assert r2["blocks_written"] == 1
+    cp2 = get_checkpoint("sess-01")
+    assert len(cp2["blocks"]) == 1
+    assert cp2["blocks"]["cp_active_intent"] == "新一轮合法意图"
+
+
+def test_rewrite_empty_blocks_keeps_old_snapshot(ckpt_env):
+    """票 14 同支路：空 blocks（无任何新块）同样不清空旧快照。"""
+    write_session_checkpoint("sess-01", _BLOCKS)
+    r = write_session_checkpoint("sess-01", {})
+    assert r["status"] == "rejected"
+    assert get_checkpoint("sess-01") is not None
+
+
 def test_latest_is_newest_session(ckpt_env):
     write_session_checkpoint("sess-old", _BLOCKS)
     write_session_checkpoint(
@@ -140,8 +173,11 @@ def test_inject_format_and_staleness(ckpt_env, monkeypatch):
         s.commit()
     text2 = inject_checkpoint_context(now=now)
     assert "30天+前" in text2
-    # 清空后无合法块 → 空串（零侵入降级）
-    write_session_checkpoint("sess-01", {"cp_active_intent": "清"})  # 过短不落
+    # 无快照 → 空串（零侵入降级）。注：票 14 后全短重写不再清空旧快照
+    # （见 test_rewrite_all_short_keeps_old_snapshot），这里直删行模拟真实无快照。
+    with ckpt_env() as s:
+        s.exec(delete(SessionCheckpoint).where(SessionCheckpoint.session_id == "sess-01"))
+        s.commit()
     assert inject_checkpoint_context(now=now) == ""
 
 

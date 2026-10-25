@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any
 
+from lantai.core.time import ensure_aware
 from lantai.models.tables import CognitiveRole, MemoryItem
 
 
@@ -65,8 +66,11 @@ def resolve_conflict(item_a: MemoryItem, item_b: MemoryItem) -> MemoryItem:
 
     # Priorities are equal, compare recency
     # Assume item_a and item_b have created_at
-    time_a = item_a.created_at
-    time_b = item_b.created_at
+    # 时区防护（票 `.scratch/review-fixes-2026-10/10`）：混来源 naive/aware
+    # 直接比较会 TypeError。ensure_aware 把 naive 按 UTC 解释、aware 归一 UTC，
+    # 只取本地值比较——不回写 ORM 属性（读路径突变纪律）。
+    time_a = ensure_aware(item_a.created_at)
+    time_b = ensure_aware(item_b.created_at)
 
     if time_a >= time_b:
         return item_a

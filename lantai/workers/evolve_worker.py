@@ -70,7 +70,8 @@ def run_evolve_once(principal=None):
             continue
 
         # 自动应用规则：置信度足够高且无强冲突 → 自动 apply
-        if prop.confidence >= 0.7 and not prop.conflict_ids:
+        # （阈值 EVOLVE_AUTO_APPLY_CONF 迁入 settings，L3 票 16；原硬编码 0.7）
+        if prop.confidence >= settings.EVOLVE_AUTO_APPLY_CONF and not prop.conflict_ids:
             apply_proposal(prop.id)
         else:
             logger.info("proposal %s pending human review", prop.id)

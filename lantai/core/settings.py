@@ -53,6 +53,10 @@ class Settings(BaseSettings):
 
     INGEST_CRON_MINUTES: int = 60
     EVOLVE_CRON_MINUTES: int = 30
+    # 演化自动应用阈值（L3 票 16）：候选提案置信度 ≥ 此值且无强冲突 → 自动
+    # apply，否则进人工待审。命名对照 reflector 同类阈值 REFLECT_AUTO_APPLY_CONF
+    # （其注释明写「与 evolve 自动应用阈值一致」）——原 0.7 硬编码迁入，默认不变。
+    EVOLVE_AUTO_APPLY_CONF: float = 0.7
     FORGET_CRON_HOURS: int = 24
 
     GATE_MIN_EXTRACTOR_CONF: float = 0.55

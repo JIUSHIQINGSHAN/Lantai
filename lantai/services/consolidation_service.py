@@ -51,6 +51,8 @@ _LAST_CONSOLIDATION_REPORT: dict = {
     "skipped_rejected_cooldown": 0,
     "skipped_lowq": 0,
     "error": "",
+    # 票 11 增量键：单簇/收尾失败明细（成功期空表），键集与运行后 report 对齐。
+    "warnings": [],
 }
 
 _CONSOLIDATION_AUDIT_MODES = ("off", "shadow", "enforce")
@@ -584,6 +586,8 @@ def _refused_report(mode: str, error: str) -> dict:
         "skipped_rejected_cooldown": 0,
         "skipped_lowq": 0,
         "error": error,
+        # 票 11：拒绝路径未进簇循环，warnings 恒空表——键集与运行后 report 对齐。
+        "warnings": [],
     }
 
 
@@ -653,51 +657,92 @@ def run_consolidation_cycle(session: Session | None = None, principal=None) -> d
         skipped_dupes = 0
         skipped_cooldown = 0
         skipped_lowq = 0
-        for cluster in clusters:
-            if mode == "enforce":
-                # 生成侧幂等去重与拒绝冷却（ADR-0050 决策 3）：先查后奏，
-                # 防每夜重复提纯（真实 LLM 成本）与重复提案打扰
-                blocked = _consolidation_proposal_blocked(s, [m.id for m in cluster])
-                if blocked == "dupes":
-                    skipped_dupes += 1
-                    continue
-                if blocked == "cooldown":
-                    skipped_cooldown += 1
-                    continue
-            res = consolidate_cluster(cluster, session=s)
-            if res is None:
-                # LLM 失败/输出无效/TrustMem 不过：保持原库不变，计入 skipped 不静默
-                # （同 autodream skipped 纪律）
-                skipped_lowq += 1
-            elif isinstance(res, MemoryProposal):
-                proposals_created += 1
-                purified_ok += 1
-            else:
-                new_count += 1
-                purified_ok += 1
-                if mode == "shadow":
-                    # shadow 每笔直写恰同步落一条影子提案（consolidate_cluster 内）——
-                    # report 契约：proposals_created 在 shadow 期 = 影子提案数 = 直写数
-                    proposals_created += 1
+        pruned = 0
+        # 单簇失败明细（票 11）：复用 revive 碎片路径的 warnings 聚合口径
+        # （record_ops_service._revive_one「宁缺不糊」先例），聚合进报告不静默。
+        warnings: list[str] = []
+        try:
+            for idx, cluster in enumerate(clusters, 1):
+                try:
+                    if mode == "enforce":
+                        # 生成侧幂等去重与拒绝冷却（ADR-0050 决策 3）：先查后奏，
+                        # 防每夜重复提纯（真实 LLM 成本）与重复提案打扰
+                        blocked = _consolidation_proposal_blocked(s, [m.id for m in cluster])
+                        if blocked == "dupes":
+                            skipped_dupes += 1
+                            continue
+                        if blocked == "cooldown":
+                            skipped_cooldown += 1
+                            continue
+                    res = consolidate_cluster(cluster, session=s)
+                    if res is None:
+                        # LLM 失败/输出无效/TrustMem 不过：保持原库不变，计入 skipped 不静默
+                        # （同 autodream skipped 纪律）
+                        skipped_lowq += 1
+                    elif isinstance(res, MemoryProposal):
+                        proposals_created += 1
+                        purified_ok += 1
+                    else:
+                        new_count += 1
+                        purified_ok += 1
+                        if mode == "shadow":
+                            # shadow 每笔直写恰同步落一条影子提案（consolidate_cluster 内）——
+                            # report 契约：proposals_created 在 shadow 期 = 影子提案数 = 直写数
+                            proposals_created += 1
+                except Exception as exc:
+                    # 票 11 单簇异常保护：一簇失败只弃一簇，不中断整周期。
+                    # 半成品事务必须回滚——consolidate_cluster 在 embed 失败前已 flush
+                    # （折叠/主记忆/checkpoint/FTS 同事务），不回滚则这些半成品会搭
+                    # 下一簇的 commit 顺车落库成孤儿态；碎片保持 active 可重试。
+                    # 失败明细进 warnings 不静默（异常本体 + 失败簇碎片 id），
+                    # 对照 revive「宁缺不糊」先例——不吞异常不留痕。
+                    frag_ids = [m.id for m in cluster]
+                    with contextlib.suppress(Exception):
+                        s.rollback()
+                    logger.error(
+                        "沉潜：第 %d/%d 簇巩固失败，弃簇继续（碎片保持 active）%s: %s",
+                        idx,
+                        len(clusters),
+                        frag_ids,
+                        exc,
+                    )
+                    warnings.append(
+                        f"cluster {idx}/{len(clusters)} consolidate failed "
+                        f"(fragments={frag_ids} kept active): {exc!r}"
+                    )
 
-        pruned = prune_decayed_synapses(session=s, principal=principal)
-        # status 判定扩展（ADR-0050 决策 3）：只产提案的运行不再误报 idle
-        status = "success" if (new_count + proposals_created + pruned) > 0 else "idle"
+            # 收尾动作（票 11 必达）：prune 自身失败同样不吞——明细进 warnings，
+            # 报告照常落盘，不让修剪故障升级成整周期无报告。
+            try:
+                pruned = prune_decayed_synapses(session=s, principal=principal)
+            except Exception as exc:
+                with contextlib.suppress(Exception):
+                    s.rollback()
+                logger.error("沉潜：收尾修剪失败（明细进 warnings 不静默）: %s", exc)
+                warnings.append(f"prune_decayed_synapses failed: {exc!r}")
+                pruned = 0
+        finally:
+            # 票 11 收尾必达（try/finally）：无论循环/修剪成败，报告必须落
+            # _LAST_CONSOLIDATION_REPORT——失败周期不再停留旧值。
+            # status 判定扩展（ADR-0050 决策 3）：只产提案的运行不再误报 idle
+            status = "success" if (new_count + proposals_created + pruned) > 0 else "idle"
 
-        report = {
-            "last_run": utcnow().isoformat(),
-            "consolidated_groups": len(clusters),
-            "new_memories": new_count,
-            "pruned_count": pruned,
-            "status": status,
-            "mode": mode,
-            "proposals_created": proposals_created,
-            "skipped_dupes": skipped_dupes,
-            "skipped_rejected_cooldown": skipped_cooldown,
-            "skipped_lowq": skipped_lowq,
-            "error": "",
-        }
-        _LAST_CONSOLIDATION_REPORT = report
+            report = {
+                "last_run": utcnow().isoformat(),
+                "consolidated_groups": len(clusters),
+                "new_memories": new_count,
+                "pruned_count": pruned,
+                "status": status,
+                "mode": mode,
+                "proposals_created": proposals_created,
+                "skipped_dupes": skipped_dupes,
+                "skipped_rejected_cooldown": skipped_cooldown,
+                "skipped_lowq": skipped_lowq,
+                "error": "",
+                # 票 11 增量键：单簇/收尾失败明细（成功期空表）
+                "warnings": warnings,
+            }
+            _LAST_CONSOLIDATION_REPORT = report
 
         # 运行留痕（ADR-0050 决策 9）：验收比例的分母地基；off 期不留痕（零漂移）
         if mode in ("shadow", "enforce"):
@@ -821,6 +866,11 @@ def get_consolidation_report() -> dict:
     内容经逐键核对是**计数与阈值**（候选数/合并数/衰减数/耗时/参数），
     不含任何记忆正文、id 或 user_id，所以定级 P2 而非 P1：泄漏的是
     "系统里大概有多少记忆在被治理"这类统计，不是内容本身。
+
+    票 11 增量键 `warnings` 是上段的唯一例外：单簇/收尾失败期携带失败簇的
+    碎片 id 与异常摘要（成功期为空表，无增面）——「失败明细不静默」的承载
+    体，用于定位哪一簇、因何失败；碎片 id 是标识不是正文，异常摘要为
+    基础设施级错误文本，不构成正文泄漏。
 
     真正按调用方收窄属于**契约级决定**（收了等于单人部署看不到全局
     治理状况），归 02 号票，不在这条修。

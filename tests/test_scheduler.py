@@ -105,6 +105,27 @@ class TestRecordRunPersistence:
         assert second is not None and first is not None
         assert second >= first
 
+    def test_record_run_db_failure_keeps_memory_state_and_logs(self, monkeypatch, caplog):
+        """L5（票 16）：落库失败不得静默吞掉——留痕且内存态兜底保留，不阻断调用方。
+
+        仅隔离存储副作用（patch db.get_session 抛错，本文件头既定口径）；
+        record_run 自身的内存态写入与异常处理是真代码。
+        """
+        import logging
+
+        def _boom():
+            raise RuntimeError("probe: db down")
+
+        monkeypatch.setitem(scheduler_mod.WORKER_LAST_RUN, "digest", "")
+        monkeypatch.setattr(db_module, "get_session", _boom)
+        with caplog.at_level(logging.ERROR):
+            record_run("digest")  # 落库失败不抛、不阻断 worker 主流程
+
+        assert scheduler_mod.WORKER_LAST_RUN["digest"], "内存态兜底必须保留（/stats 仍可用）"
+        assert any("落库失败" in r.getMessage() for r in caplog.records), (
+            f"落库失败必须留痕（不得静默 pass）：{[r.getMessage() for r in caplog.records]}"
+        )
+
 
 class TestStartSchedulerCatchup:
     """启动接线：错过调度点 → 注册补跑 job；已跑/未到点 → 不注册。"""

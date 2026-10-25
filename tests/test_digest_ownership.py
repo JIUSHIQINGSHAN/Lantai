@@ -276,3 +276,85 @@ class TestDigestStatsOwnership:
         assert stats_admin["reflection"]["created"] == 2, (
             f"admin 该看见全部反思提案，实际 {stats_admin['reflection']['created']}"
         )
+
+    def test_reflection_other_count_excludes_other_users(self, digest_owned_env):
+        """`other` 计数也按归属收窄（票 .scratch/review-fixes-2026-10/12）。
+
+        created/applied/pending/rejected 四个计数都带 prop_scope，唯独 other
+        漏了 → B 的非三态行（approved）计入 A 的 other，破坏自证不变量
+        applied+pending+rejected+other == created。种子特意含 NULL 与
+        "default" 属主的 other 行：归属过滤不得把它们藏掉（同
+        readside-gaps/04「报表归零是修废」口径），内部无 principal 调用
+        （`collect_calibration_stats` 走的路径）对在册行计数不变。
+        """
+        from lantai.core.time import utcnow
+        from lantai.models.tables import MemoryProposal
+        from lantai.services.work_item_service import _viewer_of
+        from lantai.workers.digest_worker import (
+            _aggregate_reflection,
+            collect_digest_stats,
+        )
+
+        now = utcnow()
+
+        def _prop(pid: str, uid: str | None, status: str) -> MemoryProposal:
+            return MemoryProposal(
+                id=pid,
+                proposal_type="merge",
+                candidate_id=None,
+                decided_by="reflect",
+                evidence_ids=["e1"],
+                proposed_patch={"key": pid},
+                confidence=0.9,
+                status=status,
+                created_at=now,
+                user_id=uid,
+                tenant_id="t1" if uid else None,
+            )
+
+        with digest_owned_env() as s:
+            s.add(_prop("prop-A-applied", "user-A", "applied"))
+            s.add(_prop("prop-A-other", "user-A", "approved"))  # 非三态 → other
+            s.add(_prop("prop-B-applied", "user-B", "applied"))
+            s.add(_prop("prop-B-other", "user-B", "approved"))  # B 的 other 行
+            s.add(_prop("prop-null-other", None, "approved"))  # NULL 属主老行
+            s.add(_prop("prop-default-other", "default", "approved"))  # default 属主
+            s.commit()
+
+        # 以 A 出统计：other 只含 A 自己 + NULL 属主行，不含 B 的行
+        # （"default" 属主行对 A 只是他人，不可见——scope = A | NULL）
+        rf = collect_digest_stats(principal=_principal("user-A"))["reflection"]
+        assert rf["created"] == 3, (
+            f"A 的 created 该是 3（A×2 + NULL；default 行对 A 不可见），实际 {rf['created']}"
+        )
+        assert rf["applied"] == 1
+        assert rf["other"] == 2, (
+            f"A 的 other 该是 2（A 的 approved + NULL，不含 B/default 的行），实际 {rf['other']}"
+        )
+        assert rf["applied"] + rf["pending"] + rf["rejected"] + rf["other"] == rf["created"], (
+            f"自证不变量被破坏：applied+pending+rejected+other="
+            f"{rf['applied'] + rf['pending'] + rf['rejected'] + rf['other']} != created={rf['created']}"
+        )
+
+        # admin（全库口径）：不变量同样成立，other 含全部 4 条非三态行
+        rfa = collect_digest_stats(principal=_principal("admin-1", role="admin"))["reflection"]
+        assert rfa["created"] == 6, f"admin 该看见全部 6 条，实际 {rfa['created']}"
+        assert rfa["other"] == 4, f"admin 的 other 该是 4，实际 {rfa['other']}"
+        assert rfa["applied"] + rfa["pending"] + rfa["rejected"] + rfa["other"] == rfa["created"], (
+            f"admin 全库口径自证不变量被破坏：{rfa}"
+        )
+
+        # 内部无 principal 直调核心函数（viewer 收敛 "default"，见 _viewer_of）：
+        # 不变量成立；在册的 NULL/default 行计数与修复前一致（不归零）。
+        assert _viewer_of(None) == "default"
+        with digest_owned_env() as s:
+            refl = _aggregate_reflection(s, now - timedelta(hours=1), now + timedelta(hours=1))
+        assert refl["created"] == 2, (
+            f"无 principal 的 created 该是 2（NULL + default），实际 {refl['created']}"
+        )
+        assert refl["other"] == 2, (
+            f"无 principal 的 other 该是 2（NULL + default，在册行不因归属过滤归零），实际 {refl['other']}"
+        )
+        assert (
+            refl["applied"] + refl["pending"] + refl["rejected"] + refl["other"] == refl["created"]
+        ), f"无 principal 自证不变量被破坏：{refl}"

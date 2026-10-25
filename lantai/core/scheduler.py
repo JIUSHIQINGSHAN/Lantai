@@ -55,7 +55,8 @@ def record_run(name: str) -> None:
             )
             s.commit()
     except Exception:
-        pass  # 落库失败不阻断（/stats 仍有内存态）
+        # L5（票 16）：落库失败不得静默吞——留痕（内存态兜底保留，/stats 仍可用）
+        logger.exception("record_run 落库失败（name=%s，内存态兜底保留）", name)
 
 
 def get_last_run(name: str) -> str | None:

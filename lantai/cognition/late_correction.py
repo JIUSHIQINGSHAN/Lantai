@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from sqlmodel import select
 
 from lantai.core.ids import new_id
+from lantai.core.logger import logger
 from lantai.core.time import utcnow
 from lantai.evolution.promoter import _make_checkpoint
 from lantai.models.tables import ConflictEvent, LifecycleStatus, MemoryEdge, MemoryItem
@@ -35,12 +36,17 @@ def _ensure_utc(dt: datetime) -> datetime:
 
 
 def correction_anchor(new_item: MemoryItem) -> datetime:
-    """锚(new) = new.event_time ?? new.valid_from；两者皆无时用 new.created_at（approximated）。"""
+    """锚(new) = new.event_time ?? new.valid_from；两者皆无时用 new.created_at（approximated）。
+
+    票 13：三支一律过 _ensure_utc——DB 读回（UTCDateTime）虽归一 aware，但内存
+    直传的 naive created_at（无偏移 ISO 串解析产物）会以裸值进入锚比较面/落库面，
+    与 aware old.valid_from 比较抛 TypeError 被吞成静默失败。
+    """
     if new_item.event_time:
         return _ensure_utc(new_item.event_time)
     if new_item.valid_from:
         return _ensure_utc(new_item.valid_from)
-    return new_item.created_at or utcnow()
+    return _ensure_utc(new_item.created_at) if new_item.created_at else utcnow()
 
 
 def apply_supersede_correction(
@@ -82,6 +88,10 @@ def apply_supersede_correction(
         )
         s.add(edge)
 
+        # d 前置捕获：checkpoint before 须为突变前真实快照（票 13，同 promoter 各分支
+        # 口径 before=existing.model_dump(mode="json")），传 {} 则回滚该版本无 before 可依
+        before = old_item.model_dump(mode="json")
+
         # b. 知命转移（事务轴如实：判定发生在今天）
         old_item.lifecycle_status = LifecycleStatus.SUPERSEDED
         old_item.superseded_by = new_item.id
@@ -93,7 +103,7 @@ def apply_supersede_correction(
 
         # d. checkpoint 快照留底（旧值）
         _make_checkpoint(
-            s, old_item, {}, actor or reason or "late_correction", trigger="late_correction"
+            s, old_item, before, actor or reason or "late_correction", trigger="late_correction"
         )
 
         # 落账：ConflictEvent(kind="override") detail 契约（spec §4.2 步骤 1/2）
@@ -135,6 +145,14 @@ def apply_supersede_correction(
             "approximated": approximated,
         }
     except Exception as exc:  # noqa: BLE001 —— 事务失败如实上抛给调用方处置
+        # 票 13：返回体虽带 error 明细，调用方（worker/批量闭环）可能不消费——
+        # 同步 warning 留痕，失败不无迹可查
+        logger.warning(
+            "替换型迟到更正失败 old=%s new=%s：%s",
+            old_item.id,
+            new_item.id,
+            exc,
+        )
         if own_session:
             s.rollback()
         return {"ok": False, "error": str(exc)}
@@ -159,8 +177,11 @@ def apply_expire_correction(
         vf_norm = _ensure_utc(old_item.valid_from) if old_item.valid_from else None
         if vf_norm is not None and vt_norm < vf_norm:
             return {"ok": False, "error": "I3: valid_to < valid_from"}
+        before = old_item.model_dump(mode="json")  # 突变前真实快照（票 13，同 promoter 口径）
         old_item.valid_to = vt_norm
-        _make_checkpoint(s, old_item, {}, actor or reason or "expire", trigger="late_correction")
+        _make_checkpoint(
+            s, old_item, before, actor or reason or "expire", trigger="late_correction"
+        )
         s.add(
             ConflictEvent(
                 id=new_id("cfev"),
@@ -183,6 +204,7 @@ def apply_expire_correction(
             s.commit()
         return {"ok": True, "old_id": old_item.id, "valid_to": vt_norm.isoformat()}
     except Exception as exc:  # noqa: BLE001
+        logger.warning("失效型迟到更正失败 old=%s：%s", old_item.id, exc)
         if own_session:
             s.rollback()
         return {"ok": False, "error": str(exc)}

@@ -116,6 +116,32 @@ def _self_reference_pattern() -> re.Pattern:
 # 热缓存（模块级，兼容既有测试 fixture 的 monkeypatch.setattr 替换）
 _LAST_GATE_DECISION = {"time": 0.0, "query": "", "needs_memory": False}
 _USER_GATE_DECISIONS = {}
+# L2（票 16）：_USER_GATE_DECISIONS 按 user_id 无界增长——多用户长跑进程内存
+# 单调涨。对照 coalesce `_seen` 的 TTL 清扫既有写法（ingestion/coalesce.py
+# check_idle：收集 stale 后逐个删除）：条目超 TTL 未活跃即清，另设容量上限
+# 兜底短时大量 user 涌入（超限按 last-seen 最旧先逐）。条目价值只在
+# GATE_CACHE_TTL 窗口内（追问沿用），超窗即纯死重，TTL 取 1h 摊薄清扫频率。
+# 并发说明：单键 dict 操作原子（GIL），pop(k, None) 竞态不炸；清扫竞态最坏
+# 后果 = 热缓存未命中重判（等效冷缓存），无正确性影响。常量可 monkeypatch
+# （测试口径同 _LAST_GATE_DECISION）。
+_GATE_USER_CACHE_TTL = 3600.0
+_GATE_USER_CACHE_MAX = 1024
+
+
+def _sweep_user_caches(now: float) -> None:
+    """清扫 _USER_GATE_DECISIONS：先清超 TTL 条目，仍超容量再逐最旧（L2 票 16）。"""
+    stale = [
+        uid
+        for uid, c in _USER_GATE_DECISIONS.items()
+        if (now - c.get("time", 0.0)) >= _GATE_USER_CACHE_TTL
+    ]
+    for uid in stale:
+        _USER_GATE_DECISIONS.pop(uid, None)
+    overflow = len(_USER_GATE_DECISIONS) - _GATE_USER_CACHE_MAX
+    if overflow > 0:
+        by_age = sorted(_USER_GATE_DECISIONS.items(), key=lambda kv: kv[1].get("time", 0.0))
+        for uid, _ in by_age[:overflow]:
+            _USER_GATE_DECISIONS.pop(uid, None)
 
 
 def relevance_check(
@@ -127,15 +153,20 @@ def relevance_check(
 
     cache/now 可注入 → 单测无需 monkeypatch 模块属性，并发用例各持独立 cache。
     """
+    now = now if now is not None else time.time()
+
     if cache is None:
         if user_id == "default":
             cache = _LAST_GATE_DECISION
         else:
+            # 占位条目 time 直接取 now：清扫紧随其后，0.0 占位会被当成
+            # 「远古未活跃」把自己清掉/逐掉（新条目即插即有效）。
             cache = _USER_GATE_DECISIONS.setdefault(
-                user_id, {"time": 0.0, "query": "", "needs_memory": False}
+                user_id, {"time": now, "query": "", "needs_memory": False}
             )
-
-    now = now if now is not None else time.time()
+            # 清扫放在 setdefault 之后：本条目已入表，超限时按 last-seen
+            # 逐最旧（自己 time=now 最新不会被逐），保证返回后表有界。
+            _sweep_user_caches(now)
 
     if not query or len(query.strip()) < 2:
         return {"needs_memory": False, "reason": "query_too_short", "scope": None}

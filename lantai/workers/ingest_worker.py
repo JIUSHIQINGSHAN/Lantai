@@ -88,25 +88,36 @@ def run_ingest_once():
                     logger.exception("quality signal upsert failed")
 
             with db.get_session() as s:
-                job = s.get(IngestJob, job.id)
-                job.status = "done"
-                job.finished_at = utcnow()
-                job.stats = {"docs": new_docs, "candidates": new_cands}
-                src2 = s.get(Source, src.id)
-                src2.last_fetched_at = utcnow()
-                s.add(job)
-                s.add(src2)
-                s.commit()
+                # L6（票 16）：job 行可能已被并发删除（外部清理/另一进程），
+                # 不得 None 解引用——按「任务已不存在」留痕跳过收尾。
+                # 变量名不覆盖内存态 job（except 路径仍需 job.id 留痕）。
+                done_job = s.get(IngestJob, job.id)
+                if done_job is None:
+                    logger.warning("ingest job %s 任务已不存在（并发删除），跳过收尾", job.id)
+                else:
+                    done_job.status = "done"
+                    done_job.finished_at = utcnow()
+                    done_job.stats = {"docs": new_docs, "candidates": new_cands}
+                    src2 = s.get(Source, src.id)
+                    src2.last_fetched_at = utcnow()
+                    s.add(done_job)
+                    s.add(src2)
+                    s.commit()
             logger.info("ingest src=%s docs=%d cand=%d", src.id, new_docs, new_cands)
         except Exception as e:
             logger.exception("ingest failed for %s", src.id)
             with db.get_session() as s:
-                job = s.get(IngestJob, job.id)
-                job.status = "failed"
-                job.error = str(e)
-                job.finished_at = utcnow()
-                s.add(job)
-                s.commit()
+                # L6（票 16）：同上——失败收尾同样防护（此处若炸会传播出
+                # worker 中断整个 source 循环，后续 source 全部停摆）。
+                failed_job = s.get(IngestJob, job.id)
+                if failed_job is None:
+                    logger.warning("ingest job %s 任务已不存在（并发删除），跳过失败记录", job.id)
+                else:
+                    failed_job.status = "failed"
+                    failed_job.error = str(e)
+                    failed_job.finished_at = utcnow()
+                    s.add(failed_job)
+                    s.commit()
 
     # 本轮摄入提交后触发一次参数建议（窗口不满足则空转）
     try:

@@ -1,9 +1,10 @@
 """Reranker 和意图分类单元测试"""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 from lantai.retrieval.intent import classify_intent
-from lantai.retrieval.reranker import rerank
+from lantai.retrieval.reranker import _parse_response, rerank
 
 
 class TestRerank:
@@ -54,6 +55,61 @@ class TestRerank:
         """空文档列表直接返回空"""
         result = rerank("query", [], top_k=5)
         assert result == []
+
+
+class TestParseResponseIndexGuard:
+    """审查 M11（票 15）：缺失/越界 index 的返回项跳过并留痕，不默认 0 脏配候选。
+
+    直调 _parse_response 的不 mock 冒烟：真实构造替身响应，不替换任何内部逻辑。
+    """
+
+    def test_missing_index_skipped_and_logged(self, caplog):
+        """缺 index 的返回项跳过（不默认 0），warning 留痕"""
+        raw = {"results": [{"score": 0.99, "document": "doc B"}]}
+        with caplog.at_level(logging.WARNING, logger="lantai"):
+            parsed = _parse_response(raw, ["doc A", "doc B"], top_k=1)
+        assert parsed == []
+        assert any("missing or out-of-range index" in r.getMessage() for r in caplog.records)
+
+    def test_out_of_range_index_skipped(self, caplog):
+        """越界 index 的返回项跳过，warning 留痕"""
+        raw = {"results": [{"index": 7, "score": 0.9, "document": "doc X"}]}
+        with caplog.at_level(logging.WARNING, logger="lantai"):
+            parsed = _parse_response(raw, ["doc A", "doc B"], top_k=1)
+        assert parsed == []
+        assert any("missing or out-of-range index" in r.getMessage() for r in caplog.records)
+
+    def test_negative_index_skipped(self):
+        """负数 index 越界，同样跳过"""
+        raw = {"results": [{"index": -1, "score": 0.9, "document": "doc B"}]}
+        parsed = _parse_response(raw, ["doc A", "doc B"], top_k=1)
+        assert parsed == []
+
+    def test_partial_missing_index_keeps_valid_item(self):
+        """部分缺失：合法项保留且映射正确，缺失项跳过不脏配"""
+        raw = {
+            "results": [
+                {"score": 0.99, "document": "doc B"},
+                {"index": 1, "score": 0.9, "document": "doc B"},
+            ]
+        }
+        parsed = _parse_response(raw, ["doc A", "doc B"], top_k=2)
+        assert len(parsed) == 1
+        assert parsed[0] == {"score": 0.9, "document": "doc B", "index": 1}
+
+    def test_normal_response_unchanged(self):
+        """正常响应行为不变（含缺 document 回退原文的既有路径）"""
+        raw = {
+            "results": [
+                {"index": 1, "score": 0.95, "document": "banana"},
+                {"index": 0, "score": 0.87},
+            ]
+        }
+        parsed = _parse_response(raw, ["apple", "banana", "fruit"], top_k=2)
+        assert parsed == [
+            {"score": 0.95, "document": "banana", "index": 1},
+            {"score": 0.87, "document": "apple", "index": 0},
+        ]
 
 
 class TestIntent:

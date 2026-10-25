@@ -24,6 +24,9 @@ r"""沉潜（ADR-0036）：闲时夜梦沉淀与记忆折叠压缩测试。
 - REST/MCP 报告形状断言 **原样保留**：既有键（last_run/consolidated_groups/
   pruned_count）不变，proposals_created/mode/skipped_* 为增量键（向后兼容）；
   两处 patch 的是 run_consolidation_cycle 本体与报告形状，非内部逻辑，合规。
+- 票 11（review-fixes-2026-10）：新增 test_cycle_survives_single_cluster_embed_failure
+  （单簇异常保护不 mock 冒烟，embed/chat_json 外部面替身）；报告键集契约同步
+  扩展增量键 warnings（失败明细不静默）。
 """
 
 from datetime import UTC, timedelta
@@ -817,6 +820,7 @@ class TestConsolidationDB:
 
         # ADR-0050 决策 3 报告契约：既有键不变 + 增量键（mode/proposals_created/
         # skipped_* /error）。off 期 new_memories/consolidated_groups/pruned_count 语义不变。
+        # 票 11 再增量 `warnings`（单簇/收尾失败明细不静默，成功期空表）。
         contract = {
             "last_run",
             "consolidated_groups",
@@ -829,10 +833,12 @@ class TestConsolidationDB:
             "skipped_rejected_cooldown",
             "skipped_lowq",
             "error",
+            "warnings",
         }
         assert set(cs._LAST_CONSOLIDATION_REPORT) == contract
 
-        # 运行后报告亦须同键集（初值与运行时契约不漂移）
+        # 运行后报告亦须同键集（初值与运行时契约不漂移；票 11 增量 warnings 后
+        # 契约测试同步扩展——失败明细是报告契约的一部分，不是键集漂移）
         session_factory, _ = param_env
         with session_factory() as s:
             _seed_fragments(s)
@@ -842,6 +848,131 @@ class TestConsolidationDB:
             ):
                 ran = run_consolidation_cycle(session=s)
         assert set(ran) == contract
+
+    def test_cycle_survives_single_cluster_embed_failure(self, param_env):
+        """票 11 单簇异常保护（不 mock 冒烟）：3 簇周期，第 2 簇 embed 抛错。
+
+        红（修复前）：循环对 consolidate_cluster 无 per-cluster 保护，off 路径
+        embed 失败显式 raise（「如实上抛」契约）→ 异常上抛中断整周期：第 3 簇
+        不处理、prune 不执行、_LAST_CONSOLIDATION_REPORT 停留旧值。
+        绿（修复后）：第 1/3 簇正常巩固、第 2 簇回滚半成品保持原库不变（可重试）、
+        失败明细进 warnings 不静默、prune 照常执行、报告照常更新。
+        embed/chat_json 为外部网络面替身（同 test_consolidation_index_sync 的
+        TestVectorFailureIsRecoverable 先例），聚类/巩固/收尾全真实路径。
+        """
+        session_factory, _ = param_env
+        import lantai.services.consolidation_service as cs
+
+        groups = {
+            # 三组各 3 条同主题碎片 → 恰 3 簇（聚类按 (domain, lane) 分组，组间
+            # 不合并；各组共享词已预先经 jieba extract_tags 逐条核验入 topK=4）
+            "tea": [
+                "大哥今天早上泡了明前大佛龙井茶",
+                "大哥喜欢喝大佛龙井茶，水温要求85度",
+                "大哥日常饮品偏好为浙江新昌大佛龙井茶",
+            ],
+            "work": [
+                "运维组每晚巡检容器编排平台",
+                "容器编排平台每周三凌晨升级",
+                "值班工程师记录容器编排告警",
+            ],
+            "hobby": [
+                "周末清晨沿江长跑十公里",
+                "长跑后拉伸放松防止受伤",
+                "报名了秋季马拉松长跑训练",
+            ],
+        }
+        with session_factory() as s:
+            for dom, contents in groups.items():
+                for i, content in enumerate(contents, 1):
+                    s.add(
+                        MemoryItem(
+                            id=f"{dom}_frag_{i}",
+                            content=content,
+                            lane="preference",
+                            domain=dom,
+                            decay_score=0.9,
+                            status="active",
+                        )
+                    )
+            # 收尾必达断言的前提：一条可裁剪记忆（decay 低于阈值 + 零 helpful）
+            s.add(
+                MemoryItem(
+                    id="mem_prune_ticket11",
+                    content="临时去了一趟超市买餐巾纸",
+                    lane="general",
+                    domain="prune",
+                    decay_score=0.01,
+                    helpful_count=0,
+                    status="active",
+                )
+            )
+            s.commit()
+            # 前提钉死：聚类确实产出恰 3 簇、每簇恰 3 条（防用例静默空转）
+            clusters = find_consolidation_clusters(s)
+            assert sorted(len(c) for c in clusters) == [3, 3, 3]
+
+        # LLM 提纯替身（外部网络面）：按簇返回带组标记的主记忆内容
+        def fake_chat(system, user):
+            if "容器编排" in user:
+                content = "提纯主记忆：团队维护容器编排平台"
+            elif "长跑" in user:
+                content = "提纯主记忆：坚持长跑锻炼"
+            else:
+                content = "提纯主记忆：大哥长期偏好大佛龙井茶"
+            return {"consolidated_content": content, "importance": 0.9, "confidence": 0.95}
+
+        # embed 替身（外部网络面）：容器编排组（插入序为第 2 簇）定点抛错
+        def embed_boom(contents, *a, **kw):
+            if contents and "容器编排" in contents[0]:
+                raise RuntimeError("embed 簇2故障(503)")
+            return [[0.1] * 8]
+
+        with session_factory() as s:
+            with (
+                patch("lantai.services.consolidation_service.chat_json", side_effect=fake_chat),
+                patch("lantai.llm.client.embed", side_effect=embed_boom),
+            ):
+                rep = run_consolidation_cycle(session=s)
+
+            # 第 1/3 簇正常巩固：主记忆落库、碎片折叠
+            active = s.exec(select(MemoryItem).where(MemoryItem.status == "active")).all()
+            assert {m.domain for m in active} == {"tea", "hobby", "work"}
+            for dom in ("tea", "hobby"):
+                masters = [m for m in active if m.domain == dom]
+                assert len(masters) == 1
+                for i in (1, 2, 3):
+                    assert s.get(MemoryItem, f"{dom}_frag_{i}").status == "consolidated"
+            # 第 2 簇保持原库不变：碎片 active（半成品已回滚，可重试），
+            # 且不残留任何 work 主记忆行（半成品不许搭下一簇的 commit 顺车落库）
+            for i in (1, 2, 3):
+                assert s.get(MemoryItem, f"work_frag_{i}").status == "active"
+            assert (
+                s.exec(
+                    select(MemoryItem).where(
+                        MemoryItem.content == "提纯主记忆：团队维护容器编排平台"
+                    )
+                ).all()
+                == []
+            )
+
+            # 失败明细进 warnings 不静默：含失败簇碎片 id 与异常本体
+            assert len(rep["warnings"]) == 1
+            detail = rep["warnings"][0]
+            assert all(f"work_frag_{i}" in detail for i in (1, 2, 3))
+            assert "RuntimeError" in detail and "embed" in detail
+            # 失败不误计入 skipped_lowq（低质跳过 ≠ 簇失败，语义分桶不混）
+            assert rep["skipped_lowq"] == 0
+
+            # 收尾必达：prune 仍执行
+            assert rep["pruned_count"] == 1
+            assert s.get(MemoryItem, "mem_prune_ticket11").status == "archived"
+
+            # 报告已更新（不停留旧值）
+            assert rep["status"] == "success"
+            assert rep["new_memories"] == 2
+            assert rep["consolidated_groups"] == 3
+            assert cs.get_consolidation_report() == rep
 
     def test_illegal_mode_fail_loud(self, param_env, monkeypatch):
         """非法值 fail-loud（ADR-0050 决策 1）：尾随空格等非法值拒绝执行本周期巩固，

@@ -357,6 +357,47 @@ class TestSystemViewerChannels:
             "$or": [{"user_id": "user-A"}, {"user_id": ""}]
         }
 
+
+class TestImplParamsNone:
+    """票 16 L1：`_hybrid_search_impl` 的 `params` 形参可为 None（签名
+    `RetrievalParams | None`，函数体以 `p = params or RetrievalParams()` 统一
+    兜底），但 `temporal_view_filter` 调用点直接解引用了**形参**而非兜底局部
+    `p`——直调且 `params=None` 时 AttributeError。公开入口 `hybrid_search`
+    已兜底（effective_params 恒非 None）不受影响；直调 impl 的 worker/脚本
+    路径会炸。
+
+    向量通道必须**非空**才走主路径（向量空则走 `_keyword_fallback`，而它收到
+    的是兜底后的 `params=p`，测不到本 bug）——故给 `_FakeVectorStore` 塞一行
+    （只替外部存储层；filter、FTS、融合打分、时间过滤全是真代码在跑）。
+    """
+
+    def test_impl_with_params_none_reaches_temporal_filter(self, engine, monkeypatch):
+        import lantai.retrieval.hybrid as hybrid_mod
+        import lantai.storage.db as db_module
+        from lantai.retrieval.hybrid import _hybrid_search_impl
+
+        _seed(engine)
+        monkeypatch.setattr(
+            hybrid_mod,
+            "get_vector_store",
+            lambda: _FakeVectorStore([("m-def", {"memory_id": "m-def", "user_id": "default"})]),
+        )
+        # embed 不必另 patch：conftest._stub_external_llm 已统一替身（外部网络 API）
+
+        orig = db_module.engine
+        db_module.engine = engine
+        try:
+            res = _hybrid_search_impl(
+                "报价底牌", top_k=10, use_rerank=False, principal=_principal("default")
+            )
+        finally:
+            db_module.engine = orig
+
+        cs = _contents(res)
+        assert any(MARK_DEFAULT in c for c in cs), (
+            f"params=None 直调 impl 应正常检索（主路径 temporal_view_filter 不得炸）：{cs}"
+        )
+
     def test_fts_channels_skip_system_viewer(self, engine):
         """FTS 两条通道：`search_fts` / `search_fts_bm25` 对系统身份不加 user 条件。
 

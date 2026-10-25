@@ -131,7 +131,8 @@ def consolidate_report_route():
     count-only（候选数/合并数/衰减数/耗时），不含正文、id 或 user_id，
     定级 P2。与 MCP `consolidation_report` 共用同一个
     `get_consolidation_report()`，两个入口口径一致——不存在"HTTP 宽、
-    MCP 窄"的分裂。
+    MCP 窄"的分裂。（票 11 例外：增量键 `warnings` 在单簇/收尾失败期
+    携带失败簇碎片 id 与异常摘要，成功期为空表。）
     """
     from lantai.services.consolidation_service import get_consolidation_report
 

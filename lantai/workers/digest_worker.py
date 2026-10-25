@@ -109,6 +109,7 @@ def _aggregate_reflection(s, start: datetime, end: datetime, *, principal=None) 
             MemoryProposal.created_at >= start,
             MemoryProposal.created_at < end,
             MemoryProposal.status.not_in(["applied", "pending", "rejected"]),
+            *([prop_scope] if prop_scope is not None else []),
         )
     ).one()
     rows = s.exec(

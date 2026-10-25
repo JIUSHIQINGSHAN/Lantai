@@ -611,8 +611,8 @@ def _hybrid_search_impl(
         time_from=time_from,
         time_to=time_to,
         as_of_recorded=as_of_recorded,
-        strict=params.temporal_asof_strict,
-        fuzzy_penalty=params.temporal_fuzzy_penalty,
+        strict=p.temporal_asof_strict,
+        fuzzy_penalty=p.temporal_fuzzy_penalty,
     )
 
     if trace:
@@ -813,7 +813,13 @@ def has_memory_item(memory_id: str) -> bool:
 
 
 def _chronos_filter(items: list) -> list:
-    """Chronos 双时间过滤：未到 valid_from 的剔除，已过 valid_to 的衰减到 0.3 倍。"""
+    """Chronos 双时间过滤：未到 valid_from 的剔除，已过 valid_to 的衰减到 0.3 倍。
+
+    衰减作用在**本地副本**上（票 `.scratch/review-fixes-2026-10/10`）：带 session
+    的检索调用一旦 commit，原地 `m.decay_score *= 0.3` 会把读路径的临时降权永久
+    写回库。副本与原对象唯一差异是 decay_score（`model_copy` 逐字段拷贝），
+    排序/打分/model_dump 读到的都是降权后的值——语义与改前逐字一致。
+    """
     from lantai.core.time import utcnow
 
     now = utcnow()
@@ -828,7 +834,7 @@ def _chronos_filter(items: list) -> list:
         if vf and vf > now:
             continue
         if vt and vt < now:
-            m.decay_score *= 0.3
+            m = m.model_copy(update={"decay_score": m.decay_score * 0.3})
         temporally_valid.append(m)
     return temporally_valid
 
@@ -1006,8 +1012,8 @@ def _keyword_fallback(
         time_from=time_from,
         time_to=time_to,
         as_of_recorded=as_of_recorded,
-        strict=params.temporal_asof_strict,
-        fuzzy_penalty=params.temporal_fuzzy_penalty,
+        strict=p.temporal_asof_strict,
+        fuzzy_penalty=p.temporal_fuzzy_penalty,
     )
 
     if not items:
