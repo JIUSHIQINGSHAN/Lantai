@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.5] - 2026-10-25 - 鱼贯（Yuguan · 衔枚鱼贯）
+
+> 版本代号「鱼贯」：《三国志·邓艾传》「衔枚鱼贯」——依次而进、不壅不塞。贴合本版主题：遗忘周期改 keyset 分页逐批推进，读路径纯化、单簇容错与全库统计口径收口。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7。
+
 ### Changed
 
 - **遗忘周期 keyset 分页（性能，行为零变更）**：`apply_forgetting` 弃 `s.exec(q).all()` 全表一次性加载，改按 `MemoryItem.id`（前缀 ULID，字典序即稳定全序）keyset 分页，逐批推进游标直至取空；`page_size` keyword-only 可注入（默认 500，小于 1 显式 raise——SQLite 负 LIMIT 视为无界、0 视为空集，静默错参比报错危险），页尾补 commit + `expunge_all()` 使内存随批大小而非库容增长。判定逻辑、衰减公式、归档阈值、`|Δdecay|<0.001` 跳写、每 100 条变更一 commit（DD-06）语义逐字未动。一致性锚：同一份 28 条种子以 `page_size=10`（3 批）与 `page_size=1000`（单页≈旧全量加载口径）逐条 status+decay_score 一致（覆盖衰减更新、到期归档、不动三类）；SQL 形态经 `before_cursor_execute` 只读观测断言无任何无界 memoryitem 查询。新增 `tests/test_forgetting_keyset.py` 3 例（真 SQLite 不 mock）。票据 `.scratch/review-fixes-2026-10/issues/09-forgetting-pagination.md`（0.23.4 票 07 遗留第 4 项，本批补齐）。

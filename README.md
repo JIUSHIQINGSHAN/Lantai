@@ -11,9 +11,9 @@
 让 AI 在对的时间，找到对的回忆。
 ```
 
-[![Version](https://img.shields.io/badge/version-0.23.4-blue.svg)](https://github.com/JIUSHIQINGSHAN/Lantai)
+[![Version](https://img.shields.io/badge/version-0.23.5-blue.svg)](https://github.com/JIUSHIQINGSHAN/Lantai)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-yellow.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-1249%2F1249-green.svg)](docs/aidumem-port-results.md)
+[![Tests](https://img.shields.io/badge/tests-2169%20passed%20%C2%B7%201%20skipped-green.svg)](https://github.com/JIUSHIQINGSHAN/Lantai/actions/workflows/tests.yml)
 [![改编自](https://img.shields.io/badge/based%20on-aiduMEM-orange.svg)](https://github.com/monkey2jack/aiduMEM)
 
 ---
@@ -94,12 +94,12 @@ lantai-server
 ### 方式二：Docker 容器运行
 
 ```bash
-docker build -t lantai:0.23.4 .
+docker build -t lantai:0.23.5 .
 docker run -d -p 8767:8767 \
   -e API_KEY=your-admin-key \
   -e OPENAI_API_KEY=sk-xxx \
   -v /your/data:/data \
-  lantai:0.23.4
+  lantai:0.23.5
 ```
 
 > 容器默认 `HOST=0.0.0.0` 对外暴露，**必须注入 `API_KEY`**——启动守卫（`assert_secure_binding`）会在非回环地址且无密钥时拒绝运行；请求路径也会校验 `X-API-Key`（或库内 Bearer key），非回环不再回退 DEV MODE。
@@ -269,7 +269,7 @@ critical）、反思/参数建议任务失败、5xx 错误率、p95 延迟、零
 
 ```bash
 .venv\Scripts\python.exe -m pytest tests/ -q
-# 全量测试通过（含 FTS/SSRF/备份恢复/MCP 协议/Shell Hook 超时；以 CI 结果为准）
+# 全量测试通过（2026-10-25 本地实跑基线：2169 passed, 1 skipped；含 FTS/SSRF/备份恢复/MCP 协议/Shell Hook 超时；以 CI 结果为准）
 ```
 
 ## 路线图
