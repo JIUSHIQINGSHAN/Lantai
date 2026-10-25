@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.4] - 2026-10-24 - 勾检（Goujian · 勾检稽失）
+
+> 版本代号「勾检」：《唐六典》勾官之职「勾检稽失」——稽查文书账目之失误而纠正之。贴合本版主题：全面审查勾检全库，修复冲突账本静默丢失、索引与正文错位、反思重复落库等八项稽失。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7。
+
 ### Changed
 
 - **检索/演化链路去 N+1 与全表加载（行为零变更）**：proposer/reflector 的相关记忆查询 `limit(20)` 下推 SQL（无 ORDER BY 自然序与旧 `[:20]` 切片一致，prompt 逐字不变）；`_importance_waterline` 由全表物化改 SQL `coalesce(sum)` 聚合（不筛 status、NULL 行不计等口径逐字保留）；scene `assign_unassigned` 逐条 embed 改整批一次（50 次 API → 1 次，归属判定只依赖质心故与逐条口径一致，批前失败零副作用更合「宁 miss 不脏写」）。基准（2000 条、7 次取中位）：proposer 73.9→5.3ms、水位 58.3→0.8ms（返回值前后一致）、reflect 空闲 259.7→66.1ms、scene 690.7→122.3ms 且 embed 50 次→1 次。新增行为 pin 测试 4 例（修复前后均绿）。票据 `.scratch/review-fixes-2026-10/issues/07-retrieval-full-table-loads.md`（第 4 项 forgetting 分页游标另行排期，本批未动）。
