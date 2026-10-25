@@ -1,3 +1,4 @@
+import math
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, timedelta
@@ -50,6 +51,10 @@ class RetrievalParams:
     mmr_enabled: bool = field(default_factory=lambda: bool(settings.MMR_ENABLED))
     mmr_lambda: float = field(default_factory=lambda: settings.MMR_LAMBDA)
     errsig_bonus: float = field(default_factory=lambda: settings.ERRSIG_BONUS)
+    episode_credit_enabled: bool = field(
+        default_factory=lambda: bool(settings.EPISODE_CREDIT_ENABLED)
+    )
+    episode_credit_weight: float = field(default_factory=lambda: settings.EPISODE_CREDIT_WEIGHT)
     temporal_asof_strict: bool = field(default_factory=lambda: bool(settings.TEMPORAL_ASOF_STRICT))
     temporal_fuzzy_penalty: float = field(
         default_factory=lambda: float(settings.TEMPORAL_FUZZY_PENALTY)
@@ -61,6 +66,11 @@ class RetrievalParams:
         # 都经过这里，显式覆盖值无法绕过（整改票 02）。
         object.__setattr__(self, "mmr_lambda", _fail_closed(self.mmr_lambda, 0.7))
         object.__setattr__(self, "errsig_bonus", _fail_closed(self.errsig_bonus, 0.10))
+        object.__setattr__(
+            self,
+            "episode_credit_weight",
+            _fail_closed(self.episode_credit_weight, 0.1),
+        )
         object.__setattr__(
             self,
             "echo_suppress_window",
@@ -96,6 +106,8 @@ class RetrievalParams:
             "ERRSIG_BONUS": "errsig_bonus",
             "TEMPORAL_ASOF_STRICT": "temporal_asof_strict",
             "TEMPORAL_FUZZY_PENALTY": "temporal_fuzzy_penalty",
+            "EPISODE_CREDIT_ENABLED": "episode_credit_enabled",
+            "EPISODE_CREDIT_WEIGHT": "episode_credit_weight",
         }
         known = {}
         extra = {}
@@ -127,6 +139,8 @@ class RetrievalParams:
             "ERRSIG_BONUS": "errsig_bonus",
             "TEMPORAL_ASOF_STRICT": "temporal_asof_strict",
             "TEMPORAL_FUZZY_PENALTY": "temporal_fuzzy_penalty",
+            "EPISODE_CREDIT_ENABLED": "episode_credit_enabled",
+            "EPISODE_CREDIT_WEIGHT": "episode_credit_weight",
         }
         attr = mapping.get(key, key)
         if hasattr(self, attr):
@@ -649,6 +663,15 @@ def _hybrid_search_impl(
     # 正文精确命中同一签名的候选加有界 bonus；识别不到则整条规则不参与。
     query_signatures = extract_error_signatures(query) if p.errsig_bonus > 0 else ()
 
+    # episode credit 影子加权（票据 D，ADR-0056；默认关）：命中记忆的累计
+    # 轨迹信用作乘性加权信号。关闭时此处短路，episode 表一次都不碰
+    # （零额外查询开销，逐位一致零回归）。
+    credit_map = None
+    if p.episode_credit_enabled:
+        from lantai.services.episode_service import episode_credit_map
+
+        credit_map = episode_credit_map([m.id for m in items])
+
     scored_items = []
     breakdowns: dict[str, dict] = {}
     rrf_k = 60
@@ -694,6 +717,14 @@ def _hybrid_search_impl(
             if errsig_hit_value:
                 score += errsig_hit_value
 
+        # episode credit 影子加权（票据 D）：score × (1 + w·tanh(credit))，
+        # tanh 有界压缩防极端 credit 主导排序；credit=0 时乘子恒 1。
+        ep_credit_value = 0.0
+        if credit_map is not None:
+            ep_credit_value = credit_map.get(m.id, 0.0)
+            if ep_credit_value:
+                score *= 1.0 + p.episode_credit_weight * math.tanh(ep_credit_value)
+
         scored_items.append((score, m))
         if explain:
             breakdowns[m.id] = {
@@ -704,6 +735,7 @@ def _hybrid_search_impl(
                 "lane_boost": lane_boost,
                 "persona_boost": persona_boost,
                 "errsig_bonus": round(errsig_hit_value, 4),
+                "episode_credit": round(ep_credit_value, 4),
                 "final": round(score, 4),
                 "decay_class": decay_class_name,
                 "decay_multiplier": round(_age_multiplier(m), 4),

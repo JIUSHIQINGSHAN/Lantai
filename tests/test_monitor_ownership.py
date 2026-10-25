@@ -719,6 +719,7 @@ class TestNoRegressionOnExistingBehaviour:
             "requests",
             "quality",
             "ingest_liveness",
+            "llm_degrade",  # 票 J（.scratch/v0.24-next-window-2026-10/07）：24h LLM 降级率一级指标
             "security",
             "dependency",
             "alerts",

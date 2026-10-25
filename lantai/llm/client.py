@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 
 from openai import OpenAI
 from tenacity import (
@@ -13,6 +14,53 @@ from lantai.core.settings import settings
 from lantai.ingestion.safety import validate_api_url
 
 _client_instance = None
+
+
+def record_llm_outcome(channel: str, outcome: str, duration_ms: int) -> None:
+    """LLM 外呼结局落库（票 J：司天 24h 降级率的数据源）。
+
+    尽力而为：遥测自身任何失败（无库/锁竞争）只吞掉并留日志一行，
+    绝不允许统计写坏调用方的外呼语义。懒导入避免 client <- db 的
+    启动期循环（db 链只依赖 models，不依赖 llm）。
+    """
+    try:
+        from lantai.core.ids import new_id
+        from lantai.models.tables import LLMCallEvent
+        from lantai.storage.db import get_session
+
+        with get_session() as s:
+            s.add(
+                LLMCallEvent(
+                    id=new_id("llm"), channel=channel, outcome=outcome, duration_ms=duration_ms
+                )
+            )
+            s.commit()
+    except Exception as exc:  # noqa: BLE001 — 遥测不得反噬外呼
+        import logging
+
+        logging.getLogger(__name__).debug("llm_call_event 落库跳过: %s", exc)
+
+
+def _timed(channel: str):
+    """装饰 chat/vision/embed 公共入口：成功记 ok、重试耗尽记 error。
+
+    tenacity 装饰在内部函数上，外层 try/except 看到的已是「最终结局」。
+    """
+
+    def deco(fn):
+        def wrapper(*args, **kwargs):
+            start = time.monotonic()
+            try:
+                result = fn(*args, **kwargs)
+            except Exception:
+                record_llm_outcome(channel, "error", int((time.monotonic() - start) * 1000))
+                raise
+            record_llm_outcome(channel, "ok", int((time.monotonic() - start) * 1000))
+            return result
+
+        return wrapper
+
+    return deco
 
 
 class LLMConcurrencyTimeout(RuntimeError):
@@ -85,6 +133,7 @@ def get_client() -> OpenAI:
     return _client_instance
 
 
+@_timed("chat")
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(min=1, max=10),
@@ -101,6 +150,7 @@ def chat_json(system: str, user: str) -> dict:
     return json.loads(resp.choices[0].message.content)
 
 
+@_timed("vision")
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(min=1, max=10),
@@ -138,6 +188,7 @@ def vision_caption(media_url: str) -> str:
     return resp.choices[0].message.content or ""
 
 
+@_timed("embed")
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(min=1, max=10),

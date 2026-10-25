@@ -347,6 +347,13 @@ class Settings(BaseSettings):
     MMR_LAMBDA: float = 0.7  # 0~1；越大越偏向相关性
     # 错误签名通道（M6）：查询含报错标识符时，正文精确命中同签名的候选加有界 bonus；0=关闭
     ERRSIG_BONUS: float = 0.10
+    # episode credit 影子接线（票据 D，ADR-0056）：检索命中记忆的累计轨迹信用
+    # 作为加权信号；默认 false——水源（dogfooding 回执）未解、样本不足不调权
+    # （2026-09 报告 episode 影子纪律）。关闭时取数前短路，零额外查询开销。
+    EPISODE_CREDIT_ENABLED: bool = False
+    # 加权公式系数：score × (1 + EPISODE_CREDIT_WEIGHT × tanh(credit))，credit 有界
+    # 压缩避免极端值主导排序；开启条件与回滚见 ADR-0056。
+    EPISODE_CREDIT_WEIGHT: float = 0.1
     # 会话精华萃取（session distill）：最少带 session 写入数；精华泳道慢衰减
     DISTILL_MIN_MEMORIES: int = 3
     DISTILL_MAX_SOURCE: int = 24

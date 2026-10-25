@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-25 - 悬衡（Xuanheng · 悬衡而知平）
+
+> 版本代号「悬衡」：《韩非子·饰邪》「悬衡而知平，设规而知圆」——悬起衡器方能校准曲直。贴合本版主题：为下一程评测自证校准仪器（评测替考后门测试锁定、司天 LLM 降级率与 git_sha 观测补全、episode 影子接线默认关、上游同构雷四路自查无雷）。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7。票据 `.scratch/v0.24-next-window-2026-10/`（票 01/02 第一步/03/07 入版，02 第二至五步与 04-06/08-09 按「评测线整块推进不半截」判据顺延下一窗口，裁决记录见 `map.md`）。
+
+### Added
+
+- **episode credit 影子接线（默认关，ADR-0056）**：检索命中记忆的累计轨迹信用作为乘性加权信号 `score × (1 + 0.1·tanh(credit))`；`EPISODE_CREDIT_ENABLED` 默认 `False`——水源（dogfooding 回执）未解、样本不足不调权（2026-09 报告 episode 影子纪律）。关闭时取数前短路，episode 表一次都不碰；默认关逐位一致回归在冻结时钟下验证，三变异门禁（翻默认/改系数/关闭态仍读表）全红。explain 新增 `episode_credit` 字段。测试 `tests/test_episode_credit_shadow.py` 5 例（真实 SQLite 直调主路径）。
+- **司天 24h LLM 降级率一级指标（票 J-a）**：新增 `llm_call_event` 表（迁移 v30，只记 channel/outcome/duration 标量、零正文零提示词），`lantai/llm/client.py` 三外呼通道（chat/vision/embed）结局记录（tenacity 重试耗尽记 error，尽力而为不反噬外呼）；`collect_llm_degrade` 三态判定（no_evidence/ok/degraded，零调用不装绿），快照一级键 `llm_degrade`，高降级告警 `llm_degrade_high`（≥10 次且失败率 ≥50% 判 high）。测试 `tests/test_llm_degrade_and_git_sha.py` 8 例。
+- **/health 返回 git_sha（票 J-b）**：PATH→常见安装路径回退定位 git、60s 短缓存、取不到返回 null 绝不抛错（Docker 镜像内可能无 git）；不影响 ok 判定。
+- **评测替考后门测试锁定（票 02 第一步收口）**：`tests/test_staged_anchor_miss.py` 3 例直调 `run_staged_eval` 全六段（真 SQLite+FTS5+内嵌 ChromaDB，替身仅外部 embedding 面），锁定「锚点缺席绝不替考补位、必报 achieved=False + redirected 指向实际拦截段」；三变异门禁（恢复 `or indexed[:1]` 兜底/缺席误报 achieved/去掉 redirected）全红。替考后门本体经复核确认已于 2026-10-10 修复（`staged.py:498` 无兜底），本版补上测试锁。
+
+### Documentation
+
+- **ADR-0055（票 I）**：API key 哈希维持 SHA-256 的条件升级备忘——key 为 `token_urlsafe(32)` 256 bit 熵，加盐/多轮不改变可计算攻击成本；三条触发即重开的升级条款（自设弱 key/熵源变更/哈希介质扩散）。现状零代码变更。
+- **ADR-0056**：episode 影子接线决策（默认 false 理由、加权公式、开启条件、回滚方式）。
+- **版本代号「悬衡」**：登记 `CONTEXT.md` 词汇表与 ADR-0013 §7。
+
+### Verified
+
+- **上游同构雷四路自查（票 01，目检无雷）**：对照上游 aiduMEI f0.6 四真雷逐项目检兰台代码——遗忘时间基准（更漏 ADR-0048 各落点有实现）、向量参数同源（embed 单一真源+collection 单例）、笔削/起复删除-索引三处一致（读侧 status 过滤兜底）、写入活性探针已在位（`collect_ingest_liveness` 三态+告警+回环自查脚本）。证据全文见票据 01 Comments；「无雷」为兰台侧目检结论，不构成对上游自述的采信。
+
 ## [0.23.5] - 2026-10-25 - 鱼贯（Yuguan · 衔枚鱼贯）
 
 > 版本代号「鱼贯」：《三国志·邓艾传》「衔枚鱼贯」——依次而进、不壅不塞。贴合本版主题：遗忘周期改 keyset 分页逐批推进，读路径纯化、单簇容错与全库统计口径收口。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7。

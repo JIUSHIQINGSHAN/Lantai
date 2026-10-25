@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Depends
 from sqlmodel import select
 
@@ -13,11 +15,66 @@ router = APIRouter()
 # 受保护路由（需要 API Key）
 protected_router = APIRouter()
 
+# git_sha 短缓存（票 J）：/health 是 Docker HEALTHCHECK 高频路径，
+# 不得每次请求起子进程。60s 内复用；失败结果同样缓存，避免坏环境
+# 下每次探活都 spawn 一个注定失败的进程。
+_GIT_SHA_TTL = 60.0
+_git_sha_cache: tuple[float, str | None] | None = None
+
+
+def _find_git() -> str | None:
+    """PATH 优先，回退常见安装路径（git 装了但不在 PATH 的场景）。"""
+    import shutil
+
+    exe = shutil.which("git")
+    if exe:
+        return exe
+    for cand in (
+        r"C:\Program Files\Git\cmd\git.exe",
+        r"C:\Program Files (x86)\Git\cmd\git.exe",
+        "/usr/bin/git",
+    ):
+        if Path(cand).exists():
+            return cand
+    return None
+
+
+def _current_git_sha() -> str | None:
+    """当前 commit sha；非 git 环境 / git 不可用时返回 None，绝不抛错。"""
+    global _git_sha_cache
+    import subprocess
+    import time as _time
+
+    now = _time.monotonic()
+    if _git_sha_cache is not None and now - _git_sha_cache[0] < _GIT_SHA_TTL:
+        return _git_sha_cache[1]
+    sha: str | None = None
+    exe = _find_git()
+    if exe:
+        try:
+            r = subprocess.run(
+                [exe, "rev-parse", "HEAD"],
+                cwd=Path(__file__).resolve().parents[2],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if r.returncode == 0:
+                sha = r.stdout.strip() or None
+        except Exception:
+            sha = None
+    _git_sha_cache = (now, sha)
+    return sha
+
 
 @router.get("/health")
 def health():
-    """简单存活探针——Docker HEALTHCHECK 用，公开；不暴露内部状态"""
-    return {"ok": True}
+    """简单存活探针——Docker HEALTHCHECK 用，公开；不暴露内部状态。
+
+    git_sha（票 J）：非敏感的构建定位信息，运维对表「跑的是哪个 commit」；
+    取不到时为 null（Docker 镜像内可能无 git），不影响 ok 判定。
+    """
+    return {"ok": True, "git_sha": _current_git_sha()}
 
 
 @router.get("/api/memory/health")

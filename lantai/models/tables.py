@@ -622,6 +622,24 @@ class RetrievalEvent(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class LLMCallEvent(SQLModel, table=True):
+    """LLM 外呼结局计数（票 J：司天 24h 降级率一级指标的数据源）。
+
+    只记标量（channel/outcome/duration_ms），零正文零提示词——遥测
+    不得把用户内容二次落库。outcome 语义：ok = tenacity 重试窗口内
+    成功；error = 三次重试后仍失败（调用方走降级路径的间接信号：
+    提取失败标 event_time_extract_failed、检索走拾遗等）。
+    """
+
+    __tablename__ = "llm_call_event"
+
+    id: str = Field(primary_key=True)
+    channel: str = Field(index=True)  # chat / vision / embed
+    outcome: str = Field(index=True)  # ok / error
+    duration_ms: int = 0
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class SchedulerRun(SQLModel, table=True):
     """worker 上次运行时间（观察期保底：/stats 持久化 + 每日任务启动补跑判定）。"""
 

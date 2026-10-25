@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 29
+TARGET_SCHEMA_VERSION = 30
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -557,6 +557,26 @@ def _migrate_v29(conn) -> None:
     logger.info("Migrated v29: cognitivepattern.dedup_key column（反思幂等去重）")
 
 
+def _migrate_v30(conn) -> None:
+    """v29 -> v30: llm_call_event 表（票 J：司天 24h LLM 降级率数据源）。
+
+    全新库由 create_all 直接建表；老库走本块补建。索引建失败不阻断
+    启动（同 v17/v20/v29 口径），但留痕。
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS llm_call_event ("
+        "id TEXT PRIMARY KEY, channel TEXT, outcome TEXT, "
+        "duration_ms INTEGER DEFAULT 0, created_at DATETIME)"
+    )
+    try:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_llm_call_event_created_at ON llm_call_event (created_at)"
+        )
+    except Exception as exc:
+        logger.warning("迁移 v30 索引创建跳过 ix_llm_call_event_created_at: %s", exc)
+    logger.info("Migrated v30: llm_call_event 表（LLM 降级率数据源）")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -586,6 +606,7 @@ MIGRATIONS = [
     (27, _migrate_v27),
     (28, _migrate_v28),
     (29, _migrate_v29),
+    (30, _migrate_v30),
 ]
 
 

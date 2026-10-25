@@ -46,6 +46,7 @@ from lantai.models.tables import (
     ApiKey,
     ConflictEvent,
     IngestJob,
+    LLMCallEvent,
     MemoryCandidate,
     MemoryItem,
     MemoryProposal,
@@ -664,6 +665,46 @@ def collect_ingest_liveness(session, *, now: datetime | None = None, principal=N
     }
 
 
+def collect_llm_degrade(session, *, now: datetime | None = None) -> dict:
+    """24h LLM 降级率（票 J：司天一级指标）。
+
+    数据源 `llm_call_event`（client.py 三外呼通道的结局计数，只标量零正文）。
+    口径纪律（同 ingest_liveness）：
+    - error = tenacity 三次重试后仍失败——调用方走降级路径（提取失败标注、
+      拾遗检索、直写兜底）的**间接**信号，不等于「某次业务必然失败」；
+    - 零调用 = 无判据（no_evidence），不判红不判绿——LLM 整段没被用到时
+      这个探针没有射程，不许拿 0/0 装绿。
+    """
+    now = now or utcnow()
+    start = now - timedelta(hours=24)
+    total = int(
+        session.exec(
+            select(func.count(LLMCallEvent.id)).where(LLMCallEvent.created_at >= start)
+        ).one()
+    )
+    failed = int(
+        session.exec(
+            select(func.count(LLMCallEvent.id)).where(
+                LLMCallEvent.created_at >= start,
+                LLMCallEvent.outcome == "error",
+            )
+        ).one()
+    )
+    if total <= 0:
+        judgment = "no_evidence"
+        rate = None
+    else:
+        rate = failed / total
+        judgment = "degraded" if failed > 0 else "ok"
+    return {
+        "window_hours": 24,
+        "calls_total_24h": total,
+        "calls_failed_24h": failed,
+        "degraded_rate_24h": rate,
+        "judgment": judgment,
+    }
+
+
 # ── 告警规则 ───────────────────────────────────────────────────────────
 def _alert(
     alert_id: str,
@@ -890,6 +931,23 @@ def evaluate_alerts(snapshot: dict) -> list[dict]:
             )
         )
 
+    llm_deg = snapshot.get("llm_degrade") or {}
+    if (
+        llm_deg.get("judgment") == "degraded"
+        and llm_deg.get("calls_total_24h", 0) >= 10
+        and (llm_deg.get("degraded_rate_24h") or 0) >= 0.5
+    ):
+        alerts.append(
+            _alert(
+                "llm_degrade_high",
+                "high",
+                "LLM 外呼 24h 降级率过高",
+                f"24h 内 {llm_deg.get('calls_failed_24h')}/{llm_deg.get('calls_total_24h')} 次外呼重试耗尽（率 {llm_deg.get('degraded_rate_24h'):.0%}）——提取/向量化正大面积走降级路径。",
+                "检查 OPENAI_API_KEY / BASE_URL 有效性与供应商状态；司天「LLM 降级率」面板看趋势。",
+                metric=llm_deg,
+            )
+        )
+
     if not dependency.get("llm", {}).get("configured"):
         alerts.append(
             _alert(
@@ -966,6 +1024,7 @@ def build_monitor_snapshot(
         "requests": collector.snapshot(window, now=now.timestamp()),
         "quality": quality,
         "ingest_liveness": collect_ingest_liveness(session, now=now, principal=principal),
+        "llm_degrade": collect_llm_degrade(session, now=now),
         "security": collect_security_view(session, principal=principal),
         "dependency": collect_dependency_view(principal=principal),
     }

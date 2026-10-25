@@ -74,7 +74,10 @@ class TestHealth:
     def test_health(self, client):
         resp = client.get("/health")
         assert resp.status_code == 200
-        assert resp.json() == {"ok": True}
+        # git_sha（票 J）：测试环境 git 可用性不定，只断言键存在且 ok 为真
+        body = resp.json()
+        assert body["ok"] is True
+        assert "git_sha" in body
 
     def test_memory_health(self, client):
         resp = client.get("/api/memory/health")
