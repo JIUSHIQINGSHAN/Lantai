@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-10-27
+
+> 补丁版（免代号，沿 v0.23.1–v0.23.3 先例）：发布节奏新规下首个「留证钉板」版——把评测自证线的公开报告锚定到不可变 tag。生产路径行为零变更（改动面为评测 harness、脚本、文档与基准留证）。
+
+### Added
+
+- **评测自证线收口（票 02 步骤②-⑤，详见 `docs/benchmarks/selfproof-report-2026-10.md`）**：对表预期标签外置（`staged-labels-2026-10.json`）+ 带证据字段的对表脚本；E1/E2 正式跑测（Qwen3-8B 钉板 + 确定性替身对照；提取段 3 报一致率 0/10 如实披露；语言漂移第一发现）；LongMemEval-S cleaned 25 题预注册 + 双闸灌库 + 三配置消融（**hybrid recall@5 0.88（条件 1.00）> bm25 = vector 0.84**，覆盖率 0.80 同报），全留证入仓。
+- **前置修复**：`scripts/run_staged_eval.py` 混维断言；确定性 embed 单一真源（`lantai/eval/deterministic_embed.py`）。
+- **ADR-0057「完璧」（Proposed 草案）**：多实体事实抽取粒度原子性，SQLite 表达方案，命名已登记 `CONTEXT.md`。
+- **发布节奏成文**：`docs/release-process.md` 新增「发布节奏」节（窗口版 minor + 两类免代号补丁触发 + 3 周软上限）。
+
 ## [0.24.0] - 2026-10-25 - 悬衡（Xuanheng · 悬衡而知平）
 
 > 版本代号「悬衡」：《韩非子·饰邪》「悬衡而知平，设规而知圆」——悬起衡器方能校准曲直。贴合本版主题：为下一程评测自证校准仪器（评测替考后门测试锁定、司天 LLM 降级率与 git_sha 观测补全、episode 影子接线默认关、上游同构雷四路自查无雷）。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7。票据 `.scratch/v0.24-next-window-2026-10/`（票 01/02 第一步/03/07 入版，02 第二至五步与 04-06/08-09 按「评测线整块推进不半截」判据顺延下一窗口，裁决记录见 `map.md`）。
