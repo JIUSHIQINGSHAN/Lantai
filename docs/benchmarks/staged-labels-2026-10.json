@@ -1,0 +1,107 @@
+{
+  "labels": {
+    "anchors": [
+      {
+        "achieved": true,
+        "evidence": {
+          "first_fault": null,
+          "guard_log": [],
+          "redirected": null,
+          "sid": "f1"
+        },
+        "expected_stage": "inject",
+        "name": "fence_escape"
+      },
+      {
+        "achieved": true,
+        "evidence": {
+          "first_fault": null,
+          "guard_log": [],
+          "redirected": null,
+          "sid": "l1"
+        },
+        "expected_stage": "gate",
+        "name": "gate_reject"
+      },
+      {
+        "achieved": true,
+        "evidence": {
+          "first_fault": null,
+          "guard_log": [],
+          "redirected": null,
+          "sid": "i2"
+        },
+        "expected_stage": "index",
+        "name": "index_desync"
+      },
+      {
+        "achieved": true,
+        "evidence": {
+          "first_fault": null,
+          "guard_log": [],
+          "redirected": null,
+          "sid": "q_anchor_zero"
+        },
+        "expected_stage": "retrieve",
+        "name": "zero_recall"
+      }
+    ],
+    "corpus_hash": "de084f0b8b5b0058",
+    "corpus_version": "staged-corpus-v1",
+    "guard_log": [],
+    "root_cause_chains": [],
+    "stages": {
+      "extract": {
+        "failure_buckets": {},
+        "nfr": 1.0,
+        "samples": 10,
+        "success": 10,
+        "success_rate": 1.0
+      },
+      "gate": {
+        "failure_buckets": {},
+        "nfr": null,
+        "samples": 12,
+        "success": 12,
+        "success_rate": 1.0
+      },
+      "index": {
+        "failure_buckets": {
+          "index_fts_orphan": 1
+        },
+        "nfr": null,
+        "samples": 10,
+        "success": 9,
+        "success_rate": 0.9
+      },
+      "inject": {
+        "failure_buckets": {},
+        "nfr": null,
+        "samples": 1,
+        "success": 1,
+        "success_rate": 1.0
+      },
+      "retrieve": {
+        "failure_buckets": {
+          "recall_zero_recall": 1
+        },
+        "nfr": null,
+        "samples": 4,
+        "success": 3,
+        "success_rate": 0.75
+      },
+      "store": {
+        "failure_buckets": {},
+        "nfr": null,
+        "samples": 9,
+        "success": 9,
+        "success_rate": 1.0
+      }
+    }
+  },
+  "reconciliation": {
+    "corpus_hash": "de084f0b8b5b0058",
+    "flip_count": 0,
+    "flips": []
+  }
+}

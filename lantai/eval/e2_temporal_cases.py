@@ -340,21 +340,14 @@ def sync_fts_quiet(session, mid: str, content: str) -> None:
 
 
 def _embed_or_fallback(texts):
-    """确定性 3-gram hash embed（512 维；spec §1.2 原则三：评测固定模型/种子）。
+    """确定性 3-gram hash embed（单一真源：lantai.eval.deterministic_embed；512 维）。
 
     不 try 生产 embed——环境含真实 embedding 服务时真调（1024 维）会与
     确定性替身（512 维）混写同一 collection，触发维度冲突（全量跑实证）。
     """
-    out = []
-    for text in texts:
-        v = [0.0] * 512
-        grams = [text[i : i + 3] for i in range(max(0, len(text) - 2))] or [text]
-        for g in grams:
-            h = int(hashlib.sha256(g.encode("utf-8")).hexdigest(), 16)
-            v[h % 512] += 1.0
-        n = sum(v) or 1.0
-        out.append([x / n for x in v])
-    return out
+    from lantai.eval.deterministic_embed import embed_for_eval
+
+    return embed_for_eval(texts)
 
 
 def db_module_safe_session():

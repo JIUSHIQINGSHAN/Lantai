@@ -1,0 +1,14 @@
+{
+  "stage": "report",
+  "started": true,
+  "updated_at": "2026-10-26T08:07:55Z",
+  "error": "HTTPError('401 Client Error: Unauthorized for url: http://127.0.0.1:8791/import/jsonl')",
+  "pilot_done": true,
+  "pilot_question": "c14c00dd",
+  "pilot_latency_s": 1687.8,
+  "done": 24,
+  "total": 25,
+  "current": "b320f3f8",
+  "config_hash": "f7f0b4ecd7fac6fa",
+  "finished": true
+}

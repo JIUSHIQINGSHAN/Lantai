@@ -63,3 +63,10 @@ docs/memory-quality/*.md
 .mirasim/
 .mrdayone/
 .claude/
+
+# LongMemEval 数据集（票 02 步骤④：数据不入仓）
+data/
+data/longmemeval/
+
+# 评测库本体（E1/E2 与 LongMemEval 的 Chroma/sqlite 评测数据；留证 JSONL/报告入仓）
+docs/benchmarks/**/eval-data/

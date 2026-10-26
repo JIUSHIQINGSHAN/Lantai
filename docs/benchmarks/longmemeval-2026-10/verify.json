@@ -1,0 +1,9 @@
+{
+  "config_hash": "b88355ed06eba0f1",
+  "total": 25,
+  "complete_n": 25,
+  "half_questions": [],
+  "missing_questions": [],
+  "verdict": "OK",
+  "resume_command": "PYTHONPATH=. python scripts/lme_run.py ingest --n 25  # 半题/缺题自动清题重灌（checkpoint 剔除后）"
+}

@@ -1,0 +1,146 @@
+{
+  "vector-only": {
+    "n": 25,
+    "abstention_n": 0,
+    "gate_skipped_n": 3,
+    "recall_at_2_all": 0.76,
+    "recall_at_5_all": 0.84,
+    "recall_at_2_conditional_gate_pass": 0.8636,
+    "recall_at_5_conditional_gate_pass": 0.9545,
+    "coverage_full_rate": 0.76,
+    "by_type": {
+      "single-session-user": {
+        "n": 4,
+        "recall_at_2": 0.5,
+        "recall_at_5": 0.75,
+        "descriptive_only": true
+      },
+      "single-session-assistant": {
+        "n": 3,
+        "recall_at_2": 0.6667,
+        "recall_at_5": 0.6667,
+        "descriptive_only": true
+      },
+      "single-session-preference": {
+        "n": 2,
+        "recall_at_2": 0.0,
+        "recall_at_5": 0.0,
+        "descriptive_only": true
+      },
+      "multi-session": {
+        "n": 6,
+        "recall_at_2": 1.0,
+        "recall_at_5": 1.0,
+        "descriptive_only": true
+      },
+      "temporal-reasoning": {
+        "n": 6,
+        "recall_at_2": 0.8333,
+        "recall_at_5": 1.0,
+        "descriptive_only": true
+      },
+      "knowledge-update": {
+        "n": 4,
+        "recall_at_2": 1.0,
+        "recall_at_5": 1.0,
+        "descriptive_only": true
+      }
+    }
+  },
+  "bm25-only": {
+    "n": 25,
+    "abstention_n": 0,
+    "gate_skipped_n": 3,
+    "recall_at_2_all": 0.8,
+    "recall_at_5_all": 0.88,
+    "recall_at_2_conditional_gate_pass": 0.9091,
+    "recall_at_5_conditional_gate_pass": 1.0,
+    "coverage_full_rate": 0.8,
+    "by_type": {
+      "single-session-user": {
+        "n": 4,
+        "recall_at_2": 1.0,
+        "recall_at_5": 1.0,
+        "descriptive_only": true
+      },
+      "single-session-assistant": {
+        "n": 3,
+        "recall_at_2": 0.6667,
+        "recall_at_5": 0.6667,
+        "descriptive_only": true
+      },
+      "single-session-preference": {
+        "n": 2,
+        "recall_at_2": 0.0,
+        "recall_at_5": 0.0,
+        "descriptive_only": true
+      },
+      "multi-session": {
+        "n": 6,
+        "recall_at_2": 0.8333,
+        "recall_at_5": 1.0,
+        "descriptive_only": true
+      },
+      "temporal-reasoning": {
+        "n": 6,
+        "recall_at_2": 0.8333,
+        "recall_at_5": 1.0,
+        "descriptive_only": true
+      },
+      "knowledge-update": {
+        "n": 4,
+        "recall_at_2": 1.0,
+        "recall_at_5": 1.0,
+        "descriptive_only": true
+      }
+    }
+  },
+  "hybrid-default": {
+    "n": 25,
+    "abstention_n": 0,
+    "gate_skipped_n": 3,
+    "recall_at_2_all": 0.84,
+    "recall_at_5_all": 0.88,
+    "recall_at_2_conditional_gate_pass": 0.9545,
+    "recall_at_5_conditional_gate_pass": 1.0,
+    "coverage_full_rate": 0.8,
+    "by_type": {
+      "single-session-user": {
+        "n": 4,
+        "recall_at_2": 1.0,
+        "recall_at_5": 1.0,
+        "descriptive_only": true
+      },
+      "single-session-assistant": {
+        "n": 3,
+        "recall_at_2": 0.6667,
+        "recall_at_5": 0.6667,
+        "descriptive_only": true
+      },
+      "single-session-preference": {
+        "n": 2,
+        "recall_at_2": 0.0,
+        "recall_at_5": 0.0,
+        "descriptive_only": true
+      },
+      "multi-session": {
+        "n": 6,
+        "recall_at_2": 1.0,
+        "recall_at_5": 1.0,
+        "descriptive_only": true
+      },
+      "temporal-reasoning": {
+        "n": 6,
+        "recall_at_2": 0.8333,
+        "recall_at_5": 1.0,
+        "descriptive_only": true
+      },
+      "knowledge-update": {
+        "n": 4,
+        "recall_at_2": 1.0,
+        "recall_at_5": 1.0,
+        "descriptive_only": true
+      }
+    }
+  }
+}

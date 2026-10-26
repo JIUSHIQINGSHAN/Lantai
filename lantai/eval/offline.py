@@ -78,6 +78,9 @@ def run_offline_eval(dataset: dict | None = None, top_k: int = 5, judge: str = "
     def session_factory() -> Session:
         return Session(engine)
 
+    # 8 维 mock embed：从属于确定性真源 lantai.eval.deterministic_embed（512 维）。
+    # 因 get_vector_store 已被 mock（下行），向量永不触达 Chroma，维度无混写风险，
+    # 仅需保证写入/查询两侧一致（均 8 维）——真源换维时此处无需跟随。
     vector_store_mock = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
     with (
         patch.object(db_module, "get_session", session_factory),
