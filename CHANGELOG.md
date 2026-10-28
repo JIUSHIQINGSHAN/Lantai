@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-29 - 稽古（Jigu · 曰若稽古）
+
+> 版本代号「稽古」：《尚书·尧典》「曰若稽古」——考订古今、时态立心。贴合本版主题「as-of 双时间轴时态查询引擎全链路打通、历史切片精确回放、迟到更正时态消解（ADR-0048）与 Hermes 插件生产级注入改造（Ticket 06）」：打通 `wanbi_retriever` 与 `hybrid_search` 在任意历史时点（`as_of`）的认知状态切片，严禁未来事实污染历史回放；实现迟到更正（supersede）的时态消解，旧事实自动以更正时间点（anchor）对齐失效，并遵循 I3 时态防倒挂钳制与审计留痕；彻底改造 Hermes 插件接入混合检索、启发式闸门与常驻个人画像，消除写死路径与 MCP 冗余。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.28-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **as-of 时态查询引擎与完璧原子事实历史快照（票 01，详见 `lantai/retrieval/wanbi_retriever.py` 与 `lantai/retrieval/hybrid.py`）**：
+  - `search_atomic_facts_by_query` 与 `hybrid_search` 全链路接入 `as_of` 时态切片参数，支持 `(valid_from IS NULL OR valid_from <= as_of) AND (valid_to IS NULL OR valid_to > as_of)` 严格过滤；
+  - 杜绝未来新事实或后续更正事实污染历史切片回放；
+  - 交付不 mock 核心计算逻辑的冒烟测试 `tests/test_jigu_as_of_smoke.py`。
+- **迟到更正时态消解与双时间轴历史无污染切片闭环（票 02，详见 `lantai/services/record_ops_service.py` 与 `lantai/cognition/late_correction.py`）**：
+  - 新增 `supersede_fact_atomic` 核心原语，旧事实 `valid_to` 精准锚定更正时刻，新事实 `valid_from` 起始于该时刻，遵循 I3 时态钳制（防 `valid_to < valid_from` 倒挂脏写）；
+  - 在 `apply_supersede_correction` 中引入谓词感知的原子事实级联时态对齐，同事务原子化提交；
+  - 注册 `AUDIT_ACTIONS` 的 `"supersede"` 动作并以 `genglou:supersede_fact_atomic` 留痕；
+  - 交付不 mock 核心逻辑的冒烟测试 `tests/test_jigu_late_correction_smoke.py`，验证事务时间（当前写入时刻）与事件时间（历史生效区间）解耦。
+- **Hermes 插件生产级注入与常驻画像改造（Ticket 06，详见 `scripts/shell_hook.py` 与 `hermes-plugin/lantai-hook/__init__.py`）**：
+  - 将粗召回切换至 `hybrid_search` 混合检索与 `relevance_check` 启发式闸门，设置 `SHELL_HOOK_SCORE_THRESHOLD = 0.5` 置信度下限过滤；
+  - 落地 `_build_resident_persona`，置顶常驻注入 `user_profile.md`、器识 PersonaProfile 与 CoreMemoryBlock，解决隐式偏好短句（“老样子/照旧”）跳过检索问题；
+  - 移除硬编码路径，实现 Python 虚拟环境与插件目录的自适应动态探测；
+  - 瘦身 MCP 工具集（`LANTAI_MCP_PROFILE=hermes` 仅暴露 5 个核心工具）；
+  - 交付增量 SQLite 迁移 `_migrate_v33`（role 列）与 `_migrate_v34`（session_id 列）。
+
 ## [0.27.0] - 2026-10-28 - 贯珠（Guanzhu · 如贯珠焉）
 
 > 版本代号「贯珠」：《汉书·景十三王传》「如贯珠焉」——联络贯穿、珠玉成串。贴合本版主题「完璧多实体原子事实接入 Hybrid 混合检索主流水线、贯珠图谱二度扩散升级与笔削生命周期闭环」：打通事实反查与投影挂载，消除全局盲目广播；升级贯珠图谱关联二度拓扑扩散，消除循环 N+1 查询；落实笔削（ADR-0047）在完璧原子事实上的四分法（就地改文、撤回止召回、级联物理删除）；构建复杂多元实体关系专项评测套件，达成多实体事实语义保真率 100% 与撤回 0 召回。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.27-next-window-2026-11/`（票 01/02/03/04 全部收口，05 发布门禁）。

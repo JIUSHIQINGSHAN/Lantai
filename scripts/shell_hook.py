@@ -168,9 +168,12 @@ def _build_resident_persona() -> str:
     try:
         from lantai.models.tables import PersonaProfile
         from lantai.services.persona_service import format_persona_context
+
         # 仅在明确存在激活人格配置或已配置画像时注入，避免未启用时干扰纯净单测
         with db.get_session() as s:
-            active_p = s.exec(select(PersonaProfile).where(PersonaProfile.is_active == True)).first()
+            active_p = s.exec(
+                select(PersonaProfile).where(PersonaProfile.is_active == True)
+            ).first()
             if active_p:
                 p_ctx = format_persona_context(active_p)
                 if p_ctx and p_ctx.strip():
@@ -298,7 +301,10 @@ def build_context(query: str, session_id: str | None = None) -> dict:
         request_id = new_id("req")  # 回执链（ADR-0049）：一次注入调用的整体标识
         event_id = _try_log(
             query,
-            [{"score": r.get("score", 0.0), "memory": {"id": (r.get("memory") or {}).get("id")}} for r in results],
+            [
+                {"score": r.get("score", 0.0), "memory": {"id": (r.get("memory") or {}).get("id")}}
+                for r in results
+            ],
             latency_ms,
             session_id=session_id,
             request_id=request_id,

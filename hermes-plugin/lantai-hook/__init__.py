@@ -32,6 +32,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
 # ── 路径自适应探测（彻底移除硬编码，ADR-0029/Ticket 06）───────────────
 def resolve_hook_paths() -> tuple[str, str]:
     """自适应探测 Python 解释器与 shell_hook.py 路径。

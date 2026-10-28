@@ -108,19 +108,19 @@ def test_fact_atomic_cascade_delete(mem_db):
 
 
 def test_migration_v31_upgrade():
-    """验证从迁移链升级到 v31 能够正确建表并设置 user_version（不 mock）。"""
+    """验证从迁移链升级到 v31+ 能够正确建表并设置 user_version（不 mock）。"""
     import sqlite3
 
-    from lantai.storage.migrations import apply_migrations
+    from lantai.storage.migrations import TARGET_SCHEMA_VERSION, apply_migrations
 
     conn = sqlite3.connect(":memory:")
     # 模拟 v30 状态
     conn.execute("PRAGMA user_version = 30")
     apply_migrations(conn)
 
-    # 验证版本已递增至 31
+    # 验证版本已递增至最新 TARGET_SCHEMA_VERSION (>= 31)
     cur = conn.execute("PRAGMA user_version")
-    assert cur.fetchone()[0] == 31
+    assert cur.fetchone()[0] == TARGET_SCHEMA_VERSION
 
     # 验证表已生成
     tables = [

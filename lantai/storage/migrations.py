@@ -638,9 +638,7 @@ def _migrate_v33(conn) -> None:
         if not _has_column(conn, "memoryitem", "role"):
             conn.execute("ALTER TABLE memoryitem ADD COLUMN role TEXT DEFAULT 'observation'")
         try:
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS ix_memoryitem_role ON memoryitem (role)"
-            )
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_memoryitem_role ON memoryitem (role)")
         except Exception as exc:
             logger.warning("迁移 v33 索引创建跳过: %s", exc)
     logger.info("Migrated v33: memoryitem 补齐 role 字段与索引")

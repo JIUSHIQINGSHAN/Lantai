@@ -888,4 +888,3 @@ def supersede_fact_atomic(
         return _run(session)
     with db.get_session() as s:
         return _run(s)
-

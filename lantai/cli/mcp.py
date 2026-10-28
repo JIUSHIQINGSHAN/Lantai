@@ -1946,7 +1946,11 @@ HERMES_CORE_TOOLS = frozenset({"search", "add", "feedback", "core_memory_get", "
 
 
 def _get_active_tools() -> dict:
-    profile = (os.environ.get("LANTAI_MCP_PROFILE") or os.environ.get("MCP_TOOL_PROFILE") or "").strip().lower()
+    profile = (
+        (os.environ.get("LANTAI_MCP_PROFILE") or os.environ.get("MCP_TOOL_PROFILE") or "")
+        .strip()
+        .lower()
+    )
     if profile in ("hermes", "core", "slim", "minimal"):
         return {k: v for k, v in TOOLS.items() if k in HERMES_CORE_TOOLS}
     return TOOLS
@@ -1963,7 +1967,7 @@ def handle(msg: dict) -> dict | None:
             "result": {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "lantai", "version": "0.27.0"},
+                "serverInfo": {"name": "lantai", "version": "0.28.0"},
             },
         }
     if method == "notifications/initialized":

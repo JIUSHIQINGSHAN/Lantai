@@ -107,17 +107,23 @@ def apply_supersede_correction(
         # 按 predicate 对齐更正边界，避免截断无关事实
         new_predicates = {nf.predicate for nf in new_facts if nf.confidence > 0.0}
         for old_fact in old_facts:
-            if old_fact.confidence > 0.0 and (not new_predicates or old_fact.predicate in new_predicates):
+            if old_fact.confidence > 0.0 and (
+                not new_predicates or old_fact.predicate in new_predicates
+            ):
                 # I3 钳制：若 anchor < old_fact.valid_from 则钳制至 valid_from，防倒挂
                 target_to = anchor_iso
-                if old_fact.valid_from and _ensure_utc(anchor_iso) < _ensure_utc(old_fact.valid_from):
+                if old_fact.valid_from and _ensure_utc(anchor_iso) < _ensure_utc(
+                    old_fact.valid_from
+                ):
                     target_to = old_fact.valid_from
                 if old_fact.valid_to is None or old_fact.valid_to > target_to:
                     old_fact.valid_to = target_to
                     s.add(old_fact)
 
         for new_fact in new_facts:
-            if new_fact.confidence > 0.0 and (new_fact.valid_from is None or new_fact.valid_from < anchor_iso):
+            if new_fact.confidence > 0.0 and (
+                new_fact.valid_from is None or new_fact.valid_from < anchor_iso
+            ):
                 new_fact.valid_from = anchor_iso
                 s.add(new_fact)
 

@@ -478,6 +478,7 @@ class Settings(BaseSettings):
         if not self.LANTAI_HOME:
             # 动态自适应探测用户持久数据目录（去死路径，票据 06）
             import sys
+
             user_data = (
                 Path.home() / "AppData" / "Local" / "remembrance-data"
                 if sys.platform == "win32"

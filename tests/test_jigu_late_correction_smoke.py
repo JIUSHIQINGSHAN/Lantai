@@ -271,9 +271,7 @@ def test_cascade_supersede_from_memory_smoke(jigu_test_db):
             as_of="2024-07-01T12:00:00+00:00",
         )
         assert len(res_july) >= 1
-        facts_july = [
-            f["id"] for r in res_july if "atomic_facts" in r for f in r["atomic_facts"]
-        ]
+        facts_july = [f["id"] for r in res_july if "atomic_facts" in r for f in r["atomic_facts"]]
         assert fid_old in facts_july
         assert fid_new not in facts_july
 
@@ -285,8 +283,6 @@ def test_cascade_supersede_from_memory_smoke(jigu_test_db):
             as_of="2024-09-01T12:00:00+00:00",
         )
         assert len(res_sep) >= 1
-        facts_sep = [
-            f["id"] for r in res_sep if "atomic_facts" in r for f in r["atomic_facts"]
-        ]
+        facts_sep = [f["id"] for r in res_sep if "atomic_facts" in r for f in r["atomic_facts"]]
         assert fid_new in facts_sep
         assert fid_old not in facts_sep
