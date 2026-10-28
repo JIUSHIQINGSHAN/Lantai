@@ -12,6 +12,7 @@
 
 import hashlib
 import logging
+from datetime import datetime
 
 from sqlmodel import Session, select
 
@@ -39,6 +40,8 @@ AUDIT_ACTIONS = (
     # 起复（ADR-0052）：巩固撤销面两操作——碎片起复 / 主记忆撤销全簇
     "revive",
     "unconsolidate",
+    # 稽古（ADR-0048）：事实原子迟到更正
+    "supersede",
 )
 
 _NOT_FOUND = {"ok": False, "error": "memory not found"}
@@ -823,3 +826,66 @@ def correct_fact_atomic(
         return _run(session)
     with db.get_session() as s:
         return _run(s)
+
+
+def supersede_fact_atomic(
+    old_fact_id: str,
+    new_fact_id: str,
+    *,
+    anchor: str | datetime,
+    actor: str = "",
+    reason: str = "",
+    session: Session | None = None,
+) -> dict:
+    """更漏（ADR-0048 / 票 02）：原子事实迟到更正（supersede）。
+
+    1. 将旧事实 old_fact.valid_to 锚定至更正时间点 anchor；
+       - 若 anchor < old_fact.valid_from，遵循 I3 钳制至 valid_from（防倒挂脏写）；
+    2. 将新事实 new_fact.valid_from 锚定至更正时间点 anchor；
+    3. 写入审计事件（action="supersede"）；
+    4. 保证在 historical as_of 检索切片中前后时段认知严格隔离，防未来知识渗透。
+    """
+    from lantai.models.tables import FactAtomic
+    from lantai.retrieval.temporal import _ensure_utc
+
+    def _run(s: Session) -> dict:
+        f_old = s.get(FactAtomic, old_fact_id)
+        if f_old is None:
+            return {"ok": False, "error": f"old fact not found: {old_fact_id}"}
+        f_new = s.get(FactAtomic, new_fact_id)
+        if f_new is None:
+            return {"ok": False, "error": f"new fact not found: {new_fact_id}"}
+
+        dt_anchor = _ensure_utc(anchor)
+        # I3 时态防倒挂校验与钳制
+        if f_old.valid_from:
+            dt_vf = _ensure_utc(f_old.valid_from)
+            if dt_anchor < dt_vf:
+                dt_anchor = dt_vf
+
+        anchor_iso = dt_anchor.isoformat()
+        f_old.valid_to = anchor_iso
+        f_new.valid_from = anchor_iso
+        s.add_all([f_old, f_new])
+
+        audit_event(
+            s,
+            memory_id=f_old.source_memory_id or f_old.id,
+            action="supersede",
+            actor=actor,
+            reason=f"genglou:supersede_fact_atomic:{reason}",
+            content=f"{f_old.statement} -> {f_new.statement} @ {anchor_iso}",
+        )
+        s.commit()
+        return {
+            "ok": True,
+            "old_fact_id": old_fact_id,
+            "new_fact_id": new_fact_id,
+            "anchor": anchor_iso,
+        }
+
+    if session is not None:
+        return _run(session)
+    with db.get_session() as s:
+        return _run(s)
+
