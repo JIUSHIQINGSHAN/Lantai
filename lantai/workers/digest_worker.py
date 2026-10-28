@@ -297,6 +297,10 @@ def collect_digest_stats(day: date | None = None, *, principal=None) -> dict:
             )
         ).one()
         refl = _aggregate_reflection(s, start, end, principal=principal)
+        from lantai.evolution.reflector import health_scan
+
+        h_scan = health_scan(s, principal=principal)
+        health_snapshot = h_scan.get("snapshot", {})
     return {
         # `day` 统一序列化成 ISO 字符串（票 mcp-identity-gaps/01a）：
         # MCP 的 `get_digest` 把整个返回值 `json.dumps` 出去，此前这里是
@@ -326,6 +330,7 @@ def collect_digest_stats(day: date | None = None, *, principal=None) -> dict:
             "avg_latency_ms": round(float(retr_avg_latency), 1) if retr_avg_latency else 0,
         },
         "reflection": refl,
+        "health": health_snapshot,
     }
 
 
@@ -362,6 +367,20 @@ def render_digest_markdown(stats: dict) -> str:
         f"| 反思提案 | 今日 {rf['created']}（自动应用 {rf['applied']}，待审 {rf['pending']}，拒绝 {rf['rejected']}） |",
         "",
     ]
+    h = stats.get("health")
+    if h:
+        lines += [
+            "## 记忆健康透出（健康扫描快照）",
+            "",
+            "| 健康指标 | 异常计数 |",
+            "|---|---|",
+            f"| 残留已替代记忆（superseded_active） | {h.get('superseded_active', 0)} |",
+            f"| 过期未归档记忆（expired_active） | {h.get('expired_active', 0)} |",
+            f"| 未决冲突（open_conflicts） | {h.get('open_conflicts', 0)} |",
+            f"| 低帮助率记忆（low_helpful） | {h.get('low_helpful', 0)} |",
+            f"| 低价值陈旧记忆（stale_low_value） | {h.get('stale_low_value', 0)} |",
+            "",
+        ]
     if rf["created"]:
         lines += [
             "",

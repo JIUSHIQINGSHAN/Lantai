@@ -1,8 +1,8 @@
 # ADR-0057: 完璧——多实体事实抽取粒度原子性（SQLite 表达，无图数据库）
 
-**日期**: 2026-10-26
-**状态**: Proposed（草案，待维护者裁决；本票只到 ADR，不含代码落地）
-**决策者**: 待大哥裁决
+**日期**: 2026-10-26（2026-10-28 落地存储层实现）
+**状态**: Accepted（已采纳，存储层与迁移链已合入 v31）
+**决策者**: 维护者裁决与自动流水线落地
 **来源**: 票据 `.scratch/v0.24-next-window-2026-10/issues/06-p1-6-multi-entity-fact-adr.md`（§六 P1 第 6 条，§四.3 Zep 超边 verified 级外部印证）；Zep 论文 arXiv:2501.13956 与 Graphiti 开源仓库（见 `docs/research/direction-research-report.md` 引 [5][6]）
 
 ---

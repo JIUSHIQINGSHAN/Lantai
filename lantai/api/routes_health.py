@@ -182,6 +182,10 @@ def stats():
         decay_rows = s.exec(
             select(MemoryItem.decay_class, func.count()).group_by(MemoryItem.decay_class)
         ).all()
+        from lantai.evolution.reflector import health_scan
+
+        h_scan = health_scan(s)
+        health_snapshot = h_scan.get("snapshot", {})
 
     buffer = get_coalesce_buffer().water_level()
     return {
@@ -193,6 +197,7 @@ def stats():
         "by_decay_class": {k: v for k, v in decay_rows},
         "coalesce_buffer": buffer,
         "workers": scheduler.WORKER_LAST_RUN,
+        "health_snapshot": health_snapshot,
     }
 
 

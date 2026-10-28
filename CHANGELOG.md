@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-28 - 完璧（Wanbi · 完璧归赵）
+
+> 版本代号「完璧」：《史记·廉颇蔺相如列传》「完璧归赵」——璧不受损、完整交付。贴合本版主题「多实体事实原子性保整（ADR-0057落地）与方案B反思监控闭环」：彻底根治多实体复合事实被拆解为二元短语导致语义结构散落的架构缺陷，实现权威事实原子表 `fact_atomic` 与级联实体投影表 `fact_entity`（user_version 31）；抽取约束落地与解析结构化防御；打通保整事实投影反查；完成方案 B 反思 worker 端到端执行与 Daily Digest / `/stats` 健康透出。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.26-next-window-2026-11/`（票 01/02/03/04 全部收口，05 发布门禁）。
+
+### Added
+
+- **完璧（ADR-0057）多实体事实原子性存储与迁移（票 01，详见 `lantai/models/tables.py` 与 `lantai/storage/migrations.py`）**：
+  - 定义 `FactAtomic`（权威事实主表：含 statement 完整事实句、predicate 谓词、object 中心宾语等）与 `FactEntity`（实体索引投影表：带 `fact_id` 级联删除与 `role` 角色）；
+  - 增补 SQLite `_migrate_v31` 增量迁移函数，平滑自建主表、投影表与四大索引，目标 Schema 提升至 v31；
+  - 交付不 mock 内部逻辑的存储层冒烟测试 `tests/test_wanbi_schema.py`（覆写级联外键约束、CRUD 与迁移幂等）。
+- **完璧提取约束与写入纪律（票 02，详见 `lantai/llm/prompts.py` 与 `lantai/parsing/extractor.py`）**：
+  - 更新 `EXTRACT_SYS` 提示词，严禁将涉及 ≥3 实体的事实拆碎为二元短语，规范输出 `atomic_facts` 结构；
+  - 在 `extract_candidate` 正常解析与异常降级链路中均增加 `atomic_facts` 兜底键防御（遵循「宁 miss 不脏写」）；
+  - 编写不 mock 抽取冒烟测试 `tests/test_wanbi_extract.py`。
+- **完璧实体检索与投影查询（票 03，详见 `lantai/retrieval/wanbi_retriever.py`）**：
+  - 实现 `get_facts_by_entity` 与 `get_facts_by_predicate`，支持带归属权限过滤的反查与全量实体投影聚合；
+  - 编写不 mock 检索冒烟测试 `tests/test_wanbi_retriever.py`。
+- **方案 B 反思调度自愈与健康透出（票 04，详见 `lantai/workers/digest_worker.py` 与 `lantai/api/routes_health.py`）**：
+  - Daily Digest 每日盘点报告中新增「记忆健康透出」专栏，集中呈现 `superseded_active` / `expired_active` / `open_conflicts` / `low_helpful` / `stale_low_value` 指标；
+  - `/stats` 端点透出 `health_snapshot`，实现司天大盘实时健康感知；
+  - 编写反思 worker 端到端不 mock 冒烟测试 `tests/test_reflect_worker_smoke.py`。
+
 ## [0.25.0] - 2026-10-28 - 嘉量（Jialiang · 嘉量既成）
 
 > 版本代号「嘉量」：《周礼·考工记》「嘉量既成，以观四方」——标准量器、定权度量。贴合本版主题「把评测仪器磨准」：LongMemEval 覆盖率 0.80 仪器量测失真根因审计与修复（rev1 三配置 coverage 1.00，recall 逐位不变）、E1 提取语言漂移提示词与任务框架双语锁定（retrieve 段 0.25→0.75）、MemProbe suite56 认知稳定性-可塑性（SP-Balance）新基准纳入与分层报告交付、对标基线换血为 aiduMEI f0.6 差距分析。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.25-next-window-2026-10/`（票 01/02/03/04 入版，05 条件未触发转 resolved，06 发布门禁）。

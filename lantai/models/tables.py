@@ -32,6 +32,7 @@ class LifecycleStatus(StrEnum):
 
 from datetime import datetime
 
+from sqlalchemy import ForeignKey
 from sqlmodel import JSON, Column, Field, SQLModel
 
 from lantai.core.time import utcnow
@@ -845,3 +846,45 @@ class IdempotencyKey(SQLModel, table=True):
     response_json: str | None = None
     state: str = "accepted"
     created_at: float = Field(default_factory=lambda: utcnow().timestamp(), index=True)
+
+
+class FactAtomic(SQLModel, table=True):
+    """完璧（ADR-0057）：多实体事实原子主表。
+
+    一条涉及三个及以上实体的完整事实在抽取、存储、去重全链路保持为一条记录。
+    主表是唯一权威。
+    """
+
+    __tablename__ = "fact_atomic"
+
+    id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
+    statement: str = Field(index=True)
+    predicate: str = Field(index=True)
+    object: str | None = Field(default=None, index=True)
+    confidence: float = Field(default=0.5)
+    valid_from: str | None = Field(default=None)
+    valid_to: str | None = Field(default=None)
+    source_memory_id: str | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class FactEntity(SQLModel, table=True):
+    """完璧（ADR-0057）：实体投影表。
+
+    只做检索倒排索引，不是知识单元；可随时从 fact_atomic 重建。
+    """
+
+    __tablename__ = "fact_entity"
+
+    fact_id: str = Field(
+        sa_column=Column(
+            "fact_id",
+            ForeignKey("fact_atomic.id", ondelete="CASCADE"),
+            primary_key=True,
+        )
+    )
+    entity_name: str = Field(primary_key=True, index=True)
+    role: str = Field(primary_key=True)

@@ -20,10 +20,11 @@ def extract_candidate(title: str, content: str) -> dict:
             "constraints": [],
             "actions": [],
             "topic": [],
+            "atomic_facts": [],
             "extractor_confidence": 0.3,
         }
     data.setdefault("summary", "")
-    for k in ["claims", "methods", "constraints", "actions", "topic"]:
+    for k in ["claims", "methods", "constraints", "actions", "topic", "atomic_facts"]:
         data.setdefault(k, [])
     data["extractor_confidence"] = float(data.get("extractor_confidence", 0.5))
     return data

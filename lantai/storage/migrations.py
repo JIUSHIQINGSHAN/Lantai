@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 30
+TARGET_SCHEMA_VERSION = 31
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -577,6 +577,37 @@ def _migrate_v30(conn) -> None:
     logger.info("Migrated v30: llm_call_event 表（LLM 降级率数据源）")
 
 
+def _migrate_v31(conn) -> None:
+    """v30 -> v31: 完璧（ADR-0057）多实体事实原子表与实体投影表。"""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS fact_atomic ("
+        "id TEXT PRIMARY KEY, tenant_id TEXT, user_id TEXT, agent_id TEXT, "
+        "statement TEXT NOT NULL, predicate TEXT NOT NULL, object TEXT, "
+        "confidence REAL DEFAULT 0.5, valid_from TEXT, valid_to TEXT, "
+        "source_memory_id TEXT, created_at DATETIME)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS fact_entity ("
+        "fact_id TEXT NOT NULL REFERENCES fact_atomic(id) ON DELETE CASCADE, "
+        "entity_name TEXT NOT NULL, role TEXT NOT NULL, "
+        "PRIMARY KEY (fact_id, entity_name, role))"
+    )
+    try:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_fact_atomic_statement ON fact_atomic (statement)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_fact_atomic_predicate ON fact_atomic (predicate)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_fact_atomic_source_memory_id ON fact_atomic (source_memory_id)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_fact_entity_name ON fact_entity (entity_name)")
+    except Exception as exc:
+        logger.warning("迁移 v31 索引创建跳过: %s", exc)
+    logger.info("Migrated v31: 完璧 fact_atomic / fact_entity (ADR-0057)")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -607,6 +638,7 @@ MIGRATIONS = [
     (28, _migrate_v28),
     (29, _migrate_v29),
     (30, _migrate_v30),
+    (31, _migrate_v31),
 ]
 
 

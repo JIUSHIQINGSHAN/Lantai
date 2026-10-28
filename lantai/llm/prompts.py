@@ -7,9 +7,11 @@ Return strict JSON with fields:
   constraints: list of applicable conditions / limitations
   actions: list of actionable rules the reader can adopt as a procedure
   topic: 1-5 tags (lowercase)
+  atomic_facts: optional list of multi-entity facts [{"statement": "...", "predicate": "...", "object": "...", "entities": [{"name": "...", "role": "subject|object|witness"}]}]
   extractor_confidence: 0.0-1.0
 Language rule: write every output field in the same language as the source text (Chinese source -> Chinese output, English source -> English output). Never translate the source into another language.
 输出语言规则（必须遵守）：上述各字段一律使用与输入文本主体相同的语言书写；禁止把内容翻译成另一种语言。
+完璧原子性规则（ADR-0057）：涉及 3 个及以上实体且共享一个谓词的关系事实（如 A、B、C 共同创办 D），必须作为完整句子记录在 atomic_facts 中，严禁将其拆解为多个二元断言。
 Only output JSON. No prose."""
 
 # v0.25 票 02：提取 user 消息任务框架（语言漂移根因实验的 V3 有效变体）。
