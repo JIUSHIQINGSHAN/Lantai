@@ -22,11 +22,14 @@ PRECISION_DELTAS = {
 }
 
 
-def _ensure_utc(dt: datetime) -> datetime:
-    """I5：全部 UTC 语义；naive 按 UTC 解释（沿 _chronos_filter/ConflictEngine 现行做法）。"""
+def _ensure_utc(dt: datetime | str) -> datetime:
+    """I5：全部 UTC 语义；naive 按 UTC 解释；非 UTC offset 统一转换为 UTC；支持 ISO 8601 字符串解析。"""
+    if isinstance(dt, str):
+        cleaned = dt.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(cleaned)
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
-    return dt
+    return dt.astimezone(UTC)
 
 
 def expand_interval(event_time: datetime, precision: str):

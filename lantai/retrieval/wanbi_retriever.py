@@ -94,12 +94,16 @@ def get_facts_by_predicate(session: Session, predicate: str, principal: Any = No
 
 
 def search_atomic_facts_by_query(
-    session: Session, query: str, principal: Any = None, limit: int = 5
+    session: Session,
+    query: str,
+    principal: Any = None,
+    limit: int = 5,
+    as_of: Any = None,
 ) -> list[dict]:
     """通过 query 中的实体名或子串反查原子事实。
 
     1. 从 query 提取候选词精准反查 FactEntity（非全表扫）；
-    2. 或通过 query 匹配 statement（必须同时满足 confidence > 0 且有效）；
+    2. 或通过 query 匹配 statement（必须同时满足 confidence > 0 且在指定时态时点有效）；
     3. 返回聚合了全部关联实体的原子事实列表。
     """
     if not query or not query.strip():
@@ -126,7 +130,6 @@ def search_atomic_facts_by_query(
         matched_fact_ids.update(session.exec(stmt_entity).all())
 
     # 查 FactAtomic，严格约束 confidence > 0.0（防已撤回事实泄漏）
-    now_iso = utcnow().isoformat()
     stmt_fact = select(FactAtomic).where(FactAtomic.confidence > 0.0)
 
     scope = _fact_scope(principal)
@@ -149,8 +152,31 @@ def search_atomic_facts_by_query(
     if conditions:
         stmt_fact = stmt_fact.where(or_(*conditions))
 
-    # 有效期过滤（若设定了 valid_to，且已过期则不查）
-    stmt_fact = stmt_fact.where((FactAtomic.valid_to.is_(None)) | (FactAtomic.valid_to > now_iso))
+    # 时态有效切片（ADR-0048 更漏 / v0.28 稽古）
+    # 当指定 as_of 时，按历史时点截断（防未来事实污染历史）：
+    # (valid_from IS NULL OR valid_from <= as_of) 且 (valid_to IS NULL OR valid_to > as_of)
+    # 使用 func.datetime 抹平 SQLite 中 +00:00 与 Z 的词法 ASCII 偏差
+    from sqlalchemy import func
+
+    if as_of is not None:
+        from lantai.retrieval.temporal import _ensure_utc
+
+        as_of_iso = _ensure_utc(as_of).isoformat()
+        stmt_fact = stmt_fact.where(
+            (FactAtomic.valid_from.is_(None))
+            | (func.datetime(FactAtomic.valid_from) <= func.datetime(as_of_iso))
+        )
+        stmt_fact = stmt_fact.where(
+            (FactAtomic.valid_to.is_(None))
+            | (func.datetime(FactAtomic.valid_to) > func.datetime(as_of_iso))
+        )
+    else:
+        # 默认当前态：valid_to IS NULL 或 valid_to > now
+        now_iso = utcnow().isoformat()
+        stmt_fact = stmt_fact.where(
+            (FactAtomic.valid_to.is_(None))
+            | (func.datetime(FactAtomic.valid_to) > func.datetime(now_iso))
+        )
 
     facts = session.exec(stmt_fact.limit(limit)).all()
     return _hydrate_facts_with_projections(session, list(facts))

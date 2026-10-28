@@ -1941,9 +1941,21 @@ TOOL_HANDLERS = {
 }
 
 
+# 5 核心工具列表（针对 Hermes 等对话宿主上下文瘦身，ADR-0029/Ticket 06）
+HERMES_CORE_TOOLS = frozenset({"search", "add", "feedback", "core_memory_get", "mem_recent"})
+
+
+def _get_active_tools() -> dict:
+    profile = (os.environ.get("LANTAI_MCP_PROFILE") or os.environ.get("MCP_TOOL_PROFILE") or "").strip().lower()
+    if profile in ("hermes", "core", "slim", "minimal"):
+        return {k: v for k, v in TOOLS.items() if k in HERMES_CORE_TOOLS}
+    return TOOLS
+
+
 def handle(msg: dict) -> dict | None:
     mid = msg.get("id")
     method = msg.get("method", "")
+    active_tools = _get_active_tools()
     if method == "initialize":
         return {
             "jsonrpc": "2.0",
@@ -1962,7 +1974,7 @@ def handle(msg: dict) -> dict | None:
         return {
             "jsonrpc": "2.0",
             "id": mid,
-            "result": {"tools": [{"name": n, **meta} for n, meta in TOOLS.items()]},
+            "result": {"tools": [{"name": n, **meta} for n, meta in active_tools.items()]},
         }
     if method == "tools/call":
         params = msg.get("params", {})
@@ -1980,7 +1992,7 @@ def handle(msg: dict) -> dict | None:
                 "id": mid,
                 "error": {"code": -32602, "message": "params/arguments must be objects"},
             }
-        if name not in TOOLS:
+        if name not in active_tools:
             return {
                 "jsonrpc": "2.0",
                 "id": mid,

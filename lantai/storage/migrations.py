@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 31
+TARGET_SCHEMA_VERSION = 34
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -341,9 +341,11 @@ def _migrate_v18(conn) -> None:
 
 
 def _migrate_v19(conn) -> None:
-    """v18 -> v19: 认知底层字段 (memorycandidate.role, memoryitem.promotion_trace)"""
+    """v18 -> v19: 认知底层字段 (memorycandidate.role, memoryitem.role, memoryitem.promotion_trace)"""
     if not _has_column(conn, "memorycandidate", "role"):
         conn.execute("ALTER TABLE memorycandidate ADD COLUMN role TEXT DEFAULT 'observation'")
+    if not _has_column(conn, "memoryitem", "role"):
+        conn.execute("ALTER TABLE memoryitem ADD COLUMN role TEXT DEFAULT 'observation'")
     if not _has_column(conn, "memoryitem", "promotion_trace"):
         conn.execute("ALTER TABLE memoryitem ADD COLUMN promotion_trace TEXT DEFAULT '{}'")
     logger.info("Migrated v19: Cognitive fields (role, promotion_trace)")
@@ -608,6 +610,58 @@ def _migrate_v31(conn) -> None:
     logger.info("Migrated v31: 完璧 fact_atomic / fact_entity (ADR-0057)")
 
 
+def _migrate_v32(conn) -> None:
+    """v31 -> v32: retrieval_event 补齐 tenant_id, user_id, agent_id (读侧可观测与归属收拢)"""
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='retrieval_event'"
+    ).fetchone():
+        if not _has_column(conn, "retrieval_event", "tenant_id"):
+            conn.execute("ALTER TABLE retrieval_event ADD COLUMN tenant_id TEXT")
+        if not _has_column(conn, "retrieval_event", "user_id"):
+            conn.execute("ALTER TABLE retrieval_event ADD COLUMN user_id TEXT")
+        if not _has_column(conn, "retrieval_event", "agent_id"):
+            conn.execute("ALTER TABLE retrieval_event ADD COLUMN agent_id TEXT")
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_retrieval_event_user_id ON retrieval_event (user_id)"
+            )
+        except Exception as exc:
+            logger.warning("迁移 v32 索引创建跳过: %s", exc)
+    logger.info("Migrated v32: retrieval_event 补齐身份归属字段")
+
+
+def _migrate_v33(conn) -> None:
+    """v32 -> v33: memoryitem 补齐 role 列（认知角色分类）。"""
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memoryitem'"
+    ).fetchone():
+        if not _has_column(conn, "memoryitem", "role"):
+            conn.execute("ALTER TABLE memoryitem ADD COLUMN role TEXT DEFAULT 'observation'")
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_memoryitem_role ON memoryitem (role)"
+            )
+        except Exception as exc:
+            logger.warning("迁移 v33 索引创建跳过: %s", exc)
+    logger.info("Migrated v33: memoryitem 补齐 role 字段与索引")
+
+
+def _migrate_v34(conn) -> None:
+    """v33 -> v34: retrieval_event 补齐 session_id 列（会话检索来源链对账）。"""
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='retrieval_event'"
+    ).fetchone():
+        if not _has_column(conn, "retrieval_event", "session_id"):
+            conn.execute("ALTER TABLE retrieval_event ADD COLUMN session_id TEXT")
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_retrieval_event_session_id ON retrieval_event (session_id)"
+            )
+        except Exception as exc:
+            logger.warning("迁移 v34 索引创建跳过: %s", exc)
+    logger.info("Migrated v34: retrieval_event 补齐 session_id 字段与索引")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -639,6 +693,9 @@ MIGRATIONS = [
     (29, _migrate_v29),
     (30, _migrate_v30),
     (31, _migrate_v31),
+    (32, _migrate_v32),
+    (33, _migrate_v33),
+    (34, _migrate_v34),
 ]
 
 

@@ -258,6 +258,7 @@ class Settings(BaseSettings):
     SHELL_HOOK_TIMEOUT: int = 2  # 秒
     SHELL_HOOK_DIALOGUE_TIMEOUT: float = 30.0  # 对话写入通道超时（秒，含 LLM 提取）
     SHELL_HOOK_TOP_K: int = 5
+    SHELL_HOOK_SCORE_THRESHOLD: float = 0.5  # 置信度下限（低于此分数的弱相关候选剔除）
     SHELL_HOOK_MIN_CHARS: int = 3
     # 召回预算（借鉴 TencentDB Agent Memory auto-recall）：单条记忆注入上限 +
     # 总字符预算，超预算截断并附工具指南；防大记忆撑爆上下文
@@ -474,6 +475,17 @@ class Settings(BaseSettings):
         """DATABASE_URL / CHROMADB_PATH 未显式设置时从 LANTAI_HOME 推导（兼容旧 REMEMBRANCE_HOME）。"""
         if not self.LANTAI_HOME and self.REMEMBRANCE_HOME:
             self.LANTAI_HOME = self.REMEMBRANCE_HOME
+        if not self.LANTAI_HOME:
+            # 动态自适应探测用户持久数据目录（去死路径，票据 06）
+            import sys
+            user_data = (
+                Path.home() / "AppData" / "Local" / "remembrance-data"
+                if sys.platform == "win32"
+                else Path.home() / ".remembrance-data"
+            )
+            if user_data.is_dir() and (user_data / "remembrance.db").is_file():
+                self.LANTAI_HOME = str(user_data)
+
         home = Path(self.LANTAI_HOME) if self.LANTAI_HOME else _REPO_ROOT
         if not self.DATABASE_URL:
             self.DATABASE_URL = f"sqlite:///{home / 'remembrance.db'}"

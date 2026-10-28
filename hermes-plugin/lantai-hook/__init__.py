@@ -28,17 +28,86 @@ import os
 import subprocess
 import sys
 import threading
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# ── 配置 ──────────────────────────────────────────────────────────
-_VENV_PY = r"C:/Users/Asus/Desktop/记忆/.venv/Scripts/python.exe"
-_SHELL_HOOK = r"C:/Users/Asus/Desktop/记忆/scripts/shell_hook.py"
+# ── 路径自适应探测（彻底移除硬编码，ADR-0029/Ticket 06）───────────────
+def resolve_hook_paths() -> tuple[str, str]:
+    """自适应探测 Python 解释器与 shell_hook.py 路径。
+
+    探测优先级：
+    1. 环境变量 LANTAI_PYTHON 与 LANTAI_SHELL_HOOK
+    2. 基于当前文件所在目录向上遍历仓库根目录
+    3. 常见工作区根目录回退
+    4. sys.executable 回退
+    """
+    hook_path: Path | None = None
+    if os.environ.get("LANTAI_SHELL_HOOK") and Path(os.environ["LANTAI_SHELL_HOOK"]).is_file():
+        hook_path = Path(os.environ["LANTAI_SHELL_HOOK"]).resolve()
+
+    if not hook_path:
+        # 当前文件在 hermes-plugin/lantai-hook/__init__.py，上两层即为仓库根目录
+        here = Path(__file__).resolve()
+        for parent in here.parents:
+            cand = parent / "scripts" / "shell_hook.py"
+            if cand.is_file():
+                hook_path = cand.resolve()
+                break
+
+    if not hook_path:
+        for r in [
+            Path.cwd(),
+            Path("D:/Projects/记忆"),
+            Path.home() / "Desktop" / "记忆",
+            Path.home() / "Projects" / "记忆",
+            Path.home() / "记忆",
+        ]:
+            cand = r / "scripts" / "shell_hook.py"
+            if cand.is_file():
+                hook_path = cand.resolve()
+                break
+
+    py_path: Path | None = None
+    if os.environ.get("LANTAI_PYTHON") and Path(os.environ["LANTAI_PYTHON"]).is_file():
+        py_path = Path(os.environ["LANTAI_PYTHON"]).resolve()
+
+    if not py_path and hook_path:
+        repo_root = hook_path.parent.parent
+        venv_py = (
+            repo_root / ".venv" / "Scripts" / "python.exe"
+            if sys.platform == "win32"
+            else repo_root / ".venv" / "bin" / "python"
+        )
+        if venv_py.is_file():
+            py_path = venv_py.resolve()
+
+    if not py_path:
+        py_path = Path(sys.executable).resolve()
+
+    return str(py_path), str(hook_path) if hook_path else ""
+
+
+_VENV_PY, _SHELL_HOOK = resolve_hook_paths()
 _REQUEST_TIMEOUT = 5.0  # 注入请求超时（秒）
 _DIALOGUE_TIMEOUT = 30.0  # 对话写入请求超时（秒，含 LLM 提取）
 _MIN_QUERY_CHARS = 2
-# 触发词（与 gate 语义对齐：短句无触发词不注入，省开销）
-_TRIGGER_WORDS = ("记得", "上次", "回忆", "帮我查", "之前", "忘记", "以前", "曾经")
+# 触发词（与 gate 语义对齐：包含老习惯与口语偏好短句）
+_TRIGGER_WORDS = (
+    "记得",
+    "上次",
+    "回忆",
+    "帮我查",
+    "之前",
+    "忘记",
+    "以前",
+    "曾经",
+    "老样子",
+    "照旧",
+    "按我习惯",
+    "帮我挑",
+    "看下之前",
+)
 # 会话缓冲上限（防膨胀）：条数与总字符
 _SESSION_BUFFER_MAX_MSGS = 200
 _SESSION_BUFFER_MAX_CHARS = 200_000

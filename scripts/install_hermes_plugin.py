@@ -2,7 +2,7 @@
 
 用法：
   python scripts/install_hermes_plugin.py [--hermes-home <path>]
-  默认 Hermes home = C:/Users/Asus/AppData/Local/hermes
+  默认 Hermes home 自动探测（环境变量 HERMES_HOME 或系统用户数据目录）
 
 行为：
   1. 备份现有插件目录到 plugins-backup/lantai-hook-YYYYMMDD（插件扫描目录之外），
@@ -15,12 +15,23 @@
 
 import argparse
 import datetime
+import os
 import re
 import shutil
 import sys
 from pathlib import Path
 
-DEFAULT_HERMES_HOME = Path(r"C:/Users/Asus/AppData/Local/hermes")
+
+def get_default_hermes_home() -> Path:
+    """动态探测 Hermes home 路径（按环境变量 -> 系统默认规范目录，去硬编码）。"""
+    if "HERMES_HOME" in os.environ and os.environ["HERMES_HOME"].strip():
+        return Path(os.environ["HERMES_HOME"].strip())
+    if sys.platform == "win32":
+        return Path.home() / "AppData" / "Local" / "hermes"
+    return Path.home() / ".hermes"
+
+
+DEFAULT_HERMES_HOME = get_default_hermes_home()
 PLUGIN_SRC = Path(__file__).resolve().parent.parent / "hermes-plugin" / "lantai-hook"
 PLUGIN_NAME = "lantai-hook"
 

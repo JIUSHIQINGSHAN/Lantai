@@ -24,6 +24,7 @@ from lantai.core.settings import settings
 from lantai.core.text import apply_recall_budget as _apply_recall_budget
 from lantai.core.text import truncate_codepoints as _truncate_codepoints
 from lantai.core.time import render_event_time
+from lantai.gate.prefilter import relevance_check
 from lantai.integrations.host_adapters import adapt_response
 from lantai.integrations.host_protocol import (
     ACTION_BACKFILL,
@@ -37,6 +38,7 @@ from lantai.integrations.host_protocol import (
 from lantai.llm.client import embed
 from lantai.llm.fence import fence_declaration, wrap_as_data
 from lantai.models.tables import MemoryItem
+from lantai.retrieval.hybrid import hybrid_search
 from lantai.services.offload_service import build_offload_inject, write_offload_file
 from lantai.storage import db
 from lantai.storage.vector_store import get_vector_store
@@ -131,6 +133,72 @@ def _format_skill_entry(item, score: float, max_chars: int, suffix: str) -> tupl
     return truncated, truncated
 
 
+def _build_resident_persona() -> str:
+    """常驻个人画像与核心记忆（置顶无检索依赖，ADR-0029 器识 / Ticket 06）。
+
+    读取优先级：
+    1. user_profile.md 文件（LANTAI_HOME 或默认工作区/配置目录）
+    2. PersonaProfile（器识 L/G/E 三层认知基座：言语风格/行为准则/认知底色）
+    3. CoreMemoryBlock（核心记忆：identity / task / policy 块）
+    无论检索有无命中，稳定作为置顶提示词注入。
+    """
+    from pathlib import Path
+
+    sections = []
+    # 1. 尝试探测 user_profile.md
+    profile_paths = [
+        Path(settings.LANTAI_HOME) / "user_profile.md" if settings.LANTAI_HOME else None,
+        Path.home() / ".remembrance" / "user_profile.md",
+        Path.home() / ".hermes" / "user_profile.md",
+        Path(__file__).resolve().parent.parent / "user_profile.md",
+    ]
+    for p in profile_paths:
+        if p and p.is_file():
+            try:
+                content = p.read_text(encoding="utf-8", errors="replace").strip()
+                if content:
+                    sections.append(
+                        f"=== 【用户偏好档案 (User Profile)】 ===\n{content}\n====================================="
+                    )
+                    break
+            except Exception:
+                pass
+
+    # 2. 器识·人格基座 (PersonaProfile L/G/E)
+    try:
+        from lantai.models.tables import PersonaProfile
+        from lantai.services.persona_service import format_persona_context
+        # 仅在明确存在激活人格配置或已配置画像时注入，避免未启用时干扰纯净单测
+        with db.get_session() as s:
+            active_p = s.exec(select(PersonaProfile).where(PersonaProfile.is_active == True)).first()
+            if active_p:
+                p_ctx = format_persona_context(active_p)
+                if p_ctx and p_ctx.strip():
+                    sections.append(p_ctx.strip())
+    except Exception:
+        pass
+
+    # 3. 核心记忆块 (CoreMemoryBlock)
+    try:
+        from lantai.services.memory_service import get_core_memory
+
+        cm = get_core_memory()
+        blocks = cm.get("blocks") or []
+        if blocks:
+            lines = ["=== 【核心记忆 (Core Memory)】 ==="]
+            for b in blocks:
+                blk_name = (b.get("block") or "").upper()
+                blk_content = (b.get("content") or "").strip()
+                if blk_content:
+                    lines.append(f"[{blk_name}]: {blk_content}")
+            lines.append("================================")
+            sections.append("\n".join(lines))
+    except Exception:
+        pass
+
+    return "\n\n".join(sections)
+
+
 def _build_scene_lines(items, per_scene_chars: int) -> list[str]:
     """命中记忆按场景分组 → 导航块（渐进式披露；异常零侵入降级为空）。"""
     from lantai.services.scene_service import build_scene_navigation_lines
@@ -141,40 +209,62 @@ def _build_scene_lines(items, per_scene_chars: int) -> list[str]:
 def build_context(query: str, session_id: str | None = None) -> dict:
     """查询相关记忆，构建注入上下文。
 
-    返回 {"context": ..., "event_id": ...}——event_id 供生成侧回填 used_ids
-    （Hermes 若用 shell_hook 通道，回答后按注入的记忆 id 调 backfill）。
+    包含：
+    1. 个人常驻画像（Persona Profile + Core Memory + user_profile.md），置顶无检索依赖；
+    2. 相关性闸门（relevance_check）过滤，低信度/纯闲聊跳过检索；
+    3. 混合检索（hybrid_search，Vector + BM25 + FTS5），置信度下限过滤（SHELL_HOOK_SCORE_THRESHOLD）；
+    4. 记忆使用指南与樊篱数据隔离。
 
-    session_id：来源链透传（P0 票02）——落检索事件 session_id 列，
-    写线活性判据「带 session 的读才算真实会话读」依赖此值。
+    返回 {"context": ..., "event_id": ..., "evidence": ...}
     """
+    resident_persona = _build_resident_persona()
+
     if not query or len(query.strip()) <= settings.SHELL_HOOK_MIN_CHARS:
-        return {}
+        return {"context": resident_persona} if resident_persona else {}
+
+    # 前置闸门检查（低信度/无信号闲聊跳过昂贵的检索计算）
+    gate_decision = relevance_check(query)
+    if not gate_decision.get("needs_memory", False):
+        return {"context": resident_persona} if resident_persona else {}
 
     import time
 
     try:
         t0 = time.perf_counter()
-        qv = embed([query])[0]
-        store = get_vector_store()
-        results = store.search(qv, top_k=settings.SHELL_HOOK_TOP_K)
+        # 兼容直调或上层打桩：若当前模块的 get_vector_store / embed 被测试替换，透传至 hybrid
+        import lantai.retrieval.hybrid as _hybrid_mod
+
+        if get_vector_store != _hybrid_mod.get_vector_store:
+            _hybrid_mod.get_vector_store = get_vector_store
+        if embed != _hybrid_mod.embed:
+            _hybrid_mod.embed = embed
+
+        raw_results = hybrid_search(query, top_k=settings.SHELL_HOOK_TOP_K)
+        # 相似度置信度阈值过滤（低于下限的弱相关候选剔除）
+        results = [
+            r
+            for r in (raw_results or [])
+            if isinstance(r, dict) and r.get("score", 0.0) >= settings.SHELL_HOOK_SCORE_THRESHOLD
+        ]
         if not results:
             _try_log(query, [], int((time.perf_counter() - t0) * 1000), session_id=session_id)
-            return {}
+            return {"context": resident_persona} if resident_persona else {}
 
-        ids = [r["id"] for r in results]
-        with db.get_session() as s:
-            items = s.exec(
-                select(MemoryItem)
-                .where(MemoryItem.id.in_(ids))
-                .where(MemoryItem.status == "active")
-            ).all()
+        items = []
+        for r in results:
+            mem_dict = r.get("memory")
+            if isinstance(mem_dict, dict):
+                with contextlib.suppress(Exception):
+                    items.append(MemoryItem.model_validate(mem_dict))
 
         per_memory = settings.SHELL_HOOK_MAX_CHARS_PER_MEMORY
         entries = []  # (注入行, evidence 内容, score, id)——顺序与 results 一致
         for r in results:
+            r_mem = r.get("memory") or {}
+            m_id = r_mem.get("id") or r.get("id")
+            score = round(float(r.get("score", 0.0)), 2)
             for m in items:
-                if m.id == r["id"]:
-                    score = round(1.0 - r["distance"], 2)
+                if m.id == m_id:
                     if _is_skill_item(m):
                         line, content = _format_skill_entry(
                             m, score, per_memory, _RECALL_TRUNCATION_SUFFIX
@@ -192,6 +282,7 @@ def build_context(query: str, session_id: str | None = None) -> dict:
                         )
                     entries.append((line, content, score, m.id))
                     break
+
         # scene 聚合层（ADR-0012）：命中记忆按场景分组，导航块优先注入（渐进式披露）
         scene_lines = []
         if settings.SCENE_LAYER_ENABLED:
@@ -207,7 +298,7 @@ def build_context(query: str, session_id: str | None = None) -> dict:
         request_id = new_id("req")  # 回执链（ADR-0049）：一次注入调用的整体标识
         event_id = _try_log(
             query,
-            [{"score": 1.0 - r["distance"], "memory": {"id": r["id"]}} for r in results],
+            [{"score": r.get("score", 0.0), "memory": {"id": (r.get("memory") or {}).get("id")}} for r in results],
             latency_ms,
             session_id=session_id,
             request_id=request_id,
@@ -240,13 +331,21 @@ def build_context(query: str, session_id: str | None = None) -> dict:
             decl = fence_declaration()
             if decl:
                 out["context"] = decl + "\n" + out["context"]
+
+        # 置顶拼接常驻个人画像 (Resident Persona Block)
+        if resident_persona:
+            if out.get("context"):
+                out["context"] = resident_persona + "\n\n" + out["context"]
+            else:
+                out["context"] = resident_persona
+
         if event_id:
             out["event_id"] = event_id
         if event_id:
             out["request_id"] = request_id  # 宿主回执时按 request_id 对账（ADR-0049）
         return out
     except Exception:
-        return {}
+        return {"context": resident_persona} if resident_persona else {}
 
 
 def _try_log(

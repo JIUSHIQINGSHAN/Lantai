@@ -616,7 +616,7 @@ def _hybrid_search_impl(
     if domain and domain != "all":
         items = [m for m in items if getattr(m, "domain", "user") == domain]
 
-    items = _chronos_filter(items)
+    items = _chronos_filter(items, as_of=as_of)
     from lantai.retrieval.temporal import temporal_view_filter
 
     items, _temporal_explain = temporal_view_filter(
@@ -784,7 +784,7 @@ def _hybrid_search_impl(
                 if explain:
                     item["explain"] = breakdowns.get(m.id)
                 results.append(item)
-            _attach_wanbi_facts(results, query, session=session, principal=principal)
+            _attach_wanbi_facts(results, query, session=session, principal=principal, as_of=as_of)
             if trace:
                 t4 = time.perf_counter()
                 rr_scores = [r["score"] for r in reranked]
@@ -810,7 +810,7 @@ def _hybrid_search_impl(
         if explain:
             item["explain"] = breakdowns.get(m.id)
         results.append(item)
-    _attach_wanbi_facts(results, query, session=session, principal=principal)
+    _attach_wanbi_facts(results, query, session=session, principal=principal, as_of=as_of)
     if trace:
         t4 = time.perf_counter()
         final_scores = [s for s, _ in candidates[:top_k]]
@@ -828,7 +828,9 @@ def _hybrid_search_impl(
     return results
 
 
-def _attach_wanbi_facts(results: list, query: str, session=None, principal=None) -> None:
+def _attach_wanbi_facts(
+    results: list, query: str, session=None, principal=None, as_of=None
+) -> None:
     """完璧（ADR-0057）：当检索 query 包含多实体时，将原子事实按来源记忆血统或相关度挂载。"""
     if not results or not query:
         return
@@ -836,7 +838,7 @@ def _attach_wanbi_facts(results: list, query: str, session=None, principal=None)
         from lantai.retrieval.wanbi_retriever import search_atomic_facts_by_query
 
         def _do_search(s):
-            return search_atomic_facts_by_query(s, query, principal=principal, limit=5)
+            return search_atomic_facts_by_query(s, query, principal=principal, limit=5, as_of=as_of)
 
         if session is not None:
             facts = _do_search(session)
@@ -883,7 +885,7 @@ def has_memory_item(memory_id: str) -> bool:
     return bool(get_vector_store().has(memory_id))
 
 
-def _chronos_filter(items: list) -> list:
+def _chronos_filter(items: list, as_of=None) -> list:
     """Chronos 双时间过滤：未到 valid_from 的剔除，已过 valid_to 的衰减到 0.3 倍。
 
     衰减作用在**本地副本**上（票 `.scratch/review-fixes-2026-10/10`）：带 session
@@ -892,8 +894,9 @@ def _chronos_filter(items: list) -> list:
     排序/打分/model_dump 读到的都是降权后的值——语义与改前逐字一致。
     """
     from lantai.core.time import utcnow
+    from lantai.retrieval.temporal import _ensure_utc
 
-    now = utcnow()
+    now = _ensure_utc(as_of) if as_of else utcnow()
     temporally_valid = []
     for m in items:
         vf = m.valid_from
@@ -1074,7 +1077,7 @@ def _keyword_fallback(
         items = [m for m in items if m.lane in lanes]
     if domain and domain != "all":
         items = [m for m in items if getattr(m, "domain", "user") == domain]
-    items = _chronos_filter(items)
+    items = _chronos_filter(items, as_of=as_of)
     from lantai.retrieval.temporal import temporal_view_filter
 
     items, _temporal_explain = temporal_view_filter(
@@ -1137,7 +1140,7 @@ def _keyword_fallback(
         if explain:
             item["explain"] = breakdowns.get(m.id)
         results.append(item)
-    _attach_wanbi_facts(results, query, session=session, principal=principal)
+    _attach_wanbi_facts(results, query, session=session, principal=principal, as_of=as_of)
 
     if trace:
         t4 = time.perf_counter()
