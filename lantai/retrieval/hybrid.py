@@ -784,6 +784,7 @@ def _hybrid_search_impl(
                 if explain:
                     item["explain"] = breakdowns.get(m.id)
                 results.append(item)
+            _attach_wanbi_facts(results, query, session=session, principal=principal)
             if trace:
                 t4 = time.perf_counter()
                 rr_scores = [r["score"] for r in reranked]
@@ -809,6 +810,7 @@ def _hybrid_search_impl(
         if explain:
             item["explain"] = breakdowns.get(m.id)
         results.append(item)
+    _attach_wanbi_facts(results, query, session=session, principal=principal)
     if trace:
         t4 = time.perf_counter()
         final_scores = [s for s, _ in candidates[:top_k]]
@@ -824,6 +826,43 @@ def _hybrid_search_impl(
         )
         return results, trace_steps
     return results
+
+
+def _attach_wanbi_facts(results: list, query: str, session=None, principal=None) -> None:
+    """完璧（ADR-0057）：当检索 query 包含多实体时，将原子事实按来源记忆血统或相关度挂载。"""
+    if not results or not query:
+        return
+    try:
+        from lantai.retrieval.wanbi_retriever import search_atomic_facts_by_query
+
+        def _do_search(s):
+            return search_atomic_facts_by_query(s, query, principal=principal, limit=5)
+
+        if session is not None:
+            facts = _do_search(session)
+        else:
+            with db.get_session() as s:
+                facts = _do_search(s)
+
+        if facts:
+            # 建立 source_memory_id -> facts 索引，优先按血统精准挂载
+            source_map: dict[str, list[dict]] = {}
+            for f in facts:
+                if f.get("source_memory_id"):
+                    source_map.setdefault(f["source_memory_id"], []).append(f)
+
+            matched_any = False
+            for item in results:
+                mid = item.get("memory", {}).get("id")
+                if mid and mid in source_map:
+                    item["atomic_facts"] = source_map[mid]
+                    matched_any = True
+
+            # 若结果集中暂无明确的血统关联项，则将检索到的事实赋给首位最相关候选条目，避免全局盲目广播
+            if not matched_any and results:
+                results[0]["atomic_facts"] = facts
+    except Exception as exc:
+        logger.warning("完璧事实挂载异常（零阻断）: %s", exc)
 
 
 def index_memory_item(memory_id: str, embedding: list[float], metadata: dict):
@@ -1098,6 +1137,7 @@ def _keyword_fallback(
         if explain:
             item["explain"] = breakdowns.get(m.id)
         results.append(item)
+    _attach_wanbi_facts(results, query, session=session, principal=principal)
 
     if trace:
         t4 = time.perf_counter()

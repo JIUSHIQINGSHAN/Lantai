@@ -137,6 +137,86 @@ def expand_graph_associations(
                 if len(expanded) >= max_expanded:
                     break
 
+        # 完璧（ADR-0057）：沿原子事实（FactAtomic / FactEntity）展开多实体保整关联与二度实体联想
+        try:
+            from sqlmodel import col
+
+            from lantai.models.tables import FactAtomic, FactEntity
+
+            # 1. 从已访问的种子与邻居关联的 source_memory_id 反查对应事实
+            source_ids = list(visited)
+            f_stmt = (
+                select(FactAtomic)
+                .where(col(FactAtomic.source_memory_id).in_(source_ids))
+                .where(FactAtomic.confidence >= min_edge_conf)
+            )
+            if principal is not None and not bool(getattr(principal, "is_admin", False)):
+                viewer = viewer_of(principal)
+                f_stmt = f_stmt.where(
+                    (FactAtomic.user_id == viewer) | (FactAtomic.user_id.is_(None))
+                )
+            facts = list(s.exec(f_stmt).all())
+
+            # 2. 沿 fact_entity 做二度拓扑实体扩散：若已命中事实，查询包含相同实体的其他原子事实
+            all_fact_ids = [f.id for f in facts]
+            if all_fact_ids:
+                seed_ents_stmt = select(FactEntity.entity_name).where(
+                    col(FactEntity.fact_id).in_(all_fact_ids)
+                )
+                shared_entity_names = list(set(s.exec(seed_ents_stmt).all()))
+                if shared_entity_names and len(facts) < max_expanded:
+                    # 反查共享这些实体的二度原子事实
+                    co_fact_ids_stmt = (
+                        select(FactEntity.fact_id)
+                        .where(col(FactEntity.entity_name).in_(shared_entity_names))
+                        .where(~col(FactEntity.fact_id).in_(all_fact_ids))
+                    )
+                    co_fact_ids = list(set(s.exec(co_fact_ids_stmt).all()))
+                    if co_fact_ids:
+                        f2_stmt = (
+                            select(FactAtomic)
+                            .where(col(FactAtomic.id).in_(co_fact_ids))
+                            .where(FactAtomic.confidence >= min_edge_conf)
+                        )
+                        if principal is not None and not bool(
+                            getattr(principal, "is_admin", False)
+                        ):
+                            viewer = viewer_of(principal)
+                            f2_stmt = f2_stmt.where(
+                                (FactAtomic.user_id == viewer) | (FactAtomic.user_id.is_(None))
+                            )
+                        f2_facts = s.exec(f2_stmt.limit(max_expanded - len(facts))).all()
+                        facts.extend(f2_facts)
+
+            # 批量加载全部事实的实体投影，彻底消除循环内 N+1 查询
+            final_fact_ids = [f.id for f in facts]
+            proj_map: dict[str, list[str]] = {}
+            if final_fact_ids:
+                all_proj_stmt = select(FactEntity).where(
+                    col(FactEntity.fact_id).in_(final_fact_ids)
+                )
+                for pe in s.exec(all_proj_stmt).all():
+                    proj_map.setdefault(pe.fact_id, []).append(pe.entity_name)
+
+            for f in facts:
+                if len(expanded) >= max_expanded:
+                    break
+                expanded.append(
+                    {
+                        "memory_id": f.source_memory_id or f.id,
+                        "hop": 1 if f.source_memory_id in visited else 2,
+                        "via_memory_id": f.source_memory_id or "fact_atomic",
+                        "relation": f"wanbi:{f.predicate}",
+                        "edge_confidence": f.confidence,
+                        "content": f.statement,
+                        "lane": "fact",
+                        "domain": "entity_network",
+                        "entities": proj_map.get(f.id, []),
+                    }
+                )
+        except Exception as exc:
+            logger.warning("贯珠完璧原子事实扩散跳过: %s", exc)
+
         logger.info(
             "贯珠：从 %d 个种子出发，经 %d 跳展开 %d 条图谱联想记忆",
             len(seeds),

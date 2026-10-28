@@ -13,7 +13,7 @@
 import hashlib
 import logging
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
@@ -173,6 +173,33 @@ def retract_memory(
             warnings.append("vector delete failed; SQL status filter remains authoritative")
         item.status = STATUS_RETRACTED
         item.updated_at = utcnow()
+
+        # 完璧（ADR-0057）：撤回来源记忆时，联动撤回挂在该记忆下的所有 FactAtomic
+        try:
+            from lantai.models.tables import FactAtomic, FactEntity
+
+            linked_facts = s.exec(
+                select(FactAtomic).where(FactAtomic.source_memory_id == memory_id)
+            ).all()
+            for lf in linked_facts:
+                if lf.confidence > 0.0:
+                    ents = s.exec(select(FactEntity).where(FactEntity.fact_id == lf.id)).all()
+                    for e in ents:
+                        s.delete(e)
+                    lf.confidence = 0.0
+                    lf.valid_to = utcnow().isoformat()
+                    s.add(lf)
+                    audit_event(
+                        s,
+                        memory_id=memory_id,
+                        action="retract",
+                        actor=actor,
+                        reason=f"wanbi:cascade_retract_from_memory:{reason}",
+                        content=lf.statement,
+                    )
+        except Exception as exc:
+            logger.warning("联动撤回完璧原子事实异常: %s", exc)
+
         audit_event(
             s,
             memory_id=memory_id,
@@ -652,6 +679,145 @@ def revive_consolidated(
             "ok": False,
             "error": ("invalid target (not consolidated fragment nor consolidation master)"),
         }
+
+    if session is not None:
+        return _run(session)
+    with db.get_session() as s:
+        return _run(s)
+
+
+def retract_fact_atomic(
+    fact_id: str, *, reason: str, actor: str = "", session: Session | None = None
+) -> dict:
+    """完璧（ADR-0057）：撤回事实原子（削）。
+
+    1. 级联软下线：清空其实体投影，确保后续检索与图谱二度扩散中 0 命中；
+    2. 事实主表保留供审计，置信度置 0.0 并记录失效时间；
+    3. 幂等支持。
+    """
+    from lantai.models.tables import FactAtomic, FactEntity
+
+    def _run(s: Session) -> dict:
+        fact = s.get(FactAtomic, fact_id)
+        if fact is None:
+            return {"ok": False, "error": "fact not found"}
+
+        # 幂等：若置信度已置 0.0 且实体投影已被清空
+        ents = s.exec(select(FactEntity).where(FactEntity.fact_id == fact_id)).all()
+        if fact.confidence <= 0.0 and not ents:
+            return {"ok": True, "already_retracted": True}
+
+        # 1. 软下线：清空投影实体，阻断基于实体/图谱的所有召回
+        for e in ents:
+            s.delete(e)
+
+        # 2. 事实主表置失效
+        fact.confidence = 0.0
+        fact.valid_to = utcnow().isoformat()
+        s.add(fact)
+
+        audit_event(
+            s,
+            memory_id=fact.source_memory_id or fact.id,
+            action="retract",
+            actor=actor,
+            reason=f"wanbi:retract_fact_atomic:{reason}",
+            content=fact.statement,
+        )
+        s.commit()
+        return {"ok": True, "fact_id": fact_id, "entities_cleared": len(ents)}
+
+    if session is not None:
+        return _run(session)
+    with db.get_session() as s:
+        return _run(s)
+
+
+def delete_fact_atomic(
+    fact_id: str, *, actor: str = "", reason: str = "", session: Session | None = None
+) -> dict:
+    """完璧（ADR-0057）：物理删除事实原子（削）。
+
+    物理删除事实原子记录，触发 FactEntity 级联删除，彻底移出系统。
+    """
+    from lantai.models.tables import FactAtomic
+
+    def _run(s: Session) -> dict:
+        fact = s.get(FactAtomic, fact_id)
+        if fact is None:
+            return {"ok": False, "error": "fact not found"}
+
+        stmt_text = fact.statement
+        src_id = fact.source_memory_id or fact.id
+        s.delete(fact)
+
+        audit_event(
+            s,
+            memory_id=src_id,
+            action="delete",
+            actor=actor,
+            reason=f"wanbi:delete_fact_atomic:{reason}",
+            content=stmt_text,
+        )
+        s.commit()
+        return {"ok": True, "fact_id": fact_id}
+
+    if session is not None:
+        return _run(session)
+    with db.get_session() as s:
+        return _run(s)
+
+
+def correct_fact_atomic(
+    fact_id: str,
+    *,
+    new_statement: str,
+    entities: list[tuple[str, str]] | None = None,
+    actor: str = "",
+    reason: str = "",
+    session: Session | None = None,
+) -> dict:
+    """完璧（ADR-0057）：纠错事实原子（笔）。
+
+    就地更新 FactAtomic.statement 与（可选）关联 FactEntity 投影集，并记录笔削审计留痕。
+    """
+    from lantai.models.tables import FactAtomic, FactEntity
+
+    def _run(s: Session) -> dict:
+        fact = s.get(FactAtomic, fact_id)
+        if fact is None:
+            return {"ok": False, "error": "fact not found"}
+
+        text = (new_statement or "").strip()
+        if not text:
+            return {"ok": False, "error": "statement is required"}
+        if fact.confidence <= 0.0:
+            return {"ok": False, "error": "retracted fact cannot be corrected"}
+        if text == fact.statement and entities is None:
+            return {"ok": False, "error": "statement unchanged"}
+
+        old_stmt = fact.statement
+        fact.statement = text
+        s.add(fact)
+
+        # 若提供了实体列表，则全量替换投影表（保证主表权威、投影可重建）
+        if entities is not None:
+            old_ents = s.exec(select(FactEntity).where(FactEntity.fact_id == fact_id)).all()
+            for oe in old_ents:
+                s.delete(oe)
+            for ename, erole in entities:
+                s.add(FactEntity(fact_id=fact_id, entity_name=ename, role=erole))
+
+        audit_event(
+            s,
+            memory_id=fact.source_memory_id or fact.id,
+            action="correct",
+            actor=actor,
+            reason=f"wanbi:correct_fact_atomic:{reason}",
+            content=old_stmt,
+        )
+        s.commit()
+        return {"ok": True, "fact_id": fact_id, "statement": text}
 
     if session is not None:
         return _run(session)

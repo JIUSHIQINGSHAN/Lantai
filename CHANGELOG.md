@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-28 - 贯珠（Guanzhu · 如贯珠焉）
+
+> 版本代号「贯珠」：《汉书·景十三王传》「如贯珠焉」——联络贯穿、珠玉成串。贴合本版主题「完璧多实体原子事实接入 Hybrid 混合检索主流水线、贯珠图谱二度扩散升级与笔削生命周期闭环」：打通事实反查与投影挂载，消除全局盲目广播；升级贯珠图谱关联二度拓扑扩散，消除循环 N+1 查询；落实笔削（ADR-0047）在完璧原子事实上的四分法（就地改文、撤回止召回、级联物理删除）；构建复杂多元实体关系专项评测套件，达成多实体事实语义保真率 100% 与撤回 0 召回。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.27-next-window-2026-11/`（票 01/02/03/04 全部收口，05 发布门禁）。
+
+### Added
+
+- **完璧多实体原子事实接入 Hybrid 混合检索（票 01，详见 `lantai/retrieval/wanbi_retriever.py` 与 `lantai/retrieval/hybrid.py`）**：
+  - 新增 `search_atomic_facts_by_query`，支持实体分词提取精准反查 `FactEntity` 与 `statement` 模糊包含匹配，严格保障 `confidence > 0` 及有效期，消除内存全表扫描；
+  - 在常规向量+FTS检索、Rerank分支以及FTS降级分支接入 `_attach_wanbi_facts`，按来源记忆血统（`source_memory_id`）精准挂载完整原子事实及关联实体列表，杜绝盲目全局广播；
+  - 交付不 mock 核心计算逻辑的冒烟测试 `tests/test_wanbi_hybrid_smoke.py`。
+- **贯珠图谱二度拓扑扩散升级（票 02，详见 `lantai/retrieval/graph_retriever.py`）**：
+  - 改造图谱联想机制，从种子记忆扩展时沿 `FactEntity` 共同包含的原子事实实现二度拓扑扩散；
+  - 批量预查投影消除循环 N+1 查询，严格遵循 ACL 租户隔离纪律（`_fact_scope`）；
+  - 交付不 mock 核心计算逻辑的图谱扩散冒烟测试 `tests/test_wanbi_guanzhu_smoke.py`。
+- **完璧原子事实的笔削生命周期联动（票 03，详见 `lantai/services/record_ops_service.py`）**：
+  - 新增 `correct_fact_atomic`（就地纠错改写 statement、重建投影并记录审计留痕）、`retract_fact_atomic`（软撤回：清空投影索引阻断检索扩散、置信度归零、记录时间戳与审计事件）与 `delete_fact_atomic`（物理删除事实并级联清除实体投影）；
+  - 在 `retract_memory` 中联动级联软下线关联的原子事实，确保检索端命中为 0；
+  - 交付不 mock 内部逻辑的生命周期联动冒烟测试 `tests/test_wanbi_bixiao_smoke.py`。
+- **完璧长程多实体关系评测集构建与回归（票 04，详见 `tests/test_wanbi_benchmark_suite.py`）**：
+  - 覆盖联合创办、多方签约、代码移交、战略备忘录等复杂多元实体关系用例；
+  - 验证多元复杂关系事实语义保真率达 100%，撤回后在检索面实现确定性 0 命中。
+
 ## [0.26.0] - 2026-10-28 - 完璧（Wanbi · 完璧归赵）
 
 > 版本代号「完璧」：《史记·廉颇蔺相如列传》「完璧归赵」——璧不受损、完整交付。贴合本版主题「多实体事实原子性保整（ADR-0057落地）与方案B反思监控闭环」：彻底根治多实体复合事实被拆解为二元短语导致语义结构散落的架构缺陷，实现权威事实原子表 `fact_atomic` 与级联实体投影表 `fact_entity`（user_version 31）；抽取约束落地与解析结构化防御；打通保整事实投影反查；完成方案 B 反思 worker 端到端执行与 Daily Digest / `/stats` 健康透出。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.26-next-window-2026-11/`（票 01/02/03/04 全部收口，05 发布门禁）。
