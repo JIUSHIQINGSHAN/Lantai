@@ -1,0 +1,113 @@
+{
+  "purpose": "v0.25 窗口票 02 步骤1：提取语言漂移最小复现（环节①漂移/②双通道失配/③锁定回中文）",
+  "model_identity": {
+    "llm_model_setting": "Qwen/Qwen3-8B",
+    "embed_model_setting": "BAAI/bge-m3",
+    "base_url": "https://api.siliconflow.cn/v1",
+    "temperature": 0.2,
+    "temperature_source": "lantai/llm/client.py chat_json temperature=0.2",
+    "probe_response_keys": [],
+    "probe_latency_s": 32.42
+  },
+  "live_current_prompt": {
+    "u1": {
+      "utterance": "用户的主数据库是 PostgreSQL 15，部署在公司内网",
+      "summary": "The main database is PostgreSQL 15, deployed within the company's internal network.",
+      "cjk_ratio": 0.0,
+      "extractor_confidence": 0.95,
+      "n_claims": 2,
+      "fallback_suspect": false,
+      "latency_s": 32.47,
+      "ok": true
+    },
+    "u5": {
+      "utterance": "用户对花生过敏",
+      "summary": "The user has a peanut allergy, which requires careful management to avoid allergic reactions. Consuming peanuts or peanut-containing products can pose significant health risks. Proper avoidance strategies and medical guidance are essential for safe handling of this condition.",
+      "cjk_ratio": 0.0,
+      "extractor_confidence": 0.95,
+      "n_claims": 3,
+      "fallback_suspect": false,
+      "latency_s": 173.84,
+      "ok": true
+    },
+    "u6": {
+      "utterance": "用户每周三下午开团队例会",
+      "summary": "The user has a team meeting scheduled every Wednesday afternoon. This is a recurring routine for team coordination.",
+      "cjk_ratio": 0.0,
+      "extractor_confidence": 0.95,
+      "n_claims": 3,
+      "fallback_suspect": false,
+      "latency_s": 18.97,
+      "ok": true
+    }
+  },
+  "channel_analysis": {
+    "q_db": {
+      "query": "用户的主数据库是什么",
+      "english": {
+        "summary": "The main database is PostgreSQL 15, deployed within the company's internal network.",
+        "cosine_3gram_hash": 0.1759,
+        "gram3_overlap": 0
+      },
+      "chinese": {
+        "summary": "用户的主数据库是 PostgreSQL 15，部署在公司内网",
+        "cosine_3gram_hash": 0.5164,
+        "gram3_overlap": 6
+      }
+    },
+    "q_allergy": {
+      "query": "用户对花生过敏吗",
+      "english": {
+        "summary": "The user has a peanut allergy, which means their immune system reacts adversely to peanut proteins. This can lead to allergic reactions upon exposure, necessitating careful dietary management and avoidance of cross-contamination.",
+        "cosine_3gram_hash": 0.1282,
+        "gram3_overlap": 0
+      },
+      "chinese": {
+        "summary": "用户对花生过敏",
+        "cosine_3gram_hash": 0.9129,
+        "gram3_overlap": 5
+      }
+    }
+  },
+  "live_locked_prompt": {
+    "u1": {
+      "utterance": "用户的主数据库是 PostgreSQL 15，部署在公司内网",
+      "summary": "该文本简要说明用户的主数据库为PostgreSQL 15，并明确指出其部署位置为公司内网。",
+      "cjk_ratio": 0.7143,
+      "extractor_confidence": 0.95,
+      "n_claims": 2,
+      "fallback_suspect": false,
+      "latency_s": 29.56,
+      "ok": true
+    },
+    "u5": {
+      "utterance": "用户对花生过敏",
+      "summary": "用户对花生过敏，这一信息表明其在接触花生或相关制品时可能引发不良反应。",
+      "cjk_ratio": 1.0,
+      "extractor_confidence": 0.5,
+      "n_claims": 1,
+      "fallback_suspect": false,
+      "latency_s": 23.21,
+      "ok": true
+    },
+    "u6": {
+      "utterance": "用户每周三下午开团队例会",
+      "summary": "用户每周三下午定期召开团队例会，这是其固定的会议安排。",
+      "cjk_ratio": 1.0,
+      "extractor_confidence": 0.95,
+      "n_claims": 3,
+      "fallback_suspect": false,
+      "latency_s": 21.88,
+      "ok": true
+    }
+  },
+  "verdict": {
+    "drift_confirmed": true,
+    "lock_holds": true,
+    "channel_mismatch_confirmed": true,
+    "valid_current_samples": 3,
+    "valid_locked_samples": 3,
+    "note": "环节①③各 3 次真调用；fallback_suspect 样本已剔除，不计入判定",
+    "verdict_recompute_note": "channel_mismatch_confirmed 由同一份原始数据按修正判据重算（初版 cosine<0.05 绝对阈值对 512 维 hash 碰撞噪声定得过紧，现行判据=gram 零交叠 + 英文余弦弱于中文对照）；原始提取/交叠数据未重采"
+  }
+}

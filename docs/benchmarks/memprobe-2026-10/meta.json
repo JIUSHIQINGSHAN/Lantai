@@ -1,0 +1,59 @@
+{
+  "run_date": "2026-10-28",
+  "ticket": "v0.25 窗口票 03",
+  "model_identity": {
+    "reader": {
+      "model": "Qwen/Qwen3-8B",
+      "provider": "siliconflow",
+      "endpoint": "https://api.siliconflow.cn/v1",
+      "temperature": 0.0,
+      "max_tokens": 4096,
+      "backend": "MemProbe runner --reader-backend openai（OpenAI SDK 读 OPENAI_BASE_URL）",
+      "note": "与论文共享 reader（gemini-3-flash-preview）不同——MemProbe 指标只作同 reader 内自洽画像，不与论文六系统横比"
+    },
+    "internal_llm": "无（verbatim 通道零 LLM 灌库；检索为非 LLM 混合检索 + 启发式闸门）",
+    "embedder": {
+      "model": "BAAI/bge-m3",
+      "provider": "siliconflow",
+      "note": "兰台产品 .env 同源（EMBED_MODEL）"
+    },
+    "retrieval_weights": {"vector": 0.6, "bm25": 0.25, "fts": 0.05}
+  },
+  "harness_versions": {
+    "memprobe_repo": "https://github.com/jq-ding/MemProbe @ main（zip 下载 2026-10-28，SHA256 见 download_manifest.json）",
+    "memprobe_runner": "src/eval/run_eval.py（上游原样，零改动）",
+    "adapter": "scripts/memprobe_lantai_adapter.py（票 03 新增，纯 API 黑盒）",
+    "server_launcher": "scripts/memprobe_server_main.py（含遥测 no-op 补丁，见预注册 telemetry_nop_patch）",
+    "lantai_product": "工作区未提交状态 v0.24.1 后（261c904c），票 01/02 的 harness 修复已在工作区",
+    "python_runner_venv": "3.12.0 独立 venv（openai/requests/numpy，未装六系统依赖）",
+    "python_server": "3.12.0（主环境，lantai 产品线）"
+  },
+  "protocol_deltas_vs_paper": [
+    "reader：Qwen/Qwen3-8B @ siliconflow（论文：gemini-3-flash-preview）——跨系统可比性不成立",
+    "internal LLM：无（论文六系统均有内部 LLM）",
+    "ingest：兰台 /import/jsonl verbatim 直存（论文系统各有提取面）",
+    "其余协议原样：episode 隔离、sessions 按序灌入、retrieve-only、共享 reader、官方 scorer 与 compute_metrics"
+  ],
+  "evidence_files": {
+    "preregistration": "preregistration.json",
+    "download_manifest": "download_manifest.json",
+    "channel_decision": "decision_channel_microverify.json",
+    "runner_report": "report.json（官方 runner 输出，每 episode 落盘可续跑）",
+    "prompt_caches": "prompts_*.json（每系统检索上下文缓存，reader_swap 可复用）",
+    "ingest_receipts": "ingest_receipts/<eid>_receipts.jsonl（逐 session 回执 + 幂等重导探针 + 逐探针 gate 元数据）",
+    "summary": "summary.json（compute_metrics 全量 + 分层表）",
+    "verify": "verify.json（对账：episode 完整性、回执↔report 交叉、探针数）"
+  },
+  "exploratory_runs": [
+    {
+      "what": "通道微验证（/dialogue 对话链 vs /import/jsonl 逐字）",
+      "where": "decision_channel_microverify.json",
+      "status": "决策证据，不产正式数字"
+    },
+    {
+      "what": "全链冒烟 --limit 2（lantai_verbatim + full_context + naive_rag）",
+      "where": ".scratch/memprobe-suite/smoke/（不入仓）",
+      "status": "探索性，验证 runner-adapter-metrics 链路，不产正式数字"
+    }
+  ]
+}

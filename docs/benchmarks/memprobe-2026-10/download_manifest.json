@@ -1,0 +1,31 @@
+{
+  "source": "https://github.com/jq-ding/MemProbe",
+  "download_url": "https://codeload.github.com/jq-ding/MemProbe/zip/refs/heads/main",
+  "download_date": "2026-10-28",
+  "ref": "arXiv:2609.30558 (Ding & Wu, Probing Stability-Plasticity Tradeoffs in Agent Memory through Cognitive Experimental Paradigms, EMNLP 2026 per README; ACL Anthology 独立确认未见——证据等级 partial)",
+  "disambiguation": "非 arXiv:2606.24595 (MEMPROBE, hidden user-state recovery)——同名异实，引用一律带本号",
+  "license": {
+    "code": "MIT",
+    "data/suite56 + results/suite56": "MIT",
+    "data/suite40 etc": "CC BY-NC 4.0 (未使用，不入兰台仓)"
+  },
+  "files_sha256": {
+    "data\\suite56\\episodes.jsonl": "24cf8a196735e851a195fc95ef5dc36a3534fd94e55d9b785cb7b9b6f3f8e3af",
+    "data\\suite56\\latent_specs.json": "54b76236fa21645d17813ddff1c28603f874b242e406c946322ceb8f3e72edce",
+    "data\\suite56\\value_pairs.json": "37ef5f47973861a0e0b69807ae3aba37be0752cee8790668f94f26bd1fe75e4b",
+    "LICENSE": "24f6731ffed1ff0a39f027baf1c237e03ff6530e804bc77e253fa4b88801c79b",
+    "DATA_LICENSE": "41003d4a74749c0220e33dd415042164b5a1093ed401f36277234f772d22d3d0"
+  },
+  "scale_measured": {
+    "episodes": 56,
+    "sessions": 1246,
+    "probes": 224,
+    "messages": 6304,
+    "roles": {
+      "user": 2693,
+      "assistant": 2676,
+      "tool_output": 935
+    }
+  },
+  "scale_note": "1246/224 系预研单源数字，本次本地实测一致（episodes.jsonl 直数）"
+}

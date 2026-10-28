@@ -8,7 +8,24 @@ Return strict JSON with fields:
   actions: list of actionable rules the reader can adopt as a procedure
   topic: 1-5 tags (lowercase)
   extractor_confidence: 0.0-1.0
+Language rule: write every output field in the same language as the source text (Chinese source -> Chinese output, English source -> English output). Never translate the source into another language.
+输出语言规则（必须遵守）：上述各字段一律使用与输入文本主体相同的语言书写；禁止把内容翻译成另一种语言。
 Only output JSON. No prose."""
+
+# v0.25 票 02：提取 user 消息任务框架（语言漂移根因实验的 V3 有效变体）。
+# 实验结论（docs/benchmarks/e1e2-lang-drift-2026-10/root-cause-exp.jsonl）：
+# 仅在 system 模板加语言规则（英文 LANGUAGE RULE 句 / 中文规则句）对
+# Qwen3-8B 均无效（V1 4/4、V2 2/2 仍英文）——提取任务语境下输出语言跟随
+# user 消息的任务框架语言；user 消息改中文任务框架 + 明示「与原文同语言、
+# 禁止翻译」后 2/2 中文（V3，CJK 占比 0.559/0.935）。模板经
+# get_prompt("EXTRACT_USER_TEMPLATE", …) 可被库内行覆盖（与 EXTRACT_SYS 同契约）。
+EXTRACT_USER_TEMPLATE = """请从下面的文本中提取结构化知识。要求：summary、claims、methods、constraints、actions 各字段一律使用与原文主体相同的语言书写（原文是中文就输出中文，禁止翻译成英文；专有名词、产品名与技术标识符保留原文）。
+
+标题：
+{title}
+
+内容：
+{content}"""
 
 CONTRADICTION_SYS = """You are checking whether a NEW claim contradicts EXISTING memory.
 Return strict JSON:

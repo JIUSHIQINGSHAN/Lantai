@@ -2,6 +2,8 @@
 
 > **票 02 步骤⑤**（`.scratch/v0.24-next-window-2026-10/issues/02-p0-2-eval-selfproof-line.md`）。
 > 检索/跑测日期：2026-10-26。运行环境：Windows 单机，生产 `.env` 同源凭据。
+> **修订：2026-10-27（v0.25 窗口票 01）——LongMemEval 覆盖率 0.80 系仪器问题已修复，修订轮三配置 coverage 1.00、recall 逐位不变，详见 §二修订注与 `longmemeval-2026-10/REVISION-2026-10-27.md`。**
+> **修订：2026-10-28（v0.25 窗口票 02）——E1 提取语言漂移已修复，真轮 retrieve 0.25 → 0.75，详见 §三修订注与 `e1e2-lang-drift-2026-10/REVISION-E1-LANGUAGE-LOCK.md`。**
 > **一句话结论：兰台的四路混合检索在 LongMemEval-S（cleaned，25 题）上会话级 recall@5 = 0.88（gate 通过子集条件召回 1.00），高于纯向量（0.84）与纯 BM25（0.84）@5；提取段对供应商非确定性敏感（3 报一致率 0/10），已如实披露并把对表基线固定在确定性替身上。**
 
 ## 摘要（给非技术读者）
@@ -24,21 +26,24 @@
 
 ## 二、LongMemEval：三配置消融（第一份混合检索公开实证）
 
+> **修订（2026-10-27，v0.25 窗口票 01）**：下表数字为 2026-10-26 基线轮原值 + 2026-10-27 修订轮复测值并排。修订原因与对账：`longmemeval-2026-10/REVISION-2026-10-27.md`。覆盖率 0.76/0.80/0.80 经逐题审计证实是**仪器问题**（harness 把检索 top-5 误当已灌清单记覆盖；另有 3 行语料因 U+2028 行界被 import 校验丢弃、均非金标），非语料缺口——25 题金标 session 在 store 侧 0 缺失（`coverage_gap_audit.json`）。修复灌库序列化与覆盖率判据（只动评测 harness，不动检索排序）并经 `/import/jsonl` 单通道补齐 3 行后复测：**三配置 coverage 全部 1.00，recall 数字逐位不变**（预期内：缺口从未压过 recall，压的只是覆盖率的量测）。
+> 留证：基线 `summary.json` / `results_*.jsonl`（未动，0.80 的唯一真源）；修订 `summary-rev1.json` / `results_*-rev1.jsonl`（config_hash 与基线同值：182a1928d2bb37ae / fd533e48849e2b68 / f7f0b4ecd7fac6fa）；补齐 `backfill_report.json`。
+
 **口径**：会话级 distinct-session recall@K——金标会话是否出现在 top-K 条结果映射回的会话集合中；gate 判「无需记忆」的跳过计入全题分母，条件召回（仅 gate 通过题）附报；预注册先行（`preregistration.json`，seed 20261026，运行时断言 ⊆ 数据集 id 集，缩题只减不换取前缀）。
 
-| 配置 | recall@2（全题） | recall@5（全题） | recall@2（条件） | recall@5（条件） | 覆盖率* |
+| 配置 | recall@2（全题）旧→新 | recall@5（全题）旧→新 | recall@2（条件）旧→新 | recall@5（条件）旧→新 | 覆盖率* 旧→新 |
 |---|---|---|---|---|---|
-| vector-only | 0.76 | 0.84 | 0.864 | 0.955 | 0.76 |
-| bm25-only | 0.80 | 0.88 | 0.909 | 1.00 | 0.80 |
-| **hybrid-default（0.6/0.25/0.05）** | **0.84** | **0.88** | **0.955** | **1.00** | 0.80 |
+| vector-only | 0.76 → 0.76 | 0.84 → 0.84 | 0.864 → 0.864 | 0.955 → 0.955 | 0.76 → **1.00** |
+| bm25-only | 0.80 → 0.80 | 0.88 → 0.88 | 0.909 → 0.909 | 1.00 → 1.00 | 0.80 → **1.00** |
+| **hybrid-default（0.6/0.25/0.05）** | **0.84 → 0.84** | **0.88 → 0.88** | **0.955 → 0.955** | **1.00 → 1.00** | 0.80 → **1.00** |
 
-\* 映射保真度覆盖率：每金标 session 至少 1 条可检索条目的题占比——**仪器未校准先开测会静默记 miss，故与 recall 同报**。coverage 未满（0.80）意味着 recall 上限被压低：hybrid 条件召回 @5 已达 1.00，全题差距主要来自覆盖缺口与 gate 跳过，不是检索排序失败。
+\* 映射保真度覆盖率（修订后口径）：每金标 session 的 store 在场性（幂等重导探针：每行恰 1 duplicate ⇔ 在库）——**仪器未校准先开测会静默记 miss，故与 recall 同报**。基线轮的 0.76/0.80 与修订轮 1.00 的差全部来自上述两处仪器问题；修订轮逐题 `coverage_reimport` 字段留在场性证据（API 单通道，无直连库写入）。
 
-**头条主张（差值口径）**：四路混合比纯向量 recall@2 高 **8 个百分点**（0.84 vs 0.76）；多会话题型混合 1.00 vs 纯向量 1.00 持平、纯 BM25 0.833；单会话偏好题三配置全 0（n=2，描述性）——暴露的是映射覆盖而非排序。
+**头条主张（差值口径）**：四路混合比纯向量 recall@2 高 **8 个百分点**（0.84 vs 0.76）；多会话题型混合 1.00 vs 纯向量 1.00 持平、纯 BM25 0.833；单会话偏好题三配置全 0（n=2，描述性）。修订轮 recall 与基线逐位一致，上述差值主张不受修订影响——全题 recall 剩余差距的主导项是 gate 跳过（3 题不变，gate 语义未动，票面非范围）。
 
-**留证链**（全部入仓，数据本体 gitignore）：`docs/benchmarks/longmemeval-2026-10/`——`preregistration.json`（预注册）、`download_manifest.json`（数据集 SHA256↔LFS oid 逐位一致，revision `98d7416c`）、`ingest_progress.jsonl`（25 题逐题 checkpoint，verify 结论 OK：25/25、零半题）、`results_*.jsonl`（三配置逐题，绑 config_hash）、`summary.json`（本表数字唯一来源）、`verify.json`（对账）。灌库双闸（独立 LANTAI_HOME 逐题评测库 + 断言 ≠ 生产路径）每题打印通过；API 单通道（/import/jsonl、/search），无直连库写入。
+**留证链**（全部入仓，数据本体 gitignore）：`docs/benchmarks/longmemeval-2026-10/`——`preregistration.json`（预注册）、`download_manifest.json`（数据集 SHA256↔LFS oid 逐位一致，revision `98d7416c`；2026-10-27 自 `data/longmemeval/` 复制入仓，修订前报告误称其已入仓，见 REVISION 文件对账）、`ingest_progress.jsonl`（25 题逐题 checkpoint，verify 结论 OK：25/25、零半题）、`results_*.jsonl`（三配置逐题，绑 config_hash；`results_*-rev1.jsonl` 为修订轮）、`summary.json` 与 `summary-rev1.json`（基线/修订汇总）、`coverage_gap_audit.json`（25 题只读审计+缺口清单）、`backfill_report.json`（补齐证据）、`REVISION-2026-10-27.md`（修订对账）、`verify.json`（对账）。灌库双闸（独立 LANTAI_HOME 逐题评测库 + 断言 ≠ 生产路径）每题打印通过；API 单通道（/import/jsonl、/search），无直连库写入。
 
-**成本**（摄入+查询分开记，采 MemoryTax/Raw-RAG 方法论启示、不采其结论）：灌库单题中位约 27 分钟（51 session/题真 embed），25 题合计约 11.3 小时；查询单题秒级。3 报一致率口径不适用于查询段（无 LLM 调用）。
+**成本**（摄入+查询分开记，采 MemoryTax/Raw-RAG 方法论启示、不采其结论）：灌库单题中位约 27 分钟（51 session/题真 embed），25 题合计约 11.3 小时；查询单题秒级（修订轮另含每题一次幂等重导探针，耗时同为秒级）。3 报一致率口径不适用于查询段（无 LLM 调用）。
 
 ## 三、E1/E2：全链路行为自证
 
@@ -46,18 +51,20 @@
 
 ### E1 六段（真 LLM 轮 / 替身轮）
 
-| 段 | 真 LLM | 替身 |
-|---|---|---|
-| extract | 1.0（NFR 0.75） | 1.0 |
-| gate | 0.9167 | 1.0 |
-| store | 1.0 | 1.0 |
-| index | 0.9（预埋锚点命中） | 0.9 |
-| retrieve | **0.25** | 0.75 |
-| inject | 1.0 | 1.0 |
+> **修订（2026-10-28，v0.25 窗口票 02）**：提取语言漂移已修复（提取提示词语言锁定：system 规则双句 + user 消息中文任务框架模板——根因实验证实仅改 system 规则无效，user 框架语言才是输出语言主导因素）。复跑与基线并排（rev1 留证 `docs/benchmarks/e1e2-formal-2026-10-rev1/`，对账 `docs/benchmarks/e1e2-lang-drift-2026-10/REVISION-E1-LANGUAGE-LOCK.md`）；语料 corpus_hash 与模型钉板不变，只换代码不换口径。
 
-- **第一发现（语言漂移）**：Qwen3-8B 把中文 utterance 摘要成英文语料，中文查询与英文语料双通道失配 → retrieve 段 0.25。这是真实产品风险（中文宿主 + 英文记忆），修复方向（提取语言锁定）留待下一窗口，不在本版擅动。
+| 段 | 真 LLM（基线 10-26 → rev1 10-28） | 替身 |
+|---|---|---|
+| extract | 1.0 → 1.0（NFR 0.75 → 0.7：噪音泄漏 1 → 3，供应商抖动如实附注） | 1.0 |
+| gate | 0.9167 → 0.9167（gate_false_pass 1，两轮同形态） | 1.0 |
+| store | 1.0 → 1.0 | 1.0 |
+| index | 0.9 → 0.9（预埋锚点命中） | 0.9 |
+| retrieve | **0.25 → 0.75**（recall_miss 2 → 0） | 0.75 → 0.75 |
+| inject | 1.0 → 1.0 | 1.0 |
+
+- **第一发现（语言漂移）→ 已修复（票 02）**：Qwen3-8B 曾把中文 utterance 摘要成英文语料，中文查询与英文语料双通道失配 → retrieve 段 0.25。根因实验（`e1e2-lang-drift-2026-10/root-cause-exp.jsonl`）复现漂移（基线 3/4 英文），锁定后生产路径 4/4 中文；复跑真轮 retrieve **0.75**（≥ 验收达标线），与替身轮持平——该 0.75 是预埋零召回锚点按设计不计成功的管道口径（描述性上界，非实测上限）。
 - **gate_false_pass 1 例**：真提取置信度未过拒收线，属真 LLM 行为与标签口径的实测分歧，非 harness 故障——替考后门（`staged.py:498`）已于 2026-10-10 修复并经测试锁定（`tests/test_staged_anchor_miss.py` 3 例 + 三变异门禁全红）。
-- **提取段 3 报一致率 0/10**：同一输入三次真提取无一 sid 逐字一致——供应商非确定性显著，提取段不可作逐字对账基准；对表基线（步骤②，`staged-labels-2026-10.json` 标签外置 + `reconcile_staged_labels.py` 证据字段对表）因此固定在确定性替身上。
+- **提取段 3 报一致率 0/10**：同一输入三次真提取无一 sid 逐字一致——供应商非确定性显著，提取段不可作逐字对账基准；对表基线（步骤②，`staged-labels-2026-10.json` 标签外置 + `reconcile_staged_labels.py` 证据字段对表）因此固定在确定性替身上。语言锁定不改变该结论（修的是语言跟随，非逐字确定性）。
 
 ### E2 时间双视图
 
@@ -72,8 +79,8 @@
 ## 五、局限与下一步
 
 1. n=25 是预算×3 外推后的取舍（50 题约 70h 超窗），分层结论仅描述性；
-2. 覆盖率 0.80 是下一窗口第一个要修的仪器问题（映射保真度审计→补可检索条目）；
-3. 提取语言漂移修复（语言锁定或双语索引）；
+2. ~~覆盖率 0.80 是下一窗口第一个要修的仪器问题~~ **已修（2026-10-27，v0.25 窗口票 01）**：审计证实 0.80 为 harness 量测问题非语料缺口，修复后三配置 coverage 1.00、recall 不变（§二修订注）；
+3. ~~提取语言漂移修复~~ **已修（2026-10-28，v0.25 窗口票 02）**：语言锁定（提取提示词 + user 消息中文框架模板），真轮 retrieve 0.25 → 0.75（§三修订表）；
 4. MemProbe suite56 纳入（票 04，已顺延）。
 
 ——本报告不与任何外部系统榜单横比；数字只从留证文件取，重跑路径见各节留证链。

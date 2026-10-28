@@ -6,7 +6,7 @@
 
 **建议定位：面向个人维护与多宿主 Agent 的、可追溯、可纠错、可撤回的本地长期记忆层；先证明可靠，再增加自主性。**
 
-本地定位依据为根目录 `CONTEXT.md` 与 `docs/research/upstream-v212-gap-analysis.md`：兰台覆盖摄取、闸门、演化、检索、遗忘，已有候选、冲突、来源和诊断等概念。SQLite/FTS/Chroma 是本次用户给定的维护约束，不为追逐竞品重建基础设施。本报告不登记新功能名。
+本地定位依据为根目录 `CONTEXT.md` 与 `docs/research/upstream-v212-gap-analysis.md`（注：该文档已于 2026-10-27 归档，由 `aidumei-f06-gap-analysis-2026-10.md` 取代，此处系 2026-09 报告写作时点的历史依据）：兰台覆盖摄取、闸门、演化、检索、遗忘，已有候选、冲突、来源和诊断等概念。SQLite/FTS/Chroma 是本次用户给定的维护约束，不为追逐竞品重建基础设施。本报告不登记新功能名。
 
 **内部事实仅继承任务交接，未重跑验证**：前次全量为 **984 passed、5 failed**，独立两文件为 **8 passed**；安全扫描 **finding 0，但 partial/inconclusive**；Hermes 来源存在 session/turn 断点；episode 已登记但未接评分。局部通过不等于全量通过，零发现不等于安全完整覆盖。旧 gap analysis 是历史判断，不视作当前实现清单；内部事实以另一份梳理为准。
 

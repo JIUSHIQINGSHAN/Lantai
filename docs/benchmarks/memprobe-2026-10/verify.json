@@ -1,0 +1,34 @@
+{
+  "episodes_total": 56,
+  "complete_per_key": {
+    "lantai_verbatim_full": 56,
+    "full_context": 56,
+    "naive_rag": 56
+  },
+  "missing_per_key": {},
+  "answers_mismatch": [],
+  "sessions_incomplete": [],
+  "store_presence_not_all_present": [],
+  "match_counts_per_key": {
+    "lantai_verbatim_full": {
+      "incorrect": 42,
+      "correct": 141,
+      "partial": 41
+    },
+    "full_context": {
+      "correct": 146,
+      "partial": 42,
+      "incorrect": 36
+    },
+    "naive_rag": {
+      "correct": 101,
+      "incorrect": 38,
+      "partial": 20,
+      "execution_error": 65
+    }
+  },
+  "probe_retrievals_total": 227,
+  "gate_blocked_total": 26,
+  "retrieved_empty_not_gate_blocked": 1,
+  "verdict": "OK"
+}

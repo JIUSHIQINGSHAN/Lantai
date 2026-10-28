@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-28 - 嘉量（Jialiang · 嘉量既成）
+
+> 版本代号「嘉量」：《周礼·考工记》「嘉量既成，以观四方」——标准量器、定权度量。贴合本版主题「把评测仪器磨准」：LongMemEval 覆盖率 0.80 仪器量测失真根因审计与修复（rev1 三配置 coverage 1.00，recall 逐位不变）、E1 提取语言漂移提示词与任务框架双语锁定（retrieve 段 0.25→0.75）、MemProbe suite56 认知稳定性-可塑性（SP-Balance）新基准纳入与分层报告交付、对标基线换血为 aiduMEI f0.6 差距分析。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.25-next-window-2026-10/`（票 01/02/03/04 入版，05 条件未触发转 resolved，06 发布门禁）。
+
+### Added
+
+- **MemProbe suite56 认知基准纳入（票 03，详见 `docs/benchmarks/memprobe-report-2026-10.md`）**：
+  - 黑盒 adapter（`scripts/memprobe_lantai_adapter.py`）接入 MemProbe 官方评测套件，通过 `/import/jsonl` 逐字通道与 `/search` 混合检索（长程时序与角色前缀保真）；
+  - 交付全量 56 题（224 探针）三键对照消融（`lantai_verbatim_full`、`full_context`、`naive_rag`）；
+  - 在同模型 Qwen3-8B 下，兰台整体准确率达 **62.95%**（逼近完整上下文理论上限 65.18% 的 96.6%）；在再巩固范式上超越完整上下文 **3.58 个百分点**（64.29% vs 60.71%），历史追溯保真度达 **96.43%**；来源识别（23.53% vs 32.35%）如实披露逐字直存结构性边界；
+  - 留证入仓：`docs/benchmarks/memprobe-2026-10/` 含预注册、模型身份、数据集校验、逐题回执与终验对账（`verify.json` verdict: OK）。
+- **aiduMEI f0.6 新基线差距分析（票 04，详见 `docs/research/aidumei-f06-gap-analysis-2026-10.md`）**：替换陈旧的 v21.2 调研，从留证纪律、失败分级、预算参数、Windows 边界、双轨发布五个维度全面重构上游差距评估与技术演进映射。
+
+### Fixed
+
+- **LongMemEval 映射保真度覆盖率修复（票 01，详见 `docs/benchmarks/longmemeval-2026-10/REVISION-2026-10-27.md`）**：
+  - 逐题审计确认 0.80 覆盖率为评测 harness 将 top-5 误当已灌清单之仪器缺陷，金标在库实为 0 缺失；
+  - 修复灌库序列化与覆盖率在场性探针判据，三配置覆盖率全部校准至 **1.00**，recall@2（0.84）与 recall@5（0.88）逐位不变，产出 rev1 修订留证。
+- **E1 提取语言漂移提示词双语锁定（票 02，详见 `docs/benchmarks/e1e2-lang-drift-2026-10/REVISION-E1-LANGUAGE-LOCK.md`）**：
+  - 根因分析揭示小模型易将中文对话摘要为英文笔记导致跨语言检索断流；
+  - 提取提示词 `EXTRACT_SYS` 与用户框架模板强化中文输出锁定（`lantai/llm/prompts.py`、`lantai/parsing/extractor.py`）；
+  - E1 复跑真 LLM 轮 retrieve 段由 **0.25 恢复至 0.75**（达到替身轮理论上界），单元测试 `tests/test_extract_language_lock.py` 锁定防护。
+
 ## [0.24.1] - 2026-10-27
 
 > 补丁版（免代号，沿 v0.23.1–v0.23.3 先例）：发布节奏新规下首个「留证钉板」版——把评测自证线的公开报告锚定到不可变 tag。生产路径行为零变更（改动面为评测 harness、脚本、文档与基准留证）。

@@ -1,0 +1,78 @@
+[
+  {
+    "question_id": "caf03d32",
+    "expected": 51,
+    "first_pass": {
+      "imported": 0,
+      "duplicates": 51,
+      "invalid_n": 0,
+      "errors": []
+    },
+    "probe_pass": {
+      "imported": 0,
+      "duplicates": 51,
+      "invalid_n": 0
+    },
+    "done_after_first": 51,
+    "half_question": false,
+    "backfill_complete": true,
+    "latency_s": 0.2
+  },
+  {
+    "question_id": "25e5aa4f",
+    "expected": 45,
+    "first_pass": {
+      "imported": 1,
+      "duplicates": 44,
+      "invalid_n": 0,
+      "errors": []
+    },
+    "probe_pass": {
+      "imported": 0,
+      "duplicates": 45,
+      "invalid_n": 0
+    },
+    "done_after_first": 45,
+    "half_question": false,
+    "backfill_complete": true,
+    "latency_s": 37.4
+  },
+  {
+    "question_id": "fea54f57",
+    "expected": 50,
+    "first_pass": {
+      "imported": 1,
+      "duplicates": 49,
+      "invalid_n": 0,
+      "errors": []
+    },
+    "probe_pass": {
+      "imported": 0,
+      "duplicates": 50,
+      "invalid_n": 0
+    },
+    "done_after_first": 50,
+    "half_question": false,
+    "backfill_complete": true,
+    "latency_s": 36.9
+  },
+  {
+    "question_id": "0ddfec37_abs",
+    "expected": 45,
+    "first_pass": {
+      "imported": 1,
+      "duplicates": 44,
+      "invalid_n": 0,
+      "errors": []
+    },
+    "probe_pass": {
+      "imported": 0,
+      "duplicates": 45,
+      "invalid_n": 0
+    },
+    "done_after_first": 45,
+    "half_question": false,
+    "backfill_complete": true,
+    "latency_s": 37.5
+  }
+]

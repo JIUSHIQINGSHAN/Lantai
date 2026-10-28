@@ -1,7 +1,7 @@
 # 上游调研（v21.2 → f0.3++）与下一步开发计划
 
 > 2026-10-07 · 基于上游 commit `418c3c3`（2026-10-06，f0.3++ 发布）
-> 上一次调研：[upstream-v212-gap-analysis.md](upstream-v212-gap-analysis.md)（2026-09-18，止于 v21.2 / `da34e1a`）
+> 上一次调研：[upstream-v212-gap-analysis.md](upstream-v212-gap-analysis.md)（2026-09-18，止于 v21.2 / `da34e1a`；**该文档已于 2026-10-27 归档，由 [aidumei-f06-gap-analysis-2026-10.md](aidumei-f06-gap-analysis-2026-10.md) 取代**，此处仅作历史链引用）
 > 上游：https://github.com/monkey2jack/aiduMEM
 
 ## 一、结论

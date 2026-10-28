@@ -1,0 +1,96 @@
+{
+  "preregistered_at": "2026-10-28",
+  "ticket": "v0.25 窗口票 03（MemProbe suite56 轻量基准纳入）",
+  "suite_identity": {
+    "name": "MemProbe",
+    "ref": "arXiv:2609.30558",
+    "citation": "Ding & Wu, Probing Stability-Plasticity Tradeoffs in Agent Memory through Cognitive Experimental Paradigms",
+    "disambiguation": "非 arXiv:2606.24595（MEMPROBE，hidden user-state recovery）——同名异实，引用一律带本号",
+    "evidence_level": "partial（README 自述 EMNLP 2026；ACL Anthology 独立确认未见）",
+    "files": "docs/benchmarks/memprobe-2026-10/download_manifest.json（SHA256）",
+    "license": "suite56 为 MIT（DATA_LICENSE 的 CC BY-NC 4.0 仅覆盖 suite40，未使用）"
+  },
+  "scope": {
+    "episodes": 56,
+    "probes": 224,
+    "subsampling": "无——全量跑，不缩题；无随机抽样，不设 seed（reader temperature=0，官方 runner 逐题落盘可续跑）",
+    "non_goals": [
+      "不与论文六系统（Mem0/Graphiti/LangMem/cognee/A-MEM/MemoryOS）横比——reader 不同（本跑 Qwen/Qwen3-8B，论文 gemini-3-flash-preview），跨系统可比性不成立，报告须声明",
+      "不引用 MemoryAgentBench 冲突消解子集数字",
+      "不横比厂商基准总分",
+      "不使用 suite40 及 filler_pool（CC BY-NC 4.0）"
+    ]
+  },
+  "channel_decision": {
+    "choice": "verbatim 逐字通道（POST /import/jsonl，零 LLM 直存）",
+    "evidence": "docs/benchmarks/memprobe-2026-10/decision_channel_microverify.json",
+    "rationale": [
+      "suite56 role 分布 user 2693 / assistant 2676 / tool_output 935；source 探针需答「值由谁引入」（user/assistant/tool/stale_tool）",
+      "对话链通道（ADR-0018）只喂 user 行、assistant 行跳过——assistant/tool 来源结构性丢失；微验证实证：对话链两种事实（fastpath/提取）均不可立即检索（候选需 evolve worker），assistant 提取一次 48.3s",
+      "逐字通道 3/3 落库、原始时间戳保留、说话人前缀可检索",
+      "同 LongMemEval 协议（/import/jsonl 单通道），数字可与票 01 口径对表"
+    ],
+    "implication": "本跑测的是兰台的存储/检索保真（verbatim 直存 + 混合检索 + 启发式闸门），不测提取/闸门/演化的维护行为——报告明示此边界"
+  },
+  "reader_decision": {
+    "choice": "路径一：官方 runner --reader-backend openai 指向 siliconflow",
+    "model": "Qwen/Qwen3-8B",
+    "endpoint": "https://api.siliconflow.cn/v1（OPENAI_BASE_URL 环境变量，生产 .env 同源凭据）",
+    "temperature": 0.0,
+    "max_tokens": 4096,
+    "rationale": "runner 的 --reader-backend openai 走 OpenAI(api_key=...) 构造，SDK 自动读 OPENAI_BASE_URL——实测 2026-10-28 通（src/eval/llm.py::_call_openai）；本机无 GEMINI_API_KEY，按预研 §四.8 三选一取路径一",
+    "implication": "与论文共享 reader（gemini-3-flash-preview）不同：MemProbe 内部指标（accuracy/plasticity/stability/SP-Balance/fidelity/split）作为同 reader 内自洽画像呈现；不与论文数字横比",
+    "model_identity_pin": "docs/benchmarks/memprobe-2026-10/meta.json"
+  },
+  "lantai_config": {
+    "ingest_channel": "POST /import/jsonl，ensure_ascii=True（U+2028 行界防拆，票 01 同源），sha256 幂等",
+    "line_format": "[Session {i+1} of {N} | {session_type}] User:|Assistant:|[tool] {text}——每条消息一行，会话序/类型/说话人钉进内容",
+    "timestamps": "suite 无墙钟，用逻辑序：2026-01-01T00:00Z + session_idx 小时 + 行内分钟（与官方 Graphiti adapter base+hours 同构）",
+    "retrieval": "POST /search top_k=15, use_rerank=false（官方示例 adapter 同款 k=15）",
+    "retrieval_weights": "hybrid-default 0.6/0.25/0.05（与 LongMemEval hybrid-default 同值）",
+    "server_env": "VERBATIM_IN_RECALL=true, RERANKER_ENABLED=false, LANTAI_INTENT_OFF=1, LANTAI_RUN_SCHEDULER=false, MONITOR_ENABLED=false（同 lme_run 先例）",
+    "isolation": "每 episode 独立 LANTAI_HOME（q_<eid>）+ 独立服务器进程（scripts/memprobe_server_main.py，启动器内断言 ≠ 生产路径）",
+    "telemetry_nop_patch": "评测服务器进程内 record_llm_outcome → no-op。诊断：_timed 包装在未提交写事务内的每次 chat/embed 外呼后开新 session 写 llm_call_event，被外层 RESERVED 写锁阻塞到 sqlite busy_timeout 30s 后抛错被吞（connect_args timeout=30；探针：embed 步 33s、SDK HTTP 仅 0.16-0.31s、llm_call_event 0 行）。评测库一次性、该遥测本来 100% 写不进；补丁只去 30s/行纯等，不改灌库/检索/落库语义。产品代码零改动；已作为产品线性能发现上报（影响所有行内 embed 的灌库路径，LongMemEval 30s/行同根）"
+  },
+  "gate_policy": {
+    "statement": "启发式闸门保持产品行为，不用 req.force 绕过；gate_blocked 探针如实返回空上下文，reader 无记忆作答按 MemProbe 正常计分——miss 计入全题分母（票 01 gate 口径），gate_blocked 计数与逐探针 gate 元数据留证"
+  },
+  "coverage_policy": {
+    "statement": "每 episode 收尾做幂等重导探针（同 payload 再导一次）：全 duplicate 且 imported=0 invalid=0 ⇔ 全部在库（票 01 coverage_reimport 口径）；receipts 逐 session 留 imported/duplicates/invalid_n",
+    "failure_handling": "宁 miss 不脏写：半段重灌一次仍不符、探针 imported>0/invalid>0、服务器启动失败——全部显式留痕进报告，不静默丢弃、不自动修正"
+  },
+  "metric_policy": {
+    "scoring": "官方 score_answer + compute_metrics（MemProbe 本体口径）：overall accuracy / plasticity(should_update) / stability(should_preserve) / SP-Balance(调和平均) / historical-source-temporal fidelity / conflict 子分 / split vs non-split。评分类型 correct/partial/incorrect/skip/execution_error，无改动",
+    "note": "「F1/召回/特异度/归因/leak rate」是 TWIST 的指标清单，本报告一律不用；MemProbe 本体指标为准（预研 §三.3 证据修正）",
+    "failure_attribution": "同 reader 参照基线 full_context / naive_rag（一并跑）：探针在参照上对、在兰台上错 → 读出面/检索面线索；报告只作方向性归因，不作论文式 read-out vs storage-side 判定"
+  },
+  "layering": {
+    "dimensions": [
+      "paradigm（interference/misinformation/consolidation/reconsolidation，各 14 episodes）",
+      "probe_type（current_value/change_detection/previous_value/source/conflict_value/temporal）",
+      "expected_behavior（should_update=plasticity / should_preserve=stability）",
+      "split vs non-split（12 split episodes）"
+    ],
+    "requirement": "每层有数字 + 留证链指针（report.json episode/answers + receipts + summary.json）；仅单层总分或数字无指针即不通过（票面验收 2）"
+  },
+  "run_plan": {
+    "segments": [
+      "lantai_verbatim：4 段 × 14 episodes（文件序 [0:14]/[14:28]/[28:42]/[42:56]，--only 指定段内 id）",
+      "full_context：4 段 × 14 episodes（同切分）",
+      "naive_rag：4 段 × 14 episodes（同切分）"
+    ],
+    "checkpoint": "官方 runner 每 episode 落盘 report.json（resume 按 episode_id 跳过已完成）+ adapter 逐 session 回执 JSONL；段边界外不停在半段",
+    "pre_run_check": "共享 API 服务器负载探测（票 01 灌库收口无残留长跑）后起跑",
+    "exploratory_declaration": "微验证（decision_channel_microverify.json）与 --limit 2 冒烟（.scratch/memprobe-suite/smoke/）为探索性跑，不产正式数字、不入报告数字表；正式数字唯一来源 = report.json + summary.json"
+  },
+  "report_policy": {
+    "file": "docs/benchmarks/memprobe-report-2026-10.md",
+    "evidence_dir": "docs/benchmarks/memprobe-2026-10/",
+    "wording_constraints": [
+      "「行为画像迥异」不得写成「大多数系统落后」",
+      "EMNLP 接收维持 partial 表述（ACL Anthology 独立确认前）",
+      "引用一律带 arXiv:2609.30558",
+      "不与外部榜单横比"
+    ]
+  }
+}

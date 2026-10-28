@@ -1,0 +1,29 @@
+{
+  "started_at_utc": "2026-10-27T16:08:38Z",
+  "double_gate": {
+    "gate1_settings_lantai_home": "docs\\benchmarks\\e1e2-formal-2026-10-rev1\\eval-data",
+    "gate1_settings_database_url": "sqlite:///docs\\benchmarks\\e1e2-formal-2026-10-rev1\\eval-data\\eval.db",
+    "gate1_settings_chromadb_path": "docs\\benchmarks\\e1e2-formal-2026-10-rev1\\eval-data\\chroma",
+    "gate2_db_engine_url": "sqlite:///:memory:",
+    "gate2_vector_store_none_until_reinit": true,
+    "gate2_db_engine_note": "内存库（独立于宿主 LANTAI_HOME 真实库）",
+    "double_gate_ok": true
+  },
+  "model_identity": {
+    "llm_model_setting": "Qwen/Qwen3-8B",
+    "embed_model_setting": "BAAI/bge-m3",
+    "base_url": "https://api.siliconflow.cn/v1",
+    "temperature": 0.2,
+    "probe_response_keys": [],
+    "probe_latency_s": 19.97,
+    "ok": true
+  },
+  "harness": {
+    "e1": "lantai.eval.staged.run_staged_eval",
+    "e2": "lantai.eval.e2_temporal_cases.run_e2_temporal_eval",
+    "real_extract": "lantai.parsing.extractor.extract_candidate (chat_json 真调)",
+    "embed_face": "确定性 512 替身（deterministic_embed 单一真源；真 embed 1024 与写入侧混维，不放）",
+    "temperature_source": "lantai/llm/client.py chat_json temperature=0.2"
+  },
+  "finished_at_utc": "2026-10-27T16:27:46Z"
+}

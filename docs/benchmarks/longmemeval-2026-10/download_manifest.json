@@ -1,0 +1,18 @@
+{
+  "repo": "xiaowu0162/longmemeval-cleaned",
+  "revision": "98d7416c24c778c2fee6e6f3006e7a073259d48f",
+  "files": {
+    "longmemeval_s_cleaned.json": {
+      "size": 277383467,
+      "sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+      "hf_lfs_oid": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+      "sha256_matches_lfs_oid": true
+    },
+    "README.md": {
+      "size": 626,
+      "sha256": "fe31783d4e5d132681a25e4192e85def8edd214094939879f5283818c0a4a3e0",
+      "hf_lfs_oid": null,
+      "sha256_matches_lfs_oid": null
+    }
+  }
+}

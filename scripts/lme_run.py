@@ -10,6 +10,12 @@
   落盘 progress.jsonl，绑定 config_hash；续跑先对账（半题→清题重灌）。
 - 长跑可见性：status.json 实时落盘；失败显式报（非零退出码 + status.error）。
 
+v0.25 窗口票 01 修订（覆盖率修复）：
+- 灌库 payload ensure_ascii=True（U+2028 行界防拆）；
+- coverage_full 改判金标 session 的 store 在场性（重导幂等探针：全行
+  duplicate ⇔ 在库），不再用检索 top-5 映射会话当已灌清单——修前 gate
+  跳过题被整题误记缺（coverage_gap_audit.json 审计 0 真缺）。
+
 用法：
     PYTHONPATH=. python scripts/lme_run.py pilot            # 1 题实测吞吐/费用
     PYTHONPATH=. python scripts/lme_run.py ingest --n 50    # 灌库（真 embed）
@@ -203,11 +209,18 @@ def _ingest_one(proc_server, q: dict, resume_state: dict) -> dict:
     半题对账：应灌 N=len(lines)，API 报告 imported+duplicates+errors 之和 M；
     M<N 或 errors 非空 → 半题 → 清题重灌（lane 级 delete 由正式 API 无对应端点，
     重灌依赖内容 sha 幂等：同内容重复导入记 duplicate，不产生脏写）。
+
+    v0.25 票 01 修订：payload 用 ensure_ascii=True 序列化——session 原文可含
+    U+2028（LINE SEPARATOR），ensure_ascii=False 不转义它，服务端
+    parse_import_lines 的 str.splitlines() 会把 U+2028 当行界，把一条合法
+    JSONL 拆成两段废段（实测 25e5aa4f/fea54f57/0ddfec37_abs 共 15 个废段，
+    4 行未落库）。ASCII 转义后 \u2028 成为字面六字符序列，行界唯一 = \n。
     """
     lines = import_lines_for_question(q)
     expected = len(lines)
     qid = q["question_id"]
-    payload = "\n".join(json.dumps(l, ensure_ascii=False) for l in lines)
+    # ensure_ascii=True：U+2028 行界防拆（v0.25 票 01，见 docstring）
+    payload = "\n".join(json.dumps(l, ensure_ascii=True) for l in lines)
     t0 = time.time()
     r = requests.post(
         f"{BASE}/import/jsonl",
@@ -345,7 +358,10 @@ def cmd_query(args) -> int:
             "ids": prereg["question_ids"][: args.n],
         }
     )
-    out_path = OUT / f"results_{args.config}.jsonl"
+    # v0.25 票 01：--suffix 支持修订轮落独立文件（results_<config>-<suffix>.jsonl），
+    # 旧轮文件原样保留——修订数字与旧数字并排留证（票据验收 4）。
+    suffix = f"-{args.suffix}" if getattr(args, "suffix", None) else ""
+    out_path = OUT / f"results_{args.config}{suffix}.jsonl"
     done_ids = set()
     if out_path.exists():
         for line in out_path.read_text(encoding="utf-8").splitlines():
@@ -377,12 +393,34 @@ def cmd_query(args) -> int:
                     sj = sr.json()
                     gate_skipped = sj.get("gate", {}).get("needs_memory") is False
                     sids = result_session_ids(sj.get("results", []))
-                    # 打分前覆盖审计：金标会话是否都灌进了该题专属库（经检索面可见）
-                    imported_all = [l["tags"][0] for l in import_lines_for_question(q)]
-                    audit = coverage_audit(q, sids)
-                    audit_full = not audit["missing"] and set(q["answer_session_ids"]) <= set(
-                        imported_all
+                    # 打分前覆盖审计（v0.25 票 01 修订口径）：金标 session 的
+                    # **store 在场性**，不是检索 top-5 是否碰巧带回金标。
+                    # 修前把检索 top-5 映射会话传给 coverage_audit（形参语义是
+                    # 已灌清单），gate 跳过题（检索面为空）被整题记缺——5 个
+                    # 假缺口全部由此产生（store 只读审计 0 缺失，见
+                    # coverage_gap_audit.json）。
+                    # 在场性证据走 API 单通道：同 payload 幂等重导一次，sha
+                    # 去重使每条已落库行恰记 1 duplicate、未落库行记 imported，
+                    # 无直连库写入（同灌库纪律）。
+                    lines = import_lines_for_question(q)
+                    re_payload = "\n".join(json.dumps(l, ensure_ascii=True) for l in lines)
+                    rr = requests.post(
+                        f"{BASE}/import/jsonl",
+                        json={"text": re_payload},
+                        headers=_api_headers(),
+                        timeout=1800,
                     )
+                    rr.raise_for_status()
+                    rrep = rr.json()
+                    dup = rrep.get("duplicates", 0)
+                    imp = rrep.get("imported", 0)
+                    inv_n = len(rrep.get("invalid", []))
+                    # coverage 面判定：每行恰在库（dup=行数）⇔ 全部金标可检索；
+                    # imp>0 或 inv_n>0 = 本题此配置库有行缺失（如实记缺口）
+                    audit = coverage_audit(
+                        q, [l["tags"][0] for l in lines] if dup == len(lines) else []
+                    )
+                    audit_full = dup == len(lines) and inv_n == 0
                     rec = {
                         "question_id": qid,
                         "question_type": q["question_type"],
@@ -393,6 +431,12 @@ def cmd_query(args) -> int:
                         "gold_in_retrieved_any": bool(set(q["answer_session_ids"]) & set(sids)),
                         "coverage_full": audit_full,
                         "coverage_audit": audit,
+                        "coverage_reimport": {
+                            "expected": len(lines),
+                            "duplicates": dup,
+                            "imported": imp,
+                            "invalid": inv_n,
+                        },
                         "abstention": q["question_type"] == "abstention",
                         "latency_s": round(time.time() - t0, 1),
                     }
@@ -419,9 +463,11 @@ def cmd_query(args) -> int:
 
 
 def cmd_report(args) -> int:
+    # v0.25 票 01：--suffix 修订轮汇总到 summary<suffix>.json，旧 summary.json 原样保留
+    suffix = f"{args.suffix}" if getattr(args, "suffix", None) else ""
     summary = {}
     for name in CONFIGS:
-        p = OUT / f"results_{name}.jsonl"
+        p = OUT / f"results_{name}{'-' + suffix if suffix else ''}.jsonl"
         if not p.exists():
             continue
         recs = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
@@ -434,10 +480,10 @@ def cmd_report(args) -> int:
             raise SystemExit(f"{name}: 存在重复题记录（半题/重灌残留），先清理")
         summary[name] = aggregate_metrics(recs)
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / "summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    out_name = f"summary{'-' + suffix if suffix else ''}.json"
+    (OUT / out_name).write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    print(f"[report] written {out_name}")
     return 0
 
 
@@ -516,9 +562,11 @@ def main(argv=None) -> int:
     qu = sub.add_parser("query")
     qu.add_argument("--config", required=True)
     qu.add_argument("--n", type=int, default=50)
+    qu.add_argument("--suffix", default=None, help="修订轮后缀：落 results_<config>-<suffix>.jsonl")
     ve = sub.add_parser("verify")
     ve.add_argument("--n", type=int, default=25)
-    sub.add_parser("report")
+    re_ = sub.add_parser("report")
+    re_.add_argument("--suffix", default=None, help="修订轮后缀：汇总到 summary-<suffix>.json")
     args = ap.parse_args(argv)
     OUT.mkdir(parents=True, exist_ok=True)
     _status(stage=args.cmd, started=True)

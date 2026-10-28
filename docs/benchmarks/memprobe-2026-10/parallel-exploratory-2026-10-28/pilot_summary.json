@@ -1,0 +1,24 @@
+{
+  "date": "2026-10-28",
+  "episode": "PILOT-01A (interference/authoritative_update, 21 sessions, 4 probes)",
+  "config": "hybrid-default (pilot tag, 独立文件与 hash)",
+  "results": {
+    "correct": "3/4",
+    "ingest_time_s": 702.1,
+    "total_time_s": 743.9,
+    "ingest_errors": 0,
+    "coverage_probe": "21/21 duplicates -> coverage_full=true (telemetry_hybrid-default-pilot.jsonl)",
+    "gate": "4/4 probes 过闸 (needs_memory=true)，检索 15/15 非空，单次 0.17-0.28s",
+    "reader": "Qwen/Qwen3-8B, enable_thinking=False 注入生效，无 <think> 泄漏，JSON 均可解析",
+    "scoring": "官方 protocol.score_answer 正常；唯一 incorrect=current_value 答 FitLife(旧值未更新)——恰为该范式要测的行为面"
+  },
+  "throughput": {
+    "per_entry_ingest_s": 33.4,
+    "attribution": "uvicorn 服务器进程请求路径内外呼 HTTPS 慢（同秒交错对照：服务器路径 33-37s vs 独立进程裸 SDK 0.09-1.2s；服务器分段计时 embed 步 33.8s 复现）。已排除：端点拥塞、代理（无 *_PROXY、winhttp 直连）、IPv6 回退（AF_INET 在前、IPv4 连接 0.03s）、遥测写（0.05s）、线程化本身、重复导入路径（0.0s）。属兰台生产导入链路性能问题（LongMemEval 轮 31.75s/session 同象），不在本票修改范围，作为发现上报——详见 prereg_addendum_2026-10-28.md",
+    "server_start_s": "~36 (每 episode 独立 uvicorn)"
+  },
+  "scale_decision": {
+    "decision": "n=56 全量先跑 hybrid-default（官方 resume 逐题落盘可续跑）；vector-only/bm25-only 接力；若端点回拥塞致时程不可行，分析层按预注册缩题网格取三配置公共前缀子集出主数字（只减不换），全 n 单配置数字另报描述性——决策留证于报告执行注记",
+    "smoke_tests": "tests/test_memprobe_harness.py 6 passed (2026-10-28)"
+  }
+}

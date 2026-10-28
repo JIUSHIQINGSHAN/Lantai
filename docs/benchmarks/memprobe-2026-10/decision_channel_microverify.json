@@ -1,0 +1,177 @@
+{
+  "purpose": "票 03 决策一微验证：assistant/tool 行在对话链 vs 逐字通道下的保真",
+  "date": "2026-10-27T17:13:47Z",
+  "env": {
+    "llm_model": "Qwen/Qwen3-8B",
+    "port": 8792,
+    "home": "D:\\Projects\\记忆\\.scratch\\memprobe-suite\\mv-home"
+  },
+  "steps": [
+    {
+      "call": "POST /dialogue user-fact",
+      "latency_s": 0.1,
+      "status": 200,
+      "resp": {
+        "ingested": true,
+        "candidate_id": "cand_01M5Z5NAGYEGJ53EX1Q8VDHFKV",
+        "fastpath": true,
+        "lane": "general",
+        "status": "fastpath"
+      },
+      "search_query": "用户的健身房是哪家？",
+      "search_gate": {
+        "needs_memory": true,
+        "reason": "self_reference",
+        "scope": "identity"
+      },
+      "search_results": []
+    },
+    {
+      "call": "POST /dialogue assistant-fact",
+      "latency_s": 48.3,
+      "status": 200,
+      "resp": {
+        "ingested": true,
+        "candidate_id": "cand_01M5Z5PWWN9FF2267CJ71EDP04",
+        "fastpath": false,
+        "lane": "general",
+        "status": "new"
+      },
+      "search_query": "我的会员升级到什么级别了？谁告诉我升级这件事的？",
+      "search_gate": {
+        "needs_memory": true,
+        "reason": "self_reference",
+        "scope": "identity"
+      },
+      "search_results": []
+    },
+    {
+      "call": "POST /import/jsonl verbatim",
+      "latency_s": 98.8,
+      "status": 200,
+      "resp": {
+        "imported": 3,
+        "duplicates": 0,
+        "errors": [],
+        "invalid": [],
+        "ok": true
+      },
+      "search_query": "我的健身房是哪家？",
+      "search_gate": {
+        "needs_memory": true,
+        "reason": "self_reference",
+        "scope": "identity"
+      },
+      "search_results": [
+        {
+          "lane": "general",
+          "memory_type": "verbatim",
+          "created_at": "2026-01-01T10:00:00Z",
+          "tags": [
+            "MP",
+            "MV-EP01",
+            "sess0",
+            "encoding",
+            "user"
+          ],
+          "content": "[Session 1] User: 我的健身房换成了 CrossFit Central，以后都在那里训练。"
+        },
+        {
+          "lane": "general",
+          "memory_type": "verbatim",
+          "created_at": "2026-01-01T10:00:30Z",
+          "tags": [
+            "MP",
+            "MV-EP01",
+            "sess0",
+            "encoding",
+            "assistant"
+          ],
+          "content": "[Session 1] Assistant: 你的健身房会员已升级为 premium，从下周一生效。"
+        },
+        {
+          "lane": "general",
+          "memory_type": "verbatim",
+          "created_at": "2026-01-01T10:01:00Z",
+          "tags": [
+            "MP",
+            "MV-EP01",
+            "sess0",
+            "encoding",
+            "tool_output"
+          ],
+          "content": "[Session 1] [tool] gym_system: membership check returned tier=premium effective 2026-01-06."
+        }
+      ],
+      "search_query_2": "会员升级是谁说的？",
+      "search_results_2": [
+        {
+          "lane": "general",
+          "memory_type": "verbatim",
+          "created_at": "2026-01-01T10:00:30Z",
+          "tags": [
+            "MP",
+            "MV-EP01",
+            "sess0",
+            "encoding",
+            "assistant"
+          ],
+          "content": "[Session 1] Assistant: 你的健身房会员已升级为 premium，从下周一生效。"
+        },
+        {
+          "lane": "general",
+          "memory_type": "verbatim",
+          "created_at": "2026-01-01T10:01:00Z",
+          "tags": [
+            "MP",
+            "MV-EP01",
+            "sess0",
+            "encoding",
+            "tool_output"
+          ],
+          "content": "[Session 1] [tool] gym_system: membership check returned tier=premium effective 2026-01-06."
+        },
+        {
+          "lane": "general",
+          "memory_type": "verbatim",
+          "created_at": "2026-01-01T10:00:00Z",
+          "tags": [
+            "MP",
+            "MV-EP01",
+            "sess0",
+            "encoding",
+            "user"
+          ],
+          "content": "[Session 1] User: 我的健身房换成了 CrossFit Central，以后都在那里训练。"
+        }
+      ]
+    }
+  ],
+  "conclusions_raw": {
+    "dialogue_user_fact": {
+      "ingested": {
+        "ingested": true,
+        "candidate_id": "cand_01M5Z5NAGYEGJ53EX1Q8VDHFKV",
+        "fastpath": true,
+        "lane": "general",
+        "status": "fastpath"
+      },
+      "searchable_immediately": false
+    },
+    "dialogue_assistant_fact": {
+      "ingested": {
+        "ingested": true,
+        "candidate_id": "cand_01M5Z5PWWN9FF2267CJ71EDP04",
+        "fastpath": false,
+        "lane": "general",
+        "status": "new"
+      },
+      "searchable_immediately": false
+    },
+    "verbatim": {
+      "imported": 3,
+      "duplicates": 0,
+      "invalid": 0
+    }
+  }
+}
