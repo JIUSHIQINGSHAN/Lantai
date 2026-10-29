@@ -17,7 +17,9 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **tier**（层级） | 记忆的生命周期深度，区分为临时的“工作记忆”与长期的“长期记忆”，超时未被强化的临时记忆会自动归档。 | 命名：项目内部技术命名（层级）；设计：见 `lantai/models/tables.py`（`MemoryItem.tier`） |
 | **gate**（闸门） | 新记忆进入系统的第一道质检门；综合新颖度、置信度与矛盾检测做出放行、拒绝或转入待审的裁决。 | 命名：意象取材「水闸控流」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、`lantai/gate/decision.py` |
 | **coalesce**（潮波合并） | 连续短消息的异步缓冲机制；将相近对话合并后再调用大模型提炼，避免高频细碎调用消耗资源。 | 命名：意象取材「潮水成波、批量冲刷」；设计：见 [ADR-0003](docs/adr/0003-coalesce-buffer-key.md) |
-| **fastpath**（白名单直写） | 常见确定性句式（如用户自我声明、明确指令）绕过大模型直接安全存入记忆库的高速通道。 | 命名：项目内部技术名（ADR-0013 候选意象「直书」）；设计：见 `parsing/fastpath.py` 与 [ADR-0013](docs/adr/0013-naming-system.md) |
+| **fastpath**（白名单直写） | 常见确定性句式（如用户自我声明、明确指令）绕过大模型直接安全存入记忆库的高速通道。 | 命名：项目内部技术名（ADR-0013 意象「直书」前身）；设计：见 `parsing/fastpath.py` 与 [ADR-0013](docs/adr/0013-naming-system.md) |
+| **直书**（Zhishu，确定性规则直写引擎） | 常见确定性句式（自我声明、偏好表达、程序约束/铁律、参数配置、显式备忘）绕过大模型直接安全提取并存入记忆库的多轨高速规则引擎。 | 命名：《左传》「董狐直笔」，秉笔直书，不经润色；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0064](docs/adr/0064-zhishu-fastpath-engine.md) 及 `lantai/parsing/zhishu.py` |
+| **直书**（Zhishu，版本代号） | v0.43.0 发行版本代号；寓意秉笔直书、不加雕琢，对应本版「多轨确定性规则引擎、程序性铁律结构化沉淀与零Token高速直写（ADR-0064落地）」的主题（代号与功能同名，承既有演进先例）。 | 命名：《左传》「董狐直笔」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记及 [ADR-0064](docs/adr/0064-zhishu-fastpath-engine.md) |
 | **candidate**（候选记忆） | 从原始输入中提取出的结构化知识半成品，必须通过闸门检验后才能正式转化为系统记忆。 | 命名：项目内部技术命名（候选）；设计：见 `lantai/models/tables.py`（`MemoryCandidate`）与 [ADR-0026](docs/adr/0026-candidate-admission-triage.md) |
 | **proposal**（提案） | 候选记忆过闸后生成的变更申请（如新增、合并、更新或废弃旧记忆），经确认后才会落库生效。 | 命名：项目内部技术名（ADR-0013 候选意象「拟议」）；设计：见 `lantai/models/tables.py`（`MemoryProposal`） |
 | **checkpoint**（检查点） | 记忆单项变更前后的对比快照，专门用于误操作或异常变更时的精确版本回滚。 | 命名：项目内部技术命名（快照）；设计：见 `lantai/models/tables.py`（`MemoryCheckpoint`） |
