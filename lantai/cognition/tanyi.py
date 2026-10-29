@@ -13,7 +13,7 @@ from enum import StrEnum
 from typing import Any
 
 import jieba
-from sqlmodel import Session
+from sqlmodel import Session, select
 from ulid import ULID
 
 from lantai.core.acl import ensure_can_delete
@@ -233,6 +233,144 @@ def execute_tanyi_resolution(
         "conflict_id": conflict_id,
         "memory_id": item.id,
     }
+
+
+@dataclass
+class TanyiProbeItem:
+    """探颐存储驱动主动扫描的探针候选（Ticket 01）。"""
+
+    memory_id: str
+    content: str
+    tenant_id: str | None
+    confidence: float
+    conflict_id: str | None = None
+    incoming_ref: str | None = None
+    lane: str | None = None
+
+
+class TanyiEngine:
+    """探颐存储驱动主动探针引擎：扫描租户内未决冲突与低置信度模糊事实。
+
+    与召回驱动的 TanyiProbingEngine（ADR-0037 插桩）互补：
+    TanyiEngine 直接面向存储层主动巡检，无需等待检索命中。
+    """
+
+    def __init__(
+        self,
+        storage: Session,
+        fuzzy_threshold: float = 0.6,
+        llm_client: Any | None = None,
+    ):
+        self.storage = storage
+        self.fuzzy_threshold = fuzzy_threshold
+        self.llm_client = llm_client
+
+    def probe_ambiguities(
+        self,
+        tenant_id: str | None,
+        query: str | None = None,
+        limit: int = 10,
+        user_id: str | None = None,
+    ) -> list[TanyiProbeItem]:
+        """主动扫描未决冲突与低置信度事实，输出探针候选列表。
+
+        归属过滤（v0.38 Ticket 02）：
+        - tenant_id=None 表示不限租户（admin 全权 / 无租户部署）；
+        - user_id 提供时追加属主二级过滤（同租户跨属主零泄漏）；
+        - 二者皆 None 时不过滤（MCP/脚本内部调用既有口径）。
+
+        严格租户隔离：仅扫描 status == active 的记忆。
+        """
+        probes: list[TanyiProbeItem] = []
+        seen_mem_ids: set[str] = set()
+
+        clean_q = (query or "").strip()
+        item_scope = [MemoryItem.status == "active"]
+        if tenant_id is not None:
+            item_scope.append(MemoryItem.tenant_id == tenant_id)
+        if user_id is not None:
+            item_scope.append(MemoryItem.user_id == user_id)
+
+        # 1. 未决冲突优先：open 状态 ConflictEvent 挂载的归属范围内记忆
+        conflict_rows = self.storage.exec(
+            select(ConflictEvent, MemoryItem)
+            .join(
+                MemoryItem,
+                ConflictEvent.memory_id == MemoryItem.id,  # type: ignore[arg-type]
+            )
+            .where(ConflictEvent.status == "open", *item_scope)
+        ).all()
+        for conf, item in conflict_rows:
+            if clean_q and not self._matches_query(clean_q, item.content, conf.incoming_ref):
+                continue
+            probes.append(
+                TanyiProbeItem(
+                    memory_id=item.id,
+                    content=item.content,
+                    tenant_id=item.tenant_id,
+                    confidence=float(item.confidence or 0.0),
+                    conflict_id=conf.id,
+                    incoming_ref=conf.incoming_ref or "",
+                    lane=item.lane,
+                )
+            )
+            seen_mem_ids.add(item.id)
+            if len(probes) >= limit:
+                return probes
+
+        # 2. 低置信度模糊事实：active 且 confidence < 阈值（未挂未决冲突）
+        fuzzy_rows = self.storage.exec(
+            select(MemoryItem)
+            .where(*item_scope, MemoryItem.confidence < self.fuzzy_threshold)
+            .order_by(MemoryItem.confidence)  # 最模糊优先
+        ).all()
+        for item in fuzzy_rows:
+            if item.id in seen_mem_ids:
+                continue
+            if clean_q and not self._matches_query(clean_q, item.content, None):
+                continue
+            probes.append(
+                TanyiProbeItem(
+                    memory_id=item.id,
+                    content=item.content,
+                    tenant_id=item.tenant_id,
+                    confidence=float(item.confidence or 0.0),
+                    conflict_id=None,
+                    incoming_ref=None,
+                    lane=item.lane,
+                )
+            )
+            if len(probes) >= limit:
+                break
+
+        return probes
+
+    def generate_clarification_prompts(self, probes: list[TanyiProbeItem]) -> list[str]:
+        """将探针候选转换为面向用户自然对话的轻量追问插桩建议。"""
+        prompts: list[str] = []
+        for p in probes:
+            if p.conflict_id:
+                prompts.append(
+                    f"顺便向您求证确认下：关于「{(p.content or '')[:30]}」，"
+                    f"目前是否已变更为「{(p.incoming_ref or '')[:30]}」？"
+                )
+            else:
+                prompts.append(
+                    f"顺便向您求证确认下：关于「{(p.content or '')[:30]}」，该事实是否属实准确？"
+                )
+        return prompts
+
+    @staticmethod
+    def _matches_query(query: str, *texts: str | None) -> bool:
+        """轻量查询关联过滤：query 分词与探针文本有交集即命中。"""
+        q_tokens = {w.strip() for w in jieba.lcut(query) if len(w.strip()) >= 2}
+        if not q_tokens:
+            return True
+        text_tokens: set[str] = set()
+        for t in texts:
+            if t:
+                text_tokens |= {w.strip() for w in jieba.lcut(t) if len(w.strip()) >= 2}
+        return bool(q_tokens & text_tokens)
 
 
 @dataclass

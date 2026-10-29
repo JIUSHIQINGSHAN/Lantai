@@ -16,6 +16,8 @@ from lantai.cognition.sanxing import (
 from lantai.cognition.tanyi import (
     ProbeInsertion,
     ResolutionIntent,
+    TanyiEngine,
+    TanyiProbeItem,
     TanyiProbingEngine,
     execute_tanyi_resolution,
     parse_user_resolution_intent,
@@ -32,6 +34,8 @@ __all__ = [
     "SanxingAuditResult",
     "SanxingEngine",
     "SanxingHealthSnapshot",
+    "TanyiEngine",
+    "TanyiProbeItem",
     "TanyiProbingEngine",
     "execute_tanyi_resolution",
     "inspect_memory_health",
