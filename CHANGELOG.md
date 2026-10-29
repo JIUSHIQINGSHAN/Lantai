@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-10-30 - 探颐（Tanyi · 存储驱动主动探针与自然交互消歧）
+
+> 版本代号「探颐」：《易·系辞上》「探赜索隐，钩深致远」——对应本版主题「存储驱动主动探针巡检与归属安全收窄（ADR-0037 延伸落地）」：v0.34 的探颐插桩引擎（`TanyiProbingEngine`）依赖检索召回命中才生成探针，未命中的未决冲突与模糊事实长期沉没。本版新增存储驱动主动巡检引擎 `TanyiEngine`（票 01），直接扫描归属范围内未决冲突（`ConflictEvent` open）与低置信度模糊事实（`confidence < 0.6`，最模糊优先），输出结构化探针候选 `TanyiProbeItem` 并生成自然对话追问 `generate_clarification_prompts`（冲突探针同时呈现新旧主张，便于用户裁决）；打通 `POST /cognition/tanyi/probe` REST 端点、MCP 工具 `memory_tanyi_probe`（工具池扩充至 69 个且广告/分发 1:1 双向一致）与 `CognitiveContext.clarification_probes` 认知上下文切面（票 02，樊篱围栏专化渲染）。归属安全：非 admin 按 `tenant_id` + `user_id` 双重过滤，同租户跨属主零泄漏，NULL 属主老行不可见——探针把正文渲染成问句直达用户，是比列表更直接的泄漏面，贯彻「宁 miss 不脏写」。票据 `.scratch/v0.38-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **探颐存储驱动主动探针引擎（票 01，详见 `lantai/cognition/tanyi.py` 与 `tests/test_tanyi_engine_smoke.py`）**：
+  - 核心引擎设计：在既有召回驱动的 `TanyiProbingEngine`（v0.34 ADR-0037 插桩）之外新增存储驱动主动巡检引擎 `TanyiEngine`，无需等待检索命中即可扫描归属范围内未决冲突（`ConflictEvent` open）与低置信度模糊事实（`confidence < 0.6`，最模糊优先）；
+  - 探针候选与追问生成：输出 `TanyiProbeItem` 结构化探针列表，`generate_clarification_prompts` 将冲突/模糊事实转换为面向用户自然对话的轻量追问（冲突探针同时呈现新旧双方主张，便于用户裁决）；
+  - 归属过滤：`tenant_id`/`user_id` 双重收窄（票 02 扩展），严格跨租户 100% 隔离，贯彻「宁 miss 不脏写」；
+  - 交付端到端不 mock 冒烟测试 `tests/test_tanyi_engine_smoke.py`（真实 in-memory SQLite，4 接缝）。
+- **探颐消歧 API、MCP 工具集成与认知上下文求证切面（票 02，详见 `lantai/api/routes_tanyi.py`、`lantai/cognition/context.py`、`lantai/cli/mcp.py` 与 `tests/test_tanyi_api_smoke.py`）**：
+  - HTTP REST 路由：新增 `POST /cognition/tanyi/probe`，非 admin 按 `tenant_id` + `user_id` 双重过滤（同租户跨属主零泄漏，NULL 属主老行不可见），admin 全权；
+  - 认知上下文切面扩展：在 `CognitiveContext` 新增 `clarification_probes` 切面并专化渲染（只出问题文本，不 repr 结构字典），樊篱数据围栏全流程防护；
+  - MCP 工具池升级：注册 `memory_tanyi_probe`，工具总数扩充至 69 个，广告与分发 1:1 双向一致（`tests/test_mcp.py` 计数与 parity 守卫同步更新）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_tanyi_api_smoke.py`（TestClient + MCP 标准分发三接缝）。
+
 ## [0.37.0] - 2026-10-29 - 三省（Sanxing · 认知层记忆反思蒸馏与自我审视闭环）
 
 > 版本代号「三省」：《论语·学而》「吾日三省吾身」——认知层反思自省与记忆健康审视，对应本版主题「认知层反思自省引擎、记忆健康审视与三省自检闭环，ADR-0013 / ADR-0044 落地」：日常交互长期积累下，存量事实与规则常面临被取代残留、时效过期、未决冲突或低频碎片等隐性质量隐患。构建认知层自我审视回环引擎 `SanxingEngine`，支持对记忆库进行多维健康扫描（`evaluate_health`），涵盖规则 R1（被取代残留：`superseded_by` 但仍为 active）、规则 R2（时效过期：`valid_to` 过期且非 `procedural` 铁律）、规则 R3（未决冲突：`ConflictEvent` 状态仍为 open）、规则 R4（低帮助度碎片：`use_count >= 5` 且 `helpful_count == 0`）；计算健康评分并输出结构化快照 `SanxingHealthSnapshot` 与自省审计建议报告 `SanxingAuditResult`；暴露 RESTful 端点 `GET /evolution/sanxing/health` 与 `POST /evolution/sanxing/audit`，以及 MCP 协议标准化工具 `memory_health_inspect`、`memory_audit_report`（MCP 工具池扩充至 68 个且 1:1 双向一致）；在 `CognitiveContext` 中新增 `reflection_audit` 切面并渲染结构化 Markdown Prompt，严守「樊篱」数据围栏与行级 ACL 租户隔离防火墙。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.37-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
