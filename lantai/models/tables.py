@@ -905,3 +905,34 @@ class FactEntity(SQLModel, table=True):
     )
     entity_name: str = Field(primary_key=True, index=True)
     role: str = Field(primary_key=True)
+
+
+# ============================================================================
+# 卷宗（v0.42 ADR-0063）：长程复杂任务情境卷宗实体
+# ============================================================================
+
+
+class Dossier(SQLModel, table=True):
+    """长程复杂任务情境卷宗实体（ADR-0063 卷宗）。
+
+    管理多轮长程任务的顶层目标、里程碑状态机与关联记忆集合，支撑情境记忆聚焦（Context Focusing）。
+    """
+
+    __tablename__ = "dossier"
+
+    id: str = Field(primary_key=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
+    session_id: str | None = Field(default=None, index=True)
+
+    title: str = Field(index=True)
+    goal: str = ""
+    status: str = Field(default="active", index=True)  # active | completed | archived
+    milestones: list = Field(default_factory=list, sa_column=Column(JSON))
+    memory_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    metadata_json: dict = Field(default_factory=dict, sa_column=Column("metadata", JSON))
+
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+

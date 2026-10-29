@@ -7,6 +7,11 @@ from lantai.cognition.chenfeng import (
     unarchive_memory_entry,
 )
 from lantai.cognition.context import CognitiveContext, CognitiveContextBuilder
+from lantai.cognition.juanzong import (
+    DossierFocusResult,
+    DossierMilestone,
+    JuanzongEngine,
+)
 from lantai.cognition.sanxing import (
     SanxingAuditResult,
     SanxingEngine,
@@ -29,6 +34,9 @@ __all__ = [
     "ChenfengEngine",
     "CognitiveContext",
     "CognitiveContextBuilder",
+    "DossierFocusResult",
+    "DossierMilestone",
+    "JuanzongEngine",
     "ProbeInsertion",
     "ResolutionIntent",
     "SanxingAuditResult",
