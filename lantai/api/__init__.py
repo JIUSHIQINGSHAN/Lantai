@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from .routes_admin import router as routes_admin_router
 from .routes_candidates import router as routes_candidates_router
+from .routes_catalog import router as routes_catalog_router
 from .routes_checkpoint import router as routes_checkpoint_router
 from .routes_cognitive import router as routes_cognitive_router
 from .routes_conflicts import router as routes_conflicts_router
@@ -72,5 +73,6 @@ __all__ = [
     "routes_terminal_router",
     "routes_tanyi_router",
     "routes_admin_router",
+    "routes_catalog_router",
     "routes_zhishu_router",
 ]

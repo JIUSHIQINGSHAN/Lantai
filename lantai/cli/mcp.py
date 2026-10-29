@@ -1544,6 +1544,24 @@ def handle_zhishu_check(params: dict) -> dict:
     return match_zhishu_service(text)
 
 
+def handle_muci_catalog(params: dict) -> dict:
+    """目次：多维记忆知识目录与分级导航查询（v0.44 ADR-0065）。"""
+    domain = params.get("domain")
+    lane = params.get("lane")
+    detail_level = params.get("detail_level", "compact")
+    max_entries = int(params.get("max_entries", 3))
+
+    from lantai.services.muci_service import get_catalog_service
+
+    return get_catalog_service(
+        principal=_principal_from_params(params),
+        domain=domain,
+        lane=lane,
+        detail_level=detail_level,
+        max_entries_per_section=max_entries,
+    )
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2473,6 +2491,35 @@ TOOLS = {
             "required": ["text"],
         },
     },
+    "muci_catalog": {
+        "description": "目次：获取结构化多维知识目录大纲与分级导航树（v0.44 ADR-0065）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "domain": {
+                    "type": "string",
+                    "description": "限定辨域：user/session/agent",
+                    "enum": ["user", "session", "agent"],
+                },
+                "lane": {
+                    "type": "string",
+                    "description": "限定分轨：fact/rule/preference/experience/general",
+                },
+                "detail_level": {
+                    "type": "string",
+                    "description": "目录详细程度：compact (极低Token大纲) 或 full (展开精选条目)",
+                    "enum": ["compact", "full"],
+                    "default": "compact",
+                },
+                "max_entries": {
+                    "type": "integer",
+                    "description": "full 模式下每板块最大条目数",
+                    "default": 3,
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2552,6 +2599,7 @@ TOOL_HANDLERS = {
     "dossier_create": handle_dossier_create,
     "dossier_focus": handle_dossier_focus,
     "zhishu_check": handle_zhishu_check,
+    "muci_catalog": handle_muci_catalog,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

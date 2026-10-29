@@ -46,6 +46,8 @@ class CognitiveContext:
     clarification_probes: list = field(default_factory=list)
     # 卷宗（v0.42 Ticket 02 ADR-0063）：活动情境卷宗切面（包含案名、目标、里程碑状态与聚焦记忆）
     active_dossier: dict | None = None
+    # 目次（v0.44 Ticket 02 ADR-0065）：多维记忆知识目录导览切面
+    catalog_digest: dict | None = None
 
     def to_prompt(self) -> str:
         """
@@ -163,6 +165,27 @@ class CognitiveContext:
                     d_lines.append(f"  * {wrap_as_data(str(c), item_id=fm.get('id'))}")
 
             sections.insert(0, "\n".join(d_lines))
+
+        # 目次（ADR-0065）：若有目录大纲，渲染全局知识目次导航切面，全面施加樊篱保护
+        if self.catalog_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            cat = self.catalog_digest
+            c_summary = cat.get("summary") or "知识目录概览"
+            c_sections = cat.get("sections") or []
+
+            c_lines = [f"## Memory Catalog & Knowledge Index: {wrap_as_data(str(c_summary))}"]
+            if c_sections:
+                c_lines.append("- **Knowledge Sections**:")
+                for s in c_sections:
+                    d = s.get("domain", "")
+                    l = s.get("lane", "")
+                    cnt = s.get("count", 0)
+                    tags = s.get("tags", [])
+                    tag_str = f" [标签: {', '.join(tags[:5])}]" if tags else ""
+                    c_lines.append(f"  * {d}/{l}: {cnt} items{tag_str}")
+
+            sections.insert(0, "\n".join(c_lines))
 
         from lantai.llm.fence import fence_declaration
 

@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI
 from lantai.api import (
     routes_admin_router,
     routes_candidates_router,
+    routes_catalog_router,
     routes_checkpoint_router,
     routes_cognitive_router,
     routes_conflicts_router,
@@ -130,6 +131,7 @@ CORE_ROUTERS = [
     routes_graph_router,
     routes_tanyi_router,
     routes_zhishu_router,
+    routes_catalog_router,
 ]
 
 EXT_ROUTERS = {
