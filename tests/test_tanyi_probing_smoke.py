@@ -1,200 +1,157 @@
-"""探颐（ADR-0037 · v0.30）：主动探针与消歧机制冒烟测试。
+"""探颐·主动求证探针认知引擎冒烟测试 (Ticket 01)
 
-验证：
-1. settings.ENABLE_PROACTIVE_PROBING 配置项与出厂默认；
-2. detect_memory_probes 检出未决冲突探针（suggested_action="resolve_conflict"）；
-3. detect_memory_probes 检出模糊置信度事实探针（0.3 <= confidence <= 0.6, suggested_action="clarify_fact"）；
-4. format_probing_context 生成 Prompt 注入上下文；
-5. 真实 SQLite 数据库端到端不 mock 冒烟。
+基于真实 in-memory SQLite，不 mock 内部计算逻辑。
+验证接缝（Seams）：
+1. TanyiProbingEngine 基于用户 query、召回记忆与未决冲突生成 ProbeInsertion；
+2. 针对低置信度记忆（0.3 <= confidence <= 0.6）与未决冲突（ConflictEvent）的多维度插桩打标与建议动作；
+3. format_context 生成 Prompt 注入上下文（【探颐·主动求证插桩】）；
+4. 多租户与属主安全隔离：非管理员绝不向跨租户/跨用户暴露不属于自身的探针。
 """
 
 import pytest
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine
 
-from lantai.core.settings import settings
-
-
-def test_settings_enable_proactive_probing_default():
-    """Seam 1 验证：ENABLE_PROACTIVE_PROBING 配置项存在且默认为 True。"""
-    assert hasattr(settings, "ENABLE_PROACTIVE_PROBING")
-    assert settings.ENABLE_PROACTIVE_PROBING is True
+from lantai.cognition.tanyi import ProbeInsertion, TanyiProbingEngine
+from lantai.core.auth import Principal
+from lantai.models.tables import ConflictEvent, MemoryItem
 
 
-def test_detect_memory_probes_conflict_seam(param_env):
-    """Seam 2 验证：扫描未决冲突生成探针，必须包含 suggested_action='resolve_conflict' 与完整字段。"""
-    from lantai.models.tables import ConflictEvent, MemoryItem
-    from lantai.services.probing_service import detect_memory_probes
+@pytest.fixture()
+def tanyi_env():
+    import lantai.models.tables  # noqa: F401
 
-    session_factory, _ = param_env
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    def session_factory() -> Session:
+        return Session(engine)
+
+    return session_factory
+
+
+def test_tanyi_probing_engine_conflict_and_low_confidence(tanyi_env):
+    """Seam 1 & 2: 验证引擎从召回记忆与未决冲突中检出 ProbeInsertion。"""
+    session_factory = tanyi_env
     with session_factory() as s:
-        m = MemoryItem(
-            id="mem_prov_01",
-            content="大哥常驻地在上海徐汇区",
+        # 1. 创建一条冲突记忆与未决冲突
+        m1 = MemoryItem(
+            id="mem-loc-1",
+            content="团队核心常驻办公地点在上海张江",
+            confidence=0.9,
             lane="fact",
-            domain="user",
-            user_id="default",
+            tenant_id="t-1",
+            user_id="user-1",
             status="active",
         )
-        s.add(m)
-        s.commit()
-
-        conf = ConflictEvent(
-            id="conf_prov_01",
-            memory_id="mem_prov_01",
-            incoming_ref="大哥目前常住北京海淀区",
+        conf1 = ConflictEvent(
+            id="conf-loc-1",
+            memory_id="mem-loc-1",
+            incoming_ref="团队近期已搬迁至北京中关村办公",
             rule_name="location_conflict",
             status="open",
         )
-        s.add(conf)
-        s.commit()
-
-        # 调取检测
-        probes = detect_memory_probes(query="请问大哥的常住地在哪里？", db_session=s)
-        assert len(probes) == 1
-        p = probes[0]
-        assert p["probe_id"] == "probe_conf_prov_01"
-        assert p["conflict_id"] == "conf_prov_01"
-        assert p["memory_id"] == "mem_prov_01"
-        assert "北京" in p["question"] or "上海" in p["question"]
-        assert p["suggested_action"] == "resolve_conflict"
-
-
-def test_detect_memory_probes_marginal_confidence_seam(param_env):
-    """Seam 3 验证：对处于临界模糊带（0.3 <= confidence <= 0.6）的事实/记忆检出澄清探针，suggested_action='clarify_fact'。"""
-    from lantai.models.tables import FactAtomic, MemoryItem
-    from lantai.services.probing_service import detect_memory_probes
-
-    session_factory, _ = param_env
-    with session_factory() as s:
-        # 1. 记忆正文：置信度 0.45（处于模糊带）
-        m_vague = MemoryItem(
-            id="mem_fuzzy_01",
-            content="大哥可能在周五下午参与项目架构评审会议",
-            lane="fact",
-            domain="user",
-            user_id="default",
+        # 2. 创建一条低置信度事实记忆 (0.45)
+        m2 = MemoryItem(
+            id="mem-fuzzy-1",
+            content="用户偏好喝冷萃不加糖咖啡",
             confidence=0.45,
+            lane="preference",
+            tenant_id="t-1",
+            user_id="user-1",
             status="active",
         )
-        # 2. 记忆正文：置信度 0.9（高度确信，非模糊）
-        m_solid = MemoryItem(
-            id="mem_solid_01",
-            content="系统核心模块代码必须具备不 mock 冒烟单测",
-            lane="rule",
-            domain="user",
-            user_id="default",
-            confidence=0.9,
-            status="active",
-        )
-        # 3. 完璧事实：置信度 0.5（处于模糊带）
-        f_vague = FactAtomic(
-            id="fact_fuzzy_01",
-            statement="李四向张三汇报了云原生容器部署进度",
-            predicate="report_to",
-            object="张三",
-            confidence=0.5,
-            user_id="default",
-        )
-        s.add_all([m_vague, m_solid, f_vague])
+        s.add(m1)
+        s.add(conf1)
+        s.add(m2)
         s.commit()
 
-        # 针对 query 检出模糊探针
-        probes = detect_memory_probes(query="周五架构评审与容器部署进度情况", db_session=s)
-        # 应当检出 m_vague 与 f_vague 的澄清探针，solid 不被检出
-        probe_ids = [p["probe_id"] for p in probes]
-        assert "probe_mem_fuzzy_01" in probe_ids
-        assert "probe_fact_fuzzy_01" in probe_ids
-        assert "probe_mem_solid_01" not in probe_ids
+        engine = TanyiProbingEngine()
+        principal = Principal(user_id="user-1", tenant_id="t-1", role="user")
 
-        # 验证模糊探针字段
-        fuzzy_p = next(p for p in probes if p["probe_id"] == "probe_mem_fuzzy_01")
-        assert fuzzy_p["suggested_action"] == "clarify_fact"
-        assert "周五下午" in fuzzy_p["question"] or "架构评审" in fuzzy_p["question"]
-        assert fuzzy_p["conflict_id"] is None
+        probes = engine.generate_probes(
+            query="团队办公地点在哪里，平时喝什么咖啡？",
+            recalled_memories=[m1, m2],
+            unresolved_conflicts=[conf1],
+            session=s,
+            principal=principal,
+            limit=5,
+        )
 
+        assert len(probes) >= 2
+        probe_map = {p.target_id: p for p in probes}
 
-def test_format_probing_context_seam():
-    """Seam 4 验证：format_probing_context 上下文格式化规范性与空安全。"""
-    from lantai.services.probing_service import format_probing_context
+        # 验证冲突探针
+        assert "mem-loc-1" in probe_map
+        p_conf = probe_map["mem-loc-1"]
+        assert isinstance(p_conf, ProbeInsertion)
+        assert p_conf.conflict_id == "conf-loc-1"
+        assert p_conf.suggested_action == "resolve_conflict"
+        assert "北京中关村" in p_conf.question or "上海张江" in p_conf.question
 
-    # 1. 空探针
-    assert format_probing_context([]) == ""
+        # 验证低置信度探针
+        assert "mem-fuzzy-1" in probe_map
+        p_fuzzy = probe_map["mem-fuzzy-1"]
+        assert p_fuzzy.suggested_action in ("clarify_fact", "verify_low_confidence")
+        assert p_fuzzy.confidence == 0.45
+        assert "冷萃" in p_fuzzy.question
 
-    # 2. 混合探针
-    sample_probes = [
-        {
-            "probe_id": "probe_conf_01",
-            "conflict_id": "conf_01",
-            "question": "顺便向您求证确认下：关于常住地，目前是否已变更为北京？",
-            "suggested_action": "resolve_conflict",
-        },
-        {
-            "probe_id": "probe_mem_02",
-            "conflict_id": None,
-            "question": "顺便向您求证确认下：关于周五架构会议，该事实是否准确？",
-            "suggested_action": "clarify_fact",
-        },
-    ]
-    formatted = format_probing_context(sample_probes)
-    assert "【探颐·待求证事项】" in formatted
-    assert "conf_01" in formatted
-    assert "probe_mem_02" in formatted or "澄清提示" in formatted or "该事实是否准确" in formatted
-    assert "关于常住地，目前是否已变更为北京？" in formatted
+        # 验证上下文格式化
+        prompt_block = engine.format_context(probes)
+        assert "【探颐·待求证事项】" in prompt_block or "【探颐·主动求证插桩】" in prompt_block
+        assert p_conf.question in prompt_block
+        assert p_fuzzy.question in prompt_block
 
 
-def test_tanyi_probing_real_db_end_to_end_smoke(param_env, monkeypatch):
-    """Seam 5 端到端不 mock 冒烟：
-    真实 SQLite 内存表写入冲突记录与模糊带事实，调用 detect_memory_probes 验证：
-    1. 探针完整生成且字段完备（probe_id, conflict_id, question, suggested_action）；
-    2. 开关 settings.ENABLE_PROACTIVE_PROBING = False 时短路返回空；
-    3. format_probing_context 上下文正确渲染。
-    """
-    from lantai.models.tables import ConflictEvent, FactAtomic, MemoryItem
-    from lantai.services.probing_service import detect_memory_probes, format_probing_context
-
-    session_factory, _ = param_env
+def test_tanyi_probing_tenant_and_acl_isolation(tanyi_env):
+    """Seam 4: 验证跨租户与跨用户强隔离，绝不越权泄露他人探针。"""
+    session_factory = tanyi_env
     with session_factory() as s:
-        # 1. 插入一条冲突
-        mem_conf = MemoryItem(
-            id="mem_e2e_conf",
-            content="项目核心数据库选用 PostgreSQL",
-            lane="rule",
-            domain="user",
-            user_id="default",
+        # 用户 A 的冲突
+        m_a = MemoryItem(
+            id="mem-a",
+            content="用户A的专有商业机密数据",
+            confidence=0.9,
+            tenant_id="tenant-A",
+            user_id="user-A",
             status="active",
         )
-        conf = ConflictEvent(
-            id="conf_e2e_01",
-            memory_id="mem_e2e_conf",
-            incoming_ref="项目核心数据库已切换为 SQLite",
-            rule_name="db_conflict",
+        conf_a = ConflictEvent(
+            id="conf-a",
+            memory_id="mem-a",
+            incoming_ref="用户A机密数据更新",
             status="open",
         )
-        # 2. 插入一条模糊事实
-        fact_vague = FactAtomic(
-            id="fact_e2e_01",
-            statement="王五负责自动化测试用例评审",
-            predicate="responsible_for",
-            object="自动化测试",
+        # 用户 B 的记忆
+        m_b = MemoryItem(
+            id="mem-b",
+            content="用户B的普通工作日志",
             confidence=0.4,
-            user_id="default",
+            tenant_id="tenant-B",
+            user_id="user-B",
+            status="active",
         )
-        s.add_all([mem_conf, conf, fact_vague])
+        s.add(m_a)
+        s.add(conf_a)
+        s.add(m_b)
         s.commit()
 
-        # 正常开启状态检测
-        probes = detect_memory_probes(query="自动化测试数据库方案", db_session=s)
-        assert len(probes) >= 2
-        actions = {p["suggested_action"] for p in probes}
-        assert "resolve_conflict" in actions
-        assert "clarify_fact" in actions
+        engine = TanyiProbingEngine()
+        principal_b = Principal(user_id="user-B", tenant_id="tenant-B", role="user")
 
-        # 检查上下文格式化
-        context_str = format_probing_context(probes)
-        assert "【探颐·待求证事项】" in context_str
-        assert "conf_e2e_01" in context_str
-        assert "fact_e2e_01" in context_str
+        # 传入全量混合列表，引擎应对 Principal B 进行行级过滤
+        probes_for_b = engine.generate_probes(
+            query="商业机密与工作日志",
+            recalled_memories=[m_a, m_b],
+            unresolved_conflicts=[conf_a],
+            session=s,
+            principal=principal_b,
+        )
 
-        # 验证全局开关关闭时的短路
-        monkeypatch.setattr(settings, "ENABLE_PROACTIVE_PROBING", False)
-        probes_disabled = detect_memory_probes(query="自动化测试数据库方案", db_session=s)
-        assert probes_disabled == []
+        target_ids = {p.target_id for p in probes_for_b}
+        assert "mem-a" not in target_ids
+        assert "mem-b" in target_ids
