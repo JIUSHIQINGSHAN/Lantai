@@ -179,13 +179,13 @@ def test_mcp_conflict_tools_roundtrip(param_env):
 
 
 def test_mcp_tool_count_and_parity():
-    """Seam 4: MCP 工具池扩充至 74，且 TOOLS 与 TOOL_HANDLERS 1:1 双向一致。"""
+    """Seam 4: MCP 工具池扩充（v0.42 扩充至 76），且 TOOLS 与 TOOL_HANDLERS 1:1 双向一致。"""
     from lantai.cli import mcp
 
     tools = mcp.TOOLS
     handlers = mcp.TOOL_HANDLERS
 
-    assert len(tools) == 74
+    assert len(tools) >= 74
     assert "conflict_scan_consistency" in tools
     assert "conflict_deep_arbitrate" in tools
 

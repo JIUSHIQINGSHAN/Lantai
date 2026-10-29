@@ -348,13 +348,22 @@ class JuanzongEngine:
             import re
 
             q_clean = query.strip().lower()
+            # 提取单词、单字（对中文，提取 2-gram 和整词以保证子串匹配敏感度）
             q_terms = [t for t in re.split(r"[\s,，。；;]+", q_clean) if t]
+            bigrams = []
+            for term in q_terms:
+                if len(term) >= 2:
+                    for i in range(len(term) - 1):
+                        bigrams.append(term[i : i + 2])
 
             def _rank(m: dict[str, Any]) -> float:
                 content = str(m.get("content", "")).lower()
-                overlap = sum(1 for t in q_terms if t in content) if q_terms else 0
+                # 1. 整词匹配
+                overlap = sum(2.0 for t in q_terms if t in content) if q_terms else 0.0
+                # 2. 2-gram 中文子串命中
+                ngram_match = sum(1.0 for bg in bigrams if bg in content) if bigrams else 0.0
                 conf = float(m.get("confidence") or 0.5)
-                return overlap * 2.0 + conf
+                return overlap + ngram_match + conf
 
             focused_memories.sort(key=_rank, reverse=True)
 

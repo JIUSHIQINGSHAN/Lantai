@@ -1485,6 +1485,54 @@ def handle_cognitive_summary(params: dict) -> dict:
     }
 
 
+def handle_dossier_create(params: dict) -> dict:
+    """卷宗：创建长程任务情境卷宗（ADR-0063）。"""
+    title = str(params.get("title", "")).strip()
+    if not title:
+        raise ValueError("title 不能为空")
+    goal = str(params.get("goal", "")).strip()
+    milestones = params.get("milestones")
+    if milestones is not None and not isinstance(milestones, list):
+        raise ValueError("milestones must be a list or null")
+    memory_ids = params.get("memory_ids")
+    if memory_ids is not None and not isinstance(memory_ids, list):
+        raise ValueError("memory_ids must be a list or null")
+    metadata = params.get("metadata")
+    if metadata is not None and not isinstance(metadata, dict):
+        raise ValueError("metadata must be a dict or null")
+
+    from lantai.services.dossier_service import create_dossier_service
+
+    return create_dossier_service(
+        title=title,
+        goal=goal,
+        milestones=milestones,
+        memory_ids=memory_ids,
+        metadata=metadata,
+        principal=_principal_from_params(params),
+    )
+
+
+def handle_dossier_focus(params: dict) -> dict:
+    """卷宗：执行长程任务情境记忆聚焦检索（ADR-0063）。"""
+    dossier_id = str(params.get("dossier_id", "")).strip()
+    if not dossier_id:
+        raise ValueError("dossier_id 不能为空")
+    query = params.get("query")
+    if query is not None and not isinstance(query, str):
+        raise ValueError("query must be a string or null")
+    limit = int(params.get("limit", 20))
+
+    from lantai.services.dossier_service import focus_dossier_service
+
+    return focus_dossier_service(
+        dossier_id=dossier_id,
+        query=query,
+        limit=limit,
+        principal=_principal_from_params(params),
+    )
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2368,6 +2416,42 @@ TOOLS = {
             "required": ["conflicting_ids"],
         },
     },
+    "dossier_create": {
+        "description": "卷宗：创建长程复杂任务情境卷宗实体，锚定战略目标与里程碑（v0.42 ADR-0063）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "卷宗案名/任务标题"},
+                "goal": {"type": "string", "description": "顶层战略目标与完成标准"},
+                "milestones": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "多阶段任务里程碑列表",
+                },
+                "memory_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "挂载的核心关联记忆 ID 列表",
+                },
+                "metadata": {"type": "object", "description": "扩展元数据"},
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+            "required": ["title"],
+        },
+    },
+    "dossier_focus": {
+        "description": "卷宗：针对指定卷宗执行情境记忆聚焦检索，优先召回核心事实并防止目标漂移（v0.42 ADR-0063）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "dossier_id": {"type": "string", "description": "待聚焦的卷宗 ID"},
+                "query": {"type": "string", "description": "当前操作相关查询词（可选）"},
+                "limit": {"type": "integer", "default": 20, "description": "召回条数上限 [1, 100]"},
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+            "required": ["dossier_id"],
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2444,6 +2528,8 @@ TOOL_HANDLERS = {
     "causal_project_impact": handle_causal_project_impact,
     "conflict_scan_consistency": handle_conflict_scan_consistency,
     "conflict_deep_arbitrate": handle_conflict_deep_arbitrate,
+    "dossier_create": handle_dossier_create,
+    "dossier_focus": handle_dossier_focus,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

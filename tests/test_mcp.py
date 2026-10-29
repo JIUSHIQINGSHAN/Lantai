@@ -32,8 +32,10 @@ def test_tools_list():
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
     assert (
-        len(resp["result"]["tools"]) == 74
-    )  # 包含参商（conflict_scan_consistency/conflict_deep_arbitrate）、格物、同袍、悬镜、尘封、三省、探颐与润物共 74 个工具
+        len(resp["result"]["tools"]) == 76
+    )  # 包含卷宗（dossier_create/dossier_focus）、参商、格物、同袍、悬镜、尘封、三省、探颐与润物共 76 个工具
+    assert "dossier_create" in names
+    assert "dossier_focus" in names
     assert "persona_get" in names
     assert "persona_set" in names
     assert "cognitive_context" in names

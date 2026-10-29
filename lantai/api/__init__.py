@@ -8,6 +8,7 @@ from .routes_conflicts import router as routes_conflicts_router
 from .routes_crystals import router as routes_crystals_router
 from .routes_dialogue import router as routes_dialogue_router
 from .routes_digest import router as routes_digest_router
+from .routes_dossiers import router as routes_dossiers_router
 from .routes_edges import router as routes_edges_router
 from .routes_evolution import router as routes_evolution_router
 from .routes_gate import router as routes_gate_router
@@ -53,6 +54,7 @@ __all__ = [
     "routes_candidates_router",
     "routes_dialogue_router",
     "routes_digest_router",
+    "routes_dossiers_router",
     "routes_conflicts_router",
     "routes_scenes_router",
     "routes_obsidian_router",

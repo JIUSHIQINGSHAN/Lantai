@@ -44,6 +44,8 @@ class CognitiveContext:
     reflection_audit: list = field(default_factory=list)
     # 探颐（v0.38 Ticket 02）：主动求证追问插桩建议（被动切面，由调用方填充）
     clarification_probes: list = field(default_factory=list)
+    # 卷宗（v0.42 Ticket 02 ADR-0063）：活动情境卷宗切面（包含案名、目标、里程碑状态与聚焦记忆）
+    active_dossier: dict | None = None
 
     def to_prompt(self) -> str:
         """
@@ -132,6 +134,36 @@ class CognitiveContext:
             sections.append("\n".join(lines))
 
         header = f"# 🧠 Cognitive Context\n**Task**: {self.task}\n"
+
+        # 卷宗（ADR-0063）：若有活动卷宗，在顶部优先渲染卷宗情境切面，全面施加樊篱保护
+        if self.active_dossier:
+            from lantai.llm.fence import wrap_as_data
+
+            dos = self.active_dossier
+            d_title = dos.get("title") or dos.get("dossier_title") or "未命名卷宗"
+            d_goal = dos.get("goal") or dos.get("dossier_goal") or ""
+            d_milestones = dos.get("milestones") or []
+            d_memories = dos.get("focused_memories") or []
+
+            d_lines = [f"## Active Dossier & Strategic Goal: {wrap_as_data(str(d_title))}"]
+            if d_goal:
+                d_lines.append(f"- **Strategic Goal**: {wrap_as_data(str(d_goal))}")
+            if d_milestones:
+                d_lines.append("- **Milestones Progress**:")
+                for m in d_milestones:
+                    m_title = m.get("title", "")
+                    m_status = m.get("status", "pending")
+                    m_notes = m.get("notes", "")
+                    note_str = f" - {wrap_as_data(str(m_notes))}" if m_notes else ""
+                    d_lines.append(f"  * [{m_status}] {wrap_as_data(str(m_title))}{note_str}")
+            if d_memories:
+                d_lines.append("- **Focused Memories**:")
+                for fm in d_memories:
+                    c = fm.get("content") or str(fm)
+                    d_lines.append(f"  * {wrap_as_data(str(c), item_id=fm.get('id'))}")
+
+            sections.insert(0, "\n".join(d_lines))
+
         from lantai.llm.fence import fence_declaration
 
         decl = fence_declaration()

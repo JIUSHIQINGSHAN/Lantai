@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -220,3 +220,41 @@ class SetPersonaReq(BaseModel):
     guidelines: str = Field(default="", max_length=2000)
     epistemic_facts: str = Field(default="", max_length=2000)
     is_active: bool = True
+
+
+class DossierCreateReq(BaseModel):
+    """创建长程任务情境卷宗请求（ADR-0063 卷宗）。"""
+
+    title: str = Field(min_length=1, max_length=200)
+    goal: str = Field(default="", max_length=2000)
+    milestones: list[dict[str, Any]] = Field(default_factory=list)
+    memory_ids: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DossierBindReq(BaseModel):
+    """卷宗绑定/解绑记忆项请求。"""
+
+    memory_ids: list[str] = Field(min_length=1)
+
+
+class DossierMilestoneUpdateReq(BaseModel):
+    """卷宗里程碑状态更新请求。"""
+
+    milestone_id: str = Field(min_length=1)
+    status: Literal["pending", "in_progress", "done"] = Field(default="pending")
+    notes: str = ""
+
+
+class DossierFocusReq(BaseModel):
+    """卷宗情境聚焦检索请求。"""
+
+    query: str | None = None
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class DossierCloseReq(BaseModel):
+    """卷宗办结/归档请求。"""
+
+    summary: str = ""
+    archived: bool = False
