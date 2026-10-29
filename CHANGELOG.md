@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-10-29 - 尘封（Chenfeng · 冷热分级存储与记忆分层归档收纳）
+
+> 版本代号「尘封」：典籍意象「积尘封藏，不弃不取；考订功过，去芜存菁」——对应本版主题「冷热分级存储与自动封藏策略引擎、尘封档案专用检索与穿透回溯，ADR-0013 / ADR-0005 / 白皮书路线图 P0-2 落地」：针对日常交互中低活跃度、衰减分触底（`decay_score < 0.05`）或长期未命中的历史记忆常驻热层带来的向量/全文索引稀释开销，构建认知层冷热分级管理引擎 `ChenfengEngine`。支持艾宾浩斯时效衰减率、长期未访问时限（>30天且0使用）与生命周期状态显式退役（`RETIRED`）三维冷数据检测（`evaluate_cold_candidates`），实现程序性铁律（`procedural`）天然豁免与跨租户越权防护；提供批量自动封藏机制（`archive_cold_memories`），在原子变更 `active -> archived` 的同时自动落盘 `MemoryCheckpoint`（`trigger='chenfeng_archive'`）快照底本保障秒级可逆与审计追溯；标准热检索（`hybrid_search`）默认隔离尘封数据；提供专用尘封检索通道（`search_archived` 与 `search_archived_memories`）、解封恢复（`unarchive_memory` 与 `unarchive_memory_entry`，解封严格核验并补齐 FTS 与向量两层索引在场性）、REST 端点（`GET /memories/archived` 与 `POST /memories/{memory_id}/unarchive`）与 MCP 工具（`memory_archived_search`、`memory_unarchive`，工具总数扩充至 66 个）；在认知上下文 `CognitiveContext` 中新增 `archived_history` 历史溯源切面及结构化 Markdown Prompt 渲染。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.36-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **冷热分级存储与自动封藏策略引擎（票 01，详见 `lantai/cognition/chenfeng.py`、`lantai/cognition/__init__.py` 与 `tests/test_chenfeng_tier_smoke.py`）**：
+  - 认知层策略引擎：落地 `ChenfengEngine`，提供多维冷数据识别扫描 `evaluate_cold_candidates`；
+  - 多维冷判别准则：涵盖艾宾浩斯时效衰减阈值（`decay_score < 0.05`）、长期闲置时限（`idle_days > 30` 且 `use_count == 0`）与显式退役状态（`lifecycle_status == RETIRED`），铁律（`procedural`）天然豁免；
+  - 批量封藏与快照保障：实现 `archive_cold_memories`，推进状态转入 `archived`，自动记录 `MemoryCheckpoint` 底本快照及 `audit_event` 审计日志，确保秒级可逆；
+  - 检索隔离与租户安全：热检索 `hybrid_search` 严格过滤排除尘封数据，严守 `_owned_scope` 租户属主防火墙；
+  - 交付端到端不 mock 冒烟测试 `tests/test_chenfeng_tier_smoke.py`。
+- **尘封专栏 API、MCP 工具集成与归档穿透追溯（票 02，详见 `lantai/cognition/chenfeng.py`、`lantai/cognition/context.py`、`lantai/api/routes_memory.py`、`lantai/cli/mcp.py` 与 `tests/test_chenfeng_api_smoke.py`）**：
+  - 专用归档检索与解封接口：实现 `ChenfengEngine.search_archived` 与 `ChenfengEngine.unarchive_memory`，支持关键词、时间范围、分轨与场景过滤，解封恢复双层在场性（FTS 与向量索引补齐）；
+  - 认知上下文切面：在 `CognitiveContext` 扩展 `archived_history` 字段与 Markdown Prompt 结构化渲染；
+  - HTTP REST 路由：新增 `GET /memories/archived` 与 `POST /memories/{memory_id}/unarchive`，跨租户越权操作 403 严格阻断；
+  - MCP 工具池升级：注册 `memory_archived_search` 与 `memory_unarchive`，工具总数扩充至 66 个并满足 1:1 分发一致性；
+  - 交付端到端不 mock 冒烟测试 `tests/test_chenfeng_api_smoke.py`。
+
 ## [0.35.0] - 2026-10-29 - 格物（Gewu · 因果时序拓扑与事件溯源链）
 
 > 版本代号「格物」：《礼记·大学》「致知在格物，物格而后知至」——穷究事物之原理与因果脉络，对应本版主题「格物（Gewu · 因果时序拓扑与事件溯源链，ADR-0013 / ADR-0037 / docs/future-roadmap.md 方向二落地）」：突破单点静态事实记忆的局限，构建面向 Agent 决策分析的因果拓扑推演、前置根因溯源（root cause analysis）与时序演进叙事能力。基于关系模型（`MemoryEdge`）建立因果关系拓扑（`causes`、`leads_to`、`triggered_by`），落地认知层因果回溯引擎 `CausalEngine` 与单步实体 `CausalHop`，支持正向次生链探索、逆向根因探测与有向图环路熔断保护；对外暴露高阶决策归因接口 `attribute_decision`、端点 `GET /edges/provenance`、`GET /edges/timeline` 与 MCP 协议工具（`causal_trace`、`event_timeline`），并在认知上下文 `CognitiveContext` 中拓展 `causal_provenance` 决策脉络切面，支持渲染结构化 Markdown Prompt 注入智能体决策；全程严守行级 ACL 租户防火墙，保障私密因果链路跨租户隔离。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.35-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
