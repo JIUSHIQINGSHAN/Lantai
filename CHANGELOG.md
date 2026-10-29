@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-10-29 - 磨勘（Mokan · 磨勘功过）
+
+> 版本代号「磨勘」：《宋史·职官志》审官院核验官员功绩以定升降，磨勘功过、自愈长青。贴合本版主题「MCMA 建议项落地：认知抽象三层架构选层检索、4~5 条知识注入硬顶与信息密度优先重排」：落地 ADR-0058 记忆认知分层与意图映射机制（H0 对话观察 / H1 情境事实 / H2 核心准则与反思总结），打通意图识别驱动的动态选层过滤与分层得分加权；依据 MCMA 论文实证落地知识注入硬顶控制（`SHELL_HOOK_MAX_INJECT_ITEMS: 5`），严格限制注入条目防注意力分散，完璧原子事实多实体整块保整计 1 项，并在候选溢出时结合认知层级开展信息密度重排。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.29-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **抽象层级化与意图选层检索闭环（票 01，详见 `lantai/retrieval/hierarchical.py`、`lantai/retrieval/hybrid.py` 与 `scripts/shell_hook.py`）**：
+  - 新增 `HierarchicalLayer`（H0/H1/H2）与认知角色映射；
+  - 扩展意图识别结果，支持按意图（如 rule_lookup -> H2, fact_lookup -> H1, general_chat -> H0+H1+H2）精确选层与加权过滤；
+  - 在 `hybrid_search` 中引入层级自适应权重提升与过滤闭环；
+  - 交付不 mock 核心逻辑的冒烟测试 `tests/test_mokan_hierarchical_layer_smoke.py`。
+- **4~5 条知识注入硬顶与信息密度重排（票 02，详见 `lantai/retrieval/hierarchical.py`、`scripts/shell_hook.py` 与 `lantai/core/settings.py`）**：
+  - 新增配置 `SHELL_HOOK_MAX_INJECT_ITEMS: int = 5`，强制注入端条目数恒 $\le 5$ 铁律；
+  - 多实体完璧原子事实整块保整，计数严格为 1 个知识单元；
+  - 新增 `rerank_by_information_density` 机制，按 H2(1.25x) > H1(1.00x) > H0(0.80x) 与原子事实增益优先截断保留高价值知识；
+  - 交付不 mock 内部计算逻辑的冒烟测试 `tests/test_mokan_items_budget_smoke.py`。
+
 ## [0.28.0] - 2026-10-29 - 稽古（Jigu · 曰若稽古）
 
 > 版本代号「稽古」：《尚书·尧典》「曰若稽古」——考订古今、时态立心。贴合本版主题「as-of 双时间轴时态查询引擎全链路打通、历史切片精确回放、迟到更正时态消解（ADR-0048）与 Hermes 插件生产级注入改造（Ticket 06）」：打通 `wanbi_retriever` 与 `hybrid_search` 在任意历史时点（`as_of`）的认知状态切片，严禁未来事实污染历史回放；实现迟到更正（supersede）的时态消解，旧事实自动以更正时间点（anchor）对齐失效，并遵循 I3 时态防倒挂钳制与审计留痕；彻底改造 Hermes 插件接入混合检索、启发式闸门与常驻个人画像，消除写死路径与 MCP 冗余。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.28-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
