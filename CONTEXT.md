@@ -20,6 +20,8 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **fastpath**（白名单直写） | 常见确定性句式（如用户自我声明、明确指令）绕过大模型直接安全存入记忆库的高速通道。 | 命名：项目内部技术名（ADR-0013 意象「直书」前身）；设计：见 `parsing/fastpath.py` 与 [ADR-0013](docs/adr/0013-naming-system.md) |
 | **直书**（Zhishu，确定性规则直写引擎） | 常见确定性句式（自我声明、偏好表达、程序约束/铁律、参数配置、显式备忘）绕过大模型直接安全提取并存入记忆库的多轨高速规则引擎。 | 命名：《左传》「董狐直笔」，秉笔直书，不经润色；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0064](docs/adr/0064-zhishu-fastpath-engine.md) 及 `lantai/parsing/zhishu.py` |
 | **直书**（Zhishu，版本代号） | v0.43.0 发行版本代号；寓意秉笔直书、不加雕琢，对应本版「多轨确定性规则引擎、程序性铁律结构化沉淀与零Token高速直写（ADR-0064落地）」的主题（代号与功能同名，承既有演进先例）。 | 命名：《左传》「董狐直笔」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记及 [ADR-0064](docs/adr/0064-zhishu-fastpath-engine.md) |
+| **目次**（Muci，多维记忆知识目录与分级导航引擎） | 记忆库的结构化全局知识目录与分层路标；按辨域（domain）、分轨（lane）、核心实体/主题聚类与时序重要度分级编排，为 Agent 提供一眼全局的记忆知识导航，杜绝单点检索的盲人摸象。 | 命名：南朝梁·刘勰《文心雕龙·序志》「成岁既渐，目次来构」，部目次序、条贯井然；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0065](docs/adr/0065-muci-memory-catalog-engine.md) 及 `lantai/cognition/muci.py` |
+| **目次**（Muci，版本代号） | v0.44.0 发行版本代号；寓意开卷有绪、目次朗然，对应本版「多维记忆知识目录、分级语义导航与认知上下文导览切面（ADR-0065落地）」的主题（代号与功能同名，承既有演进先例）。 | 命名：《文心雕龙·序志》「成岁既渐，目次来构」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记及 [ADR-0065](docs/adr/0065-muci-memory-catalog-engine.md) |
 | **candidate**（候选记忆） | 从原始输入中提取出的结构化知识半成品，必须通过闸门检验后才能正式转化为系统记忆。 | 命名：项目内部技术命名（候选）；设计：见 `lantai/models/tables.py`（`MemoryCandidate`）与 [ADR-0026](docs/adr/0026-candidate-admission-triage.md) |
 | **proposal**（提案） | 候选记忆过闸后生成的变更申请（如新增、合并、更新或废弃旧记忆），经确认后才会落库生效。 | 命名：项目内部技术名（ADR-0013 候选意象「拟议」）；设计：见 `lantai/models/tables.py`（`MemoryProposal`） |
 | **checkpoint**（检查点） | 记忆单项变更前后的对比快照，专门用于误操作或异常变更时的精确版本回滚。 | 命名：项目内部技术命名（快照）；设计：见 `lantai/models/tables.py`（`MemoryCheckpoint`） |
