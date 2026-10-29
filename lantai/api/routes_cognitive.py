@@ -175,75 +175,43 @@ def cognitive_summary(
     task: str = "",
     max_rules: int = 2,
     max_failures: int = 1,
+    max_probes: int = 1,
+    char_budget: int = 350,
     db: Session = Depends(get_session),
     ctx=Depends(get_current_user),
 ) -> dict:
     """
-    轻量认知摘要（v0.4 Cognitive Middleware）：返回给定 task 最相关的 Rule 和 Failure。
+    自适应认知摘要（润物 RunwuEngine · v0.39）：
+    返回给定 task 最相关的规则、失败教训与主动求证探针。
 
-    比完整 /context 更轻量，供 MCP 自动注入和快速 Agent 查询使用。
-    响应格式：
-    {
-      "task": "...",
-      "rules": [{"id": "...", "content": "...", "confidence": 0.85}],
-      "failures": [{"id": "...", "lesson": "...", "severity": 0.7}],
-      "summary": "相关规则: ... | 已知失败: ..."
-    }
+    比完整 /context 更轻量紧凑，供 MCP 自动注入和快速 Agent 查询使用。
     """
-    builder = CognitiveContextBuilder(db, principal=ctx)
-    ctx = builder.build(task=task, top_k=max(max_rules, max_failures) + 2)
+    from lantai.runtime.runwu import RunwuEngine
 
-    rules_out = []
-    for r in (ctx.rules or [])[:max_rules]:
-        if isinstance(r, dict):
-            rules_out.append(
-                {
-                    "id": r.get("id", ""),
-                    "content": (r.get("content") or "")[:200],
-                    "confidence": r.get("confidence", 0.5),
-                }
-            )
-        else:
-            rules_out.append(
-                {
-                    "id": getattr(r, "id", ""),
-                    "content": (getattr(r, "content", "") or "")[:200],
-                    "confidence": getattr(r, "confidence", 0.5),
-                }
-            )
+    viewer = getattr(ctx, "user_id", None) if ctx else None
+    tenant = getattr(ctx, "tenant_id", None) if ctx else None
 
-    failures_out = []
-    for f in (ctx.failures or [])[:max_failures]:
-        if isinstance(f, dict):
-            failures_out.append(
-                {
-                    "id": f.get("id", ""),
-                    "lesson": f.get("content") or f.get("lesson") or "",
-                    "severity": f.get("severity", 0.5),
-                }
-            )
-        else:
-            failures_out.append(
-                {
-                    "id": getattr(f, "id", ""),
-                    "lesson": getattr(f, "lesson", None) or getattr(f, "content", ""),
-                    "severity": getattr(f, "severity", 0.5),
-                }
-            )
+    engine = RunwuEngine(db=db, default_char_budget=char_budget)
+    res = engine.extract_summary(
+        task=task,
+        user_id=viewer,
+        tenant_id=tenant,
+        max_rules=max_rules,
+        max_failures=max_failures,
+        max_probes=max_probes,
+        char_budget=char_budget,
+    )
 
-    # 生成纯文本摘要
-    parts = []
-    if rules_out:
-        parts.append("相关规则: " + "; ".join(r["content"][:80] for r in rules_out))
-    if failures_out:
-        lesson = failures_out[0].get("lesson", "")
-        if lesson:
-            parts.append(f"已知失败: {lesson[:80]}")
-    summary_text = " | ".join(parts)
+    # 结构化投影（保持向后兼容，同时扩展 probes 与紧凑 summary 文本）
+    rules_out = [{"content": r} for r in res.rules]
+    failures_out = [{"lesson": f} for f in res.failures]
+    probes_out = [{"question": p} for p in res.probes]
 
     return {
         "task": task,
         "rules": rules_out,
         "failures": failures_out,
-        "summary": summary_text,
+        "probes": probes_out,
+        "summary": res.formatted_text,
+        "char_count": res.char_count,
     }

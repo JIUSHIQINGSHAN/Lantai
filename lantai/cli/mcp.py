@@ -1365,6 +1365,45 @@ def handle_memory_tanyi_probe(params: dict) -> dict:
     return {"probes": items, "prompt_context": "\n".join(f"- {q}" for q in prompts)}
 
 
+def handle_cognitive_summary(params: dict) -> dict:
+    """润物：轻量自适应认知摘要提取（规则/失败教训/主动探针，ADR-0060）。"""
+    task = str(params.get("task", "")).strip()
+    if not task:
+        raise ValueError("task 不能为空")
+    max_rules = int(params.get("max_rules", 2))
+    max_failures = int(params.get("max_failures", 1))
+    max_probes = int(params.get("max_probes", 1))
+    char_budget = int(params.get("char_budget", 350))
+
+    from lantai.runtime.runwu import RunwuEngine
+    from lantai.storage import db as db_module
+
+    principal = _principal_from_params(params)
+    user_id = getattr(principal, "user_id", None) if principal else None
+    tenant_id = getattr(principal, "tenant_id", None) if principal else None
+
+    with db_module.get_session() as session:
+        engine = RunwuEngine(db=session, default_char_budget=char_budget)
+        res = engine.extract_summary(
+            task=task,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            max_rules=max_rules,
+            max_failures=max_failures,
+            max_probes=max_probes,
+            char_budget=char_budget,
+        )
+
+    return {
+        "task": task,
+        "rules": [{"content": r} for r in res.rules],
+        "failures": [{"lesson": f} for f in res.failures],
+        "probes": [{"question": p} for p in res.probes],
+        "summary": res.formatted_text,
+        "char_count": res.char_count,
+    }
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2165,6 +2204,25 @@ TOOLS = {
             },
         },
     },
+    "cognitive_summary": {
+        "description": "润物：自适应萃取与任务最相关的规则、已知教训与求证探针（v0.39）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "当前执行的任务或操作目标描述"},
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+                "max_rules": {"type": "integer", "default": 2, "description": "提取规则上限"},
+                "max_failures": {
+                    "type": "integer",
+                    "default": 1,
+                    "description": "提取失败教训上限",
+                },
+                "max_probes": {"type": "integer", "default": 1, "description": "提取主动探针上限"},
+                "char_budget": {"type": "integer", "default": 350, "description": "字符预算上限"},
+            },
+            "required": ["task"],
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2236,6 +2294,7 @@ TOOL_HANDLERS = {
     "memory_health_inspect": handle_memory_health_inspect,
     "memory_audit_report": handle_memory_audit_report,
     "memory_tanyi_probe": handle_memory_tanyi_probe,
+    "cognitive_summary": handle_cognitive_summary,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

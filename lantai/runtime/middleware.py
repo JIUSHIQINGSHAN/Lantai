@@ -15,6 +15,7 @@ Agent 无需显式调用 cognitive_context 工具。
 from __future__ import annotations
 
 import base64
+import urllib.parse
 
 
 def _rid(item) -> str | None:
@@ -84,12 +85,23 @@ class CognitiveMiddleware:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
-            # 提取 X-Task header
+            # 提取 X-Task header（支持 URL 解码或原始文本）
             headers = dict(scope.get("headers", []))
-            task_header = headers.get(b"x-task", b"").decode("utf-8", errors="ignore").strip()
+            raw_task = headers.get(b"x-task", b"").decode("utf-8", errors="ignore").strip()
 
-            if task_header:
-                summary = build_cognitive_summary(task_header)
+            if raw_task:
+                task_header = urllib.parse.unquote(raw_task)
+                # 尝试提取归属信息
+                raw_user = (
+                    headers.get(b"x-user-id", b"").decode("utf-8", errors="ignore").strip() or None
+                )
+                raw_tenant = (
+                    headers.get(b"x-tenant-id", b"").decode("utf-8", errors="ignore").strip()
+                    or None
+                )
+                summary = build_cognitive_summary(
+                    task=task_header, user_id=raw_user, tenant_id=raw_tenant
+                )
                 encoded = encode_cognitive_header(summary)
 
                 async def send_with_cognitive(message):
