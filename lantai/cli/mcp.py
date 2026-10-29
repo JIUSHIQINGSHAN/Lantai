@@ -556,6 +556,44 @@ def handle_event_timeline(params: dict) -> dict:
     )
 
 
+def handle_causal_counterfactual(params: dict) -> dict:
+    """格物（v0.40）：反事实假设因果判定，推演介入阻断某诱因后目标是否仍可达成。"""
+    from lantai.services.provenance_service import evaluate_counterfactual_service
+
+    target_id = params.get("target_memory_id", "")
+    intervened_id = params.get("intervened_node_id", "")
+    max_depth = int(params.get("max_depth", 10))
+    if not isinstance(target_id, str) or not target_id.strip():
+        raise ValueError("target_memory_id must be a non-empty string")
+    if not isinstance(intervened_id, str) or not intervened_id.strip():
+        raise ValueError("intervened_node_id must be a non-empty string")
+
+    return evaluate_counterfactual_service(
+        target_id=target_id,
+        intervened_node_id=intervened_id,
+        max_depth=max_depth,
+        principal=_principal_from_params(params),
+    )
+
+
+def handle_causal_project_impact(params: dict) -> dict:
+    """格物（v0.40）：前瞻决策因果影响面模拟，预测次生波及节点与因果强度衰减。"""
+    from lantai.services.provenance_service import project_causal_impact_service
+
+    memory_id = params.get("memory_id", "")
+    max_depth = int(params.get("max_depth", 5))
+    min_confidence = float(params.get("min_confidence", 0.05))
+    if not isinstance(memory_id, str) or not memory_id.strip():
+        raise ValueError("memory_id must be a non-empty string")
+
+    return project_causal_impact_service(
+        memory_id=memory_id,
+        max_depth=max_depth,
+        min_confidence=min_confidence,
+        principal=_principal_from_params(params),
+    )
+
+
 def handle_feedback(params: dict) -> dict:
     req = FeedbackReq(
         memory_id=params.get("memory_id", ""),
@@ -2223,6 +2261,39 @@ TOOLS = {
             "required": ["task"],
         },
     },
+    "causal_counterfactual": {
+        "description": "格物：反事实假设因果判定，推演介入阻断某诱因后目标是否仍可达成（v0.40）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "target_memory_id": {"type": "string", "description": "目标决策或事态记忆 ID"},
+                "intervened_node_id": {
+                    "type": "string",
+                    "description": "拟介入阻断的前置诱因记忆 ID",
+                },
+                "max_depth": {"type": "integer", "default": 10, "description": "最大探索深度"},
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+            "required": ["target_memory_id", "intervened_node_id"],
+        },
+    },
+    "causal_project_impact": {
+        "description": "格物：前瞻决策因果影响面模拟，预测次生波及节点与因果强度衰减（v0.40）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "拟推演决策或事态记忆 ID"},
+                "max_depth": {"type": "integer", "default": 5, "description": "最大前瞻深度"},
+                "min_confidence": {
+                    "type": "number",
+                    "default": 0.05,
+                    "description": "最小置信度过滤阈值",
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+            "required": ["memory_id"],
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2295,6 +2366,8 @@ TOOL_HANDLERS = {
     "memory_audit_report": handle_memory_audit_report,
     "memory_tanyi_probe": handle_memory_tanyi_probe,
     "cognitive_summary": handle_cognitive_summary,
+    "causal_counterfactual": handle_causal_counterfactual,
+    "causal_project_impact": handle_causal_project_impact,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

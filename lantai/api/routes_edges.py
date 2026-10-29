@@ -12,7 +12,9 @@ from lantai.services.edge_service import (
     remove_edge,
 )
 from lantai.services.provenance_service import (
+    evaluate_counterfactual_service,
     get_event_timeline,
+    project_causal_impact_service,
     trace_decision_provenance,
 )
 
@@ -24,6 +26,40 @@ class EdgeReq(BaseModel):
     target_memory_id: str
     relation: str
     confidence: float = 0.5
+
+
+class CounterfactualReq(BaseModel):
+    target_memory_id: str
+    intervened_node_id: str
+    max_depth: int = 10
+
+
+class ProjectImpactReq(BaseModel):
+    memory_id: str
+    max_depth: int = 5
+    min_confidence: float = 0.05
+
+
+@router.post("/edges/counterfactual")
+def counterfactual_route(req: CounterfactualReq, ctx=Depends(get_current_user)):
+    """格物（v0.40）：反事实假设因果判定。"""
+    return evaluate_counterfactual_service(
+        target_id=req.target_memory_id,
+        intervened_node_id=req.intervened_node_id,
+        max_depth=req.max_depth,
+        principal=ctx,
+    )
+
+
+@router.post("/edges/project-impact")
+def project_impact_route(req: ProjectImpactReq, ctx=Depends(get_current_user)):
+    """格物（v0.40）：前瞻决策因果影响面模拟。"""
+    return project_causal_impact_service(
+        memory_id=req.memory_id,
+        max_depth=req.max_depth,
+        min_confidence=req.min_confidence,
+        principal=ctx,
+    )
 
 
 @router.post("/edges")

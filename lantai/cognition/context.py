@@ -62,13 +62,19 @@ class CognitiveContext:
                 if isinstance(item, dict):
                     # 处理 causal_provenance 归因结构字典
                     if section_key == "causal_provenance" and "target_id" in item:
+                        from lantai.llm.fence import wrap_as_data
+
                         target = item.get("target_id")
                         narrative = item.get("narrative", "")
-                        lines.append(f"- [决策目标: {target}] {narrative}")
+                        lines.append(f"- [决策目标: {target}] {wrap_as_data(str(narrative))}")
                         tl = item.get("timeline", [])
                         for event in tl:
                             ts = event.get("timestamp") or "未知时间"
-                            lines.append(f"  * [{ts}] {event.get('content')}")
+                            lines.append(f"  * [{ts}] {wrap_as_data(str(event.get('content')))}")
+                        # 反事实替代路径支持（ADR-0061 / v0.40）
+                        alt_paths = item.get("alternative_paths", [])
+                        if alt_paths:
+                            lines.append(f"  * 备用替代因果路径: {len(alt_paths)} 条")
                         continue
 
                     # 探颐（v0.38 Ticket 02）：求证探针专化渲染——只出问题文本，

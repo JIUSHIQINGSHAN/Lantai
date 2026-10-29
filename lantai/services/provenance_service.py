@@ -208,3 +208,37 @@ def get_event_timeline(
         e.pop("_sort_ts", None)
 
     return {"events": events}
+
+
+def evaluate_counterfactual_service(
+    target_id: str,
+    intervened_node_id: str,
+    max_depth: int = 10,
+    principal=None,
+) -> dict:
+    """格物（v0.40）：反事实因果判定服务，推演当 intervened_node_id 被阻断时 target 是否仍可达成。"""
+    from lantai.cognition.causal import CausalEngine
+
+    engine = CausalEngine(principal=principal)
+    return engine.evaluate_counterfactual(
+        target_id=target_id,
+        intervened_node_id=intervened_node_id,
+        max_depth=max_depth,
+    )
+
+
+def project_causal_impact_service(
+    memory_id: str,
+    max_depth: int = 5,
+    min_confidence: float = 0.05,
+    principal=None,
+) -> dict:
+    """格物（v0.40）：前瞻决策影响面模拟服务，推演次生波及面与因果强度衰减。"""
+    from lantai.cognition.causal import CausalEngine
+
+    engine = CausalEngine(principal=principal)
+    return engine.project_causal_impact(
+        node_id=memory_id,
+        max_depth=max_depth,
+        min_confidence=min_confidence,
+    )
