@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-30 - 目次（Muci · 多维记忆知识目录与分级语义导航引擎）
+
+> 版本代号「目次」：出自南朝梁·刘勰《文心雕龙·序志》「成岁既渐，目次来构」；部目次序、条贯井然，使开卷者一览无遗——对应本版主题「多维记忆知识目录、分级语义导航与认知上下文导览切面，ADR-0065 落地」：突破既有统计概览（`ops/overview.py`）仅有粗粒度行级计数的局限，构建面向全局记忆知识感知的高性能聚合引擎 `MuciEngine`（票 01）。支持按辨域（domain: user / session / agent）与分轨（lane: fact / rule / preference / experience / general）构建结构化知识板块，统计板块活跃度、高频标签云与最新事件时间；提供 compact（紧凑低 Token 大纲）与 full（精选条目展开）双模式，正文统一经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严格落实行级租户安全隔离与「宁 miss 不脏写」纪律。打通服务层 `muci_service.py`、HTTP REST 路由（`GET /catalog/overview`、`GET /catalog/domains/{domain}`）、MCP 工具（`muci_catalog`，工具池扩充至 78 个且 1:1 双向一致）与认知上下文 `CognitiveContext`（票 02，目次导览切面置顶呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.44-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心目次多维知识目录聚合引擎 MuciEngine（票 01，详见 `lantai/cognition/muci.py` 与 `tests/test_muci_engine_smoke.py`）**：
+  - 多维分级知识编目：按 `(domain, lane)` 组织为结构化 Sections，量化活跃条目与总数，提炼高频实体标签与时序晚近点；
+  - 双模式大纲塑形：`compact` 模式输出极低 Token 开销的大纲导航树，`full` 模式按重要度与时效展开精选代表条目；
+  - 樊篱安全隔离：精选条目正文强制经由樊篱（`wrap_as_data`）数据围栏包裹并带 `id` 属性，杜绝提示注入风险；
+  - 严格租户隔离：`_check_access` 租户与属主安全校验，跨租户跨用户数据零泄漏（宁 miss 不脏写）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_muci_engine_smoke.py`（4 个独立接缝验证）。
+- **目次 API 路由、MCP 工具集成与认知上下文导览切面（票 02，详见 `lantai/services/muci_service.py`、`lantai/api/routes_catalog.py`、`lantai/cli/mcp.py`、`lantai/cognition/context.py` 与 `tests/test_muci_api_smoke.py`）**：
+  - 服务层下沉：新增 `get_catalog_service`，处理 Session 事务边界并提供统一的目录查询服务；
+  - HTTP REST 路由：新增 `GET /catalog/overview` 与 `GET /catalog/domains/{domain}` 端点，挂载至 `app.py` 鉴权路由组；
+  - MCP 工具池升级：注册 `muci_catalog` 工具，系统 MCP 工具总数扩充至 78 个，广告与分发字典 1:1 双向一致（`tests/test_mcp.py` 计数与 parity 守卫全绿）；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 支持 `catalog_digest` 目次导览切面，大纲经樊篱包裹并置顶呈现；
+  - 交付端到端不 mock 冒烟测试 `tests/test_muci_api_smoke.py`（服务层、REST 端点、MCP 协议往返与认知上下文 4 个独立接缝验证）。
+
 ## [0.43.0] - 2026-10-30 - 直书（Zhishu · 确定性高频句型直写引擎与多轨规则矩阵）
 
 > 版本代号「直书」：出自《左传·成公七年》「史氏秉笔直书，不隐不讳」与《左传·襄公二十五年》董狐秉笔直书之典——对应本版主题「高频确定性事实零 Token 秒级直写、程序铁律硬性纳管与多轨语义分流，ADR-0064 落地」：突破既有 `lantai/parsing/fastpath.py` 仅 3 组初等正则且结构扁平的局限，构建面向生产环境的高精确定性规则引擎 `ZhishuEngine`（票 01）。支持 Fact（身份自称/职业/居所）、Preference（喜好/厌恶/习惯）、Constraint/Procedural（绝对铁律禁令/务必义务，强制 `lane="rule"` 且 `decay_class="procedural"` 永不衰减）、Config（系统配置/参数赋值结构化键值对）、General（显式备忘记录）五大核心分轨；全轨落实「宁 miss 不脏写」纪律，严苛过滤问句句尾（`?`、`吗`、`呢`等）与复合转折干扰词（`虽然`、`但是`、`如果`、`有人说`等），低置信或复杂语境零误判、安全回退大模型提取；原 `fastpath.py` 演化为 100% 向后兼容门面，既有历史测试逐字不改平滑通过。打通服务层 `zhishu_service.py`、HTTP REST 调试端点（`POST /parsing/zhishu/match`，带 `ZhishuMatchReq` 模式校验）、MCP 工具（`zhishu_check`，工具池扩充至 77 个且 1:1 双向一致）（票 02）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.43-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
