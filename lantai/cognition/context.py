@@ -86,6 +86,18 @@ class CognitiveContext:
                         lines.append(f"- {wrap_as_data(str(question))}")
                         continue
 
+                    # 参商（v0.41 Ticket 02）：冲突违例专化渲染——经过樊篱包裹
+                    if section_key == "conflicts" and "conflicting_memory_ids" in item:
+                        from lantai.llm.fence import wrap_as_data
+
+                        desc = item.get("description") or str(item)
+                        severity = item.get("severity", "medium")
+                        ids_str = ", ".join(item.get("conflicting_memory_ids", []))
+                        lines.append(
+                            f"- [参商抵触 ({severity}) 涉及: {ids_str}] {wrap_as_data(str(desc))}"
+                        )
+                        continue
+
                     content = item.get("content") or item.get("lesson") or str(item)
                     scope = item.get("scope", "")
                     conf = item.get("confidence", "")
@@ -104,7 +116,19 @@ class CognitiveContext:
                 else:
                     from lantai.llm.fence import wrap_as_data
 
-                    lines.append(f"- {wrap_as_data(str(item))}")
+                    if (
+                        section_key == "conflicts"
+                        and hasattr(item, "conflicting_memory_ids")
+                        and hasattr(item, "description")
+                    ):
+                        desc = getattr(item, "description", "")
+                        severity = getattr(item, "severity", "medium")
+                        ids_str = ", ".join(getattr(item, "conflicting_memory_ids", []))
+                        lines.append(
+                            f"- [参商抵触 ({severity}) 涉及: {ids_str}] {wrap_as_data(str(desc))}"
+                        )
+                    else:
+                        lines.append(f"- {wrap_as_data(str(item))}")
             sections.append("\n".join(lines))
 
         header = f"# 🧠 Cognitive Context\n**Task**: {self.task}\n"

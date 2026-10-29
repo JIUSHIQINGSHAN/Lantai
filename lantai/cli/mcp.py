@@ -753,6 +753,49 @@ def handle_conflict_resolve(params: dict) -> dict:
     )
 
 
+def handle_conflict_scan_consistency(params: dict) -> dict:
+    """参商：信念一致性审计扫描（ADR-0062）。"""
+    memory_ids = params.get("memory_ids")
+    entity_name = params.get("entity_name")
+    limit = params.get("limit", 50)
+    if memory_ids is not None:
+        if not isinstance(memory_ids, list) or not all(
+            isinstance(m, str) and m.strip() for m in memory_ids
+        ):
+            raise ValueError("memory_ids must be a list of non-empty strings")
+    if entity_name is not None and not isinstance(entity_name, str):
+        raise ValueError("entity_name must be a string")
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
+        raise ValueError("limit must be an int in [1, 500]")
+
+    from lantai.services.conflict_service import audit_consistency_service
+
+    return audit_consistency_service(
+        memory_ids=memory_ids,
+        entity_name=entity_name,
+        limit=limit,
+        principal=_principal_from_params(params),
+    )
+
+
+def handle_conflict_deep_arbitrate(params: dict) -> dict:
+    """参商：深层多方冲突仲裁直断（ADR-0062）。"""
+    conflicting_ids = params.get("conflicting_ids")
+    if (
+        not isinstance(conflicting_ids, list)
+        or not conflicting_ids
+        or not all(isinstance(m, str) and m.strip() for m in conflicting_ids)
+    ):
+        raise ValueError("conflicting_ids must be a non-empty list of non-empty strings")
+
+    from lantai.services.conflict_service import arbitrate_deep_service
+
+    return arbitrate_deep_service(
+        conflicting_ids=conflicting_ids,
+        principal=_principal_from_params(params),
+    )
+
+
 def handle_scene_get(params: dict) -> dict:
     """下钻场景：场景元数据 + 全部成员详情（渐进式披露第二步）。"""
     scene_id = params.get("scene_id", "")
@@ -2294,6 +2337,37 @@ TOOLS = {
             "required": ["memory_id"],
         },
     },
+    "conflict_scan_consistency": {
+        "description": "参商：触发全域或指定实体的信念一致性审计矩阵扫描，发现隐性矛盾（v0.41）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "指定待扫描的记忆 ID 列表（可选）",
+                },
+                "entity_name": {"type": "string", "description": "指定扫描的目标实体名称（可选）"},
+                "limit": {"type": "integer", "default": 50, "description": "扫描候选上限 [1, 500]"},
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
+    "conflict_deep_arbitrate": {
+        "description": "参商：对一组互斥记忆发起深层多方仲裁直断，基于更漏事件轴输出胜出主导记忆（v0.41）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "conflicting_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "涉事互斥记忆 ID 列表（至少 1 条）",
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+            "required": ["conflicting_ids"],
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2368,6 +2442,8 @@ TOOL_HANDLERS = {
     "cognitive_summary": handle_cognitive_summary,
     "causal_counterfactual": handle_causal_counterfactual,
     "causal_project_impact": handle_causal_project_impact,
+    "conflict_scan_consistency": handle_conflict_scan_consistency,
+    "conflict_deep_arbitrate": handle_conflict_deep_arbitrate,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

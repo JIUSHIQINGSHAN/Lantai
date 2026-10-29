@@ -120,3 +120,52 @@ def resolve_conflict_event(event_id: str, decision: str, note: str = "", princip
         s.add(ev)
         s.commit()
         return {"ok": True, "event_id": ev.id, "status": ev.status}
+
+
+def audit_consistency_service(
+    memory_ids: list[str] | None = None,
+    entity_name: str | None = None,
+    limit: int = 50,
+    principal=None,
+) -> dict:
+    """参商（ADR-0062）：信念一致性审计矩阵服务。"""
+    from lantai.cognition.canshang import CanshangEngine
+
+    engine = CanshangEngine(principal=principal)
+    report = engine.audit_consistency(memory_ids=memory_ids, entity_name=entity_name, limit=limit)
+
+    return {
+        "total_scanned": report.total_scanned,
+        "violation_count": report.violation_count,
+        "violations": [
+            {
+                "conflicting_memory_ids": v.conflicting_memory_ids,
+                "violation_type": v.violation_type,
+                "severity": v.severity,
+                "description": v.description,
+                "metadata": v.metadata,
+            }
+            for v in report.violations
+        ],
+        "audited_at": report.audited_at.isoformat(),
+        "entity_name": report.entity_name,
+    }
+
+
+def arbitrate_deep_service(
+    conflicting_ids: list[str],
+    principal=None,
+) -> dict:
+    """参商（ADR-0062）：深层多方冲突仲裁直断服务。"""
+    from lantai.cognition.canshang import CanshangEngine
+
+    engine = CanshangEngine(principal=principal)
+    result = engine.arbitrate_deep_conflict(conflicting_ids=conflicting_ids)
+
+    return {
+        "dominant_memory_id": result.dominant_memory_id,
+        "subordinate_memory_ids": result.subordinate_memory_ids,
+        "resolution_strategy": result.resolution_strategy,
+        "decision_trace": result.decision_trace,
+        "narrative": result.narrative,
+    }

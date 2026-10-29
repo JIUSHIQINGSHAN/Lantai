@@ -12,7 +12,11 @@ POST /conflicts/{id}/resolve  人工裁决：resolved / dismissed
 from fastapi import APIRouter, Depends, HTTPException
 
 from lantai.core.auth import get_current_user
-from lantai.models.schemas import ConflictResolveReq
+from lantai.models.schemas import (
+    ConflictResolveReq,
+    ConsistencyScanReq,
+    DeepArbitrateReq,
+)
 from lantai.services import conflict_service
 
 router = APIRouter(tags=["conflicts"])
@@ -32,6 +36,32 @@ def resolve_conflict(event_id: str, req: ConflictResolveReq, ctx=Depends(get_cur
     try:
         return conflict_service.resolve_conflict_event(
             event_id, req.decision, req.note, principal=ctx
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/conflicts/scan-consistency")
+def scan_consistency(req: ConsistencyScanReq, ctx=Depends(get_current_user)):
+    """参商（ADR-0062）：触发全域或指定实体的信念一致性审计矩阵扫描。"""
+    try:
+        return conflict_service.audit_consistency_service(
+            memory_ids=req.memory_ids,
+            entity_name=req.entity_name,
+            limit=req.limit,
+            principal=ctx,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/conflicts/arbitrate-deep")
+def arbitrate_deep(req: DeepArbitrateReq, ctx=Depends(get_current_user)):
+    """参商（ADR-0062）：对一组互斥记忆发起深层多方仲裁直断。"""
+    try:
+        return conflict_service.arbitrate_deep_service(
+            conflicting_ids=req.conflicting_ids,
+            principal=ctx,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))

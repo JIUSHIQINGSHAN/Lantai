@@ -198,6 +198,20 @@ class ConflictResolveReq(BaseModel):
     note: str = ""
 
 
+class ConsistencyScanReq(BaseModel):
+    """参商（ADR-0062）：信念一致性审计扫描请求。"""
+
+    memory_ids: list[str] | None = None
+    entity_name: str | None = None
+    limit: int = Field(default=50, ge=1, le=500)
+
+
+class DeepArbitrateReq(BaseModel):
+    """参商（ADR-0062）：深度多方冲突仲裁请求。"""
+
+    conflicting_ids: list[str] = Field(min_length=1)
+
+
 class SetPersonaReq(BaseModel):
     """设置/更新器识（Persona 人格基座，ADR-0029）。"""
 

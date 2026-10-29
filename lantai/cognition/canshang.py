@@ -64,6 +64,7 @@ class DeepArbitrationResult:
 OPPOSITE_PAIRS = [
     ("启用", "关闭"),
     ("开启", "禁用"),
+    ("开启", "关闭"),
     ("打开", "关闭"),
     ("允许", "禁止"),
     ("支持", "不支持"),
@@ -131,37 +132,36 @@ class CanshangEngine:
         is_same_entity = (ent_a and ent_b and ent_a == ent_b) or False
 
         # 检查结构化字段中的显式互斥
+        # 若双方都有明确的 entity 且不同，则互斥仅发生在有交叉特征/策略且无独立实体的场景
         for key in ("value", "feature", "role", "state", "policy", "action"):
             val_a = str(st_a.get(key, ""))
             val_b = str(st_b.get(key, ""))
             if val_a and val_b and val_a != val_b:
-                # 检查互斥性
-                if (
-                    is_same_entity
-                    or key in ("feature", "state", "policy")
-                    or (ent_a and ent_a == ent_b)
-                ):
-                    for w1, w2 in OPPOSITE_PAIRS:
-                        if (w1 in val_a and w2 in val_b) or (w2 in val_a and w1 in val_b):
-                            field_desc = (
-                                f"{key} ({st_a.get('feature', '')})" if st_a.get("feature") else key
-                            )
-                            return ConsistencyViolation(
-                                conflicting_memory_ids=[item_a.id, item_b.id],
-                                violation_type="attribute_conflict",
-                                severity="high",
-                                description=f"实体或维度 '{field_desc}' 存在互斥状态：'{val_a}' vs '{val_b}'（参商抵触/矛盾）",
-                                metadata={"field": key, "val_a": val_a, "val_b": val_b},
-                            )
-                    # 角色互斥 (如 PM vs Dev 且明确互斥)
-                    if key == "role" and is_same_entity:
+                # 实体约束：若两方都声明了 entity 且不相同，不属于同一实体的状态冲突
+                if ent_a and ent_b and ent_a != ent_b:
+                    continue
+
+                for w1, w2 in OPPOSITE_PAIRS:
+                    if (w1 in val_a and w2 in val_b) or (w2 in val_a and w1 in val_b):
+                        field_desc = (
+                            f"{key} ({st_a.get('feature', '')})" if st_a.get("feature") else key
+                        )
                         return ConsistencyViolation(
                             conflicting_memory_ids=[item_a.id, item_b.id],
                             violation_type="attribute_conflict",
-                            severity="medium",
-                            description=f"实体 '{ent_a}' 存在冲突的身份主张：'{val_a}' vs '{val_b}'",
+                            severity="high",
+                            description=f"实体或维度 '{field_desc}' 存在互斥状态：'{val_a}' vs '{val_b}'（参商抵触/矛盾）",
                             metadata={"field": key, "val_a": val_a, "val_b": val_b},
                         )
+                # 角色互斥 (如 PM vs Dev 且明确互斥)
+                if key == "role" and is_same_entity:
+                    return ConsistencyViolation(
+                        conflicting_memory_ids=[item_a.id, item_b.id],
+                        violation_type="attribute_conflict",
+                        severity="medium",
+                        description=f"实体 '{ent_a}' 存在冲突的身份主张：'{val_a}' vs '{val_b}'",
+                        metadata={"field": key, "val_a": val_a, "val_b": val_b},
+                    )
 
         # 2. 文本正文互斥词对检测
         content_a = item_a.content or ""
@@ -202,24 +202,42 @@ class CanshangEngine:
                     items.append(item)
         elif entity_name:
             query = select(MemoryItem).where(MemoryItem.status == "active")
-            all_items = s.exec(query.limit(limit * 2)).all()
+            if (
+                self.principal is not None
+                and not self.principal.is_admin
+                and self.principal.user_id
+            ):
+                query = query.where(
+                    (MemoryItem.user_id == self.principal.user_id) | (MemoryItem.user_id.is_(None))
+                )
+            all_items = s.exec(query.limit(limit * 3)).all()
             for it in all_items:
                 if self._check_access(it):
                     st = it.structure if isinstance(it.structure, dict) else {}
                     if (
                         st.get("entity") == entity_name
                         or entity_name in (it.content or "")
-                        or entity_name in it.key
+                        or entity_name in (it.key or "")
                     ):
                         items.append(it)
                         if len(items) >= limit:
                             break
         else:
             query = select(MemoryItem).where(MemoryItem.status == "active")
-            all_items = s.exec(query.limit(limit)).all()
+            if (
+                self.principal is not None
+                and not self.principal.is_admin
+                and self.principal.user_id
+            ):
+                query = query.where(
+                    (MemoryItem.user_id == self.principal.user_id) | (MemoryItem.user_id.is_(None))
+                )
+            all_items = s.exec(query.limit(limit * 2)).all()
             for it in all_items:
                 if self._check_access(it):
                     items.append(it)
+                    if len(items) >= limit:
+                        break
 
         violations: list[ConsistencyViolation] = []
         n = len(items)
