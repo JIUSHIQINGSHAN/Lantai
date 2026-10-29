@@ -187,9 +187,13 @@ def get_causal_chain(
                 visited.add(edge.target_memory_id)
                 current = edge.target_memory_id
             else:
-                # 2. 或者查找以当前节点为 target 的 causes 边（即上游 source causes 当前 target）
-                edges_cause = get_edges(current, relation="causes", as_source=False, as_target=True)
-                cause_candidates = [e for e in edges_cause if e.source_memory_id not in visited]
+                # 2. 或者查找以当前节点为 target 的 causes / leads_to 边（即上游 source causes/leads_to 当前 target）
+                edges_cause = get_edges(current, as_source=False, as_target=True)
+                cause_candidates = [
+                    e
+                    for e in edges_cause
+                    if e.relation in ("causes", "leads_to") and e.source_memory_id not in visited
+                ]
                 if cause_candidates:
                     edge = cause_candidates[0]
                     next_hop = {

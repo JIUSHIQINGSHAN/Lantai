@@ -32,8 +32,8 @@ def test_tools_list():
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
     assert (
-        len(resp["result"]["tools"]) == 60
-    )  # 包含 cognitive_context 心斋认知切面 + revive_consolidated 起复
+        len(resp["result"]["tools"]) == 62
+    )  # 包含格物（causal_trace + event_timeline）共 62 个工具
     assert "persona_get" in names
     assert "persona_set" in names
     assert "cognitive_context" in names
@@ -52,6 +52,8 @@ def test_tools_list():
     assert "dialogue_add_async" in names
     assert "dialogue_task_status" in names
     assert "graph_expand_search" in names
+    assert "causal_trace" in names
+    assert "event_timeline" in names
     assert "candidates_pending" in names
     assert "candidate_review" in names
     assert "add_dialogue" in names

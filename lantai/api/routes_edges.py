@@ -11,6 +11,10 @@ from lantai.services.edge_service import (
     list_edges,
     remove_edge,
 )
+from lantai.services.provenance_service import (
+    get_event_timeline,
+    trace_decision_provenance,
+)
 
 router = APIRouter()
 
@@ -41,6 +45,29 @@ def create_edge_route(req: EdgeReq, ctx=Depends(get_current_user)):
         session_id=getattr(ctx, "session_id", None),
         principal=ctx,
     )
+
+
+@router.get("/edges/provenance")
+def decision_provenance_route(
+    memory_id: str | None = None,
+    query: str | None = None,
+    max_depth: int = 10,
+    ctx=Depends(get_current_user),
+):
+    """格物（v0.31）：针对特定决策或状态变更的溯源推理与根因反查。"""
+    return trace_decision_provenance(
+        memory_id=memory_id, query=query, max_depth=max_depth, principal=ctx
+    )
+
+
+@router.get("/edges/timeline")
+def event_timeline_route(
+    memory_id: str,
+    max_depth: int = 10,
+    ctx=Depends(get_current_user),
+):
+    """格物（v0.31）：生成关联事件的时序演进时间线。"""
+    return get_event_timeline(memory_id=memory_id, max_depth=max_depth, principal=ctx)
 
 
 @router.get("/edges/{memory_id}")

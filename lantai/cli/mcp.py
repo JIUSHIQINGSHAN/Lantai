@@ -523,6 +523,34 @@ def handle_probe_resolve(params: dict) -> dict:
     )
 
 
+def handle_causal_trace(params: dict) -> dict:
+    """格物（v0.31）：针对特定决策或事态变更执行因果溯源与根因反查。"""
+    from lantai.services.provenance_service import trace_decision_provenance
+
+    mid = params.get("memory_id")
+    q = params.get("query")
+    max_depth = int(params.get("max_depth", 10))
+    return trace_decision_provenance(
+        memory_id=mid,
+        query=q,
+        max_depth=max_depth,
+        principal=_principal_from_params(params),
+    )
+
+
+def handle_event_timeline(params: dict) -> dict:
+    """格物（v0.31）：获取指定节点相关的事件时间线与演进事态。"""
+    from lantai.services.provenance_service import get_event_timeline
+
+    mid = params.get("memory_id", "")
+    max_depth = int(params.get("max_depth", 10))
+    return get_event_timeline(
+        memory_id=mid,
+        max_depth=max_depth,
+        principal=_principal_from_params(params),
+    )
+
+
 def handle_feedback(params: dict) -> dict:
     req = FeedbackReq(
         memory_id=params.get("memory_id", ""),
@@ -1776,6 +1804,28 @@ TOOLS = {
             },
         },
     },
+    "causal_trace": {
+        "description": "格物（v0.31）：针对特定决策或事态变更执行因果溯源与根因反查",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "目标决策记忆 ID"},
+                "query": {"type": "string", "description": "自然语言描述/查询"},
+                "max_depth": {"type": "integer", "default": 10, "description": "最大溯源深度"},
+            },
+        },
+    },
+    "event_timeline": {
+        "description": "格物（v0.31）：获取指定节点相关的事件时间线与演进事态",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "起始事件或决策记忆 ID"},
+                "max_depth": {"type": "integer", "default": 10, "description": "最大遍历深度"},
+            },
+            "required": ["memory_id"],
+        },
+    },
     "recall_chain": {
         "description": "记忆广播链（烽燧，只读）：seed 记忆逐层触发关联记忆",
         "inputSchema": {
@@ -1935,6 +1985,8 @@ TOOL_HANDLERS = {
     "persona_set": handle_persona_set,
     "scratchpad_get": handle_scratchpad_get,
     "scratchpad_write": handle_scratchpad_write,
+    "causal_trace": handle_causal_trace,
+    "event_timeline": handle_event_timeline,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。
