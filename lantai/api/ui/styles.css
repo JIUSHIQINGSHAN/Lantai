@@ -419,3 +419,170 @@ dialog header button { width: 32px; height: 32px; border: 0; background: transpa
 .tree-node-meta { display: flex; gap: 10px; align-items: baseline; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
 .tree-node-meta code { font-size: 10.5px; }
 .tree-node-desc { font-style: italic; }
+
+/* ===== 悬镜 · 3D 神经元记忆星图与可视化观测台 (Xuanjing) ===== */
+.xuanjing-workspace {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: calc(100vh - 120px);
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.xuanjing-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  min-height: 600px;
+  background: radial-gradient(circle at 50% 50%, rgba(20, 28, 36, 0.4) 0%, rgba(13, 18, 23, 0.95) 100%);
+  overflow: hidden;
+}
+
+[data-theme="louchuang"] .xuanjing-stage {
+  background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.7) 0%, rgba(244, 246, 244, 0.95) 100%);
+}
+
+.xuanjing-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.xuanjing-legend {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(8px);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 11.5px;
+  color: var(--muted);
+  box-shadow: 0 4px 16px var(--shadow);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.xuanjing-legend strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.legend-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.xuanjing-drawer {
+  width: 340px;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  box-shadow: -4px 0 20px var(--shadow);
+  z-index: 10;
+  transition: transform 0.25s ease;
+}
+
+.xuanjing-drawer[hidden] {
+  display: none !important;
+}
+
+.xuanjing-drawer .drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.xuanjing-drawer .drawer-header h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.xuanjing-drawer .drawer-body {
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.xuanjing-drawer .meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.xuanjing-drawer .meta-row strong,
+.xuanjing-drawer .meta-row span,
+.xuanjing-drawer .meta-row code {
+  color: var(--ink);
+}
+
+.decay-bar-wrap {
+  width: 100%;
+  height: 6px;
+  background: var(--surface);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: -4px;
+}
+
+.decay-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--warn) 0%, var(--green) 100%);
+  transition: width 0.3s ease;
+}
+
+.content-block {
+  margin-top: 10px;
+}
+
+.content-block label {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.xuanjing-content-text {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+

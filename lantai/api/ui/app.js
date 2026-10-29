@@ -10,10 +10,12 @@ import {
   triggerConsolidation,
 } from './studio.js';
 import {initPlayground} from './playground.js';
+import {initXuanjing, activateXuanjingView, deactivateXuanjing} from './xuanjing.js';
 
-// Init Terminal on load
+// Init Terminal and Xuanjing on load
 document.addEventListener('DOMContentLoaded', () => {
   initTerminal();
+  initXuanjing();
 });
 
 const SECTION_ORDER = ['immediate_action', 'pending_decisions', 'organization_needed', 'runtime_status'];
@@ -75,6 +77,7 @@ function setView(view) {
   if (view !== 'tasks') closeInspector();
   if (view !== 'monitor') deactivateMonitor();
   if (view !== 'terminal') deactivateTerminal();
+  if (view !== 'xuanjing') deactivateXuanjing();
 
   if (view === 'monitor') {
     activateMonitorView();
@@ -84,6 +87,8 @@ function setView(view) {
     loadVault();
     loadLimbo();
     loadTree();
+  } else if (view === 'xuanjing') {
+    activateXuanjingView();
   } else if (view === 'terminal') {
     activateTerminalView();
   } else if (view === 'studio') {

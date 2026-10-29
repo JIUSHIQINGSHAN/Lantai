@@ -20,6 +20,7 @@
         <button class="nav-item" data-view="overview"><span>中枢总览</span></button>
         <button class="nav-item active" data-view="tasks"><span>案牍审阅</span><b id="navTaskCount">0</b></button>
         <button class="nav-item" data-view="vault"><span>档案星图</span></button>
+        <button class="nav-item" data-view="xuanjing"><span>悬镜星图</span></button>
         <button class="nav-item" data-view="studio"><span>认知进化</span></button>
         <button class="nav-item" data-view="playground"><span>检索演练</span></button>
         <button class="nav-item" data-view="terminal"><span>认知终端</span></button>
@@ -222,6 +223,79 @@
                 <button class="secondary-button" id="checkpointRefreshBtn">↻ 查看最新</button>
               </div>
               <pre id="checkpointView" class="code-box">尚未加载</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3.5 悬镜星图观测台 (Xuanjing Observatory · Ticket 02) -->
+      <section class="view" id="xuanjingView">
+        <header class="topbar">
+          <div>
+            <h1>悬镜 · 3D 神经元记忆星图</h1>
+            <p id="xuanjingStatus">高悬明镜，照见万物脉络与因果溯源</p>
+          </div>
+          <div class="top-actions">
+            <span class="meta-tag" title="当前加载恒星节点数">节点 <b id="xuanjingNodeCount">0</b></span>
+            <span class="meta-tag" title="当前拓扑关联边数">因果边 <b id="xuanjingEdgeCount">0</b></span>
+            <span class="meta-tag" title="全图平均艾宾浩斯记忆保留率">平均时效 <b id="xuanjingAvgDecay">—</b></span>
+            <select id="xuanjingLaneFilter" class="select-box" aria-label="分轨过滤">
+              <option value="all" selected>全部分轨</option>
+              <option value="user">用户域 (user)</option>
+              <option value="agent">智能体域 (agent)</option>
+              <option value="session">会话域 (session)</option>
+              <option value="fact">事实 (fact)</option>
+              <option value="preference">偏好 (preference)</option>
+            </select>
+            <select id="xuanjingLimitFilter" class="select-box" aria-label="加载上限">
+              <option value="100">100 节点</option>
+              <option value="250" selected>250 节点</option>
+              <option value="500">500 节点</option>
+            </select>
+            <input type="text" id="xuanjingSearchInput" placeholder="过滤星图节点..." class="search-input" style="width:160px;">
+            <button class="primary-btn" id="xuanjingRefreshBtn">↻ 重新观测</button>
+          </div>
+        </header>
+        <div class="view-content xuanjing-workspace">
+          <div class="xuanjing-stage" id="xuanjingSvgContainer">
+            <svg id="xuanjingSvg" class="xuanjing-svg"></svg>
+            <div class="xuanjing-legend">
+              <div class="legend-row"><strong>恒星分轨</strong></div>
+              <div class="legend-items">
+                <span class="legend-dot" style="background:#10b981;"></span><small>用户域</small>
+                <span class="legend-dot" style="background:#8b5cf6;"></span><small>智能体域</small>
+                <span class="legend-dot" style="background:#3b82f6;"></span><small>会话域</small>
+                <span class="legend-dot" style="background:#f59e0b;"></span><small>同袍公共殿堂</small>
+              </div>
+              <div class="legend-row" style="margin-top:6px;"><strong>引力拓扑边</strong></div>
+              <div class="legend-items">
+                <span class="legend-line" style="background:#f97316;"></span><small>格物因果 (causes/leads_to)</small>
+                <span class="legend-line" style="background:#10b981;"></span><small>支持关联 (supports)</small>
+                <span class="legend-line" style="background:#ef4444;"></span><small>矛盾对立 (contradicts)</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- 悬镜节点透视抽屉 -->
+          <div class="xuanjing-drawer" id="xuanjingDrawer" hidden>
+            <div class="drawer-header">
+              <h3>🌟 恒星记忆透视</h3>
+              <button class="icon-button" id="xuanjingCloseDrawer" title="关闭透视">×</button>
+            </div>
+            <div class="drawer-body">
+              <div class="meta-row"><span>记忆编号</span><code id="xjdId">—</code></div>
+              <div class="meta-row"><span>所属分轨</span><strong id="xjdLane">—</strong></div>
+              <div class="meta-row"><span>所属星系</span><span id="xjdScene">—</span></div>
+              <div class="meta-row"><span>共享状态</span><span id="xjdScope">—</span></div>
+              <div class="meta-row"><span>引力质心 (Weight)</span><span id="xjdWeight">—</span></div>
+              <div class="meta-row"><span>艾宾浩斯时效</span><span id="xjdDecay">—</span></div>
+              <div class="decay-bar-wrap"><div class="decay-bar" id="xjdDecayBar"></div></div>
+              <div class="meta-row"><span>被引次数</span><span id="xjdUseCount">0</span></div>
+              <div class="meta-row"><span>固有重要度</span><span id="xjdImportance">0.5</span></div>
+              <div class="content-block">
+                <label>记忆原旨</label>
+                <div class="xuanjing-content-text" id="xjdContent">读取中…</div>
+              </div>
             </div>
           </div>
         </div>
@@ -586,6 +660,7 @@
     <button data-view="overview">总览</button>
     <button class="active" data-view="tasks">待办</button>
     <button data-view="vault">档案</button>
+    <button data-view="xuanjing">悬镜</button>
     <button data-view="studio">进化</button>
     <button data-view="playground">演练</button>
     <button data-view="terminal">终端</button>

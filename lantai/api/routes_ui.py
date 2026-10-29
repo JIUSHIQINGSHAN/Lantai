@@ -283,6 +283,7 @@ def ui_asset(asset_name: str):
         "playground.js": "text/javascript",
         "monitor.js": "text/javascript",
         "terminal.js": "text/javascript",
+        "xuanjing.js": "text/javascript",
         "d3.v7.min.js": "text/javascript",
     }
     media_type = allowed.get(asset_name)
