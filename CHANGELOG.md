@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-10-29 - 格物（Gewu · 因果时序拓扑与事件溯源链）
+
+> 版本代号「格物」：《礼记·大学》「致知在格物，物格而后知至」——穷究事物之原理与因果脉络，对应本版主题「格物（Gewu · 因果时序拓扑与事件溯源链，ADR-0013 / ADR-0037 / docs/future-roadmap.md 方向二落地）」：突破单点静态事实记忆的局限，构建面向 Agent 决策分析的因果拓扑推演、前置根因溯源（root cause analysis）与时序演进叙事能力。基于关系模型（`MemoryEdge`）建立因果关系拓扑（`causes`、`leads_to`、`triggered_by`），落地认知层因果回溯引擎 `CausalEngine` 与单步实体 `CausalHop`，支持正向次生链探索、逆向根因探测与有向图环路熔断保护；对外暴露高阶决策归因接口 `attribute_decision`、端点 `GET /edges/provenance`、`GET /edges/timeline` 与 MCP 协议工具（`causal_trace`、`event_timeline`），并在认知上下文 `CognitiveContext` 中拓展 `causal_provenance` 决策脉络切面，支持渲染结构化 Markdown Prompt 注入智能体决策；全程严守行级 ACL 租户防火墙，保障私密因果链路跨租户隔离。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.35-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **格物因果时序拓扑与因果回溯引擎（票 01，详见 `lantai/cognition/causal.py`、`lantai/cognition/__init__.py` 与 `tests/test_gewu_causal_topology_smoke.py`、`tests/test_gewu_causal_engine_smoke.py`）**：
+  - 核心引擎设计：落地 `CausalEngine` 与 `CausalHop`，依托 `MemoryEdge` 因果三元组（`causes` / `leads_to` / `triggered_by`）建立记忆拓扑连接；
+  - 双向图推演与环路熔断：支持向前顺推下游次生引发链与逆向回溯根因诱因链，内置 `visited` 环路截断防护，防止无限递归；
+  - 租户行级安全隔离：所有拓扑跳跃严格校验属主权限与 `viewer_of` 租户边界，杜绝跨租户嗅探私有图谱；
+  - 交付端到端不 mock 冒烟测试 `tests/test_gewu_causal_topology_smoke.py` 与 `tests/test_gewu_causal_engine_smoke.py`。
+- **事件溯源链 API 与查询接口及决策脉络回溯（票 02，详见 `lantai/cognition/causal.py`、`lantai/cognition/context.py` 与 `tests/test_gewu_attribution_api_smoke.py`）**：
+  - 高阶决策归因入口：实现 `CausalEngine.attribute_decision`，支持基于显式 `memory_id` 或自然语言 `query` 模糊检索定位决策，生成初始根因、逐级链路与正序时间线叙事；
+  - 认知上下文切面打通：在 `CognitiveContext` 扩展 `causal_provenance` 切面属性，并在 `to_prompt()` 中渲染格式化 Markdown 因果决策提示块；
+  - API 与 MCP 双形态端点集成：打通 HTTP 路由 `GET /edges/provenance` 与 `GET /edges/timeline`，验证 MCP 标准工具 `causal_trace` 与 `event_timeline` 的 JSON-RPC 2.0 调用及越权隔离；
+  - 交付端到端不 mock 冒烟测试 `tests/test_gewu_attribution_api_smoke.py`。
+
 ## [0.34.0] - 2026-10-29 - 探颐（Tanyi · 探赜索隐）
 
 > 版本代号「探颐」：《易·系辞上》「探赜索隐，钩深致远」——深入探求隐微之理，对应本版主题「探颐（Tanyi · 记忆主动探针与自然交互消歧机制，ADR-0013 / ADR-0037 / docs/future-roadmap.md 方向一落地）」：改变记忆系统只被动查询的现状，构建认知层主动求证探针引擎 `TanyiProbingEngine` 与上下文插桩模型 `ProbeInsertion`，当检索召回命中未决冲突（`ConflictEvent`）或处于模糊带（`0.3 <= confidence <= 0.6`）的低置信度事实时，自动在 Prompt 中注入轻量求证探针；打通自然交互答复意图分类器 `parse_user_resolution_intent` 与自动闭环消解流水线 `execute_tanyi_resolution`，严密支持肯定（更新正文、版本递增、重置衰减分、落 `MemoryCheckpoint` 快照、同步 FTS/向量索引与解决冲突）、否定（废弃冲突保留原主张）、事实修正（提取自然输入新事实并同步索引）及模糊暧昧（保持 pending 绝不脏写），全流程严守行级 ACL 403 越权防护与多租户隔离。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.34-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
