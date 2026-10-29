@@ -177,3 +177,22 @@ def episode_credits_route(memory_ids: str | None = None):
 
     ids = [m.strip() for m in memory_ids.split(",") if m.strip()] if memory_ids else None
     return {"credits": episode_credit_map(ids)}
+
+
+@router.get("/evolution/sanxing/health")
+def sanxing_health_route(ctx=Depends(get_current_user)):
+    """三省（Sanxing · 吾日三省吾身）：获取当前租户记忆健康快照与多维缺陷统计。"""
+    from lantai.cognition.sanxing import SanxingEngine
+
+    engine = SanxingEngine(principal=ctx)
+    snapshot = engine.evaluate_health()
+    return snapshot.model_dump(mode="json")
+
+
+@router.post("/evolution/sanxing/audit")
+def sanxing_audit_route(ctx=Depends(get_current_user)):
+    """三省（Sanxing · 吾日三省吾身）：触发即时记忆健康自省并生成结构化诊断报告。"""
+    from lantai.cognition.sanxing import inspect_memory_health
+
+    return inspect_memory_health(principal=ctx)
+

@@ -24,6 +24,7 @@ _SECTION_HEADINGS = {
     "conflicts": "## Active Conflicts",
     "causal_provenance": "## Causal Provenance & Decision History",
     "archived_history": "## Archived History & Precedents",
+    "reflection_audit": "## Memory Health Audit & Self-Reflection",
 }
 
 
@@ -39,6 +40,7 @@ class CognitiveContext:
     conflicts: list = field(default_factory=list)
     causal_provenance: list = field(default_factory=list)
     archived_history: list = field(default_factory=list)
+    reflection_audit: list = field(default_factory=list)
 
     def to_prompt(self) -> str:
         """

@@ -32,8 +32,8 @@ def test_tools_list():
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
     assert (
-        len(resp["result"]["tools"]) == 66
-    )  # 包含格物、同袍、悬镜与尘封（memory_archived_search + memory_unarchive）共 66 个工具
+        len(resp["result"]["tools"]) == 68
+    )  # 包含格物、同袍、悬镜、尘封与三省（memory_health_inspect + memory_audit_report）共 68 个工具
     assert "persona_get" in names
     assert "persona_set" in names
     assert "cognitive_context" in names
@@ -49,6 +49,8 @@ def test_tools_list():
     assert "probe_resolve" in names
     assert "memory_archived_search" in names
     assert "memory_unarchive" in names
+    assert "memory_health_inspect" in names
+    assert "memory_audit_report" in names
     assert "scratchpad_get" in names
     assert "scratchpad_write" in names
     assert "dialogue_add_async" in names

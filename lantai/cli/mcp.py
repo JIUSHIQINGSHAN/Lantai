@@ -1307,6 +1307,23 @@ def handle_persona_set(params: dict) -> dict:
     return p.model_dump(mode="json")
 
 
+def handle_memory_health_inspect(params: dict) -> dict:
+    """三省：多维扫描记忆库健康状况，返回缺陷快照（ADR-0013 / ADR-0044）。"""
+    from lantai.cognition.sanxing import SanxingEngine
+
+    engine = SanxingEngine(principal=_principal_from_params(params))
+    snapshot = engine.evaluate_health()
+    return snapshot.model_dump(mode="json")
+
+
+def handle_memory_audit_report(params: dict) -> dict:
+    """三省：执行即时记忆健康自省并生成结构化诊断报告与建议清单。"""
+    from lantai.cognition.sanxing import inspect_memory_health
+
+    return inspect_memory_health(principal=_principal_from_params(params))
+
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2075,6 +2092,24 @@ TOOLS = {
             },
         },
     },
+    "memory_health_inspect": {
+        "description": "三省：扫描当前租户记忆健康快照（检测被取代残留、时效过期、未决冲突与低帮助度碎片）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
+    "memory_audit_report": {
+        "description": "三省：执行认知层深度自省并生成结构化诊断报告与建议清单",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2143,6 +2178,8 @@ TOOL_HANDLERS = {
     "get_xuanjing_graph": handle_get_xuanjing_graph,
     "memory_archived_search": handle_memory_archived_search,
     "memory_unarchive": handle_memory_unarchive,
+    "memory_health_inspect": handle_memory_health_inspect,
+    "memory_audit_report": handle_memory_audit_report,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。
