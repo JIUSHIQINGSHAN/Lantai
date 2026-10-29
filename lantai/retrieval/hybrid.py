@@ -59,6 +59,12 @@ class RetrievalParams:
     temporal_fuzzy_penalty: float = field(
         default_factory=lambda: float(settings.TEMPORAL_FUZZY_PENALTY)
     )
+    hierarchical_layer: str = field(
+        default_factory=lambda: str(getattr(settings, "HIERARCHICAL_LAYER_DEFAULT", "auto"))
+    )
+    hierarchical_boost: float = field(
+        default_factory=lambda: float(getattr(settings, "HIERARCHICAL_LAYER_BOOST", 1.25))
+    )
     extra: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -108,6 +114,8 @@ class RetrievalParams:
             "TEMPORAL_FUZZY_PENALTY": "temporal_fuzzy_penalty",
             "EPISODE_CREDIT_ENABLED": "episode_credit_enabled",
             "EPISODE_CREDIT_WEIGHT": "episode_credit_weight",
+            "HIERARCHICAL_LAYER_DEFAULT": "hierarchical_layer",
+            "HIERARCHICAL_LAYER_BOOST": "hierarchical_boost",
         }
         known = {}
         extra = {}
@@ -141,6 +149,8 @@ class RetrievalParams:
             "TEMPORAL_FUZZY_PENALTY": "temporal_fuzzy_penalty",
             "EPISODE_CREDIT_ENABLED": "episode_credit_enabled",
             "EPISODE_CREDIT_WEIGHT": "episode_credit_weight",
+            "HIERARCHICAL_LAYER_DEFAULT": "hierarchical_layer",
+            "HIERARCHICAL_LAYER_BOOST": "hierarchical_boost",
         }
         attr = mapping.get(key, key)
         if hasattr(self, attr):
@@ -377,6 +387,7 @@ def hybrid_search(
     time_from=None,
     time_to=None,
     as_of_recorded=None,
+    layer: str | None = None,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     """混合检索：向量 + BM25 + 衰减（支持辨域 ADR-0034 domain 过滤）。
 
@@ -410,6 +421,10 @@ def hybrid_search(
     """
     principal = _converge_principal(principal)
     effective_params = params or RetrievalParams.from_overrides(param_overrides)
+    if layer is not None:
+        effective_params = RetrievalParams.from_overrides(
+            {**effective_params.__dict__, "hierarchical_layer": layer}
+        )
     return _hybrid_search_impl(
         query,
         top_k,
@@ -663,6 +678,14 @@ def _hybrid_search_impl(
     # 正文精确命中同一签名的候选加有界 bonus；识别不到则整条规则不参与。
     query_signatures = extract_error_signatures(query) if p.errsig_bonus > 0 else ()
 
+    # 磨勘（v0.29 · MCMA 建议项 4）：抽象层级与意图选层
+    from lantai.retrieval.hierarchical import (
+        classify_memory_layer,
+        filter_and_resolve_layer,
+    )
+
+    items, target_layer = filter_and_resolve_layer(items, query, p)
+
     # episode credit 影子加权（票据 D，ADR-0056；默认关）：命中记忆的累计
     # 轨迹信用作乘性加权信号。关闭时此处短路，episode 表一次都不碰
     # （零额外查询开销，逐位一致零回归）。
@@ -725,6 +748,13 @@ def _hybrid_search_impl(
             if ep_credit_value:
                 score *= 1.0 + p.episode_credit_weight * math.tanh(ep_credit_value)
 
+        # 磨勘（v0.29 · MCMA 建议项 4）：抽象层级加权
+        m_layer = classify_memory_layer(m)
+        layer_multiplier = 1.0
+        if target_layer in ("h0", "h1", "h2") and m_layer == target_layer:
+            layer_multiplier = p.hierarchical_boost
+            score *= layer_multiplier
+
         scored_items.append((score, m))
         if explain:
             breakdowns[m.id] = {
@@ -734,6 +764,8 @@ def _hybrid_search_impl(
                 "decay": round(p.w_decay * actual_decay, 4),
                 "lane_boost": lane_boost,
                 "persona_boost": persona_boost,
+                "layer": m_layer,
+                "layer_multiplier": layer_multiplier,
                 "errsig_bonus": round(errsig_hit_value, 4),
                 "episode_credit": round(ep_credit_value, 4),
                 "final": round(score, 4),
@@ -780,6 +812,7 @@ def _hybrid_search_impl(
                     "score": s,
                     "memory": m.model_dump(mode="json"),
                     "document": m.content,
+                    "layer": classify_memory_layer(m),
                 }
                 if explain:
                     item["explain"] = breakdowns.get(m.id)
@@ -806,6 +839,7 @@ def _hybrid_search_impl(
             "score": s,
             "memory": m.model_dump(mode="json"),
             "document": m.content,
+            "layer": classify_memory_layer(m),
         }
         if explain:
             item["explain"] = breakdowns.get(m.id)
@@ -1090,6 +1124,14 @@ def _keyword_fallback(
         fuzzy_penalty=p.temporal_fuzzy_penalty,
     )
 
+    # 磨勘（v0.29 · MCMA 建议项 4）：关键词降级分支抽象层级与意图选层
+    from lantai.retrieval.hierarchical import (
+        classify_memory_layer,
+        filter_and_resolve_layer,
+    )
+
+    items, target_layer = filter_and_resolve_layer(items, query, p)
+
     if not items:
         if trace:
             return [], trace_steps
@@ -1115,6 +1157,14 @@ def _keyword_fallback(
 
         actual_decay = m.decay_score * _age_multiplier(m)
         score = ((bm25_score + p.w_fts * fts_hit + p.w_decay * actual_decay) / total_w) * lane_boost
+
+        # 磨勘（v0.29 · MCMA 建议项 4）：抽象层级加权
+        m_layer = classify_memory_layer(m)
+        layer_multiplier = 1.0
+        if target_layer in ("h0", "h1", "h2") and m_layer == target_layer:
+            layer_multiplier = p.hierarchical_boost
+            score *= layer_multiplier
+
         scored.append((score, m))
         if explain:
             breakdowns[m.id] = {
@@ -1123,6 +1173,8 @@ def _keyword_fallback(
                 "fts": round(p.w_fts * fts_hit / total_w, 4),
                 "decay": round(p.w_decay * actual_decay / total_w, 4),
                 "lane_boost": lane_boost,
+                "layer": m_layer,
+                "layer_multiplier": layer_multiplier,
                 "final": round(score, 4),
                 "decay_class": decay_class_name,
                 "decay_multiplier": round(_age_multiplier(m), 4),
@@ -1136,6 +1188,7 @@ def _keyword_fallback(
             "score": s,
             "memory": m.model_dump(mode="json"),
             "document": m.content,
+            "layer": classify_memory_layer(m),
         }
         if explain:
             item["explain"] = breakdowns.get(m.id)

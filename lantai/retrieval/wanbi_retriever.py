@@ -46,6 +46,7 @@ def _hydrate_facts_with_projections(session: Session, facts: list[FactAtomic]) -
                 "valid_from": f.valid_from,
                 "valid_to": f.valid_to,
                 "source_memory_id": f.source_memory_id,
+                "layer": "h1",  # 磨勘（v0.29 · MCMA 建议项 4）：完璧原子事实归属 H1 情境事实层
                 "entities": proj_map.get(f.id, []),
             }
         )

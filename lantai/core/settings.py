@@ -215,6 +215,9 @@ class Settings(BaseSettings):
     TEMPORAL_FUZZY_PENALTY: float = (
         0.8  # as-of/时间窗激活时 fuzzy/unknown 的分数乘子（fail-closed 0~1）
     )
+    # 磨勘（v0.29 · MCMA 建议项 4）：抽象层级选层检索配置
+    HIERARCHICAL_LAYER_BOOST: float = 1.25  # 意图匹配目标层级的权重加成系数
+    HIERARCHICAL_LAYER_DEFAULT: str = "auto"  # 默认检索模式：auto | all | h0 | h1 | h2
     CHROMADB_PATH: str = ""  # 为空时从 LANTAI_HOME 自动推导
 
     # 闸门配置
