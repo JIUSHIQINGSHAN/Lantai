@@ -274,6 +274,10 @@ class ActionOutcome(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+# 格物（v0.31）：因果拓扑与事件溯源关系集合
+CAUSAL_RELATIONS = frozenset({"causes", "triggered_by", "leads_to"})
+
+
 class MemoryEdge(SQLModel, table=True):
     id: str = Field(primary_key=True)
     tenant_id: str | None = Field(default=None, index=True)
@@ -282,7 +286,9 @@ class MemoryEdge(SQLModel, table=True):
     session_id: str | None = Field(default=None, index=True)
     source_memory_id: str = Field(index=True)
     target_memory_id: str = Field(index=True)
-    relation: str  # supports / contradicts / refines / supersedes
+    relation: (
+        str  # supports / contradicts / refines / supersedes / causes / triggered_by / leads_to
+    )
     confidence: float = 0.5
     reason: str = ""
     created_at: datetime = Field(default_factory=utcnow)

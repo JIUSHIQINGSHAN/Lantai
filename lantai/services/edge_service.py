@@ -1,7 +1,15 @@
 """记忆关系（边）service 层——从路由 handler 下沉"""
 
 from lantai.core.acl import viewer_of
-from lantai.storage.edges import create_edge, delete_edge, get_edges, get_supersed_chain
+from lantai.storage.edges import (
+    create_edge,
+    delete_edge,
+    get_edges,
+    get_supersed_chain,
+)
+from lantai.storage.edges import (
+    get_causal_chain as storage_get_causal_chain,
+)
 
 
 def add_edge(
@@ -117,6 +125,48 @@ def get_chain(memory_id: str, principal=None) -> dict:
                         break
                 if ok:
                     visible.append(hop)
+        chain = visible
+    return {"chain": chain}
+
+
+def get_causal_chain(
+    memory_id: str,
+    direction: str = "forward",
+    max_depth: int = 10,
+    principal=None,
+) -> dict:
+    """格物（v0.31）：获取因果时序溯源链，带租户行级 ACL 校验。"""
+    # 根节点可见性前置校验（宁 miss 不脏写）：
+    # 若起点 memory_id 对调用者不可见，链的开端就非法，直接返回空
+    if principal is not None and not bool(getattr(principal, "is_admin", False)):
+        from lantai.models.tables import MemoryItem
+        from lantai.storage.db import get_session
+
+        viewer = viewer_of(principal)
+        with get_session() as s:
+            root_mem = s.get(MemoryItem, memory_id)
+            if root_mem is None or (root_mem.user_id or None) not in (None, viewer):
+                return {"chain": []}
+
+    chain = storage_get_causal_chain(memory_id, direction=direction, max_depth=max_depth)
+    if principal is not None and not bool(getattr(principal, "is_admin", False)):
+        from lantai.models.tables import MemoryItem
+        from lantai.storage.db import get_session
+
+        viewer = viewer_of(principal)
+        visible = []
+        with get_session() as s:
+            for hop in chain:
+                ok = True
+                for mid in (hop["from_id"], hop["to_id"]):
+                    mem = s.get(MemoryItem, mid)
+                    if mem is None or (mem.user_id or None) not in (None, viewer):
+                        ok = False
+                        break
+                if not ok:
+                    # 链路上遇到不可见节点，后续链路立即截断保护
+                    break
+                visible.append(hop)
         chain = visible
     return {"chain": chain}
 

@@ -127,3 +127,84 @@ def get_supersed_chain(memory_id: str) -> list[dict]:
         )
         current = edges[0].target_memory_id
     return chain
+
+
+def get_causal_chain(
+    memory_id: str,
+    direction: str = "forward",
+    max_depth: int = 10,
+) -> list[dict]:
+    """格物（v0.31）：获取因果时序溯源链。
+
+    direction:
+      - "forward": 顺查下游事态（沿着 causes 与 leads_to 边，从 source 向 target 延伸）
+      - "backward": 逆查前置诱因（沿着 triggered_by 正向查找 target，或沿 causes 逆向查找 source）
+    """
+    chain: list[dict] = []
+    current = memory_id
+    visited = {current}
+    depth = 0
+
+    while current and depth < max_depth:
+        depth += 1
+        next_hop = None
+
+        if direction == "forward":
+            # 正向推演：当前节点作为 source，沿着 causes / leads_to 到下游
+            edges = get_edges(current, as_source=True, as_target=False)
+            causal_edges = [
+                e
+                for e in edges
+                if e.relation in ("causes", "leads_to") and e.target_memory_id not in visited
+            ]
+            if causal_edges:
+                edge = causal_edges[0]
+                next_hop = {
+                    "edge_id": edge.id,
+                    "from_id": edge.source_memory_id,
+                    "to_id": edge.target_memory_id,
+                    "relation": edge.relation,
+                    "confidence": edge.confidence,
+                }
+                visited.add(edge.target_memory_id)
+                current = edge.target_memory_id
+        else:
+            # 逆向溯源：
+            # 1. 当前节点作为 source，通过 triggered_by 指向前置诱因 (target)
+            edges_trig = get_edges(
+                current, relation="triggered_by", as_source=True, as_target=False
+            )
+            trig_candidates = [e for e in edges_trig if e.target_memory_id not in visited]
+            if trig_candidates:
+                edge = trig_candidates[0]
+                next_hop = {
+                    "edge_id": edge.id,
+                    "from_id": edge.source_memory_id,
+                    "to_id": edge.target_memory_id,
+                    "relation": edge.relation,
+                    "confidence": edge.confidence,
+                }
+                visited.add(edge.target_memory_id)
+                current = edge.target_memory_id
+            else:
+                # 2. 或者查找以当前节点为 target 的 causes 边（即上游 source causes 当前 target）
+                edges_cause = get_edges(current, relation="causes", as_source=False, as_target=True)
+                cause_candidates = [e for e in edges_cause if e.source_memory_id not in visited]
+                if cause_candidates:
+                    edge = cause_candidates[0]
+                    next_hop = {
+                        "edge_id": edge.id,
+                        "from_id": edge.target_memory_id,
+                        "to_id": edge.source_memory_id,
+                        "relation": "triggered_by",  # 逆向视角
+                        "confidence": edge.confidence,
+                    }
+                    visited.add(edge.source_memory_id)
+                    current = edge.source_memory_id
+
+        if next_hop:
+            chain.append(next_hop)
+        else:
+            break
+
+    return chain

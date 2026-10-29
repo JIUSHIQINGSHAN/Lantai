@@ -46,3 +46,7 @@ class EdgeRelation(StrEnum):
     CONTRADICTS = "contradicts"
     REFINES = "refines"
     SUPERSEDES = "supersedes"
+    # 格物（v0.31）：因果拓扑与事件溯源关系
+    CAUSES = "causes"
+    TRIGGERED_BY = "triggered_by"
+    LEADS_TO = "leads_to"

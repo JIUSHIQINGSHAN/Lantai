@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from lantai.core.auth import get_current_user
-from lantai.services.edge_service import add_edge, get_chain, list_edges, remove_edge
+from lantai.services.edge_service import (
+    add_edge,
+    get_causal_chain,
+    get_chain,
+    list_edges,
+    remove_edge,
+)
 
 router = APIRouter()
 
@@ -51,6 +57,17 @@ def supersed_chain_route(memory_id: str, ctx=Depends(get_current_user)):
     # 归属必须下传（票 .scratch/readside-gaps/22）：链比边更值钱——它直接
     # 告诉 A「B 的这条记忆被谁取代了」，superseded_by 就是下一步该读的 id。
     return get_chain(memory_id, principal=ctx)
+
+
+@router.get("/edges/{memory_id}/causal-chain")
+def causal_chain_route(
+    memory_id: str,
+    direction: str = "forward",
+    max_depth: int = 10,
+    ctx=Depends(get_current_user),
+):
+    """格物（v0.31）：获取因果拓扑与事件溯源链。"""
+    return get_causal_chain(memory_id, direction=direction, max_depth=max_depth, principal=ctx)
 
 
 @router.delete("/edges/{edge_id}")
