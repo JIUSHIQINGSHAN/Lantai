@@ -11,14 +11,19 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, func, select
 from ulid import ULID
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import ensure_can_delete, viewer_of
 from lantai.core.logger import logger
 from lantai.core.time import utcnow
 from lantai.models.tables import LifecycleStatus, MemoryCheckpoint, MemoryItem
-from lantai.services.record_ops_service import STATUS_ACTIVE, STATUS_ARCHIVED, audit_event
+from lantai.services.record_ops_service import (
+    STATUS_ACTIVE,
+    STATUS_ARCHIVED,
+    audit_event,
+    unarchive_memory,
+)
 from lantai.storage import db
 
 
@@ -187,3 +192,125 @@ class ChenfengEngine:
             return _archive(self.session)
         with db.get_session() as s:
             return _archive(s)
+
+    def search_archived(
+        self,
+        query: str = "",
+        lane: str = "",
+        scene: str = "",
+        time_from: datetime | None = None,
+        time_to: datetime | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """专用于检索与翻阅尘封（archived）记忆。
+
+        严守租户隔离，过滤出 status='archived' 的条目并支持关键词、分轨、场景及时间范围过滤。
+        """
+
+        def _search(s: Session) -> dict[str, Any]:
+            stmt = select(MemoryItem).where(MemoryItem.status == STATUS_ARCHIVED)
+            scope = self._owned_scope()
+            if scope is not None:
+                stmt = stmt.where(scope)
+
+            if lane:
+                stmt = stmt.where(MemoryItem.lane == lane)
+            if scene:
+                stmt = stmt.where(MemoryItem.scene_id == scene)
+            if time_from:
+                stmt = stmt.where(MemoryItem.created_at >= time_from)
+            if time_to:
+                stmt = stmt.where(MemoryItem.created_at <= time_to)
+            if query:
+                # 兼容多关键词模糊查询与空格分词
+                for term in query.split():
+                    term_clean = term.strip()
+                    if term_clean:
+                        stmt = stmt.where(col(MemoryItem.content).contains(term_clean))
+
+            # 统计符合条件的条目总数
+            count_stmt = select(func.count()).select_from(stmt.subquery())
+            total = int(s.exec(count_stmt).one() or 0)
+
+            # 分页与时间倒序排序
+            stmt = stmt.order_by(
+                col(MemoryItem.updated_at).desc(), col(MemoryItem.created_at).desc()
+            )
+            stmt = stmt.limit(limit).offset(offset)
+
+            items = s.exec(stmt).all()
+            return {
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "items": [item.model_dump(mode="json") for item in items],
+            }
+
+        if self.session is not None:
+            return _search(self.session)
+        with db.get_session() as s:
+            return _search(s)
+
+    def unarchive_memory(
+        self,
+        memory_id: str,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """解封已尘封记忆：验证属主权限并委托 record_ops_service 执行恢复与双层在场核验。"""
+
+        def _unarchive(s: Session) -> dict[str, Any]:
+            item = s.get(MemoryItem, memory_id)
+            if item is None:
+                return {"ok": False, "error": "memory not found"}
+
+            # 行级 ACL 租户防越权校验
+            ensure_can_delete(
+                self.principal,
+                resource_user_id=item.user_id,
+                resource_tenant_id=item.tenant_id,
+                lane=item.lane,
+            )
+
+            actor = viewer_of(self.principal)
+            return unarchive_memory(memory_id=memory_id, actor=actor, reason=reason, session=s)
+
+        if self.session is not None:
+            return _unarchive(self.session)
+        with db.get_session() as s:
+            return _unarchive(s)
+
+
+def search_archived_memories(
+    query: str = "",
+    lane: str = "",
+    scene: str = "",
+    time_from: datetime | None = None,
+    time_to: datetime | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    principal=None,
+    session: Session | None = None,
+) -> dict[str, Any]:
+    """快捷检索尘封档案函数。"""
+    engine = ChenfengEngine(session=session, principal=principal)
+    return engine.search_archived(
+        query=query,
+        lane=lane,
+        scene=scene,
+        time_from=time_from,
+        time_to=time_to,
+        limit=limit,
+        offset=offset,
+    )
+
+
+def unarchive_memory_entry(
+    memory_id: str,
+    reason: str = "",
+    principal=None,
+    session: Session | None = None,
+) -> dict[str, Any]:
+    """快捷解封尘封记忆函数。"""
+    engine = ChenfengEngine(session=session, principal=principal)
+    return engine.unarchive_memory(memory_id=memory_id, reason=reason)

@@ -23,6 +23,7 @@ _SECTION_HEADINGS = {
     "failures": "## Known Failures",
     "conflicts": "## Active Conflicts",
     "causal_provenance": "## Causal Provenance & Decision History",
+    "archived_history": "## Archived History & Precedents",
 }
 
 
@@ -37,6 +38,7 @@ class CognitiveContext:
     failures: list = field(default_factory=list)
     conflicts: list = field(default_factory=list)
     causal_provenance: list = field(default_factory=list)
+    archived_history: list = field(default_factory=list)
 
     def to_prompt(self) -> str:
         """

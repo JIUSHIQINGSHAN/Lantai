@@ -1,7 +1,11 @@
 """认知层模块导出。"""
 
 from lantai.cognition.causal import CausalEngine, CausalHop
-from lantai.cognition.chenfeng import ChenfengEngine
+from lantai.cognition.chenfeng import (
+    ChenfengEngine,
+    search_archived_memories,
+    unarchive_memory_entry,
+)
 from lantai.cognition.context import CognitiveContext, CognitiveContextBuilder
 from lantai.cognition.tanyi import (
     ProbeInsertion,
@@ -22,4 +26,6 @@ __all__ = [
     "TanyiProbingEngine",
     "execute_tanyi_resolution",
     "parse_user_resolution_intent",
+    "search_archived_memories",
+    "unarchive_memory_entry",
 ]

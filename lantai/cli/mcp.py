@@ -567,6 +567,49 @@ def handle_feedback(params: dict) -> dict:
     return record_feedback_entry(req, principal=_principal_from_params(params))
 
 
+def handle_memory_archived_search(params: dict) -> dict:
+    """尘封专栏检索（ADR-0013 / ADR-0005）：检索已被封藏入库的历史记忆。"""
+    from lantai.cognition.chenfeng import search_archived_memories
+
+    query = params.get("query", "")
+    lane = params.get("lane", "")
+    scene = params.get("scene", "") or params.get("scene_id", "")
+    limit = int(params.get("limit", 50))
+    offset = int(params.get("offset", 0))
+    return search_archived_memories(
+        query=query,
+        lane=lane,
+        scene=scene,
+        limit=limit,
+        offset=offset,
+        principal=_principal_from_params(params),
+    )
+
+
+def handle_memory_unarchive(params: dict) -> dict:
+    """尘封解封恢复（ADR-0013 / ADR-0005）：将尘封记忆恢复至活跃态并补齐在场索引。"""
+    from fastapi import HTTPException
+
+    from lantai.cognition.chenfeng import unarchive_memory_entry
+
+    memory_id = params.get("memory_id", "")
+    reason = params.get("reason", "")
+    if not isinstance(memory_id, str) or not memory_id.strip():
+        raise ValueError("memory_id must be a non-empty string")
+
+    try:
+        res = unarchive_memory_entry(
+            memory_id=memory_id,
+            reason=reason,
+            principal=_principal_from_params(params),
+        )
+        return res
+    except HTTPException as e:
+        return {"ok": False, "error": e.detail, "status_code": e.status_code}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def handle_raw_add(params: dict) -> dict:
     """原文直存（verbatim）：内容直入 FTS5+向量，零 LLM，不走提取/闸门/演化。"""
     from lantai.models.schemas import RawMemoryReq
@@ -1933,6 +1976,30 @@ TOOLS = {
             },
         },
     },
+    "memory_archived_search": {
+        "description": "尘封档案检索（ADR-0013 / ADR-0005，只读）：穿透常规检索隔离，专用于检索与翻阅历史封存记忆",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "关键词查询"},
+                "lane": {"type": "string", "description": "限定泳道（可选）"},
+                "scene": {"type": "string", "description": "限定场景 ID（可选）"},
+                "limit": {"type": "integer", "default": 50, "description": "返回数量上限"},
+                "offset": {"type": "integer", "default": 0, "description": "偏移量"},
+            },
+        },
+    },
+    "memory_unarchive": {
+        "description": "尘封解封恢复（ADR-0013 / ADR-0005）：将尘封归档记忆恢复至活跃态并补齐在场索引（受行级属主校验保护）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "待解封恢复的记忆 ID"},
+                "reason": {"type": "string", "description": "解封原由/说明"},
+            },
+            "required": ["memory_id"],
+        },
+    },
     "checkpoint_write": {
         "description": "底本：写入五段会话快照（在做/下一步/工作区/决策/待办），下次会话启动注入",
         "inputSchema": {
@@ -2074,6 +2141,8 @@ TOOL_HANDLERS = {
     "causal_trace": handle_causal_trace,
     "event_timeline": handle_event_timeline,
     "get_xuanjing_graph": handle_get_xuanjing_graph,
+    "memory_archived_search": handle_memory_archived_search,
+    "memory_unarchive": handle_memory_unarchive,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

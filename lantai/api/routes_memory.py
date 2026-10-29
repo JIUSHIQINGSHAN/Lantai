@@ -1,5 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime
 
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from lantai.cognition.chenfeng import search_archived_memories, unarchive_memory_entry
 from lantai.core.auth import Principal, get_current_user
 from lantai.models.schemas import AddMemoryReq, RawMemoryReq
 from lantai.services.memory_service import (
@@ -12,6 +16,10 @@ from lantai.services.memory_service import (
 )
 
 router = APIRouter()
+
+
+class UnarchiveReq(BaseModel):
+    reason: str = ""
 
 
 @router.post("/add")
@@ -104,3 +112,47 @@ def list_memories_route(
         )
     except ValueError as e:
         raise HTTPException(422, str(e))
+
+
+@router.get("/memories/archived")
+def search_archived_memories_route(
+    query: str = "",
+    lane: str = "",
+    scene: str = "",
+    time_from: datetime | None = None,
+    time_to: datetime | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    ctx: Principal = Depends(get_current_user),
+):
+    """尘封（Chenfeng · 归档记忆专栏检索）：只读分页与过滤。受行级租户安全保护。"""
+    try:
+        return search_archived_memories(
+            query=query,
+            lane=lane,
+            scene=scene,
+            time_from=time_from,
+            time_to=time_to,
+            limit=limit,
+            offset=offset,
+            principal=ctx,
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@router.post("/memories/{memory_id}/unarchive")
+def unarchive_memory_route(
+    memory_id: str,
+    req: UnarchiveReq | None = None,
+    ctx: Principal = Depends(get_current_user),
+):
+    """尘封·解封恢复：archived -> active。严格校验属主与分轨权限，恢复全文与向量索引。"""
+    reason = req.reason if req else ""
+    res = unarchive_memory_entry(memory_id=memory_id, reason=reason, principal=ctx)
+    if not res.get("ok"):
+        error_msg = res.get("error", "unarchive failed")
+        if error_msg == "memory not found":
+            raise HTTPException(status_code=404, detail="memory not found")
+        raise HTTPException(status_code=409, detail=error_msg)
+    return res
