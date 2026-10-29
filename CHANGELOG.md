@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-10-30 - 润物（Runwu · 自适应认知中间件与无感上下文装载）
+
+> 版本代号「润物」：出自唐代杜甫《春夜喜雨》「随风潜入夜，润物细无声」——对应本版主题「核心认知自适应装载引擎 RunwuEngine、认知切面紧凑萃取与 ASGI / MCP / HTTP 全链路自适应护航」：打破 Agent 每次都需要显式主动调用复杂检索工具才能获取指导规则与历史教训的局限，构建自适应认知装载引擎 `RunwuEngine`（票 01），实现无感护航与零网络阻塞的轻量抽取；打通 `GET /cognitive/summary` REST 端点、MCP 工具 `cognitive_summary`（工具池扩充至 70 个且 1:1 双向一致）与 `CognitiveMiddleware` ASGI 中间件自适应注入（票 02，自动解析请求任务并在响应头 `X-Cognitive-Context` 注入 Base64 编码紧凑认知摘要）。安全防护：全流程通过「樊篱」（`wrap_as_data`）数据围栏包裹（OWASP LLM01 防护），预算安全截断并自动补齐闭合标签；支持 `tenant_id` + `user_id` 双重收窄，跨租户 0 泄漏，非 admin 严格归属隔离。票据 `.scratch/v0.39-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心认知自适应装载引擎 RunwuEngine（票 01，详见 `lantai/runtime/runwu.py` 与 `tests/test_runwu_engine_smoke.py`）**：
+  - 核心装载引擎：提供 `RunwuEngine` 与 `RunwuSummary` 数据载体，支持规则（`rules`）、历史教训（`failures`）与主动求证探针（`probes`，联动探颐 `TanyiEngine`）三维紧凑萃取与格式化；
+  - 纯内存与零外部阻塞：纯 SQL 检索与词面相关度排序，无大模型或外部网络阻塞风险（宁 miss 不脏写）；
+  - 字符预算安全控制：支持 `char_budget`（默认 350 字以内）预算控制与文本截断，自动校验并补齐樊篱闭合标签（`</memory_data>`），杜绝注入逃逸风险；
+  - 严格租户隔离：支持 `tenant_id` + `user_id` 双重隔离，跨租户跨用户数据零泄漏；
+  - 门面兼容（ADR-0001）：`lantai/runtime/middleware.py` 的 `build_cognitive_summary` 代理至 `RunwuEngine`，在 `lantai/runtime/__init__.py` 导出相关组件；
+  - 交付端到端不 mock 冒烟测试 `tests/test_runwu_engine_smoke.py`（4 个独立接缝验证）。
+- **润物 API、MCP 工具集成与 ASGI 自适应注入中间件（票 02，详见 `lantai/api/routes_cognitive.py`、`lantai/cli/mcp.py`、`lantai/runtime/middleware.py` 与 `tests/test_runwu_api_smoke.py`）**：
+  - HTTP REST 路由：升级 `GET /cognitive/summary`，支持任务提取并导出结构化认知（rules / failures / probes / summary 紧凑文本 / char_count），保持 v0.4 字段向后兼容；
+  - MCP 工具池升级：注册 `cognitive_summary`，工具总数扩充至 70 个，广告与分发字典 1:1 双向一致（`tests/test_mcp.py` 计数与 parity 守卫同步更新）；
+  - ASGI 自适应中间件升级：`CognitiveMiddleware` 支持从 `X-Task` 请求头自适应提取任务上下文（支持 URL 解码），并在响应头自动注入 Base64 编码认知摘要 `X-Cognitive-Context`；
+  - 交付端到端不 mock 冒烟测试 `tests/test_runwu_api_smoke.py`（HTTP、MCP、ASGI 3 个独立接缝）。
+
 ## [0.38.0] - 2026-10-30 - 探颐（Tanyi · 存储驱动主动探针与自然交互消歧）
 
 > 版本代号「探颐」：《易·系辞上》「探赜索隐，钩深致远」——对应本版主题「存储驱动主动探针巡检与归属安全收窄（ADR-0037 延伸落地）」：v0.34 的探颐插桩引擎（`TanyiProbingEngine`）依赖检索召回命中才生成探针，未命中的未决冲突与模糊事实长期沉没。本版新增存储驱动主动巡检引擎 `TanyiEngine`（票 01），直接扫描归属范围内未决冲突（`ConflictEvent` open）与低置信度模糊事实（`confidence < 0.6`，最模糊优先），输出结构化探针候选 `TanyiProbeItem` 并生成自然对话追问 `generate_clarification_prompts`（冲突探针同时呈现新旧主张，便于用户裁决）；打通 `POST /cognition/tanyi/probe` REST 端点、MCP 工具 `memory_tanyi_probe`（工具池扩充至 69 个且广告/分发 1:1 双向一致）与 `CognitiveContext.clarification_probes` 认知上下文切面（票 02，樊篱围栏专化渲染）。归属安全：非 admin 按 `tenant_id` + `user_id` 双重过滤，同租户跨属主零泄漏，NULL 属主老行不可见——探针把正文渲染成问句直达用户，是比列表更直接的泄漏面，贯彻「宁 miss 不脏写」。票据 `.scratch/v0.38-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
