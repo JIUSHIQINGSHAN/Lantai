@@ -1533,6 +1533,17 @@ def handle_dossier_focus(params: dict) -> dict:
     )
 
 
+def handle_zhishu_check(params: dict) -> dict:
+    """直书：对输入文本执行确定性规则匹配分析（v0.43 ADR-0064）。"""
+    text = params.get("text", "")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("text must be a non-empty string")
+
+    from lantai.services.zhishu_service import match_zhishu_service
+
+    return match_zhishu_service(text)
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2452,6 +2463,16 @@ TOOLS = {
             "required": ["dossier_id"],
         },
     },
+    "zhishu_check": {
+        "description": "直书：预判与检测文本是否命中白名单确定性直写规则（自我声明/偏好/程序约束/参数配置/显式备忘，v0.43 ADR-0064）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "待检测的自然语言文本"},
+            },
+            "required": ["text"],
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2530,6 +2551,7 @@ TOOL_HANDLERS = {
     "conflict_deep_arbitrate": handle_conflict_deep_arbitrate,
     "dossier_create": handle_dossier_create,
     "dossier_focus": handle_dossier_focus,
+    "zhishu_check": handle_zhishu_check,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

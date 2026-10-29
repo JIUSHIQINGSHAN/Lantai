@@ -35,6 +35,7 @@ from .routes_tree import router as routes_tree_router
 from .routes_ui import router as routes_ui_router
 from .routes_verification import router as routes_verification_router
 from .routes_work_items import router as routes_work_items_router
+from .routes_zhishu import router as routes_zhishu_router
 
 __all__ = [
     "routes_cognitive_router",
@@ -71,4 +72,5 @@ __all__ = [
     "routes_terminal_router",
     "routes_tanyi_router",
     "routes_admin_router",
+    "routes_zhishu_router",
 ]

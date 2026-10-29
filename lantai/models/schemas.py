@@ -258,3 +258,9 @@ class DossierCloseReq(BaseModel):
 
     summary: str = ""
     archived: bool = False
+
+
+class ZhishuMatchReq(BaseModel):
+    """直书规则匹配诊断请求。"""
+
+    text: str = Field(min_length=1, max_length=10000, description="待检测文本")
