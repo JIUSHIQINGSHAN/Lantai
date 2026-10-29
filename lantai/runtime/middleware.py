@@ -24,47 +24,40 @@ def _rid(item) -> str | None:
     return getattr(item, "id", None)
 
 
-def build_cognitive_summary(task: str, max_rules: int = 2, max_failures: int = 1) -> str:
+def build_cognitive_summary(
+    task: str,
+    max_rules: int = 2,
+    max_failures: int = 1,
+    user_id: str | None = None,
+    tenant_id: str | None = None,
+    max_probes: int = 1,
+    char_budget: int = 350,
+) -> str:
     """
-    根据 task 描述生成认知摘要字符串（纯文本）。
+    根据 task 描述生成自适应认知摘要字符串（纯文本，基于润物 RunwuEngine）。
 
     返回格式：
-    "相关规则: [rule1] | 已知失败: [failure1.lesson]"
+    "相关规则: [rule1] | 已知教训: [failure1.lesson] | 待求证: [probe]"
     或空字符串（无认知数据时）。
 
-    不阻塞调用者：内部捕获所有异常。
+    不阻塞调用者：内部捕获所有异常（宁 miss 不脏写）。
     """
     try:
-        from lantai.cognition.context import CognitiveContextBuilder
+        from lantai.runtime.runwu import RunwuEngine
         from lantai.storage import db as db_module
 
         with db_module.get_session() as session:
-            builder = CognitiveContextBuilder(db=session)
-            ctx = builder.build(task=task, top_k=max_rules + max_failures)
-
-        parts = []
-        if ctx.rules:
-            from lantai.llm.fence import wrap_as_data
-
-            rules_texts = []
-            for r in ctx.rules[:max_rules]:
-                c = r.get("content") if isinstance(r, dict) else getattr(r, "content", "")
-                if c:
-                    rules_texts.append(wrap_as_data(str(c)[:80], item_id=_rid(r)))
-            if rules_texts:
-                parts.append(f"相关规则: {'; '.join(rules_texts)}")
-        if ctx.failures:
-            from lantai.llm.fence import wrap_as_data
-
-            f = ctx.failures[0]
-            if isinstance(f, dict):
-                lesson = f.get("content") or f.get("lesson") or ""
-            else:
-                lesson = getattr(f, "lesson", None) or getattr(f, "content", "")
-            if lesson:
-                parts.append(f"已知失败: {wrap_as_data(str(lesson)[:80], item_id=_rid(f))}")
-
-        return " | ".join(parts) if parts else ""
+            engine = RunwuEngine(db=session, default_char_budget=char_budget)
+            summary = engine.extract_summary(
+                task=task,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                max_rules=max_rules,
+                max_failures=max_failures,
+                max_probes=max_probes,
+                char_budget=char_budget,
+            )
+            return engine.format_compact(summary, budget=char_budget)
     except Exception:
         return ""
 

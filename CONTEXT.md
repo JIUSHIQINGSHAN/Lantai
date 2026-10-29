@@ -70,6 +70,7 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **起复**（Qifu，巩固撤销与碎片恢复） | 沉潜巩固的对称撤销面：输入碎片 id 则把被折叠的 consolidated 碎片恢复 active（重同步 FTS/向量 + checkpoint + 审计）；输入主记忆 id 则撤销全簇（主记忆撤回止召回 + 全部碎片起复 + 删除 supersedes 边），一个事务完成，幂等。已被普通撤回过的主记忆同样受理——补完没收尾的撤销。 | 命名：唐宋典制「夺情起复」——官员去位（丁忧）后重新起用；碎片被折叠如官员去位，恢复现役即起复；设计：见 [ADR-0052](docs/adr/0052-consolidation-revive.md) 及 `lantai/services/record_ops_service.py` |
 | **直断**（Zhiduan，裁决理由追踪） | 冲突消解引擎在仲裁新旧矛盾时生成的结构化裁决依据；清晰记录胜出方的核心评分优势与判定原因。 | 命名：直截明断、断狱有据之意；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 及 `lantai/cognition/conflicts.py` |
 | **润物**（Runwu，自适应认知中间件） | 无需 Agent 手动调工具查询、在处理链路中透明为当前请求自动装载相关规则与历史教训的注入技术。 | 命名：杜甫《春夜喜雨》「随风潜入夜，润物细无声」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 及 `lantai/runtime/middleware.py` |
+| **润物**（Runwu，版本代号） | v0.39.0 发行版本代号；寓意随风潜入夜、润物细无声，对应本版「核心认知自适应装载引擎 RunwuEngine、认知切面紧凑萃取与 ASGI / MCP / HTTP 全链路自适应护航」的主题（代号与功能同名，承 v0.19.0 沉潜、v0.22.1 起复、v0.26.0 完璧、v0.34.0 探颐、v0.36.0 尘封、v0.37.0 三省先例）。 | 命名：杜甫《春夜喜雨》「随风潜入夜，润物细无声」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
 | **吉金**（Jijin，UI 主题） | 悬镜控制台默认深色皮肤；以青铜器拓片质感为底色，点缀铜绿与鎏金纹理，体现沉稳厚重的历史感。 | 命名：古籍中对青铜彝器的尊称（《墨子》等）；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0038](docs/adr/0038-visual-management-studio.md) |
 | **漏窗**（Louchuang，UI 主题） | 悬镜控制台浅色皮肤；汲取苏州园林漏窗移步换景的意境，采用绢黄底色与月洞门造型卡片。 | 命名：苏州园林建筑构件「漏窗」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0038](docs/adr/0038-visual-management-studio.md) |
 | **缥缃**（Piaoxiang，版本代号） | v0.14.0 发行版本代号；象征古籍书卷，契合兰台为 AI 守护长期记忆档案的系统定位。 | 命名：古人对淡青与淡黄色丝帛书衣的称谓，借指书卷；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
