@@ -13,8 +13,9 @@ from sqlmodel import Session, select
 from ulid import ULID
 
 from lantai.core.logger import logger
+from lantai.core.settings import settings
 from lantai.core.time import utcnow
-from lantai.models.tables import ConflictEvent, MemoryCheckpoint, MemoryItem
+from lantai.models.tables import ConflictEvent, FactAtomic, MemoryCheckpoint, MemoryItem
 from lantai.services.record_ops_service import sync_vector_upsert
 from lantai.storage import db
 from lantai.storage.fts import sync_fts
@@ -57,12 +58,15 @@ _NEGATIVE_PATTERNS = [
 
 
 def detect_memory_probes(
-    query: str,
+    query: str | None = None,
     session_id: str | None = None,
     session: Session | None = None,
     principal=None,
+    *,
+    db_session: Session | None = None,
+    memory_ids: list[str] | None = None,
 ) -> list[dict]:
-    """扫描未决冲突账本，检测与当前查询相关的冲突事实，生成主动求证探针。
+    """扫描未决冲突账本与模糊置信度事实，生成主动求证探针（ADR-0037 探颐）。
 
     归属收窄（票 .scratch/readside-gaps/07 修法口径 4）：此前
     `select(ConflictEvent).where(status=="open")` 全表捞，把别人的
@@ -78,11 +82,18 @@ def detect_memory_probes(
     `principal=None`（`cli/mcp.py` 的 `handle_probe_detect`）不加过滤，
     与改动前逐字一致。
     """
-    clean_q = query.strip()
-    if not clean_q:
+    if not settings.ENABLE_PROACTIVE_PROBING:
         return []
 
-    tokens = set(w.strip() for w in jieba.lcut(clean_q) if len(w.strip()) >= 2)
+    active_session = db_session if db_session is not None else session
+
+    clean_q = (query or "").strip()
+    if not clean_q and not memory_ids:
+        return []
+
+    tokens = (
+        set(w.strip() for w in jieba.lcut(clean_q) if len(w.strip()) >= 2) if clean_q else set()
+    )
 
     def _visible(s: Session, conf: ConflictEvent) -> bool:
         """冲突对当前 principal 是否可见（过渡到挂载记忆的属主）。"""
@@ -109,12 +120,14 @@ def detect_memory_probes(
             existing_content = item.content if item else ""
             incoming_ref = conf.incoming_ref or ""
 
-            # 判断当前查询是否涉及冲突的主题词
+            # 判断当前查询是否涉及冲突的主题词，或指定了 memory_ids
             all_text = f"{existing_content} {incoming_ref}"
             text_tokens = set(w.strip() for w in jieba.lcut(all_text) if len(w.strip()) >= 2)
 
-            # 如果查询词与冲突内容有交集，或者查询直接命中实体
-            if not tokens or (tokens & text_tokens):
+            match_query = (not tokens) or bool(tokens & text_tokens)
+            match_memory_id = bool(memory_ids and conf.memory_id in memory_ids)
+
+            if match_query or match_memory_id:
                 question = (
                     f"顺便向您求证确认下：关于「{existing_content[:30]}」，"
                     f"目前是否已变更为「{incoming_ref[:30]}」？"
@@ -127,14 +140,91 @@ def detect_memory_probes(
                         "existing_content": existing_content,
                         "incoming_ref": incoming_ref,
                         "question": question,
+                        "suggested_action": "resolve_conflict",
+                    }
+                )
+
+        # 2. 扫描临界模糊带事实/记忆（0.3 <= confidence <= 0.6）
+        # 归属过滤原则：非 admin 只探查自身属主记录
+        viewer = None
+        if principal is not None and not bool(getattr(principal, "is_admin", False)):
+            from lantai.services.work_item_service import _viewer_of
+
+            viewer = _viewer_of(principal)
+
+        # 已经生成过冲突解决探针的 memory_id 集合（优先冲突解决，不产生同条重复探针）
+        conflicted_mem_ids = {conf.memory_id for conf in open_conflicts if conf.status == "open"}
+
+        # 2a. 临界模糊记忆项（MemoryItem）
+        mem_query = (
+            select(MemoryItem)
+            .where(MemoryItem.status == "active")
+            .where(MemoryItem.confidence >= 0.3)
+            .where(MemoryItem.confidence <= 0.6)
+        )
+        if viewer:
+            mem_query = mem_query.where(MemoryItem.user_id == viewer)
+        fuzzy_memories = s.exec(mem_query).all()
+
+        for m in fuzzy_memories:
+            if m.id in conflicted_mem_ids:
+                continue
+            m_text = m.content or ""
+            m_tokens = set(w.strip() for w in jieba.lcut(m_text) if len(w.strip()) >= 2)
+            match_q = (not tokens) or bool(tokens & m_tokens)
+            match_mid = bool(memory_ids and m.id in memory_ids)
+
+            if match_q or match_mid:
+                question = f"顺便向您求证确认下：关于「{m_text[:30]}」，该事实是否准确？"
+                probes.append(
+                    {
+                        "probe_id": f"probe_{m.id}",
+                        "conflict_id": None,
+                        "memory_id": m.id,
+                        "existing_content": m_text,
+                        "incoming_ref": "",
+                        "question": question,
+                        "suggested_action": "clarify_fact",
+                    }
+                )
+
+        # 2b. 临界模糊原子事实（FactAtomic）
+        fact_query = (
+            select(FactAtomic)
+            .where(FactAtomic.confidence >= 0.3)
+            .where(FactAtomic.confidence <= 0.6)
+        )
+        if viewer:
+            fact_query = fact_query.where(FactAtomic.user_id == viewer)
+        fuzzy_facts = s.exec(fact_query).all()
+
+        for f in fuzzy_facts:
+            if f.source_memory_id and f.source_memory_id in conflicted_mem_ids:
+                continue
+            f_text = f.statement or ""
+            f_tokens = set(w.strip() for w in jieba.lcut(f_text) if len(w.strip()) >= 2)
+            match_q = (not tokens) or bool(tokens & f_tokens)
+            match_mid = bool(memory_ids and f.source_memory_id in memory_ids)
+
+            if match_q or match_mid:
+                question = f"顺便向您求证确认下：关于「{f_text[:30]}」，该事实是否属实？"
+                probes.append(
+                    {
+                        "probe_id": f"probe_{f.id}",
+                        "conflict_id": None,
+                        "memory_id": f.source_memory_id,
+                        "existing_content": f_text,
+                        "incoming_ref": "",
+                        "question": question,
+                        "suggested_action": "clarify_fact",
                     }
                 )
 
         logger.info("探颐：针对查询 '%s' 检出 %d 个主动探针", clean_q[:20], len(probes))
         return probes
 
-    if session is not None:
-        return _detect(session)
+    if active_session is not None:
+        return _detect(active_session)
     with db.get_session() as s:
         return _detect(s)
 
@@ -145,7 +235,8 @@ def format_probing_context(probes: list[dict]) -> str:
         return ""
     lines = ["【探颐·待求证事项】（若当前对话语境适宜，建议在回复末尾顺带向用户确认下述事实）："]
     for p in probes:
-        lines.append(f"- 探针提示 [ID: {p['conflict_id']}]: {p['question']}")
+        item_id = p.get("conflict_id") or p.get("probe_id")
+        lines.append(f"- 探针提示 [ID: {item_id}]: {p['question']}")
     return "\n".join(lines)
 
 

@@ -257,6 +257,9 @@ class Settings(BaseSettings):
     # ADR-0023 实质新词扩展信号：旧锚点零丢失 + 新增实质词 ≥ 此值 → update 提案
     DEDUP_EXTRA_ANCHOR_LIMIT: int = 2
 
+    # 探颐（ADR-0037 · v0.30）：主动探针与自然交互消歧机制开关
+    ENABLE_PROACTIVE_PROBING: bool = True
+
     # Shell Hook 配置
     SHELL_HOOK_TIMEOUT: int = 2  # 秒
     SHELL_HOOK_DIALOGUE_TIMEOUT: float = 30.0  # 对话写入通道超时（秒，含 LLM 提取）
