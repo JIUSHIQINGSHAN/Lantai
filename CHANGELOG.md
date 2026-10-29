@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-10-29 - 探颐（Tanyi · 探赜索隐）
+
+> 版本代号「探颐」：《易·系辞上》「探赜索隐，钩深致远」——深入探求隐微之理，对应本版主题「探颐（Tanyi · 记忆主动探针与自然交互消歧机制，ADR-0013 / ADR-0037 / docs/future-roadmap.md 方向一落地）」：改变记忆系统只被动查询的现状，构建认知层主动求证探针引擎 `TanyiProbingEngine` 与上下文插桩模型 `ProbeInsertion`，当检索召回命中未决冲突（`ConflictEvent`）或处于模糊带（`0.3 <= confidence <= 0.6`）的低置信度事实时，自动在 Prompt 中注入轻量求证探针；打通自然交互答复意图分类器 `parse_user_resolution_intent` 与自动闭环消解流水线 `execute_tanyi_resolution`，严密支持肯定（更新正文、版本递增、重置衰减分、落 `MemoryCheckpoint` 快照、同步 FTS/向量索引与解决冲突）、否定（废弃冲突保留原主张）、事实修正（提取自然输入新事实并同步索引）及模糊暧昧（保持 pending 绝不脏写），全流程严守行级 ACL 403 越权防护与多租户隔离。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.34-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **探颐认知层主动求证探针引擎与插桩服务（票 01，详见 `lantai/cognition/tanyi.py`、`lantai/cognition/__init__.py` 与 `tests/test_tanyi_probing_smoke.py`）**：
+  - 核心引擎设计：落地 `TanyiProbingEngine` 与插桩数据结构 `ProbeInsertion`，支持按 query 语义相关性及召回内容动态扫描未决冲突与模糊带记忆；
+  - 上下文插桩格式化：实现 `format_context`，生成温和自然的求证提示块，促使智能体在回复中顺带向用户求证；
+  - 租户隔离与属主防御：非管理员严格限制仅能看见同租户且属于自身的记忆与未决冲突探针；
+  - 交付端到端不 mock 冒烟测试 `tests/test_tanyi_probing_smoke.py`。
+- **自然交互答复解析与自动 conflict_resolve 闭环（票 02，详见 `lantai/cognition/tanyi.py`、`lantai/cognition/__init__.py` 与 `tests/test_tanyi_resolution_smoke.py`）**：
+  - 自然语言意图分类器：实现 `parse_user_resolution_intent`，严谨区分肯定（`AFFIRMATIVE`）、否定（`NEGATIVE`）、新事实修正（`CORRECTION`）与模糊暧昧（`AMBIGUOUS`）；
+  - 自动消歧闭环流水线：实现 `execute_tanyi_resolution`，肯定意图原子化采纳新事实并落 `MemoryCheckpoint` 快照、递增版本并强一致同步全文/向量索引；否定意图标记 `dismissed` 保留原状；修正意图精准提取用户纠正的新文本写入；模糊意图执行推迟，绝不脏写；
+  - 严格权限校验：调用 `ensure_can_delete` 验证行级属主与租户，非属主越权消解严密抛出 403 阻断；
+  - 交付端到端不 mock 冒烟测试 `tests/test_tanyi_resolution_smoke.py`。
+
 ## [0.33.0] - 2026-10-29 - 悬镜（Xuanjing · 记忆星图观测台）
 
 > 版本代号「悬镜」：《旧唐书·魏徵传》「以铜为镜，可以正衣冠；以古为镜，可以知兴替；以人为镜，可以明得失」——高悬明镜，照见万物脉络与因果溯源，对应本版主题「3D 神经元记忆星图与可视化观测台（ADR-0013 / ADR-0059 / docs/future-roadmap.md 方向四落地）」：构建记忆星图拓扑聚合服务 `xuanjing_service.py`，抽取节点活跃引力质心（`weight`）与艾宾浩斯时效衰减率（`decay_score`），融合格物因果拓扑边（`causes` / `leads_to` / `triggered_by`）与关联边（`supports` / `refines` / `contradicts` / `supersedes`），并按记忆场景星系（`MemoryScene`）与分轨（`lane`）聚合聚簇；坚守多租户行级安全边界，支持同袍联邦公共知识殿堂（`swarm_shared`）记忆的继承透视；在 REST API（`GET /graph/xuanjing`）与 MCP 工具池（`get_xuanjing_graph`，工具池扩充至 64 个）全面暴露；在 Lantai Web Studio 控制台（`lantai/api/ui/`）集成专有「悬镜星图」观测台面板（`#xuanjingView` 与 `xuanjing.js`），支持 D3 力导向仿真天体投射、恒星衰减高斯光晕滤镜、格物因果火橙连线、多维过滤检索与抽屉式节点深度透视，适配吉金与漏窗双主题。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7、[ADR-0059](docs/adr/0059-xuanjing-memory-topology-service.md) 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.33-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
