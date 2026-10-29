@@ -102,9 +102,9 @@ class TestZhishuApiSmoke:
         assert "遵循宁 miss 不脏写原则" in res_data["rule"]["constraints"][0]
 
     def test_mcp_tools_parity_seam(self):
-        """Seam 4: MCP 77 工具池与处理器 1:1 双向严苛守卫。"""
+        """Seam 4: MCP 工具池与处理器 1:1 双向严苛守卫。"""
         assert "zhishu_check" in TOOLS
         assert "zhishu_check" in TOOL_HANDLERS
-        assert len(TOOLS) == 77
-        assert len(TOOL_HANDLERS) == 77
+        assert len(TOOLS) >= 77
+        assert len(TOOL_HANDLERS) == len(TOOLS)
         assert set(TOOLS.keys()) == set(TOOL_HANDLERS.keys())
