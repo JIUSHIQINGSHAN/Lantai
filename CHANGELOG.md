@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-10-30 - 直书（Zhishu · 确定性高频句型直写引擎与多轨规则矩阵）
+
+> 版本代号「直书」：出自《左传·成公七年》「史氏秉笔直书，不隐不讳」与《左传·襄公二十五年》董狐秉笔直书之典——对应本版主题「高频确定性事实零 Token 秒级直写、程序铁律硬性纳管与多轨语义分流，ADR-0064 落地」：突破既有 `lantai/parsing/fastpath.py` 仅 3 组初等正则且结构扁平的局限，构建面向生产环境的高精确定性规则引擎 `ZhishuEngine`（票 01）。支持 Fact（身份自称/职业/居所）、Preference（喜好/厌恶/习惯）、Constraint/Procedural（绝对铁律禁令/务必义务，强制 `lane="rule"` 且 `decay_class="procedural"` 永不衰减）、Config（系统配置/参数赋值结构化键值对）、General（显式备忘记录）五大核心分轨；全轨落实「宁 miss 不脏写」纪律，严苛过滤问句句尾（`?`、`吗`、`呢`等）与复合转折干扰词（`虽然`、`但是`、`如果`、`有人说`等），低置信或复杂语境零误判、安全回退大模型提取；原 `fastpath.py` 演化为 100% 向后兼容门面，既有历史测试逐字不改平滑通过。打通服务层 `zhishu_service.py`、HTTP REST 调试端点（`POST /parsing/zhishu/match`，带 `ZhishuMatchReq` 模式校验）、MCP 工具（`zhishu_check`，工具池扩充至 77 个且 1:1 双向一致）（票 02）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.43-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心直书确定性规则直写引擎 ZhishuEngine（票 01，详见 `lantai/parsing/zhishu.py`、`lantai/parsing/fastpath.py` 与 `tests/test_zhishu_engine_smoke.py`）**：
+  - 五大分轨确定性抽取：Fact（自称/职业/居所）、Preference（喜好/偏爱/习惯）、Constraint（严禁/禁止/务必/切勿/必须）、Config（参数配置/键值映射）、General（显式备忘）；
+  - 程序性约束永不衰减：Constraint 轨道提取直接标记 `decay_class="procedural"` 与 `lane="rule"`，确保安全守则与操作铁律免受 Ebbinghaus 遗忘周期降权；
+  - 宁 miss 不脏写守卫（Negative Guard）：问句结尾与复合转折从句快速熔断拒判，精度指标 ≥95%；
+  - 100% 向后兼容门面：`lantai/parsing/fastpath.py` 无缝转调 `ZhishuEngine`，历史下游 `memory_service` 与 `dialogue.py` 零适配开销；
+  - 交付端到端不 mock 冒烟测试 `tests/test_zhishu_engine_smoke.py`（7 个独立测试用例验证）。
+- **直书 API、MCP 工具集成与规则直写诊断端点（票 02，详见 `lantai/services/zhishu_service.py`、`lantai/api/routes_zhishu.py`、`lantai/models/schemas.py`、`lantai/cli/mcp.py` 与 `tests/test_zhishu_api_smoke.py`）**：
+  - 服务层下沉：新增 `match_zhishu_service`，返回统一格式的规则匹配诊断契约 `{"matched": bool, "text": str, "rule": dict | None}`；
+  - HTTP REST 路由：新增 `POST /parsing/zhishu/match` 诊断路由，挂载至 `app.py` 鉴权路由组；
+  - MCP 工具池升级：注册 `zhishu_check` 工具，系统 MCP 工具总数扩充至 77 个，广告与分发字典 1:1 双向一致（`tests/test_mcp.py` 计数与 parity 守卫全绿）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_zhishu_api_smoke.py`（服务层、REST 端点、MCP 协议往返与 77 工具池对齐 4 个独立接缝验证）。
+
 ## [0.42.0] - 2026-10-30 - 卷宗（Juanzong · 长程复杂任务场景聚合与目标上下文锚定）
 
 > 版本代号「卷宗」：出自唐代白居易《新乐府》「卷宗堆案墨翻盆」——对应本版主题「长程多轮复杂工程任务情境聚合、战略目标与阶段里程碑状态追踪、动态记忆情境聚焦与樊篱安全防御，ADR-0063 落地」：突破既有 ADR-0012 纯弱聚类 `MemoryScene` 的无状态局限，构建面向复杂多轮长程任务（如系统重构、排障演练、技术攻坚）的「情境卷宗实体（Dossier）」、「任务里程碑追踪（Milestones）」与「动态情境记忆聚焦（Dossier Context Focusing）」。核心认知引擎 `JuanzongEngine`（票 01）支持卷宗完整生命周期 CRUD、任务里程碑状态推进（`pending`/`in_progress`/`done`）与笔记追踪、记忆项保序幂等绑定/解绑、结案纪要沉淀，并基于中文 2-gram 与整词重叠优化情境聚焦检索；打通服务层 `dossier_service.py`、HTTP REST 端点（`POST /dossiers`、`GET /dossiers`、`POST /dossiers/{id}/bind`、`POST /dossiers/{id}/milestones`、`POST /dossiers/{id}/focus` 等）、MCP 工具（`dossier_create` 与 `dossier_focus`，工具池扩充至 76 个且 1:1 双向一致）与认知上下文 `CognitiveContext`（票 02，卷宗切面置顶呈现，案名、目标愿景、里程碑笔记与记忆内容全部强制经过樊篱 `<memory_data>` 防御包裹）。全链路严格实施行级租户安全隔离与「宁 miss 不脏写」纪律。票据 `.scratch/v0.42-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
