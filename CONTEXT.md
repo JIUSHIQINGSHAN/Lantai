@@ -57,7 +57,7 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **贯珠**（Guanzhu，图谱二度联想） | 沿着实体关系图谱展开一至两步跳跃扩散的联想检索；能跨越字面局限，顺藤摸瓜检索出隐藏的关联知识。 | 命名：《汉书·景十三王传》「如贯珠焉」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0035](docs/adr/0035-graph-association-retriever.md) |
 | **沉潜**（Chenqian，闲时折叠压缩） | 模仿人脑睡眠巩固机制；在闲时对同场景的高密度碎片记忆进行归纳折叠生成总括记忆，并修剪深度衰减噪音。 | 命名：《荀子》「沉潜以思」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0036](docs/adr/0036-sleep-memory-consolidation.md) |
 | **探颐**（Tanyi，主动探针） | 当检测到记忆存在模糊或冲突时，在对话回复中主动发起自然提问向用户求证，并在次轮自动闭环解决冲突。 | 命名：《易·系辞上》「探赜索隐，钩深致远」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0037](docs/adr/0037-proactive-memory-probing.md) |
-| **悬镜**（Xuanjing，可视化控制台） | 兰台系统的全功能单页 Web 管理中台（Lantai Studio），提供待办审批、人格编辑、检索演练与星图总览。 | 命名：宝镜高悬、洞烛幽微之意；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0038](docs/adr/0038-visual-management-studio.md) |
+| **悬镜**（Xuanjing，可视化控制台） | 兰台系统的全功能单页 Web 管理中台（Lantai Studio）与 3D/力导向记忆拓扑观测台，提供待办审批、检索演练与神经元记忆星图聚合。 | 命名：宝镜高悬、洞烛幽微之意；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0038](docs/adr/0038-visual-management-studio.md) 与 [ADR-0059](docs/adr/0059-xuanjing-memory-topology-service.md) |
 | **持节**（Chijie，智能体自主审批） | 赋予受信任的外部 AI 智能体自主治理记忆库的协议规范；支持智能体自动巡检、批量审批候选与清理噪音。 | 命名：汉唐典制天子特使「持节」巡行决断；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0039](docs/adr/0039-agent-autonomous-triage.md) |
 | **认知闭环**（Cognitive Loop） | 从任务失败记录中归纳经验、沉淀出新信念与规则，并在后续类似任务中自动生效的自主学习机制。 | 命名：认知心理学与 Agent 学习机制命名；设计：见 `docs/benchmarks/behavioral-learning-benchmark.md` |
 | **司天**（Sitian，运行监控面板） | 系统后台健康度与性能的统一监测大盘；集中掌控进程状态、存储容量、记忆吞吐、任务调度及告警事件。 | 命名：古代观测天象、预报灾异的官署「司天监」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0045](docs/adr/0045-sitian-ops-monitor-panel.md) |

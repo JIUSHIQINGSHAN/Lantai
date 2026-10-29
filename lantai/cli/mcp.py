@@ -1064,6 +1064,25 @@ def handle_graph_view(params: dict) -> dict:
     return get_graph(limit, principal=_principal_from_params(params))
 
 
+def handle_get_xuanjing_graph(params: dict) -> dict:
+    """悬镜记忆星图（ADR-0059，只读）：3D 神经元拓扑与力导向图数据聚合。"""
+    from lantai.services.xuanjing_service import get_xuanjing_graph
+
+    limit = params.get("limit", 250)
+    if not isinstance(limit, int) or limit < 1 or limit > 1000:
+        raise ValueError("limit must be an integer between 1 and 1000")
+    scene_id = params.get("scene_id")
+    lane = params.get("lane")
+    include_archived = bool(params.get("include_archived", False))
+    return get_xuanjing_graph(
+        limit=limit,
+        scene_id=scene_id,
+        lane=lane,
+        include_archived=include_archived,
+        principal=_principal_from_params(params),
+    )
+
+
 def handle_recall_chain(params: dict) -> dict:
     """记忆广播链（只读）：seed 记忆逐层触发关联记忆（烽燧相传）。"""
     from lantai.ops.recall_chain import build_recall_chain, validate_chain_params
@@ -1898,6 +1917,22 @@ TOOLS = {
             "required": ["q"],
         },
     },
+    "get_xuanjing_graph": {
+        "description": "悬镜记忆星图（ADR-0059，只读）：3D 神经元拓扑与力导向图数据聚合（含衰减度、质量引力、格物因果边与同袍共享知识）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "default": 250, "description": "最大节点数 [1, 1000]"},
+                "scene_id": {"type": "string", "description": "限定场景 ID（可选）"},
+                "lane": {"type": "string", "description": "限定泳道（可选）"},
+                "include_archived": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "是否包含已归档记忆",
+                },
+            },
+        },
+    },
     "checkpoint_write": {
         "description": "底本：写入五段会话快照（在做/下一步/工作区/决策/待办），下次会话启动注入",
         "inputSchema": {
@@ -2038,6 +2073,7 @@ TOOL_HANDLERS = {
     "scratchpad_write": handle_scratchpad_write,
     "causal_trace": handle_causal_trace,
     "event_timeline": handle_event_timeline,
+    "get_xuanjing_graph": handle_get_xuanjing_graph,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

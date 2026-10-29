@@ -4,10 +4,11 @@
 兰台用自家 MemoryEdge + scene 归属，不引入作者的四类节点概念。
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from lantai.core.auth import Principal, get_current_user
 from lantai.ops.graph import get_graph, validate_graph_limit
+from lantai.services.xuanjing_service import get_xuanjing_graph
 
 router = APIRouter()
 
@@ -20,3 +21,21 @@ def graph_route(limit: int = 150, principal: Principal = Depends(get_current_use
     except ValueError as e:
         raise HTTPException(422, str(e))
     return get_graph(limit, principal=principal)
+
+
+@router.get("/graph/xuanjing")
+def xuanjing_graph_route(
+    limit: int = Query(250, ge=1, le=1000, description="最大节点数"),
+    scene_id: str | None = Query(None, description="限定场景 ID"),
+    lane: str | None = Query(None, description="限定泳道"),
+    include_archived: bool = Query(False, description="是否包含归档记忆"),
+    principal: Principal = Depends(get_current_user),
+) -> dict:
+    """悬镜记忆星图（ADR-0059）：3D 神经元拓扑与力导向图数据聚合端点。"""
+    return get_xuanjing_graph(
+        limit=limit,
+        scene_id=scene_id,
+        lane=lane,
+        include_archived=include_archived,
+        principal=principal,
+    )
