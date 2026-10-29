@@ -83,6 +83,7 @@ def run_crystal_detect_once(
     if not dry_run:
         owner = getattr(principal, "user_id", None)
         tenant = getattr(principal, "tenant_id", None)
+        agent_id = getattr(principal, "agent_id", None)
         with db.get_session() as s:
             for cand in candidates[: settings.CRYSTAL_MAX_DAILY]:
                 existing = s.exec(
@@ -103,6 +104,9 @@ def run_crystal_detect_once(
                             id=new_id("crystal"),
                             user_id=owner,
                             tenant_id=tenant,
+                            agent_id=agent_id,
+                            source_agent_id=agent_id,
+                            shared_scope="private",
                             **cand,
                         )
                     )
@@ -136,7 +140,11 @@ def _crystal_scope(principal):
     viewer = _viewer_of(principal)
     if viewer == SYSTEM_VIEWER:
         return None
-    return (SkillCrystal.user_id == viewer) | (SkillCrystal.user_id.is_(None))
+    # 同袍（ADR-0058）：公共殿堂结晶或同属主结晶放行
+    scope = (SkillCrystal.user_id == viewer) | (SkillCrystal.user_id.is_(None))
+    if hasattr(SkillCrystal, "shared_scope"):
+        scope = scope | (SkillCrystal.shared_scope == "swarm_shared")
+    return scope
 
 
 def list_crystals(status: str = "candidate", limit: int = 50, principal=None) -> dict:

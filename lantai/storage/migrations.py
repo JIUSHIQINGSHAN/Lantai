@@ -661,7 +661,7 @@ def _migrate_v34(conn) -> None:
 
 
 def _migrate_v35(conn) -> None:
-    """v34 -> v35: memoryitem 补齐 shared_scope 列（同袍 ADR-0058：多智能体记忆联邦与公共知识殿堂）。"""
+    """v34 -> v35: memoryitem 补齐 shared_scope 列，skillcrystal 补齐 shared_scope / success_count / source_agent_id（同袍 ADR-0058：多智能体记忆联邦与公共知识殿堂）。"""
     if conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memoryitem'"
     ).fetchone():
@@ -673,7 +673,28 @@ def _migrate_v35(conn) -> None:
             )
         except Exception as exc:
             logger.warning("迁移 v35 索引创建跳过: %s", exc)
-    logger.info("Migrated v35: memoryitem 补齐 shared_scope 字段与索引（同袍记忆联邦）")
+
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='skillcrystal'"
+    ).fetchone():
+        if not _has_column(conn, "skillcrystal", "shared_scope"):
+            conn.execute("ALTER TABLE skillcrystal ADD COLUMN shared_scope TEXT DEFAULT 'private'")
+        if not _has_column(conn, "skillcrystal", "success_count"):
+            conn.execute("ALTER TABLE skillcrystal ADD COLUMN success_count INTEGER DEFAULT 0")
+        if not _has_column(conn, "skillcrystal", "source_agent_id"):
+            conn.execute("ALTER TABLE skillcrystal ADD COLUMN source_agent_id TEXT")
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_skillcrystal_shared_scope ON skillcrystal (shared_scope)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_skillcrystal_source_agent_id ON skillcrystal (source_agent_id)"
+            )
+        except Exception as exc:
+            logger.warning("迁移 v35 skillcrystal 索引创建跳过: %s", exc)
+    logger.info(
+        "Migrated v35: memoryitem 与 skillcrystal 补齐 shared_scope 等字段与索引（同袍记忆联邦）"
+    )
 
 
 MIGRATIONS = [

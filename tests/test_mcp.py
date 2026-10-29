@@ -32,8 +32,8 @@ def test_tools_list():
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
     assert (
-        len(resp["result"]["tools"]) == 62
-    )  # 包含格物（causal_trace + event_timeline）共 62 个工具
+        len(resp["result"]["tools"]) == 63
+    )  # 包含格物与同袍（causal_trace + event_timeline + crystal_promote）共 63 个工具
     assert "persona_get" in names
     assert "persona_set" in names
     assert "cognitive_context" in names

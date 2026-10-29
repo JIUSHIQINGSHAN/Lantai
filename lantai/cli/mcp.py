@@ -974,6 +974,31 @@ def handle_crystal_decide(params: dict) -> dict:
     )
 
 
+def handle_crystal_promote(params: dict) -> dict:
+    """同袍（ADR-0058）：将技能结晶晋升发布至公共知识殿堂（swarm_shared）。"""
+    crystal_id = params.get("crystal_id", "")
+    steps = params.get("steps", []) or []
+    min_success_count = params.get("min_success_count", 1)
+    if not isinstance(crystal_id, str) or not crystal_id.strip():
+        raise ValueError("crystal_id must be a non-empty string")
+    if not isinstance(steps, list) or not all(isinstance(x, str) for x in steps):
+        raise ValueError("steps must be a list of strings")
+    if (
+        not isinstance(min_success_count, int)
+        or isinstance(min_success_count, bool)
+        or min_success_count < 0
+    ):
+        raise ValueError("min_success_count must be a non-negative int")
+    from lantai.evolution.crystal_promoter import promote_crystal
+
+    return promote_crystal(
+        crystal_id,
+        steps=steps,
+        min_success_count=min_success_count,
+        principal=_principal_from_params(params),
+    )
+
+
 def handle_reflect_run(params: dict) -> dict:
     """执行一轮反思：健康扫描 -> 提案 -> 裁决（高置信 auto-apply，中风险落 pending，宁 miss 不脏写）。
 
@@ -1767,6 +1792,26 @@ TOOLS = {
             "required": ["crystal_id", "approve"],
         },
     },
+    "crystal_promote": {
+        "description": "同袍（ADR-0058）：将技能结晶晋升发布至公共知识殿堂（swarm_shared），全群组智能体自动继承",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "crystal_id": {"type": "string", "description": "技能结晶 ID"},
+                "steps": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "执行步骤列表（可选，未传时自 procedure 抽取）",
+                },
+                "min_success_count": {
+                    "type": "integer",
+                    "default": 1,
+                    "description": "最低验证成功门槛（默认 1）",
+                },
+            },
+            "required": ["crystal_id"],
+        },
+    },
     "reflect_run": {
         "description": "执行一轮反思：健康扫描 -> 提案 -> 裁决（高置信 auto-apply，中风险落 pending，宁 miss 不脏写）",
         "inputSchema": {"type": "object", "properties": {}},
@@ -1979,6 +2024,7 @@ TOOL_HANDLERS = {
     "crystals_list": handle_crystals_list,
     "crystals_detect": handle_crystals_detect,
     "crystal_decide": handle_crystal_decide,
+    "crystal_promote": handle_crystal_promote,
     "reflect_run": handle_reflect_run,
     "mem_usage": handle_mem_usage,
     "core_memory_get": handle_core_memory_get,

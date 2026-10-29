@@ -184,6 +184,13 @@ class CrystalDecideReq(BaseModel):
     reason: str = ""
 
 
+class CrystalPromoteReq(BaseModel):
+    """技能结晶跨 Agent 晋升至公共殿堂请求（同袍 ADR-0058）。"""
+
+    steps: list[str] = []
+    min_success_count: int = 1
+
+
 class ConflictResolveReq(BaseModel):
     """冲突事件人工裁决（ADR-0010）：理由走 body，避免中文长文本进 URL query。"""
 

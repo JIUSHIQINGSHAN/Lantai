@@ -9,7 +9,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from lantai.core.auth import get_current_user
-from lantai.models.schemas import CrystalDecideReq
+from lantai.evolution.crystal_promoter import promote_crystal
+from lantai.models.schemas import CrystalDecideReq, CrystalPromoteReq
 from lantai.services import crystal_service
 
 router = APIRouter()
@@ -33,6 +34,20 @@ def crystal_decide_route(crystal_id: str, req: CrystalDecideReq, ctx=Depends(get
     try:
         return crystal_service.decide_crystal(
             crystal_id, req.approve, req.steps, req.reason, principal=ctx
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@router.post("/crystals/{crystal_id}/promote")
+def crystal_promote_route(crystal_id: str, req: CrystalPromoteReq, ctx=Depends(get_current_user)):
+    """同袍（ADR-0058）：将技能结晶晋升发布至公共知识殿堂（swarm_shared）。"""
+    try:
+        return promote_crystal(
+            crystal_id,
+            steps=req.steps,
+            min_success_count=req.min_success_count,
+            principal=ctx,
         )
     except ValueError as e:
         raise HTTPException(422, str(e))

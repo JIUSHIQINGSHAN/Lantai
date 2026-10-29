@@ -112,6 +112,7 @@ def create_skill(
     steps: list[str] | None = None,
     tags: list[str] | None = None,
     principal=None,
+    shared_scope: str = "private",
 ) -> dict:
     """显式沉淀 Skill 资产（借鉴腾讯 mem:create-skill）。
 
@@ -173,6 +174,7 @@ def create_skill(
             tenant_id=tenant_id,
             user_id=user_id,
             agent_id=agent_id,
+            shared_scope=shared_scope or "private",
         )
         s.add(mem)
         s.flush()
@@ -184,6 +186,7 @@ def create_skill(
                 "memory_type": mem.memory_type,
                 "lane": getattr(mem, "lane", "general") or "general",
                 "domain": getattr(mem, "domain", "user") or "user",
+                "shared_scope": getattr(mem, "shared_scope", "private") or "private",
                 "tenant_id": getattr(mem, "tenant_id", "") or "",
                 "user_id": getattr(mem, "user_id", "") or "",
                 "session_id": getattr(mem, "session_id", "") or "",

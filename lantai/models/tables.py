@@ -346,7 +346,12 @@ class SkillCrystal(SQLModel, table=True):
     sample_keys: list = Field(default_factory=list, sa_column=Column(JSON))
     hit_count: int = 1
     candidate_count: int = 0
-    status: str = "candidate"  # candidate | approved | archived
+    success_count: int = 0  # 验证成功次数（同袍 ADR-0058）
+    source_agent_id: str | None = Field(default=None, index=True)  # 贡献者 Agent（同袍 ADR-0058）
+    shared_scope: str = Field(
+        default="private", index=True
+    )  # 同袍（ADR-0058）：private（私有结晶）/ swarm_shared（公共殿堂结晶）
+    status: str = "candidate"  # candidate | approved | archived | promoted
     decision_reason: str = ""
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

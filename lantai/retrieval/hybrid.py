@@ -1007,6 +1007,8 @@ def _keyword_fallback(
     权重归一化到 1：只使用 (W_BM25 + W_FTS + W_DECAY)。
     不触发 reranker——embedding 已不可用，rerank 大概率同样失败，保持降级可用。
     """
+    from sqlalchemy import or_
+
     p = params or RetrievalParams()
     fts_bm25_results = []
     fts_hits: set[str] = set()
@@ -1116,11 +1118,26 @@ def _keyword_fallback(
         return []
 
     def _items_cb(s):
-        return s.exec(
-            select(MemoryItem).where(
-                MemoryItem.id.in_(list(candidate_ids)), MemoryItem.status == "active"
-            )
-        ).all()
+        stmt = select(MemoryItem).where(
+            MemoryItem.id.in_(list(candidate_ids)), MemoryItem.status == "active"
+        )
+        if not bool(getattr(principal, "is_admin", False)) and not _is_system_viewer(principal):
+            viewer = getattr(principal, "user_id", None) or "default"
+            stmt = stmt.where(or_(MemoryItem.user_id == viewer, MemoryItem.user_id.is_(None)))
+            if getattr(principal, "tenant_id", None):
+                stmt = stmt.where(
+                    or_(MemoryItem.tenant_id == principal.tenant_id, MemoryItem.tenant_id.is_(None))
+                )
+            # 同袍（ADR-0058）：Agent 私有隔离与公共知识殿堂放行
+            if getattr(principal, "agent_id", None):
+                stmt = stmt.where(
+                    or_(
+                        MemoryItem.agent_id == principal.agent_id,
+                        MemoryItem.agent_id.is_(None),
+                        MemoryItem.shared_scope == "swarm_shared",
+                    )
+                )
+        return s.exec(stmt).all()
 
     items = _get_s(_items_cb)
 
