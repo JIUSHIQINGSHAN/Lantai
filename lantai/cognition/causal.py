@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from lantai.core.acl import viewer_of
 from lantai.core.logger import logger
@@ -157,3 +157,338 @@ class CausalEngine:
                 ts = item.get("timestamp") or "未知时间"
                 lines.append(f"  * [{ts}] {item.get('content')}")
         return "\n".join(lines)
+
+    def _check_node_access(self, memory_id: str) -> bool:
+        """检查调用者对节点的访问权限。"""
+        if self.principal is None or bool(getattr(self.principal, "is_admin", False)):
+            return True
+        viewer = viewer_of(self.principal)
+        with db.get_session() as s:
+            mem = s.get(MemoryItem, memory_id)
+            if mem is None or mem.status != "active":
+                return False
+            return (mem.user_id or None) in (None, viewer)
+
+    def evaluate_counterfactual(
+        self,
+        target_id: str,
+        intervened_node_id: str,
+        max_depth: int = 10,
+    ) -> dict[str, Any]:
+        """反事实因果判定：如果阻断 intervened_node_id，目标 target_id 是否仍可由其他路径达成。
+
+        返回：
+        - found: 是否找到目标且具有访问权限
+        - target_id: 目标节点 ID
+        - intervened_node_id: 被阻断的介入节点 ID
+        - is_necessary: 是否为绝对必要根因（阻断后下游完全断裂）
+        - reachable_without_node: 阻断后是否依然可达
+        - alternative_paths: 替代存活因果路径列表（若有）
+        - narrative: 自然语言解释
+        """
+        if not self._check_node_access(target_id):
+            return {
+                "found": False,
+                "target_id": target_id,
+                "intervened_node_id": intervened_node_id,
+                "is_necessary": False,
+                "reachable_without_node": False,
+                "alternative_paths": [],
+                "narrative": f"目标节点 {target_id} 不存在或无访问权限",
+            }
+
+        if target_id == intervened_node_id:
+            return {
+                "found": True,
+                "target_id": target_id,
+                "intervened_node_id": intervened_node_id,
+                "is_necessary": True,
+                "reachable_without_node": False,
+                "alternative_paths": [],
+                "narrative": f"目标节点自身即为介入阻断节点 {intervened_node_id}，阻断后直接消除。",
+            }
+
+        # 逆向搜索通往 target_id 的所有路径（忽略被介入阻断的节点）
+        # 路径由 CausalHop 字典组成
+        viewer = None
+        if self.principal is not None and not bool(getattr(self.principal, "is_admin", False)):
+            viewer = viewer_of(self.principal)
+
+        def _get_parent_hops(node: str) -> list[dict[str, Any]]:
+            hops = []
+            with db.get_session() as s:
+                # 1. node 作为 target，被其他 source causes/leads_to
+                stmt1 = select(MemoryEdge).where(
+                    MemoryEdge.target_memory_id == node,
+                    MemoryEdge.relation.in_(["causes", "leads_to"]),
+                )
+                for edge in s.exec(stmt1).all():
+                    parent_mem = s.get(MemoryItem, edge.source_memory_id)
+                    if parent_mem is not None and parent_mem.status == "active":
+                        if viewer is None or (parent_mem.user_id or None) in (None, viewer):
+                            hops.append(
+                                {
+                                    "edge_id": edge.id,
+                                    "from_id": edge.source_memory_id,
+                                    "to_id": edge.target_memory_id,
+                                    "relation": edge.relation,
+                                    "confidence": edge.confidence,
+                                }
+                            )
+                # 2. node 作为 source，triggered_by 指向前置 target
+                stmt2 = select(MemoryEdge).where(
+                    MemoryEdge.source_memory_id == node,
+                    MemoryEdge.relation == "triggered_by",
+                )
+                for edge in s.exec(stmt2).all():
+                    parent_mem = s.get(MemoryItem, edge.target_memory_id)
+                    if parent_mem is not None and parent_mem.status == "active":
+                        if viewer is None or (parent_mem.user_id or None) in (None, viewer):
+                            hops.append(
+                                {
+                                    "edge_id": edge.id,
+                                    "from_id": edge.target_memory_id,
+                                    "to_id": edge.source_memory_id,
+                                    "relation": edge.relation,
+                                    "confidence": edge.confidence,
+                                }
+                            )
+            return hops
+
+        # 收集所有不含 intervened_node_id 的有效路径
+        # BFS / DFS 逆向回溯
+        from collections import deque
+
+        queue = deque([([target_id], [])])  # (visited_nodes, path_hops)
+        surviving_paths: list[list[dict[str, Any]]] = []
+
+        while queue:
+            current_chain, current_hops = queue.popleft()
+            if len(current_hops) >= max_depth:
+                if current_hops:
+                    surviving_paths.append(list(reversed(current_hops)))
+                continue
+
+            curr_node = current_chain[-1]
+            parents = _get_parent_hops(curr_node)
+            # 过滤掉介入节点
+            valid_parents = [
+                h
+                for h in parents
+                if h["from_id"] != intervened_node_id and h["from_id"] not in current_chain
+            ]
+
+            if not valid_parents:
+                if current_hops:
+                    surviving_paths.append(list(reversed(current_hops)))
+            else:
+                for phop in valid_parents:
+                    queue.append((current_chain + [phop["from_id"]], current_hops + [phop]))
+
+        if not surviving_paths:
+            return {
+                "found": True,
+                "target_id": target_id,
+                "intervened_node_id": intervened_node_id,
+                "is_necessary": True,
+                "reachable_without_node": False,
+                "alternative_paths": [],
+                "narrative": f"反事实推演：若阻断前置节点 {intervened_node_id}，目标 {target_id} 的因果链将完全断裂，证实该节点为必要根因。",
+            }
+
+        return {
+            "found": True,
+            "target_id": target_id,
+            "intervened_node_id": intervened_node_id,
+            "is_necessary": False,
+            "reachable_without_node": True,
+            "alternative_paths": surviving_paths,
+            "narrative": f"反事实推演：即使阻断节点 {intervened_node_id}，目标 {target_id} 仍可通过 {len(surviving_paths)} 条替代路径达成。",
+        }
+
+    def project_causal_impact(
+        self,
+        node_id: str,
+        max_depth: int = 5,
+        min_confidence: float = 0.05,
+    ) -> dict[str, Any]:
+        """前瞻模拟从 node_id 出发可能引发的下游次生事件及影响面。
+
+        计算波及深度与累积置信度衰减，防环路死锁。
+        """
+        if not self._check_node_access(node_id):
+            return {
+                "found": False,
+                "start_node_id": node_id,
+                "impacted_nodes": [],
+                "max_depth_reached": 0,
+            }
+
+        viewer = None
+        if self.principal is not None and not bool(getattr(self.principal, "is_admin", False)):
+            viewer = viewer_of(self.principal)
+
+        impacted: dict[str, dict[str, Any]] = {}
+        # queue: (current_node_id, current_depth, cumulative_confidence)
+        from collections import deque
+
+        queue = deque([(node_id, 0, 1.0)])
+        visited_nodes = {node_id}
+
+        max_reached = 0
+
+        while queue:
+            curr_id, depth, cum_conf = queue.popleft()
+            if depth >= max_depth:
+                continue
+
+            # 寻找下游 causes / leads_to 边
+            with db.get_session() as s:
+                stmt = select(MemoryEdge).where(
+                    MemoryEdge.source_memory_id == curr_id,
+                    MemoryEdge.relation.in_(["causes", "leads_to"]),
+                )
+                edges = s.exec(stmt).all()
+                for edge in edges:
+                    target_mem = s.get(MemoryItem, edge.target_memory_id)
+                    if target_mem is None or target_mem.status != "active":
+                        continue
+                    if viewer is not None and (target_mem.user_id or None) not in (None, viewer):
+                        continue
+
+                    next_id = edge.target_memory_id
+                    next_conf = cum_conf * (edge.confidence or 0.5)
+                    if next_conf < min_confidence:
+                        continue
+
+                    next_depth = depth + 1
+                    max_reached = max(max_reached, next_depth)
+
+                    if (
+                        next_id not in impacted
+                        or next_conf > impacted[next_id]["cumulative_confidence"]
+                    ):
+                        impacted[next_id] = {
+                            "node_id": next_id,
+                            "content": target_mem.content,
+                            "depth": next_depth,
+                            "cumulative_confidence": next_conf,
+                            "relation": edge.relation,
+                        }
+
+                    if next_id not in visited_nodes:
+                        visited_nodes.add(next_id)
+                        queue.append((next_id, next_depth, next_conf))
+
+        sorted_impacted = sorted(
+            impacted.values(), key=lambda x: (x["depth"], -x["cumulative_confidence"])
+        )
+        return {
+            "found": True,
+            "start_node_id": node_id,
+            "impacted_nodes": sorted_impacted,
+            "max_depth_reached": max_reached,
+        }
+
+    def find_critical_causal_path(
+        self,
+        target_id: str,
+        max_depth: int = 10,
+    ) -> dict[str, Any]:
+        """在 DAG 因果网络中计算通向 target_id 的最高置信度主导关键因果路径。"""
+        if not self._check_node_access(target_id):
+            return {
+                "found": False,
+                "target_id": target_id,
+                "critical_path": [],
+                "path_confidence": 0.0,
+                "root_id": None,
+            }
+
+        viewer = None
+        if self.principal is not None and not bool(getattr(self.principal, "is_admin", False)):
+            viewer = viewer_of(self.principal)
+
+        def _get_upstream_edges(node: str) -> list[dict[str, Any]]:
+            hops = []
+            with db.get_session() as s:
+                stmt1 = select(MemoryEdge).where(
+                    MemoryEdge.target_memory_id == node,
+                    MemoryEdge.relation.in_(["causes", "leads_to"]),
+                )
+                for edge in s.exec(stmt1).all():
+                    parent_mem = s.get(MemoryItem, edge.source_memory_id)
+                    if parent_mem is not None and parent_mem.status == "active":
+                        if viewer is None or (parent_mem.user_id or None) in (None, viewer):
+                            hops.append(
+                                {
+                                    "edge_id": edge.id,
+                                    "from_id": edge.source_memory_id,
+                                    "to_id": edge.target_memory_id,
+                                    "relation": edge.relation,
+                                    "confidence": edge.confidence or 0.5,
+                                }
+                            )
+                stmt2 = select(MemoryEdge).where(
+                    MemoryEdge.source_memory_id == node,
+                    MemoryEdge.relation == "triggered_by",
+                )
+                for edge in s.exec(stmt2).all():
+                    parent_mem = s.get(MemoryItem, edge.target_memory_id)
+                    if parent_mem is not None and parent_mem.status == "active":
+                        if viewer is None or (parent_mem.user_id or None) in (None, viewer):
+                            hops.append(
+                                {
+                                    "edge_id": edge.id,
+                                    "from_id": edge.target_memory_id,
+                                    "to_id": edge.source_memory_id,
+                                    "relation": edge.relation,
+                                    "confidence": edge.confidence or 0.5,
+                                }
+                            )
+            return hops
+
+        # 遍历所有路径计算置信度乘积
+        all_paths: list[tuple[float, list[dict[str, Any]], str]] = []
+        from collections import deque
+
+        queue = deque([([target_id], [], 1.0)])
+
+        while queue:
+            visited_chain, hops_so_far, conf = queue.popleft()
+            if len(hops_so_far) >= max_depth:
+                if hops_so_far:
+                    all_paths.append((conf, list(reversed(hops_so_far)), visited_chain[-1]))
+                continue
+
+            curr = visited_chain[-1]
+            up_hops = _get_upstream_edges(curr)
+            valid_up = [h for h in up_hops if h["from_id"] not in visited_chain]
+
+            if not valid_up:
+                if hops_so_far:
+                    all_paths.append((conf, list(reversed(hops_so_far)), curr))
+            else:
+                for h in valid_up:
+                    queue.append(
+                        (visited_chain + [h["from_id"]], hops_so_far + [h], conf * h["confidence"])
+                    )
+
+        if not all_paths:
+            return {
+                "found": True,
+                "target_id": target_id,
+                "critical_path": [],
+                "path_confidence": 1.0,
+                "root_id": target_id,
+            }
+
+        # 挑选置信度最高的路径
+        best_conf, best_path, root_id = max(all_paths, key=lambda x: x[0])
+        return {
+            "found": True,
+            "target_id": target_id,
+            "critical_path": best_path,
+            "path_confidence": best_conf,
+            "root_id": root_id,
+        }
