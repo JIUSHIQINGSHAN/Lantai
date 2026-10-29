@@ -47,6 +47,7 @@ def search(
         as_of_recorded=_parse_dt(req.as_of_recorded),
         time_from=_parse_dt(req.time_from),
         time_to=_parse_dt(req.time_to),
+        shared_scope=req.shared_scope,
     )
     latency_ms = int((time.perf_counter() - t0) * 1000)
     if trace and isinstance(result, tuple):

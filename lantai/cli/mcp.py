@@ -230,7 +230,12 @@ def handle_search(params: dict) -> dict:
     # "入口收敛"修，本行修的是"传了身份却不生效"。
     # 同文件 `handle_verbatim_search`（:832）一直是对的，照它对齐。
     results = hybrid_search(
-        query, top_k=top_k, domain=domain, principal=principal, **temporal_kwargs
+        query,
+        top_k=top_k,
+        domain=domain,
+        principal=principal,
+        shared_scope=params.get("shared_scope"),
+        **temporal_kwargs,
     )
     latency_ms = int((time.perf_counter() - t0) * 1000)
     event_id = _try_log(

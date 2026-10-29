@@ -388,6 +388,7 @@ def hybrid_search(
     time_to=None,
     as_of_recorded=None,
     layer: str | None = None,
+    shared_scope: str | None = None,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     """混合检索：向量 + BM25 + 衰减（支持辨域 ADR-0034 domain 过滤）。
 
@@ -441,6 +442,7 @@ def hybrid_search(
         time_from=time_from,
         time_to=time_to,
         as_of_recorded=as_of_recorded,
+        shared_scope=shared_scope,
     )
 
 
@@ -460,6 +462,7 @@ def _hybrid_search_impl(
     time_from=None,
     time_to=None,
     as_of_recorded=None,
+    shared_scope: str | None = None,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     p = params or RetrievalParams()
     trace_steps = []
@@ -541,6 +544,7 @@ def _hybrid_search_impl(
             time_from=time_from,
             time_to=time_to,
             as_of_recorded=as_of_recorded,
+            shared_scope=shared_scope,
         )
 
     # Step 3: FTS5 子串召回（ADR-0008）与 BM25 召回（F2 重构）
@@ -613,6 +617,19 @@ def _hybrid_search_impl(
         if not bool(getattr(principal, "is_admin", False)) and not _is_system_viewer(principal):
             viewer = getattr(principal, "user_id", None) or "default"
             stmt = stmt.where(or_(MemoryItem.user_id == viewer, MemoryItem.user_id.is_(None)))
+            if getattr(principal, "tenant_id", None):
+                stmt = stmt.where(
+                    or_(MemoryItem.tenant_id == principal.tenant_id, MemoryItem.tenant_id.is_(None))
+                )
+            # 同袍（ADR-0058）：Agent 私有隔离与公共知识殿堂放行
+            if getattr(principal, "agent_id", None):
+                stmt = stmt.where(
+                    or_(
+                        MemoryItem.agent_id == principal.agent_id,
+                        MemoryItem.agent_id.is_(None),
+                        MemoryItem.shared_scope == "swarm_shared",
+                    )
+                )
         return s.exec(stmt).all()
 
     if session is not None:
@@ -630,6 +647,9 @@ def _hybrid_search_impl(
         items = [m for m in items if m.lane in lanes]
     if domain and domain != "all":
         items = [m for m in items if getattr(m, "domain", "user") == domain]
+    # 同袍（ADR-0058）：显式过滤 shared_scope
+    if shared_scope and shared_scope != "all":
+        items = [m for m in items if getattr(m, "shared_scope", "private") == shared_scope]
 
     items = _chronos_filter(items, as_of=as_of)
     from lantai.retrieval.temporal import temporal_view_filter
@@ -980,6 +1000,7 @@ def _keyword_fallback(
     time_to=None,
     as_of_recorded=None,
     principal=None,
+    shared_scope: str | None = None,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     """向量检索降级路径：FTS5 召回作候选集，BM25 + decay 打分（无向量分）。
 
@@ -1111,6 +1132,9 @@ def _keyword_fallback(
         items = [m for m in items if m.lane in lanes]
     if domain and domain != "all":
         items = [m for m in items if getattr(m, "domain", "user") == domain]
+    # 同袍（ADR-0058）：显式过滤 shared_scope
+    if shared_scope and shared_scope != "all":
+        items = [m for m in items if getattr(m, "shared_scope", "private") == shared_scope]
     items = _chronos_filter(items, as_of=as_of)
     from lantai.retrieval.temporal import temporal_view_filter
 

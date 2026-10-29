@@ -33,6 +33,9 @@ class AddMemoryReq(BaseModel):
     tags: list[str] = []
     lane: str = Field(default="general")  # fact/rule/experience/preference/chat/general
     domain: str | None = None  # 辨域（ADR-0034）：user/session/agent
+    shared_scope: str = Field(
+        default="private"
+    )  # 同袍（ADR-0058）：private（私有）/ swarm_shared（公共知识殿堂）
     session_id: str = Field(default="", max_length=128)  # 来源链显式透传（v022 票据 01）
     metadata: dict = {}  # 附加元数据，落 RawDocument.meta（如 source=pre_compress）
 
@@ -64,6 +67,7 @@ class SearchReq(BaseModel):
     memory_types: list[str] = []
     lanes: list[str] = []
     domain: str | None = None  # 辨域（ADR-0034）：user/session/agent/all
+    shared_scope: str | None = None  # 同袍（ADR-0058）：private/swarm_shared/all
     use_rerank: bool = True
     force: bool = False  # 显式透传：为 True 时绕过相关性闸门直接检索（拾遗 ADR-0028）
     # 更漏（ADR-0048/票 09）：时效视图参数——全部缺省 = 现行行为逐字节不变
@@ -123,6 +127,9 @@ class RawMemoryReq(BaseModel):
     title: str = ""
     content: str = Field(min_length=1, max_length=200_000)
     lane: str = Field(default="general")  # 默认取 settings.RAW_MEMORY_DEFAULT_LANE
+    shared_scope: str = Field(
+        default="private"
+    )  # 同袍（ADR-0058）：private（私有）/ swarm_shared（公共知识殿堂）
     tags: list[str] = []
     session_id: str = Field(default="", max_length=128)  # 来源链显式透传（v022 票据 01）
     metadata: dict = {}

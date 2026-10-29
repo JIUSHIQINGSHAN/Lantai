@@ -92,6 +92,9 @@ class MemoryCandidate(SQLModel, table=True):
     role: CognitiveRole = Field(default=CognitiveRole.OBSERVATION, index=True)
     lane: str = Field(default="general")  # 分轨：从 AddMemoryReq 传入
     domain: str = Field(default="user", index=True)
+    shared_scope: str = Field(
+        default="private", index=True
+    )  # 同袍（ADR-0058）：private / swarm_shared
     status: str = "new"
     review_due_at: datetime | None = None  # 待审队列 TTL 截止（Ticket 02）
     deferred_at: datetime | None = None
@@ -131,6 +134,9 @@ class MemoryItem(SQLModel, table=True):
     domain: str = Field(
         default="user", index=True
     )  # 辨域（ADR-0034）：user/session/agent 三维硬隔离
+    shared_scope: str = Field(
+        default="private", index=True
+    )  # 同袍（ADR-0058）：private（私有工作区）/ swarm_shared（公共知识殿堂）
     source_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     version: int = 1
     status: str = "active"

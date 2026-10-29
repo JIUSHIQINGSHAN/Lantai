@@ -319,12 +319,15 @@ def _create_candidate_direct(
         s.commit()
         s.refresh(doc)
 
+        agent_id = getattr(principal, "agent_id", None) if principal else None
         cand = MemoryCandidate(
             id=new_id("cand"),
             # 归属四元组（票 .scratch/ownership-gaps/03）：不落列则来源链
             # 继承到 MemoryItem 也是 NULL，属主过滤把所有人的结果都滤光
             user_id=user_id,
             tenant_id=tenant_id,
+            agent_id=agent_id,
+            shared_scope=getattr(req, "shared_scope", "private") or "private",
             session_id=(getattr(req, "session_id", "") or "").strip() or None,
             document_id=doc.id,
             topic=fp_data["topic"] or req.tags,
@@ -404,11 +407,14 @@ def _create_candidate_with_extraction(
         if errsig_hits:
             prov_extra["errsig"] = errsig_hits
 
+        agent_id = getattr(principal, "agent_id", None) if principal else None
         cand = MemoryCandidate(
             id=new_id("cand"),
             # 归属四元组（票 .scratch/ownership-gaps/03）：同 fastpath 路径口径
             user_id=user_id,
             tenant_id=tenant_id,
+            agent_id=agent_id,
+            shared_scope=getattr(req, "shared_scope", "private") or "private",
             session_id=(getattr(req, "session_id", "") or "").strip() or None,
             document_id=doc.id,
             topic=data["topic"] or req.tags,
@@ -584,6 +590,7 @@ def build_verbatim_item(
     user_id: str | None = None,
     tenant_id: str | None = None,
     agent_id: str | None = None,
+    shared_scope: str = "private",
 ) -> MemoryItem:
     """verbatim 直存项构造（纯函数）：sha256 幂等 key + 固定语义字段。
 
@@ -611,6 +618,7 @@ def build_verbatim_item(
         user_id=user_id,
         tenant_id=tenant_id,
         agent_id=agent_id,
+        shared_scope=shared_scope or "private",
         created_at=created,
         updated_at=updated_at or created,
     )
@@ -671,6 +679,8 @@ def add_raw_memory(
         if existing:
             return {"memory_id": existing.id, "dedup": True, "verbatim": True}
         emb = embed([req.content])[0]
+        if agent_id is None and principal is not None:
+            agent_id = getattr(principal, "agent_id", None)
         mem = build_verbatim_item(
             req.content,
             lane,
@@ -678,6 +688,7 @@ def add_raw_memory(
             user_id=user_id,
             tenant_id=tenant_id,
             agent_id=agent_id,
+            shared_scope=getattr(req, "shared_scope", "private") or "private",
         )
         # 来源链（v022 票据 01）：直存也带 session 出身；空则 NULL
         if (getattr(req, "session_id", "") or "").strip():
@@ -692,6 +703,7 @@ def add_raw_memory(
                 "memory_type": mem.memory_type,
                 "lane": getattr(mem, "lane", "general") or "general",
                 "domain": getattr(mem, "domain", "user") or "user",
+                "shared_scope": getattr(mem, "shared_scope", "private") or "private",
                 "tenant_id": getattr(mem, "tenant_id", "") or "",
                 "user_id": getattr(mem, "user_id", "") or "",
                 "session_id": getattr(mem, "session_id", "") or "",

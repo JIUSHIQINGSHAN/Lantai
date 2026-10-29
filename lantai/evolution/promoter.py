@@ -542,6 +542,10 @@ def apply_proposal(proposal_id: str, principal=None) -> dict:
                     mem_kwargs["session_id"] = src_cand.session_id
                 if src_cand.user_id:
                     mem_kwargs["user_id"] = src_cand.user_id
+                if getattr(src_cand, "agent_id", None):
+                    mem_kwargs["agent_id"] = src_cand.agent_id
+                if getattr(src_cand, "shared_scope", None):
+                    mem_kwargs["shared_scope"] = src_cand.shared_scope
             # 更漏（ADR-0048/票 08）：提案携带显式事件时间 → I1 校验后落列；
             # 违例拒写留痕（宁 miss 不脏写，不静默修正）
             et = patch.get("event_time")
@@ -594,6 +598,7 @@ def apply_proposal(proposal_id: str, principal=None) -> dict:
                     "memory_type": mem.memory_type,
                     "lane": getattr(mem, "lane", "general") or "general",
                     "domain": getattr(mem, "domain", "user") or "user",
+                    "shared_scope": getattr(mem, "shared_scope", "private") or "private",
                     "tenant_id": getattr(mem, "tenant_id", "") or "",
                     "user_id": getattr(mem, "user_id", "") or "",
                     "session_id": getattr(mem, "session_id", "") or "",

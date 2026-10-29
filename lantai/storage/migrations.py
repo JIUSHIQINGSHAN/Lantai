@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 34
+TARGET_SCHEMA_VERSION = 35
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -660,6 +660,22 @@ def _migrate_v34(conn) -> None:
     logger.info("Migrated v34: retrieval_event 补齐 session_id 字段与索引")
 
 
+def _migrate_v35(conn) -> None:
+    """v34 -> v35: memoryitem 补齐 shared_scope 列（同袍 ADR-0058：多智能体记忆联邦与公共知识殿堂）。"""
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memoryitem'"
+    ).fetchone():
+        if not _has_column(conn, "memoryitem", "shared_scope"):
+            conn.execute("ALTER TABLE memoryitem ADD COLUMN shared_scope TEXT DEFAULT 'private'")
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_memoryitem_shared_scope ON memoryitem (shared_scope)"
+            )
+        except Exception as exc:
+            logger.warning("迁移 v35 索引创建跳过: %s", exc)
+    logger.info("Migrated v35: memoryitem 补齐 shared_scope 字段与索引（同袍记忆联邦）")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -694,6 +710,7 @@ MIGRATIONS = [
     (32, _migrate_v32),
     (33, _migrate_v33),
     (34, _migrate_v34),
+    (35, _migrate_v35),
 ]
 
 

@@ -232,6 +232,12 @@ def search_fts(
             if getattr(principal, "tenant_id", None):
                 sql += " AND m.tenant_id = ?"
                 params.append(principal.tenant_id)
+            # 同袍（ADR-0058）：Agent 私有隔离与公共知识殿堂放行
+            if getattr(principal, "agent_id", None):
+                sql += (
+                    " AND (m.agent_id = ? OR m.agent_id IS NULL OR m.shared_scope = 'swarm_shared')"
+                )
+                params.append(principal.agent_id)
             # 归属（票 `.scratch/mcp-identity-gaps/13`）：身份收敛 + admin 豁免
             # 都收到 `_owner_filter_clause` 单一真源，两个 FTS 函数共用。
             # 此前此处手写，票 11 只改到其中一处、差点漏另一处。
@@ -282,6 +288,12 @@ def search_fts_bm25(
             if getattr(principal, "tenant_id", None):
                 sql += " AND m.tenant_id = ?"
                 params.append(principal.tenant_id)
+            # 同袍（ADR-0058）：Agent 私有隔离与公共知识殿堂放行
+            if getattr(principal, "agent_id", None):
+                sql += (
+                    " AND (m.agent_id = ? OR m.agent_id IS NULL OR m.shared_scope = 'swarm_shared')"
+                )
+                params.append(principal.agent_id)
             # 归属（票 `.scratch/mcp-identity-gaps/13`）：与 `search_fts` 共用
             # `_owner_filter_clause` 单一真源——两个函数是同一处手写的同一段，
             # 改一处漏一处等于没改（票 11 就差点只改到一处）。
