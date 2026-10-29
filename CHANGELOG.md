@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-10-30 - 参商（Canshang · 深度矛盾冲突检测与多跳信念一致性仲裁）
+
+> 版本代号「参商」：出自《左传·昭公元年》「虽相背而不同出，如参商之不可见也」——对应本版主题「深层矛盾冲突检测、多跳因果一致性审计与更漏时间轴深度多方仲裁直断，ADR-0062 落地」：突破既有 v0.3 静态孤立双记忆相似度启发式打分局限，构建面向全局信念与因果网络的深层冲突检测与一致性仲裁引擎 `CanshangEngine`（票 01）。支持基于语义相斥与结构化实体属性的显式抵触推导、跨 `causes`/`leads_to` 因果链的多跳隐性矛盾推导（Multi-hop Causal Contradiction），以及全域/实体信念一致性审计矩阵扫描（Consistency Audit Matrix）；针对多方互斥主张，提供结合更漏双时间轴（`event_time` 时效优势）、证据链完整度与置信度量化的深度裁决直断（Deep Arbitration）。打通服务层 `audit_consistency_service`/`arbitrate_deep_service`、HTTP REST 端点（`POST /conflicts/scan-consistency`、`POST /conflicts/arbitrate-deep`）、MCP 工具（`conflict_scan_consistency`、`conflict_deep_arbitrate`，工具池扩充至 74 个且 1:1 双向一致）与认知上下文 `CognitiveContext`（票 02，参商冲突违例经樊篱 `wrap_as_data` 数据围栏包裹安全渲染）。全链路严格实施行级租户安全隔离与「宁 miss 不脏写」纪律。票据 `.scratch/v0.41-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心深层冲突检测与信念一致性仲裁引擎 CanshangEngine（票 01，详见 `lantai/cognition/canshang.py` 与 `tests/test_canshang_engine_smoke.py`）**：
+  - 两两主张与属性互斥冲突检测：`detect_pairwise_contradiction` 支持结构化属性（`value`/`role`/`state`/`policy`）与文本相斥语义对规则推导；
+  - 多跳因果隐性相悖推导：`audit_consistency` 沿因果边（`MemoryEdge: causes/leads_to`）自动追踪前置诱因与推演结论相抵触的多跳链条；
+  - 信念一致性审计矩阵：支持全域范围或指定实体名称的一致性扫描，生成结构化违例审计报告 `ConsistencyAuditReport`；
+  - 深度多方仲裁直断：`arbitrate_deep_conflict` 对多方互斥记忆进行综合权衡，优先采纳更漏事件轴晚近且置信度高的数据，给出裁决策略与决策轨迹；
+  - 严格租户隔离：`_check_access` 行级租户安全校验，跨租户跨用户数据零泄漏（宁 miss 不脏写）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_canshang_engine_smoke.py`（5 个独立接缝验证）。
+- **参商一致性审计 API、MCP 工具集成与认知上下文抵触防御（票 02，详见 `lantai/services/conflict_service.py`、`lantai/api/routes_conflicts.py`、`lantai/cli/mcp.py`、`lantai/cognition/context.py` 与 `tests/test_canshang_api_smoke.py`）**：
+  - 服务层下沉：封装 `audit_consistency_service` 与 `arbitrate_deep_service`，带调用方 principal 行级鉴权；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 支持参商违例结构专化渲染，全部正文经樊篱（`wrap_as_data`）数据围栏包裹；
+  - HTTP REST 路由：新增 `POST /conflicts/scan-consistency` 与 `POST /conflicts/arbitrate-deep`，并在 `schemas.py` 增加请求约束模型；
+  - MCP 工具池升级：注册 `conflict_scan_consistency` 与 `conflict_deep_arbitrate`，工具总数扩充至 74 个，广告与分发字典 1:1 双向一致（`tests/test_mcp.py` 计数与 parity 守卫全绿）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_canshang_api_smoke.py`（HTTP、MCP、CognitiveContext 3 个独立接缝验证）。
+
 ## [0.40.0] - 2026-10-30 - 格物（Gewu · 反事实推理与前瞻因果推演引擎）
 
 > 版本代号「格物」：出自《礼记·大学》「致知在格物，物格而后知至」——对应本版主题「因果反事实推理、前瞻决策影响推演与关键因果路径量化，ADR-0061 延伸落地」：突破既有 v0.35 仅能进行事后回溯（Retrospective Provenance）的局限，提供面向 Agent 决策前瞻推演的「反事实根因判定（Counterfactual Necessity Evaluation）」、「前瞻次生决策影响面模拟（Projected Causal Impact）」与「主导因果强路径量化（Critical Causal Path）」。核心引擎 `CausalEngine`（票 01）支持 Do-calculus 介入阻断单点诱因并探索存活替代路径，计算必要性 `is_necessary`，正向模拟次生波及半径与累积置信度衰减，内置闭环防死锁熔断；打通服务层 `evaluate_counterfactual_service`/`project_causal_impact_service`、HTTP REST 端点（`POST /edges/counterfactual`、`POST /edges/project-impact`）、MCP 工具（`causal_counterfactual`、`causal_project_impact`，工具池扩充至 72 个且 1:1 双向一致）与认知上下文 `CognitiveContext`（票 02，反事实替代路径经樊篱 `wrap_as_data` 数据围栏包裹安全渲染）。全链路执行行级租户隔离（`tenant_id` + `user_id`），不可见节点无法穿透或推演。票据 `.scratch/v0.40-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
