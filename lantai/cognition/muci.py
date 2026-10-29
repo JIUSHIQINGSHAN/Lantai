@@ -71,6 +71,11 @@ class MuciEngine:
             if item.user_id and item.user_id != user_id:
                 return False
 
+        # 3. 授权泳道限制（allowed_lanes 隔离）
+        if self.principal.allowed_lanes is not None:
+            if item.lane not in self.principal.allowed_lanes:
+                return False
+
         return True
 
     def build_catalog(
