@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-10-29 - 同袍（Tongpao · 记忆联邦）
+
+> 版本代号「同袍」：《诗经·秦风·无衣》「岂曰无衣？与子同袍」——多智能体协同、守望相助，对应本版主题「多智能体记忆联邦与公共知识殿堂、两级分级存储与跨智能体技能结晶晋升共享（ADR-0013 / ADR-0058 / docs/future-roadmap.md 方向三落地）」：在 `MemoryItem` 与 `SkillCrystal` 实体引入两级存储范式 `shared_scope`（`private` 私有工作区 / `swarm_shared` 公共知识殿堂）；设计并落地 SQLite 增量迁移 `_migrate_v35`；扩展混合检索（`hybrid_search`、`_keyword_fallback` 与 FTS5 全文检索）在保证租户安全隔离前提下，为指定 Agent 自动放行继承公共殿堂知识；落地 SkillCrystal 晋升评考流水线（`crystal_promoter.py`），遵循「宁 miss 不脏写」原则核验有效规程步骤与成功验证频次，驱动技能晋升为 `MemoryItem(lane='procedural')` 并自动构筑 `MemoryEdge(relation='leads_to')` 因果溯源边；在 REST API（`POST /crystals/{crystal_id}/promote`）与 MCP 工具池（`crystal_promote`，工具池扩充至 63 个）完整暴露。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.32-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **多智能体记忆联邦分级存储与公共知识殿堂隔离（票 01，详见 `lantai/models/tables.py`、`lantai/storage/migrations.py`、`lantai/retrieval/hybrid.py` 与 `lantai/storage/fts.py`）**：
+  - `MemoryItem` 实体新增 `shared_scope` 索引列（`private` / `swarm_shared`）；
+  - `_migrate_v35` 补齐两级分级存储列与索引，平滑兼容旧数据；
+  - `hybrid_search`、`_keyword_fallback` 与 `FTS5` 全文索引层重构查询策略，实现“本 Agent 私有记忆 + 全 Swarm 公共记忆”联合召回，同时坚守多租户（Tenant）强隔离防火墙；
+  - 交付端到端不 mock 冒烟测试 `tests/test_tongpao_federation_smoke.py`。
+- **SkillCrystal 技能结晶跨 Agent 晋升评考与继承（票 02，详见 `lantai/evolution/crystal_promoter.py`、`lantai/api/routes_crystals.py` 与 `lantai/cli/mcp.py`）**：
+  - `SkillCrystal` 实体扩展 `success_count`、`source_agent_id` 与 `shared_scope`；
+  - 落地 `evaluate_crystal_for_promotion` 评考机制与 `promote_crystal` 晋升流水线，严谨验证规程合法性与命中频次；
+  - 晋升时生成 `MemoryEdge(relation='leads_to')` 因果时序拓扑溯源边，记录技能从 Agent 私有结晶晋升为群体智慧的全过程；
+  - 暴露 HTTP 路由 `POST /crystals/{crystal_id}/promote`；
+  - MCP 工具池新增 `crystal_promote` 工具（工具池规模增至 63 个），全面支持 Agent 间技能晋升与继承；
+  - 交付端到端不 mock 冒烟测试 `tests/test_tongpao_crystal_promotion_smoke.py` 并保证 MCP 工具集全绿。
+
 ## [0.31.0] - 2026-10-29 - 格物（Gewu · 格物穷理）
 
 > 版本代号「格物」：《礼记·大学》「致知在格物，物格而后知至」——穷究事物原理与因果脉络，对应本版主题「因果时序拓扑与事件溯源链、MemoryEdge 因果关系建模与归因推理闭环（ADR-0013 / docs/future-roadmap.md 方向二落地）」：扩展图谱边关系枚举 `EdgeRelation`（`causes` / `triggered_by` / `leads_to`）与关联常量 `CAUSAL_RELATIONS`，支持因果有向图落盘；落地事件溯源服务 `trace_decision_provenance` 与 `get_event_timeline`，支持面向决策/状态变更反查前置诱因、定位顶层根因并按真实事件时间戳（`event_time` / `created_at`）严格正序组织时间线；内置图谱遍历环路安全阻断与租户行级 ACL 隔离；在 MCP 工具池（`causal_trace`、`event_timeline`）与 HTTP 路由（`GET /edges/provenance`、`GET /edges/timeline`、`GET /edges/{memory_id}/causal-chain`）完整暴露。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.31-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
