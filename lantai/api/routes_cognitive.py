@@ -188,8 +188,9 @@ def cognitive_summary(
     """
     from lantai.runtime.runwu import RunwuEngine
 
-    viewer = getattr(ctx, "user_id", None) if ctx else None
-    tenant = getattr(ctx, "tenant_id", None) if ctx else None
+    is_admin = bool(getattr(ctx, "is_admin", False)) if ctx else False
+    viewer = getattr(ctx, "user_id", None) if (ctx and not is_admin) else None
+    tenant = getattr(ctx, "tenant_id", None) if (ctx and not is_admin) else None
 
     engine = RunwuEngine(db=db, default_char_budget=char_budget)
     res = engine.extract_summary(
@@ -203,8 +204,8 @@ def cognitive_summary(
     )
 
     # 结构化投影（保持向后兼容，同时扩展 probes 与紧凑 summary 文本）
-    rules_out = [{"content": r} for r in res.rules]
-    failures_out = [{"lesson": f} for f in res.failures]
+    rules_out = [{"id": "", "content": r, "confidence": 0.85} for r in res.rules]
+    failures_out = [{"id": "", "lesson": f, "severity": 0.7} for f in res.failures]
     probes_out = [{"question": p} for p in res.probes]
 
     return {

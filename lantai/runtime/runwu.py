@@ -225,11 +225,12 @@ class RunwuEngine:
 
         full_text = " | ".join(parts) if parts else ""
 
-        # 预算截断保护：若超过预算，进行安全截断
+        # 预算截断保护：若超过预算，进行安全截断并保证樊篱闭合
         if len(full_text) > char_limit:
-            # 优先保规则，若仍超预算，在文本边界截断并闭合樊篱标签
-            full_text = full_text[: char_limit - 15] + "..."
-            if "<memory_data" in full_text and "</memory_data>" not in full_text:
+            full_text = full_text[: max(0, char_limit - 15)] + "..."
+            open_count = full_text.count("<memory_data")
+            close_count = full_text.count("</memory_data>")
+            if open_count > close_count:
                 full_text += "</memory_data>"
 
         return full_text
