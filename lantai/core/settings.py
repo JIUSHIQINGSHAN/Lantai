@@ -261,6 +261,9 @@ class Settings(BaseSettings):
     SHELL_HOOK_TIMEOUT: int = 2  # 秒
     SHELL_HOOK_DIALOGUE_TIMEOUT: float = 30.0  # 对话写入通道超时（秒，含 LLM 提取）
     SHELL_HOOK_TOP_K: int = 5
+    SHELL_HOOK_MAX_INJECT_ITEMS: int = (
+        5  # 磨勘（v0.29 · MCMA 建议项 6）：知识注入条目上限硬顶（4~5 条最优）
+    )
     SHELL_HOOK_SCORE_THRESHOLD: float = 0.5  # 置信度下限（低于此分数的弱相关候选剔除）
     SHELL_HOOK_MIN_CHARS: int = 3
     # 召回预算（借鉴 TencentDB Agent Memory auto-recall）：单条记忆注入上限 +

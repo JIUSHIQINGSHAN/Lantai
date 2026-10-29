@@ -38,6 +38,9 @@ from lantai.integrations.host_protocol import (
 from lantai.llm.client import embed
 from lantai.llm.fence import fence_declaration, wrap_as_data
 from lantai.models.tables import MemoryItem
+from lantai.retrieval.hierarchical import (
+    rerank_by_information_density,
+)
 from lantai.retrieval.hybrid import hybrid_search
 from lantai.services.offload_service import build_offload_inject, write_offload_file
 from lantai.storage import db
@@ -253,6 +256,10 @@ def build_context(query: str, session_id: str | None = None) -> dict:
             _try_log(query, [], int((time.perf_counter() - t0) * 1000), session_id=session_id)
             return {"context": resident_persona} if resident_persona else {}
 
+        # 磨勘（v0.29 · MCMA 建议项 6）：信息密度优先重排与条目硬顶（<= SHELL_HOOK_MAX_INJECT_ITEMS，默认 5）
+        max_items = getattr(settings, "SHELL_HOOK_MAX_INJECT_ITEMS", 5)
+        results = rerank_by_information_density(results, max_items=max_items)
+
         items = []
         for r in results:
             mem_dict = r.get("memory")
@@ -266,25 +273,59 @@ def build_context(query: str, session_id: str | None = None) -> dict:
             r_mem = r.get("memory") or {}
             m_id = r_mem.get("id") or r.get("id")
             score = round(float(r.get("score", 0.0)), 2)
+
+            # 若结果项包含完璧 FactAtomic 原子事实列表，则优先连同事实结构保整注入
+            atomic_facts = r.get("atomic_facts") or []
+            atomic_suffix = ""
+            if atomic_facts:
+                fact_stmts = [
+                    f["statement"]
+                    for f in atomic_facts
+                    if isinstance(f, dict) and f.get("statement")
+                ]
+                if fact_stmts:
+                    atomic_suffix = f" [完璧事实: {'；'.join(fact_stmts)}]"
+
+            matched_item = None
             for m in items:
                 if m.id == m_id:
-                    if _is_skill_item(m):
-                        line, content = _format_skill_entry(
-                            m, score, per_memory, _RECALL_TRUNCATION_SUFFIX
-                        )
-                    elif len(m.content) > settings.SHELL_HOOK_OFFLOAD_CHARS:
-                        # 上下文卸载（借鉴腾讯 offload）：全文落文件，注入摘要 + 路径
-                        line, content = _format_offload_entry(m, score, per_memory)
-                    else:
-                        line, content = _format_memory_entry(
-                            m.content,
-                            score,
-                            per_memory,
-                            _RECALL_TRUNCATION_SUFFIX,
-                            time_str=_event_time_str(m),
-                        )
-                    entries.append((line, content, score, m.id))
+                    matched_item = m
                     break
+
+            if matched_item:
+                m = matched_item
+                if _is_skill_item(m):
+                    line, content = _format_skill_entry(
+                        m, score, per_memory, _RECALL_TRUNCATION_SUFFIX
+                    )
+                elif len(m.content) > settings.SHELL_HOOK_OFFLOAD_CHARS:
+                    # 上下文卸载（借鉴腾讯 offload）：全文落文件，注入摘要 + 路径
+                    line, content = _format_offload_entry(m, score, per_memory)
+                else:
+                    line, content = _format_memory_entry(
+                        m.content,
+                        score,
+                        per_memory,
+                        _RECALL_TRUNCATION_SUFFIX,
+                        time_str=_event_time_str(m),
+                    )
+                target_id = m.id
+            else:
+                # 针对无直接对应 MemoryItem 实例但属于检索合法候选的条目（如纯事实块）
+                doc_text = (
+                    r.get("document")
+                    or (r_mem.get("content") if isinstance(r_mem, dict) else "")
+                    or str(r)
+                )
+                line, content = _format_memory_entry(
+                    doc_text, score, per_memory, _RECALL_TRUNCATION_SUFFIX
+                )
+                target_id = m_id
+
+            if atomic_suffix:
+                line = f"{line}{atomic_suffix}"
+                content = f"{content}{atomic_suffix}"
+            entries.append((line, content, score, target_id))
 
         # scene 聚合层（ADR-0012）：命中记忆按场景分组，导航块优先注入（渐进式披露）
         scene_lines = []

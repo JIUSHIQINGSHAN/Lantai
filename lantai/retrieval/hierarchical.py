@@ -136,3 +136,61 @@ def filter_and_resolve_layer(items: list, query: str, params: Any) -> tuple[list
         if filtered:
             items = filtered
     return items, target
+
+
+def count_injected_knowledge_units(entry: Any) -> int:
+    """计算单条注入条目所占用的知识单元计数（完璧保整契约）。
+
+    依据 ADR-0057「完璧」原则与 MCMA 建议项 6：
+    一个 FactAtomic 原子事实块（无论挂载了多少个投影实体）始终作为 1 个保整的知识单元，
+    普通记忆项亦为 1 个单元，空条目或无效项计 0。
+    """
+    if not entry:
+        return 0
+    return 1
+
+
+# 信息密度层级权重乘子（MCMA 建议项 6：H2 抽象规则 > H1 事实 > H0 流水草稿）
+LAYER_DENSITY_MULTIPLIER: dict[HierarchicalLayer, float] = {
+    "h2": 1.25,  # 高阶准则、规则、原则：信息密度与迁移泛化性最高
+    "h1": 1.00,  # 具体情境事实、完璧原子事实：具体业务依据
+    "h0": 0.80,  # 原始观察流水、未加工对话：信息密度较低，优先淘汰
+}
+
+
+def rerank_by_information_density(candidates: list[dict], max_items: int = 5) -> list[dict]:
+    """依据信息密度优先重排并严格硬顶（MCMA 建议项 6 与磨勘考功纪律）。
+
+    在相似度打分的基础上，结合认知抽象层级与原子事实保整，
+    计算 density_score = score * LAYER_DENSITY_MULTIPLIER[layer]，
+    并额外对拥有完璧原子事实（atomic_facts）的条目给予 1.1x 保整加成，
+    优先输出高价值、高密度条目，并严格截断至 <= max_items。
+    """
+    if not candidates:
+        return []
+    if max_items <= 0:
+        return []
+
+    scored_candidates = []
+    for item in candidates:
+        score = float(item.get("score", 0.0))
+        layer = item.get("layer")
+        if not layer or layer not in ("h0", "h1", "h2"):
+            # 若条目未带 layer，尝试从内部 memory 或对象推断
+            mem = item.get("memory") or item
+            layer = classify_memory_layer(mem)
+
+        mult = LAYER_DENSITY_MULTIPLIER.get(layer, 1.0)
+        density_score = score * mult
+
+        # 完璧原子事实加成：具备结构化事实投影的事实拥有更高的信息确定度
+        if item.get("atomic_facts"):
+            density_score *= 1.1
+
+        scored_candidates.append((density_score, item))
+
+    # 按信息密度得分降序排序
+    scored_candidates.sort(key=lambda x: x[0], reverse=True)
+
+    # 严格截断至 max_items
+    return [item for _, item in scored_candidates[:max_items]]
