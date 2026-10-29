@@ -117,6 +117,19 @@ class CausalEngine:
             principal=self.principal,
         )
 
+    def attribute_decision(
+        self,
+        memory_id: str | None = None,
+        query: str | None = None,
+        max_depth: int = 10,
+    ) -> dict[str, Any]:
+        """高阶决策因果归因入口，定位根因并输出正序事件脉络。"""
+        return self.get_provenance(
+            memory_id=memory_id,
+            query=query,
+            max_depth=max_depth,
+        )
+
     def get_timeline(self, memory_id: str, max_depth: int = 10) -> list[dict[str, Any]]:
         """获取与目标节点相关的因果事件全景正序时间线。"""
         res = get_event_timeline(

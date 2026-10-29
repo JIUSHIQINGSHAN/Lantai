@@ -22,6 +22,7 @@ _SECTION_HEADINGS = {
     "principles": "## Principles",
     "failures": "## Known Failures",
     "conflicts": "## Active Conflicts",
+    "causal_provenance": "## Causal Provenance & Decision History",
 }
 
 
@@ -35,6 +36,7 @@ class CognitiveContext:
     principles: list = field(default_factory=list)
     failures: list = field(default_factory=list)
     conflicts: list = field(default_factory=list)
+    causal_provenance: list = field(default_factory=list)
 
     def to_prompt(self) -> str:
         """
@@ -51,6 +53,17 @@ class CognitiveContext:
             lines = [heading]
             for item in items:
                 if isinstance(item, dict):
+                    # 处理 causal_provenance 归因结构字典
+                    if section_key == "causal_provenance" and "target_id" in item:
+                        target = item.get("target_id")
+                        narrative = item.get("narrative", "")
+                        lines.append(f"- [决策目标: {target}] {narrative}")
+                        tl = item.get("timeline", [])
+                        for event in tl:
+                            ts = event.get("timestamp") or "未知时间"
+                            lines.append(f"  * [{ts}] {event.get('content')}")
+                        continue
+
                     content = item.get("content") or item.get("lesson") or str(item)
                     scope = item.get("scope", "")
                     conf = item.get("confidence", "")
