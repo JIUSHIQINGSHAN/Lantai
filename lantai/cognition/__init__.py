@@ -7,6 +7,12 @@ from lantai.cognition.chenfeng import (
     unarchive_memory_entry,
 )
 from lantai.cognition.context import CognitiveContext, CognitiveContextBuilder
+from lantai.cognition.sanxing import (
+    SanxingAuditResult,
+    SanxingEngine,
+    SanxingHealthSnapshot,
+    inspect_memory_health,
+)
 from lantai.cognition.tanyi import (
     ProbeInsertion,
     ResolutionIntent,
@@ -23,8 +29,12 @@ __all__ = [
     "CognitiveContextBuilder",
     "ProbeInsertion",
     "ResolutionIntent",
+    "SanxingAuditResult",
+    "SanxingEngine",
+    "SanxingHealthSnapshot",
     "TanyiProbingEngine",
     "execute_tanyi_resolution",
+    "inspect_memory_health",
     "parse_user_resolution_intent",
     "search_archived_memories",
     "unarchive_memory_entry",

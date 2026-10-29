@@ -93,6 +93,8 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **更漏**（Genglou，时间感知） | 记忆的双时间轴体系：区分「兰台何时知道」（事务轴 `created_at`）与「现实何时发生/何时为真」（事件轴 `event_time` ± 精度标识、主张有效期 `valid_from`/`valid_to`）；支撑当前态视图与任意历史时点视图（as-of），并为迟到更正提供事件轴锚点与直断裁决依据。 | 命名：铜壶滴漏计时（ADR-0013 候选意象转正）；设计：见 [ADR-0048](docs/adr/0048-genglou-bitemporal-event-time.md) 与 [P1 Schema 规范](docs/plans/p1-event-time-schema-spec.md) |
 | **尘封**（Chenfeng，冷热分级存储） | 认知层冷热分级管理机制；对衰减分极低、长期未访问或已退役的历史记忆自动识别与批量封藏（转 archived 状态），从日常热检索中隔离并记录底本快照保障可逆，实现不弃不取、去芜存菁。 | 命名：典籍意象「积尘封藏，不弃不取」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 及 [ADR-0005](docs/adr/0005-forgetting-semantics.md) |
 | **尘封**（Chenfeng，版本代号） | v0.36.0 发行版本代号；寓意积尘封藏、不弃不取，对应本版「冷热分级存储与自动封藏策略引擎、尘封档案专用检索与穿透回溯」的主题。 | 命名：典籍意象「积尘封藏」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
+| **三省**（Sanxing，认知自省） | 认知层反思自省与记忆健康审视机制；多维扫描被取代残留、时效过期、未决冲突与低帮助度碎片，生成结构化健康审计快照。 | 命名：《论语·学而》「吾日三省吾身」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 及 [ADR-0044](docs/adr/0044-cognition-evolution-boundary.md) |
+| **三省**（Sanxing，版本代号） | v0.37.0 发行版本代号；寓意吾日三省、审视功过，对应本版「认知层反思自省引擎、记忆健康审视与三省自检闭环」的主题。 | 命名：《论语·学而》「吾日三省吾身」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
 | *decay_score*（技术字段） | 记忆保持强度分值（0.0~1.0）；随时间指数衰减，跌破极低阈值后触发休眠归档。 | 命名：项目内部技术字段；设计：见 `lantai/models/tables.py` 及 [ADR-0005](docs/adr/0005-forgetting-semantics.md) |
 | *search_trace*（技术字段） | 检索诊断调试数组；开启后记录检索执行各步骤的耗时、候选条数与得分分布。 | 命名：项目内部技术字段；设计：见 `lantai/retrieval/hybrid.py` 诊断输出 |
 | *water_level*（技术字段） | 潮波合并缓冲区的水位指标；实时反映未冲刷的消息堆积量与活跃会话数，用于写入节流监控。 | 命名：项目内部技术字段；设计：见 [ADR-0003](docs/adr/0003-coalesce-buffer-key.md) 及 `/stats` 路由 |
