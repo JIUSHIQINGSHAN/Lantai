@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-10-29 - 悬镜（Xuanjing · 记忆星图观测台）
+
+> 版本代号「悬镜」：《旧唐书·魏徵传》「以铜为镜，可以正衣冠；以古为镜，可以知兴替；以人为镜，可以明得失」——高悬明镜，照见万物脉络与因果溯源，对应本版主题「3D 神经元记忆星图与可视化观测台（ADR-0013 / ADR-0059 / docs/future-roadmap.md 方向四落地）」：构建记忆星图拓扑聚合服务 `xuanjing_service.py`，抽取节点活跃引力质心（`weight`）与艾宾浩斯时效衰减率（`decay_score`），融合格物因果拓扑边（`causes` / `leads_to` / `triggered_by`）与关联边（`supports` / `refines` / `contradicts` / `supersedes`），并按记忆场景星系（`MemoryScene`）与分轨（`lane`）聚合聚簇；坚守多租户行级安全边界，支持同袍联邦公共知识殿堂（`swarm_shared`）记忆的继承透视；在 REST API（`GET /graph/xuanjing`）与 MCP 工具池（`get_xuanjing_graph`，工具池扩充至 64 个）全面暴露；在 Lantai Web Studio 控制台（`lantai/api/ui/`）集成专有「悬镜星图」观测台面板（`#xuanjingView` 与 `xuanjing.js`），支持 D3 力导向仿真天体投射、恒星衰减高斯光晕滤镜、格物因果火橙连线、多维过滤检索与抽屉式节点深度透视，适配吉金与漏窗双主题。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7、[ADR-0059](docs/adr/0059-xuanjing-memory-topology-service.md) 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.33-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **悬镜星图聚合服务与 3D/力导向拓扑数据端点（票 01，详见 `lantai/services/xuanjing_service.py`、`lantai/api/routes_graph.py`、`lantai/cli/mcp.py` 与 `docs/adr/0059-xuanjing-memory-topology-service.md`）**：
+  - 架构决策：制定并落地 ADR-0059，规范 3D 神经元记忆星图拓扑模型、恒星质心权重公式与时效光晕衰减映射；
+  - 聚合服务：实现 `build_xuanjing_topology`，高效计算节点引力权重与时效保留分，提取包含格物因果关系在内的拓扑有向边，支持星系聚簇与质心统计；
+  - 租户隔离与同袍放行：严格维护租户防火墙，允许智能体无缝观测同租户公共知识殿堂（`swarm_shared`）恒星；
+  - 接口扩展：暴露 HTTP 端点 `GET /graph/xuanjing`，并在 MCP 工具池注册 `get_xuanjing_graph`（扩充至 64 个工具）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_xuanjing_topology_smoke.py`。
+- **UI 控制台集成「悬镜」记忆星图观测台面板（票 02，详见 `lantai/api/ui/xuanjing.js`、`lantai/api/ui/index.html`、`lantai/api/ui/styles.css` 与 `lantai/api/routes_ui.py`）**：
+  - 观测台工作区：在控制台导航栏与工作区主体接入「悬镜星图」视图 `#xuanjingView`，配备指标统计条与分轨/数量多维过滤控制器；
+  - D3 拓扑仿真引擎：实现 `xuanjing.js`，借助 D3 Force Simulation 模拟天体引力拓扑动力学，将艾宾浩斯记忆保留度映射为高斯模糊恒星光晕，将因果边高亮为因果火橙色，标识同袍公共殿堂外环；
+  - 节点透视抽屉：支持点击任意恒星节点唤起侧边抽屉，实时查阅记忆原旨、所属分轨、引力质心、衰减时效与被引频次；
+  - 双主题与静态托管：在 `routes_ui.py` 注册静态托管映射，并在 `styles.css` 完善吉金（暗色深空）与漏窗（明亮星盘）双主题渲染及平滑过渡；
+  - 交付端到端不 mock 冒烟测试 `tests/test_xuanjing_ui_smoke.py`。
+
 ## [0.32.0] - 2026-10-29 - 同袍（Tongpao · 记忆联邦）
 
 > 版本代号「同袍」：《诗经·秦风·无衣》「岂曰无衣？与子同袍」——多智能体协同、守望相助，对应本版主题「多智能体记忆联邦与公共知识殿堂、两级分级存储与跨智能体技能结晶晋升共享（ADR-0013 / ADR-0058 / docs/future-roadmap.md 方向三落地）」：在 `MemoryItem` 与 `SkillCrystal` 实体引入两级存储范式 `shared_scope`（`private` 私有工作区 / `swarm_shared` 公共知识殿堂）；设计并落地 SQLite 增量迁移 `_migrate_v35`；扩展混合检索（`hybrid_search`、`_keyword_fallback` 与 FTS5 全文检索）在保证租户安全隔离前提下，为指定 Agent 自动放行继承公共殿堂知识；落地 SkillCrystal 晋升评考流水线（`crystal_promoter.py`），遵循「宁 miss 不脏写」原则核验有效规程步骤与成功验证频次，驱动技能晋升为 `MemoryItem(lane='procedural')` 并自动构筑 `MemoryEdge(relation='leads_to')` 因果溯源边；在 REST API（`POST /crystals/{crystal_id}/promote`）与 MCP 工具池（`crystal_promote`，工具池扩充至 63 个）完整暴露。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.32-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
