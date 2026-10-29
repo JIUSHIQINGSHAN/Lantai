@@ -1323,7 +1323,6 @@ def handle_memory_audit_report(params: dict) -> dict:
     return inspect_memory_health(principal=_principal_from_params(params))
 
 
-
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2213,7 +2212,7 @@ def handle(msg: dict) -> dict | None:
             "result": {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "lantai", "version": "0.36.0"},
+                "serverInfo": {"name": "lantai", "version": "0.37.0"},
             },
         }
     if method == "notifications/initialized":

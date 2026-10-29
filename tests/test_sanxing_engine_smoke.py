@@ -184,9 +184,7 @@ def test_sanxing_acl_tenant_defense_seam(param_env):
         all_detected_ids = {
             item["id"]
             for item in (
-                snapshot.superseded_stale
-                + snapshot.expired_items
-                + snapshot.unhelpful_items
+                snapshot.superseded_stale + snapshot.expired_items + snapshot.unhelpful_items
             )
         }
         assert "bob_stale_secret" not in all_detected_ids

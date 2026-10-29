@@ -195,4 +195,3 @@ def sanxing_audit_route(ctx=Depends(get_current_user)):
     from lantai.cognition.sanxing import inspect_memory_health
 
     return inspect_memory_health(principal=ctx)
-

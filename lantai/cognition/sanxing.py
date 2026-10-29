@@ -121,7 +121,9 @@ class SanxingEngine:
                     valid_to = item.valid_to
                     if valid_to.tzinfo is None:
                         valid_to = valid_to.replace(tzinfo=UTC)
-                    now_tz = eval_now if eval_now.tzinfo is not None else eval_now.replace(tzinfo=UTC)
+                    now_tz = (
+                        eval_now if eval_now.tzinfo is not None else eval_now.replace(tzinfo=UTC)
+                    )
 
                     if valid_to < now_tz and (item.decay_class or "").lower() != "procedural":
                         expired_items.append(
@@ -164,7 +166,12 @@ class SanxingEngine:
             ]
 
             total_items = len(active_items)
-            issue_count = len(superseded_stale) + len(expired_items) + len(open_conflicts) + len(unhelpful_items)
+            issue_count = (
+                len(superseded_stale)
+                + len(expired_items)
+                + len(open_conflicts)
+                + len(unhelpful_items)
+            )
             # 健康分计算公式：满分 100，每处缺陷扣 5 分，最低 0 分
             penalty = issue_count * 5.0
             health_score = max(0.0, round(100.0 - penalty, 2))

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-10-29 - 三省（Sanxing · 认知层记忆反思蒸馏与自我审视闭环）
+
+> 版本代号「三省」：《论语·学而》「吾日三省吾身」——认知层反思自省与记忆健康审视，对应本版主题「认知层反思自省引擎、记忆健康审视与三省自检闭环，ADR-0013 / ADR-0044 落地」：日常交互长期积累下，存量事实与规则常面临被取代残留、时效过期、未决冲突或低频碎片等隐性质量隐患。构建认知层自我审视回环引擎 `SanxingEngine`，支持对记忆库进行多维健康扫描（`evaluate_health`），涵盖规则 R1（被取代残留：`superseded_by` 但仍为 active）、规则 R2（时效过期：`valid_to` 过期且非 `procedural` 铁律）、规则 R3（未决冲突：`ConflictEvent` 状态仍为 open）、规则 R4（低帮助度碎片：`use_count >= 5` 且 `helpful_count == 0`）；计算健康评分并输出结构化快照 `SanxingHealthSnapshot` 与自省审计建议报告 `SanxingAuditResult`；暴露 RESTful 端点 `GET /evolution/sanxing/health` 与 `POST /evolution/sanxing/audit`，以及 MCP 协议标准化工具 `memory_health_inspect`、`memory_audit_report`（MCP 工具池扩充至 68 个且 1:1 双向一致）；在 `CognitiveContext` 中新增 `reflection_audit` 切面并渲染结构化 Markdown Prompt，严守「樊篱」数据围栏与行级 ACL 租户隔离防火墙。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.37-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **认知层反思自省引擎与记忆健康审视（票 01，详见 `lantai/cognition/sanxing.py`、`lantai/cognition/__init__.py` 与 `tests/test_sanxing_engine_smoke.py`）**：
+  - 核心引擎设计：落地 `SanxingEngine`，提供多维健康缺陷主动扫描 `evaluate_health` 与报告聚合 `generate_audit_report`；
+  - 多维自检规则 R1-R4：覆盖被取代残留、时效过期、未决冲突与低帮助度碎片，程序性铁律（`procedural`）天然豁免；
+  - 租户行级安全与快捷入口：严格受限 `_owned_memory_scope` 与 `_visible_conflict_ids` 隔离，导出快捷函数 `inspect_memory_health`；
+  - 交付端到端不 mock 冒烟测试 `tests/test_sanxing_engine_smoke.py`。
+- **三省自检 API、MCP 工具集成与认知上下文切面（票 02，详见 `lantai/cognition/context.py`、`lantai/api/routes_evolution.py`、`lantai/cli/mcp.py` 与 `tests/test_sanxing_api_smoke.py`）**：
+  - 认知上下文切面扩展：在 `CognitiveContext` 扩展 `reflection_audit` 切面并渲染结构化 Markdown Prompt，樊篱数据围栏全流程防护；
+  - HTTP REST 路由：新增 `GET /evolution/sanxing/health` 与 `POST /evolution/sanxing/audit`，租户越权隔离严密把守；
+  - MCP 工具池升级：注册 `memory_health_inspect` 与 `memory_audit_report`，工具总数扩充至 68 个，广告与分发 1:1 双向一致；
+  - 交付端到端不 mock 冒烟测试 `tests/test_sanxing_api_smoke.py` 与 `tests/test_mcp.py` 回归。
+
 ## [0.36.0] - 2026-10-29 - 尘封（Chenfeng · 冷热分级存储与记忆分层归档收纳）
 
 > 版本代号「尘封」：典籍意象「积尘封藏，不弃不取；考订功过，去芜存菁」——对应本版主题「冷热分级存储与自动封藏策略引擎、尘封档案专用检索与穿透回溯，ADR-0013 / ADR-0005 / 白皮书路线图 P0-2 落地」：针对日常交互中低活跃度、衰减分触底（`decay_score < 0.05`）或长期未命中的历史记忆常驻热层带来的向量/全文索引稀释开销，构建认知层冷热分级管理引擎 `ChenfengEngine`。支持艾宾浩斯时效衰减率、长期未访问时限（>30天且0使用）与生命周期状态显式退役（`RETIRED`）三维冷数据检测（`evaluate_cold_candidates`），实现程序性铁律（`procedural`）天然豁免与跨租户越权防护；提供批量自动封藏机制（`archive_cold_memories`），在原子变更 `active -> archived` 的同时自动落盘 `MemoryCheckpoint`（`trigger='chenfeng_archive'`）快照底本保障秒级可逆与审计追溯；标准热检索（`hybrid_search`）默认隔离尘封数据；提供专用尘封检索通道（`search_archived` 与 `search_archived_memories`）、解封恢复（`unarchive_memory` 与 `unarchive_memory_entry`，解封严格核验并补齐 FTS 与向量两层索引在场性）、REST 端点（`GET /memories/archived` 与 `POST /memories/{memory_id}/unarchive`）与 MCP 工具（`memory_archived_search`、`memory_unarchive`，工具总数扩充至 66 个）；在认知上下文 `CognitiveContext` 中新增 `archived_history` 历史溯源切面及结构化 Markdown Prompt 渲染。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.36-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
