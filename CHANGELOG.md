@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-10-30 - 格物（Gewu · 反事实推理与前瞻因果推演引擎）
+
+> 版本代号「格物」：出自《礼记·大学》「致知在格物，物格而后知至」——对应本版主题「因果反事实推理、前瞻决策影响推演与关键因果路径量化，ADR-0061 延伸落地」：突破既有 v0.35 仅能进行事后回溯（Retrospective Provenance）的局限，提供面向 Agent 决策前瞻推演的「反事实根因判定（Counterfactual Necessity Evaluation）」、「前瞻次生决策影响面模拟（Projected Causal Impact）」与「主导因果强路径量化（Critical Causal Path）」。核心引擎 `CausalEngine`（票 01）支持 Do-calculus 介入阻断单点诱因并探索存活替代路径，计算必要性 `is_necessary`，正向模拟次生波及半径与累积置信度衰减，内置闭环防死锁熔断；打通服务层 `evaluate_counterfactual_service`/`project_causal_impact_service`、HTTP REST 端点（`POST /edges/counterfactual`、`POST /edges/project-impact`）、MCP 工具（`causal_counterfactual`、`causal_project_impact`，工具池扩充至 72 个且 1:1 双向一致）与认知上下文 `CognitiveContext`（票 02，反事实替代路径经樊篱 `wrap_as_data` 数据围栏包裹安全渲染）。全链路执行行级租户隔离（`tenant_id` + `user_id`），不可见节点无法穿透或推演。票据 `.scratch/v0.40-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心反事实与因果推演认知引擎升级 CausalEngine（票 01，详见 `lantai/cognition/causal.py` 与 `tests/test_gewu_counterfactual_engine_smoke.py`）**：
+  - 反事实因果判定：`evaluate_counterfactual` 支持介入阻断目标节点的指定诱因，逆向分析存活替代路径，计算必要性 `is_necessary` 与 `reachable_without_node`；
+  - 前瞻影响面推演：`project_causal_impact` 沿 `causes`/`leads_to` 前瞻推演次生波及面与累积置信度衰减，内置环路与死循环熔断保护；
+  - 关键因果路径量化：`find_critical_causal_path` 在 DAG 因果拓扑中量化乘积置信度最高的主导因果链；
+  - 严格租户隔离：`_check_node_access` 行级租户隔离前置校验，非本人数据不可见、不可穿透（宁 miss 不脏写）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_gewu_counterfactual_engine_smoke.py`（5 个独立接缝验证）。
+- **格物反事实 API、MCP 工具集成与认知上下文推演切面（票 02，详见 `lantai/services/provenance_service.py`、`lantai/api/routes_edges.py`、`lantai/cli/mcp.py`、`lantai/cognition/context.py` 与 `tests/test_gewu_counterfactual_api_smoke.py`）**：
+  - 服务层下沉：封装 `evaluate_counterfactual_service` 与 `project_causal_impact_service`，带调用方 principal 行级鉴权；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 支持反事实替代因果路径渲染，全部正文经樊篱（`wrap_as_data`）数据围栏包裹；
+  - HTTP REST 路由：新增 `POST /edges/counterfactual` 与 `POST /edges/project-impact`；
+  - MCP 工具池升级：注册 `causal_counterfactual` 与 `causal_project_impact`，工具总数扩充至 72 个，广告与分发字典 1:1 双向一致（`tests/test_mcp.py` 计数与 parity 守卫全绿）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_gewu_counterfactual_api_smoke.py`（4 个独立接缝验证）。
+
 ## [0.39.0] - 2026-10-30 - 润物（Runwu · 自适应认知中间件与无感上下文装载）
 
 > 版本代号「润物」：出自唐代杜甫《春夜喜雨》「随风潜入夜，润物细无声」——对应本版主题「核心认知自适应装载引擎 RunwuEngine、认知切面紧凑萃取与 ASGI / MCP / HTTP 全链路自适应护航」：打破 Agent 每次都需要显式主动调用复杂检索工具才能获取指导规则与历史教训的局限，构建自适应认知装载引擎 `RunwuEngine`（票 01），实现无感护航与零网络阻塞的轻量抽取；打通 `GET /cognitive/summary` REST 端点、MCP 工具 `cognitive_summary`（工具池扩充至 70 个且 1:1 双向一致）与 `CognitiveMiddleware` ASGI 中间件自适应注入（票 02，自动解析请求任务并在响应头 `X-Cognitive-Context` 注入 Base64 编码紧凑认知摘要）。安全防护：全流程通过「樊篱」（`wrap_as_data`）数据围栏包裹（OWASP LLM01 防护），预算安全截断并自动补齐闭合标签；支持 `tenant_id` + `user_id` 双重收窄，跨租户 0 泄漏，非 admin 严格归属隔离。票据 `.scratch/v0.39-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
