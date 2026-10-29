@@ -29,7 +29,8 @@ class ProbeDetectReq(BaseModel):
 
 
 class ProbeResolveReq(BaseModel):
-    conflict_id: str
+    conflict_id: str | None = None
+    probe_id: str | None = None
     user_reply: str
 
 
@@ -50,4 +51,5 @@ def probing_resolve_route(req: ProbeResolveReq, ctx=Depends(get_current_user)):
         conflict_id=req.conflict_id,
         user_reply=req.user_reply,
         principal=ctx,
+        probe_id=req.probe_id,
     )

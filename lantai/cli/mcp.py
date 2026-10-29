@@ -514,7 +514,7 @@ def handle_probe_resolve(params: dict) -> dict:
     """探颐：根据用户自然答复消解冲突与更新记忆（ADR-0037）。"""
     from lantai.services.probing_service import resolve_probe_response
 
-    cid = params.get("conflict_id", "")
+    cid = params.get("conflict_id") or params.get("probe_id") or ""
     reply = params.get("user_reply", "")
     # 归属（票 01a）：肯定分支会把 `incoming_ref` 写进别人的记忆正文——
     # 全轮最严重的一条
@@ -1432,10 +1432,11 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "conflict_id": {"type": "string", "description": "冲突事件 ID"},
+                "conflict_id": {"type": "string", "description": "冲突事件 ID 或探针 probe_id"},
+                "probe_id": {"type": "string", "description": "探针 ID（可选，兼容 conflict_id）"},
                 "user_reply": {"type": "string", "description": "用户自然语言答复"},
             },
-            "required": ["conflict_id", "user_reply"],
+            "required": ["user_reply"],
         },
     },
     "raw_add": {

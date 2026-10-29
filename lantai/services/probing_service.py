@@ -33,8 +33,15 @@ _AFFIRMATIVE_PATTERNS = [
     r"成了",
     r"改用",
     r"换成",
+    r"改了",
+    r"改好了",
+    r"确认",
+    r"确有此事",
+    r"属实",
+    r"准确",
     r"yes",
     r"yep",
+    r"yeah",
     r"correct",
     r"right",
     r"true",
@@ -44,12 +51,17 @@ _NEGATIVE_PATTERNS = [
     r"不对",
     r"没有",
     r"写错",
+    r"搞错",
+    r"弄错",
     r"别改",
     r"未变",
     r"还是",
     r"依然",
     r"没变",
     r"保持",
+    r"不属实",
+    r"不准确",
+    r"假",
     r"no",
     r"nope",
     r"false",
@@ -250,13 +262,16 @@ def _is_affirmative_reply(reply: str) -> bool:
 
 
 def resolve_probe_response(
-    conflict_id: str,
-    user_reply: str,
+    conflict_id: str | None = None,
+    user_reply: str = "",
     session: Session | None = None,
     principal=None,
+    *,
+    probe_id: str | None = None,
 ) -> dict:
     """分析用户对探针的自然语言答复，自动执行冲突消解与版本更替。
 
+    支持 conflict_id 与 probe_id（如 probe_conf_xxx、probe_mem_xxx、probe_fact_xxx）兼容解析。
     归属校验（票 .scratch/readside-gaps/07 修法口径 4）：**全轮最严重的一条**。
     肯定分支会 `item.content = conf.incoming_ref`——写的是正文，而此前一个
     身份都不取，A 用自己的 key 就能把 B 的记忆原文覆盖掉（`OBSERVED3.txt`
@@ -277,99 +292,183 @@ def resolve_probe_response(
     if not clean_reply:
         return {"status": "error", "message": "user_reply 不能为空"}
 
+    # 参数解析：兼顾 conflict_id 与 probe_id
+    target_id = conflict_id or probe_id or ""
+    if not target_id:
+        return {"status": "error", "message": "conflict_id 或 probe_id 不能为空"}
+
+    actual_conflict_id = target_id
+    if (
+        target_id.startswith("probe_conf_")
+        or target_id.startswith("probe_")
+        and not target_id.startswith("probe_mem_")
+        and not target_id.startswith("probe_fact_")
+    ):
+        actual_conflict_id = target_id[len("probe_") :]
+
     def _resolve(s: Session) -> dict:
-        conf = s.get(ConflictEvent, conflict_id)
-        if not conf:
-            return {"status": "not_found", "message": f"ConflictEvent {conflict_id} 未找到"}
+        # 分支 A：针对未决冲突（ConflictEvent）消解
+        conf = s.get(ConflictEvent, actual_conflict_id)
+        if conf:
+            if conf.status != "open":
+                return {"status": "already_resolved", "conflict_status": conf.status}
 
-        if conf.status != "open":
-            return {"status": "already_resolved", "conflict_status": conf.status}
+            item = s.get(MemoryItem, conf.memory_id)
+            if not item:
+                return {"status": "error", "message": f"MemoryItem {conf.memory_id} 不存在"}
 
-        item = s.get(MemoryItem, conf.memory_id)
-        if not item:
-            return {"status": "error", "message": f"MemoryItem {conf.memory_id} 不存在"}
+            # 归属校验：在任何写操作之前（403 不能伴随落库）
+            if principal is not None:
+                from lantai.core.acl import ensure_can_delete
 
-        # 归属校验：在任何写操作之前（403 不能伴随落库）
-        if principal is not None:
-            from lantai.core.acl import ensure_can_delete
+                ensure_can_delete(
+                    principal,
+                    resource_user_id=item.user_id,
+                    resource_tenant_id=item.tenant_id,
+                    lane=item.lane,
+                )
 
-            ensure_can_delete(
-                principal,
-                resource_user_id=item.user_id,
-                resource_tenant_id=item.tenant_id,
-                lane=item.lane,
-            )
+            # 1. 优先匹配否定词（否定意图优先）
+            is_neg = any(re.search(pat, clean_reply, re.IGNORECASE) for pat in _NEGATIVE_PATTERNS)
+            is_aff = _is_affirmative_reply(clean_reply)
 
-        # 1. 优先匹配否定词（否定意图优先）
-        is_neg = any(re.search(pat, clean_reply, re.IGNORECASE) for pat in _NEGATIVE_PATTERNS)
-        is_aff = _is_affirmative_reply(clean_reply)
+            if is_neg:
+                conf.status = "dismissed"
+                conf.resolved_by = "proactive_probe_user_rejected"
+                conf.resolved_at = utcnow()
+                s.add(conf)
+                s.commit()
+                logger.info("探颐：用户否定探针，已废弃冲突 %s", actual_conflict_id)
+                return {
+                    "status": "resolved",
+                    "action": "dismissed",
+                    "conflict_id": actual_conflict_id,
+                }
 
-        if is_neg:
-            conf.status = "dismissed"
-            conf.resolved_by = "proactive_probe_user_rejected"
-            conf.resolved_at = utcnow()
-            s.add(conf)
-            s.commit()
-            logger.info("探颐：用户否定探针，已废弃冲突 %s", conflict_id)
-            return {"status": "resolved", "action": "dismissed", "conflict_id": conflict_id}
+            elif is_aff:
+                # 记录 Checkpoint 快照
+                before_snapshot = item.model_dump(mode="json")
+                item.content = conf.incoming_ref
+                item.version += 1
+                item.decay_score = 1.0
+                item.updated_at = utcnow()
 
-        elif is_aff:
-            # 记录 Checkpoint 快照
-            before_snapshot = item.model_dump(mode="json")
-            item.content = conf.incoming_ref
-            item.version += 1
-            item.decay_score = 1.0
-            item.updated_at = utcnow()
+                cp = MemoryCheckpoint(
+                    id=f"cp_{ULID()}",
+                    memory_id=item.id,
+                    version=item.version,
+                    before=before_snapshot,
+                    after=item.model_dump(mode="json"),
+                    trigger="proactive_probe_resolved",
+                    created_at=utcnow(),
+                )
+                s.add(cp)
 
-            cp = MemoryCheckpoint(
-                id=f"cp_{ULID()}",
-                memory_id=item.id,
-                version=item.version,
-                before=before_snapshot,
-                after=item.model_dump(mode="json"),
-                trigger="proactive_probe_resolved",
-                created_at=utcnow(),
-            )
-            s.add(cp)
+                conf.status = "resolved"
+                conf.resolved_by = "proactive_probe_user_confirmed"
+                conf.resolved_at = utcnow()
+                s.add(conf)
+                s.add(item)
 
-            conf.status = "resolved"
-            conf.resolved_by = "proactive_probe_user_confirmed"
-            conf.resolved_at = utcnow()
-            s.add(conf)
-            s.add(item)
+                # FTS 同事务强一致（ADR-0008，同 correct_memory / promoter update 口径）
+                sync_fts(s, item.id, item.content)
 
-            # FTS 同事务强一致（ADR-0008，同 correct_memory / promoter update 口径，
-            # 票 .scratch/review-fixes-2026-10/01）：正文已替换而 FTS 停留旧文 =
-            # 可命中旧事实的脏索引。sync_fts 异常随本事务回滚——正文停在旧值、
-            # 冲突保持 open（宁 miss 不脏写），不再吞成 warning。
-            sync_fts(s, item.id, item.content)
+                s.commit()
 
-            s.commit()
+                # 向量库独立于 SQL 事务：对替换后的新正文重建
+                vector_synced = sync_vector_upsert(item.id, item)
+                warnings: list[str] = []
+                if not vector_synced:
+                    warnings.append("vector resync failed; content updated in SQL/FTS only")
+                    logger.warning(
+                        "探颐：消解后向量重同步失败（正文与 FTS 已更新）memory=%s", item.id
+                    )
 
-            # 向量库独立于 SQL 事务：对**替换后的新正文**重建（票 01 修前 import 自
-            # 不存在的 lantai.retrieval.embed 且 embed 的是 item.key 而非新正文）。
-            # 复用 record_ops_service 的 best-effort 重同步原语（embed + 8 键
-            # metadata 契约 + 失败如实回报），失败不静默：回执如实暴露（宁 miss
-            # 不脏写——正文已改而索引失败必须在返回体/warning 里看得见）。
-            vector_synced = sync_vector_upsert(item.id, item)
-            warnings: list[str] = []
-            if not vector_synced:
-                warnings.append("vector resync failed; content updated in SQL/FTS only")
-                logger.warning("探颐：消解后向量重同步失败（正文与 FTS 已更新）memory=%s", item.id)
+                logger.info("探颐：用户肯定探针，已成功消解冲突并更新记忆 %s", item.id)
+                return {
+                    "status": "resolved",
+                    "action": "applied",
+                    "conflict_id": actual_conflict_id,
+                    "memory_id": item.id,
+                    "vector_synced": vector_synced,
+                    "warnings": warnings,
+                }
 
-            logger.info("探颐：用户肯定探针，已成功消解冲突并更新记忆 %s", item.id)
-            return {
-                "status": "resolved",
-                "action": "applied",
-                "conflict_id": conflict_id,
-                "memory_id": item.id,
-                "vector_synced": vector_synced,
-                "warnings": warnings,
-            }
+            else:
+                logger.info("探颐：用户答复未明确表态，保持冲突待审状态")
+                return {
+                    "status": "deferred",
+                    "action": "pending",
+                    "conflict_id": actual_conflict_id,
+                }
 
-        else:
-            logger.info("探颐：用户答复未明确表态，保持冲突待审状态")
-            return {"status": "deferred", "action": "pending", "conflict_id": conflict_id}
+        # 分支 B：针对模糊记忆项澄清（probe_mem_xxx 或 MemoryItem）
+        mem_target_id = target_id
+        if mem_target_id.startswith("probe_"):
+            mem_target_id = mem_target_id[len("probe_") :]
+        target_mem = s.get(MemoryItem, mem_target_id)
+        if target_mem:
+            if principal is not None:
+                from lantai.core.acl import ensure_can_delete
+
+                ensure_can_delete(
+                    principal,
+                    resource_user_id=target_mem.user_id,
+                    resource_tenant_id=target_mem.tenant_id,
+                    lane=target_mem.lane,
+                )
+            is_neg = any(re.search(pat, clean_reply, re.IGNORECASE) for pat in _NEGATIVE_PATTERNS)
+            is_aff = _is_affirmative_reply(clean_reply)
+
+            if is_neg:
+                # 否定：降低置信度或标记为废弃（0.15 跌破底线）
+                target_mem.confidence = 0.1
+                target_mem.status = "archived"
+                s.add(target_mem)
+                s.commit()
+                return {"status": "resolved", "action": "archived", "memory_id": target_mem.id}
+            elif is_aff:
+                # 肯定：确信该事实，提振置信度至 0.95
+                target_mem.confidence = 0.95
+                s.add(target_mem)
+                s.commit()
+                return {"status": "resolved", "action": "confirmed", "memory_id": target_mem.id}
+            else:
+                return {"status": "deferred", "action": "pending", "memory_id": target_mem.id}
+
+        # 分支 C：针对模糊原子事实澄清（probe_fact_xxx 或 FactAtomic）
+        fact_target_id = target_id
+        if fact_target_id.startswith("probe_"):
+            fact_target_id = fact_target_id[len("probe_") :]
+        target_fact = s.get(FactAtomic, fact_target_id)
+        if target_fact:
+            if principal is not None:
+                from lantai.core.acl import ensure_can_delete
+
+                ensure_can_delete(
+                    principal,
+                    resource_user_id=target_fact.user_id,
+                    resource_tenant_id=target_fact.tenant_id,
+                )
+            is_neg = any(re.search(pat, clean_reply, re.IGNORECASE) for pat in _NEGATIVE_PATTERNS)
+            is_aff = _is_affirmative_reply(clean_reply)
+
+            if is_neg:
+                # 软撤回原子事实
+                target_fact.confidence = 0.0
+                target_fact.valid_to = utcnow().isoformat()
+                s.add(target_fact)
+                s.commit()
+                return {"status": "resolved", "action": "retracted", "fact_id": target_fact.id}
+            elif is_aff:
+                target_fact.confidence = 0.95
+                s.add(target_fact)
+                s.commit()
+                return {"status": "resolved", "action": "confirmed", "fact_id": target_fact.id}
+            else:
+                return {"status": "deferred", "action": "pending", "fact_id": target_fact.id}
+
+        return {"status": "not_found", "message": f"未找到可消解的冲突或事实对象: {target_id}"}
 
     if session is not None:
         return _resolve(session)
