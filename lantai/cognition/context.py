@@ -25,6 +25,7 @@ _SECTION_HEADINGS = {
     "causal_provenance": "## Causal Provenance & Decision History",
     "archived_history": "## Archived History & Precedents",
     "reflection_audit": "## Memory Health Audit & Self-Reflection",
+    "clarification_probes": "## Clarification Probes",
 }
 
 
@@ -41,6 +42,8 @@ class CognitiveContext:
     causal_provenance: list = field(default_factory=list)
     archived_history: list = field(default_factory=list)
     reflection_audit: list = field(default_factory=list)
+    # 探颐（v0.38 Ticket 02）：主动求证追问插桩建议（被动切面，由调用方填充）
+    clarification_probes: list = field(default_factory=list)
 
     def to_prompt(self) -> str:
         """
@@ -66,6 +69,15 @@ class CognitiveContext:
                         for event in tl:
                             ts = event.get("timestamp") or "未知时间"
                             lines.append(f"  * [{ts}] {event.get('content')}")
+                        continue
+
+                    # 探颐（v0.38 Ticket 02）：求证探针专化渲染——只出问题文本，
+                    # 不 repr 整个结构字典（正文照例过樊篱）
+                    if section_key == "clarification_probes":
+                        from lantai.llm.fence import wrap_as_data
+
+                        question = item.get("question") or str(item)
+                        lines.append(f"- {wrap_as_data(str(question))}")
                         continue
 
                     content = item.get("content") or item.get("lesson") or str(item)

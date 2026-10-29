@@ -30,6 +30,7 @@ from lantai.api import (
     routes_scratchpad_router,
     routes_search_router,
     routes_sources_router,
+    routes_tanyi_router,
     routes_terminal_router,
     routes_tree_router,
     routes_ui_router,
@@ -119,6 +120,7 @@ CORE_ROUTERS = [
     routes_sources_router,
     routes_prompts_router,
     routes_graph_router,
+    routes_tanyi_router,
 ]
 
 EXT_ROUTERS = {

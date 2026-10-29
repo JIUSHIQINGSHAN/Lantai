@@ -28,6 +28,7 @@ from .routes_scenes import router as routes_scenes_router
 from .routes_scratchpad import router as routes_scratchpad_router
 from .routes_search import router as routes_search_router
 from .routes_sources import router as routes_sources_router
+from .routes_tanyi import router as routes_tanyi_router
 from .routes_terminal import router as routes_terminal_router
 from .routes_tree import router as routes_tree_router
 from .routes_ui import router as routes_ui_router
@@ -66,5 +67,6 @@ __all__ = [
     "routes_persona_router",
     "routes_scratchpad_router",
     "routes_terminal_router",
+    "routes_tanyi_router",
     "routes_admin_router",
 ]

@@ -1323,6 +1323,48 @@ def handle_memory_audit_report(params: dict) -> dict:
     return inspect_memory_health(principal=_principal_from_params(params))
 
 
+def handle_memory_tanyi_probe(params: dict) -> dict:
+    """探颐：存储驱动主动扫描归属范围内未决冲突与低置信度事实（v0.38 Ticket 02）。
+
+    归属（同 probe_detect 口径，票 .scratch/mcp-identity-gaps/01a）：探针会把
+    别人的冲突正文渲染成"顺便向您求证确认下：关于「…」"的问句——那是比
+    列表更直接的泄漏面。params 透传 user_id 时按该身份收窄（同租户跨属主
+    亦不可见，宁 miss 不脏写）；不透传则不过滤（内部调用既有口径）。
+    """
+    from lantai.cognition.tanyi import TanyiEngine
+    from lantai.storage import db
+
+    limit = params.get("limit", 10)
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 100):
+        raise ValueError("limit must be an int in [1, 100]")
+    query = params.get("query")
+    if query is not None and not isinstance(query, str):
+        raise ValueError("query must be a string or null")
+
+    principal = _principal_from_params(params)
+    with db.get_session() as s:
+        engine = TanyiEngine(storage=s)
+        probes = engine.probe_ambiguities(
+            tenant_id=principal.tenant_id if principal is not None else None,
+            user_id=principal.user_id if principal is not None else None,
+            query=query,
+            limit=limit,
+        )
+        prompts = engine.generate_clarification_prompts(probes)
+
+    items = []
+    for p, q in zip(probes, prompts):
+        items.append(
+            {
+                "memory_id": p.memory_id,
+                "conflict_id": p.conflict_id,
+                "confidence": p.confidence,
+                "question": q,
+            }
+        )
+    return {"probes": items, "prompt_context": "\n".join(f"- {q}" for q in prompts)}
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2109,6 +2151,20 @@ TOOLS = {
             },
         },
     },
+    "memory_tanyi_probe": {
+        "description": "探颐：主动扫描归属范围内未决冲突与低置信度事实，输出求证探针与自然对话追问建议（v0.38）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": {
+                    "type": "string",
+                    "description": "操作租户/用户 ID（透传即按该身份收窄归属）",
+                },
+                "query": {"type": "string", "description": "可选查询词，过滤相关探针"},
+                "limit": {"type": "integer", "default": 10, "description": "探针数量上限 [1, 100]"},
+            },
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2179,6 +2235,7 @@ TOOL_HANDLERS = {
     "memory_unarchive": handle_memory_unarchive,
     "memory_health_inspect": handle_memory_health_inspect,
     "memory_audit_report": handle_memory_audit_report,
+    "memory_tanyi_probe": handle_memory_tanyi_probe,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。
