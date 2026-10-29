@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-10-30 - 卷宗（Juanzong · 长程复杂任务场景聚合与目标上下文锚定）
+
+> 版本代号「卷宗」：出自唐代白居易《新乐府》「卷宗堆案墨翻盆」——对应本版主题「长程多轮复杂工程任务情境聚合、战略目标与阶段里程碑状态追踪、动态记忆情境聚焦与樊篱安全防御，ADR-0063 落地」：突破既有 ADR-0012 纯弱聚类 `MemoryScene` 的无状态局限，构建面向复杂多轮长程任务（如系统重构、排障演练、技术攻坚）的「情境卷宗实体（Dossier）」、「任务里程碑追踪（Milestones）」与「动态情境记忆聚焦（Dossier Context Focusing）」。核心认知引擎 `JuanzongEngine`（票 01）支持卷宗完整生命周期 CRUD、任务里程碑状态推进（`pending`/`in_progress`/`done`）与笔记追踪、记忆项保序幂等绑定/解绑、结案纪要沉淀，并基于中文 2-gram 与整词重叠优化情境聚焦检索；打通服务层 `dossier_service.py`、HTTP REST 端点（`POST /dossiers`、`GET /dossiers`、`POST /dossiers/{id}/bind`、`POST /dossiers/{id}/milestones`、`POST /dossiers/{id}/focus` 等）、MCP 工具（`dossier_create` 与 `dossier_focus`，工具池扩充至 76 个且 1:1 双向一致）与认知上下文 `CognitiveContext`（票 02，卷宗切面置顶呈现，案名、目标愿景、里程碑笔记与记忆内容全部强制经过樊篱 `<memory_data>` 防御包裹）。全链路严格实施行级租户安全隔离与「宁 miss 不脏写」纪律。票据 `.scratch/v0.42-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心长程任务情境卷宗聚合引擎 JuanzongEngine（票 01，详见 `lantai/cognition/juanzong.py`、`lantai/models/tables.py` 与 `tests/test_juanzong_engine_smoke.py`）**：
+  - 数据模型实体：新增 `Dossier` 模型表，涵盖 `id`, `tenant_id`, `user_id`, `title`, `goal`, `status`, `milestones`, `memory_ids`, `metadata_json` 与时间戳；
+  - 卷宗生命周期管理：`create_dossier`、`get_dossier`、`list_dossiers`、`close_dossier` 完整覆盖创建、查询、办结与归档；
+  - 里程碑状态机：`update_milestone` 推进任务阶段并记录进展笔记，支持 SQLAlchemy JSON 字段变更感知（`flag_modified`）；
+  - 记忆项保序绑定：`bind_memories` 与 `unbind_memories` 幂等维护案卷关联事实；
+  - 情境记忆聚焦：`focus_dossier_context` 定向召回卷宗绑定事实并结合中文分词排重与置信度打分置顶；
+  - 严格租户隔离：`_check_access` 双重属性（`tenant_id` + `user_id`）行级安全校验，跨租户跨用户数据零泄漏（宁 miss 不脏写）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_juanzong_engine_smoke.py`（5 个独立接缝验证）。
+- **卷宗 API、MCP 工具集成与认知上下文情境聚焦切面（票 02，详见 `lantai/services/dossier_service.py`、`lantai/api/routes_dossiers.py`、`lantai/cli/mcp.py`、`lantai/cognition/context.py` 与 `tests/test_juanzong_api_smoke.py`）**：
+  - 服务层下沉：封装 `create_dossier_service`、`get_dossier_service`、`list_dossiers_service`、`bind_memories_service`、`unbind_memories_service`、`update_milestone_service`、`focus_dossier_service` 与 `close_dossier_service`，带调用方 principal 行级鉴权；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 支持 `active_dossier` 聚焦切面，案名、战略目标、里程碑状态与聚焦记忆全部经樊篱（`wrap_as_data`）数据围栏包裹安全渲染；
+  - HTTP REST 路由：新增 `/dossiers` 系列 REST 端点，挂载至 `app.py` 鉴权路由组；
+  - MCP 工具池升级：注册 `dossier_create` 与 `dossier_focus`，工具总数扩充至 76 个，广告与分发字典 1:1 双向一致（`tests/test_mcp.py` 计数与 parity 守卫全绿）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_juanzong_api_smoke.py`（HTTP、MCP、CognitiveContext、服务层 5 个独立接缝验证）。
+
 ## [0.41.0] - 2026-10-30 - 参商（Canshang · 深度矛盾冲突检测与多跳信念一致性仲裁）
 
 > 版本代号「参商」：出自《左传·昭公元年》「虽相背而不同出，如参商之不可见也」——对应本版主题「深层矛盾冲突检测、多跳因果一致性审计与更漏时间轴深度多方仲裁直断，ADR-0062 落地」：突破既有 v0.3 静态孤立双记忆相似度启发式打分局限，构建面向全局信念与因果网络的深层冲突检测与一致性仲裁引擎 `CanshangEngine`（票 01）。支持基于语义相斥与结构化实体属性的显式抵触推导、跨 `causes`/`leads_to` 因果链的多跳隐性矛盾推导（Multi-hop Causal Contradiction），以及全域/实体信念一致性审计矩阵扫描（Consistency Audit Matrix）；针对多方互斥主张，提供结合更漏双时间轴（`event_time` 时效优势）、证据链完整度与置信度量化的深度裁决直断（Deep Arbitration）。打通服务层 `audit_consistency_service`/`arbitrate_deep_service`、HTTP REST 端点（`POST /conflicts/scan-consistency`、`POST /conflicts/arbitrate-deep`）、MCP 工具（`conflict_scan_consistency`、`conflict_deep_arbitrate`，工具池扩充至 74 个且 1:1 双向一致）与认知上下文 `CognitiveContext`（票 02，参商冲突违例经樊篱 `wrap_as_data` 数据围栏包裹安全渲染）。全链路严格实施行级租户安全隔离与「宁 miss 不脏写」纪律。票据 `.scratch/v0.41-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
