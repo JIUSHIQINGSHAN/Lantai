@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-29 - 探颐（Tanyi · 探赜索隐）
+
+> 版本代号「探颐」：《易·系辞上》「探赜索隐，钩深致远」——深入探求隐微之理，对应本版主题「记忆主动探针与自然交互消歧机制（ADR-0037落地）、模糊带事实与未决冲突的主动澄清求证与闭环裁决」：落地核心服务 `detect_memory_probes` 与 `format_probing_context`，检索时扫描悬决冲突与临界模糊带（0.3 <= confidence <= 0.6）事实并生成温和澄清探针；打通次轮自然答复闭环 `resolve_probe_response`，支持肯定意图（应用新事实、版本更替、落 Checkpoint 快照与同事务双索引强一致）、否定意图（废弃冲突保留原状）与中立/转移话题（严格遵循宁 miss 不脏写）；在 MCP（`probe_detect`、`probe_resolve`）与 REST 路由完整暴露。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.30-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **探颐核心服务与主动消歧探针生成（票 01，详见 `lantai/services/probing_service.py` 与 `lantai/core/settings.py`）**：
+  - 新增全局开关 `ENABLE_PROACTIVE_PROBING: bool = True`，并在 `tests/test_settings_defaults_frozen.py` 冻结出厂默认值；
+  - 增强 `detect_memory_probes`，支持悬决冲突与临界模糊带（0.3~0.6）事实/记忆双维度扫描，防重复压制，严格租户隔离；
+  - 增强 `format_probing_context` 格式化规范，渲染 `【探颐·待求证事项】` 提示块供回复决策参考；
+  - 交付不 mock 核心逻辑的冒烟测试 `tests/test_tanyi_probing_smoke.py`。
+- **探颐自然交互闭环与冲突自动裁决（票 02，详见 `lantai/services/probing_service.py`、`lantai/cli/mcp.py` 与 `lantai/api/routes_probing.py`）**：
+  - 升级 `resolve_probe_response`，双向兼容 `conflict_id` 与 `probe_id`，覆盖肯定、否定与中立意图；
+  - 肯定意图驱动正文替换、版本递增、Checkpoint 审计留痕与 FTS/Chroma 强一致同步；
+  - 否定意图软废弃冲突，中立意图安全推迟（宁 miss 不脏写）；
+  - 暴露 MCP 工具与 API POST 路由；
+  - 交付端到端不 mock 冒烟测试 `tests/test_tanyi_resolve_smoke.py`。
+
 ## [0.29.0] - 2026-10-29 - 磨勘（Mokan · 磨勘功过）
 
 > 版本代号「磨勘」：《宋史·职官志》审官院核验官员功绩以定升降，磨勘功过、自愈长青。贴合本版主题「MCMA 建议项落地：认知抽象三层架构选层检索、4~5 条知识注入硬顶与信息密度优先重排」：落地 ADR-0058 记忆认知分层与意图映射机制（H0 对话观察 / H1 情境事实 / H2 核心准则与反思总结），打通意图识别驱动的动态选层过滤与分层得分加权；依据 MCMA 论文实证落地知识注入硬顶控制（`SHELL_HOOK_MAX_INJECT_ITEMS: 5`），严格限制注入条目防注意力分散，完璧原子事实多实体整块保整计 1 项，并在候选溢出时结合认知层级开展信息密度重排。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.29-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
