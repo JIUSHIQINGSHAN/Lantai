@@ -28,13 +28,20 @@ class TestZhishuEngineSmoke:
         assert "张三" in r1["claims"]
         assert r1["extractor_confidence"] == 1.0
 
-        # 职业声明
+        # 职业声明（含“我是一名软件工程师”前缀精确归入职业轨，不被“我是”通用自称掩盖）
         r2 = ZhishuEngine.parse("我的职业是后端架构师")
         assert r2 is not None
         assert r2["lane"] == "fact"
         assert r2["rail"] == "fact"
         assert r2["summary"] == "用户职业：后端架构师"
         assert "后端架构师" in r2["claims"]
+
+        r2_sub = ZhishuEngine.parse("我是一名软件工程师")
+        assert r2_sub is not None
+        assert r2_sub["lane"] == "fact"
+        assert r2_sub["rail"] == "fact"
+        assert r2_sub["summary"] == "用户职业：软件工程师"
+        assert "软件工程师" in r2_sub["claims"]
 
         # 现居/居住地声明
         r3 = ZhishuEngine.parse("我现居杭州")

@@ -11,7 +11,9 @@ import re
 # 半衰期（天）；None = 永不衰减
 DECAY_CLASS_HALFLIFE = {"procedural": None, "semantic": 180.0, "episodic": 30.0}
 
-_PROCEDURAL_HINT = re.compile(r"永远|总是|铁律|必须|禁止|绝不|always|never|must")
+_PROCEDURAL_HINT = re.compile(
+    r"永远|总是|铁律|必须|禁止|严禁|切勿|千万别|千万不要|绝不|always|never|must"
+)
 _SEMANTIC_HINT = re.compile(r"配置|设置|偏好|习惯|默认|config|preference|default|habit")
 
 
