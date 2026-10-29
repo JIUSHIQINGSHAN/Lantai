@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-29 - 格物（Gewu · 格物穷理）
+
+> 版本代号「格物」：《礼记·大学》「致知在格物，物格而后知至」——穷究事物原理与因果脉络，对应本版主题「因果时序拓扑与事件溯源链、MemoryEdge 因果关系建模与归因推理闭环（ADR-0013 / docs/future-roadmap.md 方向二落地）」：扩展图谱边关系枚举 `EdgeRelation`（`causes` / `triggered_by` / `leads_to`）与关联常量 `CAUSAL_RELATIONS`，支持因果有向图落盘；落地事件溯源服务 `trace_decision_provenance` 与 `get_event_timeline`，支持面向决策/状态变更反查前置诱因、定位顶层根因并按真实事件时间戳（`event_time` / `created_at`）严格正序组织时间线；内置图谱遍历环路安全阻断与租户行级 ACL 隔离；在 MCP 工具池（`causal_trace`、`event_timeline`）与 HTTP 路由（`GET /edges/provenance`、`GET /edges/timeline`、`GET /edges/{memory_id}/causal-chain`）完整暴露。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.31-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **格物因果关系建模与 MemoryEdge 拓扑扩展（票 01，详见 `lantai/models/enums.py`、`lantai/models/tables.py`、`lantai/storage/edges.py` 与 `lantai/services/edge_service.py`）**：
+  - `EdgeRelation` 新增 `causes`、`triggered_by`、`leads_to`，并在 `tables.py` 注册 `CAUSAL_RELATIONS` 冻结常量集合；
+  - 存储层与服务层实现 `get_causal_chain`，支持顺查下游事态（`forward`）与逆查根因溯源（`backward`），集成访问控制阻断与闭环死循环熔断；
+  - 暴露 HTTP 路由 `GET /edges/{memory_id}/causal-chain`；
+  - 交付端到端不 mock 冒烟测试 `tests/test_gewu_causal_topology_smoke.py`。
+- **事件溯源链查询与决策因果归因闭环（票 02，详见 `lantai/services/provenance_service.py`、`lantai/api/routes_edges.py` 与 `lantai/cli/mcp.py`）**：
+  - 落地 `trace_decision_provenance`，支持按 `memory_id` 显式输入或自然语言 `query` 模糊推导定位目标决策记忆，反溯根因节点 `root_cause_id` 并生成时序脉络摘要；
+  - 落地 `get_event_timeline`，以节点为中心正反双向扩展因果边，按发生时间严格升序编排事件时间线；
+  - 暴露 HTTP 路由 `GET /edges/provenance` 与 `GET /edges/timeline`；
+  - 扩充标准 MCP 工具池至 62 个（新增 `causal_trace` 与 `event_timeline`），支持租户隔离；
+  - 交付端到端不 mock 冒烟测试 `tests/test_gewu_event_provenance_smoke.py` 并通过全量 MCP 门禁。
+
 ## [0.30.0] - 2026-10-29 - 探颐（Tanyi · 探赜索隐）
 
 > 版本代号「探颐」：《易·系辞上》「探赜索隐，钩深致远」——深入探求隐微之理，对应本版主题「记忆主动探针与自然交互消歧机制（ADR-0037落地）、模糊带事实与未决冲突的主动澄清求证与闭环裁决」：落地核心服务 `detect_memory_probes` 与 `format_probing_context`，检索时扫描悬决冲突与临界模糊带（0.3 <= confidence <= 0.6）事实并生成温和澄清探针；打通次轮自然答复闭环 `resolve_probe_response`，支持肯定意图（应用新事实、版本更替、落 Checkpoint 快照与同事务双索引强一致）、否定意图（废弃冲突保留原状）与中立/转移话题（严格遵循宁 miss 不脏写）；在 MCP（`probe_detect`、`probe_resolve`）与 REST 路由完整暴露。登记见 [ADR-0013](docs/adr/0013-naming-system.md) §7 与 `CONTEXT.md` 词汇表。票据 `.scratch/v0.30-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
