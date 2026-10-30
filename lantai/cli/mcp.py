@@ -498,6 +498,17 @@ def handle_kaogong_inspect(params: dict) -> dict:
     )
 
 
+def handle_sanxing_remedy(params: dict) -> dict:
+    """三省：反思自省深度演化、因果违例闭环与健康自愈（ADR-0079）。"""
+    from lantai.services.sanxing_service import sanxing_remedy_service
+
+    auto_apply = bool(params.get("auto_apply", False))
+    return sanxing_remedy_service(
+        auto_apply=auto_apply,
+        principal=_principal_from_params(params),
+    )
+
+
 def handle_memory_consolidate(params: dict) -> dict:
     """沉潜：执行闲时夜梦记忆沉淀与折叠压缩周期（ADR-0036）。"""
     from lantai.services.consolidation_service import run_consolidation_cycle
@@ -2172,6 +2183,20 @@ TOOLS = {
             "required": ["memory_id"],
         },
     },
+    "sanxing_remedy": {
+        "description": "三省（自愈）：反思自省深度演化、因果违例闭环与健康自愈处置（ADR-0079）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "auto_apply": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "是否就地执行自愈落库修复（默认 False 仅预演生成策略清单）",
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
     "memory_consolidate": {
         "description": "沉潜（折叠压缩）：扫描高密度碎片记忆聚类提纯为主记忆，并修剪极度衰减的边缘噪音（ADR-0036）",
         "inputSchema": {
@@ -3406,6 +3431,7 @@ TOOL_HANDLERS = {
     "shiyi_pipeline": handle_shiyi_pipeline,
     "pisha_refine": handle_pisha_refine,
     "kaogong_inspect": handle_kaogong_inspect,
+    "sanxing_remedy": handle_sanxing_remedy,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

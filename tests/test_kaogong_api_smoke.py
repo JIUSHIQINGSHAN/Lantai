@@ -95,9 +95,9 @@ def test_seam2_rest_endpoints(monkeypatch):
 
 
 def test_seam3_mcp_91_tools_parity():
-    """Seam 3: MCP 协议往返与 91 工具池 1:1 双向对齐守卫。"""
-    assert len(TOOLS) == 91
-    assert len(TOOL_HANDLERS) == 91
+    """Seam 3: MCP 协议往返与 91+ 工具池 1:1 双向对齐守卫。"""
+    assert len(TOOLS) >= 91
+    assert len(TOOL_HANDLERS) == len(TOOLS)
     assert "kaogong_inspect" in TOOLS
     assert "kaogong_inspect" in TOOL_HANDLERS
     assert "kaogong_eval" in TOOLS

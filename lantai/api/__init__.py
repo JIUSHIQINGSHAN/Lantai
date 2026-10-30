@@ -35,6 +35,7 @@ from .routes_qijuzhu import router as routes_qijuzhu_router
 from .routes_qingniao import router as routes_qingniao_router
 from .routes_recall_chain import router as routes_recall_chain_router
 from .routes_retrieval import router as routes_retrieval_router
+from .routes_sanxing import router as routes_sanxing_router
 from .routes_scenes import router as routes_scenes_router
 from .routes_scratchpad import router as routes_scratchpad_router
 from .routes_search import router as routes_search_router
@@ -64,6 +65,7 @@ __all__ = [
     "routes_edges_router",
     "routes_param_advice_router",
     "routes_retrieval_router",
+    "routes_sanxing_router",
     "routes_verification_router",
     "routes_candidates_router",
     "routes_dialogue_router",

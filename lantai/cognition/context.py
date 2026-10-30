@@ -72,6 +72,8 @@ class CognitiveContext:
     pisha_digest: list[dict] | None = None
     # 考功（v0.57 Ticket 02 ADR-0078）：记忆价值演化与多维功过评定切面
     kaogong_digest: list[dict] | None = None
+    # 三省（v0.58 Ticket 02 ADR-0079）：认知层反思自省与健康自愈切面
+    sanxing_digest: list[dict] | None = None
 
     def to_prompt(self) -> str:
         """
@@ -451,6 +453,31 @@ class CognitiveContext:
                 )
 
             sections.insert(0, "\n".join(kg_lines))
+
+        # 三省（ADR-0079）：若有反思自省与健康自愈建议，渲染三省切面
+        if self.sanxing_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            sx_items = self.sanxing_digest
+            sx_lines = [f"## Memory Health Remediation & Reflection (三省 · {len(sx_items)}):"]
+            for idx, item in enumerate(sx_items[:5], 1):
+                tid = item.get("target_id") or ""
+                defect = item.get("defect_type") or "defect"
+                action = item.get("recommended_action") or "remedy"
+                risk = item.get("risk_level") or "low"
+                reason = item.get("reason") or ""
+                reason_str = f" - {wrap_as_data(str(reason))}" if reason else ""
+                fenced_c = item.get("fenced_content") or ""
+                content_display = (
+                    fenced_c
+                    if fenced_c
+                    else wrap_as_data(str(item.get("content", "")), item_id=tid)
+                )
+                sx_lines.append(
+                    f"- [三省·S{idx} ({action}) [缺陷: {defect}] [风险: {risk}]] {content_display}{reason_str}"
+                )
+
+            sections.insert(0, "\n".join(sx_lines))
 
         from lantai.llm.fence import fence_declaration
 
