@@ -1632,6 +1632,27 @@ def handle_zuozheng_evidence(params: dict) -> dict:
     return {"error": "Either memory_id or claim must be provided"}
 
 
+def handle_shiyi_remedy(params: dict) -> dict:
+    """拾遗：遗漏记忆补偿与零召回自适应补救（v0.48 ADR-0069）。"""
+    query = params.get("query")
+    if not query:
+        return {"error": "query is required"}
+    domain = params.get("domain", "all")
+    allow_domain_relax = bool(params.get("allow_domain_relax", False))
+    limit = int(params.get("limit", 5))
+
+    from lantai.services.shiyi_service import remedy_recall_service
+
+    p = _principal_from_params(params)
+    return remedy_recall_service(
+        query=query,
+        domain=domain,
+        allow_domain_relax=allow_domain_relax,
+        limit=limit,
+        principal=p,
+    )
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2668,6 +2689,35 @@ TOOLS = {
             },
         },
     },
+    "shiyi_remedy": {
+        "description": "拾遗：遗漏记忆补偿与零召回自适应补救（v0.48 ADR-0069）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "待补救召回的目标查询文本（用于长尾/模糊失配补偿）",
+                },
+                "domain": {
+                    "type": "string",
+                    "description": "限定辨域：user/session/agent/all",
+                    "default": "all",
+                },
+                "allow_domain_relax": {
+                    "type": "boolean",
+                    "description": "首轮失配时是否允许安全放宽辨域范围",
+                    "default": False,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "最大召回补救条数（默认 5）",
+                    "default": 5,
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+            "required": ["query"],
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2751,6 +2801,7 @@ TOOL_HANDLERS = {
     "qijuzhu_chronicle": handle_qijuzhu_chronicle,
     "famen_skill": handle_famen_skill,
     "zuozheng_evidence": handle_zuozheng_evidence,
+    "shiyi_remedy": handle_shiyi_remedy,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

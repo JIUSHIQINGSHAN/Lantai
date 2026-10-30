@@ -42,6 +42,7 @@ from lantai.api import (
     routes_work_items_router,
     routes_zhishu_router,
     routes_zuozheng_router,
+    routes_shiyi_router,
 )
 from lantai.core.auth import assert_secure_binding, get_current_user
 from lantai.core.logger import logger
@@ -138,6 +139,7 @@ CORE_ROUTERS = [
     routes_qijuzhu_router,
     routes_famen_router,
     routes_zuozheng_router,
+    routes_shiyi_router,
 ]
 
 EXT_ROUTERS = {

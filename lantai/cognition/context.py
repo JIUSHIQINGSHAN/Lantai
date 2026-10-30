@@ -54,6 +54,8 @@ class CognitiveContext:
     famen_digest: list[dict] | None = None
     # 佐证（v0.47 Ticket 02 ADR-0068）：证据链反查与印证切面
     zuozheng_digest: list[dict] | None = None
+    # 拾遗（v0.48 Ticket 02 ADR-0069）：遗漏自适应补救召回切面
+    shiyi_digest: list[dict] | None = None
 
     def to_prompt(self) -> str:
         """
@@ -251,6 +253,27 @@ class CognitiveContext:
                 )
 
             sections.insert(0, "\n".join(zz_lines))
+
+        # 拾遗（ADR-0069）：若有遗漏自适应补救召回记忆，渲染补救切面
+        if self.shiyi_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            sy_items = self.shiyi_digest
+            sy_lines = [
+                f"## Compensated Recall & Remedied Memories (拾遗 · {len(sy_items)}):"
+            ]
+            for idx, item in enumerate(sy_items[:5], 1):
+                c = item.get("content") or ""
+                tier = item.get("remedy_tier") or "fuzzy"
+                conf = item.get("confidence")
+                conf_str = f" [置信度: {conf}]" if conf is not None else ""
+                reason = item.get("remedy_reason") or ""
+                reason_str = f" - {wrap_as_data(str(reason))}" if reason else ""
+                sy_lines.append(
+                    f"- [拾遗·R{idx} ({tier}){conf_str}] {wrap_as_data(str(c), item_id=item.get('id'))}{reason_str}"
+                )
+
+            sections.insert(0, "\n".join(sy_lines))
 
         from lantai.llm.fence import fence_declaration
 
