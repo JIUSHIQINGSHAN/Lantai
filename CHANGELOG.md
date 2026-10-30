@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-10-30 - 考功（Kaogong · 长程价值演化与多维功过评定引擎、生命周期状态机与认知层收敛）
+
+> 版本代号「考功」：出自唐代吏部「考功司」（《唐六典》），掌官吏功过品级考评，取「考校功过、升降品级、去劣存优」之意——对应本版主题「长程价值演化与多维功过评定引擎、生命周期状态机与认知层收敛，ADR-0078 落地」：突破既有价值升降级仅依赖简单引用次数硬编码阈值的局限，构建面向生产环境的一级认知引擎 `KaogongEngine` 与 `KaogongResult` 契约（票 01）。引入综合采纳率（`helpful_score`）、使用频度密度（`density_score`）、衰减与冲突风险多因子复合评分（`MeritScore`），驱动生命周期状态机精准流转（`promote_longterm` 晋升长期语义层并免疫衰减、`demote_deprecate` 劣质记忆降权淘汰、`keep_neutral` 样本不足审慎保持原状，宁 miss 不脏写）；严守行级租户属主安全隔离与樊篱数据围栏（`wrap_as_data`）防提示词注入防御。全面重构服务层 `kaogong_service.py`，保持历史评级接口向下兼容并增补 `kaogong_inspect_service` 深度考评；挂载 HTTP REST 路由（`POST /kaogong/eval`、`GET /kaogong/report`、`POST /kaogong/inspect`）；MCP 工具池扩充至 **91 工具里程碑**（新增 `kaogong_inspect` 细粒度审查工具），实现 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫；增强认知上下文 `CognitiveContext`，将价值演化评定深度整合至提示词切面中（票 02）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.57-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心考功价值演化评定引擎 KaogongEngine 与认知层收敛（票 01，详见 `lantai/cognition/kaogong.py` 与 `tests/test_kaogong_engine_smoke.py`）**：
+  - 价值评定结构化契约：定义 `KaogongResult` 契约，输出记忆 ID、处置动作、综合评分、使用量/采纳量、因子分解映射、生命周期层级流转、重要度变迁、裁决理由与樊篱数据包裹；
+  - 多因子复合打分模型：综合评定采纳率表现与使用频度密度，支持高价值沉淀为恒定资产、劣质条目自动淡出，并在样本不足（use_count < 3）时审慎保持原状；
+  - 单条考评与批量巡检持久化：支持单条记忆即时考评与批量 `run_cycle`，落库维护 `tier`、`decay_class` 与 `importance` 并产出结构化审计报告快照；
+  - 行级租户属主 ACL 隔离与樊篱防御：严格校验 `_check_access` 杜绝跨租户改写（宁漏不越权），全链路正文采用 `<memory_data>` 围栏隔离；
+  - 交付端到端不 mock 冒烟测试 `tests/test_kaogong_engine_smoke.py`（纯函数多因子评分、SQLite 单条考评落库流转、批量巡检报告快照、行级 ACL 隔离与樊篱防御 4 个独立接缝验证全绿）。
+- **考功服务层重构、REST 路由、MCP 91 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/kaogong_service.py`、`lantai/api/routes_kaogong.py`、`lantai/cli/mcp.py` 与 `tests/test_kaogong_api_smoke.py`）**：
+  - 服务层重构：统一基于 `KaogongEngine` 重构 `kaogong_service.py`，保持既有 `evaluate_memory_item_grade` 与 `run_kaogong_cycle` 契约兼容，增设 `kaogong_inspect_service` 深度审查；
+  - HTTP REST 路由：新增 `POST /kaogong/eval`、`GET /kaogong/report` 与 `POST /kaogong/inspect` 路由端点，并挂载入 `CORE_ROUTERS`；
+  - MCP 扩充至 91 工具里程碑：注册 `kaogong_inspect` 工具规范定义并挂载处理器，保持 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向对齐；
+  - 认知上下文增强：在 `CognitiveContext` 中引入 `kaogong_digest` 属性，并在 `to_prompt()` 中渲染结构化考功切面（樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_kaogong_api_smoke.py`（服务层调用、REST 端点、MCP 91 工具协议往返与对齐、认知切面提示词渲染 4 个独立接缝验证全绿）。
+
 ## [0.56.0] - 2026-10-30 - 披沙（Pisha · 候选记忆递归提纯去噪、多轨指代消解与认知引擎收敛）
 
 > 版本代号「披沙」：出自《世说新语·德行》「披沙拣金，往往见宝」，取「去粗取精、沙中淘金、去噪提纯」之意——对应本版主题「候选记忆递归提纯去噪、多轨指代消解与认知引擎收敛，ADR-0077 落地」：突破早期候选精炼工具分散脆弱、缺少结构化审计契约与降级保障的局限，构建面向生产环境的一级认知引擎 `PishaEngine` 与 `PishaResult` 契约（票 01）。引入两阶段确定性规则管线（启发式口语化副词助词修剪 `colloquial_pruned`、基于实体提示的确定性代词消解 `pronoun_resolutions`），并在 LLM 异常时提供严格确定性保底（纯噪音直接归零拒绝，有规则收益时平滑校准，宁 miss 不脏写）；严守行级租户属主安全隔离与樊篱数据围栏（`wrap_as_data`）防提示词注入防御。全面重构服务层 `refine_service.py`，新增统一入口 `pisha_refine_service` 并保持历史向下兼容；挂载 HTTP REST 路由（`POST /pisha/refine`、`POST /pisha/batch`）；MCP 工具池扩充至 **90 工具里程碑**（新增 `pisha_refine`），实现 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫；增强认知上下文 `CognitiveContext`，将提纯结果深度整合至提示词切面中（票 02）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.56-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
