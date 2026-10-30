@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-10-30 - 底本（Diben · 跨会话现场定本与认知状态传承引擎）
+
+> 版本代号「底本」：出自章学诚《校讎通义》「校讎之法，必本于底本」，喻指在会话间隙或任务更迭时，将认知现场固化为唯一可信定本，为新一轮交互提供定本锚点与传承依据，保证 Agent 行事有据、不迷失方向——对应本版主题「跨会话现场定本与认知状态传承引擎、意图漂移检测、会话定本锚定与认知上下文底本切面，ADR-0072 落地」：突破既有会话快照停留于标量存储、缺乏认知推理沉淀与意图漂移判别的局限，构建面向生产环境的高性能跨会话定本传承引擎 `DibenEngine`（票 01）。支持针对会话五段现场（在做/下一步/工作区/决策/待办）进行结构化定本提炼与固化（`synthesize_anchor`）；支持实时比对用户新输入与激活底本的语义重合与意图偏转程度（`analyze_drift`），精准输出意图延续与漂移评级（`none` / `slight` / `significant`）；支持安全检索当前租户激活底本（`get_active_anchor`）；全链路底本定本与漂移分析推论强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁 miss 不脏写）。打通服务层 `diben_service.py`、HTTP REST 路由（`POST /diben/anchor`、`POST /diben/drift`、`GET /diben/latest`）、MCP 工具（`diben_anchor`，工具池扩充至 85 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，底本定本切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.51-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心底本定本锚定与意图漂移分析引擎 DibenEngine（票 01，详见 `lantai/cognition/diben.py` 与 `tests/test_diben_engine_smoke.py`）**：
+  - 定本模型契约：定义 `SessionAnchor` 契约，统一纳管在做意图、下一步、当前工作区、关键决策列表与未竟待办，支持樊篱安全渲染；
+  - 意图漂移分析契约：定义 `DriftAnalysis`，输出意图延续得分 `continuity_score`、延续布尔标识与漂移等级；
+  - 认知定本提炼与落库：实现 `synthesize_anchor`，与底层 `SessionCheckpoint` 存储平滑兼容并强化认知提炼；
+  - 意图延续度计算：实现 `analyze_drift`，基于结巴分词与关键实词匹配，判别新输入是否偏离激活底本；
+  - 樊篱安全隔离与行级 ACL：底本定本与漂移推论强制施加 `<memory_data>` 围栏隔离，严格校验租户与用户属主（宁 miss 不脏写）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_diben_engine_smoke.py`（定本提炼与结构化提取、意图延续与漂移分析、樊篱包裹防注入、行级 ACL 隔离 4 个独立接缝验证全绿）。
+- **底本服务层、REST 路由、MCP 85 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/diben_service.py`、`lantai/api/routes_diben.py`、`lantai/cli/mcp.py`、`lantai/cognition/context.py` 与 `tests/test_diben_api_smoke.py`）**：
+  - 服务层封装：新增 `synthesize_anchor_service`、`analyze_drift_service` 与 `get_active_anchor_service`，统一管理 DB 会话生命周期与定本调度；
+  - HTTP REST 路由：新增 `POST /diben/anchor`、`POST /diben/drift` 与 `GET /diben/latest` 鉴权端点，挂载入 `app.py` 核心鉴权路由；
+  - MCP 工具池扩容至 85 工具里程碑：注册 `diben_anchor` 工具并实现 `handle_diben_anchor` 处理器，`TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫全绿；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 引入 `diben_digest` 切面，结构化渲染跨会话定本快照（樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_diben_api_smoke.py`（服务层调用、REST 端点、MCP 协议往返与 85 工具对齐、认知上下文底本切面 4 个独立接缝验证全绿）。
+
 ## [0.50.0] - 2026-10-30 - 拟议（Niyi · 认知演化提案审议与因果变化推演引擎）
 
 > 版本代号「拟议」：出自《易·系辞上》「拟之而后言，议之而后动，拟议以成其变化」，喻指在认知发生实质变更前，先作周详模拟推演，再行审议评估，最终成其健全之认知演化——对应本版主题「认知演化提案审议与因果变化推演引擎、因果拓扑断裂风险评级、未决提案互斥审计与认知上下文拟议切面，ADR-0071 落地」：突破既有演化模块点对点孤立变更、缺乏拓扑全局因果推演与未决提案冲突排查的局限，构建面向生产环境的高性能演化审议推演引擎 `NiyiEngine`（票 01）。支持针对任意提议的认知变更（`add` / `update` / `merge` / `deprecate`）执行因果拓扑影响推演（`deliberate_proposal`），模拟对相连 `MemoryEdge` 因果边的冲击，精准输出风险评级（`low` / `medium` / `high`）与结构化审议结论（`DeliberationOutcome`）；支持当前租户范围内未决提案池的并发竞争与互斥审计（`audit_pending_proposals`），自动发现针对同一目标的冲突提案对；全链路审议推论与审计摘要强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁 miss 不脏写）。打通服务层 `niyi_service.py`、HTTP REST 路由（`POST /niyi/deliberate`、`GET /niyi/audit`）、MCP 工具（`niyi_deliberate`，工具池扩充至 84 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，拟议审议切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.50-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
