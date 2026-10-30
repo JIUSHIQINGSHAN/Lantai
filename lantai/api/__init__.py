@@ -18,6 +18,7 @@ from .routes_graph import router as routes_graph_router
 from .routes_health import protected_router as routes_health_protected_router
 from .routes_health import router as routes_health_router
 from .routes_import import router as routes_import_router
+from .routes_jiaochou import router as routes_jiaochou_router
 from .routes_memory import router as routes_memory_router
 from .routes_monitor import router as routes_monitor_router
 from .routes_obsidian import router as routes_obsidian_router
@@ -82,5 +83,6 @@ __all__ = [
     "routes_famen_router",
     "routes_zuozheng_router",
     "routes_shiyi_router",
+    "routes_jiaochou_router",
     "routes_zhishu_router",
 ]

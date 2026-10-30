@@ -1653,6 +1653,33 @@ def handle_shiyi_remedy(params: dict) -> dict:
     )
 
 
+def handle_jiaochou_collate(params: dict) -> dict:
+    """校雠：智能语义去重与知识对齐订误（v0.49 ADR-0070）。"""
+    text_a = params.get("text_a")
+    text_b = params.get("text_b")
+    scan = bool(params.get("scan", False))
+    limit = int(params.get("limit", 50))
+    threshold = float(params.get("similarity_threshold", 0.7))
+
+    from lantai.services.jiaochou_service import (
+        collate_memories_service,
+        scan_redundancy_service,
+    )
+
+    p = _principal_from_params(params)
+    if scan:
+        return scan_redundancy_service(limit=limit, similarity_threshold=threshold, principal=p)
+    if text_a and text_b:
+        return collate_memories_service(
+            text_a=text_a,
+            text_b=text_b,
+            memory_id_a=params.get("memory_id_a"),
+            memory_id_b=params.get("memory_id_b"),
+            principal=p,
+        )
+    return {"error": "Either provide both text_a and text_b, or set scan=true"}
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2718,6 +2745,40 @@ TOOLS = {
             "required": ["query"],
         },
     },
+    "jiaochou_collate": {
+        "description": "校雠：智能语义去重与知识对齐订误（v0.49 ADR-0070）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text_a": {
+                    "type": "string",
+                    "description": "第一段事实正文（对齐对比时必传）",
+                },
+                "text_b": {
+                    "type": "string",
+                    "description": "第二段事实正文（对齐对比时必传）",
+                },
+                "memory_id_a": {"type": "string", "description": "第一段记忆 ID（可选）"},
+                "memory_id_b": {"type": "string", "description": "第二段记忆 ID（可选）"},
+                "scan": {
+                    "type": "boolean",
+                    "description": "是否扫描当前租户全域近义冗余记忆簇",
+                    "default": False,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "扫描返回最大对数",
+                    "default": 50,
+                },
+                "similarity_threshold": {
+                    "type": "number",
+                    "description": "冗余聚类相似度阈值 [0.1, 1.0]",
+                    "default": 0.7,
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2802,6 +2863,7 @@ TOOL_HANDLERS = {
     "famen_skill": handle_famen_skill,
     "zuozheng_evidence": handle_zuozheng_evidence,
     "shiyi_remedy": handle_shiyi_remedy,
+    "jiaochou_collate": handle_jiaochou_collate,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

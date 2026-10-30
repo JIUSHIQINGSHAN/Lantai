@@ -56,6 +56,8 @@ class CognitiveContext:
     zuozheng_digest: list[dict] | None = None
     # 拾遗（v0.48 Ticket 02 ADR-0069）：遗漏自适应补救召回切面
     shiyi_digest: list[dict] | None = None
+    # 校雠（v0.49 Ticket 02 ADR-0070）：智能语义去重与校勘切面
+    jiaochou_digest: list[dict] | None = None
 
     def to_prompt(self) -> str:
         """
@@ -272,6 +274,25 @@ class CognitiveContext:
                 )
 
             sections.insert(0, "\n".join(sy_lines))
+
+        # 校雠（ADR-0070）：若有对齐订误与冗余校勘建议，渲染校雠切面
+        if self.jiaochou_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            jc_items = self.jiaochou_digest
+            jc_lines = [f"## Semantic Alignment & Collation (校雠 · {len(jc_items)}):"]
+            for idx, item in enumerate(jc_items[:5], 1):
+                prop = item.get("synthesized_proposal") or item.get("text_b") or ""
+                action = item.get("action_suggestion") or "merge"
+                sim = item.get("similarity")
+                sim_str = f" [相似度: {sim}]" if sim is not None else ""
+                summary = item.get("divergence_summary") or ""
+                summary_str = f" - {wrap_as_data(str(summary))}" if summary else ""
+                jc_lines.append(
+                    f"- [校雠·C{idx} ({action}){sim_str}] {wrap_as_data(str(prop))}{summary_str}"
+                )
+
+            sections.insert(0, "\n".join(jc_lines))
 
         from lantai.llm.fence import fence_declaration
 
