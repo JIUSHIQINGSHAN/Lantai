@@ -75,7 +75,8 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **底本**（Diben，会话快照） | 在会话结束或上下文压缩时记录的现场快照，涵盖在做、下一步、决策等五大要素，供下次会话无缝继承。 | 命名：版本学意象，校勘所据之定本；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0021](docs/adr/0021-session-checkpoint.md) |
 | **拾遗**（Shiyi，检索韧性降级） | 当外部向量检索服务超时或异常时，平滑降级为本地关键词与全文检索的多级容灾保障，杜绝检索击穿。 | 命名：唐代谏官官职「拾遗」，取拾遗补阙之义；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0028](docs/adr/0028-zero-recall-remediation.md) |
 | **器识**（Qishi，人格基座） | Agent 保持稳定角色与原则的底座；确立长期不变的语言风格、行为戒律与认知底色，且不随时间遗忘衰减。 | 命名：《新唐书·裴行俭传》「士之致远，先器识而后文艺」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0029](docs/adr/0029-persona-base.md) |
-| **披沙**（Pisha，候选精炼） | 对处于置信度模糊带的候选记忆进行二次结构化提纯，消除代词指代歧义与口语废话，提升记忆质量。 | 命名：《世说新语·德行》「披沙拣金，往往见宝」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0030](docs/adr/0030-candidate-refine.md) |
+| **披沙**（Pisha，候选精炼与去噪提纯引擎） | 对处于置信度模糊带的候选记忆进行二次结构化提纯，消除代词指代歧义与口语废话，提升记忆质量。 | 命名：《世说新语·德行》「披沙拣金，往往见宝」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0030](docs/adr/0030-candidate-refine.md)、[ADR-0077](docs/adr/0077-pisha-candidate-refine-and-denoise-engine.md) 及 `lantai/cognition/pisha.py` |
+| **披沙**（Pisha，版本代号） | v0.56.0 发行版本代号；寓意披沙拣金、去粗取精，对应本版「候选记忆递归提纯去噪、多轨指代消解与认知引擎收敛（ADR-0077落地）」的主题（代号与功能同名，承既有演进先例）。 | 命名：《世说新语·德行》「披沙拣金，往往见宝」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记及 [ADR-0077](docs/adr/0077-pisha-candidate-refine-and-denoise-engine.md) |
 | **考功**（Kaogong，价值演化） | 根据记忆在实际交互中的被采纳率与用户反馈，对全库记忆进行功过评定；晋升高频有益记忆，淘汰劣质记忆。 | 命名：唐代吏部「考功司」，掌官吏功过品级考评；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0031](docs/adr/0031-kaogong-weight-evolution.md) |
 | **札记**（Zhaji，工作区暂存便签） | 供 Agent 在复杂多轮交互中主动读写的临时工作便签，辅助记录多步骤推理中的阶段性要点。 | 命名：古代读书摘记要点之木简便签；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0032](docs/adr/0032-session-scratchpad.md) |
 | **潜移**（Qianyi，异步摄取管道） | 将对话提炼与入库流水线转入后台非阻塞线程池的异步架构；使对话端毫秒级返回，彻底杜绝大模型调用阻塞。 | 命名：《文心雕龙》「潜移暗引，莫之能知」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0033](docs/adr/0033-async-ingest-pipeline.md) |
