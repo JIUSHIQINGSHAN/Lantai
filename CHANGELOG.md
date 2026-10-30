@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-10-30 - 拾遗（Shiyi · 主流水线零召回自适应补救闭环与深度检索治理）
+
+> 版本代号「拾遗」：出自唐代谏官官职「拾遗」（杜甫曾任左拾遗），取「捡回遗漏之物、补苴罅漏」之意——对应本版主题「主流水线零召回自适应补救闭环、检索召回深度治理与端到端补救切面融合，ADR-0076 落地」：突破既有检索主流水线在初始初筛未命中或经衰减/时效/辨域过滤后出现零召回（Zero-Recall）直接返空的局限，构建面向生产环境的主流水线零召回自适应拾遗补救闭环（票 01）。在 `hybrid_search` 中原生打通 `ShiyiEngine.remedy_search_pipeline`，在零召回时自适应唤醒宽松分词、字符级子序列与辨域安全放宽补救阶梯；补救条目通过统一契约 `to_search_result()` 转换为标准检索结果项，携带 `is_remedied: True`、`remedy_tier` 与 `remedy_reason`；支持受控兼容开关 `enable_shiyi`，关闭时 100% 保持旧有静默返回行为；全链路补救正文强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁漏不越权）。打通服务层 `remedy_pipeline_service`、HTTP REST 路由（`POST /shiyi/pipeline`）、MCP 工具（`shiyi_pipeline`，工具池扩充至 89 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，拾遗补救切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.55-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心主流水线零召回自适应拾遗补救闭环与 ShiyiEngine 增强（票 01，详见 `lantai/retrieval/hybrid.py`、`lantai/cognition/shiyi.py` 与 `tests/test_shiyi_pipeline_smoke.py`）**：
+  - 拾遗候选统一度量投影：在 `RemedyCandidate` 契约中扩展 `to_search_result()`，将补救候选无缝标准化为 `hybrid_search` 结果项契约，携带分值、层级与补救元数据；
+  - 主流水线自适应闭环：在 `hybrid_search` 与 `_keyword_fallback` 零召回截断点原生接入 `ShiyiEngine.remedy_search_pipeline`，实现初筛/过滤后空结果的主动自适应补救召回；
+  - 审计线索留痕：在 `trace_steps` 中增加 `shiyi_remedy` 诊断步骤，完整记录补救候选条数、耗时与分值区间；
+  - 兼容回退与 ACL 守卫：引入 `enable_shiyi=True` 可控开关，默认自适应唤醒，显式关闭时保持旧有空返回行为；补救全流程严守行级租户属主隔离与樊篱防注入（宁漏不越权）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_shiyi_pipeline_smoke.py`（主流水线零召回自适应唤醒、补救投影与 trace 记录对齐、开关关闭兼容回退、行级 ACL 隔离与樊篱包裹 4 个独立接缝验证全绿）。
+- **拾遗主流水线服务层、REST 路由、MCP 89 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/shiyi_service.py`、`lantai/api/routes_shiyi.py`、`lantai/cli/mcp.py` 与 `tests/test_shiyi_pipeline_api_smoke.py`）**：
+  - 服务层封装：新增 `remedy_pipeline_service`，统一调度底层 `hybrid_search` 与 DB 会话生命周期；
+  - HTTP REST 路由：新增 `POST /shiyi/pipeline` 鉴权端点，挂载入 `routes_shiyi_router`；
+  - MCP 工具池扩容至 89 工具里程碑：注册 `shiyi_pipeline` 工具并实现 `handle_shiyi_pipeline` 处理器，`TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫全绿；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 深度整合拾遗补救切面渲染（樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_shiyi_pipeline_api_smoke.py`（服务层调用、REST 端点、MCP 协议往返与 89 工具对齐、认知上下文切面渲染 4 个独立接缝验证全绿）。
+
 ## [0.54.0] - 2026-10-30 - 青鸟（Qingniao · 多智能体记忆信使与异步通信路由引擎）
 
 > 版本代号「青鸟」：出自李商隐《无题》「蓬山此去无多路，青鸟殷勤为探看」与《山海经》西王母三青鸟，代指在认知联邦与智能体集群生态中专职传递核心记忆与书简公文的神圣信使——对应本版主题「多智能体记忆信使与异步通信路由引擎、记忆信函封装、送达回执闭环与认知上下文青鸟切面，ADR-0075 落地」：突破既有记忆局限于单体本地或扁平共享表的局限，构建面向多智能体协作与联邦认知的高可靠青鸟信使引擎 `QingniaoEngine`（票 01）。支持跨智能体记忆信函封装与寻址（`QingniaoLetter`），提供异步派发回执（`QingniaoDispatchResult`）；支持收件箱智能拉取与优先级倒序调度（`fetch_inbox`）；实现生命周期签收闭环（`acknowledge_letter`，支持 ACK/REJECT 状态机转换）；全链路信函正文强制经由樊篱（`wrap_as_data`）数据围栏包裹，抵御跨体提示词注入攻击，并严格校验租户隔离与接收方签收权限（宁 miss 不越权）。打通服务层 `qingniao_service.py`、HTTP REST 路由（`POST /qingniao/dispatch`、`GET /qingniao/inbox`、`POST /qingniao/ack`）、MCP 工具（`qingniao_messenger`，工具池扩充至 88 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，青鸟多智能体信使切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.54-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
