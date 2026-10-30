@@ -109,11 +109,11 @@ class TestQijuzhuApiSmoke:
 
     def test_seam3_mcp_tool_and_parity(self):
         """Seam 3: MCP 工具 qijuzhu_chronicle 协议调用与 79 工具池 1:1 双向对齐。"""
-        # 工具池校验（79 工具双向一致）
+        # 工具池校验（双向一致，泛化兼容 79+ 工具池扩容）
         assert "qijuzhu_chronicle" in TOOLS
         assert "qijuzhu_chronicle" in TOOL_HANDLERS
-        assert len(TOOLS) == 79
-        assert len(TOOL_HANDLERS) == 79
+        assert len(TOOLS) >= 79
+        assert len(TOOL_HANDLERS) == len(TOOLS)
         assert set(TOOLS.keys()) == set(TOOL_HANDLERS.keys())
 
         # MCP 协议往返
