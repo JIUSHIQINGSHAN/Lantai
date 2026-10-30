@@ -64,6 +64,8 @@ class CognitiveContext:
     diben_digest: dict | None = None
     # 测候（v0.52 Ticket 02 ADR-0073）：影子观察期巡检与演化状态监控切面
     cehou_digest: list[dict] | None = None
+    # 石室（v0.53 Ticket 02 ADR-0074）：高密核心记忆金匮封存与防篡改硬核切面
+    shishi_digest: list[dict] | None = None
 
     def to_prompt(self) -> str:
         """
@@ -362,6 +364,24 @@ class CognitiveContext:
                 )
 
             sections.insert(0, "\n".join(ch_lines))
+
+        # 石室（ADR-0074）：若有高密核心记忆金匮封存块，渲染石室硬核切面
+        if self.shishi_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            ss_items = self.shishi_digest
+            ss_lines = [f"## Core Memory Vault (石室 · {len(ss_items)}):"]
+            for idx, item in enumerate(ss_items[:5], 1):
+                bkey = item.get("block_key", "core")
+                c = item.get("content", "")
+                immutable = item.get("is_immutable", True)
+                imm_str = " [金匮锁定]" if immutable else " [可调整]"
+                ver = item.get("version", 1)
+                ss_lines.append(
+                    f"- [石室·V{idx} ({bkey}·v{ver}){imm_str}] {wrap_as_data(str(c), item_id=f'shishi-{bkey}', score=1.0)}"
+                )
+
+            sections.insert(0, "\n".join(ss_lines))
 
         from lantai.llm.fence import fence_declaration
 

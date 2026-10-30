@@ -35,6 +35,7 @@ from .routes_retrieval import router as routes_retrieval_router
 from .routes_scenes import router as routes_scenes_router
 from .routes_scratchpad import router as routes_scratchpad_router
 from .routes_search import router as routes_search_router
+from .routes_shishi import router as routes_shishi_router
 from .routes_shiyi import router as routes_shiyi_router
 from .routes_sources import router as routes_sources_router
 from .routes_tanyi import router as routes_tanyi_router
@@ -86,6 +87,7 @@ __all__ = [
     "routes_famen_router",
     "routes_zuozheng_router",
     "routes_shiyi_router",
+    "routes_shishi_router",
     "routes_jiaochou_router",
     "routes_niyi_router",
     "routes_diben_router",

@@ -1784,6 +1784,37 @@ def handle_cehou_observe(params: dict) -> dict:
     return scan_cehou_windows_service(principal=p)
 
 
+def handle_shishi_vault(params: dict) -> dict:
+    """石室：高密核心记忆金匮封存、防篡改验真与封存块检索（v0.53 ADR-0074）。"""
+    verify = bool(params.get("verify", False))
+    namespace = str(params.get("namespace", "default") or "default")
+    block = params.get("block")
+    content = params.get("content")
+    is_immutable = bool(params.get("is_immutable", True))
+
+    from lantai.services.shishi_service import (
+        get_sealed_blocks_service,
+        seal_core_memory_service,
+        verify_shishi_integrity_service,
+    )
+
+    p = _principal_from_params(params)
+    if verify:
+        return verify_shishi_integrity_service(namespace=namespace, principal=p)
+
+    if block and content:
+        return seal_core_memory_service(
+            block=str(block),
+            content=str(content),
+            is_immutable=is_immutable,
+            namespace=namespace,
+            principal=p,
+        )
+
+    blocks = get_sealed_blocks_service(namespace=namespace, principal=p)
+    return {"namespace": namespace, "blocks": blocks, "total": len(blocks)}
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2980,6 +3011,39 @@ TOOLS = {
             },
         },
     },
+    "shishi_vault": {
+        "description": "石室：高密核心记忆金匮封存、防篡改验真与封存块检索（v0.53 ADR-0074）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "block": {
+                    "type": "string",
+                    "description": "核心记忆块名：identity | policy | task",
+                    "enum": ["identity", "policy", "task"],
+                },
+                "content": {
+                    "type": "string",
+                    "description": "核心记忆正文（封存或更新时提供）",
+                },
+                "is_immutable": {
+                    "type": "boolean",
+                    "description": "是否施加金匮锁定（锁定后非管理员不可改写）",
+                    "default": True,
+                },
+                "verify": {
+                    "type": "boolean",
+                    "description": "是否对核心记忆执行防篡改哈希签名验真",
+                    "default": False,
+                },
+                "namespace": {
+                    "type": "string",
+                    "description": "命名空间（默认 default）",
+                    "default": "default",
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -3068,6 +3132,7 @@ TOOL_HANDLERS = {
     "niyi_deliberate": handle_niyi_deliberate,
     "diben_anchor": handle_diben_anchor,
     "cehou_observe": handle_cehou_observe,
+    "shishi_vault": handle_shishi_vault,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

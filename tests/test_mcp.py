@@ -32,8 +32,9 @@ def test_tools_list():
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
     assert (
-        len(resp["result"]["tools"]) == 86
-    )  # 包含测候（cehou_observe）、底本（diben_anchor）、拟议（niyi_deliberate）、校雠（jiaochou_collate）、拾遗（shiyi_remedy）、佐证（zuozheng_evidence）、法门（famen_skill）、起居注（qijuzhu_chronicle）、目次（muci_catalog）、直书（zhishu_check）、卷宗、参商、格物、同袍、悬镜、尘封、三省、探颐与润物共 86 个工具
+        len(resp["result"]["tools"]) == 87
+    )  # 包含石室（shishi_vault）、测候（cehou_observe）、底本（diben_anchor）、拟议（niyi_deliberate）、校雠（jiaochou_collate）、拾遗（shiyi_remedy）、佐证（zuozheng_evidence）、法门（famen_skill）、起居注（qijuzhu_chronicle）、目次（muci_catalog）、直书（zhishu_check）、卷宗、参商、格物、同袍、悬镜、尘封、三省、探颐与润物共 87 个工具
+    assert "shishi_vault" in names
     assert "cehou_observe" in names
     assert "diben_anchor" in names
     assert "niyi_deliberate" in names
