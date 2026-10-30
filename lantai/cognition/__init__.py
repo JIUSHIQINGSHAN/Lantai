@@ -12,6 +12,10 @@ from lantai.cognition.juanzong import (
     DossierMilestone,
     JuanzongEngine,
 )
+from lantai.cognition.kaogong import (
+    KaogongEngine,
+    KaogongResult,
+)
 from lantai.cognition.pisha import (
     PishaEngine,
     PishaResult,
@@ -52,6 +56,8 @@ __all__ = [
     "DossierFocusResult",
     "DossierMilestone",
     "JuanzongEngine",
+    "KaogongEngine",
+    "KaogongResult",
     "PishaEngine",
     "PishaResult",
     "ProbeInsertion",
