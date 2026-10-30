@@ -146,7 +146,7 @@ def test_build_context_has_evidence(monkeypatch):
     import lantai.storage.db as db_module
 
     monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
-    monkeypatch.setattr(mod, "get_vector_store", lambda: _FakeStore())
+    monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
 
     out = mod.build_context("这是一个超过三字符的查询")
     assert "依据" in out["context"]
@@ -164,7 +164,7 @@ def test_build_context_no_hits_no_evidence(monkeypatch):
         def search(self, qv, top_k=5, filters=None):
             return []
 
-    monkeypatch.setattr(mod, "get_vector_store", lambda: _EmptyStore())
+    monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _EmptyStore())
     out = mod.build_context("这是一个超过三字符的查询")
     assert out == {}
 
@@ -401,7 +401,7 @@ def test_build_context_budget_and_guide(monkeypatch):
     import lantai.storage.db as db_module
 
     monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
-    monkeypatch.setattr(mod, "get_vector_store", lambda: _FakeStore())
+    monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
     monkeypatch.setattr(mod.settings, "SHELL_HOOK_MAX_CHARS_PER_MEMORY", 50)
     monkeypatch.setattr(mod.settings, "SHELL_HOOK_MAX_TOTAL_CHARS", 120)
 

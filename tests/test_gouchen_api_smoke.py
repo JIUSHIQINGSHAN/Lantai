@@ -124,9 +124,9 @@ def test_seam2_rest_endpoints():
 
 
 def test_seam3_mcp_95_tools_parity():
-    """接缝 3：MCP 95 工具 gouchen_dredge 注册 + TOOLS/TOOL_HANDLERS 1:1 对齐守卫。"""
-    # 工具总数验证
-    assert len(TOOLS) == 95, f"Expected 95 tools, got {len(TOOLS)}"
+    """接缝 3：MCP 工具 gouchen_dredge 注册 + TOOLS/TOOL_HANDLERS 1:1 对齐守卫。"""
+    # 工具总数验证（>= 95）
+    assert len(TOOLS) >= 95, f"Expected at least 95 tools, got {len(TOOLS)}"
     assert len(TOOL_HANDLERS) == len(TOOLS), (
         f"TOOLS ({len(TOOLS)}) ≠ TOOL_HANDLERS ({len(TOOL_HANDLERS)}): "
         f"missing={set(TOOLS) - set(TOOL_HANDLERS)}, "

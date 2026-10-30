@@ -15,7 +15,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import SYSTEM_VIEWER, is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.core.logger import logger
 from lantai.core.time import utcnow
@@ -54,6 +54,7 @@ class KaogongResult:
 
     def to_dict(self, *, fenced: bool = True) -> dict[str, Any]:
         return {
+            "id": self.memory_id,
             "memory_id": self.memory_id,
             "action": self.action,
             "score": round(self.score, 4),
@@ -84,24 +85,26 @@ class KaogongEngine:
         tenant_id: str | None,
     ) -> bool:
         """行级安全隔离校验（宁漏不越权）。"""
-        if self.principal is None:
-            return True
-        if getattr(self.principal, "is_admin", False):
+        if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
             return True
 
         viewer = viewer_of(self.principal)
-        current_tenant = getattr(self.principal, "tenant_id", None)
+        if viewer == SYSTEM_VIEWER:
+            return True
 
+        current_tenant = getattr(self.principal, "tenant_id", None)
         if tenant_id and current_tenant and tenant_id != current_tenant:
             return False
 
-        return not (owner_id is not None and owner_id != viewer)
+        return owner_id is None or owner_id == viewer
 
     def _owned_scope(self):
         """MemoryItem 租户行级安全过滤条件。"""
-        if self.principal is None or getattr(self.principal, "is_admin", False):
+        if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
             return None
         viewer = viewer_of(self.principal)
+        if viewer == SYSTEM_VIEWER:
+            return None
         cond = (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
         tenant = getattr(self.principal, "tenant_id", None)
         if tenant:

@@ -22,6 +22,11 @@ from lantai.cognition.kaogong import (
     KaogongEngine,
     KaogongResult,
 )
+from lantai.cognition.mokan import (
+    MokanAuditResult,
+    MokanEngine,
+    MokanVerificationItem,
+)
 from lantai.cognition.pisha import (
     PishaEngine,
     PishaResult,
@@ -114,4 +119,7 @@ __all__ = [
     "GouchenItem",
     "GouchenResult",
     "HistoricalContext",
+    "MokanAuditResult",
+    "MokanEngine",
+    "MokanVerificationItem",
 ]

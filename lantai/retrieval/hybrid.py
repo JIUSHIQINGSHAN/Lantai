@@ -941,15 +941,12 @@ def _attach_wanbi_facts(
                 if f.get("source_memory_id"):
                     source_map.setdefault(f["source_memory_id"], []).append(f)
 
-            matched_any = False
             for item in results:
                 mid = item.get("memory", {}).get("id")
                 if mid and mid in source_map:
                     item["atomic_facts"] = source_map[mid]
-                    matched_any = True
 
             # 严格血统匹配：严禁将孤儿事实/未匹配事实强行挂给首位条目（彻底消灭 X-01 隐私跨条目泄漏漏洞）
-            pass
     except Exception as exc:
         logger.warning("完璧事实挂载异常（零阻断）: %s", exc)
 

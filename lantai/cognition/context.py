@@ -80,6 +80,8 @@ class CognitiveContext:
     zhiming_digest: list[dict] | None = None
     # 钩沉（v0.61 Ticket 02 ADR-0082）：历史语境回溯与沉埋记忆检索恢复切面
     gouchen_digest: dict | None = None
+    # 磨勘（v0.62 Ticket 02 ADR-0083）：多源认知证据交叉勘验与可信度自证切面
+    mokan_digest: dict | None = None
 
     def to_prompt(self) -> str:
         """
@@ -554,6 +556,32 @@ class CognitiveContext:
                 )
                 gc_lines.append(f"- [钩沉·G{idx}{sunken_str}] {content_display}")
             sections.insert(0, "\n".join(gc_lines))
+
+        # 磨勘（ADR-0083）：若有多源证据交叉勘验或可信度自证审计结果，渲染磨勘切面
+        if self.mokan_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            mk = self.mokan_digest
+            total = mk.get("total_audited") or mk.get("total_verified") or 0
+            verified_c = mk.get("verified_count", 0)
+            disputed_c = mk.get("disputed_count", 0)
+            mk_lines = [
+                f"## Cross-Verification & Trust Proof (磨勘 · 总计 {total} | 证实 {verified_c} | 争议 {disputed_c}):"
+            ]
+            items = mk.get("items") or []
+            for idx, item in enumerate(items[:5], 1):
+                mid = item.get("memory_id") or ""
+                status = item.get("verification_status") or "unverified"
+                trust = item.get("trust_score")
+                trust_str = f" [可信度: {round(trust, 3)}]" if trust is not None else ""
+                fenced_c = item.get("fenced_content") or ""
+                content_display = (
+                    fenced_c
+                    if fenced_c
+                    else wrap_as_data(str(item.get("content", "")), item_id=mid)
+                )
+                mk_lines.append(f"- [磨勘·M{idx} ({status}){trust_str}] {content_display}")
+            sections.insert(0, "\n".join(mk_lines))
 
         from lantai.llm.fence import fence_declaration
 

@@ -362,8 +362,12 @@ def delete_memory(memory_id: str, principal=Depends(get_current_user)):
         # 级联删除关联的 fact_atomic 与 fact_entity（彻底修复 X-01 级联残留隐患）
         try:
             from sqlmodel import col, delete, select
+
             from lantai.models.tables import FactAtomic, FactEntity
-            sub_facts = session.exec(select(FactAtomic.id).where(FactAtomic.source_memory_id == memory_id)).all()
+
+            sub_facts = session.exec(
+                select(FactAtomic.id).where(FactAtomic.source_memory_id == memory_id)
+            ).all()
             if sub_facts:
                 session.exec(delete(FactEntity).where(col(FactEntity.fact_id).in_(sub_facts)))
             session.exec(delete(FactAtomic).where(FactAtomic.source_memory_id == memory_id))

@@ -132,6 +132,7 @@ def search_atomic_facts_by_query(
 
     # 查 FactAtomic，严格约束 confidence > 0.0，且来源记忆必须存在且处于 active 状态（防已删除/已归档记忆事实泄漏）
     from lantai.models.tables import MemoryItem
+
     stmt_fact = (
         select(FactAtomic)
         .join(MemoryItem, col(FactAtomic.source_memory_id) == col(MemoryItem.id))

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-10-30 - 磨勘（Mokan · 多源认知证据交叉勘验与可信度自证引擎）
+
+> 版本代号「磨勘」：出自《宋史·选举志》「磨勘之法，核验资历功过以定升降」，宋代设审官院、三班院核验官吏实绩功过与文书证据——取「核验多源证据功过、自证记忆可信度」之意——对应本版主题「多源认知证据交叉勘验与可信度自证引擎，ADR-0083 落地」：将多源异构证据交叉核对、事实可信度自证打分与矛盾冲突勘验提升为一级认知引擎 `MokanEngine` 与 `MokanVerificationItem`/`MokanAuditResult` 领域契约（票 01）。支持纯函数可信度自证打分（`compute_trust_score`，多源边际递减增益与矛盾惩罚降权）；支持多源证据拓扑交叉核验与互证支持链追踪（`cross_verify_memories`）；支持存量事实全局矛盾冲突审计与争议状态标记（`audit_contradictions`）；全链路行级租户安全隔离与樊篱防注入。提供 `mokan_service.py` 服务层统一入口；挂载 HTTP REST 路由（`POST /mokan/verify` 与 `GET /mokan/audit`）；MCP 工具池扩充至 **96 工具里程碑**（新增 `mokan_cross_verify`），实现 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫；增强认知上下文 `CognitiveContext`，将磨勘切面深度集成至 `mokan_digest` 中（票 02）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.62-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心磨勘多源认知证据交叉勘验与可信度自证引擎 MokanEngine 与认知层收敛（票 01，详见 `lantai/cognition/mokan.py` 与 `tests/test_mokan_engine.py`）**：
+  - 纯函数可信度自证打分算法（`compute_trust_score`）：证据数 > 1 时产生边际递减的交叉印证增益，检测到矛盾冲突时施加阶梯惩罚降权，严格受限在 [0.0, 1.0] 闭区间；
+  - 多源异构事实交叉勘验（`cross_verify_memories`）：基于拓扑关系（supports/refines/contradicts）核验多源事实，自动标注 `verified`/`disputed`/`unverified` 状态；
+  - 全局矛盾与争议审计（`audit_contradictions`）：支持关键字过滤或全库扫描未决冲突，输出结构化 `MokanAuditResult` 并生成防注入 `<mokan_audit>` 围栏块；
+  - 行级租户属主安全隔离与樊篱防注入：严格校验 `_check_access`（宁漏不越权），全链路正文采用 `<memory_data>` 围栏包裹；
+  - 交付端到端不 mock 冒烟测试 `tests/test_mokan_engine.py`（4 接缝：可信度算法边界、一致性多源印证、矛盾识别降权、行级多租户隔离全绿）。
+- **磨勘服务层封装、REST 路由、MCP 96 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/mokan_service.py`、`lantai/api/routes_mokan.py`、`lantai/cli/mcp.py` 与 `tests/test_mokan_service_and_mcp.py`）**：
+  - 服务层封装：提供 `mokan_verify_service` 与 `mokan_audit_service` 统一入口；
+  - HTTP REST 路由：新增 `POST /mokan/verify` 与 `GET /mokan/audit` 路由端点，挂载入 `CORE_ROUTERS`；
+  - MCP 扩充至 96 工具里程碑：注册 `mokan_cross_verify` 工具规范（支持 `verify`/`audit` 双模式）并挂载处理器 `handle_mokan_cross_verify`，保持 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向对齐；
+  - 认知上下文切面：`CognitiveContext` 新增 `mokan_digest` 属性，在 `to_prompt()` 中渲染结构化磨勘切面（含可信度分数与状态，正文严守樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_mokan_service_and_mcp.py`（4 接缝：服务层调度、REST 端点往返、MCP 96 工具双向对齐、认知切面渲染全绿）。
+
 ## [0.61.0] - 2026-10-30 - 钩沉（Gouchen · 历史语境回溯与沉埋记忆检索恢复引擎）
 
 > 版本代号「钩沉」：出自《易·系辞上》「探赜索隐，钩深致远」，宋代王应麟《困学纪闻》等考据治学常用「钩沉」指打捞湮没典籍——取「钩取沉埋之物、打捞沉没记忆」之意——对应本版主题「历史语境回溯与沉埋记忆检索恢复引擎，ADR-0082 落地」：突破既有常规 Hybrid 检索只看活跃浅水区、无法触达归档/弱化深层记忆、缺乏历史时态语境回溯能力的局限，构建面向生产环境的一级认知打捞引擎 `GouchenEngine` 与 `GouchenItem`/`GouchenResult`/`HistoricalContext` 领域契约（票 01）。支持沉没度打分（`SunkenScore = (1-decay) × age/(age+30)`）、穿透 `archived`/`weakened` 状态的深水区多维打捞（`dredge_sunken_memories`）；支持基于双时间轴锚点 $T_{anchor}$ 的历史语境无未来污染快照重建（`reconstruct_historical_context`）；全链路行级租户安全隔离与樊篱防注入。提供 `gouchen_service.py` 服务层统一入口；挂载 HTTP REST 路由（`POST /gouchen/dredge` 与 `GET /gouchen/snapshot`）；MCP 工具池扩充至 **95 工具里程碑**（新增 `gouchen_dredge`），实现 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫；增强认知上下文 `CognitiveContext`，将钩沉切面集成至 `gouchen_digest` 中（票 02）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.61-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。

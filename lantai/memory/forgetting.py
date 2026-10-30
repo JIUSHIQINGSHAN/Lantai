@@ -115,9 +115,8 @@ def apply_forgetting(principal=None, *, page_size: int = 500):
                         and not is_exempt
                     )
                     if (
-                        (m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD or ttl_expired)
-                        and m.status != "archived"
-                    ):
+                        m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD or ttl_expired
+                    ) and m.status != "archived":
                         m.status = "archived"
                         changed = True
 

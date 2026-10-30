@@ -237,14 +237,6 @@ def build_context(query: str, session_id: str | None = None) -> dict:
 
     try:
         t0 = time.perf_counter()
-        # 兼容直调或上层打桩：若当前模块的 get_vector_store / embed 被测试替换，透传至 hybrid
-        import lantai.retrieval.hybrid as _hybrid_mod
-
-        if get_vector_store != _hybrid_mod.get_vector_store:
-            _hybrid_mod.get_vector_store = get_vector_store
-        if embed != _hybrid_mod.embed:
-            _hybrid_mod.embed = embed
-
         raw_results = hybrid_search(query, top_k=settings.SHELL_HOOK_TOP_K)
         # 相似度置信度阈值过滤（低于下限的弱相关候选剔除）
         results = [

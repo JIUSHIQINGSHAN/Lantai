@@ -594,6 +594,35 @@ def handle_gouchen_dredge(params: dict) -> dict:
     )
 
 
+def handle_mokan_cross_verify(params: dict) -> dict:
+    """磨勘：多源认知证据交叉勘验与可信度自证（ADR-0083）。"""
+    action = str(params.get("action", "verify") or "verify").lower()
+    memory_ids = params.get("memory_ids")
+    query = str(params.get("query", "") or "")
+    limit = int(params.get("limit", 50))
+
+    from lantai.services.mokan_service import (
+        mokan_audit_service,
+        mokan_verify_service,
+    )
+
+    p = _principal_from_params(params)
+
+    if action == "audit":
+        return mokan_audit_service(
+            query=query,
+            limit=limit,
+            principal=p,
+        )
+
+    # 默认 verify 模式
+    ids_list = [str(mid) for mid in memory_ids] if isinstance(memory_ids, list) else None
+    return mokan_verify_service(
+        memory_ids=ids_list,
+        principal=p,
+    )
+
+
 def handle_memory_consolidate(params: dict) -> dict:
     """沉潜：执行闲时夜梦记忆沉淀与折叠压缩周期（ADR-0036）。"""
     from lantai.services.consolidation_service import run_consolidation_cycle
@@ -2393,6 +2422,36 @@ TOOLS = {
             },
         },
     },
+    "mokan_cross_verify": {
+        "description": "磨勘（勘验）：多源认知证据交叉勘验、事实可信度自证打分与矛盾冲突审计（ADR-0083）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "default": "verify",
+                    "description": "操作类型：verify(多源交叉勘验) | audit(存量矛盾审计)",
+                    "enum": ["verify", "audit"],
+                },
+                "memory_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "待交叉勘验的目标记忆 ID 列表（verify 模式可用）",
+                },
+                "query": {
+                    "type": "string",
+                    "default": "",
+                    "description": "检索过滤关键字（audit 模式可用）",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 50,
+                    "description": "最大条数",
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
     "memory_consolidate": {
         "description": "沉潜（折叠压缩）：扫描高密度碎片记忆聚类提纯为主记忆，并修剪极度衰减的边缘噪音（ADR-0036）",
         "inputSchema": {
@@ -3631,6 +3690,7 @@ TOOL_HANDLERS = {
     "zhaji_distill": handle_zhaji_distill,
     "zhiming_lifecycle": handle_zhiming_lifecycle,
     "gouchen_dredge": handle_gouchen_dredge,
+    "mokan_cross_verify": handle_mokan_cross_verify,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。
@@ -3664,7 +3724,7 @@ def handle(msg: dict) -> dict | None:
             "result": {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "lantai", "version": "0.61.0"},
+                "serverInfo": {"name": "lantai", "version": "0.62.0"},
             },
         }
     if method == "notifications/initialized":
