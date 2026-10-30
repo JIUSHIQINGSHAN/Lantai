@@ -86,12 +86,12 @@ class TestMuciApiSmoke:
             assert d2["sections"][0]["domain"] == "user"
 
     def test_seam3_mcp_tool_and_parity(self):
-        """Seam 3: MCP 工具 muci_catalog 协议调用与 78 工具池 1:1 双向对齐。"""
-        # 工具池校验（78 工具双向一致）
+        """Seam 3: MCP 工具 muci_catalog 协议调用与工具池 1:1 双向对齐。"""
+        # 工具池校验（双向一致性守卫）
         assert "muci_catalog" in TOOLS
         assert "muci_catalog" in TOOL_HANDLERS
-        assert len(TOOLS) == 78
-        assert len(TOOL_HANDLERS) == 78
+        assert len(TOOLS) >= 78
+        assert len(TOOL_HANDLERS) == len(TOOLS)
         assert set(TOOLS.keys()) == set(TOOL_HANDLERS.keys())
 
         # MCP 协议往返

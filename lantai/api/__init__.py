@@ -24,6 +24,7 @@ from .routes_param_advice import router as routes_param_advice_router
 from .routes_persona import router as routes_persona_router
 from .routes_probing import router as routes_probing_router
 from .routes_prompts import router as routes_prompts_router
+from .routes_qijuzhu import router as routes_qijuzhu_router
 from .routes_recall_chain import router as routes_recall_chain_router
 from .routes_retrieval import router as routes_retrieval_router
 from .routes_scenes import router as routes_scenes_router
@@ -74,5 +75,6 @@ __all__ = [
     "routes_tanyi_router",
     "routes_admin_router",
     "routes_catalog_router",
+    "routes_qijuzhu_router",
     "routes_zhishu_router",
 ]

@@ -1562,6 +1562,31 @@ def handle_muci_catalog(params: dict) -> dict:
     )
 
 
+def handle_qijuzhu_chronicle(params: dict) -> dict:
+    """起居注：时序记忆脉络与每日全息纪事查询（v0.45 ADR-0066）。"""
+    date_str = params.get("date")
+    days = int(params.get("days", 1))
+    detail_level = params.get("detail_level", "summary")
+    limit = int(params.get("limit", 50))
+
+    from lantai.services.qijuzhu_service import (
+        get_daily_chronicle_service,
+        get_timeline_service,
+    )
+
+    if days > 1:
+        return get_timeline_service(
+            days=days,
+            limit=limit,
+            principal=_principal_from_params(params),
+        )
+    return get_daily_chronicle_service(
+        date_str=date_str,
+        detail_level=detail_level,
+        principal=_principal_from_params(params),
+    )
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2520,6 +2545,35 @@ TOOLS = {
             },
         },
     },
+    "qijuzhu_chronicle": {
+        "description": "起居注：查询时序记忆演进脉络、每日全息纪事与滑动时间轴事件流（v0.45 ADR-0066）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "description": "指定查询日期 (YYYY-MM-DD)，默认今日",
+                },
+                "days": {
+                    "type": "integer",
+                    "description": "滑动回溯天数（>1 时返回连续脉络事件流）",
+                    "default": 1,
+                },
+                "detail_level": {
+                    "type": "string",
+                    "description": "纪事详细程度：summary 或 full",
+                    "enum": ["summary", "full"],
+                    "default": "summary",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "滑动时间轴最大返回条目数",
+                    "default": 50,
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2600,6 +2654,7 @@ TOOL_HANDLERS = {
     "dossier_focus": handle_dossier_focus,
     "zhishu_check": handle_zhishu_check,
     "muci_catalog": handle_muci_catalog,
+    "qijuzhu_chronicle": handle_qijuzhu_chronicle,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

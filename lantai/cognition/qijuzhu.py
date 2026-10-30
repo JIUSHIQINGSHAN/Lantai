@@ -67,7 +67,11 @@ class QijuzhuEngine:
             return True
         if getattr(self.principal, "is_admin", False):
             return True
-        if self.principal.tenant_id and item.tenant_id and item.tenant_id != self.principal.tenant_id:
+        if (
+            self.principal.tenant_id
+            and item.tenant_id
+            and item.tenant_id != self.principal.tenant_id
+        ):
             return False
         user_id = self.principal.user_id
         if user_id and item.user_id and item.user_id != user_id:
@@ -82,7 +86,11 @@ class QijuzhuEngine:
             return True
         if getattr(self.principal, "is_admin", False):
             return True
-        if self.principal.tenant_id and dossier.tenant_id and dossier.tenant_id != self.principal.tenant_id:
+        if (
+            self.principal.tenant_id
+            and dossier.tenant_id
+            and dossier.tenant_id != self.principal.tenant_id
+        ):
             return False
         user_id = self.principal.user_id
         if user_id and dossier.user_id:
@@ -95,7 +103,11 @@ class QijuzhuEngine:
             return True
         if getattr(self.principal, "is_admin", False):
             return True
-        if self.principal.tenant_id and proposal.tenant_id and proposal.tenant_id != self.principal.tenant_id:
+        if (
+            self.principal.tenant_id
+            and proposal.tenant_id
+            and proposal.tenant_id != self.principal.tenant_id
+        ):
             return False
         user_id = self.principal.user_id
         if user_id and proposal.user_id:
@@ -122,7 +134,11 @@ class QijuzhuEngine:
                 continue
             is_rule = m.lane == "rule" or m.decay_class == "procedural"
             ev_type = "rule_established" if is_rule else "memory_ingested"
-            title = f"确立程序铁律: {m.content[:24]}..." if is_rule else f"摄入事实: {m.content[:24]}..."
+            title = (
+                f"确立程序铁律: {m.content[:24]}..."
+                if is_rule
+                else f"摄入事实: {m.content[:24]}..."
+            )
             safe_detail = wrap_as_data(m.content, item_id=m.id)
             events.append(
                 ChronicleEvent(
@@ -176,7 +192,9 @@ class QijuzhuEngine:
                 safe_prop_detail = wrap_as_data(p.reason or "知识演化提案", item_id=p.id)
                 events.append(
                     ChronicleEvent(
-                        event_type="proposal_applied" if p.status == "applied" else "proposal_created",
+                        event_type="proposal_applied"
+                        if p.status == "applied"
+                        else "proposal_created",
                         timestamp=p.created_at,
                         title=f"知识提案 [{p.proposal_type}]: {p.reason[:24]}...",
                         detail=safe_prop_detail,
@@ -218,7 +236,9 @@ class QijuzhuEngine:
 
         # 统计度量指标
         total_events = len(events)
-        new_memories = sum(1 for e in events if e.event_type in ("memory_ingested", "rule_established"))
+        new_memories = sum(
+            1 for e in events if e.event_type in ("memory_ingested", "rule_established")
+        )
         rules_established = sum(1 for e in events if e.event_type == "rule_established")
         dossier_events = sum(1 for e in events if e.event_type == "dossier_milestone")
         proposals_applied = sum(1 for e in events if e.event_type == "proposal_applied")

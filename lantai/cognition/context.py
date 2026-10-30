@@ -48,6 +48,8 @@ class CognitiveContext:
     active_dossier: dict | None = None
     # 目次（v0.44 Ticket 02 ADR-0065）：多维记忆知识目录导览切面
     catalog_digest: dict | None = None
+    # 起居注（v0.45 Ticket 02 ADR-0066）：时序演进全息纪事切面
+    qijuzhu_digest: dict | None = None
 
     def to_prompt(self) -> str:
         """
@@ -186,6 +188,29 @@ class CognitiveContext:
                     c_lines.append(f"  * {d}/{l}: {cnt} items{tag_str}")
 
             sections.insert(0, "\n".join(c_lines))
+
+        # 起居注（ADR-0066）：若有日度全息纪事，置顶渲染时序脉络切面，正文经樊篱保护
+        if self.qijuzhu_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            qjz = self.qijuzhu_digest
+            q_date = qjz.get("date") or "今日"
+            q_summary = qjz.get("summary") or "时序全息纪事"
+            q_events = qjz.get("chronicle_events") or qjz.get("events") or []
+
+            q_lines = [
+                f"## Recent Chronicle & Activity Digest (起居注 · {q_date}): {wrap_as_data(str(q_summary))}"
+            ]
+            if q_events:
+                q_lines.append("- **Chronicle Events**:")
+                for ev in q_events[:5]:
+                    e_type = ev.get("event_type", "event")
+                    e_title = ev.get("title", "")
+                    e_detail = ev.get("detail", "")
+                    detail_str = f" - {e_detail}" if e_detail else ""
+                    q_lines.append(f"  * [{e_type}] {wrap_as_data(str(e_title))}{detail_str}")
+
+            sections.insert(0, "\n".join(q_lines))
 
         from lantai.llm.fence import fence_declaration
 

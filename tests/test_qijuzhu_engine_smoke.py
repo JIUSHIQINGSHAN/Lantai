@@ -133,7 +133,12 @@ class TestQijuzhuEngineSmoke:
                 title="起居注工程战役",
                 goal="打通时序脉络与每日纪事",
                 milestones=[
-                    {"id": "ms-1", "title": "设计 ADR 规范", "status": "done", "notes": "ADR-0066 已 Accepted"}
+                    {
+                        "id": "ms-1",
+                        "title": "设计 ADR 规范",
+                        "status": "done",
+                        "notes": "ADR-0066 已 Accepted",
+                    }
                 ],
                 created_at=now,
             )
@@ -229,7 +234,9 @@ class TestQijuzhuEngineSmoke:
             principal = Principal(user_id="user-alice", role="user")
             engine = QijuzhuEngine(session=session, principal=principal)
 
-            chronicle = engine.get_daily_chronicle(date=now.strftime("%Y-%m-%d"), detail_level="full")
+            chronicle = engine.get_daily_chronicle(
+                date=now.strftime("%Y-%m-%d"), detail_level="full"
+            )
             events = chronicle["chronicle_events"]
             target = next(e for e in events if e.get("ref_id") == "mem-qjz-inject-1")
 
