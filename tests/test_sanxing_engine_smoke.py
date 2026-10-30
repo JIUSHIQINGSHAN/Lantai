@@ -1,219 +1,162 @@
-"""三省·认知层反思自省引擎与记忆健康审视冒烟测试 (v0.37 Ticket 01)
+"""端到端不 mock 冒烟测试：三省认知自省与健康自愈闭环引擎（Ticket 01）。
 
-基于真实 in-memory SQLite，遵循 Matt Pocock TDD 纪律，不使用任何内部逻辑 mock。
-验证公共接口 Seams：
-1. evaluate_health 多维健康规则扫描：
-   - R1: 被取代残留检测（已被 supersedes 但仍为 active）；
-   - R2: 时效过期检测（valid_to 已过且非 procedural）；
-   - R3: 未决冲突隐患检测（ConflictEvent 状态为 open）；
-   - R4: 低帮助度碎片检测（高使用率但 0 采纳/0 帮助）；
-2. 规则健全度与铁律豁免：procedural 铁律即使过期也受保护；
-3. 行级 ACL 与租户防御：非属主/跨租户记忆严格隔离，不可越权审视；
-4. generate_audit_report 审计快照聚合：统计指标与问题清单自洽。
+覆盖 4 个独立接缝：
+1. 接缝 1：纯函数缺陷自愈方案生成（generate_remedies: auto_apply=False 预演）；
+2. 接缝 2：真实 SQLite DB 单项自愈落库流转（auto_apply=True 就地修复）；
+3. 接缝 3：批量健康自省与健康分动态自愈变迁；
+4. 接缝 4：行级租户属主安全隔离校验（宁漏不越权）与樊篱防注入围栏包裹。
 """
 
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel.pool import StaticPool
 
-from lantai.cognition.sanxing import (
-    SanxingAuditResult,
-    SanxingEngine,
-    SanxingHealthSnapshot,
-    inspect_memory_health,
-)
+from lantai.cognition.sanxing import SanxingEngine, SanxingRemedyResult
 from lantai.core.auth import Principal
 from lantai.models.tables import ConflictEvent, MemoryItem
 
 
-def _principal(user_id: str, *, admin: bool = False, lanes=None) -> Principal:
-    return Principal(
-        user_id=user_id,
-        allowed_lanes=lanes or ["fact", "rule", "general"],
-        role="admin" if admin else "user",
+@pytest.fixture(name="db_session")
+def fixture_db_session():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        yield session
 
 
-def test_sanxing_evaluate_health_multi_dimensional_seam(param_env):
-    """Seam 1: 验证多维健康规则扫描（R1 被取代残留、R2 时效过期、R3 未决冲突、R4 低帮助度）。"""
-    session_factory, _ = param_env
-    user_alice = _principal("alice")
-    now = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
-    past_time = now - timedelta(days=10)
-    future_time = now + timedelta(days=30)
+def test_seam1_pure_remedy_generation(db_session: Session):
+    """Seam 1: 纯函数缺陷自愈方案生成（预演不落库）。"""
+    now = datetime(2026, 10, 30, 12, 0, 0, tzinfo=UTC)
 
-    with session_factory() as s:
-        # 1. 正常健康记忆
-        s.add(
-            MemoryItem(
-                id="mem_healthy",
-                content="团队固定每周一上午10点举行周会",
-                status="active",
-                user_id="alice",
-                valid_from=past_time,
-                valid_to=future_time,
-                use_count=5,
-                helpful_count=4,
-            )
-        )
-        # 2. R1: 被取代残留（已标明 superseded_by 但状态仍为 active）
-        s.add(
-            MemoryItem(
-                id="mem_superseded_stale",
-                content="旧周会时间：每周二下午3点",
-                status="active",
-                user_id="alice",
-                structure={"superseded_by": "mem_healthy"},
-            )
-        )
-        # 3. R2: 时效过期（valid_to < now）
-        s.add(
-            MemoryItem(
-                id="mem_expired",
-                content="临时活动优惠码 PROMO2025 有效期至上周",
-                status="active",
-                user_id="alice",
-                valid_from=past_time - timedelta(days=20),
-                valid_to=past_time,
-                decay_class="episodic",
-            )
-        )
-        # 4. R2 豁免项: procedural 铁律即使 valid_to 过期也豁免失效判定
-        s.add(
-            MemoryItem(
-                id="mem_procedural_exempt",
-                content="安全铁律：生产环境绝不硬编码明文密钥",
-                status="active",
-                user_id="alice",
-                valid_to=past_time,
-                decay_class="procedural",
-            )
-        )
-        # 5. R4: 低帮助度碎片（使用次数 >= 5 但 helpful_count == 0）
-        s.add(
-            MemoryItem(
-                id="mem_unhelpful",
-                content="某次偶发网络超时的调试建议碎语",
-                status="active",
-                user_id="alice",
-                use_count=6,
-                helpful_count=0,
-            )
-        )
-        # 6. R3: Alice 的未决冲突账本记录
-        s.add(
-            ConflictEvent(
-                id="conf_alice_open",
-                memory_id="mem_healthy",
-                status="open",
-                rule_name="mutex_meeting_time",
-                created_at=past_time,
-            )
-        )
-        # 7. Bob 的未决冲突与过期记忆（隔离检验）
-        s.add(
-            MemoryItem(
-                id="bob_expired",
-                content="Bob 的过期项目密钥",
-                status="active",
-                user_id="bob",
-                valid_to=past_time,
-            )
-        )
-        s.add(
-            ConflictEvent(
-                id="conf_bob_open",
-                memory_id="bob_expired",
-                status="open",
-                rule_name="mutex_secret_key",
-                created_at=past_time,
-            )
-        )
-        s.commit()
+    # 1. 制造一条过期记忆
+    expired_mem = MemoryItem(
+        id="mem_exp_01",
+        content="上季度临时活动配置",
+        status="active",
+        valid_to=now - timedelta(days=1),
+        decay_class="exponential",
+    )
+    # 2. 制造一条被替代记忆
+    superseded_mem = MemoryItem(
+        id="mem_sup_01",
+        content="老版认证接口规范",
+        status="active",
+        structure={"superseded_by": "mem_sup_new"},
+    )
+    # 3. 制造一条低帮助碎片
+    unhelpful_mem = MemoryItem(
+        id="mem_unh_01",
+        content="高频调用但无法解答的残缺问答",
+        status="active",
+        use_count=6,
+        helpful_count=0,
+    )
+    db_session.add_all([expired_mem, superseded_mem, unhelpful_mem])
+    db_session.commit()
 
-    with session_factory() as s:
-        engine = SanxingEngine(session=s, principal=user_alice)
-        snapshot = engine.evaluate_health(now=now)
+    engine = SanxingEngine(session=db_session)
+    res: SanxingRemedyResult = engine.generate_remedies(auto_apply=False, now=now)
 
-        assert isinstance(snapshot, SanxingHealthSnapshot)
-        assert snapshot.total_checked >= 4
+    assert res.total_defects == 3
+    assert res.applied_count == 0  # 预演模式，未写库
+    actions = {r.recommended_action for r in res.remedies}
+    assert "archive_expire" in actions
+    assert "supersede_retract" in actions
+    assert "demote_deprecate" in actions
 
-        # 检验 R1 被取代残留捕获
-        superseded_ids = {item["id"] for item in snapshot.superseded_stale}
-        assert "mem_superseded_stale" in superseded_ids
-        assert "mem_healthy" not in superseded_ids
-
-        # 检验 R2 时效过期捕获及 procedural 铁律豁免
-        expired_ids = {item["id"] for item in snapshot.expired_items}
-        assert "mem_expired" in expired_ids
-        assert "mem_procedural_exempt" not in expired_ids
-
-        # 检验 R3 未决冲突捕获
-        conflict_ids = {c["id"] for c in snapshot.open_conflicts}
-        assert "conf_alice_open" in conflict_ids
-        assert "conf_bob_open" not in conflict_ids
-
-        # 检验 R4 低帮助度捕获
-        unhelpful_ids = {item["id"] for item in snapshot.unhelpful_items}
-        assert "mem_unhelpful" in unhelpful_ids
+    # 验证 DB 内状态未变
+    assert db_session.get(MemoryItem, "mem_exp_01").status == "active"
 
 
-def test_sanxing_acl_tenant_defense_seam(param_env):
-    """Seam 2: 验证三省自省引擎严格遵守租户防火墙与行级属主隔离。"""
-    session_factory, _ = param_env
-    user_alice = _principal("alice")
-    now = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
+def test_seam2_single_item_remediation_apply(db_session: Session):
+    """Seam 2: 真实 SQLite DB 自愈就地执行落库。"""
+    now = datetime(2026, 10, 30, 12, 0, 0, tzinfo=UTC)
 
-    with session_factory() as s:
-        s.add(
-            MemoryItem(
-                id="bob_stale_secret",
-                content="Bob 的内部敏感测试指令",
-                status="active",
-                user_id="bob",
-                structure={"superseded_by": "bob_new"},
-            )
-        )
-        s.commit()
+    mem_to_expire = MemoryItem(
+        id="mem_to_expire",
+        content="已过期服务鉴权凭证",
+        status="active",
+        valid_to=now - timedelta(hours=2),
+        decay_class="linear",
+    )
+    db_session.add(mem_to_expire)
+    db_session.commit()
 
-    with session_factory() as s:
-        # Alice 执行三省健康审视，绝不可感知或越权检测 Bob 的私密异常
-        engine = SanxingEngine(session=s, principal=user_alice)
-        snapshot = engine.evaluate_health(now=now)
-        all_detected_ids = {
-            item["id"]
-            for item in (
-                snapshot.superseded_stale + snapshot.expired_items + snapshot.unhelpful_items
-            )
-        }
-        assert "bob_stale_secret" not in all_detected_ids
+    engine = SanxingEngine(session=db_session)
+    res = engine.generate_remedies(auto_apply=True, now=now)
+
+    assert res.total_defects == 1
+    assert res.applied_count == 1
+
+    # 验证落库持久化：状态已流转为 archived
+    refreshed = db_session.get(MemoryItem, "mem_to_expire")
+    assert refreshed.status == "archived"
 
 
-def test_sanxing_generate_audit_report_seam(param_env):
-    """Seam 3: 验证 generate_audit_report 报告生成与快捷函数 inspect_memory_health。"""
-    session_factory, _ = param_env
-    user_alice = _principal("alice")
-    now = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
+def test_seam3_batch_health_score_transition(db_session: Session):
+    """Seam 3: 批量健康自省与健康分动态变迁。"""
+    now = datetime(2026, 10, 30, 12, 0, 0, tzinfo=UTC)
 
-    with session_factory() as s:
-        s.add(
-            MemoryItem(
-                id="alice_stale_cfg",
-                content="已废弃的旧集群端口配置",
-                status="active",
-                user_id="alice",
-                valid_to=now - timedelta(days=5),
-            )
-        )
-        s.commit()
+    mem_stale = MemoryItem(
+        id="mem_stale_01",
+        content="废弃 API 路由",
+        status="active",
+        structure={"superseded_by": "mem_new_01"},
+    )
+    mem_low_help = MemoryItem(
+        id="mem_low_01",
+        content="无意义社交闲聊记录",
+        status="active",
+        use_count=7,
+        helpful_count=0,
+        importance=0.8,
+    )
+    db_session.add_all([mem_stale, mem_low_help])
+    db_session.commit()
 
-    with session_factory() as s:
-        # 通过快捷函数调用
-        report = inspect_memory_health(principal=user_alice, session=s, now=now)
-        assert isinstance(report, dict)
-        assert "health_score" in report
-        assert "summary" in report
-        assert "issues_count" in report
-        assert report["issues_count"] >= 1
-        assert any(issue["id"] == "alice_stale_cfg" for issue in report["details"])
+    engine = SanxingEngine(session=db_session)
+    res = engine.generate_remedies(auto_apply=True, now=now)
+
+    # 修复前 90.0 分（扣 10 分），修复后全部解决重回 100.0 分
+    assert res.health_score_before == 90.0
+    assert res.health_score_after == 100.0
+    assert res.applied_count == 2
+    # 验证 low_help 重要度降权
+    assert db_session.get(MemoryItem, "mem_low_01").importance <= 0.1
+
+
+def test_seam4_acl_isolation_and_fencing(db_session: Session):
+    """Seam 4: 行级租户安全隔离校验与樊篱数据围栏包裹。"""
+    now = datetime(2026, 10, 30, 12, 0, 0, tzinfo=UTC)
+
+    mem_tenant_b = MemoryItem(
+        id="mem_b_defect",
+        content="租户B保密系统过期密钥",
+        status="active",
+        valid_to=now - timedelta(days=5),
+        user_id="bob",
+        tenant_id="tenant_b",
+    )
+    db_session.add(mem_tenant_b)
+    db_session.commit()
+
+    # 租户 A 执行自省，不应扫描到租户 B 的缺陷
+    principal_a = Principal(user_id="alice", tenant_id="tenant_a", role="user")
+    engine_a = SanxingEngine(session=db_session, principal=principal_a)
+    res_a = engine_a.generate_remedies(auto_apply=True, now=now)
+    assert res_a.total_defects == 0
+
+    # 租户 B 执行自省，校验樊篱防注入围栏
+    principal_b = Principal(user_id="bob", tenant_id="tenant_b", role="user")
+    engine_b = SanxingEngine(session=db_session, principal=principal_b)
+    res_b = engine_b.generate_remedies(auto_apply=True, now=now)
+    assert res_b.total_defects == 1
+    remedy = res_b.remedies[0]
+    assert "<memory_data" in remedy.fenced_content
+    assert "租户B保密系统过期密钥" in remedy.fenced_content

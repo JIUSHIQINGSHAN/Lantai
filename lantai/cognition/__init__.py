@@ -29,6 +29,8 @@ from lantai.cognition.sanxing import (
     SanxingAuditResult,
     SanxingEngine,
     SanxingHealthSnapshot,
+    SanxingRemedyItem,
+    SanxingRemedyResult,
     inspect_memory_health,
 )
 from lantai.cognition.shishi import (
@@ -68,6 +70,8 @@ __all__ = [
     "SanxingAuditResult",
     "SanxingEngine",
     "SanxingHealthSnapshot",
+    "SanxingRemedyItem",
+    "SanxingRemedyResult",
     "ShishiEngine",
     "ShishiVaultBlock",
     "IntegrityVerificationResult",

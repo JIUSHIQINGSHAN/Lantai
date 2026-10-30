@@ -1,26 +1,26 @@
-"""三省（Sanxing · 吾日三省吾身）：认知层反思自省引擎与记忆健康审视。
+"""三省（Sanxing · 吾日三省吾身）：认知层反思自省引擎与记忆健康自愈闭环 (ADR-0079)。
 
-依照 ADR-0013 命名系统与 ADR-0044 认知演化边界规范构建：
-对系统存量记忆开展多维健康质量自检，扫描并诊断四大类认知缺陷：
-- 规则 R1（被取代残留）：已被标记为 supersedes / superseded_by 替代但仍为 active 的陈旧事实；
-- 规则 R2（时效过期）：valid_to 已过期且非 procedural（程序性铁律天然豁免）；
-- 规则 R3（未决冲突隐患）：状态仍为 open 的冲突账本记录（ConflictEvent）；
-- 规则 R4（低帮助度碎片）：高频被引用（use_count >= 5）但 0 采纳/0 帮助（helpful_count == 0）的认知杂音；
-
-聚合生成结构化自检快照 SanxingHealthSnapshot 与健康诊断报告 SanxingAuditResult。
-全程严守行级 ACL 与多租户安全边界，杜绝越权感知与脏写。
+依照 ADR-0013 命名系统、ADR-0044 认知演化边界与 ADR-0079 自愈闭环规范构建：
+1. 多维健康质量诊断（四大缺陷：被取代残留、时效过期、未决冲突、低帮助度碎片）；
+2. 结构化自愈动作推导（SanxingRemedyItem / SanxingRemedyResult）；
+3. 联动状态机执行就地修复（supersede_retract 撤回陈旧条目、archive_expire 归档过期条目、demote_deprecate 降权低效条目）；
+4. 全面集成樊篱防注入安全围栏（wrap_as_data）；
+5. 落实行级租户与属主安全隔离（宁漏不越权、宁 miss 不脏写）。
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
-from sqlmodel import Session, col, select
+from pydantic import BaseModel
+from pydantic import Field as PydanticField
+from sqlmodel import Session, select
 
 from lantai.core.acl import viewer_of
 from lantai.core.time import utcnow
+from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import ConflictEvent, MemoryItem
 from lantai.storage import db
 
@@ -31,12 +31,12 @@ class SanxingHealthSnapshot(BaseModel):
     """三省健康审视结构化快照。"""
 
     total_checked: int = 0
-    superseded_stale: list[dict[str, Any]] = Field(default_factory=list)
-    expired_items: list[dict[str, Any]] = Field(default_factory=list)
-    open_conflicts: list[dict[str, Any]] = Field(default_factory=list)
-    unhelpful_items: list[dict[str, Any]] = Field(default_factory=list)
+    superseded_stale: list[dict[str, Any]] = PydanticField(default_factory=list)
+    expired_items: list[dict[str, Any]] = PydanticField(default_factory=list)
+    open_conflicts: list[dict[str, Any]] = PydanticField(default_factory=list)
+    unhelpful_items: list[dict[str, Any]] = PydanticField(default_factory=list)
     health_score: float = 100.0
-    evaluated_at: datetime = Field(default_factory=utcnow)
+    evaluated_at: datetime = PydanticField(default_factory=utcnow)
 
 
 class SanxingAuditResult(BaseModel):
@@ -45,12 +45,62 @@ class SanxingAuditResult(BaseModel):
     health_score: float = 100.0
     summary: str = ""
     issues_count: int = 0
-    details: list[dict[str, Any]] = Field(default_factory=list)
-    snapshot: SanxingHealthSnapshot = Field(default_factory=SanxingHealthSnapshot)
+    details: list[dict[str, Any]] = PydanticField(default_factory=list)
+    snapshot: SanxingHealthSnapshot = PydanticField(default_factory=SanxingHealthSnapshot)
+
+
+@dataclass
+class SanxingRemedyItem:
+    """单项自愈策略与处置动作契约。"""
+
+    target_id: str
+    defect_type: str  # superseded_stale | expired | open_conflict | unhelpful
+    recommended_action: (
+        str  # supersede_retract | archive_expire | arbitrate_dispatch | demote_deprecate
+    )
+    risk_level: str = "low"  # low | medium | high
+    detail: dict[str, Any] = field(default_factory=dict)
+    reason: str = ""
+    executed: bool = False
+    fenced_content: str = ""
+
+    def to_dict(self, *, fenced: bool = True) -> dict[str, Any]:
+        return {
+            "target_id": self.target_id,
+            "defect_type": self.defect_type,
+            "recommended_action": self.recommended_action,
+            "risk_level": self.risk_level,
+            "detail": self.detail,
+            "reason": self.reason,
+            "executed": self.executed,
+            "fenced_content": self.fenced_content if fenced else "",
+        }
+
+
+@dataclass
+class SanxingRemedyResult:
+    """三省自省自愈综合审计契约。"""
+
+    total_defects: int
+    remedies: list[SanxingRemedyItem] = field(default_factory=list)
+    applied_count: int = 0
+    health_score_before: float = 100.0
+    health_score_after: float = 100.0
+    summary: str = ""
+
+    def to_dict(self, *, fenced: bool = True) -> dict[str, Any]:
+        return {
+            "total_defects": self.total_defects,
+            "applied_count": self.applied_count,
+            "health_score_before": round(self.health_score_before, 2),
+            "health_score_after": round(self.health_score_after, 2),
+            "summary": self.summary,
+            "remedies": [r.to_dict(fenced=fenced) for r in self.remedies],
+        }
 
 
 class SanxingEngine:
-    """三省·认知层反思自省与健康审视引擎。"""
+    """三省·认知层反思自省与健康自愈引擎。"""
 
     def __init__(self, session: Session | None = None, principal=None):
         self.session = session
@@ -62,12 +112,13 @@ class SanxingEngine:
         if principal is not None and bool(getattr(principal, "is_admin", False)):
             return None
         viewer = viewer_of(principal)
-        return (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
+        cond = (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
+        tenant = getattr(principal, "tenant_id", None) if principal else None
+        if tenant:
+            cond = cond & ((MemoryItem.tenant_id == tenant) | (MemoryItem.tenant_id.is_(None)))
+        return cond
 
     def _visible_conflict_ids(self, s: Session) -> set[str] | None:
-        """获取当前 principal 可见的冲突事件 ID 集合；None 表示不过滤。
-        ConflictEvent 属主通过挂载的 MemoryItem.user_id 推导。
-        """
         principal = self.principal
         if principal is not None and bool(getattr(principal, "is_admin", False)):
             return None
@@ -79,19 +130,21 @@ class SanxingEngine:
         ).all()
         return {cid for cid, uid in rows if uid is not None and uid == viewer}
 
-    def evaluate_health(self, now: datetime | None = None) -> SanxingHealthSnapshot:
-        """多维健康规则扫描。
+    def _check_access(self, *, owner_id: str | None, tenant_id: str | None) -> bool:
+        if self.principal is None:
+            return True
+        if getattr(self.principal, "is_admin", False):
+            return True
+        viewer = viewer_of(self.principal)
+        current_tenant = getattr(self.principal, "tenant_id", None)
+        if tenant_id and current_tenant and tenant_id != current_tenant:
+            return False
+        return not (owner_id is not None and owner_id != viewer)
 
-        判别维度：
-        - R1: 被取代残留（structure 内含 superseded_by 且 status == 'active'）；
-        - R2: 时效过期（valid_to < now 且 decay_class != 'procedural' 且 status == 'active'）；
-        - R3: 未决冲突隐患（ConflictEvent.status == 'open'）；
-        - R4: 低帮助度碎片（use_count >= 5 且 helpful_count == 0 且 status == 'active'）；
-        """
+    def evaluate_health(self, now: datetime | None = None) -> SanxingHealthSnapshot:
         eval_now = now or utcnow()
 
         def _evaluate(s: Session) -> SanxingHealthSnapshot:
-            # 1. 扫描活跃记忆
             stmt = select(MemoryItem).where(MemoryItem.status == STATUS_ACTIVE)
             scope = self._owned_memory_scope()
             if scope is not None:
@@ -104,7 +157,6 @@ class SanxingEngine:
 
             for item in active_items:
                 struct = item.structure or {}
-                # R1 检查: 被取代残留
                 if struct.get("superseded_by"):
                     superseded_stale.append(
                         {
@@ -112,12 +164,12 @@ class SanxingEngine:
                             "content": item.content,
                             "superseded_by": struct.get("superseded_by"),
                             "reason": "superseded_but_active",
+                            "user_id": item.user_id,
+                            "tenant_id": item.tenant_id,
                         }
                     )
 
-                # R2 检查: 时效过期，procedural 天然豁免
                 if item.valid_to is not None:
-                    # 确保带时区比较
                     valid_to = item.valid_to
                     if valid_to.tzinfo is None:
                         valid_to = valid_to.replace(tzinfo=UTC)
@@ -132,10 +184,11 @@ class SanxingEngine:
                                 "content": item.content,
                                 "valid_to": valid_to.isoformat(),
                                 "reason": "validity_expired",
+                                "user_id": item.user_id,
+                                "tenant_id": item.tenant_id,
                             }
                         )
 
-                # R4 检查: 高频使用但零帮助
                 if (item.use_count or 0) >= 5 and (item.helpful_count or 0) == 0:
                     unhelpful_items.append(
                         {
@@ -144,10 +197,11 @@ class SanxingEngine:
                             "use_count": item.use_count,
                             "helpful_count": item.helpful_count,
                             "reason": "unhelpful_fragment",
+                            "user_id": item.user_id,
+                            "tenant_id": item.tenant_id,
                         }
                     )
 
-            # 2. 扫描未决冲突 (R3)
             conflict_stmt = select(ConflictEvent).where(ConflictEvent.status == "open")
             visible_conf_ids = self._visible_conflict_ids(s)
             conflicts = s.exec(conflict_stmt).all()
@@ -172,7 +226,6 @@ class SanxingEngine:
                 + len(open_conflicts)
                 + len(unhelpful_items)
             )
-            # 健康分计算公式：满分 100，每处缺陷扣 5 分，最低 0 分
             penalty = issue_count * 5.0
             health_score = max(0.0, round(100.0 - penalty, 2))
 
@@ -192,7 +245,6 @@ class SanxingEngine:
             return _evaluate(s)
 
     def generate_audit_report(self, now: datetime | None = None) -> SanxingAuditResult:
-        """生成三省健康审计报告与明细清单。"""
         snapshot = self.evaluate_health(now=now)
         details: list[dict[str, Any]] = []
 
@@ -203,7 +255,7 @@ class SanxingEngine:
                     "id": item["id"],
                     "content": item.get("content", ""),
                     "description": f"已由 {item.get('superseded_by')} 替代但仍在活跃态",
-                    "suggestion": "建议归档或折叠起复",
+                    "suggestion": "建议撤销或状态流转",
                 }
             )
         for item in snapshot.expired_items:
@@ -233,7 +285,7 @@ class SanxingEngine:
                     "id": item["id"],
                     "content": item.get("content", ""),
                     "description": f"使用次数达到 {item.get('use_count')} 但帮助度为 0",
-                    "suggestion": "建议重炼精简或清理沉淀",
+                    "suggestion": "建议降权淘汰或精炼提纯",
                 }
             )
 
@@ -250,6 +302,131 @@ class SanxingEngine:
             details=details,
             snapshot=snapshot,
         )
+
+    def generate_remedies(
+        self, auto_apply: bool = False, now: datetime | None = None
+    ) -> SanxingRemedyResult:
+        """从健康审视生成结构化自愈动作清单，并按需执行落库自愈（宁 miss 不脏写）。"""
+        snapshot = self.evaluate_health(now=now)
+
+        def _run_remediation(s: Session) -> SanxingRemedyResult:
+            remedy_items: list[SanxingRemedyItem] = []
+            applied_count = 0
+
+            # 1. 处置陈旧被取代记忆 -> supersede_retract (置为 superseded 或撤回)
+            for item in snapshot.superseded_stale:
+                tid = item["id"]
+                content = item.get("content", "")
+                fenced = wrap_as_data(content, item_id=tid)
+                r_item = SanxingRemedyItem(
+                    target_id=tid,
+                    defect_type="superseded_stale",
+                    recommended_action="supersede_retract",
+                    risk_level="low",
+                    detail={"superseded_by": item.get("superseded_by")},
+                    reason=f"记忆已由 {item.get('superseded_by')} 替代，退出活跃态",
+                    fenced_content=fenced,
+                )
+                if auto_apply:
+                    mem = s.get(MemoryItem, tid)
+                    if mem and self._check_access(owner_id=mem.user_id, tenant_id=mem.tenant_id):
+                        mem.status = "archived"
+                        mem.lifecycle_status = "superseded"
+                        s.add(mem)
+                        r_item.executed = True
+                        applied_count += 1
+                remedy_items.append(r_item)
+
+            # 2. 处置过期记忆 -> archive_expire (置为 archived)
+            for item in snapshot.expired_items:
+                tid = item["id"]
+                content = item.get("content", "")
+                fenced = wrap_as_data(content, item_id=tid)
+                r_item = SanxingRemedyItem(
+                    target_id=tid,
+                    defect_type="expired",
+                    recommended_action="archive_expire",
+                    risk_level="low",
+                    detail={"valid_to": item.get("valid_to")},
+                    reason=f"时效过期（截止 {item.get('valid_to')}），休眠转入归档",
+                    fenced_content=fenced,
+                )
+                if auto_apply:
+                    mem = s.get(MemoryItem, tid)
+                    if mem and self._check_access(owner_id=mem.user_id, tenant_id=mem.tenant_id):
+                        mem.status = "archived"
+                        s.add(mem)
+                        r_item.executed = True
+                        applied_count += 1
+                remedy_items.append(r_item)
+
+            # 3. 处置未决冲突 -> arbitrate_dispatch (标记审计待办)
+            for item in snapshot.open_conflicts:
+                cid = item["id"]
+                r_item = SanxingRemedyItem(
+                    target_id=cid,
+                    defect_type="open_conflict",
+                    recommended_action="arbitrate_dispatch",
+                    risk_level="medium",
+                    detail={"memory_id": item.get("memory_id"), "rule_name": item.get("rule_name")},
+                    reason="未决冲突记录，需介入仲裁或探针求证",
+                    fenced_content=wrap_as_data(f"冲突事件: {cid}", item_id=cid),
+                )
+                remedy_items.append(r_item)
+
+            # 4. 处置低效碎片 -> demote_deprecate (重要度降权至 0.1)
+            for item in snapshot.unhelpful_items:
+                tid = item["id"]
+                content = item.get("content", "")
+                fenced = wrap_as_data(content, item_id=tid, score=0.1)
+                r_item = SanxingRemedyItem(
+                    target_id=tid,
+                    defect_type="unhelpful",
+                    recommended_action="demote_deprecate",
+                    risk_level="low",
+                    detail={
+                        "use_count": item.get("use_count"),
+                        "helpful_count": item.get("helpful_count"),
+                    },
+                    reason="高频使用但零帮助，自省降权淘汰",
+                    fenced_content=fenced,
+                )
+                if auto_apply:
+                    mem = s.get(MemoryItem, tid)
+                    if mem and self._check_access(owner_id=mem.user_id, tenant_id=mem.tenant_id):
+                        mem.importance = 0.1
+                        s.add(mem)
+                        r_item.executed = True
+                        applied_count += 1
+                remedy_items.append(r_item)
+
+            if auto_apply:
+                s.commit()
+
+            score_before = snapshot.health_score
+            # 重新评估自愈后健康分
+            remaining_issues = len(remedy_items) - applied_count
+            score_after = (
+                max(0.0, round(100.0 - remaining_issues * 5.0, 2)) if auto_apply else score_before
+            )
+            summary = (
+                f"三省自愈分析完成：发现缺陷 {len(remedy_items)} 处，已就地修复 {applied_count} 处，"
+                f"健康分自愈变迁: {score_before} -> {score_after}。"
+            )
+
+            return SanxingRemedyResult(
+                total_defects=len(remedy_items),
+                remedies=remedy_items,
+                applied_count=applied_count,
+                health_score_before=score_before,
+                health_score_after=score_after,
+                summary=summary,
+            )
+
+        if self.session is not None:
+            return _run_remediation(self.session)
+        with db.get_session() as s:
+            return _run_remediation(s)
 
 
 def inspect_memory_health(
