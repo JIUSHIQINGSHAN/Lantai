@@ -1351,6 +1351,14 @@ wiki = [
     { name = "markdown" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "apscheduler", specifier = ">=3.10" },
@@ -1382,6 +1390,14 @@ requires-dist = [
     { name = "watchdog", marker = "extra == 'obsidian'", specifier = ">=4" },
 ]
 provides-extras = ["dev", "vision", "obsidian", "wiki", "all"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-asyncio", specifier = ">=1.4.0" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
+    { name = "ruff", specifier = ">=0.16.6" },
+]
 
 [[package]]
 name = "lxml"

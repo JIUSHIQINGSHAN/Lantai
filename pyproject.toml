@@ -89,6 +89,14 @@ ignore = ["E712", "E501", "E741", "SIM117", "B017", "E702", "E402", "B905", "B90
 quote-style = "double"
 indent-style = "space"
 
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.6",
+]
+
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "Depends"]
