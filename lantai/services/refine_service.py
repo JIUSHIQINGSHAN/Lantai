@@ -1,88 +1,36 @@
-"""披沙（ADR-0030）：候选记忆递归精炼（Refine）核心服务。
+"""披沙（ADR-0077）：候选记忆递归提纯去噪（Pisha）核心服务。
 
-提供：
-1. refine_memory_text: LLM 指代消解、事实提纯与置信度重估（纯函数 + 降级保护）；
+基于认知层 PishaEngine 统一封装：
+1. refine_memory_text: LLM 与确定性启发式多轨提纯（纯函数，异常时宁 miss 不脏写降级）；
 2. refine_candidate_record: 针对单条候选记录进行精炼并更新 DB；
 3. batch_refine_candidates: 针对模糊区间候选批量披沙提纯。
 """
 
+from typing import Any
+
 from sqlmodel import Session, select
 
+from lantai.cognition.pisha import PishaEngine
 from lantai.core.logger import logger
-from lantai.llm import client as llm_client
 from lantai.models.tables import MemoryCandidate
 from lantai.storage import db
 
-REFINE_SYSTEM_PROMPT = """你是一个严谨的记忆精炼与事实提纯专家（兰台记忆·披沙系统）。
-你的任务是对提取出的模糊候选记忆进行指代消解、事实提纯与去噪。
-
-【精炼要求】
-1. 指代消解：将“他/它/那个/这件事”等弱指代根据上下文还原为具体的主语、实体名称或技术栈；
-2. 去粗取精：剔除口语化副词、助词、客套修饰，提炼为精炼且信息完整的陈述句；
-3. 原子化收敛：确保记忆表达单一、清晰的事实、偏好或规则；
-4. 真实性与置信度重估：
-   - 若提纯后事实确凿且实体完整：输出 is_valid=true，confidence 置为 0.70~0.95；
-   - 若原内容纯属无意义社交客套、闲聊废话：输出 is_valid=false，confidence=0.0；
-5. 必须返回严格的 JSON 格式：
-{
-  "refined_text": "精炼后的记忆陈述句",
-  "confidence": 0.85,
-  "is_valid": true,
-  "lane": "general",
-  "tags": ["标签1"],
-  "reason": "精炼与提纯说明"
-}
-"""
-
 
 def refine_memory_text(text: str, context: str = "", metadata: dict | None = None) -> dict:
-    """对单段记忆文本执行指代消解与结构化提纯（纯函数，异常时宁 miss 不脏写降级）。"""
-    raw_text = (text or "").strip()
-    if not raw_text:
-        return {
-            "refined_text": "",
-            "confidence": 0.0,
-            "is_valid": False,
-            "lane": "general",
-            "tags": [],
-            "reason": "输入文本为空",
-        }
-
-    user_prompt = f"【待精炼候选文本】:\n{raw_text}\n"
-    if context:
-        user_prompt += f"\n【上下文背景】:\n{context}\n"
-
-    try:
-        res = llm_client.chat_json(REFINE_SYSTEM_PROMPT, user_prompt)
-        if isinstance(res, dict) and "refined_text" in res:
-            refined_text = str(res.get("refined_text", "")).strip() or raw_text
-            confidence = float(res.get("confidence", 0.7))
-            is_valid = bool(res.get("is_valid", True))
-            lane = str(res.get("lane", "general"))
-            tags = list(res.get("tags", []))
-            reason = str(res.get("reason", "精炼成功"))
-            return {
-                "refined_text": refined_text,
-                "confidence": min(max(confidence, 0.0), 1.0),
-                "is_valid": is_valid,
-                "lane": lane
-                if lane in ("general", "profile", "preference", "rule", "entity", "project")
-                else "general",
-                "tags": [str(t).strip() for t in tags if str(t).strip()],
-                "reason": reason,
-            }
-    except Exception as exc:
-        logger.warning("披沙：LLM 精炼调用异常（优雅降级保持原样）: %s", exc)
-
-    # 优雅降级（宁 miss 不脏写）
+    """对单段记忆文本执行指代消解与结构化提纯（基于 PishaEngine，纯函数，异常时宁 miss 不脏写降级）。"""
+    engine = PishaEngine()
+    entity_hints = metadata.get("entity_hints") if metadata else None
+    res = engine.refine_text(text=text, context=context, entity_hints=entity_hints)
     return {
-        "refined_text": raw_text,
-        "confidence": 0.0,
-        "is_valid": True,
-        "llm_failed": True,
-        "lane": "general",
-        "tags": [],
-        "reason": "LLM 调用异常,保持原候选不变",
+        "refined_text": res.refined_text,
+        "confidence": res.refined_confidence,
+        "is_valid": res.is_valid,
+        "llm_failed": res.llm_failed,
+        "lane": res.lane,
+        "tags": res.denoise_tags,
+        "reason": res.reason,
+        "pronoun_resolutions": res.pronoun_resolutions,
+        "fenced_content": res.fenced_content,
     }
 
 
@@ -116,20 +64,36 @@ def refine_candidate_record(
                 lane=cand.lane,
             )
 
+        engine = PishaEngine(session=s, principal=principal)
         raw_text = cand.summary or (cand.claims[0] if cand.claims else "")
         context_str = str(cand.provenance) if cand.provenance else ""
-        res = refine_memory_text(raw_text, context=context_str)
-        if res.get("llm_failed"):
-            logger.warning("披沙:候选【%s】LLM 不可用,保持原样待重试", cand.id)
+        initial_conf = float(cand.extractor_confidence or 0.4)
+
+        res = engine.refine_text(raw_text, context=context_str, initial_confidence=initial_conf)
+        if res.llm_failed and not res.denoise_tags:
+            logger.warning("披沙:候选【%s】LLM 不可用且无规则修剪,保持原样待重试", cand.id)
             return cand.model_dump(mode="json")
 
-        if not res["is_valid"] or res["confidence"] <= 0.0:
+        if not res.is_valid or res.refined_confidence <= 0.0:
             cand.status = "rejected"
+            cand.extractor_confidence = 0.0
+            cand.provenance = {
+                **(cand.provenance or {}),
+                "pisha_rejected": True,
+                "pisha_reason": res.reason,
+            }
         else:
-            cand.summary = res["refined_text"]
-            cand.claims = [res["refined_text"]]
-            cand.extractor_confidence = res["confidence"]
-            cand.lane = res.get("lane") or cand.lane
+            cand.summary = res.refined_text
+            cand.claims = [res.refined_text]
+            cand.extractor_confidence = res.refined_confidence
+            cand.lane = res.lane or cand.lane
+            cand.provenance = {
+                **(cand.provenance or {}),
+                "pisha_refined": True,
+                "pronoun_resolutions": res.pronoun_resolutions,
+                "denoise_tags": res.denoise_tags,
+                "pisha_reason": res.reason,
+            }
 
         s.add(cand)
         s.commit()
@@ -158,10 +122,7 @@ def batch_refine_candidates(
 ) -> dict:
     """批量对处于模糊置信度区间的候选执行披沙提纯。
 
-    归属收窄（票 .scratch/readside-gaps/02）：批量入口此前全表捞模糊区间
-    候选——A 的 `limit=20` 会把 B 的待审候选捞进来改写，甚至改 status。
-    这里按 `viewer` 收窄查询（admin 全权），与
-    `candidate_service.list_pending_candidates` 同口径。
+    归属收窄（票 .scratch/readside-gaps/02）：按 viewer 收窄查询（admin 全权）。
     """
 
     def _run(s: Session) -> dict:
@@ -184,20 +145,35 @@ def batch_refine_candidates(
 
         refined_count = 0
         rejected_count = 0
+        engine = PishaEngine(session=s, principal=principal)
         for cand in candidates:
             raw_text = cand.summary or (cand.claims[0] if cand.claims else "")
             context_str = str(cand.provenance) if cand.provenance else ""
-            res = refine_memory_text(raw_text, context=context_str)
-            if res.get("llm_failed"):
+            initial_conf = float(cand.extractor_confidence or 0.4)
+            res = engine.refine_text(raw_text, context=context_str, initial_confidence=initial_conf)
+            if res.llm_failed and not res.denoise_tags:
                 continue
-            if not res["is_valid"] or res["confidence"] <= 0.0:
+            if not res.is_valid or res.refined_confidence <= 0.0:
                 cand.status = "rejected"
+                cand.extractor_confidence = 0.0
+                cand.provenance = {
+                    **(cand.provenance or {}),
+                    "pisha_rejected": True,
+                    "pisha_reason": res.reason,
+                }
                 rejected_count += 1
             else:
-                cand.summary = res["refined_text"]
-                cand.claims = [res["refined_text"]]
-                cand.extractor_confidence = res["confidence"]
-                cand.lane = res.get("lane") or cand.lane
+                cand.summary = res.refined_text
+                cand.claims = [res.refined_text]
+                cand.extractor_confidence = res.refined_confidence
+                cand.lane = res.lane or cand.lane
+                cand.provenance = {
+                    **(cand.provenance or {}),
+                    "pisha_refined": True,
+                    "pronoun_resolutions": res.pronoun_resolutions,
+                    "denoise_tags": res.denoise_tags,
+                    "pisha_reason": res.reason,
+                }
                 refined_count += 1
             s.add(cand)
 
@@ -212,3 +188,21 @@ def batch_refine_candidates(
         return _run(session)
     with db.get_session() as s:
         return _run(s)
+
+
+def pisha_refine_service(
+    text: str | None = None,
+    candidate_id: str | None = None,
+    context: str = "",
+    entity_hints: dict[str, str] | None = None,
+    session: Session | None = None,
+    principal=None,
+) -> dict[str, Any]:
+    """统一披沙服务入口，支持纯文本提纯或候选条目落库提纯。"""
+    if candidate_id:
+        return refine_candidate_record(candidate_id, session=session, principal=principal)
+    if text:
+        return refine_memory_text(
+            text=text, context=context, metadata={"entity_hints": entity_hints or {}}
+        )
+    raise ValueError("text 与 candidate_id 至少需提供其一")

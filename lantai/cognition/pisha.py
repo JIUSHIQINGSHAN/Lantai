@@ -227,17 +227,23 @@ class PishaEngine:
                 llm_failed=True,
             )
 
-        fenced = wrap_as_data(final_text, score=initial_confidence)
+        fallback_conf = 0.0 if not h_tags and not pronoun_map else initial_confidence
+        fenced = wrap_as_data(final_text, score=fallback_conf)
+        reason_msg = (
+            "LLM 调用异常,保持原候选不变"
+            if not h_tags and not pronoun_map
+            else "LLM 异常，确定性规则保底"
+        )
         return PishaResult(
             original_text=raw_text,
             refined_text=final_text,
             original_confidence=initial_confidence,
-            refined_confidence=initial_confidence,
+            refined_confidence=fallback_conf,
             is_valid=True,
             lane="general",
             pronoun_resolutions=pronoun_map,
-            denoise_tags=h_tags + ["fallback_rule"],
-            reason="LLM 异常，确定性规则保底",
+            denoise_tags=h_tags + (["fallback_rule"] if h_tags or pronoun_map else []),
+            reason=reason_msg,
             fenced_content=fenced,
             llm_failed=True,
         )

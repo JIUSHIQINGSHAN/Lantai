@@ -27,6 +27,7 @@ from .routes_niyi import router as routes_niyi_router
 from .routes_obsidian import router as routes_obsidian_router
 from .routes_param_advice import router as routes_param_advice_router
 from .routes_persona import router as routes_persona_router
+from .routes_pisha import router as routes_pisha_router
 from .routes_probing import router as routes_probing_router
 from .routes_prompts import router as routes_prompts_router
 from .routes_qijuzhu import router as routes_qijuzhu_router
@@ -79,6 +80,7 @@ __all__ = [
     "routes_work_items_router",
     "routes_prompts_router",
     "routes_persona_router",
+    "routes_pisha_router",
     "routes_qingniao_router",
     "routes_scratchpad_router",
     "routes_terminal_router",

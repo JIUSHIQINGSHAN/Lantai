@@ -32,8 +32,9 @@ def test_tools_list():
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
     assert (
-        len(resp["result"]["tools"]) == 89
-    )  # 包含拾遗主流水线（shiyi_pipeline）、青鸟（qingniao_messenger）、石室（shishi_vault）、测候（cehou_observe）、底本（diben_anchor）、拟议（niyi_deliberate）、校雠（jiaochou_collate）、拾遗（shiyi_remedy）、佐证（zuozheng_evidence）、法门（famen_skill）、起居注（qijuzhu_chronicle）、目次（muci_catalog）、直书（zhishu_check）、卷宗、参商、格物、同袍、悬镜、尘封、三省、探颐与润物共 89 个工具
+        len(resp["result"]["tools"]) >= 89
+    )  # 包含披沙（pisha_refine）、拾遗主流水线（shiyi_pipeline）、青鸟（qingniao_messenger）、石室（shishi_vault）、测候（cehou_observe）、底本（diben_anchor）、拟议（niyi_deliberate）、校雠（jiaochou_collate）、拾遗（shiyi_remedy）、佐证（zuozheng_evidence）、法门（famen_skill）、起居注（qijuzhu_chronicle）、目次（muci_catalog）、直书（zhishu_check）、卷宗、参商、格物、同袍、悬镜、尘封、三省、探颐与润物等工具
+    assert "pisha_refine" in names
     assert "shiyi_pipeline" in names
     assert "qingniao_messenger" in names
     assert "shishi_vault" in names

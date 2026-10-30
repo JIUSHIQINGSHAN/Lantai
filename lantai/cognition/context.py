@@ -68,6 +68,8 @@ class CognitiveContext:
     shishi_digest: list[dict] | None = None
     # 青鸟（v0.54 Ticket 02 ADR-0075）：多智能体记忆信使与异步通信切面
     qingniao_digest: list[dict] | None = None
+    # 披沙（v0.56 Ticket 02 ADR-0077）：候选记忆提纯去噪切面
+    pisha_digest: list[dict] | None = None
 
     def to_prompt(self) -> str:
         """
@@ -402,6 +404,26 @@ class CognitiveContext:
                 )
 
             sections.insert(0, "\n".join(qn_lines))
+
+        # 披沙（ADR-0077）：若有提纯去噪后的候选切面，渲染披沙切面
+        if self.pisha_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            ps_items = self.pisha_digest
+            ps_lines = [f"## Refined Candidates & Denoised Memories (披沙 · {len(ps_items)}):"]
+            for idx, item in enumerate(ps_items[:5], 1):
+                c = item.get("refined_text") or item.get("summary") or ""
+                conf = item.get("confidence") or item.get("refined_confidence")
+                conf_str = f" [置信度: {conf}]" if conf is not None else ""
+                reason = item.get("reason") or ""
+                reason_str = f" - {wrap_as_data(str(reason))}" if reason else ""
+                resolutions = item.get("pronoun_resolutions")
+                res_str = f" [消解: {resolutions}]" if resolutions else ""
+                ps_lines.append(
+                    f"- [披沙·P{idx}{conf_str}{res_str}] {wrap_as_data(str(c))}{reason_str}"
+                )
+
+            sections.insert(0, "\n".join(ps_lines))
 
         from lantai.llm.fence import fence_declaration
 

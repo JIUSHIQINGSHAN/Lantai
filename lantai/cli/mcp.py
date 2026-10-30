@@ -1898,6 +1898,34 @@ def handle_qingniao_messenger(params: dict) -> dict:
     return {"error": "Invalid qingniao parameters"}
 
 
+def handle_pisha_refine(params: dict) -> dict:
+    """披沙：候选记忆递归提纯去噪、多轨指代消解与置信度重估（v0.56 ADR-0077）。"""
+    text = params.get("text")
+    candidate_id = params.get("candidate_id")
+    context = str(params.get("context", "") or "")
+    entity_hints = params.get("entity_hints")
+    batch = bool(params.get("batch", False))
+
+    from lantai.services.refine_service import batch_refine_candidates, pisha_refine_service
+
+    p = _principal_from_params(params)
+    if batch:
+        min_conf = float(params.get("min_conf", 0.15))
+        max_conf = float(params.get("max_conf", 0.6))
+        limit = int(params.get("limit", 20))
+        return batch_refine_candidates(
+            min_conf=min_conf, max_conf=max_conf, limit=limit, principal=p
+        )
+
+    return pisha_refine_service(
+        text=text,
+        candidate_id=candidate_id,
+        context=context,
+        entity_hints=entity_hints,
+        principal=p,
+    )
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -3208,6 +3236,52 @@ TOOLS = {
             "required": ["query"],
         },
     },
+    "pisha_refine": {
+        "description": "披沙：候选记忆递归提纯去噪、多轨指代消解与置信度重估（v0.56 ADR-0077）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "待精炼的原始文本（纯文本模式）",
+                },
+                "candidate_id": {
+                    "type": "string",
+                    "description": "待精炼的候选记忆 ID（记录落库模式）",
+                },
+                "context": {
+                    "type": "string",
+                    "description": "上下文背景信息",
+                    "default": "",
+                },
+                "entity_hints": {
+                    "type": "object",
+                    "description": "已知实体映射线索，辅助确定性指代消解",
+                },
+                "batch": {
+                    "type": "boolean",
+                    "description": "是否为模糊带批量扫描模式",
+                    "default": False,
+                },
+                "min_conf": {
+                    "type": "number",
+                    "description": "批量模式模糊带最小置信度",
+                    "default": 0.15,
+                },
+                "max_conf": {
+                    "type": "number",
+                    "description": "批量模式模糊带最大置信度",
+                    "default": 0.6,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "批量模式最大处理候选数",
+                    "default": 20,
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -3299,6 +3373,7 @@ TOOL_HANDLERS = {
     "shishi_vault": handle_shishi_vault,
     "qingniao_messenger": handle_qingniao_messenger,
     "shiyi_pipeline": handle_shiyi_pipeline,
+    "pisha_refine": handle_pisha_refine,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。
