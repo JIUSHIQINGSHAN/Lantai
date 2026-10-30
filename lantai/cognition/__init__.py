@@ -48,6 +48,11 @@ from lantai.cognition.tanyi import (
     execute_tanyi_resolution,
     parse_user_resolution_intent,
 )
+from lantai.cognition.zhaji import (
+    ZhajiDigestResult,
+    ZhajiEngine,
+    ZhajiItem,
+)
 
 __all__ = [
     "CausalEngine",
@@ -84,4 +89,7 @@ __all__ = [
     "parse_user_resolution_intent",
     "search_archived_memories",
     "unarchive_memory_entry",
+    "ZhajiDigestResult",
+    "ZhajiEngine",
+    "ZhajiItem",
 ]
