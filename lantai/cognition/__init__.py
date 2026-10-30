@@ -7,6 +7,12 @@ from lantai.cognition.chenfeng import (
     unarchive_memory_entry,
 )
 from lantai.cognition.context import CognitiveContext, CognitiveContextBuilder
+from lantai.cognition.gouchen import (
+    GouchenEngine,
+    GouchenItem,
+    GouchenResult,
+    HistoricalContext,
+)
 from lantai.cognition.juanzong import (
     DossierFocusResult,
     DossierMilestone,
@@ -104,4 +110,8 @@ __all__ = [
     "ZhimingItem",
     "ZhimingResult",
     "ZhimingTransition",
+    "GouchenEngine",
+    "GouchenItem",
+    "GouchenResult",
+    "HistoricalContext",
 ]
