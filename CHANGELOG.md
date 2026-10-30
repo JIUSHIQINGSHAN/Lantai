@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-10-30 - 钩沉（Gouchen · 历史语境回溯与沉埋记忆检索恢复引擎）
+
+> 版本代号「钩沉」：出自《易·系辞上》「探赜索隐，钩深致远」，宋代王应麟《困学纪闻》等考据治学常用「钩沉」指打捞湮没典籍——取「钩取沉埋之物、打捞沉没记忆」之意——对应本版主题「历史语境回溯与沉埋记忆检索恢复引擎，ADR-0082 落地」：突破既有常规 Hybrid 检索只看活跃浅水区、无法触达归档/弱化深层记忆、缺乏历史时态语境回溯能力的局限，构建面向生产环境的一级认知打捞引擎 `GouchenEngine` 与 `GouchenItem`/`GouchenResult`/`HistoricalContext` 领域契约（票 01）。支持沉没度打分（`SunkenScore = (1-decay) × age/(age+30)`）、穿透 `archived`/`weakened` 状态的深水区多维打捞（`dredge_sunken_memories`）；支持基于双时间轴锚点 $T_{anchor}$ 的历史语境无未来污染快照重建（`reconstruct_historical_context`）；全链路行级租户安全隔离与樊篱防注入。提供 `gouchen_service.py` 服务层统一入口；挂载 HTTP REST 路由（`POST /gouchen/dredge` 与 `GET /gouchen/snapshot`）；MCP 工具池扩充至 **95 工具里程碑**（新增 `gouchen_dredge`），实现 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫；增强认知上下文 `CognitiveContext`，将钩沉切面集成至 `gouchen_digest` 中（票 02）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.61-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心钩沉历史语境回溯与沉埋记忆打捞引擎 GouchenEngine 与认知层收敛（票 01，详见 `lantai/cognition/gouchen.py` 与 `tests/test_gouchen_engine_smoke.py`）**：
+  - 沉没度打分纯函数引擎：基于 `(1-decay_score) × age/(age+30)` 计算记忆沉没深度，衰减越彻底、存续越久远，沉没度越高；
+  - 深水区穿透打捞（`dredge_sunken_memories`）：突破常规检索状态隔离，显式穿透打捞 `archived`/`weakened`/低分沉埋条目，按沉没度降序输出 `GouchenResult`；
+  - 历史语境快照无未来污染重建（`reconstruct_historical_context`）：基于时序锚点 $T_{anchor}$ 抓取当时生效记忆（`created_at ≤ anchor`, `valid_from ≤ anchor < valid_to`），绝对阻断未来信息泄漏，输出 `HistoricalContext`；
+  - 行级租户属主 ACL 隔离与樊篱防御：严格校验 `_check_access`（宁漏不越权），全链路正文采用 `<memory_data>` 围栏隔离；
+  - 交付端到端不 mock 冒烟测试 `tests/test_gouchen_engine_smoke.py`（4 接缝：纯函数打分、真实 SQLite 穿透打捞、历史快照无污染重建、行级 ACL 隔离与樊篱防注入全绿）。
+- **钩沉服务层封装、REST 路由、MCP 95 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/gouchen_service.py`、`lantai/api/routes_gouchen.py`、`lantai/cli/mcp.py` 与 `tests/test_gouchen_api_smoke.py`）**：
+  - 服务层封装：提供 `gouchen_dredge_service` 与 `gouchen_snapshot_service` 统一入口；
+  - HTTP REST 路由：新增 `POST /gouchen/dredge` 与 `GET /gouchen/snapshot` 路由端点，挂载入 `CORE_ROUTERS`；
+  - MCP 扩充至 95 工具里程碑：注册 `gouchen_dredge` 工具规范（支持 `dredge`/`snapshot` 双模式）并挂载处理器 `handle_gouchen_dredge`，保持 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向对齐；
+  - 认知上下文切面：`CognitiveContext` 新增 `gouchen_digest` 属性，在 `to_prompt()` 中渲染结构化钩沉切面（含沉没度展示与樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_gouchen_api_smoke.py`（4 接缝：服务层调度、REST 端点协议往返、MCP 95 工具双向对齐、认知上下文切面渲染全绿）。
+
 ## [0.60.0] - 2026-10-30 - 知命（Zhiming · 认知生命全周期演化状态机、动态时效衰变引擎与认知层收敛）
 
 > 版本代号「知命」：出自孔子「五十而知天命」，取「顺应事物生命周期演化、知晓时效规律与认知终局」之意——对应本版主题「认知生命全周期演化状态机、动态时效衰变引擎与认知层收敛，ADR-0081 落地」：突破既有记忆孤立存储、缺乏生命演化与时效衰变机制的局限，构建面向生产环境的一级认知状态机引擎 `ZhimingEngine` 与全生命周期契约。支持多阶段生命流转（`seed` -> `active` -> `decaying` -> `archived` / `dormant` -> `tombstone`）；实现半衰期对数时效衰变与重要性加权评估；行级租户属主安全隔离与樊篱防御；提供 `zhiming_service.py` 服务层统一入口；挂载 HTTP REST 路由（`POST /lifecycle/transition` 与 `GET /lifecycle/inspect`）；MCP 工具池扩充至 **94 工具里程碑**（新增 `zhiming_lifecycle`），实现 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫；增强认知上下文 `CognitiveContext`，将知命生命状态切面集成至 `zhiming_digest` 中。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.60-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
