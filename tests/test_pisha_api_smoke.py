@@ -136,10 +136,10 @@ class TestPishaApiSmoke:
         assert "total_scanned" in resp_batch.json()
 
     def test_seam3_mcp_90_tools_parity(self):
-        """接缝 3：MCP 90 工具协议往返与 1:1 双向对齐守卫。"""
-        # 工具总数必须恰好为 90 个里程碑
-        assert len(TOOLS) == 90
-        assert len(TOOL_HANDLERS) == 90
+        """接缝 3：MCP 90+ 工具协议往返与 1:1 双向对齐守卫。"""
+        # 工具总数达到 90+ 里程碑，并保持 1:1 双向对齐
+        assert len(TOOLS) >= 90
+        assert len(TOOL_HANDLERS) == len(TOOLS)
         assert set(TOOLS.keys()) == set(TOOL_HANDLERS.keys())
         assert "pisha_refine" in TOOLS
 

@@ -70,6 +70,8 @@ class CognitiveContext:
     qingniao_digest: list[dict] | None = None
     # 披沙（v0.56 Ticket 02 ADR-0077）：候选记忆提纯去噪切面
     pisha_digest: list[dict] | None = None
+    # 考功（v0.57 Ticket 02 ADR-0078）：记忆价值演化与多维功过评定切面
+    kaogong_digest: list[dict] | None = None
 
     def to_prompt(self) -> str:
         """
@@ -424,6 +426,31 @@ class CognitiveContext:
                 )
 
             sections.insert(0, "\n".join(ps_lines))
+
+        # 考功（ADR-0078）：若有价值演化与升降级评定结果，渲染考功切面
+        if self.kaogong_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            kg_items = self.kaogong_digest
+            kg_lines = [f"## Memory Merit & Value Evolution (考功 · {len(kg_items)}):"]
+            for idx, item in enumerate(kg_items[:5], 1):
+                mid = item.get("memory_id") or ""
+                action = item.get("action") or "keep_neutral"
+                score = item.get("score")
+                score_str = f" [功过分: {score}]" if score is not None else ""
+                reason = item.get("reason") or ""
+                reason_str = f" - {wrap_as_data(str(reason))}" if reason else ""
+                fenced_c = item.get("fenced_content") or ""
+                content_display = (
+                    fenced_c
+                    if fenced_c
+                    else wrap_as_data(str(item.get("content", "")), item_id=mid)
+                )
+                kg_lines.append(
+                    f"- [考功·K{idx} ({action}){score_str}] {content_display}{reason_str}"
+                )
+
+            sections.insert(0, "\n".join(kg_lines))
 
         from lantai.llm.fence import fence_declaration
 

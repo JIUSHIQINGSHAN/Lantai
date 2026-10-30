@@ -477,11 +477,25 @@ def handle_get_digest(params: dict) -> dict:
 
 
 def handle_kaogong_eval(params: dict) -> dict:
-    """考功：执行全库记忆价值演化考评周期（ADR-0031）。"""
+    """考功：执行全库记忆价值演化考评周期（ADR-0031 / ADR-0078）。"""
     from lantai.services.kaogong_service import run_kaogong_cycle
 
+    limit = int(params.get("limit", 100))
     # 归属（票 01a）
-    return run_kaogong_cycle(principal=_principal_from_params(params))
+    return run_kaogong_cycle(principal=_principal_from_params(params), limit=limit)
+
+
+def handle_kaogong_inspect(params: dict) -> dict:
+    """考功：单条记忆多因子价值深度审查（ADR-0078）。"""
+    from lantai.services.kaogong_service import kaogong_inspect_service
+
+    memory_id = params.get("memory_id", "")
+    write = bool(params.get("write", False))
+    return kaogong_inspect_service(
+        memory_id=memory_id,
+        principal=_principal_from_params(params),
+        write=write,
+    )
 
 
 def handle_memory_consolidate(params: dict) -> dict:
@@ -2135,10 +2149,27 @@ TOOLS = {
         },
     },
     "kaogong_eval": {
-        "description": "考功（演化）：基于长程使用反馈与采纳率，对全库记忆执行功过升降级评定（ADR-0031）",
+        "description": "考功（演化）：基于长程使用反馈与采纳率，对全库记忆执行功过升降级评定（ADR-0031 / ADR-0078）",
         "inputSchema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "limit": {"type": "integer", "default": 100, "description": "最大考评条目上限"},
+            },
+        },
+    },
+    "kaogong_inspect": {
+        "description": "考功（审查）：对指定单条记忆执行多因子价值与生命周期深度审查（ADR-0078）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "目标记忆 ID"},
+                "write": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "是否持久化应用升降级修改",
+                },
+            },
+            "required": ["memory_id"],
         },
     },
     "memory_consolidate": {
@@ -3374,6 +3405,7 @@ TOOL_HANDLERS = {
     "qingniao_messenger": handle_qingniao_messenger,
     "shiyi_pipeline": handle_shiyi_pipeline,
     "pisha_refine": handle_pisha_refine,
+    "kaogong_inspect": handle_kaogong_inspect,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

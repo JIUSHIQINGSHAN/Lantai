@@ -21,6 +21,7 @@ from .routes_health import protected_router as routes_health_protected_router
 from .routes_health import router as routes_health_router
 from .routes_import import router as routes_import_router
 from .routes_jiaochou import router as routes_jiaochou_router
+from .routes_kaogong import router as routes_kaogong_router
 from .routes_memory import router as routes_memory_router
 from .routes_monitor import router as routes_monitor_router
 from .routes_niyi import router as routes_niyi_router
@@ -72,6 +73,7 @@ __all__ = [
     "routes_scenes_router",
     "routes_obsidian_router",
     "routes_import_router",
+    "routes_kaogong_router",
     "routes_tree_router",
     "routes_crystals_router",
     "routes_graph_router",
