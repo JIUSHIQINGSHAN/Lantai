@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-30 - 起居注（Qijuzhu · 时序记忆脉络与每日全息纪事引擎）
+
+> 版本代号「起居注」：出自《汉书·艺文志》「古之人君，左史记言，右史记事」，逐日详录言行得失与政事变迁——对应本版主题「时序记忆脉络、多源认知事件编排与每日全息纪事切面，ADR-0066 落地」：突破既有静态粗粒度每日盘点（`digest_worker.py`）仅在清晨产生离线 Markdown、缺乏结构化时序动态切面的局限，构建面向生产环境的高性能聚合引擎 `QijuzhuEngine`（票 01）。支持统一编排与捕获异构多源认知事件流（记忆摄入、直书/程序铁律确立、卷宗里程碑流转、参商冲突仲裁与记忆演化提案应用）；提供今日与任意指定日期的全息日度纪事（`get_daily_chronicle`，支持宏观变迁摘要、量化度量指标与事件流），以及跨任意时间窗（`days`、`limit`）的滑动时间轴脉络（`get_timeline`）；所有纪事摘要、条目标题与笔记细节强制经由樊篱（`wrap_as_data`）数据围栏包裹，严防提示注入，并严守行级租户属主安全隔离与「宁 miss 不脏写」纪律。打通服务层 `qijuzhu_service.py`、HTTP REST 路由（`GET /qijuzhu/today`、`GET /qijuzhu/timeline`、`GET /qijuzhu/dates/{date_str}`）、MCP 工具（`qijuzhu_chronicle`，工具池扩充至 79 个且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，时序全息纪事切面置顶呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.45-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心起居注时序记忆纪事聚合引擎 QijuzhuEngine（票 01，详见 `lantai/cognition/qijuzhu.py` 与 `tests/test_qijuzhu_engine_smoke.py`）**：
+  - 多源异构认知事件流聚合：编排抓取 MemoryItem（普通摄入、程序铁律确立）、Dossier（战略目标卷宗推进与里程碑流转）、MemoryProposal（记忆演化合并、精炼与归档提案应用）时序流水；
+  - 全息日度纪事与滑动时间轴脉络：`get_daily_chronicle` 产出宏观变迁叙事、5 项量化度量指标（总事件数/新记忆数/确立规则数/卷宗推进数/提案生效数）与明细事件流；`get_timeline` 产出任意多日倒序滑动时间轴脉络流并支持 limit 截断；
+  - 樊篱安全隔离：所有纪事事件明细、标题与说明经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入风险；
+  - 严格租户与属主隔离：`_check_access` 结合 `tenant_id`、`user_id` 与 `allowed_lanes` 泳道白名单过滤，宁 miss 不脏写，越权事件零泄漏；
+  - 交付端到端不 mock 冒烟测试 `tests/test_qijuzhu_engine_smoke.py`（当日全息纪事聚合、滑动时间轴排序与截断、樊篱包裹防注入、租户与泳道权限隔离 4 个独立接缝验证全绿）。
+- **起居注 API 路由、MCP 工具集成与认知上下文切面（票 02，详见 `lantai/services/qijuzhu_service.py`、`lantai/api/routes_qijuzhu.py`、`lantai/cli/mcp.py`、`lantai/cognition/context.py` 与 `tests/test_qijuzhu_api_smoke.py`）**：
+  - 服务层封装：新增 `get_daily_chronicle_service` 与 `get_timeline_service`，纳管 DB 会话事务生命周期；
+  - HTTP REST 路由：新增 `GET /qijuzhu/today`、`GET /qijuzhu/timeline`、`GET /qijuzhu/dates/{date_str}` 鉴权端点，挂载入 `app.py` 核心路由池；
+  - MCP 工具池升级：注册 `qijuzhu_chronicle` 工具并实现 `handle_qijuzhu_chronicle` 处理器，系统 MCP 工具总数扩充至 79 个，TOOLS 与 TOOL_HANDLERS 1:1 双向一致性守卫全绿；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 引入 `qijuzhu_digest` 切面，置顶呈现樊篱包裹的近期起居注纪事；
+  - 交付端到端不 mock 冒烟测试 `tests/test_qijuzhu_api_smoke.py`（服务层调用、REST 路由端点、MCP 协议往返与 79 工具对齐、认知上下文时序切面 4 个独立接缝验证全绿）。
+
 ## [0.44.0] - 2026-10-30 - 目次（Muci · 多维记忆知识目录与分级语义导航引擎）
 
 > 版本代号「目次」：出自南朝梁·刘勰《文心雕龙·序志》「成岁既渐，目次来构」；部目次序、条贯井然，使开卷者一览无遗——对应本版主题「多维记忆知识目录、分级语义导航与认知上下文导览切面，ADR-0065 落地」：突破既有统计概览（`ops/overview.py`）仅有粗粒度行级计数的局限，构建面向全局记忆知识感知的高性能聚合引擎 `MuciEngine`（票 01）。支持按辨域（domain: user / session / agent）与分轨（lane: fact / rule / preference / experience / general）构建结构化知识板块，统计板块活跃度、高频标签云与最新事件时间；提供 compact（紧凑低 Token 大纲）与 full（精选条目展开）双模式，正文统一经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严格落实行级租户安全隔离与「宁 miss 不脏写」纪律。打通服务层 `muci_service.py`、HTTP REST 路由（`GET /catalog/overview`、`GET /catalog/domains/{domain}`）、MCP 工具（`muci_catalog`，工具池扩充至 78 个且 1:1 双向一致）与认知上下文 `CognitiveContext`（票 02，目次导览切面置顶呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.44-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
