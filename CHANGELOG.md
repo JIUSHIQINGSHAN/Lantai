@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-10-30 - 青鸟（Qingniao · 多智能体记忆信使与异步通信路由引擎）
+
+> 版本代号「青鸟」：出自李商隐《无题》「蓬山此去无多路，青鸟殷勤为探看」与《山海经》西王母三青鸟，代指在认知联邦与智能体集群生态中专职传递核心记忆与书简公文的神圣信使——对应本版主题「多智能体记忆信使与异步通信路由引擎、记忆信函封装、送达回执闭环与认知上下文青鸟切面，ADR-0075 落地」：突破既有记忆局限于单体本地或扁平共享表的局限，构建面向多智能体协作与联邦认知的高可靠青鸟信使引擎 `QingniaoEngine`（票 01）。支持跨智能体记忆信函封装与寻址（`QingniaoLetter`），提供异步派发回执（`QingniaoDispatchResult`）；支持收件箱智能拉取与优先级倒序调度（`fetch_inbox`）；实现生命周期签收闭环（`acknowledge_letter`，支持 ACK/REJECT 状态机转换）；全链路信函正文强制经由樊篱（`wrap_as_data`）数据围栏包裹，抵御跨体提示词注入攻击，并严格校验租户隔离与接收方签收权限（宁 miss 不越权）。打通服务层 `qingniao_service.py`、HTTP REST 路由（`POST /qingniao/dispatch`、`GET /qingniao/inbox`、`POST /qingniao/ack`）、MCP 工具（`qingniao_messenger`，工具池扩充至 88 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，青鸟多智能体信使切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.54-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心青鸟多智能体记忆信使与异步通信路由引擎 QingniaoEngine（票 01，详见 `lantai/cognition/qingniao.py` 与 `tests/test_qingniao_engine_smoke.py`）**：
+  - 记忆信函契约：定义 `QingniaoLetter` 契约，统一纳管信函 ID、发信方、收信方（支持单播与广播）、主题、正文、优先级（high/normal/low）、状态与时序时间戳；
+  - 派发回执契约：定义 `QingniaoDispatchResult`，输出入队派发状态、信函 ID、受众数量与时间戳；
+  - 核心派发与信箱调度：实现 `dispatch_letter` 与 `fetch_inbox`，支持多智能体异步投递、按优先级排序与状态过滤；
+  - 签收回执状态机：实现 `acknowledge_letter`，支持 ACK 确认与 REJECT 拒收，并限定仅目标接收方或管理员有权操作；
+  - 樊篱安全隔离与行级 ACL：信函正文强制包裹 `<memory_data>` 围栏，严守租户边界与跨体权限隔离（宁 miss 不脏写）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_qingniao_engine_smoke.py`（信函派发与入队回执、收信箱拉取与 ACK 生命周期闭环、樊篱防注入围栏、行级 ACL 隔离与非法越权拦截 4 个独立接缝验证全绿）。
+- **青鸟服务层、REST 路由、MCP 88 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/qingniao_service.py`、`lantai/api/routes_qingniao.py`、`lantai/cli/mcp.py`、`lantai/cognition/context.py` 与 `tests/test_qingniao_api_smoke.py`）**：
+  - 服务层封装：新增 `dispatch_letter_service`、`fetch_inbox_service` 与 `acknowledge_letter_service`，统一管理 DB 会话生命周期与信使调度；
+  - HTTP REST 路由：新增 `POST /qingniao/dispatch`、`GET /qingniao/inbox` 与 `POST /qingniao/ack` 鉴权端点，挂载入 `app.py` 核心鉴权路由；
+  - MCP 工具池扩容至 88 工具里程碑：注册 `qingniao_messenger` 工具并实现 `handle_qingniao_messenger` 处理器，`TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫全绿；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 引入 `qingniao_digest` 切面，结构化渲染跨智能体待收公文与信使信函（樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_qingniao_api_smoke.py`（服务层调用、REST 端点、MCP 协议往返与 88 工具对齐、认知上下文青鸟切面 4 个独立接缝验证全绿）。
+
 ## [0.53.0] - 2026-10-30 - 石室（Shishi · 高密核心记忆金匮封存与防篡改硬核锚定引擎）
 
 > 版本代号「石室」：出自西汉司马迁《史记·太史公自序》「迁为太史令，紬石室金匮之书」，喻指在认知架构中将智能体最核心、最神圣不可动摇之身份、原则与铁律，作为「金匮石室」秘籍硬核封存，施加不可变锁定，提供全生命周期防篡改、完整性验真与樊篱隔离锚定——对应本版主题「高密核心记忆金匮封存与防篡改硬核锚定引擎、SHA-256 完整性验真签名、不可变加锁与认知上下文石室切面，ADR-0074 落地」：突破既有核心记忆停留于普通数据行、缺乏防篡改与完整性验真保障的局限，构建面向生产环境的高性能石室封存验真引擎 `ShishiEngine`（票 01）。支持针对核心身份（identity）、行为铁律（policy）与基石任务（task）执行金匮封存与版本自增（`seal_core_memory`），计算 SHA-256 完整性摘要并施加不可变保护（`is_immutable`）；支持全域完整性哈希验真（`verify_integrity`），主动识别并拦截底层非法数据篡改；支持安全读取已封存的核心硬核记忆（`get_sealed_blocks`）；全链路封存正文强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁 miss 不脏写）。打通服务层 `shishi_service.py`、HTTP REST 路由（`POST /shishi/seal`、`GET /shishi/verify`、`GET /shishi/blocks`）、MCP 工具（`shishi_vault`，工具池扩充至 87 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，石室金匮硬核切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.53-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
