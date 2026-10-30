@@ -100,7 +100,7 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-app = FastAPI(title="兰台记忆（Lantai）", version="0.57.0", lifespan=lifespan)
+app = FastAPI(title="兰台记忆（Lantai）", version="0.58.0", lifespan=lifespan)
 
 # 润物（ADR-0060）：自适应认知中间件（检测 X-Task 请求头并自适应注入 Base64 认知摘要）
 from lantai.runtime.middleware import CognitiveMiddleware

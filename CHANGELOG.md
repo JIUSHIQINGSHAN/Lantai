@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-10-30 - 三省（Sanxing · 认知层反思自省深度演化、因果违例闭环与健康自愈引擎）
+
+> 版本代号「三省」：出自《论语·学而》「吾日三省吾身」，取「审视功过、反思内省、自省自愈」之意——对应本版主题「认知层反思自省深度演化、因果违例闭环与健康自愈引擎，ADR-0079 落地」：突破既有健康诊断仅停留在静态只读扫描、缺乏与认知演化深度联动与自愈闭环的局限，构建面向生产环境的一级自省自愈引擎 `SanxingEngine` 与 `SanxingRemedyResult` 契约（票 01）。引入四大缺陷的主动自愈处置策略（针对被取代陈旧事实的 `supersede_retract` 撤回流转、针对过期条目的 `archive_expire` 自动归档、针对未决冲突的 `arbitrate_dispatch` 标记排查、针对低效碎片的 `demote_deprecate` 降权淘汰）；严守行级租户属主安全隔离与樊篱数据围栏（`wrap_as_data`）防提示词注入防御。全面重构服务层 `sanxing_service.py`，提供 `sanxing_diagnose_service` 与 `sanxing_remedy_service`；挂载 HTTP REST 路由（`GET /sanxing/diagnose`、`POST /sanxing/remedy`）；MCP 工具池扩充至 **92 工具里程碑**（新增 `sanxing_remedy` 自省自愈工具），实现 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫；增强认知上下文 `CognitiveContext`，将反思自愈深度整合至提示词切面中（票 02）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.58-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心三省认知反思自省与健康自愈引擎 SanxingEngine（票 01，详见 `lantai/cognition/sanxing.py` 与 `tests/test_sanxing_engine_smoke.py`）**：
+  - 自愈策略结构化契约：定义 `SanxingRemedyItem` 与 `SanxingRemedyResult` 契约，输出目标记忆 ID、缺陷类别、建议处置动作、风险等级、执行状态、健康分自愈变迁与樊篱围栏数据包裹；
+  - 闭环自愈决策模型：支持陈旧条目撤销、时效过期自动归档、低效碎片降权淘汰，支持预演模式与一键状态机落库执行（宁 miss 不脏写）；
+  - 行级租户属主 ACL 隔离与樊篱防御：严格校验 `_check_access` 杜绝越权（宁漏不越权），全链路正文采用 `<memory_data>` 围栏隔离；
+  - 交付端到端不 mock 冒烟测试 `tests/test_sanxing_engine_smoke.py`（纯函数缺陷自愈方案生成、真实 SQLite DB 单项自愈落库流转、批量健康自省与报告快照、行级 ACL 隔离与樊篱包裹 4 个独立接缝验证全绿）。
+- **三省服务层重构、REST 路由、MCP 92 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/sanxing_service.py`、`lantai/api/routes_sanxing.py`、`lantai/cli/mcp.py` 与 `tests/test_sanxing_api_smoke.py`）**：
+  - 服务层封装：基于 `SanxingEngine` 封装 `sanxing_service.py`，提供 `sanxing_diagnose_service` 与 `sanxing_remedy_service` 统一入口；
+  - HTTP REST 路由：新增 `GET /sanxing/diagnose` 与 `POST /sanxing/remedy` 路由端点，并挂载入 `CORE_ROUTERS`；
+  - MCP 扩充至 92 工具里程碑：注册 `sanxing_remedy` 工具规范定义并挂载处理器，保持 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向对齐；
+  - 认知上下文增强：在 `CognitiveContext` 中引入 `sanxing_digest` 属性，并在 `to_prompt()` 中渲染结构化三省切面（樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_sanxing_api_smoke.py`（服务层调用、REST 端点、MCP 92 工具协议往返与对齐、认知切面提示词渲染 4 个独立接缝验证全绿）。
+
 ## [0.57.0] - 2026-10-30 - 考功（Kaogong · 长程价值演化与多维功过评定引擎、生命周期状态机与认知层收敛）
 
 > 版本代号「考功」：出自唐代吏部「考功司」（《唐六典》），掌官吏功过品级考评，取「考校功过、升降品级、去劣存优」之意——对应本版主题「长程价值演化与多维功过评定引擎、生命周期状态机与认知层收敛，ADR-0078 落地」：突破既有价值升降级仅依赖简单引用次数硬编码阈值的局限，构建面向生产环境的一级认知引擎 `KaogongEngine` 与 `KaogongResult` 契约（票 01）。引入综合采纳率（`helpful_score`）、使用频度密度（`density_score`）、衰减与冲突风险多因子复合评分（`MeritScore`），驱动生命周期状态机精准流转（`promote_longterm` 晋升长期语义层并免疫衰减、`demote_deprecate` 劣质记忆降权淘汰、`keep_neutral` 样本不足审慎保持原状，宁 miss 不脏写）；严守行级租户属主安全隔离与樊篱数据围栏（`wrap_as_data`）防提示词注入防御。全面重构服务层 `kaogong_service.py`，保持历史评级接口向下兼容并增补 `kaogong_inspect_service` 深度考评；挂载 HTTP REST 路由（`POST /kaogong/eval`、`GET /kaogong/report`、`POST /kaogong/inspect`）；MCP 工具池扩充至 **91 工具里程碑**（新增 `kaogong_inspect` 细粒度审查工具），实现 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫；增强认知上下文 `CognitiveContext`，将价值演化评定深度整合至提示词切面中（票 02）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.57-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
