@@ -12,6 +12,7 @@ from .routes_digest import router as routes_digest_router
 from .routes_dossiers import router as routes_dossiers_router
 from .routes_edges import router as routes_edges_router
 from .routes_evolution import router as routes_evolution_router
+from .routes_famen import router as routes_famen_router
 from .routes_gate import router as routes_gate_router
 from .routes_graph import router as routes_graph_router
 from .routes_health import protected_router as routes_health_protected_router
@@ -76,5 +77,6 @@ __all__ = [
     "routes_admin_router",
     "routes_catalog_router",
     "routes_qijuzhu_router",
+    "routes_famen_router",
     "routes_zhishu_router",
 ]

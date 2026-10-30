@@ -1587,6 +1587,31 @@ def handle_qijuzhu_chronicle(params: dict) -> dict:
     )
 
 
+def handle_famen_skill(params: dict) -> dict:
+    """法门：程序性技能匹配与标准 SOP 获取（v0.46 ADR-0067）。"""
+    skill_id = params.get("skill_id")
+    task = params.get("task")
+    limit = int(params.get("limit", 5))
+
+    from lantai.services.famen_service import (
+        get_skill_detail_service,
+        list_skills_service,
+        match_skills_service,
+    )
+
+    p = _principal_from_params(params)
+    if skill_id:
+        detail = get_skill_detail_service(skill_id=skill_id, principal=p)
+        if not detail:
+            return {"error": "Skill not found or access denied", "skill_id": skill_id}
+        return detail
+    if task:
+        matched = match_skills_service(task=task, limit=limit, principal=p)
+        return {"task": task, "count": len(matched), "skills": matched}
+    skills = list_skills_service(limit=limit, principal=p)
+    return {"count": len(skills), "items": skills}
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2574,6 +2599,28 @@ TOOLS = {
             },
         },
     },
+    "famen_skill": {
+        "description": "法门：程序性技能匹配、标准作业规程（SOP）提取与详情获取（v0.46 ADR-0067）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "根据目标任务描述动态匹配推荐适用的法门技能",
+                },
+                "skill_id": {
+                    "type": "string",
+                    "description": "指定法门/结晶 ID 获取带樊篱防注入保护的详细 SOP 步骤",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "最大返回法门数量（默认 5）",
+                    "default": 5,
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2655,6 +2702,7 @@ TOOL_HANDLERS = {
     "zhishu_check": handle_zhishu_check,
     "muci_catalog": handle_muci_catalog,
     "qijuzhu_chronicle": handle_qijuzhu_chronicle,
+    "famen_skill": handle_famen_skill,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

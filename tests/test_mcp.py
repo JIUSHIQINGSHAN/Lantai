@@ -32,8 +32,9 @@ def test_tools_list():
     resp = mod.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in resp["result"]["tools"]]
     assert (
-        len(resp["result"]["tools"]) == 79
-    )  # 包含起居注（qijuzhu_chronicle）、目次（muci_catalog）、直书（zhishu_check）、卷宗（dossier_create/dossier_focus）、参商、格物、同袍、悬镜、尘封、三省、探颐与润物共 79 个工具
+        len(resp["result"]["tools"]) == 80
+    )  # 包含法门（famen_skill）、起居注（qijuzhu_chronicle）、目次（muci_catalog）、直书（zhishu_check）、卷宗、参商、格物、同袍、悬镜、尘封、三省、探颐与润物共 80 个工具
+    assert "famen_skill" in names
     assert "qijuzhu_chronicle" in names
     assert "muci_catalog" in names
     assert "zhishu_check" in names

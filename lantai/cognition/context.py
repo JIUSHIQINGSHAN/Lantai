@@ -50,6 +50,8 @@ class CognitiveContext:
     catalog_digest: dict | None = None
     # 起居注（v0.45 Ticket 02 ADR-0066）：时序演进全息纪事切面
     qijuzhu_digest: dict | None = None
+    # 法门（v0.46 Ticket 02 ADR-0067）：程序性 SOP 技能切面
+    famen_digest: list[dict] | None = None
 
     def to_prompt(self) -> str:
         """
@@ -211,6 +213,23 @@ class CognitiveContext:
                     q_lines.append(f"  * [{e_type}] {wrap_as_data(str(e_title))}{detail_str}")
 
             sections.insert(0, "\n".join(q_lines))
+
+        # 法门（ADR-0067）：若有匹配的程序性 SOP 技能，在上下文渲染技能执行切面
+        if self.famen_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            fm_skills = self.famen_digest
+            fm_lines = [f"## Applicable Procedural Skills & SOP (法门 · {len(fm_skills)}):"]
+            for s in fm_skills[:3]:
+                name = s.get("name") or "未命名法门"
+                trigger = s.get("trigger_rule") or ""
+                steps = s.get("steps") or []
+                trigger_str = f" _(触发: {wrap_as_data(str(trigger))})_" if trigger else ""
+                fm_lines.append(f"- **{wrap_as_data(str(name))}**{trigger_str}")
+                for i, st in enumerate(steps[:5], 1):
+                    fm_lines.append(f"  {i}. {wrap_as_data(str(st))}")
+
+            sections.insert(0, "\n".join(fm_lines))
 
         from lantai.llm.fence import fence_declaration
 

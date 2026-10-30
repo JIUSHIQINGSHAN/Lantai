@@ -15,6 +15,7 @@ from lantai.api import (
     routes_dossiers_router,
     routes_edges_router,
     routes_evolution_router,
+    routes_famen_router,
     routes_gate_router,
     routes_graph_router,
     routes_health_protected_router,
@@ -134,6 +135,7 @@ CORE_ROUTERS = [
     routes_zhishu_router,
     routes_catalog_router,
     routes_qijuzhu_router,
+    routes_famen_router,
 ]
 
 EXT_ROUTERS = {
