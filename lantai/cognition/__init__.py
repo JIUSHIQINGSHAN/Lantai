@@ -53,6 +53,13 @@ from lantai.cognition.zhaji import (
     ZhajiEngine,
     ZhajiItem,
 )
+from lantai.cognition.zhiming import (
+    LifecyclePhase,
+    ZhimingEngine,
+    ZhimingItem,
+    ZhimingResult,
+    ZhimingTransition,
+)
 
 __all__ = [
     "CausalEngine",
@@ -92,4 +99,9 @@ __all__ = [
     "ZhajiDigestResult",
     "ZhajiEngine",
     "ZhajiItem",
+    "LifecyclePhase",
+    "ZhimingEngine",
+    "ZhimingItem",
+    "ZhimingResult",
+    "ZhimingTransition",
 ]
