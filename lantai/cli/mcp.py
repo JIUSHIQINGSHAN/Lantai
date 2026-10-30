@@ -509,6 +509,24 @@ def handle_sanxing_remedy(params: dict) -> dict:
     )
 
 
+def handle_zhaji_distill(params: dict) -> dict:
+    """札记：工作区便签多槽位提炼与即时上下文熔断（ADR-0080）。"""
+    session_id = str(params.get("session_id", "default") or "default")
+    content = str(params.get("content", "") or "")
+    write = bool(params.get("write", False))
+    max_chars = int(params.get("max_chars", 1000))
+
+    from lantai.services.scratchpad_service import zhaji_distill_service
+
+    return zhaji_distill_service(
+        session_id=session_id,
+        raw_text=content,
+        write=write,
+        max_chars=max_chars,
+        principal=_principal_from_params(params),
+    )
+
+
 def handle_memory_consolidate(params: dict) -> dict:
     """沉潜：执行闲时夜梦记忆沉淀与折叠压缩周期（ADR-0036）。"""
     from lantai.services.consolidation_service import run_consolidation_cycle
@@ -2197,6 +2215,35 @@ TOOLS = {
             },
         },
     },
+    "zhaji_distill": {
+        "description": "札记（提纯）：工作区认知便签多槽位提炼与即时上下文熔断（ADR-0080）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "default": "default",
+                    "description": "工作区会话 ID",
+                },
+                "content": {
+                    "type": "string",
+                    "default": "",
+                    "description": "便签文本（传空则从 DB 回读已有便签进行提纯）",
+                },
+                "write": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "是否持久化保存到 SessionScratchpad",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "default": 1000,
+                    "description": "字符预算上限，平滑截断防熔断",
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
     "memory_consolidate": {
         "description": "沉潜（折叠压缩）：扫描高密度碎片记忆聚类提纯为主记忆，并修剪极度衰减的边缘噪音（ADR-0036）",
         "inputSchema": {
@@ -3432,6 +3479,7 @@ TOOL_HANDLERS = {
     "pisha_refine": handle_pisha_refine,
     "kaogong_inspect": handle_kaogong_inspect,
     "sanxing_remedy": handle_sanxing_remedy,
+    "zhaji_distill": handle_zhaji_distill,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

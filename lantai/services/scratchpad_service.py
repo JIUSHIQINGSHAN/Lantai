@@ -170,3 +170,48 @@ def format_scratchpad_context(
     if settings.DATA_FENCE_ENABLED:
         text = neutralize_fence_escapes(text)
     return f"【札记 (Scratchpad)】:\n{text}\n"
+
+
+def zhaji_distill_service(
+    session_id: str = "default",
+    raw_text: str = "",
+    write: bool = False,
+    max_chars: int = MAX_SCRATCHPAD_CHARS,
+    session: Session | None = None,
+    *,
+    principal=None,
+) -> dict:
+    """札记结构化提纯服务层（ADR-0080）。
+
+    统一调度 ZhajiEngine：
+    1. 当 raw_text 传入且 write=True 时，保存并提纯便签；
+    2. 当 raw_text 传入但 write=False 时，只读内存解析提纯（无写副作用）；
+    3. 当 raw_text 为空时，从会话持久化存储中读取并提纯便签。
+    """
+    from lantai.cognition.zhaji import ZhajiEngine
+
+    engine = ZhajiEngine(session=session, principal=principal)
+    sid = (session_id or "default").strip()
+
+    if raw_text:
+        if write:
+            digest = engine.save_and_digest(
+                session_id=sid,
+                raw_text=raw_text,
+                write=True,
+                max_chars=max_chars,
+            )
+        else:
+            u_id = getattr(principal, "user_id", None) if principal else None
+            t_id = getattr(principal, "tenant_id", None) if principal else None
+            item = engine.distill_text(
+                session_id=sid,
+                raw_text=raw_text,
+                user_id=u_id,
+                tenant_id=t_id,
+            )
+            digest = engine.digest_item(item, max_chars=max_chars)
+    else:
+        digest = engine.digest_session(session_id=sid, max_chars=max_chars)
+
+    return digest.to_dict(fenced=True)

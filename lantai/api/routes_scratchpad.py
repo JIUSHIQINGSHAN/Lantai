@@ -25,6 +25,37 @@ class WriteScratchpadReq(BaseModel):
     content: str = ""
 
 
+class DistillScratchpadReq(BaseModel):
+    session_id: str = "default"
+    content: str = ""
+    write: bool = False
+    max_chars: int = 1000
+
+
+@router.post("/scratchpad/distill")
+def scratchpad_distill_route(
+    req: DistillScratchpadReq,
+    ctx=Depends(get_current_user),
+):
+    """札记结构化提纯与认知压缩端点（ADR-0080）。"""
+    from lantai.services.scratchpad_service import zhaji_distill_service
+
+    try:
+        return zhaji_distill_service(
+            session_id=req.session_id,
+            raw_text=req.content,
+            write=req.write,
+            max_chars=req.max_chars,
+            principal=ctx,
+        )
+    except PermissionError as pe:
+        raise HTTPException(403, str(pe)) from pe
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(422, str(e)) from e
+
+
 @router.get("/scratchpad")
 @router.get("/scratchpad/{session_id}")
 def scratchpad_get_route(session_id: str = "default", ctx=Depends(get_current_user)):

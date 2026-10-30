@@ -74,6 +74,8 @@ class CognitiveContext:
     kaogong_digest: list[dict] | None = None
     # 三省（v0.58 Ticket 02 ADR-0079）：认知层反思自省与健康自愈切面
     sanxing_digest: list[dict] | None = None
+    # 札记（v0.59 Ticket 02 ADR-0080）：工作区认知暂存便签与多槽位提纯切面
+    zhaji_digest: dict | None = None
 
     def to_prompt(self) -> str:
         """
@@ -478,6 +480,30 @@ class CognitiveContext:
                 )
 
             sections.insert(0, "\n".join(sx_lines))
+
+        # 札记（ADR-0080）：若有工作区提纯便签，渲染札记切面（防注入樊篱保护）
+        if self.zhaji_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            zj = self.zhaji_digest
+            sid = zj.get("session_id", "default")
+            compact = zj.get("compact_text", "")
+            fenced_c = zj.get("fenced_content", "")
+            content_display = (
+                fenced_c
+                if fenced_c
+                else (
+                    wrap_as_data(str(compact), item_id=f"zhaji-{sid}", score=0.95)
+                    if compact
+                    else ""
+                )
+            )
+            if content_display:
+                zj_lines = [
+                    f"## Working Scratchpad & Distilled Notes (札记 · 会话 {sid}):",
+                    f"- {content_display}",
+                ]
+                sections.insert(0, "\n".join(zj_lines))
 
         from lantai.llm.fence import fence_declaration
 

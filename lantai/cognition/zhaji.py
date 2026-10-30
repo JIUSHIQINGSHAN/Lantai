@@ -87,7 +87,8 @@ class ZhajiEngine:
     def _check_access(self, *, owner_id: str | None, tenant_id: str | None) -> bool:
         """行级租户与属主安全校验（宁漏不越权）。"""
         if self.principal is None:
-            return True
+            # 外部/未透传身份默认收敛到 "default" 属主空间，防止越权读写私有便签
+            return owner_id in (None, "default")
         if (
             getattr(self.principal, "is_admin", False)
             or getattr(self.principal, "role", None) == "admin"
@@ -118,15 +119,16 @@ class ZhajiEngine:
 
         current_slot = "notes"
 
-        # 槽位识别模式
+        # 槽位识别模式（支持 # 标题与 - * 前缀列表）
         goal_pattern = re.compile(
-            r"^(#+\s*)?(当前目标|目标|goals?|aims?)([:：\s]|$)", re.IGNORECASE
+            r"^(#+\s*|[-*•]\s*)?(当前目标|目标|goals?|aims?)([:：\s]|$)", re.IGNORECASE
         )
         finding_pattern = re.compile(
-            r"^(#+\s*)?(\[?关键发现\]?|发现|findings?|insights?)([:：\s]|$)", re.IGNORECASE
+            r"^(#+\s*|[-*•]\s*)?(\[?关键发现\]?|发现|findings?|insights?)([:：\s]|$)",
+            re.IGNORECASE,
         )
         question_pattern = re.compile(
-            r"^(#+\s*)?(【?待办与疑问】?|待办|疑问|questions?|todo|blockers?)([:：\s]|$)",
+            r"^(#+\s*|[-*•]\s*)?(【?待办与疑问】?|待办|疑问|questions?|todo|blockers?)([:：\s]|$)",
             re.IGNORECASE,
         )
 
@@ -222,6 +224,8 @@ class ZhajiEngine:
         accepted_parts: list[str] = []
 
         for label, elements in priorities:
+            if truncated:
+                break
             for elem in elements:
                 clean_elem = (elem or "").strip()
                 if not clean_elem:
