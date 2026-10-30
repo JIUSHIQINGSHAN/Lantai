@@ -50,6 +50,7 @@ from lantai.api import (
     routes_ui_router,
     routes_verification_router,
     routes_work_items_router,
+    routes_zhiming_router,
     routes_zhishu_router,
     routes_zuozheng_router,
 )
@@ -159,6 +160,7 @@ CORE_ROUTERS = [
     routes_pisha_router,
     routes_kaogong_router,
     routes_sanxing_router,
+    routes_zhiming_router,
 ]
 
 EXT_ROUTERS = {

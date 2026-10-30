@@ -76,6 +76,8 @@ class CognitiveContext:
     sanxing_digest: list[dict] | None = None
     # 札记（v0.59 Ticket 02 ADR-0080）：工作区认知暂存便签与多槽位提纯切面
     zhaji_digest: dict | None = None
+    # 知命（v0.60 Ticket 02 ADR-0081）：认知生命全周期演化状态机与动态时效衰变切面
+    zhiming_digest: list[dict] | None = None
 
     def to_prompt(self) -> str:
         """
@@ -504,6 +506,31 @@ class CognitiveContext:
                     f"- {content_display}",
                 ]
                 sections.insert(0, "\n".join(zj_lines))
+
+        # 知命（ADR-0081）：若有生命周期度量或状态变迁，渲染知命切面
+        if self.zhiming_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            zm_items = self.zhiming_digest
+            zm_lines = [f"## Knowledge Lifecycle & Decay State (知命 · {len(zm_items)}):"]
+            for idx, item in enumerate(zm_items[:5], 1):
+                mid = item.get("memory_id") or ""
+                phase = item.get("phase") or item.get("to_phase") or "active"
+                eff_conf = item.get("effective_confidence")
+                conf_str = f" [有效置信度: {eff_conf}]" if eff_conf is not None else ""
+                reason = item.get("reason") or ""
+                reason_str = f" - {wrap_as_data(str(reason))}" if reason else ""
+                fenced_c = item.get("fenced_content") or ""
+                content_display = (
+                    fenced_c
+                    if fenced_c
+                    else wrap_as_data(str(item.get("content", "")), item_id=mid)
+                )
+                zm_lines.append(
+                    f"- [知命·L{idx} ({phase}){conf_str}] {content_display}{reason_str}"
+                )
+
+            sections.insert(0, "\n".join(zm_lines))
 
         from lantai.llm.fence import fence_declaration
 

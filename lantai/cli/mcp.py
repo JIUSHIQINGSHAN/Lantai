@@ -527,6 +527,41 @@ def handle_zhaji_distill(params: dict) -> dict:
     )
 
 
+def handle_zhiming_lifecycle(params: dict) -> dict:
+    """知命：认知生命全周期演化状态机与动态时效衰变（ADR-0081）。"""
+    action = str(params.get("action", "inspect") or "inspect").lower()
+    memory_id = str(params.get("memory_id", "") or "")
+    target_phase = str(params.get("target_phase", "") or "")
+    reason = str(params.get("reason", "") or "")
+    superseded_by = params.get("superseded_by")
+    apply = bool(params.get("apply", False))
+    auto_apply = bool(params.get("auto_apply", False))
+    limit = int(params.get("limit", 100))
+
+    from lantai.services.zhiming_service import (
+        zhiming_audit_service,
+        zhiming_inspect_service,
+        zhiming_transition_service,
+    )
+
+    p = _principal_from_params(params)
+
+    if action == "audit":
+        return zhiming_audit_service(auto_apply=auto_apply, limit=limit, principal=p)
+    if action == "transition" and memory_id and target_phase:
+        return zhiming_transition_service(
+            memory_id=memory_id,
+            target_phase=target_phase,
+            reason=reason,
+            superseded_by=str(superseded_by) if superseded_by else None,
+            apply=apply,
+            principal=p,
+        )
+    if memory_id:
+        return zhiming_inspect_service(memory_id=memory_id, principal=p)
+    return {"error": "Invalid zhiming parameters (memory_id required for inspect/transition)"}
+
+
 def handle_memory_consolidate(params: dict) -> dict:
     """沉潜：执行闲时夜梦记忆沉淀与折叠压缩周期（ADR-0036）。"""
     from lantai.services.consolidation_service import run_consolidation_cycle
@@ -2244,6 +2279,54 @@ TOOLS = {
             },
         },
     },
+    "zhiming_lifecycle": {
+        "description": "知命（状态机）：认知生命全周期演化状态机、动态时效衰变度量与逆向复元（ADR-0081）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "default": "inspect",
+                    "description": "操作类型：inspect(度量探查) | transition(状态跃迁) | audit(批量巡检)",
+                    "enum": ["inspect", "transition", "audit"],
+                },
+                "memory_id": {
+                    "type": "string",
+                    "description": "目标记忆 ID（inspect 与 transition 必填）",
+                },
+                "target_phase": {
+                    "type": "string",
+                    "description": "目标生命周期阶段：candidate | active | weakened | superseded | retired",
+                    "enum": ["candidate", "active", "weakened", "superseded", "retired"],
+                },
+                "reason": {
+                    "type": "string",
+                    "default": "",
+                    "description": "转移理由",
+                },
+                "superseded_by": {
+                    "type": "string",
+                    "description": "取代者记忆 ID（当 target_phase=superseded 时填入）",
+                },
+                "apply": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "transition 操作时是否就地写库执行（默认 False 仅预演）",
+                },
+                "auto_apply": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "audit 操作时是否自动将转移建议落库执行",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 100,
+                    "description": "audit 批量巡检最大条数",
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
     "memory_consolidate": {
         "description": "沉潜（折叠压缩）：扫描高密度碎片记忆聚类提纯为主记忆，并修剪极度衰减的边缘噪音（ADR-0036）",
         "inputSchema": {
@@ -3480,6 +3563,7 @@ TOOL_HANDLERS = {
     "kaogong_inspect": handle_kaogong_inspect,
     "sanxing_remedy": handle_sanxing_remedy,
     "zhaji_distill": handle_zhaji_distill,
+    "zhiming_lifecycle": handle_zhiming_lifecycle,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。
