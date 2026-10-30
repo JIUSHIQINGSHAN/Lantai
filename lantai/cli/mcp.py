@@ -1612,6 +1612,26 @@ def handle_famen_skill(params: dict) -> dict:
     return {"count": len(skills), "items": skills}
 
 
+def handle_zuozheng_evidence(params: dict) -> dict:
+    """佐证：证据链反查与断言可解释性验证（v0.47 ADR-0068）。"""
+    memory_id = params.get("memory_id")
+    claim = params.get("claim")
+    max_depth = int(params.get("max_depth", 2))
+    limit = int(params.get("limit", 5))
+
+    from lantai.services.zuozheng_service import (
+        inspect_evidence_service,
+        verify_claim_service,
+    )
+
+    p = _principal_from_params(params)
+    if memory_id:
+        return inspect_evidence_service(memory_id=memory_id, max_depth=max_depth, principal=p)
+    if claim:
+        return verify_claim_service(claim=claim, limit=limit, principal=p)
+    return {"error": "Either memory_id or claim must be provided"}
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2621,6 +2641,33 @@ TOOLS = {
             },
         },
     },
+    "zuozheng_evidence": {
+        "description": "佐证：证据链反查与断言可解释性验证（v0.47 ADR-0068）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {
+                    "type": "string",
+                    "description": "指定目标记忆 ID，深度反查多维因果拓扑与支撑证据",
+                },
+                "claim": {
+                    "type": "string",
+                    "description": "输入自然语言断言，反向检索并计算支撑证据置信度",
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "description": "证据链反查拓扑最大深度（默认 2）",
+                    "default": 2,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "断言印证最大召回支撑证据条数（默认 5）",
+                    "default": 5,
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2703,6 +2750,7 @@ TOOL_HANDLERS = {
     "muci_catalog": handle_muci_catalog,
     "qijuzhu_chronicle": handle_qijuzhu_chronicle,
     "famen_skill": handle_famen_skill,
+    "zuozheng_evidence": handle_zuozheng_evidence,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

@@ -52,6 +52,8 @@ class CognitiveContext:
     qijuzhu_digest: dict | None = None
     # 法门（v0.46 Ticket 02 ADR-0067）：程序性 SOP 技能切面
     famen_digest: list[dict] | None = None
+    # 佐证（v0.47 Ticket 02 ADR-0068）：证据链反查与印证切面
+    zuozheng_digest: list[dict] | None = None
 
     def to_prompt(self) -> str:
         """
@@ -230,6 +232,25 @@ class CognitiveContext:
                     fm_lines.append(f"  {i}. {wrap_as_data(str(st))}")
 
             sections.insert(0, "\n".join(fm_lines))
+
+        # 佐证（ADR-0068）：若有支撑证据链或断言印证节点，渲染佐证切面
+        if self.zuozheng_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            zz_items = self.zuozheng_digest
+            zz_lines = [f"## Supporting Evidence & Proof Chain (佐证 · {len(zz_items)}):"]
+            for idx, item in enumerate(zz_items[:5], 1):
+                c = item.get("content") or ""
+                direction = item.get("support_direction") or "supports"
+                conf = item.get("confidence")
+                conf_str = f" [置信度: {conf}]" if conf is not None else ""
+                reason = item.get("relation_reason") or ""
+                reason_str = f" - {wrap_as_data(str(reason))}" if reason else ""
+                zz_lines.append(
+                    f"- [佐证·E{idx} ({direction}){conf_str}] {wrap_as_data(str(c), item_id=item.get('id'))}{reason_str}"
+                )
+
+            sections.insert(0, "\n".join(zz_lines))
 
         from lantai.llm.fence import fence_declaration
 

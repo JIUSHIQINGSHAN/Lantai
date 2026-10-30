@@ -39,6 +39,7 @@ from .routes_ui import router as routes_ui_router
 from .routes_verification import router as routes_verification_router
 from .routes_work_items import router as routes_work_items_router
 from .routes_zhishu import router as routes_zhishu_router
+from .routes_zuozheng import router as routes_zuozheng_router
 
 __all__ = [
     "routes_cognitive_router",
@@ -78,5 +79,6 @@ __all__ = [
     "routes_catalog_router",
     "routes_qijuzhu_router",
     "routes_famen_router",
+    "routes_zuozheng_router",
     "routes_zhishu_router",
 ]
