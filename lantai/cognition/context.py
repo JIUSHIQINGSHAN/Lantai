@@ -259,9 +259,7 @@ class CognitiveContext:
             from lantai.llm.fence import wrap_as_data
 
             sy_items = self.shiyi_digest
-            sy_lines = [
-                f"## Compensated Recall & Remedied Memories (拾遗 · {len(sy_items)}):"
-            ]
+            sy_lines = [f"## Compensated Recall & Remedied Memories (拾遗 · {len(sy_items)}):"]
             for idx, item in enumerate(sy_items[:5], 1):
                 c = item.get("content") or ""
                 tier = item.get("remedy_tier") or "fuzzy"

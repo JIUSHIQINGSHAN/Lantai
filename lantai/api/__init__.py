@@ -31,6 +31,7 @@ from .routes_retrieval import router as routes_retrieval_router
 from .routes_scenes import router as routes_scenes_router
 from .routes_scratchpad import router as routes_scratchpad_router
 from .routes_search import router as routes_search_router
+from .routes_shiyi import router as routes_shiyi_router
 from .routes_sources import router as routes_sources_router
 from .routes_tanyi import router as routes_tanyi_router
 from .routes_terminal import router as routes_terminal_router
@@ -40,7 +41,6 @@ from .routes_verification import router as routes_verification_router
 from .routes_work_items import router as routes_work_items_router
 from .routes_zhishu import router as routes_zhishu_router
 from .routes_zuozheng import router as routes_zuozheng_router
-from .routes_shiyi import router as routes_shiyi_router
 
 __all__ = [
     "routes_cognitive_router",

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-10-30 - 拾遗（Shiyi · 遗漏补偿与零召回自适应补救引擎）
+
+> 版本代号「拾遗」：出自唐代谏官官职「拾遗」（杜甫曾任左拾遗），取「捡回遗漏之物、补苴罅漏」之意——对应本版主题「遗漏补偿与零召回自适应补救引擎、分阶模糊回溯、跨辨域安全放宽与认知上下文补偿切面，ADR-0069 落地」：突破常规检索在模糊长尾表述或同义分词偏差下直接返空的局限，构建面向生产环境的高性能自适应补救引擎 `ShiyiEngine`（票 01）。支持针对模糊失配查询启动分级补救（Tier 1: 宽松结巴分词与字符级子序列模糊召回；Tier 2: 跨辨域与分轨安全放宽；Tier 3: 衰减时效回拨）；定义清晰的补救候选契约 `RemedyCandidate`，明确标注补救梯队（`remedy_tier`）与加权置信度；全链路正文与理由强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁漏不越权）。打通服务层 `shiyi_service.py`、HTTP REST 路由（`POST /shiyi/remedy`）、MCP 工具（`shiyi_remedy`，工具池扩充至 82 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，拾遗补救切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.48-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心拾遗自适应补偿引擎 ShiyiEngine（票 01，详见 `lantai/cognition/shiyi.py` 与 `tests/test_shiyi_engine_smoke.py`）**：
+  - 遗漏补救候选模型：定义 `RemedyCandidate` 契约，自动纳管模糊词条、子序列重合度与补救原由，支持樊篱安全渲染；
+  - 多阶自适应补救算法：实现 `remedy_recall`，支持常规零召回时的分阶回溯与辨域安全放宽计算；
+  - 樊篱安全隔离与行级 ACL：补救正文强制施加 `<memory_data>` 围栏隔离，严格校验租户与用户属主（宁漏不越权）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_shiyi_engine_smoke.py`（零召回模糊补救、辨域安全放宽与置信度校准、樊篱包裹防注入、行级 ACL 隔离 4 个独立接缝验证全绿）。
+- **拾遗服务层、REST 路由、MCP 82 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/shiyi_service.py`、`lantai/api/routes_shiyi.py`、`lantai/cli/mcp.py`、`lantai/cognition/context.py` 与 `tests/test_shiyi_api_smoke.py`）**：
+  - 服务层封装：新增 `remedy_recall_service`，统一管理 DB 会话生命周期与自适应补救参数调度；
+  - HTTP REST 路由：新增 `POST /shiyi/remedy` 鉴权端点，挂载入 `app.py` 核心鉴权路由；
+  - MCP 工具池扩容至 82 工具里程碑：注册 `shiyi_remedy` 工具并实现 `handle_shiyi_remedy` 处理器，`TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫全绿；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 引入 `shiyi_digest` 切面，结构化渲染补救候选与置信度梯队（樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_shiyi_api_smoke.py`（服务层调用、REST 端点、MCP 协议往返与 82 工具对齐、认知上下文补救切面 4 个独立接缝验证全绿）。
+
 ## [0.47.0] - 2026-10-30 - 佐证（Zuozheng · 证据链反查与可解释性溯源图谱引擎）
 
 > 版本代号「佐证」：出自《宋刑统》「案情显明，须得佐证」，喻指辅助证据、相互勘验印证与决策依据解释——对应本版主题「证据链反查与可解释性溯源图谱引擎、断言反向印证、多跳因果溯源与认知上下文证据切面，ADR-0068 落地」：突破既有检索粗粒度前缀截取、缺乏图谱因果支撑的局限，构建面向生产环境的高性能可解释性反查引擎 `ZuozhengEngine`（票 01）。支持针对任意记忆反查因果推演边（`supports` / `causes` / `refines` 等）与关联 `Evidence` 实体构建多跳证据链（`inspect_evidence`）；支持根据自然语言断言反向召回支撑证据簇并计算综合置信度得分（`verify_claim`）；全链路证据正文与推理原因强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁 miss 不脏写）。打通服务层 `zuozheng_service.py`、HTTP REST 路由（`GET /zuozheng/inspect/{id}`、`POST /zuozheng/verify`）、MCP 工具（`zuozheng_evidence`，工具池扩充至 81 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，佐证支撑证据切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.47-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
