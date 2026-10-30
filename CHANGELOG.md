@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-10-30 - 测候（Cehou · 影子观察期巡检与演化状态监控引擎）
+
+> 版本代号「测候」：出自北宋沈括《梦溪笔谈·象数一》「司天监测候天象，待其应验，以定历法」，喻指在认知演化提案或新规则生效前，作为专职影子期观测与状态机评估引擎，持续测验守候、跟踪指标漂移、验证收益真实性，待其数据周全应验后再行转正入库——对应本版主题「影子观察期巡检与演化状态监控引擎、应验转正与漂移熔断裁决、样本实测度量与认知上下文测候切面，ADR-0073 落地」：突破既有观察期缺乏针对认知演化视窗的实时巡检、胜率聚合与生命周期状态机管理的局限，构建面向生产环境的高性能影子观察巡检引擎 `CehouEngine`（票 01）。支持针对参数建议、反思提案与新规则创建影子视窗（`create_observation_window`）；支持持续采集并度量实测运行样本（`record_sample`），统计时延与收益分差；支持巡检并自动裁决视窗状态跃迁（`inspect_window`），胜率与样本达标自动判定为应验转正（`graduated`），异常劣化判定为熔断回滚（`rolled_back`）；支持全域视窗扫描与告警汇总（`scan_active_windows`）；全链路观测摘要与转正裁决强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁 miss 不脏写）。打通服务层 `cehou_service.py`、HTTP REST 路由（`GET /cehou/windows`、`POST /cehou/inspect`、`POST /cehou/sample`、`POST /cehou/windows`）、MCP 工具（`cehou_observe`，工具池扩充至 86 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，测候观察切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.52-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心测候影子观察期巡检与健康判定引擎 CehouEngine（票 01，详见 `lantai/cognition/cehou.py` 与 `tests/test_cehou_engine_smoke.py`）**：
+  - 影子视窗契约：定义 `ShadowObservation` 契约，统一纳管视窗标识、目标类型、达标天数与样本要求、实测胜率与时延分差，支持樊篱安全渲染；
+  - 巡检汇总报告契约：定义 `InspectionReport`，输出视窗状态分布与风险告警列表；
+  - 运行样本追加与胜率核算：实现 `record_sample`，支持实时样本上报与异常错误率激增检测；
+  - 应验转正与回滚状态机：实现 `inspect_window`，自动判定天数、样本量与胜率达标状态；
+  - 樊篱安全隔离与行级 ACL：视窗观测摘要强制施加 `<memory_data>` 围栏隔离，严格校验租户与用户属主（宁 miss 不脏写）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_cehou_engine_smoke.py`（影子视窗指标核算与转正判定、活跃视窗巡检与报警、樊篱包裹防注入、行级 ACL 隔离 4 个独立接缝验证全绿）。
+- **测候服务层、REST 路由、MCP 86 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/cehou_service.py`、`lantai/api/routes_cehou.py`、`lantai/cli/mcp.py`、`lantai/cognition/context.py` 与 `tests/test_cehou_api_smoke.py`）**：
+  - 服务层封装：新增 `inspect_cehou_window_service`、`scan_cehou_windows_service`、`record_cehou_sample_service` 与 `create_cehou_window_service`，统一管理 DB 会话生命周期与视窗调度；
+  - HTTP REST 路由：新增 `POST /cehou/windows`、`POST /cehou/inspect`、`GET /cehou/windows` 与 `POST /cehou/sample` 鉴权端点，挂载入 `app.py` 核心鉴权路由；
+  - MCP 工具池扩容至 86 工具里程碑：注册 `cehou_observe` 工具并实现 `handle_cehou_observe` 处理器，`TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫全绿；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 引入 `cehou_digest` 切面，结构化渲染影子期视窗与转正状态（樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_cehou_api_smoke.py`（服务层调用、REST 端点、MCP 协议往返与 86 工具对齐、认知上下文测候切面 4 个独立接缝验证全绿）。
+
 ## [0.51.0] - 2026-10-30 - 底本（Diben · 跨会话现场定本与认知状态传承引擎）
 
 > 版本代号「底本」：出自章学诚《校讎通义》「校讎之法，必本于底本」，喻指在会话间隙或任务更迭时，将认知现场固化为唯一可信定本，为新一轮交互提供定本锚点与传承依据，保证 Agent 行事有据、不迷失方向——对应本版主题「跨会话现场定本与认知状态传承引擎、意图漂移检测、会话定本锚定与认知上下文底本切面，ADR-0072 落地」：突破既有会话快照停留于标量存储、缺乏认知推理沉淀与意图漂移判别的局限，构建面向生产环境的高性能跨会话定本传承引擎 `DibenEngine`（票 01）。支持针对会话五段现场（在做/下一步/工作区/决策/待办）进行结构化定本提炼与固化（`synthesize_anchor`）；支持实时比对用户新输入与激活底本的语义重合与意图偏转程度（`analyze_drift`），精准输出意图延续与漂移评级（`none` / `slight` / `significant`）；支持安全检索当前租户激活底本（`get_active_anchor`）；全链路底本定本与漂移分析推论强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁 miss 不脏写）。打通服务层 `diben_service.py`、HTTP REST 路由（`POST /diben/anchor`、`POST /diben/drift`、`GET /diben/latest`）、MCP 工具（`diben_anchor`，工具池扩充至 85 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，底本定本切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.51-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。

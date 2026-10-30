@@ -358,7 +358,7 @@ class CognitiveContext:
                 rate = item.get("success_rate", 0.0)
                 summary = item.get("observation_summary") or ""
                 ch_lines.append(
-                    f"- [测候·W{idx} ({st}·胜率: {round(rate*100, 1)}%) [视窗: {wid}]] - {wrap_as_data(str(summary))}"
+                    f"- [测候·W{idx} ({st}·胜率: {round(rate * 100, 1)}%) [视窗: {wid}]] - {wrap_as_data(str(summary))}"
                 )
 
             sections.insert(0, "\n".join(ch_lines))
