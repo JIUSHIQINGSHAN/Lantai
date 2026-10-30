@@ -124,6 +124,9 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **尘封**（Chenfeng，版本代号） | v0.36.0 发行版本代号；寓意积尘封藏、不弃不取，对应本版「冷热分级存储与自动封藏策略引擎、尘封档案专用检索与穿透回溯」的主题。 | 命名：典籍意象「积尘封藏」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
 | **三省**（Sanxing，认知自省） | 认知层反思自省与记忆健康审视机制；多维扫描被取代残留、时效过期、未决冲突与低帮助度碎片，生成结构化健康审计快照。 | 命名：《论语·学而》「吾日三省吾身」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 及 [ADR-0044](docs/adr/0044-cognition-evolution-boundary.md) |
 | **三省**（Sanxing，版本代号） | v0.37.0 发行版本代号；寓意吾日三省、审视功过，对应本版「认知层反思自省引擎、记忆健康审视与三省自检闭环」的主题。 | 命名：《论语·学而》「吾日三省吾身」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
+| **青鸟**（Qingniao，多智能体信使） | 多智能体集群间的专职记忆信使与异步通信路由引擎；支持跨智能体信函封装（QingniaoLetter）、优先级倒序收件箱调度与 ACK/REJECT 签收回执闭环，信函正文强制施加樊篱数据围栏包裹并严守行级租户隔离。 | 命名：李商隐《无题》「青鸟殷勤为探看」、《山海经》西王母信使；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0075](docs/adr/0075-qingniao-multi-agent-messenger-and-routing-engine.md) 及 `lantai/cognition/qingniao.py` |
+| **青鸟**（Qingniao，版本代号） | v0.54.0 发行版本代号；寓意青鸟殷勤、传书通讯，对应本版「多智能体记忆信使与异步通信路由引擎、记忆信函封装、送达回执闭环与认知上下文青鸟切面（ADR-0075落地）」的主题。 | 命名：李商隐《无题》「青鸟殷勤为探看」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记及 [ADR-0075](docs/adr/0075-qingniao-multi-agent-messenger-and-routing-engine.md) |
+| **拾遗**（Shiyi，版本代号） | v0.55.0 发行版本代号；寓意捡回遗漏之物、补苴罅漏，对应本版「主流水线零召回自适应补救闭环、检索召回深度治理与端到端补救切面融合（ADR-0076落地）」的主题。 | 命名：唐代谏官官职「拾遗」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记及 [ADR-0076](docs/adr/0076-shiyi-main-pipeline-zero-recall-adaptive-remediation.md) |
 | *decay_score*（技术字段） | 记忆保持强度分值（0.0~1.0）；随时间指数衰减，跌破极低阈值后触发休眠归档。 | 命名：项目内部技术字段；设计：见 `lantai/models/tables.py` 及 [ADR-0005](docs/adr/0005-forgetting-semantics.md) |
 | *search_trace*（技术字段） | 检索诊断调试数组；开启后记录检索执行各步骤的耗时、候选条数与得分分布。 | 命名：项目内部技术字段；设计：见 `lantai/retrieval/hybrid.py` 诊断输出 |
 | *water_level*（技术字段） | 潮波合并缓冲区的水位指标；实时反映未冲刷的消息堆积量与活跃会话数，用于写入节流监控。 | 命名：项目内部技术字段；设计：见 [ADR-0003](docs/adr/0003-coalesce-buffer-key.md) 及 `/stats` 路由 |
