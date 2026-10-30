@@ -1730,6 +1730,60 @@ def handle_diben_anchor(params: dict) -> dict:
     return {"message": "No active session anchor found", "session_id": session_id}
 
 
+def handle_cehou_observe(params: dict) -> dict:
+    """测候：影子观察期视窗巡检、视窗扫描与样本实测上报（v0.52 ADR-0073）。"""
+    scan = bool(params.get("scan", False))
+    window_id = params.get("window_id")
+    target_type = params.get("target_type")
+    record_sample = bool(params.get("record_sample", False))
+
+    from lantai.services.cehou_service import (
+        create_cehou_window_service,
+        inspect_cehou_window_service,
+        record_cehou_sample_service,
+        scan_cehou_windows_service,
+    )
+
+    p = _principal_from_params(params)
+    if scan:
+        return scan_cehou_windows_service(target_type=target_type, principal=p)
+
+    if record_sample and window_id:
+        success = bool(params.get("success", True))
+        latency = float(params.get("latency_ms", 0.0))
+        score_delta = float(params.get("score_delta", 0.0))
+        return record_cehou_sample_service(
+            window_id=window_id,
+            success=success,
+            latency_ms=latency,
+            score_delta=score_delta,
+            principal=p,
+        )
+
+    create = bool(params.get("create", False))
+    if create and window_id and target_type and params.get("target_id"):
+        return create_cehou_window_service(
+            window_id=window_id,
+            target_type=target_type,
+            target_id=str(params.get("target_id")),
+            required_days=int(params.get("required_days", 7)),
+            min_samples=int(params.get("min_samples", 10)),
+            principal=p,
+        )
+
+    if window_id:
+        res = inspect_cehou_window_service(
+            window_id=window_id,
+            mock_days_observed=params.get("mock_days_observed"),
+            principal=p,
+        )
+        if res:
+            return res
+        return {"error": f"Observation window {window_id} not found"}
+
+    return scan_cehou_windows_service(principal=p)
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2887,6 +2941,45 @@ TOOLS = {
             },
         },
     },
+    "cehou_observe": {
+        "description": "测候：影子观察期视窗巡检、视窗扫描与样本实测上报（v0.52 ADR-0073）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "window_id": {"type": "string", "description": "观察视窗 ID"},
+                "scan": {
+                    "type": "boolean",
+                    "description": "是否全域扫描当前租户内活跃观察视窗",
+                    "default": False,
+                },
+                "target_type": {
+                    "type": "string",
+                    "description": "过滤/创建目标类型：param | rule | proposal",
+                },
+                "record_sample": {
+                    "type": "boolean",
+                    "description": "是否为样本上报模式",
+                    "default": False,
+                },
+                "success": {
+                    "type": "boolean",
+                    "description": "样本执行成败",
+                    "default": True,
+                },
+                "latency_ms": {"type": "number", "description": "样本耗时 (ms)"},
+                "score_delta": {"type": "number", "description": "样本收益分差"},
+                "create": {
+                    "type": "boolean",
+                    "description": "是否创建新观察视窗",
+                    "default": False,
+                },
+                "target_id": {"type": "string", "description": "观察目标实体 ID"},
+                "required_days": {"type": "integer", "default": 7, "description": "达标观察天数"},
+                "min_samples": {"type": "integer", "default": 10, "description": "达标最小样本数"},
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2974,6 +3067,7 @@ TOOL_HANDLERS = {
     "jiaochou_collate": handle_jiaochou_collate,
     "niyi_deliberate": handle_niyi_deliberate,
     "diben_anchor": handle_diben_anchor,
+    "cehou_observe": handle_cehou_observe,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

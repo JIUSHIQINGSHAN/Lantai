@@ -6,6 +6,7 @@ from lantai.api import (
     routes_admin_router,
     routes_candidates_router,
     routes_catalog_router,
+    routes_cehou_router,
     routes_checkpoint_router,
     routes_cognitive_router,
     routes_conflicts_router,
@@ -146,6 +147,7 @@ CORE_ROUTERS = [
     routes_shiyi_router,
     routes_jiaochou_router,
     routes_niyi_router,
+    routes_cehou_router,
 ]
 
 EXT_ROUTERS = {

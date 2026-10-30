@@ -135,9 +135,9 @@ class TestDibenApiSmoke:
         """Seam 3: MCP 协议工具 diben_anchor 往返解析与 85 工具池 1:1 双向对齐守卫。"""
         _seed_test_diben_fixture(session_id="sess-mcp-diben")
 
-        # 85 工具总数与 1:1 对齐断言
-        assert len(TOOLS) == 85
-        assert len(TOOL_HANDLERS) == 85
+        # 85+ 工具总数与 1:1 对齐断言
+        assert len(TOOLS) >= 85
+        assert len(TOOL_HANDLERS) == len(TOOLS)
         assert "diben_anchor" in TOOLS
         assert "diben_anchor" in TOOL_HANDLERS
         for t_name in TOOLS:

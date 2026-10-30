@@ -62,6 +62,8 @@ class CognitiveContext:
     niyi_digest: list[dict] | None = None
     # 底本（v0.51 Ticket 02 ADR-0072）：跨会话现场定本与认知状态传承切面
     diben_digest: dict | None = None
+    # 测候（v0.52 Ticket 02 ADR-0073）：影子观察期巡检与演化状态监控切面
+    cehou_digest: list[dict] | None = None
 
     def to_prompt(self) -> str:
         """
@@ -343,6 +345,23 @@ class CognitiveContext:
                 db_lines.append(f"- **未竟待办 (Open Notes)**: {wrap_as_data('; '.join(notes))}")
 
             sections.insert(0, "\n".join(db_lines))
+
+        # 测候（ADR-0073）：若有影子观察期视窗与实验评估，渲染测候切面
+        if self.cehou_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            ch_items = self.cehou_digest
+            ch_lines = [f"## Shadow Observation & Graduation (测候 · {len(ch_items)}):"]
+            for idx, item in enumerate(ch_items[:5], 1):
+                wid = item.get("window_id", "")
+                st = item.get("state", "observing")
+                rate = item.get("success_rate", 0.0)
+                summary = item.get("observation_summary") or ""
+                ch_lines.append(
+                    f"- [测候·W{idx} ({st}·胜率: {round(rate*100, 1)}%) [视窗: {wid}]] - {wrap_as_data(str(summary))}"
+                )
+
+            sections.insert(0, "\n".join(ch_lines))
 
         from lantai.llm.fence import fence_declaration
 
