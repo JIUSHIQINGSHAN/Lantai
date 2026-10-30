@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-10-30 - 法门（Famen · 程序性技能资产与执行流水线引擎）
+
+> 版本代号「法门」：出自《法华经》「深入法门，通达诸法」，喻指可循之法、可行之门与标准作业规程（SOP）——对应本版主题「程序性技能资产归一、触发规则动态匹配、SOP 结构化提取与认知上下文技能切面，ADR-0067 落地」：突破既有 `SkillCrystal` 技能结晶与 `MemoryItem` 步骤松散孤立、无法直接指导 Agent 动作的局限，构建面向生产环境的高性能技能流水线引擎 `FamenEngine`（票 01）。支持从结晶与程序性规则中归一化提取标准化 SOP 步骤对象契约；支持结合任务意图与触发词进行动态相关度排序与截断（`match_skills`）；全链路步骤正文与规则说明强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离与集群公共结晶共享（`shared_scope="swarm_shared"`）纪律（宁 miss 不脏写）。打通服务层 `famen_service.py`、HTTP REST 路由（`GET /famen/match`、`GET /famen/skills/{skill_id}`、`GET /famen/list`）、MCP 工具（`famen_skill`，工具池扩充至 80 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，法门 SOP 步骤切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.46-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心法门程序性技能与 SOP 聚合匹配引擎 FamenEngine（票 01，详见 `lantai/cognition/famen.py` 与 `tests/test_famen_engine_smoke.py`）**：
+  - 多源技能资产归一化：提取并纳管 SkillCrystal 与 MemoryItem procedural 规程步骤，形成统一的 `SkillAsset` 契约；
+  - 动态触发规则匹配：基于任务意图、触发规则、技能名称与步骤上下文的多维度综合打分算法（`match_skills`），实现 SOP 精准匹配；
+  - 樊篱安全隔离：SOP 步骤列表、流程正文与触发词规则全面经樊篱（`wrap_as_data`）包裹，杜绝提示注入攻击；
+  - 行级租户与公共共享隔离：严格校验属主与租户，支持 `swarm_shared` 集群公共结晶安全共享，越权资产完全屏蔽；
+  - 交付端到端不 mock 冒烟测试 `tests/test_famen_engine_smoke.py`（多源技能聚合、任务驱动匹配排序、樊篱包裹防注入、行级 ACL 隔离 4 个独立接缝验证全绿）。
+- **法门 API 路由、MCP 80 工具池扩充与认知上下文 SOP 切面（票 02，详见 `lantai/services/famen_service.py`、`lantai/api/routes_famen.py`、`lantai/cli/mcp.py`、`lantai/cognition/context.py` 与 `tests/test_famen_api_smoke.py`）**：
+  - 服务层封装：新增 `match_skills_service`、`get_skill_detail_service` 与 `list_skills_service`，统一管理 DB 会话生命周期；
+  - HTTP REST 路由：新增 `GET /famen/match`、`GET /famen/skills/{skill_id}`、`GET /famen/list` 鉴权端点，挂载入 `app.py` 核心鉴权路由；
+  - MCP 工具池扩容至 80 工具里程碑：注册 `famen_skill` 工具并实现 `handle_famen_skill` 处理器，`TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫全绿；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 引入 `famen_digest` 切面，结构化渲染适用法门与编号步骤（樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_famen_api_smoke.py`（服务层调用、REST 端点、MCP 协议往返与 80 工具对齐、认知上下文 SOP 切面 4 个独立接缝验证全绿）。
+
 ## [0.45.0] - 2026-10-30 - 起居注（Qijuzhu · 时序记忆脉络与每日全息纪事引擎）
 
 > 版本代号「起居注」：出自《汉书·艺文志》「古之人君，左史记言，右史记事」，逐日详录言行得失与政事变迁——对应本版主题「时序记忆脉络、多源认知事件编排与每日全息纪事切面，ADR-0066 落地」：突破既有静态粗粒度每日盘点（`digest_worker.py`）仅在清晨产生离线 Markdown、缺乏结构化时序动态切面的局限，构建面向生产环境的高性能聚合引擎 `QijuzhuEngine`（票 01）。支持统一编排与捕获异构多源认知事件流（记忆摄入、直书/程序铁律确立、卷宗里程碑流转、参商冲突仲裁与记忆演化提案应用）；提供今日与任意指定日期的全息日度纪事（`get_daily_chronicle`，支持宏观变迁摘要、量化度量指标与事件流），以及跨任意时间窗（`days`、`limit`）的滑动时间轴脉络（`get_timeline`）；所有纪事摘要、条目标题与笔记细节强制经由樊篱（`wrap_as_data`）数据围栏包裹，严防提示注入，并严守行级租户属主安全隔离与「宁 miss 不脏写」纪律。打通服务层 `qijuzhu_service.py`、HTTP REST 路由（`GET /qijuzhu/today`、`GET /qijuzhu/timeline`、`GET /qijuzhu/dates/{date_str}`）、MCP 工具（`qijuzhu_chronicle`，工具池扩充至 79 个且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，时序全息纪事切面置顶呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.45-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
