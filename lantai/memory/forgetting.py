@@ -100,16 +100,23 @@ def apply_forgetting(principal=None, *, page_size: int = 500):
                         m.decay_score = new_decay
                         changed = True
 
-                    # 自动归档：decay 极低 或 working memory 过期且无用
+                    # 自动归档：decay 极低 或 working memory 过期且无用（彻底消灭 X-02 误归档高重要度偏好隐患）
+                    # 豁免原则：高重要度 (>=0.8)、偏好/画像 (preference/profile)、语义/程序性记忆永不因 60 天 TTL 归档
+                    is_exempt = (
+                        (m.importance is not None and m.importance >= 0.8)
+                        or (m.lane in ("preference", "profile"))
+                        or (getattr(m, "decay_class", None) in ("semantic", "procedural"))
+                        or (getattr(m, "use_count", 0) > 0)
+                    )
+                    ttl_expired = (
+                        m.tier == "working"
+                        and days > settings.WORKING_MEMORY_TTL_DAYS
+                        and m.helpful_count == 0
+                        and not is_exempt
+                    )
                     if (
-                        m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD
+                        (m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD or ttl_expired)
                         and m.status != "archived"
-                        or (
-                            m.tier == "working"
-                            and days > settings.WORKING_MEMORY_TTL_DAYS
-                            and m.helpful_count == 0
-                            and m.status != "archived"
-                        )
                     ):
                         m.status = "archived"
                         changed = True

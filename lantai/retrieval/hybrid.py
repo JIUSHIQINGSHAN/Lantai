@@ -389,7 +389,7 @@ def hybrid_search(
     as_of_recorded=None,
     layer: str | None = None,
     shared_scope: str | None = None,
-    enable_shiyi: bool = True,
+    enable_shiyi: bool = False,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     """混合检索：向量 + BM25 + 衰减（支持辨域 ADR-0034 domain 过滤与拾遗零召回自适应补救 ADR-0076）。
 
@@ -465,7 +465,7 @@ def _hybrid_search_impl(
     time_to=None,
     as_of_recorded=None,
     shared_scope: str | None = None,
-    enable_shiyi: bool = True,
+    enable_shiyi: bool = False,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     p = params or RetrievalParams()
     trace_steps = []
@@ -948,9 +948,8 @@ def _attach_wanbi_facts(
                     item["atomic_facts"] = source_map[mid]
                     matched_any = True
 
-            # 若结果集中暂无明确的血统关联项，则将检索到的事实赋给首位最相关候选条目，避免全局盲目广播
-            if not matched_any and results:
-                results[0]["atomic_facts"] = facts
+            # 严格血统匹配：严禁将孤儿事实/未匹配事实强行挂给首位条目（彻底消灭 X-01 隐私跨条目泄漏漏洞）
+            pass
     except Exception as exc:
         logger.warning("完璧事实挂载异常（零阻断）: %s", exc)
 
@@ -1035,7 +1034,7 @@ def _keyword_fallback(
     as_of_recorded=None,
     principal=None,
     shared_scope: str | None = None,
-    enable_shiyi: bool = True,
+    enable_shiyi: bool = False,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     """向量检索降级路径：FTS5 召回作候选集，BM25 + decay 打分（无向量分）。
 

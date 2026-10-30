@@ -130,8 +130,14 @@ def search_atomic_facts_by_query(
         )
         matched_fact_ids.update(session.exec(stmt_entity).all())
 
-    # 查 FactAtomic，严格约束 confidence > 0.0（防已撤回事实泄漏）
-    stmt_fact = select(FactAtomic).where(FactAtomic.confidence > 0.0)
+    # 查 FactAtomic，严格约束 confidence > 0.0，且来源记忆必须存在且处于 active 状态（防已删除/已归档记忆事实泄漏）
+    from lantai.models.tables import MemoryItem
+    stmt_fact = (
+        select(FactAtomic)
+        .join(MemoryItem, col(FactAtomic.source_memory_id) == col(MemoryItem.id))
+        .where(FactAtomic.confidence > 0.0)
+        .where(col(MemoryItem.status) == "active")
+    )
 
     scope = _fact_scope(principal)
     if scope is not None:
