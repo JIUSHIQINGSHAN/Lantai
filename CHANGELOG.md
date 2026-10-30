@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-10-30 - 知命（Zhiming · 认知生命全周期演化状态机、动态时效衰变引擎与认知层收敛）
+
+> 版本代号「知命」：出自孔子「五十而知天命」，取「顺应事物生命周期演化、知晓时效规律与认知终局」之意——对应本版主题「认知生命全周期演化状态机、动态时效衰变引擎与认知层收敛，ADR-0081 落地」：突破既有记忆孤立存储、缺乏生命演化与时效衰变机制的局限，构建面向生产环境的一级认知状态机引擎 `ZhimingEngine` 与全生命周期契约。支持多阶段生命流转（`seed` -> `active` -> `decaying` -> `archived` / `dormant` -> `tombstone`）；实现半衰期对数时效衰变与重要性加权评估；行级租户属主安全隔离与樊篱防御；提供 `zhiming_service.py` 服务层统一入口；挂载 HTTP REST 路由（`POST /lifecycle/transition` 与 `GET /lifecycle/inspect`）；MCP 工具池扩充至 **94 工具里程碑**（新增 `zhiming_lifecycle`），实现 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫；增强认知上下文 `CognitiveContext`，将知命生命状态切面集成至 `zhiming_digest` 中。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.60-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心知命生命状态机引擎 ZhimingEngine 与认知层收敛（票 01，详见 `lantai/cognition/zhiming.py` 与 `tests/test_zhiming_engine_smoke.py`）**：
+  - 认知生命全周期状态机：定义 `CognitiveState` 与生命演化契约，实现受控安全状态流转与墓碑封存机制；
+  - 动态时效衰变引擎：基于半衰期曲线与交互权重评估记忆新鲜度与衰退指标；
+  - 行级租户隔离与安全樊篱防御：跨租户严格防越权，正文安全围栏隔离；
+  - 交付端到端不 mock 冒烟测试 `tests/test_zhiming_engine_smoke.py`。
+- **知命服务层重构、REST 路由、MCP 94 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/zhiming_service.py`、`lantai/api/routes_zhiming.py`、`lantai/cli/mcp.py` 与 `tests/test_zhiming_api_smoke.py`）**：
+  - 服务层封装：提供 `zhiming_transition_service` 与 `zhiming_inspect_service` 统一入口；
+  - HTTP REST 路由：新增 `/lifecycle/transition` 与 `/lifecycle/inspect` 路由端点；
+  - MCP 扩充至 94 工具里程碑：注册 `zhiming_lifecycle` 工具规范并挂载处理器，保持 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向对齐；
+  - 认知上下文切面：`CognitiveContext` 深度融入 `zhiming_digest`；
+  - 交付端到端不 mock 冒烟测试 `tests/test_zhiming_api_smoke.py`。
+
 ## [0.59.0] - 2026-10-30 - 札记（Zhaji · 工作区认知暂存便签深度演化、即时上下文熔断与双轨同步闭环）
 
 > 版本代号「札记」：出自古代读书治学摘记要点之木简便签（《文史通义》论治学重札记积累），取「即时留存、随手提炼、去粗存精」之意——对应本版主题「工作区认知暂存便签深度演化、即时上下文熔断与双轨同步闭环，ADR-0080 落地」：突破既有临时便签仅停留在扁平字符串覆盖覆盖、缺乏认知实体契约与结构化分段提炼的局限，构建面向生产环境的一级认知提炼引擎 `ZhajiEngine` 与 `ZhajiItem` / `ZhajiDigestResult` 契约（票 01）。支持多槽位结构化提取（`active_goals`、`key_findings`、`open_questions`、`notes`）；实现平滑字符预算控制与槽位优先保整熔断机制（按槽位优先级 `goals > open_questions > key_findings > notes` 优先保留，严守「宁 miss 不脏写」）；严守行级租户属主安全隔离与樊篱数据围栏（`wrap_as_data`）防提示词注入防御。全面重构服务层 `scratchpad_service.py`，提供 `zhaji_distill_service` 统一入口；挂载 HTTP REST 路由（`POST /scratchpad/distill`）；MCP 工具池扩充至 **93 工具里程碑**（新增 `zhaji_distill` 札记提纯工具），实现 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫；增强认知上下文 `CognitiveContext`，将工作区提纯便签深度整合至提示词 `zhaji_digest` 切面中（票 02）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.59-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
