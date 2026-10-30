@@ -63,6 +63,35 @@ class RemedyCandidate:
             "metadata": self.metadata,
         }
 
+    def to_search_result(self, *, layer: str = "instance") -> dict[str, Any]:
+        """将拾遗补救候选投影为 hybrid_search 标准检索结果项契约 (ADR-0076)。"""
+        fenced_c = wrap_as_data(self.content, item_id=self.id, score=self.confidence)
+        return {
+            "score": round(self.confidence, 4),
+            "memory": {
+                "id": self.id,
+                "content": self.content,
+                "domain": self.domain,
+                "lane": self.lane,
+                "confidence": round(self.confidence, 4),
+                "user_id": self.user_id,
+                "tenant_id": self.tenant_id,
+                "created_at": self.created_at.isoformat() if self.created_at else None,
+                "metadata": {
+                    **self.metadata,
+                    "is_remedied": True,
+                    "remedy_tier": self.remedy_tier,
+                    "remedy_reason": self.remedy_reason,
+                },
+            },
+            "document": self.content,
+            "fenced_content": fenced_c,
+            "layer": layer,
+            "is_remedied": True,
+            "remedy_tier": self.remedy_tier,
+            "remedy_reason": self.remedy_reason,
+        }
+
 
 class ShiyiEngine:
     """拾遗（Shiyi）遗漏补偿与零召回自适应补救引擎。"""
@@ -196,9 +225,28 @@ class ShiyiEngine:
 
         candidates.sort(key=lambda x: x[0], reverse=True)
         remedied_items = [c.to_dict(fenced=True) for _, c in candidates[:limit]]
+        remedy_candidates = [c for _, c in candidates[:limit]]
 
         return {
             "query": query,
             "is_remedied": len(remedied_items) > 0,
             "remedied_items": remedied_items,
+            "_raw_candidates": remedy_candidates,
         }
+
+    def remedy_search_pipeline(
+        self,
+        query: str,
+        domain: str = "all",
+        allow_domain_relax: bool = True,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """为混合检索主流水线零召回场景提供自适应补救结果项列表 (ADR-0076)。"""
+        res = self.remedy_recall(
+            query=query,
+            domain=domain,
+            allow_domain_relax=allow_domain_relax,
+            limit=limit,
+        )
+        raw_candidates = res.get("_raw_candidates", [])
+        return [c.to_search_result() for c in raw_candidates]

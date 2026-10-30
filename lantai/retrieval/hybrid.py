@@ -389,8 +389,9 @@ def hybrid_search(
     as_of_recorded=None,
     layer: str | None = None,
     shared_scope: str | None = None,
+    enable_shiyi: bool = True,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
-    """混合检索：向量 + BM25 + 衰减（支持辨域 ADR-0034 domain 过滤）。
+    """混合检索：向量 + BM25 + 衰减（支持辨域 ADR-0034 domain 过滤与拾遗零召回自适应补救 ADR-0076）。
 
     trace=True 时返回 (results, trace_steps)。
     explain=True 时每条结果附带分项 {vector, bm25, fts, decay, lane_boost,
@@ -443,6 +444,7 @@ def hybrid_search(
         time_to=time_to,
         as_of_recorded=as_of_recorded,
         shared_scope=shared_scope,
+        enable_shiyi=enable_shiyi,
     )
 
 
@@ -463,6 +465,7 @@ def _hybrid_search_impl(
     time_to=None,
     as_of_recorded=None,
     shared_scope: str | None = None,
+    enable_shiyi: bool = True,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     p = params or RetrievalParams()
     trace_steps = []
@@ -545,6 +548,7 @@ def _hybrid_search_impl(
             time_to=time_to,
             as_of_recorded=as_of_recorded,
             shared_scope=shared_scope,
+            enable_shiyi=enable_shiyi,
         )
 
     # Step 3: FTS5 子串召回（ADR-0008）与 BM25 召回（F2 重构）
@@ -676,6 +680,36 @@ def _hybrid_search_impl(
         )
 
     if not items:
+        if enable_shiyi and query and query.strip():
+            try:
+                from lantai.cognition.shiyi import ShiyiEngine
+
+                shiyi_eng = ShiyiEngine(session=session, principal=principal)
+                remedy_results = shiyi_eng.remedy_search_pipeline(
+                    query=query,
+                    domain=domain or "all",
+                    allow_domain_relax=True,
+                    limit=top_k,
+                )
+                if remedy_results:
+                    if trace:
+                        t_rem = time.perf_counter()
+                        trace_steps.append(
+                            {
+                                "step": "shiyi_remedy",
+                                "elapsed_ms": round((t_rem - t0) * 1000, 1),
+                                "candidate_count": len(remedy_results),
+                                "score_range": [
+                                    round(min(r["score"] for r in remedy_results), 3),
+                                    round(max(r["score"] for r in remedy_results), 3),
+                                ],
+                            }
+                        )
+                        return remedy_results, trace_steps
+                    return remedy_results
+            except Exception as e:
+                logger.warning("Shiyi auto-remedy in main pipeline failed (fail-safe): %s", e)
+
         if trace:
             return [], trace_steps
         return []
@@ -1001,6 +1035,7 @@ def _keyword_fallback(
     as_of_recorded=None,
     principal=None,
     shared_scope: str | None = None,
+    enable_shiyi: bool = True,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     """向量检索降级路径：FTS5 召回作候选集，BM25 + decay 打分（无向量分）。
 
@@ -1113,6 +1148,36 @@ def _keyword_fallback(
             logger.warning(f"LIKE fallback failed, retrieval exhausted: {e}")
 
     if not candidate_ids:
+        if enable_shiyi and query and query.strip():
+            try:
+                from lantai.cognition.shiyi import ShiyiEngine
+
+                shiyi_eng = ShiyiEngine(session=session, principal=principal)
+                remedy_results = shiyi_eng.remedy_search_pipeline(
+                    query=query,
+                    domain=domain or "all",
+                    allow_domain_relax=True,
+                    limit=top_k,
+                )
+                if remedy_results:
+                    if trace:
+                        t_rem = time.perf_counter()
+                        trace_steps.append(
+                            {
+                                "step": "shiyi_remedy_keyword",
+                                "elapsed_ms": round((t_rem - t0) * 1000, 1),
+                                "candidate_count": len(remedy_results),
+                                "score_range": [
+                                    round(min(r["score"] for r in remedy_results), 3),
+                                    round(max(r["score"] for r in remedy_results), 3),
+                                ],
+                            }
+                        )
+                        return remedy_results, trace_steps
+                    return remedy_results
+            except Exception as e:
+                logger.warning("Shiyi auto-remedy in keyword fallback failed (fail-safe): %s", e)
+
         if trace:
             return [], trace_steps
         return []
@@ -1174,6 +1239,38 @@ def _keyword_fallback(
     items, target_layer = filter_and_resolve_layer(items, query, p)
 
     if not items:
+        if enable_shiyi and query and query.strip():
+            try:
+                from lantai.cognition.shiyi import ShiyiEngine
+
+                shiyi_eng = ShiyiEngine(session=session, principal=principal)
+                remedy_results = shiyi_eng.remedy_search_pipeline(
+                    query=query,
+                    domain=domain or "all",
+                    allow_domain_relax=True,
+                    limit=top_k,
+                )
+                if remedy_results:
+                    if trace:
+                        t_rem = time.perf_counter()
+                        trace_steps.append(
+                            {
+                                "step": "shiyi_remedy_keyword_filter",
+                                "elapsed_ms": round((t_rem - t0) * 1000, 1),
+                                "candidate_count": len(remedy_results),
+                                "score_range": [
+                                    round(min(r["score"] for r in remedy_results), 3),
+                                    round(max(r["score"] for r in remedy_results), 3),
+                                ],
+                            }
+                        )
+                        return remedy_results, trace_steps
+                    return remedy_results
+            except Exception as e:
+                logger.warning(
+                    "Shiyi auto-remedy in keyword fallback items empty failed (fail-safe): %s", e
+                )
+
         if trace:
             return [], trace_steps
         return []
