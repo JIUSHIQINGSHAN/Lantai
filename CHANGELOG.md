@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-10-30 - 佐证（Zuozheng · 证据链反查与可解释性溯源图谱引擎）
+
+> 版本代号「佐证」：出自《宋刑统》「案情显明，须得佐证」，喻指辅助证据、相互勘验印证与决策依据解释——对应本版主题「证据链反查与可解释性溯源图谱引擎、断言反向印证、多跳因果溯源与认知上下文证据切面，ADR-0068 落地」：突破既有检索粗粒度前缀截取、缺乏图谱因果支撑的局限，构建面向生产环境的高性能可解释性反查引擎 `ZuozhengEngine`（票 01）。支持针对任意记忆反查因果推演边（`supports` / `causes` / `refines` 等）与关联 `Evidence` 实体构建多跳证据链（`inspect_evidence`）；支持根据自然语言断言反向召回支撑证据簇并计算综合置信度得分（`verify_claim`）；全链路证据正文与推理原因强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁 miss 不脏写）。打通服务层 `zuozheng_service.py`、HTTP REST 路由（`GET /zuozheng/inspect/{id}`、`POST /zuozheng/verify`）、MCP 工具（`zuozheng_evidence`，工具池扩充至 81 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，佐证支撑证据切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.47-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心佐证证据链拓扑与反查验证引擎 ZuozhengEngine（票 01，详见 `lantai/cognition/zuozheng.py` 与 `tests/test_zuozheng_engine_smoke.py`）**：
+  - 证据链拓扑模型：定义 `EvidenceNode` 与 `ProofChain` 契约，统一纳管记忆节点、因果推演边与直接证据实体；
+  - 深度证据反查：多跳因果拓扑展开（`inspect_evidence`），自动追踪前置因果与直接佐证，计算拓扑综合置信度；
+  - 自然语言断言印证：基于结巴分词与置信度加权的断言反向印证算法（`verify_claim`），实现客观证据快速检验；
+  - 樊篱安全隔离与行级 ACL：证据节点正文全面由樊篱（`wrap_as_data`）包裹，落实租户与属主访问收窄（宁 miss 不脏写）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_zuozheng_engine_smoke.py`（证据链反查展开、断言反查印证、樊篱包裹防注入、行级 ACL 隔离 4 个独立接缝验证全绿）。
+- **佐证服务层、REST 路由、MCP 81 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/zuozheng_service.py`、`lantai/api/routes_zuozheng.py`、`lantai/cli/mcp.py`、`lantai/cognition/context.py` 与 `tests/test_zuozheng_api_smoke.py`）**：
+  - 服务层封装：新增 `inspect_evidence_service` 与 `verify_claim_service`，统一管理 DB 会话生命周期；
+  - HTTP REST 路由：新增 `GET /zuozheng/inspect/{memory_id}` 与 `POST /zuozheng/verify` 鉴权端点，挂载入 `app.py` 核心鉴权路由；
+  - MCP 工具池扩容至 81 工具里程碑：注册 `zuozheng_evidence` 工具并实现 `handle_zuozheng_evidence` 处理器，`TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫全绿；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 引入 `zuozheng_digest` 切面，结构化渲染置信度证据节点（樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_zuozheng_api_smoke.py`（服务层调用、REST 端点、MCP 协议往返与 81 工具对齐、认知上下文证据切面 4 个独立接缝验证全绿）。
+
 ## [0.46.0] - 2026-10-30 - 法门（Famen · 程序性技能资产与执行流水线引擎）
 
 > 版本代号「法门」：出自《法华经》「深入法门，通达诸法」，喻指可循之法、可行之门与标准作业规程（SOP）——对应本版主题「程序性技能资产归一、触发规则动态匹配、SOP 结构化提取与认知上下文技能切面，ADR-0067 落地」：突破既有 `SkillCrystal` 技能结晶与 `MemoryItem` 步骤松散孤立、无法直接指导 Agent 动作的局限，构建面向生产环境的高性能技能流水线引擎 `FamenEngine`（票 01）。支持从结晶与程序性规则中归一化提取标准化 SOP 步骤对象契约；支持结合任务意图与触发词进行动态相关度排序与截断（`match_skills`）；全链路步骤正文与规则说明强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离与集群公共结晶共享（`shared_scope="swarm_shared"`）纪律（宁 miss 不脏写）。打通服务层 `famen_service.py`、HTTP REST 路由（`GET /famen/match`、`GET /famen/skills/{skill_id}`、`GET /famen/list`）、MCP 工具（`famen_skill`，工具池扩充至 80 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，法门 SOP 步骤切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.46-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
