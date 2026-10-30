@@ -562,6 +562,38 @@ def handle_zhiming_lifecycle(params: dict) -> dict:
     return {"error": "Invalid zhiming parameters (memory_id required for inspect/transition)"}
 
 
+def handle_gouchen_dredge(params: dict) -> dict:
+    """钩沉：历史语境回溯与沉埋记忆检索恢复（ADR-0082）。"""
+    from datetime import datetime
+
+    action = str(params.get("action", "dredge") or "dredge").lower()
+    query = str(params.get("query", "") or "")
+    min_sunken_score = float(params.get("min_sunken_score", 0.4))
+    anchor_time_str = params.get("anchor_time")
+    limit = int(params.get("limit", 50))
+
+    from lantai.services.gouchen_service import (
+        gouchen_dredge_service,
+        gouchen_snapshot_service,
+    )
+
+    p = _principal_from_params(params)
+
+    if action == "snapshot" and anchor_time_str:
+        try:
+            anchor_time = datetime.fromisoformat(str(anchor_time_str))
+        except ValueError:
+            return {"error": f"Invalid anchor_time format: {anchor_time_str}"}
+        return gouchen_snapshot_service(anchor_time=anchor_time, limit=limit, principal=p)
+
+    return gouchen_dredge_service(
+        query=query,
+        min_sunken_score=min_sunken_score,
+        limit=limit,
+        principal=p,
+    )
+
+
 def handle_memory_consolidate(params: dict) -> dict:
     """沉潜：执行闲时夜梦记忆沉淀与折叠压缩周期（ADR-0036）。"""
     from lantai.services.consolidation_service import run_consolidation_cycle
@@ -2327,6 +2359,40 @@ TOOLS = {
             },
         },
     },
+    "gouchen_dredge": {
+        "description": "钩沉（打捞）：穿透归档与弱化状态打捞沉埋历史记忆，或基于时间锚点重建历史语境快照（ADR-0082）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "default": "dredge",
+                    "description": "操作类型：dredge(打捞沉埋记忆) | snapshot(历史语境快照)",
+                    "enum": ["dredge", "snapshot"],
+                },
+                "query": {
+                    "type": "string",
+                    "default": "",
+                    "description": "关键字过滤（dredge 模式，空字符串表示全库打捞）",
+                },
+                "min_sunken_score": {
+                    "type": "number",
+                    "default": 0.4,
+                    "description": "沉没度最低阈值（0.0~1.0，越高越沉埋）",
+                },
+                "anchor_time": {
+                    "type": "string",
+                    "description": "历史时间锚点 ISO 8601（snapshot 模式必填，UTC）",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 50,
+                    "description": "最大返回条数",
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
     "memory_consolidate": {
         "description": "沉潜（折叠压缩）：扫描高密度碎片记忆聚类提纯为主记忆，并修剪极度衰减的边缘噪音（ADR-0036）",
         "inputSchema": {
@@ -3564,6 +3630,7 @@ TOOL_HANDLERS = {
     "sanxing_remedy": handle_sanxing_remedy,
     "zhaji_distill": handle_zhaji_distill,
     "zhiming_lifecycle": handle_zhiming_lifecycle,
+    "gouchen_dredge": handle_gouchen_dredge,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。
@@ -3597,7 +3664,7 @@ def handle(msg: dict) -> dict | None:
             "result": {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "lantai", "version": "0.60.0"},
+                "serverInfo": {"name": "lantai", "version": "0.61.0"},
             },
         }
     if method == "notifications/initialized":

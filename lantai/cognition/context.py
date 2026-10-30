@@ -78,6 +78,8 @@ class CognitiveContext:
     zhaji_digest: dict | None = None
     # 知命（v0.60 Ticket 02 ADR-0081）：认知生命全周期演化状态机与动态时效衰变切面
     zhiming_digest: list[dict] | None = None
+    # 钩沉（v0.61 Ticket 02 ADR-0082）：历史语境回溯与沉埋记忆检索恢复切面
+    gouchen_digest: dict | None = None
 
     def to_prompt(self) -> str:
         """
@@ -531,6 +533,27 @@ class CognitiveContext:
                 )
 
             sections.insert(0, "\n".join(zm_lines))
+
+        # 钩沉（ADR-0082）：若有沉埋记忆打捞或历史语境快照，渲染钩沉切面
+        if self.gouchen_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            gc = self.gouchen_digest
+            total = gc.get("total_dredged") or gc.get("total_count") or 0
+            gc_lines = [f"## Sunken Memory Dredge & Historical Context (钩沉 · {total}):"]
+            items = gc.get("items") or gc.get("memories") or []
+            for idx, item in enumerate(items[:5], 1):
+                mid = item.get("memory_id") or ""
+                sunken = item.get("sunken_score")
+                sunken_str = f" [沉没度: {round(sunken, 3)}]" if sunken is not None else ""
+                fenced_c = item.get("fenced_content") or ""
+                content_display = (
+                    fenced_c
+                    if fenced_c
+                    else wrap_as_data(str(item.get("content", "")), item_id=mid)
+                )
+                gc_lines.append(f"- [钩沉·G{idx}{sunken_str}] {content_display}")
+            sections.insert(0, "\n".join(gc_lines))
 
         from lantai.llm.fence import fence_declaration
 

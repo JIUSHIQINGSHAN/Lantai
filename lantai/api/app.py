@@ -19,6 +19,7 @@ from lantai.api import (
     routes_evolution_router,
     routes_famen_router,
     routes_gate_router,
+    routes_gouchen_router,
     routes_graph_router,
     routes_health_protected_router,
     routes_health_router,
@@ -101,7 +102,7 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-app = FastAPI(title="兰台记忆（Lantai）", version="0.60.0", lifespan=lifespan)
+app = FastAPI(title="兰台记忆（Lantai）", version="0.61.0", lifespan=lifespan)
 
 # 润物（ADR-0060）：自适应认知中间件（检测 X-Task 请求头并自适应注入 Base64 认知摘要）
 from lantai.runtime.middleware import CognitiveMiddleware
@@ -161,6 +162,7 @@ CORE_ROUTERS = [
     routes_kaogong_router,
     routes_sanxing_router,
     routes_zhiming_router,
+    routes_gouchen_router,
 ]
 
 EXT_ROUTERS = {
