@@ -269,7 +269,9 @@ class ZuozhengEngine:
             hit_count = sum(1 for token in meaningful_tokens if token in content_text)
             match_ratio = hit_count / max(len(meaningful_tokens), 1)
             # 至少需命中 50% 关键词（或至少命中 2 个核心词），避免泛化单实词噪声召回
-            if hit_count == 0 or (len(meaningful_tokens) >= 2 and hit_count < 2 and match_ratio < 0.5):
+            if hit_count == 0 or (
+                len(meaningful_tokens) >= 2 and hit_count < 2 and match_ratio < 0.5
+            ):
                 continue
 
             mem_conf = mem.confidence if mem.confidence is not None else 0.8
