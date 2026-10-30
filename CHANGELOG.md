@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-10-30 - 石室（Shishi · 高密核心记忆金匮封存与防篡改硬核锚定引擎）
+
+> 版本代号「石室」：出自西汉司马迁《史记·太史公自序》「迁为太史令，紬石室金匮之书」，喻指在认知架构中将智能体最核心、最神圣不可动摇之身份、原则与铁律，作为「金匮石室」秘籍硬核封存，施加不可变锁定，提供全生命周期防篡改、完整性验真与樊篱隔离锚定——对应本版主题「高密核心记忆金匮封存与防篡改硬核锚定引擎、SHA-256 完整性验真签名、不可变加锁与认知上下文石室切面，ADR-0074 落地」：突破既有核心记忆停留于普通数据行、缺乏防篡改与完整性验真保障的局限，构建面向生产环境的高性能石室封存验真引擎 `ShishiEngine`（票 01）。支持针对核心身份（identity）、行为铁律（policy）与基石任务（task）执行金匮封存与版本自增（`seal_core_memory`），计算 SHA-256 完整性摘要并施加不可变保护（`is_immutable`）；支持全域完整性哈希验真（`verify_integrity`），主动识别并拦截底层非法数据篡改；支持安全读取已封存的核心硬核记忆（`get_sealed_blocks`）；全链路封存正文强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁 miss 不脏写）。打通服务层 `shishi_service.py`、HTTP REST 路由（`POST /shishi/seal`、`GET /shishi/verify`、`GET /shishi/blocks`）、MCP 工具（`shishi_vault`，工具池扩充至 87 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，石室金匮硬核切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.53-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心石室高密核心记忆金匮封存与防篡改硬核锚定引擎 ShishiEngine（票 01，详见 `lantai/cognition/shishi.py` 与 `tests/test_shishi_engine_smoke.py`）**：
+  - 金匮封存块契约：定义 `ShishiVaultBlock` 契约，统一纳管块名、正文、SHA-256 哈希签名、不可变标识与递增版本号，支持樊篱安全渲染；
+  - 完整性验真报告契约：定义 `IntegrityVerificationResult`，输出验真合格状态、受检块数与篡改异常清单；
+  - 金匮封存与不可变锁定：实现 `seal_core_memory`，支持核心记忆版本递增与哈希签名，已锁定时非管理员修改强制抛出权限异常；
+  - 完整性哈希比对验真：实现 `verify_integrity`，全域扫描当前租户内核心块哈希指纹，精准定位并报告底层非法篡改；
+  - 樊篱安全隔离与行级 ACL：核心封存正文强制施加 `<memory_data>` 围栏隔离，严格校验租户与用户属主（宁 miss 不脏写）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_shishi_engine_smoke.py`（金匮封存与版本递增、底层篡改主动感知与验真、樊篱包裹防注入、行级 ACL 隔离与不可变锁定 4 个独立接缝验证全绿）。
+- **石室服务层、REST 路由、MCP 87 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/shishi_service.py`、`lantai/api/routes_shishi.py`、`lantai/cli/mcp.py`、`lantai/cognition/context.py` 与 `tests/test_shishi_api_smoke.py`）**：
+  - 服务层封装：新增 `seal_core_memory_service`、`verify_shishi_integrity_service` 与 `get_sealed_blocks_service`，统一管理 DB 会话生命周期与石室调度；
+  - HTTP REST 路由：新增 `POST /shishi/seal`、`GET /shishi/verify` 与 `GET /shishi/blocks` 鉴权端点，挂载入 `app.py` 核心鉴权路由；
+  - MCP 工具池扩容至 87 工具里程碑：注册 `shishi_vault` 工具并实现 `handle_shishi_vault` 处理器，`TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫全绿；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 引入 `shishi_digest` 切面，结构化渲染核心记忆金匮封存块（樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_shishi_api_smoke.py`（服务层调用、REST 端点、MCP 协议往返与 87 工具对齐、认知上下文石室切面 4 个独立接缝验证全绿）。
+
 ## [0.52.0] - 2026-10-30 - 测候（Cehou · 影子观察期巡检与演化状态监控引擎）
 
 > 版本代号「测候」：出自北宋沈括《梦溪笔谈·象数一》「司天监测候天象，待其应验，以定历法」，喻指在认知演化提案或新规则生效前，作为专职影子期观测与状态机评估引擎，持续测验守候、跟踪指标漂移、验证收益真实性，待其数据周全应验后再行转正入库——对应本版主题「影子观察期巡检与演化状态监控引擎、应验转正与漂移熔断裁决、样本实测度量与认知上下文测候切面，ADR-0073 落地」：突破既有观察期缺乏针对认知演化视窗的实时巡检、胜率聚合与生命周期状态机管理的局限，构建面向生产环境的高性能影子观察巡检引擎 `CehouEngine`（票 01）。支持针对参数建议、反思提案与新规则创建影子视窗（`create_observation_window`）；支持持续采集并度量实测运行样本（`record_sample`），统计时延与收益分差；支持巡检并自动裁决视窗状态跃迁（`inspect_window`），胜率与样本达标自动判定为应验转正（`graduated`），异常劣化判定为熔断回滚（`rolled_back`）；支持全域视窗扫描与告警汇总（`scan_active_windows`）；全链路观测摘要与转正裁决强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁 miss 不脏写）。打通服务层 `cehou_service.py`、HTTP REST 路由（`GET /cehou/windows`、`POST /cehou/inspect`、`POST /cehou/sample`、`POST /cehou/windows`）、MCP 工具（`cehou_observe`，工具池扩充至 86 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，测候观察切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.52-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
