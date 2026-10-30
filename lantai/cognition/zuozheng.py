@@ -267,11 +267,11 @@ class ZuozhengEngine:
 
             content_text = (mem.content or "").lower()
             hit_count = sum(1 for token in meaningful_tokens if token in content_text)
-            if hit_count == 0:
+            match_ratio = hit_count / max(len(meaningful_tokens), 1)
+            # 至少需命中 50% 关键词（或至少命中 2 个核心词），避免泛化单实词噪声召回
+            if hit_count == 0 or (len(meaningful_tokens) >= 2 and hit_count < 2 and match_ratio < 0.5):
                 continue
 
-            # 匹配分数 = 词条重合比例 * 记忆自身置信度
-            match_ratio = hit_count / max(len(meaningful_tokens), 1)
             mem_conf = mem.confidence if mem.confidence is not None else 0.8
             final_score = match_ratio * 0.6 + mem_conf * 0.4
 

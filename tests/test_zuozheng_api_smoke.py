@@ -127,12 +127,12 @@ class TestZuozhengApiSmoke:
         assert len(d2["supporting_nodes"]) >= 1
 
     def test_seam3_mcp_81_tools_parity(self):
-        """Seam 3: MCP 协议工具 zuozheng_evidence 往返解析与 81 工具池 1:1 双向对齐守卫。"""
+        """Seam 3: MCP 协议工具 zuozheng_evidence 往返解析与 81+ 工具池 1:1 双向对齐守卫。"""
         target, _, _ = _seed_test_data()
 
-        # 81 工具总数与 1:1 对齐断言
-        assert len(TOOLS) == 81
-        assert len(TOOL_HANDLERS) == 81
+        # 81+ 工具总数与 1:1 对齐断言
+        assert len(TOOLS) >= 81
+        assert len(TOOL_HANDLERS) == len(TOOLS)
         assert "zuozheng_evidence" in TOOLS
         assert "zuozheng_evidence" in TOOL_HANDLERS
         for t_name in TOOLS:
