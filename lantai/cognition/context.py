@@ -58,6 +58,8 @@ class CognitiveContext:
     shiyi_digest: list[dict] | None = None
     # 校雠（v0.49 Ticket 02 ADR-0070）：智能语义去重与校勘切面
     jiaochou_digest: list[dict] | None = None
+    # 拟议（v0.50 Ticket 02 ADR-0071）：认知演化提案审议与因果变化推演切面
+    niyi_digest: list[dict] | None = None
 
     def to_prompt(self) -> str:
         """
@@ -293,6 +295,26 @@ class CognitiveContext:
                 )
 
             sections.insert(0, "\n".join(jc_lines))
+
+        # 拟议（ADR-0071）：若有认知演化提案审议结果，渲染拟议切面
+        if self.niyi_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            ny_items = self.niyi_digest
+            ny_lines = [f"## Evolution Proposals & Deliberation (拟议 · {len(ny_items)}):"]
+            for idx, item in enumerate(ny_items[:5], 1):
+                ptype = item.get("proposal_type") or "change"
+                risk = item.get("risk_level") or "low"
+                edges_c = item.get("impacted_edges_count", 0)
+                reason = item.get("deliberation_reason") or ""
+                tid = item.get("target_memory_id")
+                tid_str = f" [目标: {tid}]" if tid else ""
+                reason_str = f" - {wrap_as_data(str(reason))}" if reason else ""
+                ny_lines.append(
+                    f"- [拟议·P{idx} ({ptype}·风险: {risk}·拓扑边: {edges_c}){tid_str}]{reason_str}"
+                )
+
+            sections.insert(0, "\n".join(ny_lines))
 
         from lantai.llm.fence import fence_declaration
 

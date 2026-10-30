@@ -1680,6 +1680,31 @@ def handle_jiaochou_collate(params: dict) -> dict:
     return {"error": "Either provide both text_a and text_b, or set scan=true"}
 
 
+def handle_niyi_deliberate(params: dict) -> dict:
+    """拟议：认知演化提案审议与因果变化推演（v0.50 ADR-0071）。"""
+    audit = bool(params.get("audit", False))
+    limit = int(params.get("limit", 50))
+    proposal_type = params.get("proposal_type", "update")
+    patch_data = params.get("patch_data") or {}
+    target_memory_id = params.get("target_memory_id")
+
+    from lantai.services.niyi_service import (
+        audit_proposals_service,
+        deliberate_proposal_service,
+    )
+
+    p = _principal_from_params(params)
+    if audit:
+        return audit_proposals_service(limit=limit, principal=p)
+
+    return deliberate_proposal_service(
+        proposal_type=proposal_type,
+        patch_data=patch_data,
+        target_memory_id=target_memory_id,
+        principal=p,
+    )
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2779,6 +2804,38 @@ TOOLS = {
             },
         },
     },
+    "niyi_deliberate": {
+        "description": "拟议：认知演化提案审议与因果变化推演（v0.50 ADR-0071）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "proposal_type": {
+                    "type": "string",
+                    "description": "提案类型：add | update | merge | deprecate",
+                    "default": "update",
+                },
+                "patch_data": {
+                    "type": "object",
+                    "description": "提议打补丁的属性键值对",
+                },
+                "target_memory_id": {
+                    "type": "string",
+                    "description": "目标记忆 ID",
+                },
+                "audit": {
+                    "type": "boolean",
+                    "description": "是否审计当前租户所有未决提案互斥与冲突",
+                    "default": False,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "审计未决提案最大条数",
+                    "default": 50,
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2864,6 +2921,7 @@ TOOL_HANDLERS = {
     "zuozheng_evidence": handle_zuozheng_evidence,
     "shiyi_remedy": handle_shiyi_remedy,
     "jiaochou_collate": handle_jiaochou_collate,
+    "niyi_deliberate": handle_niyi_deliberate,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

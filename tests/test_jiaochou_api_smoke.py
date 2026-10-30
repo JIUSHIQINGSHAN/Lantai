@@ -114,9 +114,9 @@ class TestJiaochouApiSmoke:
         """Seam 3: MCP 协议工具 jiaochou_collate 往返解析与 83 工具池 1:1 双向对齐守卫。"""
         m1, m2 = _seed_test_pair()
 
-        # 83 工具总数与 1:1 对齐断言
-        assert len(TOOLS) == 83
-        assert len(TOOL_HANDLERS) == 83
+        # 83+ 工具总数与 1:1 对齐断言
+        assert len(TOOLS) >= 83
+        assert len(TOOL_HANDLERS) == len(TOOLS)
         assert "jiaochou_collate" in TOOLS
         assert "jiaochou_collate" in TOOL_HANDLERS
         for t_name in TOOLS:

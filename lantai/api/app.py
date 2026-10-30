@@ -24,6 +24,7 @@ from lantai.api import (
     routes_jiaochou_router,
     routes_memory_router,
     routes_monitor_router,
+    routes_niyi_router,
     routes_obsidian_router,
     routes_param_advice_router,
     routes_persona_router,
@@ -142,6 +143,7 @@ CORE_ROUTERS = [
     routes_zuozheng_router,
     routes_shiyi_router,
     routes_jiaochou_router,
+    routes_niyi_router,
 ]
 
 EXT_ROUTERS = {

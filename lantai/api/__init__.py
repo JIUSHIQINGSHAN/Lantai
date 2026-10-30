@@ -21,6 +21,7 @@ from .routes_import import router as routes_import_router
 from .routes_jiaochou import router as routes_jiaochou_router
 from .routes_memory import router as routes_memory_router
 from .routes_monitor import router as routes_monitor_router
+from .routes_niyi import router as routes_niyi_router
 from .routes_obsidian import router as routes_obsidian_router
 from .routes_param_advice import router as routes_param_advice_router
 from .routes_persona import router as routes_persona_router
@@ -84,5 +85,6 @@ __all__ = [
     "routes_zuozheng_router",
     "routes_shiyi_router",
     "routes_jiaochou_router",
+    "routes_niyi_router",
     "routes_zhishu_router",
 ]
