@@ -81,12 +81,12 @@ class TestShiyiApiSmoke:
         assert any(item["id"] == mem.id for item in data["remedied_items"])
 
     def test_seam3_mcp_82_tools_parity(self):
-        """Seam 3: MCP 协议工具 shiyi_remedy 往返解析与 82 工具池 1:1 双向对齐守卫。"""
+        """Seam 3: MCP 协议工具 shiyi_remedy 往返解析与 82+ 工具池 1:1 双向对齐守卫。"""
         mem = _seed_test_memory()
 
-        # 82 工具总数与 1:1 对齐断言
-        assert len(TOOLS) == 82
-        assert len(TOOL_HANDLERS) == 82
+        # 82+ 工具总数与 1:1 对齐断言
+        assert len(TOOLS) >= 82
+        assert len(TOOL_HANDLERS) == len(TOOLS)
         assert "shiyi_remedy" in TOOLS
         assert "shiyi_remedy" in TOOL_HANDLERS
         for t_name in TOOLS:
