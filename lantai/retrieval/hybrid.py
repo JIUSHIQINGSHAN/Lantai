@@ -941,12 +941,20 @@ def _attach_wanbi_facts(
                 if f.get("source_memory_id"):
                     source_map.setdefault(f["source_memory_id"], []).append(f)
 
+            result_ids = {item.get("memory", {}).get("id") for item in results}
             for item in results:
-                mid = item.get("memory", {}).get("id")
-                if mid and mid in source_map:
-                    item["atomic_facts"] = source_map[mid]
-
-            # 严格血统匹配：严禁将孤儿事实/未匹配事实强行挂给首位条目（彻底消灭 X-01 隐私跨条目泄漏漏洞）
+                mem = item.get("memory", {}) or {}
+                mid = mem.get("id")
+                attached = list(source_map.get(mid, [])) if mid else []
+                # 血统沿 superseded_by 前进一跳：结果是被迟到更正替换的旧记忆、而接替它的
+                # 新记忆不在结果集中时，新记忆的事实挂到旧记忆下（稽古 ADR-0048 语义）。
+                # 这是显式血统，不是「挂给首位」：无血统关系的事实一律不挂（X-01）。
+                succ = mem.get("superseded_by")
+                if succ and succ not in result_ids and succ in source_map:
+                    attached.extend(source_map[succ])
+                if attached:
+                    item["atomic_facts"] = attached
+            # 严格血统匹配：严禁将孤儿事实/未匹配事实强行挂给首位条目（X-01 隐私跨条目泄漏）
     except Exception as exc:
         logger.warning("完璧事实挂载异常（零阻断）: %s", exc)
 

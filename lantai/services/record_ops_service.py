@@ -689,6 +689,44 @@ def revive_consolidated(
         return _run(s)
 
 
+def purge_facts_for_memory(s: Session, memory_id: str) -> int:
+    """完璧级联（X-01）：删除来源为 memory_id 的全部 FactAtomic 及其 FactEntity 投影。
+
+    所有物理删除 MemoryItem 的路径都必须在**同一个 session、删记忆之前**调用本函数，
+    并与记忆删除一起 commit。本函数**不 commit、不吞异常**：失败直接抛出，由调用方
+    rollback，保证「事实删不掉 -> 记忆也不删」，不留孤儿事实。
+
+    FactEntity 显式删除：SQLite 未开 PRAGMA foreign_keys，schema 上的
+    ON DELETE CASCADE 不生效。返回删除的事实条数。
+    """
+    from sqlmodel import col, delete
+
+    from lantai.models.tables import FactAtomic, FactEntity
+
+    fact_ids = list(
+        s.exec(select(FactAtomic.id).where(FactAtomic.source_memory_id == memory_id)).all()
+    )
+    if not fact_ids:
+        return 0
+    s.exec(delete(FactEntity).where(col(FactEntity.fact_id).in_(fact_ids)))
+    s.exec(delete(FactAtomic).where(col(FactAtomic.id).in_(fact_ids)))
+    return len(fact_ids)
+
+
+def repoint_facts(s: Session, from_memory_id: str, to_memory_id: str) -> int:
+    """合并场景：把 from 记忆的事实血统改挂到 to 记忆（不 commit、不吞异常）。"""
+    from sqlmodel import update
+
+    from lantai.models.tables import FactAtomic
+
+    res = s.exec(
+        update(FactAtomic)
+        .where(FactAtomic.source_memory_id == from_memory_id)
+        .values(source_memory_id=to_memory_id)
+    )
+    return int(getattr(res, "rowcount", 0) or 0)
+
+
 def retract_fact_atomic(
     fact_id: str, *, reason: str, actor: str = "", session: Session | None = None
 ) -> dict:

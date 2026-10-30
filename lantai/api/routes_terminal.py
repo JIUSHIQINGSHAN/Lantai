@@ -342,9 +342,6 @@ def delete_memory(memory_id: str, principal=Depends(get_current_user)):
             logger.exception("delete: fts removal failed (reported, not silent)")
             fts_removed = False
             warnings.append("fts removal failed")
-        vector_removed = record_ops_service.sync_vector_delete(memory_id)
-        if not vector_removed:
-            warnings.append("vector delete failed")
         try:
             # 审计 best-effort（票05）：失败不阻断删除主语义，如实进 warnings
             record_ops_service.audit_event(
@@ -359,23 +356,22 @@ def delete_memory(memory_id: str, principal=Depends(get_current_user)):
             logger.exception("delete: audit write failed (reported, not silent)")
             warnings.append("audit write failed; deletion itself succeeded")
 
-        # 级联删除关联的 fact_atomic 与 fact_entity（彻底修复 X-01 级联残留隐患）
+        # 完璧级联（X-01）：事实与记忆同一事务；级联失败整体回滚并报 500，记忆不删
         try:
-            from sqlmodel import col, delete, select
+            record_ops_service.purge_facts_for_memory(session, memory_id)
+            session.delete(m)
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            logger.exception("delete: cascade fact deletion failed, rolled back")
+            raise HTTPException(
+                500, "cascade fact deletion failed; memory NOT deleted (rolled back)"
+            ) from exc
 
-            from lantai.models.tables import FactAtomic, FactEntity
-
-            sub_facts = session.exec(
-                select(FactAtomic.id).where(FactAtomic.source_memory_id == memory_id)
-            ).all()
-            if sub_facts:
-                session.exec(delete(FactEntity).where(col(FactEntity.fact_id).in_(sub_facts)))
-            session.exec(delete(FactAtomic).where(FactAtomic.source_memory_id == memory_id))
-        except Exception as e:
-            logger.warning("delete: cascade fact deletion failed: %s", e)
-
-        session.delete(m)
-        session.commit()
+        # 向量库在 SQL 提交成功后再删（与 promoter.delete_memory 同序）
+        vector_removed = record_ops_service.sync_vector_delete(memory_id)
+        if not vector_removed:
+            warnings.append("vector delete failed")
 
         return {
             "ok": True,
@@ -560,6 +556,10 @@ def merge_memories(req: MergeReq, principal=Depends(get_current_user)):
         tgt.importance = new_importance
         tgt.version = (tgt.version or 1) + 1
 
+        # 完璧血统（X-01）：source 的事实改挂到 target，避免 source 删除后留下孤儿事实
+        from lantai.services import record_ops_service
+
+        record_ops_service.repoint_facts(session, src.id, tgt.id)
         session.delete(src)
 
         # 创建 supersedes 边记录

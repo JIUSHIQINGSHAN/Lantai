@@ -11,7 +11,15 @@ from sqlmodel import Session, col, select
 
 from lantai.core.acl import viewer_of
 from lantai.core.time import utcnow
-from lantai.models.tables import FactAtomic, FactEntity
+from lantai.models.tables import FactAtomic, FactEntity, MemoryItem
+
+
+def _source_alive_clause():
+    """来源存活谓词（需配合 FactAtomic LEFT JOIN MemoryItem 使用）。
+
+    无来源事实放行；有来源事实要求来源记忆存在且 status == 'active'。
+    """
+    return (col(FactAtomic.source_memory_id).is_(None)) | (col(MemoryItem.status) == "active")
 
 
 def _fact_scope(principal: Any = None):
@@ -67,8 +75,10 @@ def get_facts_by_entity(session: Session, entity_name: str, principal: Any = Non
     # 2. 查询 FactAtomic 事实主表（带归属过滤与置信度过滤）
     stmt_fact = (
         select(FactAtomic)
+        .outerjoin(MemoryItem, col(FactAtomic.source_memory_id) == col(MemoryItem.id))
         .where(col(FactAtomic.id).in_(fact_ids))
         .where(FactAtomic.confidence > 0.0)
+        .where(_source_alive_clause())
     )
     scope = _fact_scope(principal)
     if scope is not None:
@@ -84,8 +94,10 @@ def get_facts_by_predicate(session: Session, predicate: str, principal: Any = No
 
     stmt_fact = (
         select(FactAtomic)
+        .outerjoin(MemoryItem, col(FactAtomic.source_memory_id) == col(MemoryItem.id))
         .where(FactAtomic.predicate == predicate)
         .where(FactAtomic.confidence > 0.0)
+        .where(_source_alive_clause())
     )
     scope = _fact_scope(principal)
     if scope is not None:
@@ -130,14 +142,15 @@ def search_atomic_facts_by_query(
         )
         matched_fact_ids.update(session.exec(stmt_entity).all())
 
-    # 查 FactAtomic，严格约束 confidence > 0.0，且来源记忆必须存在且处于 active 状态（防已删除/已归档记忆事实泄漏）
-    from lantai.models.tables import MemoryItem
-
+    # 查 FactAtomic，严格约束 confidence > 0.0。
+    # 来源约束只作用于「有来源」的事实：source_memory_id 为空的事实（schema 允许，
+    # 抽取/手工/基准写入都会产生）照常可检索；有来源的事实，来源记忆必须仍存在且为
+    # active（来源已删除 -> LEFT JOIN 得 NULL -> 排除；来源已归档/撤回 -> 排除）。
     stmt_fact = (
         select(FactAtomic)
-        .join(MemoryItem, col(FactAtomic.source_memory_id) == col(MemoryItem.id))
+        .outerjoin(MemoryItem, col(FactAtomic.source_memory_id) == col(MemoryItem.id))
         .where(FactAtomic.confidence > 0.0)
-        .where(col(MemoryItem.status) == "active")
+        .where(_source_alive_clause())
     )
 
     scope = _fact_scope(principal)

@@ -779,8 +779,18 @@ def delete_memory(memory_id: str, principal=None) -> dict:
                 )
             except HTTPException as exc:
                 return {"ok": False, "reason": f"forbidden: {exc.detail}"}
-        s.delete(mem)
-        sync_fts(s, memory_id, None)
-        s.commit()
+        # 完璧级联（X-01）：事实与记忆同一事务删除；任何一步失败整体回滚，记忆不删
+        from lantai.services.record_ops_service import purge_facts_for_memory
+
+        try:
+            purge_facts_for_memory(s, memory_id)
+            s.delete(mem)
+            sync_fts(s, memory_id, None)
+            s.commit()
+        except Exception as exc:
+            s.rollback()
+            logger.exception("delete_memory %s: 级联删除失败，已整体回滚", memory_id)
+            return {"ok": False, "reason": f"cascade delete failed, rolled back: {exc}"}
+    # 向量库在 SQL 提交成功后再删：SQL 回滚时向量仍在，三处保持一致
     delete_memory_item(memory_id)
     return {"ok": True}
