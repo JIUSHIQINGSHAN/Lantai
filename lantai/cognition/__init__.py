@@ -18,6 +18,12 @@ from lantai.cognition.sanxing import (
     SanxingHealthSnapshot,
     inspect_memory_health,
 )
+from lantai.cognition.shishi import (
+    IntegrityVerificationResult,
+    ShishiEngine,
+    ShishiVaultBlock,
+    compute_content_digest,
+)
 from lantai.cognition.tanyi import (
     ProbeInsertion,
     ResolutionIntent,
@@ -42,6 +48,10 @@ __all__ = [
     "SanxingAuditResult",
     "SanxingEngine",
     "SanxingHealthSnapshot",
+    "ShishiEngine",
+    "ShishiVaultBlock",
+    "IntegrityVerificationResult",
+    "compute_content_digest",
     "TanyiEngine",
     "TanyiProbeItem",
     "TanyiProbingEngine",
