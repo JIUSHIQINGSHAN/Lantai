@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-10-30 - 校雠（Jiaochou · 智能语义去重与知识对齐订误引擎）
+
+> 版本代号「校雠」：出自西汉刘向《别录》「一人读书，校其上下，得谬误而差正之，谓之校；一人持本，一人读书，若冤家相对，谓之雠」，喻指多源互校、勘误订正与语义去重——对应本版主题「智能语义去重与知识对齐订误引擎、双源对齐校勘、存量冗余扫描与认知上下文校雠切面，ADR-0070 落地」：突破既有仅在候选入库瞬间进行单一余弦去重的局限，构建面向生产环境的高性能校勘对齐引擎 `JiaochouEngine`（票 01）。支持针对任意两段记忆/事实执行细粒度语义对齐校勘（`compare_and_collate`），精准抽取共同事实与增量分歧点，输出结构化订误动作建议（`merge` / `update` / `retain_both`）；支持存量全库活跃记忆的近义冗余聚类扫描（`scan_redundancy`）；全链路融合正文与差异总结强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁 miss 不脏写）。打通服务层 `jiaochou_service.py`、HTTP REST 路由（`POST /jiaochou/collate`、`GET /jiaochou/scan`）、MCP 工具（`jiaochou_collate`，工具池扩充至 83 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，校雠对齐切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.49-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心校雠语义去重与知识对齐引擎 JiaochouEngine（票 01，详见 `lantai/cognition/jiaochou.py` 与 `tests/test_jiaochou_engine_smoke.py`）**：
+  - 校勘对齐模型：定义 `CollationDiff` 契约，统一纳管重合词条、差异分歧摘要与融合建议提案，支持樊篱安全渲染；
+  - 双源事实对齐算法：实现 `compare_and_collate`，支持多粒度分词重合度计算、增量细节提炼与订误动作推荐；
+  - 存量库冗余扫描：实现 `scan_redundancy`，多对高阶聚类扫描与近义冗余记忆簇识别；
+  - 樊篱安全隔离与行级 ACL：校勘融合提案强制施加 `<memory_data>` 围栏隔离，严格校验租户与用户属主；
+  - 交付端到端不 mock 冒烟测试 `tests/test_jiaochou_engine_smoke.py`（双源事实对齐差异提取、存量冗余扫描、樊篱包裹防注入、行级 ACL 隔离 4 个独立接缝验证全绿）。
+- **校雠服务层、REST 路由、MCP 83 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/jiaochou_service.py`、`lantai/api/routes_jiaochou.py`、`lantai/cli/mcp.py`、`lantai/cognition/context.py` 与 `tests/test_jiaochou_api_smoke.py`）**：
+  - 服务层封装：新增 `collate_memories_service` 与 `scan_redundancy_service`，统一管理 DB 会话生命周期与校勘参数调度；
+  - HTTP REST 路由：新增 `POST /jiaochou/collate` 与 `GET /jiaochou/scan` 鉴权端点，挂载入 `app.py` 核心鉴权路由；
+  - MCP 工具池扩容至 83 工具里程碑：注册 `jiaochou_collate` 工具并实现 `handle_jiaochou_collate` 处理器，`TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫全绿；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 引入 `jiaochou_digest` 切面，结构化渲染校勘建议与相似度标尺（樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_jiaochou_api_smoke.py`（服务层调用、REST 端点、MCP 协议往返与 83 工具对齐、认知上下文校勘切面 4 个独立接缝验证全绿）。
+
 ## [0.48.0] - 2026-10-30 - 拾遗（Shiyi · 遗漏补偿与零召回自适应补救引擎）
 
 > 版本代号「拾遗」：出自唐代谏官官职「拾遗」（杜甫曾任左拾遗），取「捡回遗漏之物、补苴罅漏」之意——对应本版主题「遗漏补偿与零召回自适应补救引擎、分阶模糊回溯、跨辨域安全放宽与认知上下文补偿切面，ADR-0069 落地」：突破常规检索在模糊长尾表述或同义分词偏差下直接返空的局限，构建面向生产环境的高性能自适应补救引擎 `ShiyiEngine`（票 01）。支持针对模糊失配查询启动分级补救（Tier 1: 宽松结巴分词与字符级子序列模糊召回；Tier 2: 跨辨域与分轨安全放宽；Tier 3: 衰减时效回拨）；定义清晰的补救候选契约 `RemedyCandidate`，明确标注补救梯队（`remedy_tier`）与加权置信度；全链路正文与理由强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁漏不越权）。打通服务层 `shiyi_service.py`、HTTP REST 路由（`POST /shiyi/remedy`）、MCP 工具（`shiyi_remedy`，工具池扩充至 82 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，拾遗补救切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.48-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
