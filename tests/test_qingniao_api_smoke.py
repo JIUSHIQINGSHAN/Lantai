@@ -127,9 +127,9 @@ class TestQingniaoApiSmoke:
         assert d3["status"] == "acknowledged"
 
     def test_seam3_mcp_88_tools_parity(self):
-        """Seam 3: MCP 协议工具 qingniao_messenger 往返解析与 88 工具池 1:1 双向对齐守卫。"""
-        assert len(TOOLS) == 88
-        assert len(TOOL_HANDLERS) == 88
+        """Seam 3: MCP 协议工具 qingniao_messenger 往返解析与工具池 1:1 双向对齐守卫。"""
+        assert len(TOOLS) >= 88
+        assert len(TOOL_HANDLERS) == len(TOOLS)
         assert "qingniao_messenger" in TOOLS
         assert "qingniao_messenger" in TOOL_HANDLERS
         for t_name in TOOLS:

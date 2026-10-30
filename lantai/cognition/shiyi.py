@@ -225,13 +225,12 @@ class ShiyiEngine:
 
         candidates.sort(key=lambda x: x[0], reverse=True)
         remedied_items = [c.to_dict(fenced=True) for _, c in candidates[:limit]]
-        remedy_candidates = [c for _, c in candidates[:limit]]
+        self._last_raw_candidates = [c for _, c in candidates[:limit]]
 
         return {
             "query": query,
             "is_remedied": len(remedied_items) > 0,
             "remedied_items": remedied_items,
-            "_raw_candidates": remedy_candidates,
         }
 
     def remedy_search_pipeline(
@@ -242,11 +241,11 @@ class ShiyiEngine:
         limit: int = 5,
     ) -> list[dict[str, Any]]:
         """为混合检索主流水线零召回场景提供自适应补救结果项列表 (ADR-0076)。"""
-        res = self.remedy_recall(
+        self.remedy_recall(
             query=query,
             domain=domain,
             allow_domain_relax=allow_domain_relax,
             limit=limit,
         )
-        raw_candidates = res.get("_raw_candidates", [])
+        raw_candidates = getattr(self, "_last_raw_candidates", [])
         return [c.to_search_result() for c in raw_candidates]
