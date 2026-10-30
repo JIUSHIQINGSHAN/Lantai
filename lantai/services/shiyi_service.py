@@ -29,3 +29,32 @@ def remedy_recall_service(
             allow_domain_relax=allow_domain_relax,
             limit=limit,
         )
+
+
+def remedy_pipeline_service(
+    *,
+    query: str,
+    top_k: int = 5,
+    domain: str | None = None,
+    allow_shiyi: bool = True,
+    principal: Principal | None = None,
+) -> dict[str, Any]:
+    """主流水线混合检索结合拾遗自适应补偿的服务层封装 (ADR-0076)。"""
+    from lantai.retrieval.hybrid import hybrid_search
+
+    with db.get_session() as session:
+        results = hybrid_search(
+            query=query,
+            top_k=top_k,
+            domain=domain,
+            session=session,
+            principal=principal,
+            enable_shiyi=allow_shiyi,
+        )
+        is_remedied = any(r.get("is_remedied", False) for r in results)
+        return {
+            "query": query,
+            "total": len(results),
+            "is_remedied": is_remedied,
+            "results": results,
+        }

@@ -1653,6 +1653,27 @@ def handle_shiyi_remedy(params: dict) -> dict:
     )
 
 
+def handle_shiyi_pipeline(params: dict) -> dict:
+    """拾遗：主流水线混合检索结合自适应零召回补偿（v0.55 ADR-0076）。"""
+    query = params.get("query")
+    if not query:
+        return {"error": "query is required"}
+    top_k = int(params.get("top_k", 5))
+    domain = params.get("domain")
+    allow_shiyi = bool(params.get("allow_shiyi", True))
+
+    from lantai.services.shiyi_service import remedy_pipeline_service
+
+    p = _principal_from_params(params)
+    return remedy_pipeline_service(
+        query=query,
+        top_k=top_k,
+        domain=domain,
+        allow_shiyi=allow_shiyi,
+        principal=p,
+    )
+
+
 def handle_jiaochou_collate(params: dict) -> dict:
     """校雠：智能语义去重与知识对齐订误（v0.49 ADR-0070）。"""
     text_a = params.get("text_a")
@@ -3159,6 +3180,34 @@ TOOLS = {
             },
         },
     },
+    "shiyi_pipeline": {
+        "description": "拾遗：主流水线混合检索结合自适应零召回补偿（v0.55 ADR-0076）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "主流水线检索与自适应补救目标查询文本",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "description": "最大召回条数（默认 5）",
+                    "default": 5,
+                },
+                "domain": {
+                    "type": "string",
+                    "description": "限定辨域：user/session/agent",
+                },
+                "allow_shiyi": {
+                    "type": "boolean",
+                    "description": "零召回时是否允许自适应唤醒拾遗补偿",
+                    "default": True,
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+            "required": ["query"],
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -3249,6 +3298,7 @@ TOOL_HANDLERS = {
     "cehou_observe": handle_cehou_observe,
     "shishi_vault": handle_shishi_vault,
     "qingniao_messenger": handle_qingniao_messenger,
+    "shiyi_pipeline": handle_shiyi_pipeline,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。
