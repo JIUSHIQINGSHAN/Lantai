@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+import jieba
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
@@ -247,8 +248,9 @@ class ZuozhengEngine:
             return self._verify_claim(s, claim, limit)
 
     def _verify_claim(self, s: Session, claim: str, limit: int) -> dict[str, Any]:
-        # 提取实词 tokens
-        tokens = set(re.findall(r"[\w一-龥]+", claim.lower()))
+        # 中文分词与实词提取
+        cut_words = [w.strip().lower() for w in jieba.cut(claim) if len(w.strip()) > 1]
+        tokens = set(cut_words) if cut_words else set(re.findall(r"[\w一-龥]+", claim.lower()))
         meaningful_tokens = {t for t in tokens if len(t) > 1} or tokens
 
         stmt = select(MemoryItem).where(MemoryItem.status == "active")
