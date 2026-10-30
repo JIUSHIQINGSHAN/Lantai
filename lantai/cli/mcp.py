@@ -1705,6 +1705,31 @@ def handle_niyi_deliberate(params: dict) -> dict:
     )
 
 
+def handle_diben_anchor(params: dict) -> dict:
+    """底本：跨会话现场定本与认知状态传承（v0.51 ADR-0072）。"""
+    session_id = params.get("session_id")
+    blocks = params.get("blocks")
+    query = params.get("query")
+    detect_drift = bool(params.get("detect_drift", False))
+
+    from lantai.services.diben_service import (
+        analyze_drift_service,
+        get_active_anchor_service,
+        synthesize_anchor_service,
+    )
+
+    p = _principal_from_params(params)
+    if detect_drift and query:
+        return analyze_drift_service(query=query, session_id=session_id, principal=p)
+    if session_id and blocks:
+        return synthesize_anchor_service(session_id=session_id, blocks=blocks, principal=p)
+
+    active = get_active_anchor_service(session_id=session_id, principal=p)
+    if active:
+        return active
+    return {"message": "No active session anchor found", "session_id": session_id}
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -2836,6 +2861,32 @@ TOOLS = {
             },
         },
     },
+    "diben_anchor": {
+        "description": "底本：跨会话现场定本固化、最新底本读取与意图漂移检测（v0.51 ADR-0072）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "会话标识 ID",
+                },
+                "blocks": {
+                    "type": "object",
+                    "description": "五段认知现场（cp_active_intent/cp_next_action/cp_current_work/cp_key_decisions/cp_open_notes）",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "当前输入文本（用于检测相对于激活底本的意图漂移）",
+                },
+                "detect_drift": {
+                    "type": "boolean",
+                    "description": "是否执行意图漂移偏转检测",
+                    "default": False,
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -2922,6 +2973,7 @@ TOOL_HANDLERS = {
     "shiyi_remedy": handle_shiyi_remedy,
     "jiaochou_collate": handle_jiaochou_collate,
     "niyi_deliberate": handle_niyi_deliberate,
+    "diben_anchor": handle_diben_anchor,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

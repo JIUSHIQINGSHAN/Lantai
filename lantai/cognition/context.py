@@ -60,6 +60,8 @@ class CognitiveContext:
     jiaochou_digest: list[dict] | None = None
     # 拟议（v0.50 Ticket 02 ADR-0071）：认知演化提案审议与因果变化推演切面
     niyi_digest: list[dict] | None = None
+    # 底本（v0.51 Ticket 02 ADR-0072）：跨会话现场定本与认知状态传承切面
+    diben_digest: dict | None = None
 
     def to_prompt(self) -> str:
         """
@@ -315,6 +317,32 @@ class CognitiveContext:
                 )
 
             sections.insert(0, "\n".join(ny_lines))
+
+        # 底本（ADR-0072）：若有跨会话现场定本，渲染底本切面
+        if self.diben_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            db_data = self.diben_digest
+            sid = db_data.get("session_id", "active")
+            intent = db_data.get("active_intent", "")
+            action = db_data.get("next_action", "")
+            work = db_data.get("working_context", "")
+            decisions = db_data.get("key_decisions") or []
+            notes = db_data.get("open_notes") or []
+
+            db_lines = [f"## Canonical Session Anchor (底本 · 会话 {sid}):"]
+            if intent:
+                db_lines.append(f"- **在做 (Intent)**: {wrap_as_data(str(intent))}")
+            if action:
+                db_lines.append(f"- **下一步 (Next Action)**: {wrap_as_data(str(action))}")
+            if work:
+                db_lines.append(f"- **工作区 (Working Context)**: {wrap_as_data(str(work))}")
+            if decisions:
+                db_lines.append(f"- **关键决策 (Decisions)**: {wrap_as_data('; '.join(decisions))}")
+            if notes:
+                db_lines.append(f"- **未竟待办 (Open Notes)**: {wrap_as_data('; '.join(notes))}")
+
+            sections.insert(0, "\n".join(db_lines))
 
         from lantai.llm.fence import fence_declaration
 

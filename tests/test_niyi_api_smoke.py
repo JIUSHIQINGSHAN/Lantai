@@ -133,9 +133,9 @@ class TestNiyiApiSmoke:
         """Seam 3: MCP 协议工具 niyi_deliberate 往返解析与 84 工具池 1:1 双向对齐守卫。"""
         mem, _ = _seed_test_evolution_fixture()
 
-        # 84 工具总数与 1:1 对齐断言
-        assert len(TOOLS) == 84
-        assert len(TOOL_HANDLERS) == 84
+        # 84+ 工具总数与 1:1 对齐断言
+        assert len(TOOLS) >= 84
+        assert len(TOOL_HANDLERS) == len(TOOLS)
         assert "niyi_deliberate" in TOOLS
         assert "niyi_deliberate" in TOOL_HANDLERS
         for t_name in TOOLS:

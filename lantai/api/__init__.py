@@ -8,6 +8,7 @@ from .routes_cognitive import router as routes_cognitive_router
 from .routes_conflicts import router as routes_conflicts_router
 from .routes_crystals import router as routes_crystals_router
 from .routes_dialogue import router as routes_dialogue_router
+from .routes_diben import router as routes_diben_router
 from .routes_digest import router as routes_digest_router
 from .routes_dossiers import router as routes_dossiers_router
 from .routes_edges import router as routes_edges_router
@@ -86,5 +87,6 @@ __all__ = [
     "routes_shiyi_router",
     "routes_jiaochou_router",
     "routes_niyi_router",
+    "routes_diben_router",
     "routes_zhishu_router",
 ]
