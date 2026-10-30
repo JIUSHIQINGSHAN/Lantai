@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-10-30 - 拟议（Niyi · 认知演化提案审议与因果变化推演引擎）
+
+> 版本代号「拟议」：出自《易·系辞上》「拟之而后言，议之而后动，拟议以成其变化」，喻指在认知发生实质变更前，先作周详模拟推演，再行审议评估，最终成其健全之认知演化——对应本版主题「认知演化提案审议与因果变化推演引擎、因果拓扑断裂风险评级、未决提案互斥审计与认知上下文拟议切面，ADR-0071 落地」：突破既有演化模块点对点孤立变更、缺乏拓扑全局因果推演与未决提案冲突排查的局限，构建面向生产环境的高性能演化审议推演引擎 `NiyiEngine`（票 01）。支持针对任意提议的认知变更（`add` / `update` / `merge` / `deprecate`）执行因果拓扑影响推演（`deliberate_proposal`），模拟对相连 `MemoryEdge` 因果边的冲击，精准输出风险评级（`low` / `medium` / `high`）与结构化审议结论（`DeliberationOutcome`）；支持当前租户范围内未决提案池的并发竞争与互斥审计（`audit_pending_proposals`），自动发现针对同一目标的冲突提案对；全链路审议推论与审计摘要强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁 miss 不脏写）。打通服务层 `niyi_service.py`、HTTP REST 路由（`POST /niyi/deliberate`、`GET /niyi/audit`）、MCP 工具（`niyi_deliberate`，工具池扩充至 84 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，拟议审议切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.50-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心拟议因果推演与结构化提案引擎 NiyiEngine（票 01，详见 `lantai/cognition/niyi.py` 与 `tests/test_niyi_engine_smoke.py`）**：
+  - 审议推演模型：定义 `DeliberationOutcome` 契约，统一纳管打补丁前后状态快照、关联因果边冲击详情、风险等级与审议理由，支持樊篱安全渲染；
+  - 提案因果拓扑推演：实现 `deliberate_proposal`，模拟废弃/更新对下游因果链条的影响，高风险操作前瞻预警；
+  - 未决提案冲突审计：实现 `audit_pending_proposals`，全域扫描当前租户内未决提案，识别互斥竞争对并输出结构化审计摘要；
+  - 樊篱安全隔离与行级 ACL：审议推论与审计摘要强制施加 `<memory_data>` 围栏隔离，严格校验租户与用户属主（宁 miss 不脏写）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_niyi_engine_smoke.py`（提案变更因果影响推演、未决提案互斥审计、樊篱包裹防注入、行级 ACL 隔离 4 个独立接缝验证全绿）。
+- **拟议服务层、REST 路由、MCP 84 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/niyi_service.py`、`lantai/api/routes_niyi.py`、`lantai/cli/mcp.py`、`lantai/cognition/context.py` 与 `tests/test_niyi_api_smoke.py`）**：
+  - 服务层封装：新增 `deliberate_proposal_service` 与 `audit_proposals_service`，统一管理 DB 会话生命周期与演化推演调度；
+  - HTTP REST 路由：新增 `POST /niyi/deliberate` 与 `GET /niyi/audit` 鉴权端点，挂载入 `app.py` 核心鉴权路由；
+  - MCP 工具池扩容至 84 工具里程碑：注册 `niyi_deliberate` 工具并实现 `handle_niyi_deliberate` 处理器，`TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫全绿；
+  - 认知上下文增强：`CognitiveContext.to_prompt()` 引入 `niyi_digest` 切面，结构化渲染提案演化推论与风险评级（樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_niyi_api_smoke.py`（服务层调用、REST 端点、MCP 协议往返与 84 工具对齐、认知上下文拟议切面 4 个独立接缝验证全绿）。
+
 ## [0.49.0] - 2026-10-30 - 校雠（Jiaochou · 智能语义去重与知识对齐订误引擎）
 
 > 版本代号「校雠」：出自西汉刘向《别录》「一人读书，校其上下，得谬误而差正之，谓之校；一人持本，一人读书，若冤家相对，谓之雠」，喻指多源互校、勘误订正与语义去重——对应本版主题「智能语义去重与知识对齐订误引擎、双源对齐校勘、存量冗余扫描与认知上下文校雠切面，ADR-0070 落地」：突破既有仅在候选入库瞬间进行单一余弦去重的局限，构建面向生产环境的高性能校勘对齐引擎 `JiaochouEngine`（票 01）。支持针对任意两段记忆/事实执行细粒度语义对齐校勘（`compare_and_collate`），精准抽取共同事实与增量分歧点，输出结构化订误动作建议（`merge` / `update` / `retain_both`）；支持存量全库活跃记忆的近义冗余聚类扫描（`scan_redundancy`）；全链路融合正文与差异总结强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁 miss 不脏写）。打通服务层 `jiaochou_service.py`、HTTP REST 路由（`POST /jiaochou/collate`、`GET /jiaochou/scan`）、MCP 工具（`jiaochou_collate`，工具池扩充至 83 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，校雠对齐切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.49-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
