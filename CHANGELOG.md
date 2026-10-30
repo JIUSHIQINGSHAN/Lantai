@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-10-30 - 札记（Zhaji · 工作区认知暂存便签深度演化、即时上下文熔断与双轨同步闭环）
+
+> 版本代号「札记」：出自古代读书治学摘记要点之木简便签（《文史通义》论治学重札记积累），取「即时留存、随手提炼、去粗存精」之意——对应本版主题「工作区认知暂存便签深度演化、即时上下文熔断与双轨同步闭环，ADR-0080 落地」：突破既有临时便签仅停留在扁平字符串覆盖覆盖、缺乏认知实体契约与结构化分段提炼的局限，构建面向生产环境的一级认知提炼引擎 `ZhajiEngine` 与 `ZhajiItem` / `ZhajiDigestResult` 契约（票 01）。支持多槽位结构化提取（`active_goals`、`key_findings`、`open_questions`、`notes`）；实现平滑字符预算控制与槽位优先保整熔断机制（按槽位优先级 `goals > open_questions > key_findings > notes` 优先保留，严守「宁 miss 不脏写」）；严守行级租户属主安全隔离与樊篱数据围栏（`wrap_as_data`）防提示词注入防御。全面重构服务层 `scratchpad_service.py`，提供 `zhaji_distill_service` 统一入口；挂载 HTTP REST 路由（`POST /scratchpad/distill`）；MCP 工具池扩充至 **93 工具里程碑**（新增 `zhaji_distill` 札记提纯工具），实现 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫；增强认知上下文 `CognitiveContext`，将工作区提纯便签深度整合至提示词 `zhaji_digest` 切面中（票 02）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.59-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心札记提炼演化引擎 ZhajiEngine 与认知层收敛（票 01，详见 `lantai/cognition/zhaji.py` 与 `tests/test_zhaji_engine_smoke.py`）**：
+  - 札记多槽位结构化领域契约：定义 `ZhajiItem` 与 `ZhajiDigestResult` 契约，输出结构化槽位清单、槽位计数、紧凑文本、预算熔断标记与樊篱数据围栏包裹；
+  - 多模式自然文本提纯模型：支持 Markdown 标题行、多前缀列表（`-`、`*`、`•`）与单行管道符（`|`）自然标注提取；
+  - 平滑字符预算控制与受控截断：按槽位优先级严格保整截断，耗尽即止，杜绝破损 JSON 与低优先级污染（宁 miss 不脏写）；
+  - 行级租户属主 ACL 隔离与樊篱防御：严格校验 `_check_access` 杜绝跨租户会话便签越权查看与覆盖（宁漏不越权），全链路正文采用 `<memory_data>` 围栏隔离；
+  - 交付端到端不 mock 冒烟测试 `tests/test_zhaji_engine_smoke.py`（纯函数多槽位解析与紧凑提纯、真实 SQLite DB 会话持久化与流转、平滑字符预算受控保整截断、行级 ACL 隔离与樊篱防注入 4 个独立接缝验证全绿）。
+- **札记服务层重构、REST 路由、MCP 93 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/scratchpad_service.py`、`lantai/api/routes_scratchpad.py`、`lantai/cli/mcp.py` 与 `tests/test_zhaji_api_smoke.py`）**：
+  - 服务层封装：基于 `ZhajiEngine` 封装 `scratchpad_service.py`，提供 `zhaji_distill_service` 只读与落库统一入口；
+  - HTTP REST 路由：新增 `POST /scratchpad/distill` 路由端点；
+  - MCP 扩充至 93 工具里程碑：注册 `zhaji_distill` 工具规范定义并挂载处理器，保持 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向对齐；
+  - 认知上下文增强：在 `CognitiveContext` 中引入 `zhaji_digest` 属性，并在 `to_prompt()` 中渲染结构化札记切面（樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_zhaji_api_smoke.py`（服务层调度、REST 端点校验、MCP 93 工具协议往返与对齐、认知切面提示词渲染 4 个独立接缝验证全绿）。
+
 ## [0.58.0] - 2026-10-30 - 三省（Sanxing · 认知层反思自省深度演化、因果违例闭环与健康自愈引擎）
 
 > 版本代号「三省」：出自《论语·学而》「吾日三省吾身」，取「审视功过、反思内省、自省自愈」之意——对应本版主题「认知层反思自省深度演化、因果违例闭环与健康自愈引擎，ADR-0079 落地」：突破既有健康诊断仅停留在静态只读扫描、缺乏与认知演化深度联动与自愈闭环的局限，构建面向生产环境的一级自省自愈引擎 `SanxingEngine` 与 `SanxingRemedyResult` 契约（票 01）。引入四大缺陷的主动自愈处置策略（针对被取代陈旧事实的 `supersede_retract` 撤回流转、针对过期条目的 `archive_expire` 自动归档、针对未决冲突的 `arbitrate_dispatch` 标记排查、针对低效碎片的 `demote_deprecate` 降权淘汰）；严守行级租户属主安全隔离与樊篱数据围栏（`wrap_as_data`）防提示词注入防御。全面重构服务层 `sanxing_service.py`，提供 `sanxing_diagnose_service` 与 `sanxing_remedy_service`；挂载 HTTP REST 路由（`GET /sanxing/diagnose`、`POST /sanxing/remedy`）；MCP 工具池扩充至 **92 工具里程碑**（新增 `sanxing_remedy` 自省自愈工具），实现 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫；增强认知上下文 `CognitiveContext`，将反思自愈深度整合至提示词切面中（票 02）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.58-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
