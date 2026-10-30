@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.55.0] - 2026-10-30 - 拾遗（Shiyi · 主流水线零召回自适应补救闭环与深度检索治理）
+## [0.56.0] - 2026-10-30 - 披沙（Pisha · 候选记忆递归提纯去噪、多轨指代消解与认知引擎收敛）
+
+> 版本代号「披沙」：出自《世说新语·德行》「披沙拣金，往往见宝」，取「去粗取精、沙中淘金、去噪提纯」之意——对应本版主题「候选记忆递归提纯去噪、多轨指代消解与认知引擎收敛，ADR-0077 落地」：突破早期候选精炼工具分散脆弱、缺少结构化审计契约与降级保障的局限，构建面向生产环境的一级认知引擎 `PishaEngine` 与 `PishaResult` 契约（票 01）。引入两阶段确定性规则管线（启发式口语化副词助词修剪 `colloquial_pruned`、基于实体提示的确定性代词消解 `pronoun_resolutions`），并在 LLM 异常时提供严格确定性保底（纯噪音直接归零拒绝，有规则收益时平滑校准，宁 miss 不脏写）；严守行级租户属主安全隔离与樊篱数据围栏（`wrap_as_data`）防提示词注入防御。全面重构服务层 `refine_service.py`，新增统一入口 `pisha_refine_service` 并保持历史向下兼容；挂载 HTTP REST 路由（`POST /pisha/refine`、`POST /pisha/batch`）；MCP 工具池扩充至 **90 工具里程碑**（新增 `pisha_refine`），实现 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向一致性守卫；增强认知上下文 `CognitiveContext`，将提纯结果深度整合至提示词切面中（票 02）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.56-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
+
+### Added
+
+- **核心披沙提纯去噪引擎 PishaEngine 与认知层收敛（票 01，详见 `lantai/cognition/pisha.py` 与 `tests/test_pisha_engine_smoke.py`）**：
+  - 提纯去噪结构化契约：定义 `PishaResult` 契约，输出原始/精炼文本、原置信度与重估置信度、有效性标记、辨域划分、指代消解映射、去噪标签、判定理由与樊篱围栏内容；
+  - 确定性与启发式两阶段清洗：在 LLM 调用前执行口语噪音过滤与实体提示词典消解，并在 LLM 失败时自动降级保底，避免因外部模型抖动脏写或丢失候选；
+  - 候选记录落库与生命周期联动：支持单条与批量候选扫描，纯噪音自动置为 `rejected` 归档，高置信提纯条目平滑更新至候选池并注入审计线索；
+  - 行级租户属主 ACL 隔离与樊篱防御：严格校验 `_check_access` 杜绝越权（宁漏不越权），全链路正文采用 `<memory_data>` 围栏隔离；
+  - 交付端到端不 mock 冒烟测试 `tests/test_pisha_engine_smoke.py`（启发式与确定性实体消解、SQLite 单条记录更新与状态流转、批量模糊区间扫描、行级 ACL 隔离与樊篱防御 4 个独立接缝验证全绿）。
+- **披沙服务层重构、REST 路由、MCP 90 工具池扩充与认知上下文切面（票 02，详见 `lantai/services/refine_service.py`、`lantai/api/routes_pisha.py`、`lantai/cli/mcp.py` 与 `tests/test_pisha_api_smoke.py`）**：
+  - 服务层重构：统一基于 `PishaEngine` 实现 `refine_memory_text`、`refine_candidate_record`、`batch_refine_candidates`，并提供 `pisha_refine_service` 统一入口；
+  - HTTP REST 路由：新增 `POST /pisha/refine` 与 `POST /pisha/batch` 路由端点，并挂载入 `CORE_ROUTERS`；
+  - MCP 扩充至 90 工具里程碑：注册 `pisha_refine` 工具规范定义并挂载处理器，保持 `TOOLS` 与 `TOOL_HANDLERS` 1:1 双向对齐；
+  - 认知上下文增强：在 `CognitiveContext` 中引入 `pisha_digest` 属性，并在 `to_prompt()` 中渲染结构化提纯切面（樊篱包裹）；
+  - 交付端到端不 mock 冒烟测试 `tests/test_pisha_api_smoke.py`（服务层调用、REST 端点、MCP 90 工具协议往返与对齐、认知切面提示词渲染 4 个独立接缝验证全绿）。
 
 > 版本代号「拾遗」：出自唐代谏官官职「拾遗」（杜甫曾任左拾遗），取「捡回遗漏之物、补苴罅漏」之意——对应本版主题「主流水线零召回自适应补救闭环、检索召回深度治理与端到端补救切面融合，ADR-0076 落地」：突破既有检索主流水线在初始初筛未命中或经衰减/时效/辨域过滤后出现零召回（Zero-Recall）直接返空的局限，构建面向生产环境的主流水线零召回自适应拾遗补救闭环（票 01）。在 `hybrid_search` 中原生打通 `ShiyiEngine.remedy_search_pipeline`，在零召回时自适应唤醒宽松分词、字符级子序列与辨域安全放宽补救阶梯；补救条目通过统一契约 `to_search_result()` 转换为标准检索结果项，携带 `is_remedied: True`、`remedy_tier` 与 `remedy_reason`；支持受控兼容开关 `enable_shiyi`，关闭时 100% 保持旧有静默返回行为；全链路补救正文强制经由樊篱（`wrap_as_data`）数据围栏包裹，严密防御提示注入，并严守行级租户属主安全隔离纪律（宁漏不越权）。打通服务层 `remedy_pipeline_service`、HTTP REST 路由（`POST /shiyi/pipeline`）、MCP 工具（`shiyi_pipeline`，工具池扩充至 89 个里程碑且 1:1 双向对齐）与认知上下文 `CognitiveContext`（票 02，拾遗补救切面结构化呈现）。全量覆盖端到端不 mock 冒烟测试。票据 `.scratch/v0.55-next-window-2026-11/`（票 01/02 全部收口，03 发布门禁）。
 

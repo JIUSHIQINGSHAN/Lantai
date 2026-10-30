@@ -108,9 +108,9 @@ class TestShiyiPipelineApiSmoke:
         assert data["is_remedied"] is True
 
     def test_seam3_mcp_pipeline_tool_and_89_parity(self):
-        """Seam 3: MCP 工具 shiyi_pipeline 处理与 89 工具池 1:1 双向对齐。"""
-        assert len(TOOLS) == 89
-        assert len(TOOL_HANDLERS) == 89
+        """Seam 3: MCP 工具 shiyi_pipeline 处理与 89+ 工具池 1:1 双向对齐。"""
+        assert len(TOOLS) >= 89
+        assert len(TOOL_HANDLERS) == len(TOOLS)
         assert "shiyi_pipeline" in TOOLS
         assert "shiyi_pipeline" in TOOL_HANDLERS
 
