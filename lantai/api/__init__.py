@@ -30,6 +30,7 @@ from .routes_persona import router as routes_persona_router
 from .routes_probing import router as routes_probing_router
 from .routes_prompts import router as routes_prompts_router
 from .routes_qijuzhu import router as routes_qijuzhu_router
+from .routes_qingniao import router as routes_qingniao_router
 from .routes_recall_chain import router as routes_recall_chain_router
 from .routes_retrieval import router as routes_retrieval_router
 from .routes_scenes import router as routes_scenes_router
@@ -78,6 +79,7 @@ __all__ = [
     "routes_work_items_router",
     "routes_prompts_router",
     "routes_persona_router",
+    "routes_qingniao_router",
     "routes_scratchpad_router",
     "routes_terminal_router",
     "routes_tanyi_router",

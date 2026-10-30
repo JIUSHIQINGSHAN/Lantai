@@ -1815,6 +1815,68 @@ def handle_shishi_vault(params: dict) -> dict:
     return {"namespace": namespace, "blocks": blocks, "total": len(blocks)}
 
 
+def handle_qingniao_messenger(params: dict) -> dict:
+    """青鸟：多智能体记忆信使派发、信箱拉取与 ACK 签收（v0.54 ADR-0075）。"""
+    action = params.get("action")
+    letter_id = params.get("letter_id")
+    receiver_agent_id = params.get("receiver_agent_id")
+    sender_agent_id = params.get("sender_agent_id")
+    subject = params.get("subject")
+    content = params.get("content")
+    priority = str(params.get("priority", "normal") or "normal")
+    status = params.get("status")
+    limit = int(params.get("limit", 20))
+    namespace = str(params.get("namespace", "default") or "default")
+
+    from lantai.services.qingniao_service import (
+        acknowledge_letter_service,
+        dispatch_letter_service,
+        fetch_inbox_service,
+    )
+
+    p = _principal_from_params(params)
+
+    # 1. 签收动作（ACK / REJECT）
+    if action in ("ack", "reject") and letter_id and receiver_agent_id:
+        return acknowledge_letter_service(
+            letter_id=str(letter_id),
+            receiver_agent_id=str(receiver_agent_id),
+            action=action,
+            namespace=namespace,
+            principal=p,
+        )
+
+    # 2. 派发信函（Dispatch）
+    if sender_agent_id and receiver_agent_id and subject and content:
+        return dispatch_letter_service(
+            sender_agent_id=str(sender_agent_id),
+            receiver_agent_id=str(receiver_agent_id),
+            subject=str(subject),
+            content=str(content),
+            priority=priority,
+            namespace=namespace,
+            principal=p,
+        )
+
+    # 3. 查收信箱（Inbox）
+    if receiver_agent_id:
+        letters = fetch_inbox_service(
+            receiver_agent_id=str(receiver_agent_id),
+            status=str(status) if status else None,
+            limit=limit,
+            namespace=namespace,
+            principal=p,
+        )
+        return {
+            "receiver_agent_id": receiver_agent_id,
+            "namespace": namespace,
+            "letters": letters,
+            "total": len(letters),
+        }
+
+    return {"error": "Invalid qingniao parameters"}
+
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
@@ -3044,6 +3106,59 @@ TOOLS = {
             },
         },
     },
+    "qingniao_messenger": {
+        "description": "青鸟：多智能体记忆信使派发、信箱查收与签收回执确认（v0.54 ADR-0075）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "sender_agent_id": {
+                    "type": "string",
+                    "description": "发信智能体标识",
+                },
+                "receiver_agent_id": {
+                    "type": "string",
+                    "description": "收信智能体标识（* 为广播）",
+                },
+                "subject": {
+                    "type": "string",
+                    "description": "信函主题",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "记忆正文内容（派发时必须提供）",
+                },
+                "priority": {
+                    "type": "string",
+                    "description": "优先级：high | normal | low",
+                    "default": "normal",
+                },
+                "action": {
+                    "type": "string",
+                    "description": "签收动作：ack | reject",
+                    "enum": ["ack", "reject"],
+                },
+                "letter_id": {
+                    "type": "string",
+                    "description": "目标信函 ID（签收确认时提供）",
+                },
+                "status": {
+                    "type": "string",
+                    "description": "查收信箱时的状态过滤（pending | acknowledged 等）",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "查收信箱最大返回条数",
+                    "default": 20,
+                },
+                "namespace": {
+                    "type": "string",
+                    "description": "命名空间（默认 default）",
+                    "default": "default",
+                },
+                "user_id": {"type": "string", "description": "操作租户/用户 ID"},
+            },
+        },
+    },
 }
 
 TOOL_HANDLERS = {
@@ -3133,6 +3248,7 @@ TOOL_HANDLERS = {
     "diben_anchor": handle_diben_anchor,
     "cehou_observe": handle_cehou_observe,
     "shishi_vault": handle_shishi_vault,
+    "qingniao_messenger": handle_qingniao_messenger,
     # 贯珠（ADR-0049 召回链）：曾在 TOOLS 广告、handle_recall_chain 也已实现，
     # 但本表漏登记 → 客户端调用即 KeyError → -32603 internal error。
     # 一致性由 tests/test_mcp.py::test_every_advertised_tool_has_handler 把守。

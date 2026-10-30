@@ -39,7 +39,7 @@ class QingniaoLetter:
     subject: str
     content: str
     priority: str  # high | normal | low
-    status: str    # pending | delivered | acknowledged | rejected
+    status: str  # pending | delivered | acknowledged | rejected
     fenced_content: str
     user_id: str | None = None
     tenant_id: str | None = None

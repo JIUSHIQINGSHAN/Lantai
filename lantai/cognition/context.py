@@ -66,6 +66,8 @@ class CognitiveContext:
     cehou_digest: list[dict] | None = None
     # 石室（v0.53 Ticket 02 ADR-0074）：高密核心记忆金匮封存与防篡改硬核切面
     shishi_digest: list[dict] | None = None
+    # 青鸟（v0.54 Ticket 02 ADR-0075）：多智能体记忆信使与异步通信切面
+    qingniao_digest: list[dict] | None = None
 
     def to_prompt(self) -> str:
         """
@@ -382,6 +384,24 @@ class CognitiveContext:
                 )
 
             sections.insert(0, "\n".join(ss_lines))
+
+        # 青鸟（ADR-0075）：若有待收/广播信使信函，渲染青鸟信使切面
+        if self.qingniao_digest:
+            from lantai.llm.fence import wrap_as_data
+
+            qn_items = self.qingniao_digest
+            qn_lines = [f"## Multi-Agent Letters & Messenger (青鸟 · {len(qn_items)}):"]
+            for idx, item in enumerate(qn_items[:5], 1):
+                lid = item.get("letter_id", "")
+                sender = item.get("sender_agent_id", "unknown")
+                subject = item.get("subject", "")
+                c = item.get("content", "")
+                priority = item.get("priority", "normal")
+                qn_lines.append(
+                    f"- [青鸟·M{idx} ({priority}) [发信方: {sender}] [主题: {subject}]] {wrap_as_data(str(c), item_id=f'qingniao-{lid}', score=1.0)}"
+                )
+
+            sections.insert(0, "\n".join(qn_lines))
 
         from lantai.llm.fence import fence_declaration
 

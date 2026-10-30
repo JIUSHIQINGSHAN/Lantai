@@ -96,9 +96,9 @@ class TestShishiApiSmoke:
         assert d3[0]["block_key"] == "policy"
 
     def test_seam3_mcp_87_tools_parity(self):
-        """Seam 3: MCP 协议工具 shishi_vault 往返解析与 87 工具池 1:1 双向对齐守卫。"""
-        assert len(TOOLS) == 87
-        assert len(TOOL_HANDLERS) == 87
+        """Seam 3: MCP 协议工具 shishi_vault 往返解析与工具池 1:1 双向对齐守卫。"""
+        assert len(TOOLS) >= 87
+        assert len(TOOL_HANDLERS) == len(TOOLS)
         assert "shishi_vault" in TOOLS
         assert "shishi_vault" in TOOL_HANDLERS
         for t_name in TOOLS:
