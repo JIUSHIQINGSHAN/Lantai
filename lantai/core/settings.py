@@ -260,6 +260,12 @@ class Settings(BaseSettings):
     # 探颐（ADR-0037 · v0.30）：主动探针与自然交互消歧机制开关
     ENABLE_PROACTIVE_PROBING: bool = True
 
+    # 拾遗（ADR-0069 · N-02 治理，v0.63 票 02）：零召回补救的扫描安全限额。
+    # 扫描超此预算（毫秒）即熔断，已收集候选按分截断返回并标注
+    # scan_truncated（partial 语义）；拾遗本就 best-effort，宁 miss 不拖延——
+    # 20k 条全表扫描实测 +0.9s，hook 预算 2s 直接爆。
+    SHIYI_SCAN_BUDGET_MS: int = 800
+
     # Shell Hook 配置
     SHELL_HOOK_TIMEOUT: int = 2  # 秒
     SHELL_HOOK_DIALOGUE_TIMEOUT: float = 30.0  # 对话写入通道超时（秒，含 LLM 提取）
@@ -299,7 +305,10 @@ class Settings(BaseSettings):
     INJECTION_GUARD_ENABLED: bool = True
 
     # 密钥熔断(票 K 第一道闸):off=不检测;shadow=只记录不转待审;enforce=命中转待审
-    SECRET_GUARD_MODE: str = "off"
+    # X-06（v0.63 票 02）：默认 shadow——enforce 会把「记住：我的 key 是
+    # sk-...」这类正当密钥记忆强制挂起人工裁决（假阳性放大器）；shadow
+    # 检测+记录+不阻断，与 hook 输出面防明文密钥断言一进一出互补。
+    SECRET_GUARD_MODE: str = "shadow"
 
     # 勘合（票据 .scratch/kanhe-idempotency/01，上游 f0.3 `2b90cee` 同款）：
     # 潜移异步写入幂等回执的 done 态寿命（天）。accepted 租约（600s）是机制

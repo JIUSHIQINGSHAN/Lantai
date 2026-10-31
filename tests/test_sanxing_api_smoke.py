@@ -107,10 +107,11 @@ def test_seam2_rest_endpoints(monkeypatch):
     assert "health_score_after" in d2
 
 
-def test_seam3_mcp_92_tools_parity():
-    """接缝 3：MCP 协议往返与 92 工具池 1:1 双向对齐守卫。"""
-    assert len(TOOLS) == 92
-    assert len(TOOL_HANDLERS) == 92
+def test_seam3_mcp_tools_parity():
+    """接缝 3：MCP 协议往返与工具池 1:1 双向对齐守卫（工具数随版本扩容，不硬编码快照）。"""
+    assert len(TOOLS) >= 92
+    assert len(TOOL_HANDLERS) >= 92
+    assert len(TOOLS) == len(TOOL_HANDLERS)
     assert "sanxing_remedy" in TOOLS
     assert "sanxing_remedy" in TOOL_HANDLERS
 

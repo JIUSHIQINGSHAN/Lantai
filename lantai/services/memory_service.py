@@ -231,23 +231,40 @@ def add_memory(
     from lantai.security.injection_guard import assert_no_prompt_injection
 
     assert_no_prompt_injection(req.content)
+
+    # 密钥熔断（X-06，v0.63 票 02）：REST/MCP 写入面此前完全不过密钥闸
+    # （仅 dialogue 摄取有）。shadow 默认：检测+记录不阻断；enforce 命中
+    # 在候选创建后转待审（见下方三个创建点的 route_secret_hits）。
+    from lantai.security.secret_guard import detect_secret_shapes
+
+    secret_hits = detect_secret_shapes(req.content)
+
+    def _route_secret(result: dict) -> dict:
+        from lantai.security.secret_guard import route_secret_hits
+
+        return route_secret_hits(result, secret_hits)
+
     if (req.media_url or "").strip():
         from lantai.services.vision_service import build_vision_memory, vision_provenance_extra
 
         req = build_vision_memory(req)
-        return _create_candidate_with_extraction(
-            req,
-            user_id=user_id,
-            tenant_id=tenant_id,
-            provenance_prompt=PROVENANCE_PROMPT_VISION,
-            provenance_extra=vision_provenance_extra(req),
-            principal=principal,
+        return _route_secret(
+            _create_candidate_with_extraction(
+                req,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                provenance_prompt=PROVENANCE_PROMPT_VISION,
+                provenance_extra=vision_provenance_extra(req),
+                principal=principal,
+            )
         )
     # Fastpath 白名单直写——缓冲前判断
     fp = fastpath_check(req.content)
     if fp:
-        return _create_candidate_direct(
-            req, fp, user_id=user_id, tenant_id=tenant_id, principal=principal
+        return _route_secret(
+            _create_candidate_direct(
+                req, fp, user_id=user_id, tenant_id=tenant_id, principal=principal
+            )
         )
 
     # Coalesce 开关——true 时走缓冲
@@ -270,13 +287,17 @@ def add_memory(
             req_copy = req.model_copy()
             req_copy.content = combined
             req_copy.session_id = result.get("session_id") or req.session_id or ""
-            return _create_candidate_with_extraction(
-                req_copy, user_id=user_id, tenant_id=tenant_id, principal=principal
+            return _route_secret(
+                _create_candidate_with_extraction(
+                    req_copy, user_id=user_id, tenant_id=tenant_id, principal=principal
+                )
             )
 
     # 默认同步路径
-    return _create_candidate_with_extraction(
-        req, user_id=user_id, tenant_id=tenant_id, principal=principal
+    return _route_secret(
+        _create_candidate_with_extraction(
+            req, user_id=user_id, tenant_id=tenant_id, principal=principal
+        )
     )
 
 
@@ -454,6 +475,12 @@ def add_memory_async(
     from lantai.security.injection_guard import assert_no_prompt_injection
 
     assert_no_prompt_injection(req.content)
+
+    # 密钥熔断（X-06）：入队内容检测（shadow 记录）；enforce 在冲刷落库时
+    # 由 _create_candidate_* 出口路由转待审
+    from lantai.security.secret_guard import detect_secret_shapes
+
+    secret_hits = detect_secret_shapes(req.content)
     buffer = get_coalesce_buffer()
     if not settings.COALESCE_ENABLED:
         result = add_memory(req, user_id=user_id, tenant_id=tenant_id, principal=principal)
@@ -470,8 +497,13 @@ def add_memory_async(
         # 会话分键（票据 .scratch/coalesce-session-key/01）：出身随键透传
         req_copy.session_id = detail.get("session_id") or req.session_id or ""
         try:
-            persisted = _create_candidate_with_extraction(
-                req_copy, user_id=user_id, tenant_id=tenant_id, principal=principal
+            from lantai.security.secret_guard import route_secret_hits
+
+            persisted = route_secret_hits(
+                _create_candidate_with_extraction(
+                    req_copy, user_id=user_id, tenant_id=tenant_id, principal=principal
+                ),
+                secret_hits,
             )
         except Exception:
             buffer.forget_fingerprint(result["job_id"])

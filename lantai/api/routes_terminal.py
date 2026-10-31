@@ -532,7 +532,14 @@ def revive_consolidated_route(memory_id: str, req: RetractReq, principal=Depends
 
 @router.post("/terminal/merge")
 def merge_memories(req: MergeReq, principal=Depends(get_current_user)):
-    """合并两条记忆：将 source 的内容追加到 target，然后删除 source（归属校验，P0 票04）"""
+    """合并两条记忆：将 source 的内容追加到 target，然后删除 source（归属校验，P0 票04）
+
+    X-03 防呆（v0.63 票 01）：source == target 时旧逻辑先自追加再
+    `session.delete(src)`，把记忆物理删除——数据静默丢失。必须最先拦截，
+    先于任何 DB 读取与写操作。
+    """
+    if req.source_id == req.target_id:
+        raise HTTPException(400, "cannot merge a memory into itself")
     session, conn = get_db_conn()
     try:
         from lantai.core.acl import ensure_can_delete
@@ -551,6 +558,15 @@ def merge_memories(req: MergeReq, principal=Depends(get_current_user)):
 
         merged_content = f"{tgt.content}\n---\n{src.content}"
         new_importance = max(tgt.importance or 0.8, src.importance or 0.8)
+
+        # 獬豸（X-03 同票闸门补全）：合并产生的新正文会落 FTS+向量并在
+        # 检索面呈现——与 correct_memory 同族同闸，注入载荷整条拒
+        from lantai.security.injection_guard import assert_no_prompt_injection
+
+        try:
+            assert_no_prompt_injection(merged_content)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
 
         tgt.content = merged_content
         tgt.importance = new_importance

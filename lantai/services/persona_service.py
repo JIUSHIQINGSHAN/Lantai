@@ -148,6 +148,11 @@ def set_persona(
     写侧归属（票 06 口径 3）：改写已存在的 persona 前过 `ensure_can_delete`
     ——A 不能凭"同名"覆写 B 的三层字段，也不能借停用别人的 active
     行把自己顶上去。新建的行落 principal 的 user_id，不造无主行。
+
+    獬豸（X-04，v0.63 票 01）：人格基座三字段是**每次 prompt 必注入面**
+    （`format_persona_context` 无防护呈现）——REST/MCP 写入的注入载荷
+    会直达系统人格。与 `memory_service` 写入漏斗同闸：命中整条拒，
+    不清洗不截断。
     """
     name = (name or "").strip()
     if not name:
@@ -157,6 +162,11 @@ def set_persona(
     l_style = (linguistic_style or "").strip()[:2000]
     g_lines = (guidelines or "").strip()[:2000]
     e_facts = (epistemic_facts or "").strip()[:2000]
+
+    from lantai.security.injection_guard import assert_no_prompt_injection
+
+    for field in (name, l_style, g_lines, e_facts):
+        assert_no_prompt_injection(field)
 
     def _run(s: Session) -> PersonaProfile:
         existing = s.exec(select(PersonaProfile).where(PersonaProfile.name == name)).first()

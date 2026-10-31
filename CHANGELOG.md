@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.0] - 2026-10-31 - 拾阙（Shique · 稽失防微与闸门补阙）
+
+> 版本代号「拾阙」：拾遗补阙，语出《史记·太史公自序》「拾遗补阙，成一家之言」——寓意拾补阙漏、防微杜渐，对应本版主题「稽失防微，固本培元；系统健壮性、闸门审计与自愈防线修复」：承接 v0.38–v0.60 续审报告揭示的 P1 核心风险，完成终端合并自删除防呆（X-03）、人格基座注入闸门（X-04）、密钥熔断全链路覆盖（X-06）与拾遗零召回全表扫描治理（N-02）。票据 `.scratch/v0.63-next-window-2026-11/`（票 01/02/03 全部收口）。
+
+### Security
+
+- **终端合并自删除防呆与合并面獬豸闸门（X-03，票 01，`lantai/api/routes_terminal.py`）**：`merge_memories` 入口首行拦截 `source_id == target_id`（400）——旧逻辑先自追加再 `session.delete(src)` 物理删除自身，数据静默丢失；合并产生的新正文（落 FTS+向量改写面）前置獬豸注入闸，命中 422（与 `correct_memory` 同族同闸）。
+- **人格基座写入注入闸门防护（X-04，票 01，`lantai/services/persona_service.py`）**：`set_persona` 的 name/L/G/E 四字段前置獬豸——人格基座是每次 prompt 必注入面，service 层挂载一处覆盖 REST `POST /persona` 与 MCP `persona_set` 双写入面。
+- **密钥熔断全链路覆盖与默认影子检测（X-06，票 02，`lantai/security/secret_guard.py` + `lantai/services/memory_service.py` + `lantai/ingestion/dialogue.py`）**：检测与路由逻辑下沉 `secret_guard.py` 单一真源（`detect_secret_shapes`/`route_secret_hits`）；`add_memory`/`add_memory_async` 全部候选创建点挂载（REST `POST /memories`、MCP `add`、coalesce 同步/异步冲刷面全覆盖）；`SECRET_GUARD_MODE` 默认 `off → shadow`（检测+记录+不阻断——enforce 会把正当密钥记忆强制挂起人工裁决，是假阳性放大器）。
+
+### Performance
+
+- **拾遗零召回全表扫描 SQL 预筛与预算熔断（N-02，票 02，`lantai/cognition/shiyi.py`）**：token `LIKE` SQL 预筛先行收窄（无关行不进 Python 逐条匹配，实测 21 行库 `scanned_count` 21→1）；新增 `SHIYI_SCAN_BUDGET_MS=800` 扫描预算熔断，超时即中断并标注 `scan_truncated`（partial 语义）；返回契约扩充 `scanned_count`/`scan_truncated`。
+
+### Tests
+
+- 新增 `tests/test_terminal_merge_gate.py`（6 项不 mock 真实测试：自合并 400 防呆 + 正常合并正面对照 + persona 注入闸门 service/REST 双面）；
+- 新增 `tests/test_key_gate_and_shiyi_perf.py`（10 项：密钥闸默认模式/shadow 不阻断/enforce 转待审/双路径覆盖/干净内容零误伤/dialogue 回归锚定 + 拾遗预筛契约/熔断时钟注入/不超支不少标）；熔断测试全程时钟注入零 `time.sleep`，无测试泄漏。
+
 ## [0.62.1] - 2026-10-31
 
 > 补丁版（免代号，沿 v0.23.1–v0.23.3 先例）：修复 v0.62.0 发布后暴露的完璧回归与测试快照陈旧。

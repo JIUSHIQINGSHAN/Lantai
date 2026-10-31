@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -22,6 +23,7 @@ from sqlmodel import Session, select
 
 from lantai.core.acl import viewer_of
 from lantai.core.auth import Principal
+from lantai.core.settings import settings
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
@@ -99,6 +101,10 @@ class ShiyiEngine:
     def __init__(self, session: Session | None = None, principal: Principal | None = None):
         self.session = session
         self.principal = principal
+        # N-02 熔断时钟（v0.63 票 02）：扫描预算基于单调时钟判定。
+        # 抽成实例属性的唯一目的：测试用 monkeypatch 注入假时钟推进，
+        # 绝不 time.sleep 真实等待（CI 抖动 = 假红/假绿，测试纪律红线）。
+        self._now = time.perf_counter
 
     def _check_access(
         self,
@@ -153,14 +159,30 @@ class ShiyiEngine:
         raw_chars = [c for c in re.findall(r"[\w一-龥]", q_lower) if c]
         tokens = set(cut_words) if cut_words else set(raw_chars)
 
-        # 2. 扫描活跃记忆
+        # 2. 扫描活跃记忆（N-02 治理，v0.63 票 02）：
+        #    a) SQL 预筛——token LIKE 先行收窄，无关行不进 Python 逐条匹配
+        #       （tokens 为空时退回全表，但受 b 熔断约束）；
+        #    b) 扫描预算熔断——超 SHIYI_SCAN_BUDGET_MS 即中断，partial 语义
+        #       标注 scan_truncated；拾遗 best-effort，宁 miss 不拖延。
         stmt = select(MemoryItem).where(MemoryItem.status == "active")
         if domain != "all" and not allow_domain_relax:
             stmt = stmt.where(MemoryItem.domain == domain)
+        if tokens:
+            stmt = stmt.where(or_(*[MemoryItem.content.like(f"%{t}%") for t in sorted(tokens)]))
         all_memories = s.exec(stmt).all()
+        scanned_count = len(all_memories)
+
+        budget_s = max(settings.SHIYI_SCAN_BUDGET_MS, 0) / 1000.0
+        t_start = self._now()
+        scan_truncated = False
 
         candidates: list[tuple[float, RemedyCandidate]] = []
         for mem in all_memories:
+            # 每行检查预算：perf_counter 是 ns 级调用，节流反而会在小库
+            # 场景漏判（循环先于下一次检查自然结束 = 熔断形同虚设）
+            if (self._now() - t_start) > budget_s:
+                scan_truncated = True
+                break
             if not self._check_access(
                 owner_id=mem.user_id,
                 tenant_id=mem.tenant_id,
@@ -231,6 +253,8 @@ class ShiyiEngine:
             "query": query,
             "is_remedied": len(remedied_items) > 0,
             "remedied_items": remedied_items,
+            "scanned_count": scanned_count,
+            "scan_truncated": scan_truncated,
         }
 
     def remedy_search_pipeline(

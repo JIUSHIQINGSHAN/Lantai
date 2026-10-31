@@ -92,11 +92,9 @@ def ingest_dialogue(
 
     assert_no_prompt_injection(text)
 
-    from lantai.security.secret_guard import find_secret_shapes
+    from lantai.security.secret_guard import detect_secret_shapes
 
-    secret_hits = find_secret_shapes(text) if settings.SECRET_GUARD_MODE != "off" else []
-    if secret_hits:
-        logger.warning("密钥熔断命中(mode=%s): %s", settings.SECRET_GUARD_MODE, secret_hits)
+    secret_hits = detect_secret_shapes(text)
 
     # 1) fastpath 白名单直通——绕过 LLM 提取
     fp = fastpath_check(text)
@@ -143,9 +141,7 @@ def ingest_dialogue(
         turn=turn,
     )
     if secret_hits and settings.SECRET_GUARD_MODE == "enforce":
-        enqueue_rejected(result["candidate_id"])
-        result["status"] = "pending_review"
-        return result
+        return _secret_guard_route(result, secret_hits)
     if data["extractor_confidence"] < settings.DIALOGUE_MIN_EXTRACTOR_CONF:
         if data["extractor_confidence"] < settings.CANDIDATE_MIN_CONFIDENCE:
             # 沙汰：低于地板信噪门 → 直接 rejected（ADR-0026）
@@ -166,10 +162,10 @@ def ingest_dialogue(
 
 
 def _secret_guard_route(result: dict, secret_hits: list[str]) -> dict:
-    if secret_hits and settings.SECRET_GUARD_MODE == "enforce":
-        enqueue_rejected(result["candidate_id"])
-        result["status"] = "pending_review"
-    return result
+    """薄壳：路由逻辑单一真源在 `secret_guard.route_secret_hits`（X-06 下沉）。"""
+    from lantai.security.secret_guard import route_secret_hits
+
+    return route_secret_hits(result, secret_hits)
 
 
 def _create_candidate(
