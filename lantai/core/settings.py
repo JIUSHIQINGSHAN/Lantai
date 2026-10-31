@@ -236,6 +236,13 @@ class Settings(BaseSettings):
 
     # 遗忘配置
     ARCHIVE_DECAY_THRESHOLD: float = 0.01  # decay 低于此值自动 archived
+    # 衰减归档豁免（与 TTL 豁免同口径的子集）：重要度 ≥ 此值或泳道在列表内的记忆，
+    # decay 再低也不被自动归档，只在检索排序里沉下去；要清理走人工/巩固路径。
+    # 泳道默认不豁免：遗忘质量评测（chinese_memory_cases stale 组）明确要求
+    # 「重要度 0.1、200 天没用过的偏好」被归档；想让偏好整体常驻可设
+    # DECAY_ARCHIVE_EXEMPT_LANES=["preference","profile"]
+    DECAY_ARCHIVE_EXEMPT_IMPORTANCE: float = 0.8
+    DECAY_ARCHIVE_EXEMPT_LANES: tuple[str, ...] = ()
 
     # 底本（session checkpoint，ADR-0021）：五段会话快照
     CHECKPOINT_MAX_SESSIONS: int = 5  # 保留最近 N 个会话的快照

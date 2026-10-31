@@ -42,6 +42,7 @@ from lantai.retrieval.hierarchical import (
     rerank_by_information_density,
 )
 from lantai.retrieval.hybrid import hybrid_search
+from lantai.retrieval.reranker import rerank_deadline
 from lantai.services.offload_service import build_offload_inject, write_offload_file
 from lantai.storage import db
 from lantai.storage.vector_store import get_vector_store
@@ -49,6 +50,8 @@ from lantai.storage.vector_store import get_vector_store
 # ── 召回预算与工具指南（借鉴 TencentDB Agent Memory auto-recall）─────────────
 # 单条记忆上限 + 总字符预算双控；按码点截断（不会切开 emoji 代理对）；
 # 超预算截断/丢弃时在注入末尾附记忆使用指南（何时深挖、最多几次、如何回写）。
+# 注入帧给格式化/写检索日志预留的尾巴（秒）：rerank 的硬预算 = 帧预算 - 已用 - 本值
+_HOOK_TAIL_RESERVE = 0.4
 _RECALL_TRUNCATION_SUFFIX = "…（已截断；可用记忆工具查看详情）"
 _OFFLOAD_SUFFIX = "…（已卸载全文；可调用 offload_read 工具查看）"
 _RECALL_TOOLS_GUIDE_TRUNCATED = (
@@ -223,7 +226,13 @@ def build_context(query: str, session_id: str | None = None) -> dict:
 
     返回 {"context": ..., "event_id": ..., "evidence": ...}
     """
+    import time
+
+    frame_t0 = time.perf_counter()
     resident_persona = _build_resident_persona()
+    # 超时兜底：整帧若在 _run_with_timeout 里超时，至少把常驻画像交出去，
+    # 而不是返回 {} 连画像一起丢（画像只读本地库/文件，此时早已就绪）
+    _publish_partial({"context": resident_persona} if resident_persona else {})
 
     if not query or len(query.strip()) <= settings.SHELL_HOOK_MIN_CHARS:
         return {"context": resident_persona} if resident_persona else {}
@@ -233,11 +242,11 @@ def build_context(query: str, session_id: str | None = None) -> dict:
     if not gate_decision.get("needs_memory", False):
         return {"context": resident_persona} if resident_persona else {}
 
-    import time
-
     try:
         t0 = time.perf_counter()
-        raw_results = hybrid_search(query, top_k=settings.SHELL_HOOK_TOP_K)
+        rerank_budget = settings.SHELL_HOOK_TIMEOUT - _HOOK_TAIL_RESERVE - (t0 - frame_t0)
+        with rerank_deadline(rerank_budget):
+            raw_results = hybrid_search(query, top_k=settings.SHELL_HOOK_TOP_K)
         # 相似度置信度阈值过滤（低于下限的弱相关候选剔除）
         results = [
             r
@@ -477,6 +486,15 @@ def _handle_checkpoint_write(session_id: str, blocks: dict) -> dict:
         return {}
 
 
+def _publish_partial(result: dict) -> None:
+    """把「超时也能交付」的部分结果挂到当前 TaskThread（不在其中则无操作）。"""
+    import threading
+
+    cur = threading.current_thread()
+    if hasattr(cur, "partial"):
+        cur.partial = result
+
+
 def _run_with_timeout(func, timeout, *args):
     import threading
 
@@ -484,6 +502,7 @@ def _run_with_timeout(func, timeout, *args):
         def __init__(self):
             super().__init__()
             self.result = {}
+            self.partial = {}
             self.daemon = True
 
         def run(self):
@@ -496,7 +515,7 @@ def _run_with_timeout(func, timeout, *args):
     t.start()
     t.join(timeout)
     if t.is_alive():
-        return {}
+        return dict(t.partial or {})
     return t.result
 
 
@@ -578,6 +597,12 @@ def _prewarm() -> None:
     """
     with contextlib.suppress(Exception):
         get_vector_store()
+    # jieba 词典首次加载约 0.9s（2026-10-31 实测 marshal.load 0.94s），原先落在
+    # 首帧的完璧事实检索里；与向量库一起移出首帧预算
+    with contextlib.suppress(Exception):
+        import jieba
+
+        jieba.initialize()
 
 
 def main():

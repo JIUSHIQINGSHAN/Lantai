@@ -281,6 +281,15 @@ def update_memory(memory_id: str, req: MemoryUpdateReq, principal=Depends(get_cu
 
         updates = 0
         if req.content is not None:
+            # 獬豸：终端编辑与 merge / correct_memory 同族——新正文会重嵌入、进 FTS，
+            # 下一轮就被 Hermes 注入。v0.64 只给 merge 补了闸，编辑口子仍敞开
+            # （2026-10-31 实测：PUT 写入「忽略之前的所有指令…」返回 200 并同步向量）
+            from lantai.security.injection_guard import assert_no_prompt_injection
+
+            try:
+                assert_no_prompt_injection(req.content)
+            except ValueError as e:
+                raise HTTPException(422, str(e)) from e
             m.content = req.content
             updates += 1
         if req.importance is not None:

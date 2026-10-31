@@ -161,6 +161,10 @@ def param_env():
 _ORIG_GET_SESSION = None
 _ORIG_ENGINE = None
 _PREV_TEST = {"id": ""}
+# 检索主路径上常被 patch 的模块级函数：被改脏时下游真库检索静默空转（不报错只少结果），
+# 比 get_session 更难查。2026-10-31 实证：hybrid.get_vector_store 残留 DummyVS lambda。
+_HYBRID_GUARDED = ("get_vector_store", "embed", "rerank")
+_ORIG_HYBRID: dict = {}
 
 
 def pytest_configure(config):
@@ -169,6 +173,10 @@ def pytest_configure(config):
 
     _ORIG_GET_SESSION = dbm.get_session
     _ORIG_ENGINE = dbm.engine
+    import lantai.retrieval.hybrid as hm
+
+    for name in _HYBRID_GUARDED:
+        _ORIG_HYBRID[name] = getattr(hm, name, None)
 
 
 def pytest_runtest_setup(item):
@@ -184,6 +192,16 @@ def pytest_runtest_setup(item):
             f"前置测试 {_PREV_TEST['id']} 污染了 lantai.storage.db.engine"
             f"（未还原：{_ORIG_ENGINE!r} → {dbm.engine!r}）"
         )
+    import lantai.retrieval.hybrid as hm
+
+    for name, orig in _ORIG_HYBRID.items():
+        cur = getattr(hm, name, None)
+        if cur is not orig:
+            setattr(hm, name, orig)  # 先复原，免得一处泄漏连坐整片下游
+            raise AssertionError(
+                f"前置测试 {_PREV_TEST['id']} 污染了 lantai.retrieval.hybrid.{name}"
+                f"（未还原：{orig!r} → {cur!r}）"
+            )
 
 
 # ── 数据目录隔离（票 02）───────────────────────────────────────
@@ -430,3 +448,75 @@ def _disable_reranker(monkeypatch):
     生效，撕卸后自动还原），与 `_sanitize_api_key` 同一口径。
     """
     monkeypatch.setattr(settings, "RERANKER_ENABLED", False)
+
+
+# ── 共享临时库逐测试复位（主干转绿）────────────────────────────
+# 背景：`_isolate_data_dir` 是 session 级，全量 2500+ 用例共用一个 SQLite 文件和
+# 一个 Chroma 目录。写库测试留下的行会被后面的测试读到：
+#   - test_console_api_contracts 写的 CoreMemoryBlock「[POLICY]: 契约测试策略」
+#     让 test_shell_hook 的 4 个「空查询 → {}」断言拿到常驻画像；
+#   - test_diben_api_smoke 写的底本「ClickHouse 分布式表分片」让
+#     test_retrieval_log 拿到 checkpoint；
+#   - staged_eval / zero_recall / zuozheng 等读到别人的记忆或缺了自己的。
+# 2026-10-31 实测：master 全量 20 failed，其中 17 个挑出来单独跑全部通过。
+# 口径：每个测试结束后清空共享库全部业务表（含 FTS）与 Chroma 集合；
+# 表结构保留（不重建，开销约每测试数毫秒）。自带内存库/patch get_session 的
+# 用例不受影响——它们本来就不碰共享库。
+_KEEP_TABLE_PREFIXES = ("sqlite_",)
+
+
+def _wipe_shared_db(engine) -> None:
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("SELECT name, sql FROM sqlite_master WHERE type = 'table'")
+        ).fetchall()
+        virtual = {r[0] for r in rows if (r[1] or "").upper().startswith("CREATE VIRTUAL")}
+        names = []
+        for name, _sql in rows:
+            if name.startswith(_KEEP_TABLE_PREFIXES):
+                continue
+            # FTS5 影子表（<vt>_data/_idx/_content/_docsize/_config）随虚表一起清
+            if any(name.startswith(v + "_") for v in virtual):
+                continue
+            names.append(name)
+        conn.execute(text("PRAGMA foreign_keys = OFF"))
+        try:
+            for name in names:
+                conn.execute(text(f'DELETE FROM "{name}"'))
+        finally:
+            conn.execute(text("PRAGMA foreign_keys = ON"))
+
+
+def _wipe_shared_vectors() -> None:
+    import lantai.storage.vector_store as vs
+
+    store = getattr(vs, "_store", None)
+    col = getattr(store, "_collection", None)
+    if col is None:
+        return
+    try:
+        ids = col.get(include=[]).get("ids") or []
+        if ids:
+            col.delete(ids=ids)
+    except Exception:
+        # 向量库状态异常时退回「丢弃单例」：下一个用到它的测试会重新建连
+        vs._store = None
+
+
+@pytest.fixture(autouse=True)
+def _reset_shared_store(_isolate_data_dir):
+    yield
+    import lantai.storage.db as db_module
+
+    # 用例若把 engine 换掉又没还原，绊线会在下一个测试点名；这里只清共享库
+    _wipe_shared_db(_isolate_data_dir)
+    # FastAPI 依赖覆盖是进程级全局：用例直接赋值又不清，会让后续 API 测试顶着
+    # 别人的身份跑（ACL 过滤后 404/空结果）。只在 app 已被导入时清，避免为此加载 app
+    app_mod = sys.modules.get("lantai.api.app")
+    if app_mod is not None and getattr(app_mod, "app", None) is not None:
+        app_mod.app.dependency_overrides.clear()
+    if db_module.engine is not _isolate_data_dir:
+        return
+    _wipe_shared_vectors()
