@@ -39,8 +39,19 @@ def rerank(
         return []
 
     url = f"{settings.RERANKER_BASE_URL}/rerank"
-    # 独立最小权限密钥优先，回退 OPENAI_API_KEY（不打印任何密钥）
-    api_key = settings.RERANKER_API_KEY or settings.OPENAI_API_KEY
+    # X-09 跨服务商密钥防泄漏：仅当未配 RERANKER_API_KEY 且 host 与 OPENAI 同域 (api.openai.com) 时才允许回退
+    api_key = settings.RERANKER_API_KEY
+    if not api_key:
+        if host in ("api.openai.com",):
+            api_key = settings.OPENAI_API_KEY
+        else:
+            logger.warning("RERANKER_API_KEY unconfigured for host '%s'; skipping rerank to prevent cross-provider key leakage", host)
+            return []
+
+    if not api_key:
+        logger.warning("No usable API key for reranker; skipping")
+        return []
+
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
