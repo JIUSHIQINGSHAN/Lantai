@@ -874,6 +874,7 @@ def _hybrid_search_impl(
             for s, m in reranked_scored:
                 item = {
                     "score": s,
+                    "score_mode": "reranker",
                     "memory": m.model_dump(mode="json"),
                     "document": m.content,
                     "layer": classify_memory_layer(m),
@@ -901,6 +902,7 @@ def _hybrid_search_impl(
     for s, m in candidates[:top_k]:
         item = {
             "score": s,
+            "score_mode": "rrf",
             "memory": m.model_dump(mode="json"),
             "document": m.content,
             "layer": classify_memory_layer(m),

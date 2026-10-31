@@ -257,11 +257,21 @@ def build_context(query: str, session_id: str | None = None) -> dict:
         # （实测 2.0 预算全给 embed → 总 2.17s > 2.0 墙，降级结果被墙丢弃）。
         budget_s = max(0.05, settings.SHELL_HOOK_TIMEOUT * 0.85 - (time.perf_counter() - t0))
         raw_results = hybrid_search(query, top_k=settings.SHELL_HOOK_TOP_K, budget_s=budget_s)
-        # 相似度置信度阈值过滤（低于下限的弱相关候选剔除）
+        # 相似度置信度阈值过滤：D-03 分路阈值（reranker 走 0.5 语义门禁，RRF 走 0.15 独立量纲，避免第 2/3 名被一刀切）
+        def _score_passes(r: dict) -> bool:
+            score = r.get("score", 0.0)
+            mode = r.get("score_mode", "rrf")
+            thresh = (
+                settings.SHELL_HOOK_SCORE_THRESHOLD
+                if mode == "reranker"
+                else getattr(settings, "SHELL_HOOK_SCORE_THRESHOLD_RRF", 0.15)
+            )
+            return score >= thresh
+
         results = [
             r
             for r in (raw_results or [])
-            if isinstance(r, dict) and r.get("score", 0.0) >= settings.SHELL_HOOK_SCORE_THRESHOLD
+            if isinstance(r, dict) and _score_passes(r)
         ]
         if not results:
             _try_log(query, [], int((time.perf_counter() - t0) * 1000), session_id=session_id)

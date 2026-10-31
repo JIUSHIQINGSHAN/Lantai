@@ -273,7 +273,8 @@ class Settings(BaseSettings):
     SHELL_HOOK_MAX_INJECT_ITEMS: int = (
         5  # 磨勘（v0.29 · MCMA 建议项 6）：知识注入条目上限硬顶（4~5 条最优）
     )
-    SHELL_HOOK_SCORE_THRESHOLD: float = 0.5  # 置信度下限（低于此分数的弱相关候选剔除）
+    SHELL_HOOK_SCORE_THRESHOLD: float = 0.5  # 置信度下限（reranker 0–1 语义分通道阈值）
+    SHELL_HOOK_SCORE_THRESHOLD_RRF: float = 0.15  # RRF 降级/非重排通道独立置信度下限（避免 0.5 将第 2 名后一刀切）
     SHELL_HOOK_MIN_CHARS: int = 3
     # 召回预算（借鉴 TencentDB Agent Memory auto-recall）：单条记忆注入上限 +
     # 总字符预算，超预算截断并附工具指南；防大记忆撑爆上下文
