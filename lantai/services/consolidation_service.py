@@ -384,6 +384,7 @@ def consolidate_cluster(
             decay_score=1.0,
             decay_class="semantic",
             status="active",
+            valid_from=utcnow(),  # 主张自落库起生效（票 08：模型层默认 None，写入点显式声明）
             created_at=utcnow(),
             updated_at=utcnow(),
             **_proposal_quadruple(cluster_items),

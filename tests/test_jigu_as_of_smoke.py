@@ -192,12 +192,16 @@ def test_jigu_hybrid_search_as_of_smoke(jigu_temporal_env):
             return_value=Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock()),
         ),
     ):
-        # 检索 2024-06-01 历史切片（严格模式）
+        # 检索 2024-06-01 历史切片（严格模式：防未来污染是历史切片的定义语义，
+        # 需 TEMPORAL_ASOF_STRICT=True——非 strict 的 missed_soft 降权保留是
+        # 「宁多见不错删」面向未知时间锚的口径，不适用于 vf 显式已知的未来记忆；
+        # 此前靠 chronos 的当前态 vf>now 越权剔除撑住，票 06 修复后口径归位）
         results_2024 = hybrid.hybrid_search(
             "张三在星光科技担任什么职务？",
             top_k=5,
             use_rerank=False,
             as_of="2024-06-01T12:00:00+00:00",
+            param_overrides={"TEMPORAL_ASOF_STRICT": True},
         )
 
         # 检索 2025-06-01 历史切片
@@ -206,6 +210,7 @@ def test_jigu_hybrid_search_as_of_smoke(jigu_temporal_env):
             top_k=5,
             use_rerank=False,
             as_of="2025-06-01T12:00:00+00:00",
+            param_overrides={"TEMPORAL_ASOF_STRICT": True},
         )
 
     # 验证 1：2024 年检索结果只命中 2024 年记忆与事实，决不命中 2025 年未来事实

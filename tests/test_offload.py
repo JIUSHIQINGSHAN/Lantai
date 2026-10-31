@@ -178,15 +178,15 @@ def test_shell_hook_offload_injection(monkeypatch, tmp_path):
     import lantai.storage.db as db_module
 
     monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
-    monkeypatch.setattr(mod, "get_vector_store", lambda: _FakeStore())
-    monkeypatch.setattr(mod, "embed", lambda texts: [[0.1] * 8])
+    monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
+    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda texts: [[0.1] * 8])
     monkeypatch.setattr(mod.settings, "SHELL_HOOK_OFFLOAD_CHARS", 50)
     monkeypatch.setattr(mod.settings, "SHELL_HOOK_MAX_CHARS_PER_MEMORY", 60)
     monkeypatch.setattr(mod.settings, "SHELL_HOOK_MAX_TOTAL_CHARS", 1500)
     monkeypatch.setattr(mod.settings, "OFFLOAD_OUTPUT_DIR", str(tmp_path))
 
     out = mod.build_context("这是一个超过三字符的查询")
-    assert "全文:" in out["context"]
+    assert "全文:" in out.get("context", "")
     off_path = tmp_path / "mem_offload_1.md"
     assert off_path.exists()
     assert off_path.read_text(encoding="utf-8") == long_content
@@ -222,15 +222,15 @@ def test_shell_hook_short_memory_no_offload(monkeypatch, tmp_path):
     import lantai.storage.db as db_module
 
     monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
-    monkeypatch.setattr(mod, "get_vector_store", lambda: _FakeStore())
-    monkeypatch.setattr(mod, "embed", lambda texts: [[0.1] * 8])
+    monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
+    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda texts: [[0.1] * 8])
     monkeypatch.setattr(mod.settings, "SHELL_HOOK_OFFLOAD_CHARS", 50)
     monkeypatch.setattr(mod.settings, "OFFLOAD_OUTPUT_DIR", str(tmp_path))
 
     out = mod.build_context("这是一个超过三字符的查询")
-    assert "全文:" not in out["context"]
+    assert "全文:" not in out.get("context", "")
     assert not (tmp_path / "mem_short.md").exists()
-    assert "短记忆：用户喜欢 Python" in out["context"]
+    assert "短记忆：用户喜欢 Python" in out.get("context", "")
 
 
 def test_mcp_offload_read_tool(monkeypatch, tmp_path):

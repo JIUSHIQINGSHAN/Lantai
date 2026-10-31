@@ -136,39 +136,53 @@ class TestDeadValidityHitIsGone:
         assert ok and by == "validity"
 
     def test_expired_and_future_fall_through_to_i4_not_excluded(self):
-        """**删除前实测发现的语义分歧，此处固化（两条一起）**：
+        """**契约更新（票 `.scratch/v0.64-next-window-2026-11/06`，2026-10-31）**：
 
-        已删的 `_validity_hit` 对「valid_to <= as_of」（已失效）与
-        「valid_from > as_of」（尚未生效）都返回 **False**；而真正被调用的
-        `asof_matches` 对同样输入走的是 **I4 unknown_soft → True**（放行、
-        仅乘 fuzzy_penalty 降权）。那份死代码不只是没人调，它与活路径
-        **结论相反**——若当初有人顺手接上，会得到「过期/未来主张被硬剔除」，
-        与 spec §2.5 I4「任何模式都不因时间条件硬排除」直接冲突。
+        原断言（vf/vt 已知且不在窗口 → I4 unknown_soft 放行）锁的是
+        chronos 越权剔除掩盖下的掩体行为：有效期已知 =「确定不在」，
+        不是 I4 保护的「时间锚不确定」（ADR-0048 边界小节 I4 原文的
+        「时间锚」指 event_time；vf/vt 是主张有效期，不是事件锚）。
+        票 06 修复 chronos 越权后，asof_matches 的 I4 收窄为
+        「vf/vt/event_time 全 NULL（时间信息完全未知）才豁免」；
+        vf/vt 已知且 as-of 落在有效期之外 → strict 剔除 / 非 strict
+        missed_soft 降权（宁多见不错删在非 strict 下不受损）。
 
-        `strict=True` 也不剔除（I4 是硬豁免）。这是 settings.py:192
-        `TEMPORAL_CURRENT_STRICT` 注释所记的**有意延后决定**：
-        「当前态收紧：已过 valid_to 退出（默认关，须独立票验证后再开）」。
-        故本票只删死代码、**不改产品行为**；真要让过期主张退出召回，
-        走那张独立票（见 .scratch/expiry-exclusion/）。
-
-        现在函数已删，这条断言锁住 `asof_matches` 的现行行为不被顺手改坏。
+        与 `.scratch/expiry-exclusion/01`（ready-for-human）作用域不相交：
+        该票审议的是**当前态**（TEMPORAL_CURRENT_STRICT，无 as_of 参数）
+        过期记忆退出召回；本函数 `asof_matches` 只服务 as-of 显式历史视图。
         """
         from lantai.retrieval.temporal import asof_matches
 
         t = datetime(2026, 9, 10, tzinfo=UTC)
+        # 时间信息完全未知（vf/vt/event_time 全 NULL）→ I4 豁免不变
+        # （显式 None：default_factory 会让构造时 vf=utcnow，那就不是「未知」了）
+        blank = _mem("vh-1", valid_from=None, valid_to=None)
+        for strict in (False, True):
+            ok, by = asof_matches(blank, t, strict=strict)
+            assert ok is True and by == "unknown_soft", (strict, ok, by)
+        # 有效期已知且 as-of 在其外 → 不再冒用 I4：strict 剔除 / 非 strict 降权保留
         cases = {
-            "expired": _mem("vh-3", valid_to=t),
+            "expired": _mem("vh-3", valid_from=t - timedelta(days=30), valid_to=t),
             "future": _mem("vh-2", valid_from=t + timedelta(days=1)),
         }
         for name, item in cases.items():
-            for strict in (False, True):
-                ok, by = asof_matches(item, t, strict=strict)
-                assert ok is True and by == "unknown_soft", (name, strict, ok, by)
+            ok, by = asof_matches(item, t, strict=False)
+            assert ok is True and by == "missed_soft", (name, ok, by)
+            ok, by = asof_matches(item, t, strict=True)
+            assert ok is False and by == "", (name, ok, by)
 
     def test_default_factory_makes_valid_from_never_null(self):
-        """固化 tables.py:149 的 default_factory 语义（删除前实测踩到的坑 1）。"""
+        """**契约更新（票 `.scratch/v0.64-next-window-2026-11/08`，2026-10-31）**：
+
+        原断言锁 default_factory「裸构造 vf 恒 utcnow」——那是被根治的污染
+        行为：default_factory 会把显式 None 改写为 utcnow，「开端开放」无法
+        表达。列默认改 `default=None` 后（写入点显式 `valid_from=utcnow()`
+        声明「现在生效」），裸构造 = vf None 保真；产品写入点的「现在生效」
+        语义由 `test_valid_from_open_interval.py` 的服务层冒烟锁定。
+        保留原测试名（删除前实测踩到的坑 1 的历史出处）。
+        """
         bare = _mem("vh-7")
-        assert bare.valid_from is not None  # utcnow 自动填，故列无稳定 NULL
+        assert bare.valid_from is None  # 列默认 None：显式 None/缺省都不再被改写
         assert bare.valid_to is None
 
     def test_event_interval_hit_survives(self):

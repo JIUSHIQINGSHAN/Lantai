@@ -119,6 +119,7 @@ class ReflectionEngine:
                         role=CognitiveRole.OBSERVATION,
                         source_ids=[f.id],
                         status="active",
+                        valid_from=utcnow(),  # 主张自落库起生效（票 08：写入点显式声明）
                     )
                 )
             if f.cause and f.cause.strip():
@@ -129,6 +130,7 @@ class ReflectionEngine:
                         role=CognitiveRole.OBSERVATION,
                         source_ids=[f.id],
                         status="active",
+                        valid_from=utcnow(),  # 主张自落库起生效（票 08：写入点显式声明）
                     )
                 )
         return obs

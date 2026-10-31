@@ -204,6 +204,7 @@ class EvolutionEngine:
                     status="candidate",  # Must be candidate
                     source_ids=pat.source_ids,
                     promotion_trace=trace,
+                    valid_from=utcnow(),  # 主张自落库起生效（票 08：写入点显式声明）
                 )
                 proposals.append(belief)
         return proposals
@@ -263,6 +264,7 @@ class EvolutionEngine:
                     status="candidate",
                     source_ids=[b.id] + (b.source_ids or []),
                     promotion_trace=trace,
+                    valid_from=utcnow(),  # 主张自落库起生效（票 08：写入点显式声明）
                 )
                 proposals.append(rule)
         return proposals
@@ -315,6 +317,7 @@ class EvolutionEngine:
                         }
                     },
                     promotion_trace=trace,
+                    valid_from=utcnow(),  # 主张自落库起生效（票 08：写入点显式声明）
                 )
                 proposals.append(prin)
         return proposals

@@ -101,8 +101,11 @@ class TestKaogongServiceDB:
             s.add(m2)
             s.commit()
 
-            # 运行考功周期
-            report = run_kaogong_cycle(session=s)
+            # 运行考功周期（写副作用身份闸，票 `.scratch/v0.64-next-window-2026-11/09`：
+            # principal=None 空转，批量巡检须持显式系统身份）
+            from lantai.core.acl import SYSTEM_VIEWER, Principal
+
+            report = run_kaogong_cycle(session=s, principal=Principal(user_id=SYSTEM_VIEWER))
             assert report["evaluated"] >= 2
             assert report["promoted_longterm"] >= 1
             assert report["demoted"] >= 1

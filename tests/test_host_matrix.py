@@ -100,7 +100,13 @@ def _seed_memory(home: Path, content: str, mem_id: str) -> None:
         " status='active', decay_score=1.0, decay_class='semantic',"
         " created_at=utcnow(), updated_at=utcnow(), valid_from=utcnow()));"
         "s.commit(); s.close();"
-        "index_memory_item(mid, embed([content])[0], {'lane':'fact','domain':'user'});"
+        # 向量 metadata 对齐写线 8 键契约（mem_command.py 写入形状）：检索侧
+        # owner filter 是 `{"$or":[{user_id:viewer},{user_id:""}]}`——Chroma $or
+        # 要求键存在且匹配，手搓 5 键 metadata 无 user_id 键 → 两半全不匹配
+        # → 0 候选（票 07 第二层根因；e2_temporal 票 06 同病根）。
+        "index_memory_item(mid, embed([content])[0], {"
+        "'memory_type':'fact','lane':'fact','domain':'user','shared_scope':'private',"
+        "'tenant_id':'','user_id':'','session_id':'','agent_id':''});"
     )
     r = subprocess.run(
         [PYTHON, "-c", code],

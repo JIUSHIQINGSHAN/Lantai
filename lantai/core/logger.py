@@ -3,7 +3,7 @@ import sys
 
 logger = logging.getLogger("lantai")
 if not logger.handlers:
-    h = logging.StreamHandler(sys.stdout)
+    h = logging.StreamHandler(sys.stderr)
     h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(h)
     logger.setLevel(logging.INFO)

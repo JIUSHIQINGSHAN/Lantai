@@ -1,6 +1,7 @@
 from sqlmodel import Session, select
 
 from lantai.core.ids import new_id
+from lantai.core.time import utcnow
 from lantai.models.tables import CognitiveRole, MemoryEdge, MemoryItem
 
 
@@ -17,6 +18,7 @@ def evaluate_and_evolve(
         content=belief_content,
         role=CognitiveRole.BELIEF,
         confidence=1.0,  # Initial high confidence
+        valid_from=utcnow(),  # 主张自落库起生效（票 08：写入点显式声明）
     )
     session.add(belief)
 

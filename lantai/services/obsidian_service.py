@@ -12,6 +12,7 @@ import re
 from sqlmodel import select
 
 from lantai.core.ids import new_id
+from lantai.core.time import utcnow
 from lantai.models.enums import MemoryTier
 from lantai.models.schemas import ObsidianSyncReq, RawMemoryReq
 from lantai.models.tables import MemoryEdge, MemoryItem
@@ -76,6 +77,7 @@ def _get_or_create_entity(s, name: str, principal=None) -> MemoryItem:
         user_id=getattr(principal, "user_id", None),
         tenant_id=getattr(principal, "tenant_id", None),
         agent_id=getattr(principal, "agent_id", None),
+        valid_from=utcnow(),  # 主张自落库起生效（票 08：模型层默认 None，写入点显式声明）
     )
     s.add(ent)
     s.flush()

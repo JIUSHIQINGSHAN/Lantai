@@ -163,12 +163,18 @@ class TestGenglouMigrationV21:
             engine.dispose()
 
     def test_model_defaults_anchor_i1_i2(self):
-        """I1 空侧 / I2 落锚：MemoryItem 默认构造 precision='' 且 valid_from 非空。"""
-        from datetime import datetime
+        """I1 空侧 / I2 落锚：MemoryItem 默认构造 precision=''。
 
+        **契约更新（票 `.scratch/v0.64-next-window-2026-11/08`）**：I2「新写入
+        valid_from 非空」的落锚职责从模型层 default_factory 移交**服务层写入点**
+        （12 处显式 `valid_from=utcnow()`）——default_factory 会把显式 None 改写
+        为 utcnow，「开端开放」无法表达（e2/jigu/readpath 三处测试被迫 SQL 补
+        NULL 续命）。模型层默认 None（显式 None 保真）；I2 语义由
+        test_valid_from_open_interval.py 的服务层冒烟锁定。
+        """
         from lantai.models.tables import MemoryItem
 
         item = MemoryItem(id="anchor-1", content="更漏落锚")
         assert item.event_time is None  # 宁 miss 不猜
         assert item.event_time_precision == ""  # I1：event_time 为空 ⇒ precision == ""
-        assert isinstance(item.valid_from, datetime)  # I2：新写入 valid_from 非空
+        assert item.valid_from is None  # 模型层默认 None（票 08：I2 落锚归服务层写入点）

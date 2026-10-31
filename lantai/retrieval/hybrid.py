@@ -984,6 +984,17 @@ def _chronos_filter(items: list, as_of=None) -> list:
     的检索调用一旦 commit，原地 `m.decay_score *= 0.3` 会把读路径的临时降权永久
     写回库。副本与原对象唯一差异是 decay_score（`model_copy` 逐字段拷贝），
     排序/打分/model_dump 读到的都是降权后的值——语义与改前逐字一致。
+
+    **as_of 显式查询时 vf>now 剔除不执行**（票
+    `.scratch/v0.64-next-window-2026-11/06`）：本函数是**当前态**过滤器，
+    「未到 valid_from」语义以当下时刻为准；as-of 历史视图的时效判定全权归
+    `temporal_view_filter`（asof_matches 的 validity 分支 + I4 + strict），
+    两处对同一列各判一次会互相打架——实证：SQLModel 0.0.42 下
+    `Field(default_factory=utcnow)` 列的显式 `valid_from=None` 在 flush 时
+    被改写为落库时刻（temporal.py:71 既有已知限制），vf(落库今天) >
+    as_of(历史) → 开区间种子被误杀 → E2 双视图 6 例零召回。vt 过期衰减
+    （0.3×）两种模式都保留（as_of 模式按 as_of 时刻算过期，与
+    temporal_view_filter 的软降权乘子语义正交）。
     """
     from lantai.core.time import utcnow
     from lantai.retrieval.temporal import _ensure_utc
@@ -997,8 +1008,8 @@ def _chronos_filter(items: list, as_of=None) -> list:
         vt = m.valid_to
         if vt and vt.tzinfo is None:
             vt = vt.replace(tzinfo=UTC)
-        if vf and vf > now:
-            continue
+        if not as_of and vf and vf > now:
+            continue  # 仅当前态剔除「未生效」；as_of 模式归 temporal_view_filter
         if vt and vt < now:
             m = m.model_copy(update={"decay_score": m.decay_score * 0.3})
         temporally_valid.append(m)

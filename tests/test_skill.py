@@ -191,10 +191,10 @@ def test_build_context_injects_skill_block(mem_db, monkeypatch):
             return [{"id": "mem_skill", "distance": 0.1}]
 
     monkeypatch.setattr(db_module, "get_session", session_factory)
-    monkeypatch.setattr(mod, "get_vector_store", lambda: _FakeStore())
-    monkeypatch.setattr(mod, "embed", lambda texts: [[0.1] * 8])
+    monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
+    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda texts: [[0.1] * 8])
 
     out = mod.build_context("上线部署怎么做")
-    assert "## Skill: 部署手册" in out["context"]
-    assert "1. 备份数据库" in out["context"]
+    assert "## Skill: 部署手册" in out.get("context", "")
+    assert "1. 备份数据库" in out.get("context", "")
     assert out["evidence"][0]["id"] == "mem_skill"

@@ -274,7 +274,9 @@ def run_e2_temporal_eval(*, top_k: int = 5) -> dict:
                 },
             )
             sync_fts_quiet(s, item.id, item.content)
-        s.commit()
+        # 票 `.scratch/v0.64-next-window-2026-11/08` 根治后无需 SQL 补 NULL：
+        # 列默认已改 `Field(default=None)`，SEEDS 的显式 `valid_from=None`
+        # 落库保真，「有效期开区间」种子语义由模型层直接表达。
 
     correct = 0
     failures: list[dict] = []

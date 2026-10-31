@@ -107,6 +107,16 @@ class TestGateContentQuery:
         res = relevance_check("Python是什么")
         assert res["needs_memory"] is False
 
+    def test_chinese_fact_question_passes_gate(self):
+        """非技术词的实质中文问句过闸（票 07：ADR-0028「不再武断 15 字卡死」补完）。
+
+        host_matrix 三宿主 E2E 的查询形态：10 汉字、无技术词、无信号词——
+        旧实现落 no_signal → hook 前置闸门整段跳过检索 → 注入正文空。
+        """
+        res = relevance_check("龙井茶冲泡水温是多少")
+        assert res["needs_memory"] is True
+        assert res["scope"] == "pinned"
+
 
 class TestGateDefault:
     """默认 → 不需要"""

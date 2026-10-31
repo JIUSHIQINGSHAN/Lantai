@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-10-31 - 缮治（Shanzhi · 协议面净化与 P0 存量收口）
+
+> 版本代号「缮治」：修缮整治、补葺去垢，语出《汉书·货殖传》「缮治器物」、《后汉书》「缮治城郭」——对应本版主题「协议面净化与 P0 存量收口」：hook stdout 协议流净化（N-01）、E2 双视图评测归零（D-06/票 06-08）、探颐否定子串误归档修复（R-01）、考功写副作用身份闸（N-03）、G1 发版闸门（红灯不出镜像），v0.38–v0.60 续审报告 P0 行动清单 7 项全部闭合。票据 `.scratch/v0.64-next-window-2026-11/`（票 01–11 全部收口）。
+
+### Security
+
+- **G1 发版闸门：镜像构建前置测试（票 10，`.github/workflows/ci.yml`）**：tag push 先跑 tests job（ruff 双门禁 + 全量 pytest，口径同 tests.yml），全绿才构建推送镜像（`build.needs: tests`）——「红灯出镜像」路径关闭（v0.39–v0.59 共 21 个标签未经 CI 直接出镜像的隐患面就此闭合）。
+- **考功写副作用身份闸（N-03 残留，票 09，`lantai/cognition/kaogong.py`）**：`run_cycle` 在 `principal is None`（MCP `user_id` 不透传）时空转返回 `skipped_no_principal`，不再降权写回 NULL 属主行（实测 0.5→0.1 可达，真实库 391/635 条 verbatim 全 NULL）——宁 miss 不脏写，写路径先验身份；系统身份与具名用户行为零变化（调用面普查：REST×2 必有身份、无 scheduler/worker 调用）。
+
+### Fixed
+
+- **hook stdout 协议流净化（N-01，票 01，`lantai/core/logger.py` + `scripts/shell_hook.py`）**：logger stdout→stderr 一行修复——chromadb posthog telemetry 与 WARNING 日志不再混入 NDJSON 帧流，宿主侧 `json.loads` 不再炸（三宿主 E2E 自 v0.62 以来首次全绿，票 07 连带闸门假阴性四层根因修复）。
+- **探颐否定子串误归档（R-01，票 09，`lantai/services/probing_service.py`）**：`_NEGATIVE_PATTERNS` 英文否定词整词化（`\bno\b` 等与肯定侧 `_is_affirmative_reply` 对称）——`'noted, 已记录'` 曾被裸子串 `no` 误判否定直接归档记忆（置信度 0.1）；CJK 否定词语义不动，三分支同源生效。
+- **E2 双视图评测归零（D-06 根治链，票 06–08）**：chronos 当前态语义污染 as-of 历史视图——SQLModel 0.0.42 `default_factory=utcnow` 吞显式 `valid_from=None`（票 08 根治：列默认 `default=None` + 12 服务层写入点显式 `valid_from=utcnow()` 落锚，I2 责任移交服务层对齐迁移 v21 回填口径）；当前态写入守卫一行修复（票 06），`e2_temporal_cases` 内 SQL NULL 补正 hack 撤除，accuracy 0.8378→**1.0**；`test_chronos_asof_open_interval` 同步归绿。
+
+### Performance
+
+- **拾遗扫描预算（票 02 延伸，`lantai/gate/prefilter.py` + `lantai/retrieval/hybrid.py`）**：闸门预筛与检索链路预算收口（详见 `.scratch/v0.64-next-window-2026-11/map.md` 票 01–07 行）。
+
+### Tests
+
+- 新增 5 个测试文件、17 项不 mock 冒烟（真实 SQLite 直调公开接口）：`test_hook_stdout_protocol`（协议帧净化）、`test_probe_reply_word_boundary`（R-01 整词边界 5 项）、`test_kaogong_no_principal_write_guard`（N-03 身份闸 3 项）、`test_valid_from_open_interval`（票 08 开端开放语义 6 项）、`test_chronos_asof_open_interval`（as-of None 保真）。
+- 3 个锁定旧行为的既有测试按新契约更新（`test_kaogong` / `test_kaogong_engine_smoke` 补显式系统身份；`test_mcp_none_scope_leaks` 翻转 NULL 老行写回断言，docstring 记录票 06→09 口径演进）。
+- 全量回归 run 9 = **17F / 2521P**（失败集与 run 7 基线 comm 逐项一致，17 项均为已知单跑绿乱序簇），vs v0.63 基线 27F 净修 10 项。
+
 ## [0.63.0] - 2026-10-31 - 拾阙（Shique · 稽失防微与闸门补阙）
 
 > 版本代号「拾阙」：拾遗补阙，语出《史记·太史公自序》「拾遗补阙，成一家之言」——寓意拾补阙漏、防微杜渐，对应本版主题「稽失防微，固本培元；系统健壮性、闸门审计与自愈防线修复」：承接 v0.38–v0.60 续审报告揭示的 P1 核心风险，完成终端合并自删除防呆（X-03）、人格基座注入闸门（X-04）、密钥熔断全链路覆盖（X-06）与拾遗零召回全表扫描治理（N-02）。票据 `.scratch/v0.63-next-window-2026-11/`（票 01/02/03 全部收口）。

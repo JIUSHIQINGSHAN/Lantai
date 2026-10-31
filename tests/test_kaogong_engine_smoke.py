@@ -97,7 +97,11 @@ def test_seam2_single_memory_evaluation_db(db_session: Session):
     db_session.add(mem)
     db_session.commit()
 
-    engine = KaogongEngine(session=db_session)
+    # 行级 ACL（宁漏不越权）上线后，引擎必须持与属主一致的身份；
+    # 测试不开 ACL 旁路，造数 user_id="alice" ↔ principal 同口径
+    from lantai.core.acl import Principal
+
+    engine = KaogongEngine(session=db_session, principal=Principal(user_id="alice"))
     res = engine.evaluate_memory_id("mem_db_01")
 
     assert res.memory_id == "mem_db_01"
@@ -142,7 +146,12 @@ def test_seam3_batch_evaluation_and_report(db_session: Session):
     db_session.add_all([mem1, mem2, mem3])
     db_session.commit()
 
-    engine = KaogongEngine(session=db_session)
+    # 写副作用身份闸（票 `.scratch/v0.64-next-window-2026-11/09`）：
+    # principal=None 空转（宁 miss 不脏写），批量巡检须持显式身份——
+    # 与 Seam 2 的 Principal 口径一致（系统身份全表）。
+    from lantai.core.acl import SYSTEM_VIEWER, Principal
+
+    engine = KaogongEngine(session=db_session, principal=Principal(user_id=SYSTEM_VIEWER))
     report = engine.run_cycle()
 
     assert report["evaluated"] >= 3

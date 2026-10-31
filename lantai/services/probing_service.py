@@ -47,6 +47,7 @@ _AFFIRMATIVE_PATTERNS = [
     r"true",
 ]
 _NEGATIVE_PATTERNS = [
+    # CJK 否定词：整词语义、词间无子串误伤面（「没错」不含「没有」），保持裸匹配
     r"不是",
     r"不对",
     r"没有",
@@ -62,10 +63,14 @@ _NEGATIVE_PATTERNS = [
     r"不属实",
     r"不准确",
     r"假",
-    r"no",
-    r"nope",
-    r"false",
-    r"wrong",
+    # 英文否定词：**整词匹配（\b 边界）**（票 `.scratch/v0.64-next-window-2026-11/09`
+    # R-01）——裸子串 `no` 曾把 'noted, 已记录' / 'known issue' 误判为否定，
+    # 探颐否定分支直接归档记忆。与肯定侧 `_is_affirmative_reply` 的锚定+
+    # 边界口径对齐。
+    r"\bno\b",
+    r"\bnope\b",
+    r"\bfalse\b",
+    r"\bwrong\b",
 ]
 
 

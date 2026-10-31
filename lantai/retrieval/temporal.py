@@ -67,9 +67,16 @@ def asof_matches(item, as_of: datetime, *, delta_days: float = 1.0, strict: bool
     判定顺序按信息量（matched_by 取最具体者）：
     1. 有效期命中（vf/vt 至少一端非空，NULL 端为开）→ (True, "validity")；
     2. 事件区间命中 → (True, "event_interval")；
-    3. **I4：event_time IS NULL → (True, "unknown_soft")**——任何模式都不因
-       时间条件硬排除（spec §2.5 I4；注意 valid_from 列在 SQLModel 0.0.42
-       default_factory 读回语义下不存在稳定 NULL——I4 的承载面是 event_time）；
+    3. **I4：vf/vt/event_time 全 NULL（时间信息完全未知）→ (True, "unknown_soft")**
+       ——任何模式都不因时间条件硬排除（spec §2.5 I4；注意 valid_from 列在
+       SQLModel 0.0.42 default_factory 读回语义下不存在稳定 NULL——I4 的
+       承载面是 event_time）。
+       **vf/vt 至少一端已知而 as-of 落在有效期之外时不得享受 I4 豁免**（票
+       `.scratch/v0.64-next-window-2026-11/06`）：有效期已知 = 「确定不在」，
+       不是「时间锚不确定」——2025 年的 CEO 事实必须不可见于 2024 年切片
+       （jigu 防未来污染语义）。此前 event_time IS NULL 即放行，让有效期
+       已知的条目冒用「时间未知」豁免，被 chronos 越权剔除掩盖（两层缺陷
+       互为掩体）。
     4. strict=True → (False, "") 剔除；strict=False（默认）→ (True, "missed_soft") 仅降权。
     """
     as_of = _ensure_utc(as_of)
@@ -78,10 +85,12 @@ def asof_matches(item, as_of: datetime, *, delta_days: float = 1.0, strict: bool
     if vf or vt:
         if (vf is None or vf <= as_of) and (vt is None or vt > as_of):
             return True, "validity"
-    if item.event_time is not None and _event_interval_hit(item, as_of, delta_days):
+        # 有效期已知但 as-of 不在其内：走 missed_soft/strict（不落入 I4）
+    elif item.event_time is not None and _event_interval_hit(item, as_of, delta_days):
         return True, "event_interval"
-    if item.event_time is None:
-        return True, "unknown_soft"  # I4：event_time IS NULL 永不硬排除
+
+    if vf is None and vt is None and item.event_time is None:
+        return True, "unknown_soft"  # I4：时间信息完全未知，永不硬排除
     if strict:
         return False, ""
     return True, "missed_soft"

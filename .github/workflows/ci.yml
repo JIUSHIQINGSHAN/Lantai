@@ -1,5 +1,12 @@
 name: Build and Push Docker Image
 
+# G1 发版闸门（票 .scratch/v0.64-next-window-2026-11/issues/10）：
+# tag push 先跑测试（ruff 双门禁 + 全量 pytest），全绿才构建推送镜像——
+# 「红灯出镜像」路径关闭。此前 build 是孤立 job，v0.39–v0.59 共 21 个
+# 标签未经 CI 直接出镜像。needs 只在同一 workflow 内生效，tests.yml
+# （master/PR 常态门禁）不能替代本闸门。coverage 与遗忘质量门禁不复制：
+# 发版闸门只管「树是绿的」，常态门禁在 tests.yml。
+
 on:
   push:
     tags:
@@ -10,7 +17,29 @@ permissions:
   packages: write
 
 jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      # 供应链锁定：actions 用 commit SHA 而非可变 tag（审计 M6）
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: pip install -e .[dev]
+      # 口径与 tests.yml 完全一致（lint 范围、API_KEY 非空防 DEV MODE 回退）
+      - name: Lint and Format Check (Ruff)
+        run: |
+          ruff check lantai/ tests/ scripts/
+          ruff format --check lantai/ tests/ scripts/
+      - name: Full test suite
+        env:
+          # shell hook 子进程测试要求非空 API_KEY(禁止 DEV MODE 回退);CI 无 .env
+          API_KEY: test-key
+        run: pytest tests/ -q
+
   build:
+    needs: tests
     runs-on: ubuntu-latest
     steps:
       # 供应链锁定：actions 用 commit SHA 而非可变 tag（审计 M6）

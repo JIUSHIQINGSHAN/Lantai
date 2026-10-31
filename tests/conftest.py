@@ -333,6 +333,57 @@ def pytest_runtest_teardown(item, nextitem):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_resident_persona(monkeypatch):
+    """常驻画像测试隔离（v0.64 票 03/05 连带修复）。
+
+    `_build_resident_persona`（shell_hook）在测试进程里经真实
+    `db.get_session()` 读到宿主机的 PersonaProfile（2026-10-31 实证：
+    本机 remembrance-data 库有激活人格 → `{"context": 人格}` 非空），
+    使「空查询/无命中 → `{}`」类断言变成**依赖宿主机状态的巧合测试**
+    ——本机全量 8 例连坐（shell_hook/fence/retrieval_log/hook_api_key_gate）。
+
+    测试基线：resident persona 恒空（既有全部「{}」断言的隐含前提）。
+    需要画像内容的用例在测试体内自行 patch `_build_resident_persona`
+    （晚于本 fixture 生效）。
+    """
+    import importlib.util
+    import os as _os
+
+    hook_path = _os.path.join(
+        _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+        "scripts",
+        "shell_hook.py",
+    )
+    try:
+        spec = importlib.util.spec_from_file_location("_shell_hook_persona_base", hook_path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        monkeypatch.setattr(mod, "_build_resident_persona", lambda: "", raising=False)
+    except Exception:
+        pass
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_gate_hot_cache():
+    """闸门热缓存跨测试复位（v0.64 票 05）。
+
+    `relevance_check` 的追问热缓存（`_LAST_GATE_DECISION` / `_USER_GATE_DECISIONS`，
+    `GATE_CACHE_TTL` 默认 1h）是模块级状态：先行的测试用带信号查询触发
+    `needs_memory=True` 后，后行测试的单字短查询会命中「追问沿用」分支
+    （`session_followup_hot`）——`test_zero_recall_remediation::force`
+    断言 `needs_memory is False` 被连坐，单跑绿全量红。测试隔离口径：
+    每个测试从冷缓存开始，需要热缓存语义的用例自行预填。
+    """
+    import lantai.gate.prefilter as pf
+
+    pf._LAST_GATE_DECISION.update({"time": 0.0, "query": "", "needs_memory": False})
+    if hasattr(pf, "_USER_GATE_DECISIONS"):
+        pf._USER_GATE_DECISIONS.clear()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _no_background_scheduler(monkeypatch):
     """全量顺序污染防护：测试进程内关闭真实后台调度器。
 

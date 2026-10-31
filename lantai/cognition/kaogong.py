@@ -255,7 +255,28 @@ class KaogongEngine:
         return res
 
     def run_cycle(self, limit: int = 100) -> dict[str, Any]:
-        """批量对库内 active 记忆执行考功巡检与落库。"""
+        """批量对库内 active 记忆执行考功巡检与落库。
+
+        **写副作用身份闸（票 `.scratch/v0.64-next-window-2026-11/09`，N-03
+        残留）**：`principal=None` = 调用方身份未知（MCP `user_id` 不透传），
+        按「宁 miss 不脏写」不落笔——空转返回 `skipped_no_principal` 标注。
+        此前 `_owned_scope` 的 `user_id IS NULL` 半边会把 NULL 属主行放进
+        候选（真实库 391/635 条 verbatim 全 NULL），`_check_access(
+        owner_id=None)=True` 放行，高频低效 NULL 行被无身份调用降权写回
+        （实测 0.5→0.1）。系统身份（SYSTEM_VIEWER/admin）与具名用户行为
+        不变；调用面普查（票面）：REST×2 ctx 必有身份、MCP×1 None 可达、
+        无 scheduler/worker 调用——空转不伤定时任务。
+        """
+        if self.principal is None:
+            return {
+                "evaluated": 0,
+                "promoted_longterm": 0,
+                "demoted": 0,
+                "kept": 0,
+                "details": [],
+                "evaluated_at": utcnow().isoformat(),
+                "skipped_no_principal": True,
+            }
         if self.session is not None:
             return self._run_cycle(self.session, limit)
         with db.get_session() as s:

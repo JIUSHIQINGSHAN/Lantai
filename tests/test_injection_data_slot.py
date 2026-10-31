@@ -30,9 +30,9 @@ def test_recalled_adversarial_memory_stays_inside_data_fence(monkeypatch):
             return [{"id": "mem_evil", "distance": 0.1}]
 
     monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
-    monkeypatch.setattr(mod, "get_vector_store", lambda: _FakeStore())
+    monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
 
-    ctx = mod.build_context("这是一个超过三字符的查询")["context"]
+    ctx = mod.build_context("这是一个超过三字符的查询").get("context", "")
 
     assert ctx.startswith(FENCE_DECLARATION)
     assert ctx.count(DATA_FENCE_CLOSE) == ctx.count("<memory_data") == 2

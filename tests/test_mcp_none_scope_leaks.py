@@ -142,7 +142,14 @@ class TestKaogongNoneNoLongerWritesOthers:
         assert report["demoted"] == 0
 
     def test_none_principal_still_evaluates_null_owner(self, engine):
-        """NULL 属主老行仍参与（单人部署不能空转）。"""
+        """NULL 属主老行：无身份时**不写回**（票 `.scratch/v0.64-next-window-2026-11/09`）。
+
+        旧契约（票 06）是「NULL 老行仍参与评估，单人部署不能空转」——但实测
+        留下脏写面：principal=None + NULL 属主高频低效行 → 降权写回 0.9→0.1。
+        票 09 按宁 miss 不脏写收紧：`principal is None` = 调用方身份未知，
+        **写路径一律不落笔**（空转返回 `skipped_no_principal`）；单人部署的
+        定时考功必须显式传系统身份（见 `test_system_viewer_still_evaluates_everyone`）。
+        """
         from lantai.services.kaogong_service import run_kaogong_cycle
 
         with Session(engine) as s:
@@ -151,8 +158,11 @@ class TestKaogongNoneNoLongerWritesOthers:
         report = run_kaogong_cycle(principal=None)
 
         with Session(engine) as s:
-            assert s.get(MemoryItem, "mem-legacy").importance == 0.1
-        assert report["demoted"] == 1
+            assert s.get(MemoryItem, "mem-legacy").importance == 0.9, (
+                "无身份考功写回了 NULL 属主行（票 09：写路径先验身份）"
+            )
+        assert report["demoted"] == 0
+        assert report.get("skipped_no_principal") is True
 
     def test_explicit_owner_still_demotes_own(self, engine):
         """显式身份仍能考功自己的记忆（回归：收窄不能把正常功能修废）。"""

@@ -20,6 +20,7 @@ from sqlmodel import select
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.core.settings import settings
+from lantai.core.time import utcnow
 from lantai.llm.client import embed  # 外部依赖：允许 mock
 from lantai.models.enums import MemoryTier
 from lantai.models.tables import MemoryItem
@@ -175,6 +176,7 @@ def create_skill(
             user_id=user_id,
             agent_id=agent_id,
             shared_scope=shared_scope or "private",
+            valid_from=utcnow(),  # 主张自落库起生效（票 08：模型层默认 None，写入点显式声明）
         )
         s.add(mem)
         s.flush()

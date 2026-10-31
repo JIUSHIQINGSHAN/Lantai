@@ -100,11 +100,11 @@ class TestFenceAtExits:
             def search(self, qv, top_k=5, filters=None):
                 return [{"id": "mem_f1", "distance": 0.1}]
 
-        monkeypatch.setattr(mod, "get_vector_store", lambda: _FakeStore())
+        monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
         out = mod.build_context("部署流程怎么做")
-        assert fence_declaration() in out["context"]
-        assert out["context"].count(DATA_FENCE_OPEN) >= 1
-        assert "部署流程：先备份" in out["context"]
+        assert fence_declaration() in out.get("context", "")
+        assert out.get("context", "").count(DATA_FENCE_OPEN) >= 1
+        assert "部署流程：先备份" in out.get("context", "")
 
     def test_mcp_search_results_fenced(self, monkeypatch):
         """出口冒烟：MCP handle_search 的 results/evidence 正文均围栏。"""
@@ -250,9 +250,9 @@ class TestFenceAtExits:
             def search(self, qv, top_k=5, filters=None):
                 return [{"id": "mem_evil", "distance": 0.1}]
 
-        monkeypatch.setattr(mod, "get_vector_store", lambda: _FakeStore())
+        monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
         out = mod.build_context("这条记忆说了什么")
-        ctx = out["context"]
+        ctx = out.get("context", "")
         # 正文里的闭合被中性化 → 围栏结构不被截断；闭合总数 = 围栏自身数量
         assert ctx.count("</memory_data>") == ctx.count(DATA_FENCE_OPEN)
         # 恶意正文在【本次依据】与【相关记忆】各出现一次，各被中性化

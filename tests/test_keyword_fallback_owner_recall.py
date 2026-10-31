@@ -142,12 +142,37 @@ class TestLikeFallbackNullOwnerVisible:
         assert any("我的机器" in d for d in docs), f"自己的行没召回了：{docs}"
         assert not any("另一台机器" in d for d in docs), f"搜到了别人的行：{docs}"
 
-    def test_none_principal_still_unfiltered(self, engine, monkeypatch):
-        """`principal=None` 仍全表——worker / 定时反思不能空转（票 06 口径）。"""
+    def test_none_principal_converges_to_default_owner(self, engine, monkeypatch):
+        """`principal=None` 收敛为 default 属主（`_converge_principal`，
+        票 `.scratch/mcp-identity-gaps/11`）：可见「自己的 + NULL 老行」，
+        不可见他人行。
+
+        旧口径（本测试原名 `test_none_principal_still_unfiltered`，
+        「None=全表」）已废弃：无身份 MCP 调用继承 worker 全表权限是
+        票 04/05/06 三连根因，全表语义一律显式传 `acl.SYSTEM_VIEWER`
+        （reflect_worker / reflector / eval runner 均已迁移）。
+        """
         _seed(engine, "mem-legacy", None, "RTX 3050 显卡")
         _seed(engine, "mem-B", "user-B", "另一台机器")
 
         res = _run_like_fallback(engine, monkeypatch, SHORT_QUERY, None)
         docs = [r["document"] for r in res]
 
-        assert len(docs) == 2, f"principal=None 不再全表了：{docs}"
+        assert any("RTX 3050" in d for d in docs), f"NULL 老行对 default 属主不可见了：{docs}"
+        assert not any("另一台机器" in d for d in docs), f"收敛后仍搜到他人行：{docs}"
+
+    def test_system_viewer_still_unfiltered(self, engine, monkeypatch):
+        """全表语义的正确表达：显式 `SYSTEM_VIEWER` 身份 → NULL 老行与他人行都可见
+        （worker / 定时反思不空转，票 06 口径的正确落点）。"""
+        from lantai.core.acl import SYSTEM_VIEWER, Principal
+
+        _seed(engine, "mem-legacy", None, "RTX 3050 显卡")
+        _seed(engine, "mem-B", "user-B", "另一台机器")
+
+        sys_principal = Principal(
+            tenant_id=None, user_id=SYSTEM_VIEWER, agent_id=None, session_id=None, role="system"
+        )
+        res = _run_like_fallback(engine, monkeypatch, SHORT_QUERY, sys_principal)
+        docs = [r["document"] for r in res]
+
+        assert len(docs) == 2, f"SYSTEM_VIEWER 不再全表了：{docs}"

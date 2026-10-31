@@ -38,6 +38,7 @@ REFERENCE_PATTERNS = re.compile(
     r"上次.*(聊|说|讲|提到|讨论)|"
     r"继续|接着|再.*(说|讲|聊)|"
     r"我们.*(决定|说过|定|约)|"
+    r"(这|那)条?(记录|记忆|笔记|备忘)|"
     r"last time|previously|before|earlier|"
     r"remember|recall|what.*(we|I).*said|"
     r"continue|go on|pick up",
@@ -74,6 +75,12 @@ _BASE_SELF_REFERENCE = (
 TECHNICAL_DOMAIN_PATTERNS = re.compile(
     r"架构|系统|配置|算法|原理|方案|模型|显卡|接口|数据|微服务|容器|集群|驱动|硬件|依赖|查询|检索|搜索|部署",
     re.IGNORECASE,
+)
+
+# 疑问式标记（票 07：实质问句识别）。只收多字疑问词与问号——单字疑问词
+# （哪/谁/几）在口语闲聊中频现（如「旧实体在哪」属实体词表职责域），不收录。
+QUESTION_PATTERNS = re.compile(
+    r"什么|多少|怎么|怎样|如何|为什么|几时|何时|为何|？|\?", re.IGNORECASE
 )
 
 # ── 实体词表惰性编译（修 import 时定死）──
@@ -199,9 +206,14 @@ def relevance_check(
     if REFERENCE_PATTERNS.search(q):
         return _update_cache(cache, now, True, q, "reference", "episode")
 
-    # 6. 有实质内容（长文本或含专业/技术领域实词的短查询，ADR-0028）
-    if (len(q) > 15 and _has_content_words(q)) or (
-        len(q) >= 4 and TECHNICAL_DOMAIN_PATTERNS.search(q)
+    # 6. 有实质内容（长文本，或含专业/技术领域实词的短查询，ADR-0028；或
+    #    含疑问式标记的实质中文问句（≥5 汉字）——非技术名词的生活实体问句
+    #    如「龙井茶冲泡水温是多少」无技术词可依，不得再被 15 字硬卡挡回
+    #    （票 07，ADR-0028「不再武断以 15 字卡死」补完：决策权交给检索分数阈值）
+    if (
+        (len(q) > 15 and _has_content_words(q))
+        or (len(q) >= 4 and TECHNICAL_DOMAIN_PATTERNS.search(q))
+        or (len(re.findall(r"[一-鿿]", q)) >= 5 and QUESTION_PATTERNS.search(q))
     ):
         return _update_cache(cache, now, True, q, "content_query", "pinned")
 

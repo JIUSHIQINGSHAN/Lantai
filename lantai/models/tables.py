@@ -154,8 +154,14 @@ class MemoryItem(SQLModel, table=True):
         default=""
     )  # event_time 释读精度：year/month/day/hour/minute/second/fuzzy；非空 ⇔ event_time 非空
     valid_from: datetime | None = Field(
-        default_factory=utcnow, index=True
-    )  # 主张有效期起点（语义必填：服务层默认 + 迁移回填 created_at；列物理可空——SQLite 无法对既有列补 NOT NULL）
+        default=None, index=True
+    )  # 主张有效期起点。语义必填（服务层写入点显式 valid_from=utcnow() + 迁移 v21 回填
+    # created_at；列物理可空——SQLite 无法对既有列补 NOT NULL）。**列默认 None（票
+    # `.scratch/v0.64-next-window-2026-11/08`）**：SQLModel 0.0.42 的 default_factory
+    # 会在 flush 时把显式 None 改写为 utcnow——「vf=NULL=开端开放」在写入路径无法表达，
+    # 「NULL=未知」与「utcnow=落库时刻」数据层不可区分（e2/jigu/readpath 三处测试被迫
+    # SQL 补 NULL 续命）。default=None 后显式 None 保真；评测种子（e2/forgetting）靠
+    # 它表达开区间语义，产品写入点则显式传 utcnow。
     valid_to: datetime | None = Field(
         default=None, index=True
     )  # 主张有效期终点；NULL=未失效（即 Zep invalid_at IS NULL 的当前态语义）

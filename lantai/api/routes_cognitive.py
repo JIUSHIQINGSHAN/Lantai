@@ -71,6 +71,7 @@ def cognitive_observe(
         user_id=getattr(ctx, "user_id", None) or "default",
         tenant_id=getattr(ctx, "tenant_id", None),
         agent_id=getattr(ctx, "agent_id", None),
+        valid_from=utcnow(),  # 主张自落库起生效（票 08：模型层默认 None，写入点显式声明）
     )
     ev = Evidence(
         id=ev_id,

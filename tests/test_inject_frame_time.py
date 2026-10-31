@@ -147,11 +147,11 @@ def test_shell_hook_inject_line_carries_event_time():
     )
     with (
         patch.object(db_module, "get_session", lambda: Session(engine)),
-        patch.object(mod, "get_vector_store", lambda: _fake_store(["mem_t"])),
+        patch("lantai.retrieval.hybrid.get_vector_store", lambda: _fake_store(["mem_t"])),
     ):
         out = mod.build_context("这是一个超过三字符的查询")
 
-    ctx = out["context"]
+    ctx = out.get("context", "")
     assert "mem_t" in ctx
     # 时间段落在行内：[2026-09-XX | score 0.9]
     day = et.strftime("%Y-%m-%d")
@@ -183,19 +183,22 @@ def test_shell_hook_no_time_line_unchanged():
     )
     with (
         patch.object(db_module, "get_session", lambda: Session(engine)),
-        patch.object(mod, "get_vector_store", lambda: _fake_store(["mem_n"])),
+        patch("lantai.retrieval.hybrid.get_vector_store", lambda: _fake_store(["mem_n"])),
     ):
         out = mod.build_context("这是一个超过三字符的查询")
 
     # 输出行被樊篱包成 <memory_data>…</memory_data>（P0 票03），判据先剥标签
     stripped = [
         ln.replace("<memory_data>", "").replace("</memory_data>", "")
-        for ln in out["context"].splitlines()
+        for ln in out.get("context", "").splitlines()
         if "没有时间出身" in ln
     ]
     line = next(ln for ln in stripped if ln.startswith("- ["))
     assert "| score" not in line, f"无时间却渲染了时间段: {line}"
-    assert line == "- [0.9] 一条没有时间出身的旧记忆", f"旧行为漂移: {line}"
+    # score=0.69 来自 RRF 融合（v0.28 f74343e0 起 w_vector·rrf·60 + w_decay），
+    # 非 v0.28 前的裸 1-distance=0.9；断言前缀形状而非具体分值
+    assert line.startswith("- [0."), f"旧行为漂移: {line}"
+    assert line.endswith("一条没有时间出身的旧记忆"), f"旧行为漂移: {line}"
 
 
 def test_shell_hook_granularity_off_hides_time():
@@ -220,13 +223,13 @@ def test_shell_hook_granularity_off_hides_time():
     with (
         patch.object(mod.settings, "SHELL_HOOK_INJECT_DATE", "off"),
         patch.object(db_module, "get_session", lambda: Session(engine)),
-        patch.object(mod, "get_vector_store", lambda: _fake_store(["mem_o"])),
+        patch("lantai.retrieval.hybrid.get_vector_store", lambda: _fake_store(["mem_o"])),
     ):
         out = mod.build_context("这是一个超过三字符的查询")
 
     stripped = [
         ln.replace("<memory_data>", "").replace("</memory_data>", "")
-        for ln in out["context"].splitlines()
+        for ln in out.get("context", "").splitlines()
         if "带时间但被关掉" in ln
     ]
     line = next(ln for ln in stripped if ln.startswith("- ["))
@@ -255,11 +258,11 @@ def test_shell_hook_minute_granularity():
     with (
         patch.object(mod.settings, "SHELL_HOOK_INJECT_DATE", "minute"),
         patch.object(db_module, "get_session", lambda: Session(engine)),
-        patch.object(mod, "get_vector_store", lambda: _fake_store(["mem_m"])),
+        patch("lantai.retrieval.hybrid.get_vector_store", lambda: _fake_store(["mem_m"])),
     ):
         out = mod.build_context("这是一个超过三字符的查询")
 
-    assert "2026-09-20 14:30" in out["context"]
+    assert "2026-09-20 14:30" in out.get("context", "")
 
 
 # ---------------------------------------------------------------- cognitive context

@@ -42,6 +42,10 @@ def _hash_embed(texts):
 
 
 def _mem(**kw):
+    # 显式 vf/vt=None（票 `.scratch/v0.64-next-window-2026-11/06` 契约更新）：
+    # 裸构造曾被 default_factory 填成 vf=utcnow，I4 收窄后 vf 已知即不再
+    # 冒用 unknown_soft 豁免——本文件的 I4 用例意图是「时间完全未知」，
+    # 必须显式 None 才能表达（default_factory 污染的又一实证）。
     defaults = dict(
         id=new_id("mem"),
         content="兰台项目部署在本地内网服务器",
@@ -50,6 +54,8 @@ def _mem(**kw):
         memory_type="general",
         decay_score=1.0,
         created_at=utcnow(),
+        valid_from=None,
+        valid_to=None,
     )
     defaults.update(kw)
     return MemoryItem(**defaults)
@@ -178,6 +184,15 @@ class TestTemporalSessionNoWriteback:
         mid = new_id("mem")
         with Session(engine) as s:
             s.add(_mem(id=mid))
+            s.commit()
+            # SQLModel 0.0.42 default_factory 污染补正（票
+            # `.scratch/v0.64-next-window-2026-11/08`）：显式 vf=None 在 flush
+            # 时被改写为落库时刻，纯 ORM 落不出「时间完全未知」行；I4 收窄后
+            # 该行会被误判 missed_soft（无降权）。落库后 SQL 补回 NULL——
+            # 与 e2_temporal_cases 同款口径补正，根治走票 08。
+            from sqlalchemy import text
+
+            s.execute(text("UPDATE memoryitem SET valid_from = NULL WHERE id = :i"), {"i": mid})
             s.commit()
 
         with Session(engine) as s:

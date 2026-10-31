@@ -424,6 +424,7 @@ def apply_proposal(proposal_id: str, principal=None) -> dict:
                 decay_score=1.0,
                 decay_class=patch_full.get("decay_class", "semantic"),
                 status="active",
+                valid_from=utcnow(),  # 主张自落库起生效（票 08：写入点显式声明）
                 created_at=utcnow(),
                 updated_at=utcnow(),
             )
@@ -528,6 +529,9 @@ def apply_proposal(proposal_id: str, principal=None) -> dict:
                 # 不信任 proposal 携带的 metadata 覆盖 decay_class（不可信来源）；
                 # 仅按内容关键词推断，显式调级走 service 层 set_decay_class（带 checkpoint）
                 decay_class=infer_decay_class(key or "", content),
+                # 主张自落库起生效（票 08：模型层默认 None，写入点显式声明——
+                # 迁移 v21 口径「vf 必填，以 created_at 近似」的服务层对应物）
+                valid_from=utcnow(),
             )
             # 冷启动导入（dialogue-session-import）：候选原始时间戳继承到
             # MemoryItem.created_at——历史会话时间线不压平到导入时刻

@@ -384,6 +384,10 @@ class TestStructuralGuard:
             # 调用方收窄属契约级决定，归 02 号票。**留在这里是为了让"未修"
             # 是显式的、有人 review 的**，01c 修完一个删一个。
             "handle_consolidation_report": "01c：读侧计数-only，收紧归 02 号票",
+            # 直书（v0.43 ADR-0064）：确定性 regex 规则匹配诊断——输入是
+            # text、纯函数（ZhishuEngine.parse 无 db/session/principal
+            # 任何引用），无归属面可收窄（v0.64 票 02 判定）
+            "handle_zhishu_check": "纯 regex 诊断，不碰库无归属面",
         }
 
         src = Path(mcp_mod.__file__).read_text(encoding="utf-8")
