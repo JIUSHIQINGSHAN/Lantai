@@ -179,7 +179,7 @@ def test_shell_hook_offload_injection(monkeypatch, tmp_path):
 
     monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
     monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
-    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda texts: [[0.1] * 8])
+    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda texts, timeout=None: [[0.1] * 8])
     monkeypatch.setattr(mod.settings, "SHELL_HOOK_OFFLOAD_CHARS", 50)
     monkeypatch.setattr(mod.settings, "SHELL_HOOK_MAX_CHARS_PER_MEMORY", 60)
     monkeypatch.setattr(mod.settings, "SHELL_HOOK_MAX_TOTAL_CHARS", 1500)
@@ -223,7 +223,7 @@ def test_shell_hook_short_memory_no_offload(monkeypatch, tmp_path):
 
     monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
     monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
-    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda texts: [[0.1] * 8])
+    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda texts, timeout=None: [[0.1] * 8])
     monkeypatch.setattr(mod.settings, "SHELL_HOOK_OFFLOAD_CHARS", 50)
     monkeypatch.setattr(mod.settings, "OFFLOAD_OUTPUT_DIR", str(tmp_path))
 

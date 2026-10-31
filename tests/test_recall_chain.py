@@ -126,7 +126,7 @@ class ChainHarness:
         self.embedder = LocalEmbedder(corpus)
         self.store = FakeVectorStore(self.embedder, self.rows)
 
-    def _embed(self, queries):
+    def _embed(self, queries, timeout=None):
         """委托当前 embedder（seed() 重建后补丁仍指向最新对象）。"""
         return self.embedder.embed(queries)
 

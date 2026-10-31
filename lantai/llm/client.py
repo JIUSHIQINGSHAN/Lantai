@@ -188,13 +188,32 @@ def vision_caption(media_url: str) -> str:
     return resp.choices[0].message.content or ""
 
 
+def _embed_once(texts: list[str], timeout: float | None = None) -> list[list[float]]:
+    with _gate_acquire():
+        client = get_client()
+        if timeout is not None:
+            # with_options 返回同配置新客户端实例（不动全局单例的超时）
+            client = client.with_options(timeout=timeout)
+        resp = client.embeddings.create(model=settings.EMBED_MODEL, input=texts)
+    return [d.embedding for d in resp.data]
+
+
 @_timed("embed")
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(min=1, max=10),
     retry=retry_if_not_exception_type(LLMConcurrencyTimeout),
 )
-def embed(texts: list[str]) -> list[list[float]]:
-    with _gate_acquire():
-        resp = get_client().embeddings.create(model=settings.EMBED_MODEL, input=texts)
-    return [d.embedding for d in resp.data]
+def embed(texts: list[str], timeout: float | None = None) -> list[list[float]]:
+    """文本向量化。
+
+    timeout（秒）：预算传导（D-04，票 `.scratch/v0.65-next-window-2026-11/01`）
+    ——hook 2s 预算内调用时传剩余预算。**预算模式下不做多次重试**：
+    tenacity 3 连击（stop_after_attempt(3) + 指数等待）会把 1.9s 预算变成
+    3×1.9s+等待——超预算必撞外层墙。预算内一次机会即止，失败抛给调用方
+    走降级路径（BM25/FTS 兜底 / 空注入保画像）。None 保持原行为（SDK
+    默认 timeout + 3 次重试，非 hook 路径无外层预算）。
+    """
+    if timeout is not None:
+        return _embed_once(texts, timeout)
+    return _embed_once(texts)

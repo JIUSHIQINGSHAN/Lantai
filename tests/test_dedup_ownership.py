@@ -932,7 +932,10 @@ class TestFilterThreading:
 
         with (
             patch("lantai.retrieval.hybrid.get_vector_store", lambda: VS()),
-            patch("lantai.retrieval.hybrid.embed", lambda texts: [[0.1] * 768 for _ in texts]),
+            patch(
+                "lantai.retrieval.hybrid.embed",
+                lambda texts, timeout=None: [[0.1] * 768 for _ in texts],
+            ),
         ):
             from lantai.retrieval.hybrid import hybrid_search
 

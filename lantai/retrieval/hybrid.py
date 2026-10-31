@@ -390,12 +390,16 @@ def hybrid_search(
     layer: str | None = None,
     shared_scope: str | None = None,
     enable_shiyi: bool = False,
+    budget_s: float | None = None,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     """混合检索：向量 + BM25 + 衰减（支持辨域 ADR-0034 domain 过滤与拾遗零召回自适应补救 ADR-0076）。
 
     trace=True 时返回 (results, trace_steps)。
     explain=True 时每条结果附带分项 {vector, bm25, fts, decay, lane_boost,
     final, decay_class, decay_multiplier}（reranker 开启时也保留原始分项）。
+    budget_s（秒）：预算传导（D-04，票 `.scratch/v0.65-next-window-2026-11/01`）
+    ——hook 侧传剩余预算：embed 超预算快速失败走 BM25/FTS 兜底、rerank 按
+    剩余预算限等；None 保持原行为。
 
     param_overrides: 临时覆盖 settings 检索参数（如 {"RETRIEVAL_W_VECTOR": 0.7}）。
     通过局部快照 RetrievalParams 注入，不再修改全局 settings 单例（并发安全，F3）。
@@ -445,6 +449,7 @@ def hybrid_search(
         as_of_recorded=as_of_recorded,
         shared_scope=shared_scope,
         enable_shiyi=enable_shiyi,
+        budget_s=budget_s,
     )
 
 
@@ -466,6 +471,7 @@ def _hybrid_search_impl(
     as_of_recorded=None,
     shared_scope: str | None = None,
     enable_shiyi: bool = False,
+    budget_s: float | None = None,
 ) -> list[dict] | tuple[list[dict], list[dict]]:
     p = params or RetrievalParams()
     trace_steps = []
@@ -503,7 +509,7 @@ def _hybrid_search_impl(
         # NULL 属主在向量库里的落点，332/353 条真实向量都是它）。
         filters = vector_owner_filter(principal, extra or None)
 
-        qv = embed([query])[0]
+        qv = embed([query], timeout=budget_s)[0]  # D-04 预算传导
         vector_store = get_vector_store()
         vector_results = vector_store.search(
             qv, top_k=fetch_n, filters=filters if filters else None
@@ -849,7 +855,11 @@ def _hybrid_search_impl(
     # Step 5: Reranker（可选）
     if use_rerank and p.reranker_enabled and candidates:
         docs = [m.content for _, m in candidates]
-        reranked = rerank(query, docs, top_k)
+        # D-04 预算传导：rerank 限等剩余预算（超预算快速降级混合检索）
+        rr_timeout = (
+            max(0.05, budget_s - (time.perf_counter() - t0)) if budget_s is not None else None
+        )
+        reranked = rerank(query, docs, top_k, timeout=rr_timeout)
         if reranked:
             doc_to_m = {m.content: m for _, m in candidates}
             reranked_scored = []

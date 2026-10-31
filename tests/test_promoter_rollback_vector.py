@@ -48,7 +48,7 @@ V1_ONLY = "杭州滨江区"  # 仅 v1 含有的连续短语
 V2_ONLY = "苏州工业园区"  # 仅 v2 含有的连续短语
 
 
-def _hash_embed(texts: list[str]) -> list[list[float]]:
+def _hash_embed(texts: list[str], timeout: float | None = None) -> list[list[float]]:
     """确定性 3-gram 哈希嵌入（外部 embedding 服务的测试替身，纪律允许面）。"""
     vecs = []
     for t in texts:

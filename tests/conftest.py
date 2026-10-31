@@ -276,7 +276,9 @@ _LLM_MODULE_BINDINGS = (
 _FAKE_EMBED_DIM = 1024
 
 
-def _fake_embed(texts):
+def _fake_embed(texts, timeout=None):
+    # timeout：D-04 预算传导（票 `.scratch/v0.65-next-window-2026-11/01`）——
+    # embed 新签名，替身同步收下（快速替身永不超时，忽略之）
     return [[0.1] * _FAKE_EMBED_DIM for _ in texts]
 
 

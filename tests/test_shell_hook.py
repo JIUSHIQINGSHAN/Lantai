@@ -6,9 +6,27 @@ import json
 import os
 import time
 
+import pytest
+
 HOOK_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "shell_hook.py"
 )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _warm_jieba_once():
+    """jieba 冷启动（~0.9-1.4s）是进程级一次性成本，不属于 hook 超时语义。
+
+    真实部署由 shell_hook._prewarm 启动时预热（票
+    `.scratch/v0.65-next-window-2026-11/01` Slice 4）；测试进程对齐该形态，
+    否则首测把模型加载算进超时断言（假阳性：3.6s > 3.0 阈值）。
+    """
+    try:
+        import jieba
+
+        jieba.lcut("预热")
+    except Exception:
+        pass
 
 
 def _load_hook(monkeypatch, embed_delay=0.0, timeout=0.2):

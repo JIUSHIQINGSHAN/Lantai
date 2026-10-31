@@ -49,7 +49,7 @@ def test_rerank_index_backfill_handles_duplicate_content(monkeypatch):
     ]
 
     monkeypatch.setattr("lantai.retrieval.hybrid.classify_intent", lambda q: {"candidate_n": 2})
-    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda q: [[0.1] * 768])
+    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda q, timeout=None: [[0.1] * 768])
 
     class FakeVectorStore:
         def search(self, *a, **kw):
@@ -67,7 +67,9 @@ def test_rerank_index_backfill_handles_duplicate_content(monkeypatch):
         s.add(mem2)
         s.commit()
     monkeypatch.setattr("lantai.storage.db.get_session", lambda: Session(engine))
-    monkeypatch.setattr("lantai.retrieval.hybrid.rerank", lambda q, docs, k: fake_rerank_output)
+    monkeypatch.setattr(
+        "lantai.retrieval.hybrid.rerank", lambda q, docs, k, timeout=None: fake_rerank_output
+    )
 
     # 显式开启 rerank
     params = RetrievalParams.from_overrides({"RERANKER_ENABLED": True})
@@ -106,7 +108,7 @@ def test_rerank_missing_index_degrades_not_misassigned(mock_post, monkeypatch, c
     mock_post.return_value = mock_resp
 
     monkeypatch.setattr("lantai.retrieval.hybrid.classify_intent", lambda q: {"candidate_n": 2})
-    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda q: [[0.1] * 768])
+    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda q, timeout=None: [[0.1] * 768])
 
     class FakeVectorStore:
         def search(self, *a, **kw):

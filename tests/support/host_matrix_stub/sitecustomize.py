@@ -25,8 +25,12 @@ if os.environ.get("LANTAI_TEST_STUB_EMBED") == "1":
 
     _EMBED_DIM = 512
 
-    def _hash_embed(texts: list[str]) -> list[list[float]]:
-        """确定性 3-gram 哈希嵌入（外部 embedding 服务的测试替身）。"""
+    def _hash_embed(texts: list[str], timeout: float | None = None) -> list[list[float]]:
+        """确定性 3-gram 哈希嵌入（外部 embedding 服务的测试替身）。
+
+        timeout：D-04 预算传导（票 `.scratch/v0.65-next-window-2026-11/01`）
+        ——embed 新签名收下预算 kwarg；快速替身永不超时，忽略之。
+        """
         vecs = []
         for t in texts:
             v = [0.0] * _EMBED_DIM

@@ -483,7 +483,7 @@ def test_build_context_injects_scene_navigation(mem_db, monkeypatch):
     monkeypatch.setattr(
         "lantai.retrieval.hybrid.get_vector_store", lambda: _fake_store(["m1", "m2"])
     )
-    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda texts: [[0.1] * 8])
+    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda texts, timeout=None: [[0.1] * 8])
     monkeypatch.setattr(mod.settings, "SCENE_LAYER_ENABLED", True)
     monkeypatch.setattr(mod.settings, "SHELL_HOOK_MAX_CHARS_PER_SCENE", 500)
     out = mod.build_context("部署怎么做")
@@ -505,7 +505,7 @@ def test_build_context_scene_disabled_plain(mem_db, monkeypatch):
         s.commit()
     monkeypatch.setattr(db_module, "get_session", session_factory)
     monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _fake_store(["m1"]))
-    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda texts: [[0.1] * 8])
+    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda texts, timeout=None: [[0.1] * 8])
     out = mod.build_context("部署怎么做")
     assert "## Scene:" not in out.get("context", "")
     assert "content1" in out.get("context", "")

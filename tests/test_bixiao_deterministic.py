@@ -42,7 +42,7 @@ from lantai.storage.vector_store import get_vector_store
 _EMBED_DIM = 512
 
 
-def _hash_embed(texts: list[str]) -> list[list[float]]:
+def _hash_embed(texts: list[str], timeout: float | None = None) -> list[list[float]]:
     """确定性 3-gram 哈希嵌入（外部 embedding 服务的测试替身，纪律允许面）。"""
     vecs = []
     for t in texts:

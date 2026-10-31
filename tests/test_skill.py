@@ -192,7 +192,7 @@ def test_build_context_injects_skill_block(mem_db, monkeypatch):
 
     monkeypatch.setattr(db_module, "get_session", session_factory)
     monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
-    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda texts: [[0.1] * 8])
+    monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda texts, timeout=None: [[0.1] * 8])
 
     out = mod.build_context("上线部署怎么做")
     assert "## Skill: 部署手册" in out.get("context", "")

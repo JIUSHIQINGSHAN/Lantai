@@ -14,10 +14,14 @@ from lantai.ingestion.safety import validate_api_url
 _ALLOWED_RERANKER_HOSTS = frozenset({"api.siliconflow.cn", "api.openai.com"})
 
 
-def rerank(query: str, documents: list[str], top_k: int) -> list[dict]:
+def rerank(
+    query: str, documents: list[str], top_k: int, timeout: float | None = None
+) -> list[dict]:
     """对候选文档做重排，返回 (score, document_text) 列表
 
     失败时重试 1 次，还失败返回空列表（由调用方降级到混合检索结果）
+    timeout（秒）：预算传导（D-04，票 `.scratch/v0.65-next-window-2026-11/01`）
+    ——hook 侧传剩余预算，None 用 settings.RERANKER_TIMEOUT。
     """
     if not documents:
         return []
@@ -50,11 +54,11 @@ def rerank(query: str, documents: list[str], top_k: int) -> list[dict]:
     }
 
     # 首次 + 重试 1 次（单调用点循环；失败返回空列表由调用方降级）
+    # 预算传导（D-04）：timeout 覆盖 RERANKER_TIMEOUT（hook 传剩余预算）
+    eff_timeout = float(timeout) if timeout is not None else settings.RERANKER_TIMEOUT
     for attempt in range(2):
         try:
-            resp = requests.post(
-                url, json=payload, headers=headers, timeout=settings.RERANKER_TIMEOUT
-            )
+            resp = requests.post(url, json=payload, headers=headers, timeout=eff_timeout)
             resp.raise_for_status()
             return _parse_response(resp.json(), documents, top_k)
         except Exception:

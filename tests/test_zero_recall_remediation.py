@@ -78,7 +78,7 @@ class TestHybridSearchShiyiFallback:
             index_fts(raw_conn, item.id, item.content)
 
         # 模拟外部 Embedding API 鉴权失效（401 Unauthorized）
-        def mock_embed_fail(texts):
+        def mock_embed_fail(texts, timeout=None):
             raise RuntimeError("401 Token is invalid")
 
         monkeypatch.setattr("lantai.retrieval.hybrid.embed", mock_embed_fail)

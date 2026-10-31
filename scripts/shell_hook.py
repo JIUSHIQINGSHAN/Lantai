@@ -50,6 +50,8 @@ from lantai.storage.vector_store import get_vector_store
 # 单条记忆上限 + 总字符预算双控；按码点截断（不会切开 emoji 代理对）；
 # 超预算截断/丢弃时在注入末尾附记忆使用指南（何时深挖、最多几次、如何回写）。
 _RECALL_TRUNCATION_SUFFIX = "…（已截断；可用记忆工具查看详情）"
+_PROFILE_TRUNCATION_SUFFIX = "…（user_profile.md 已截断；仅取前段）"
+_PROFILE_MAX_CHARS = 4000
 _OFFLOAD_SUFFIX = "…（已卸载全文；可调用 offload_read 工具查看）"
 _RECALL_TOOLS_GUIDE_TRUNCATED = (
     "部分记忆片段已截断——若不足以回答，可主动触发记忆检索"
@@ -160,9 +162,12 @@ def _build_resident_persona() -> str:
             try:
                 content = p.read_text(encoding="utf-8", errors="replace").strip()
                 if content:
-                    sections.append(
-                        f"=== 【用户偏好档案 (User Profile)】 ===\n{content}\n====================================="
+                    content = _truncate_codepoints(
+                        content, _PROFILE_MAX_CHARS, _PROFILE_TRUNCATION_SUFFIX
                     )
+                    header = "=== 【用户偏好档案 (User Profile)】 ==="
+                    footer = "====================================="
+                    sections.append(wrap_as_data(f"{header}\n{content}\n{footer}"))
                     break
             except Exception:
                 pass
@@ -180,7 +185,7 @@ def _build_resident_persona() -> str:
             if active_p:
                 p_ctx = format_persona_context(active_p)
                 if p_ctx and p_ctx.strip():
-                    sections.append(p_ctx.strip())
+                    sections.append(wrap_as_data(p_ctx.strip()))
     except Exception:
         pass
 
@@ -198,7 +203,7 @@ def _build_resident_persona() -> str:
                 if blk_content:
                     lines.append(f"[{blk_name}]: {blk_content}")
             lines.append("================================")
-            sections.append("\n".join(lines))
+            sections.append(wrap_as_data("\n".join(lines)))
     except Exception:
         pass
 
@@ -224,20 +229,34 @@ def build_context(query: str, session_id: str | None = None) -> dict:
     返回 {"context": ..., "event_id": ..., "evidence": ...}
     """
     resident_persona = _build_resident_persona()
+    _decl = fence_declaration()
+
+    def _persona_only() -> dict:
+        if not resident_persona:
+            return {}
+        parts = [p for p in [_decl, resident_persona] if p]
+        return {"context": "\n\n".join(parts)}
 
     if not query or len(query.strip()) <= settings.SHELL_HOOK_MIN_CHARS:
-        return {"context": resident_persona} if resident_persona else {}
+        return _persona_only()
 
     # 前置闸门检查（低信度/无信号闲聊跳过昂贵的检索计算）
     gate_decision = relevance_check(query)
     if not gate_decision.get("needs_memory", False):
-        return {"context": resident_persona} if resident_persona else {}
+        return _persona_only()
 
     import time
 
     try:
         t0 = time.perf_counter()
-        raw_results = hybrid_search(query, top_k=settings.SHELL_HOOK_TOP_K)
+        # D-04 预算传导（票 `.scratch/v0.65-next-window-2026-11/01`）：
+        # 剩余预算传给检索链——embed/rerank 在预算内快速失败走降级路径，
+        # 而非挂满 30s/600s 撞外层 _run_with_timeout 墙丢整段注入。
+        # **预留 15% 调度余量**：embed 睡满预算后还要走 BM25/FTS 兜底 +
+        # 组装 + 置顶拼接，外层 join(timeout) 是硬墙——不给余量必擦线超
+        # （实测 2.0 预算全给 embed → 总 2.17s > 2.0 墙，降级结果被墙丢弃）。
+        budget_s = max(0.05, settings.SHELL_HOOK_TIMEOUT * 0.85 - (time.perf_counter() - t0))
+        raw_results = hybrid_search(query, top_k=settings.SHELL_HOOK_TOP_K, budget_s=budget_s)
         # 相似度置信度阈值过滤（低于下限的弱相关候选剔除）
         results = [
             r
@@ -246,7 +265,7 @@ def build_context(query: str, session_id: str | None = None) -> dict:
         ]
         if not results:
             _try_log(query, [], int((time.perf_counter() - t0) * 1000), session_id=session_id)
-            return {"context": resident_persona} if resident_persona else {}
+            return _persona_only()
 
         # 磨勘（v0.29 · MCMA 建议项 6）：信息密度优先重排与条目硬顶（<= SHELL_HOOK_MAX_INJECT_ITEMS，默认 5）
         max_items = getattr(settings, "SHELL_HOOK_MAX_INJECT_ITEMS", 5)
@@ -367,16 +386,10 @@ def build_context(query: str, session_id: str | None = None) -> dict:
                     for e in evidence
                 )
                 out["context"] += "\n\n" + _build_tools_guide(truncated)
-            decl = fence_declaration()
-            if decl:
-                out["context"] = decl + "\n" + out["context"]
 
-        # 置顶拼接常驻个人画像 (Resident Persona Block)
-        if resident_persona:
-            if out.get("context"):
-                out["context"] = resident_persona + "\n\n" + out["context"]
-            else:
-                out["context"] = resident_persona
+        # 最终组装：声明 → 常驻画像 → 检索记忆（声明先于所有数据段）
+        parts = [p for p in [_decl, resident_persona, out.get("context")] if p]
+        out["context"] = "\n\n".join(parts) if parts else ""
 
         if event_id:
             out["event_id"] = event_id
@@ -384,7 +397,7 @@ def build_context(query: str, session_id: str | None = None) -> dict:
             out["request_id"] = request_id  # 宿主回执时按 request_id 对账（ADR-0049）
         return out
     except Exception:
-        return {"context": resident_persona} if resident_persona else {}
+        return _persona_only()
 
 
 def _try_log(
@@ -477,7 +490,14 @@ def _handle_checkpoint_write(session_id: str, blocks: dict) -> dict:
         return {}
 
 
-def _run_with_timeout(func, timeout, *args):
+def _run_with_timeout(func, timeout, *args, _fallback=None):
+    """超时包装（D-04，票 `.scratch/v0.65-next-window-2026-11/01`）。
+
+    超时返回 `_fallback()`（降级工厂，零参回调——QUERY 通道传常驻画像，
+    免得超时把画像段一并丢弃）；未传保持原行为返回 `{}`。非超时路径
+    不碰工厂。daemon 线程不可取消是 Python 线程模型限制，预算控制在
+    build_context 内传导（见其 docstring）。
+    """
     import threading
 
     class TaskThread(threading.Thread):
@@ -496,7 +516,10 @@ def _run_with_timeout(func, timeout, *args):
     t.start()
     t.join(timeout)
     if t.is_alive():
-        return {}
+        try:
+            return _fallback() if _fallback is not None else {}
+        except Exception:
+            return {}
     return t.result
 
 
@@ -560,24 +583,45 @@ def _dispatch_one(raw: str) -> dict:
         )
 
     if req.action == ACTION_QUERY:
+        # D-04（票 `.scratch/v0.65-next-window-2026-11/01`）：超时兜底返回
+        # 常驻画像——检索超时不该把"置顶无检索依赖"的画像段一并丢弃。
+        def _query_fallback() -> dict:
+            p = _build_resident_persona()
+            if not p:
+                return {}
+            decl = fence_declaration()
+            parts = [x for x in [decl, p] if x]
+            return {"context": "\n\n".join(parts)}
+
         return _run_with_timeout(
-            build_context, settings.SHELL_HOOK_TIMEOUT, req.query, req.session_id
+            build_context,
+            settings.SHELL_HOOK_TIMEOUT,
+            req.query,
+            req.session_id,
+            _fallback=_query_fallback,
         )
 
     return {}
 
 
 def _prewarm() -> None:
-    """启动即初始化向量库连接（best-effort，失败不阻断启动）。
+    """启动即初始化向量库连接与 jieba（best-effort，失败不阻断启动）。
 
     首帧预算 SHELL_HOOK_TIMEOUT 仅 2s，而向量库客户端冷启动（Chroma
     client/collection 首次创建）实测约 2.2s——留在首帧的 build_context
     里才初始化，首帧必然超时返回空注入。常驻进程的本意就是消除冷启动
     （见 main 的 serve 注释）；启动时提前建连，把该项成本移出首帧预算。
+    jieba 同理（D-04，票 `.scratch/v0.65-next-window-2026-11/01`）：完璧
+    事实检索（wanbi_retriever）首次分词触发模型加载实测 ~0.9-1.4s，同样
+    吃首帧预算——启动时预热一次，常驻后零成本。
     失败降级交由帧内既有异常零侵入路径逐帧处理。
     """
     with contextlib.suppress(Exception):
         get_vector_store()
+    with contextlib.suppress(Exception):
+        import jieba
+
+        jieba.lcut("预热")
 
 
 def main():

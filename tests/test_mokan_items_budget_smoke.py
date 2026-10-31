@@ -181,7 +181,7 @@ def test_shell_hook_max_items_guard_smoke(monkeypatch):
         )
 
     # 模拟 hybrid_search 返回 8 条结果
-    monkeypatch.setattr(mod, "hybrid_search", lambda query, top_k=5: mock_results)
+    monkeypatch.setattr(mod, "hybrid_search", lambda query, top_k=5, budget_s=None: mock_results)
     monkeypatch.setattr(mod.settings, "SHELL_HOOK_MAX_INJECT_ITEMS", 5)
 
     res = mod.build_context("记得项目开发部署的系统架构规范原则与交接事实")
