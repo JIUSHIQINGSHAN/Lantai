@@ -123,10 +123,11 @@ def test_seam2_rest_endpoints():
     assert r2.status_code == 404
 
 
-def test_seam3_mcp_94_tools_parity():
-    """接缝 3：MCP 协议往返与 94 工具池 1:1 双向对齐守卫。"""
-    assert len(TOOLS) == 94
-    assert len(TOOL_HANDLERS) == 94
+def test_seam3_mcp_tools_parity():
+    """接缝 3：MCP 协议往返与工具池 1:1 双向对齐守卫（工具数随版本扩容，不硬编码快照）。"""
+    assert len(TOOLS) >= 94
+    assert len(TOOL_HANDLERS) >= 94
+    assert len(TOOLS) == len(TOOL_HANDLERS)
     assert "zhiming_lifecycle" in TOOLS
     assert "zhiming_lifecycle" in TOOL_HANDLERS
 

@@ -106,10 +106,11 @@ def test_seam2_rest_distill_endpoint():
     assert "fenced_content" in data
 
 
-def test_seam3_mcp_93_tools_parity():
-    """接缝 3：MCP 协议往返与 93 工具池 1:1 双向对齐守卫。"""
-    assert len(TOOLS) == 93
-    assert len(TOOL_HANDLERS) == 93
+def test_seam3_mcp_tools_parity():
+    """接缝 3：MCP 协议往返与工具池 1:1 双向对齐守卫（工具数随版本扩容，不硬编码快照）。"""
+    assert len(TOOLS) >= 93
+    assert len(TOOL_HANDLERS) >= 93
+    assert len(TOOLS) == len(TOOL_HANDLERS)
     assert "zhaji_distill" in TOOLS
     assert "zhaji_distill" in TOOL_HANDLERS
 
