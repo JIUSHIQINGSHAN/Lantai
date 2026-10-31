@@ -455,9 +455,10 @@ def _on_pre_llm_call(**kwargs) -> dict | None:
         ck = _call_checkpoint()
     if len(q) < _MIN_QUERY_CHARS:
         return {"context": ck} if ck else None
-    # 短句且无触发词 → 不注入检索（与 gate 语义一致，省子进程开销）
-    if len(q) <= 15 and not any(w in q for w in _TRIGGER_WORDS):
-        return {"context": ck} if ck else None
+    # 原「≤15 字且无触发词就跳过」已移除（续审 2026-10-31 P0-3）：它在插件侧先于
+    # gate.prefilter.relevance_check 拦截，导致 v0.64 对短问句的放行（票 07）和常驻
+    # 画像对 Hermes 全部失效——「我对什么过敏？」「龙井茶冲泡水温是多少」都拿不到画像。
+    # 是否检索由 shell_hook 内的 relevance_check 判；被闸门拒绝时它只回常驻画像，不跑检索。
     data = _call_hook(q, session_id=session_id)
     if not data:
         return {"context": ck} if ck else None

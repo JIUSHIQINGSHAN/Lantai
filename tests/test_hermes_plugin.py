@@ -187,6 +187,18 @@ class TestCheckpointInjection:
         ck.assert_called_once()
         hk.assert_not_called()
 
+    @pytest.mark.parametrize("q", ["我对什么过敏？", "龙井茶冲泡水温是多少", "我女朋友叫什么名字"])
+    def test_short_question_reaches_hook_for_persona(self, mod, q):
+        """续审 2026-10-31 P0-3：≤15 字的短问句不再在插件侧被拦，交由 shell_hook 的
+        relevance_check 判断；否则常驻画像对 Hermes 永远不生效。"""
+        with (
+            patch.object(mod, "_call_checkpoint", return_value=None),
+            patch.object(mod, "_call_hook", return_value={"context": "[画像]"}) as hk,
+        ):
+            r = mod._on_pre_llm_call(user_message=q, session_id=f"sess_q_{len(q)}")
+        hk.assert_called_once()
+        assert r is not None and "[画像]" in r["context"]
+
     def test_on_session_end_writes_blocks(self, mod):
         """会话结束：五段块（含命中句式）落 checkpoint_write。"""
         mod._buffer_turn("sess_e", "接下来把部署脚本补全")

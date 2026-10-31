@@ -62,7 +62,8 @@ _NEGATIVE_PATTERNS = [
     r"保持",
     r"不属实",
     r"不准确",
-    r"假",
+    # 裸「假」会命中「放假/假期/请假」并把记忆归档（续审 2026-10-31 实测），收窄为「假的」
+    r"假的",
     # 英文否定词：**整词匹配（\b 边界）**（票 `.scratch/v0.64-next-window-2026-11/09`
     # R-01）——裸子串 `no` 曾把 'noted, 已记录' / 'known issue' 误判为否定，
     # 探颐否定分支直接归档记忆。与肯定侧 `_is_affirmative_reply` 的锚定+
@@ -257,11 +258,68 @@ def format_probing_context(probes: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# 模糊记忆/原子事实求证（分支 B/C）专用口径（续审 2026-10-31 P0-2）。
+# 分支 A 问的是「新说法要不要替换旧的」，「还是/依然/没变/保持」是「保留旧的」=否定新说法；
+# 分支 B/C 问的是「这条记忆还对不对」，同样的词恰恰是**确认**。共用 _NEGATIVE_PATTERNS
+# 会把「对，没变」「是的，还是喝乌龙茶」直接归档掉一条正确记忆。
+_CLAIM_NEGATIVE_PATTERNS = [
+    r"不对",
+    r"(?<!是)不是",  # 「是不是」是疑问不是否定
+    r"写错",
+    r"搞错",
+    r"弄错",
+    r"错了",
+    r"不属实",
+    r"不准确",
+    r"假的",
+    r"\bno\b",
+    r"\bnope\b",
+    r"\bfalse\b",
+    r"\bwrong\b",
+]
+_UNCHANGED_PATTERNS = [r"没变", r"未变", r"没有变", r"还是", r"依然", r"保持", r"一直"]
+# 含糊/转折：任何分支都不自动改写或归档，留待审（宁可多问一次，不可错删一条）。
+_HEDGE_PATTERNS = [
+    r"但",
+    r"不过",
+    r"还没(?:决定|想好|定)",
+    r"说不好",
+    r"不确定",
+    r"不清楚",
+    r"再说",
+    r"也许",
+    r"可能",
+    r"大概",
+    r"是吧",
+]
+
+
+def _matches_any(patterns: list[str], text: str) -> bool:
+    return any(re.search(pat, text, re.IGNORECASE) for pat in patterns)
+
+
+def _classify_claim_reply(reply: str) -> str:
+    """分支 B/C：返回 'negative' / 'affirmative' / 'unclear'。两边都沾或含糊一律 unclear。"""
+    if _matches_any(_HEDGE_PATTERNS, reply):
+        return "unclear"
+    neg = _matches_any(_CLAIM_NEGATIVE_PATTERNS, reply)
+    aff = _is_affirmative_reply(reply) or _matches_any(_UNCHANGED_PATTERNS, reply)
+    if neg and not aff:
+        return "negative"
+    if aff and not neg:
+        return "affirmative"
+    return "unclear"
+
+
 def _is_affirmative_reply(reply: str) -> bool:
     """整句确认才算肯定:以肯定词开头,其后接结束、标点或"的"等确认语气,而非另一个词。"""
-    body = re.sub(r"^[\s。,.!?~!?,、]+|[\s。,.!?~!?,、]+$", "", reply)
+    body = re.sub(
+        r"^[\s。,.!?~!?,、\uff0c\uff01\uff1f]+|[\s。,.!?~!?,、\uff0c\uff01\uff1f]+$", "", reply
+    )
     for pat in _AFFIRMATIVE_PATTERNS:
-        if re.match(rf"(?:{pat})(?:$|[\s,.!?~,。!?、的啊呀吧呢])", body, re.IGNORECASE):
+        if re.match(
+            rf"(?:{pat})(?:$|[\s,.!?~,。!?、\uff0c\uff01\uff1f的啊呀吧呢])", body, re.IGNORECASE
+        ):
             return True
     return False
 
@@ -334,8 +392,9 @@ def resolve_probe_response(
                 )
 
             # 1. 优先匹配否定词（否定意图优先）
-            is_neg = any(re.search(pat, clean_reply, re.IGNORECASE) for pat in _NEGATIVE_PATTERNS)
-            is_aff = _is_affirmative_reply(clean_reply)
+            hedged = _matches_any(_HEDGE_PATTERNS, clean_reply)
+            is_neg = not hedged and _matches_any(_NEGATIVE_PATTERNS, clean_reply)
+            is_aff = not hedged and _is_affirmative_reply(clean_reply)
 
             if is_neg:
                 conf.status = "dismissed"
@@ -422,8 +481,9 @@ def resolve_probe_response(
                     resource_tenant_id=target_mem.tenant_id,
                     lane=target_mem.lane,
                 )
-            is_neg = any(re.search(pat, clean_reply, re.IGNORECASE) for pat in _NEGATIVE_PATTERNS)
-            is_aff = _is_affirmative_reply(clean_reply)
+            verdict = _classify_claim_reply(clean_reply)
+            is_neg = verdict == "negative"
+            is_aff = verdict == "affirmative"
 
             if is_neg:
                 # 否定：降低置信度或标记为废弃（0.15 跌破底线）
@@ -455,8 +515,9 @@ def resolve_probe_response(
                     resource_user_id=target_fact.user_id,
                     resource_tenant_id=target_fact.tenant_id,
                 )
-            is_neg = any(re.search(pat, clean_reply, re.IGNORECASE) for pat in _NEGATIVE_PATTERNS)
-            is_aff = _is_affirmative_reply(clean_reply)
+            verdict = _classify_claim_reply(clean_reply)
+            is_neg = verdict == "negative"
+            is_aff = verdict == "affirmative"
 
             if is_neg:
                 # 软撤回原子事实
