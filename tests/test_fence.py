@@ -100,8 +100,11 @@ class TestFenceAtExits:
             def search(self, qv, top_k=5, filters=None):
                 return [{"id": "mem_f1", "distance": 0.1}]
 
-        monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
-        out = mod.build_context("部署流程怎么做")
+        # 用测试体内的局部 MonkeyPatch：param_env 已 patch 过同一属性，若用函数级
+        # monkeypatch，两条撤销栈的撕卸顺序会把 DummyVS lambda 永久留在 hybrid 上
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
+            out = mod.build_context("部署流程怎么做")
         assert fence_declaration() in out.get("context", "")
         assert out.get("context", "").count(DATA_FENCE_OPEN) >= 1
         assert "部署流程：先备份" in out.get("context", "")
@@ -250,8 +253,9 @@ class TestFenceAtExits:
             def search(self, qv, top_k=5, filters=None):
                 return [{"id": "mem_evil", "distance": 0.1}]
 
-        monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
-        out = mod.build_context("这条记忆说了什么")
+        with pytest.MonkeyPatch.context() as mp:  # 同上：不与 param_env 交错撤销
+            mp.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
+            out = mod.build_context("这条记忆说了什么")
         ctx = out.get("context", "")
         # 正文里的闭合被中性化 → 围栏结构不被截断；闭合总数 = 围栏自身数量
         assert ctx.count("</memory_data>") == ctx.count(DATA_FENCE_OPEN)

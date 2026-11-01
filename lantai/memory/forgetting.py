@@ -114,9 +114,20 @@ def apply_forgetting(principal=None, *, page_size: int = 500):
                         and m.helpful_count == 0
                         and not is_exempt
                     )
-                    if (
-                        m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD or ttl_expired
-                    ) and m.status != "archived":
+                    # 衰减归档同样豁免高重要度（不含 semantic 与 use_count>0：对话直存默认
+                    # semantic，全豁免等于关掉遗忘）。改前只有 TTL 路径看豁免，preference
+                    # 泳道 S=15+20×imp，imp=0.95 时约 156 天 decay<0.01 照样归档。
+                    # 低重要度、长期没被用到的记忆照旧归档（遗忘质量评测 stale 组口径）；
+                    # 天天被用的由回执刷新 last_used_at 保活（retrieval_log._touch_used_memories）。
+                    # decay_score 仍照常更新（检索排序继续体现新旧），只是不再被自动收走。
+                    decay_exempt = (
+                        m.importance is not None
+                        and m.importance >= settings.DECAY_ARCHIVE_EXEMPT_IMPORTANCE
+                    ) or (m.lane in settings.DECAY_ARCHIVE_EXEMPT_LANES)
+                    decay_expired = (
+                        m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD and not decay_exempt
+                    )
+                    if (decay_expired or ttl_expired) and m.status != "archived":
                         m.status = "archived"
                         changed = True
 

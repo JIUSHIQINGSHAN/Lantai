@@ -3,12 +3,22 @@
 import logging
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from lantai.retrieval.intent import classify_intent
 from lantai.retrieval.reranker import _parse_response, rerank
 
 
 class TestRerank:
     """硅基流 Reranker 测试"""
+
+    @pytest.fixture(autouse=True)
+    def _reranker_key(self, monkeypatch):
+        # X-09（v0.65）起：RERANKER_API_KEY 为空且 host 与 OPENAI_BASE_URL 不同则跳过精排，
+        # 本组测的是请求/解析主路径，显式给精排专用密钥。
+        from lantai.core.settings import settings
+
+        monkeypatch.setattr(settings, "RERANKER_API_KEY", "sk-rerank-test")
 
     @patch("lantai.retrieval.reranker.requests.post")
     def test_rerank_success(self, mock_post):

@@ -40,6 +40,10 @@ def _child_env(home: Path, host: str) -> dict:
     # 替身目录在前，使 sitecustomize 先于 lantai 生效（只替外部 embedding 网络）
     env["PYTHONPATH"] = os.pathsep.join([str(STUB_DIR), str(REPO)])
     env["LANTAI_TEST_STUB_EMBED"] = "1"
+    # reranker 是外网精排（硅基流），与「协议帧 → 注入 → 回执」矩阵无关；子进程不吃
+    # conftest 的 _disable_reranker，开着它在无密钥/无网的 CI 上会把首帧拖过 2s 预算
+    # → 注入为空（2026-10-31 实测首帧 4.6s，其中 rerank 3.4s）。与进程内测试同口径关掉。
+    env["RERANKER_ENABLED"] = "false"
     env["PYTHONIOENCODING"] = "utf-8"
     return env
 

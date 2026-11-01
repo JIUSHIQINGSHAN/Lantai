@@ -134,6 +134,33 @@ def _backfill_owner_ok(ev, principal) -> bool:
     return ev.user_id is None or ev.user_id == viewer
 
 
+def _touch_used_memories(s, ids: list, now, principal) -> None:
+    """宿主回执 → 刷新被用记忆的 last_used_at（遗忘时钟从「最后被用」起算）。
+
+    此前回执只落 RetrievalEvent，`MemoryItem.last_used_at` 只在显式反馈
+    （memory_feedback）时更新——只用 Hermes 插件的人从不点反馈，记忆按
+    created_at 衰减，天天被注入的偏好照样过期归档（2026-10-31 实测）。
+
+    刻意**不**加 use_count：use_count 与 helpful_count 在 考功（use≥3 且 helpful=0
+    → 重要度降到 0.1）、三省（use≥5 且 helpful=0 告警）、演化有用率（helpful/use）
+    里是「显式反馈次数」口径，按注入次数累加会把天天用的记忆反向降级。
+    幂等：调用方只传本次新增的 id（整体覆盖语义下重复回执不重复刷新）。
+    归属：只刷新 viewer 自己或 NULL 属主的行，口径同 `_backfill_owner_ok`。
+    """
+    ids = [i for i in dict.fromkeys(ids) if isinstance(i, str) and i]
+    if not ids:
+        return
+    q = select(MemoryItem).where(MemoryItem.id.in_(ids))
+    if principal is not None and not bool(getattr(principal, "is_admin", False)):
+        from lantai.core.acl import viewer_of
+
+        viewer = viewer_of(principal)
+        q = q.where((MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None)))
+    for m in s.exec(q).all():
+        m.last_used_at = now
+        s.add(m)
+
+
 def backfill_used_ids(
     event_id: str, used_ids: list[str], request_id: str | None = None, *, principal=None
 ) -> None:
@@ -166,10 +193,13 @@ def backfill_used_ids(
                 if not _backfill_owner_ok(ev, principal):
                     logger.warning("receipt backfill refused (owner mismatch): ev=%s", event_id)
                     return
+                prev_used = {i for i in (ev.used_ids or []) if isinstance(i, str)}
+                now = utcnow()
                 ev.used_ids = list(used_ids)
                 ev.receipt_status = "acked"
-                ev.receipt_at = utcnow()
+                ev.receipt_at = now
                 s.add(ev)
+                _touch_used_memories(s, [i for i in used_ids if i not in prev_used], now, principal)
                 s.commit()
     except Exception:
         logger.exception("retrieval used_ids backfill failed (non-fatal)")

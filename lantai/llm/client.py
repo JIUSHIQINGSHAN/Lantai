@@ -192,18 +192,24 @@ def _embed_once(texts: list[str], timeout: float | None = None) -> list[list[flo
     with _gate_acquire():
         client = get_client()
         if timeout is not None:
-            # with_options 返回同配置新客户端实例（不动全局单例的超时）
-            client = client.with_options(timeout=timeout)
+            # with_options 返回同配置新客户端实例（不动全局单例的超时）。
+            # max_retries=0：OpenAI SDK 自带默认 2 次重试，预算模式下也得关掉，
+            # 否则一次调用最多发 3 个请求、耗时约 3×timeout。
+            client = client.with_options(timeout=timeout, max_retries=0)
         resp = client.embeddings.create(model=settings.EMBED_MODEL, input=texts)
     return [d.embedding for d in resp.data]
 
 
-@_timed("embed")
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(min=1, max=10),
     retry=retry_if_not_exception_type(LLMConcurrencyTimeout),
 )
+def _embed_with_retry(texts: list[str]) -> list[list[float]]:
+    return _embed_once(texts)
+
+
+@_timed("embed")
 def embed(texts: list[str], timeout: float | None = None) -> list[list[float]]:
     """文本向量化。
 
@@ -214,6 +220,8 @@ def embed(texts: list[str], timeout: float | None = None) -> list[list[float]]:
     走降级路径（BM25/FTS 兜底 / 空注入保画像）。None 保持原行为（SDK
     默认 timeout + 3 次重试，非 hook 路径无外层预算）。
     """
+    # tenacity 只包无预算路径：v0.65 把 @retry 直接装在 embed 上，预算模式也被重试
+    # 3 次（实测 timeout=0.1 时 3 次请求、耗时 3.5s，远超 2s 帧预算）。
     if timeout is not None:
         return _embed_once(texts, timeout)
-    return _embed_once(texts)
+    return _embed_with_retry(texts)

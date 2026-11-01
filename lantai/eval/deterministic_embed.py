@@ -12,8 +12,12 @@ import hashlib
 EVAL_EMBED_DIM = 512
 
 
-def embed_for_eval(texts: list[str]) -> list[list[float]]:
-    """确定性评测 embed：sha256 3-gram，EVAL_EMBED_DIM 维。"""
+def embed_for_eval(texts: list[str], timeout: float | None = None) -> list[list[float]]:
+    """确定性评测 embed：sha256 3-gram，EVAL_EMBED_DIM 维。
+
+    timeout：与 lantai.llm.client.embed 签名对齐（D-04 预算传导）；本地计算
+    不会超时，忽略之。
+    """
     vecs = []
     for text in texts:
         v = [0.0] * EVAL_EMBED_DIM

@@ -106,6 +106,9 @@ def test_rerank_missing_index_degrades_not_misassigned(mock_post, monkeypatch, c
     }
     mock_resp.raise_for_status = MagicMock()
     mock_post.return_value = mock_resp
+    # X-09（v0.65）起：无 RERANKER_API_KEY 且 host 与 OPENAI_BASE_URL 不同则整段跳过精排，
+    # 本测试要走到解析分支，显式给精排专用密钥。
+    monkeypatch.setattr("lantai.core.settings.settings.RERANKER_API_KEY", "sk-rerank-test")
 
     monkeypatch.setattr("lantai.retrieval.hybrid.classify_intent", lambda q: {"candidate_n": 2})
     monkeypatch.setattr("lantai.retrieval.hybrid.embed", lambda q, timeout=None: [[0.1] * 768])
