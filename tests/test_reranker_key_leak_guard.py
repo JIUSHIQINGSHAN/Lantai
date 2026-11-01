@@ -7,10 +7,11 @@
 """
 
 from unittest.mock import patch
+
 import pytest
 
-from lantai.retrieval.reranker import rerank
 from lantai.core.settings import settings
+from lantai.retrieval.reranker import rerank
 
 
 def test_siliconflow_host_does_not_leak_openai_key(monkeypatch):

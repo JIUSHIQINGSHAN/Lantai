@@ -13,7 +13,7 @@
 
 [![Version](https://img.shields.io/badge/version-0.64.0-blue.svg)](https://github.com/JIUSHIQINGSHAN/Lantai)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-yellow.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-2169%20passed%20%C2%B7%201%20skipped-green.svg)](https://github.com/JIUSHIQINGSHAN/Lantai/actions/workflows/tests.yml)
+[![Tests](https://github.com/JIUSHIQINGSHAN/Lantai/actions/workflows/tests.yml/badge.svg)](https://github.com/JIUSHIQINGSHAN/Lantai/actions/workflows/tests.yml)
 [![改编自](https://img.shields.io/badge/based%20on-aiduMEM-orange.svg)](https://github.com/monkey2jack/aiduMEM)
 
 ---
@@ -269,7 +269,7 @@ critical）、反思/参数建议任务失败、5xx 错误率、p95 延迟、零
 
 ```bash
 .venv\Scripts\python.exe -m pytest tests/ -q
-# 全量测试通过（2026-10-25 本地实跑基线：2169 passed, 1 skipped；含 FTS/SSRF/备份恢复/MCP 协议/Shell Hook 超时；以 CI 结果为准）
+# 全量测试以 CI 为准（含 FTS/SSRF/备份恢复/MCP 协议/Shell Hook 超时；实跑记录见 docs/research/ 相关发版回归记录）
 ```
 
 ## 路线图

@@ -59,7 +59,6 @@ def resolve_hook_paths() -> tuple[str, str]:
     if not hook_path:
         for r in [
             Path.cwd(),
-            Path("D:/Projects/记忆"),
             Path.home() / "Desktop" / "记忆",
             Path.home() / "Projects" / "记忆",
             Path.home() / "记忆",

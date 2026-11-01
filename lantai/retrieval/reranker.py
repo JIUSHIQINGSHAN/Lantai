@@ -45,7 +45,10 @@ def rerank(
         if host in ("api.openai.com",):
             api_key = settings.OPENAI_API_KEY
         else:
-            logger.warning("RERANKER_API_KEY unconfigured for host '%s'; skipping rerank to prevent cross-provider key leakage", host)
+            logger.warning(
+                "RERANKER_API_KEY unconfigured for host '%s'; skipping rerank to prevent cross-provider key leakage",
+                host,
+            )
             return []
 
     if not api_key:

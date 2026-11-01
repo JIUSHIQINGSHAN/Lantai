@@ -6,12 +6,13 @@
 """
 
 from unittest.mock import patch
-from sqlmodel import SQLModel, create_engine
-from sqlalchemy.pool import StaticPool
-import pytest
 
-from scripts.shell_hook import build_context
+import pytest
+from sqlalchemy.pool import StaticPool
+from sqlmodel import SQLModel, create_engine
+
 from lantai.core.settings import settings
+from scripts.shell_hook import build_context
 
 
 @pytest.fixture
@@ -48,7 +49,11 @@ def test_reranker_dimension_strictly_enforces_half_threshold(clean_env):
     """Reranker 模式下，0.5 语义门禁依然严格生效，低于 0.5 的条目坚决剔除。"""
     mock_candidates = [
         {"score": 0.85, "score_mode": "reranker", "memory": {"id": "m1", "content": "强相关证据"}},
-        {"score": 0.45, "score_mode": "reranker", "memory": {"id": "m2", "content": "弱相关证据（应被剔除）"}},
+        {
+            "score": 0.45,
+            "score_mode": "reranker",
+            "memory": {"id": "m2", "content": "弱相关证据（应被剔除）"},
+        },
     ]
 
     with (
