@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.65.0] - 2026-11-01 - 钩玄（Gouxuan · 存量积弊清仓与防注入强化）
+
+> 版本代号「钩玄」：钩沉存量积弊，探赜索隐补遗，语出韩愈《进学解》「拔萃便适，钩玄提要」——对应本版主题「两份深度评审报告存量清仓」：常驻画像樊篱防注入与截断兜底（D-05）、网络调用预算传导与超时不丢画像（D-04）、RRF 与 Reranker 检索分路阈值（D-03）、SiliconFlow 跨服务商密钥泄露阻断（X-09）、README 动态徽章与私有路径彻底剥离（X-10, C-03）。票据 `.scratch/v0.65-next-window-2026-11/`（票 01–06 全部收口）。
+
+### Security
+- **阻断向第三方端点外发 OpenAI 密钥（X-09，票 04，`lantai/retrieval/reranker.py`）**：仅当端点域名同属 `api.openai.com` 时才允许回退复用 `OPENAI_API_KEY`；使用 SiliconFlow 或异构服务商且未配独立密钥时安全短路返回空列表，宁 miss 不外发（新增 `test_reranker_key_leak_guard.py`）。
+- **常驻画像防提示注入樊篱与字数截断（D-05，票 02，`scripts/shell_hook.py`）**：画像三段（profile/persona/core）全部经过 `wrap_as_data` 樊篱包裹，前置 `fence_declaration`，并对 `user_profile.md` 施加 4000 码点硬上限防护（新增 `test_persona_injection_fence.py` 11 项全绿）。
+
+### Fixed
+- **检索超时不丢画像与预算传导（D-04，票 01，`scripts/shell_hook.py`）**：检索超时（2.0s 预算）兜底回退带围栏的常驻画像，杜绝超时连带丢画像；预算向下层网络调用逐级传导（新增 `test_hook_timeout_budget.py`）。
+- **相似度分路阈值隔离量纲（D-03，票 03，`scripts/shell_hook.py` + `settings.py`）**：区分 Reranker（0.5 语义下限）与 RRF 融合分（0.15 独立量纲），新增 `SHELL_HOOK_SCORE_THRESHOLD_RRF` 配置项，解决降级时排第二候选被误杀（新增 `test_score_threshold_dimension.py`）。
+- **动态 CI 徽章与私有绝对路径清除（X-10, C-03，票 05）**：README 徽章改为动态工作流状态，移除写死测试数；插件侧彻底剔除 `Path("D:/Projects/记忆")` 开发者机器绝对路径残留。
+
 ## [0.64.0] - 2026-10-31 - 缮治（Shanzhi · 协议面净化与 P0 存量收口）
 
 > 版本代号「缮治」：修缮整治、补葺去垢，语出《汉书·货殖传》「缮治器物」、《后汉书》「缮治城郭」——对应本版主题「协议面净化与 P0 存量收口」：hook stdout 协议流净化（N-01）、E2 双视图评测归零（D-06/票 06-08）、探颐否定子串误归档修复（R-01）、考功写副作用身份闸（N-03）、G1 发版闸门（红灯不出镜像），v0.38–v0.60 续审报告 P0 行动清单 7 项全部闭合。票据 `.scratch/v0.64-next-window-2026-11/`（票 01–11 全部收口）。
