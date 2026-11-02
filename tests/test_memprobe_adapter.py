@@ -5,13 +5,21 @@
 （gate 拦截与正常路径）。
 """
 
+import importlib.util
 import json
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+# 按文件路径直载被测适配器，不再 `sys.path.insert(0, scripts/)`：模块级 sys.path 改写
+# 会永久留在测试进程里，污染后续用例的导入解析（票 05 续14，G2；与
+# tests/test_shell_hook.py 的 _load_hook 同一范式）。
+_ADAPTER_PATH = Path(__file__).resolve().parent.parent / "scripts" / "memprobe_lantai_adapter.py"
+_spec = importlib.util.spec_from_file_location("memprobe_lantai_adapter", _ADAPTER_PATH)
+_adapter = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_adapter)
 
-from memprobe_lantai_adapter import build_session_lines, format_retrieval, payload_of
+build_session_lines = _adapter.build_session_lines
+format_retrieval = _adapter.format_retrieval
+payload_of = _adapter.payload_of
 
 U2028 = chr(0x2028)  # LINE SEPARATOR：服务端 splitlines 会当行界（票 01 教训）
 

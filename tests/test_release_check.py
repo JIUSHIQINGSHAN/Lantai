@@ -19,10 +19,11 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
 
 
-def _ensure_real_git_available() -> None:
+def _ensure_real_git_available(monkeypatch: pytest.MonkeyPatch) -> None:
     """git 可能已装但不在 PATH（便携版安装）：定位真实 git.exe 补进 PATH。
 
-    只补环境、不 mock——用例仍真实执行 git 子进程（意图不变）；
+    只补环境（`monkeypatch.setenv`，用例结束自动还原，不再永久改写进程 PATH）、
+    不 mock——用例仍真实执行 git 子进程（意图不变，票 05 续14 G2）；
     整机确实无 git 时显式 skip（无法真实测试），不为绿灯改断言。
     """
     if shutil.which("git"):
@@ -38,14 +39,14 @@ def _ensure_real_git_available() -> None:
     ]
     for d in candidates:
         if (d / "git.exe").is_file():
-            os.environ["PATH"] = str(d) + os.pathsep + os.environ.get("PATH", "")
+            monkeypatch.setenv("PATH", str(d) + os.pathsep + os.environ.get("PATH", ""))
             return
     pytest.skip("本机无 git 可执行文件：release_check 的 git 用例无法真实执行")
 
 
 @pytest.fixture
-def clean_repo(tmp_path: Path) -> Path:
-    _ensure_real_git_available()
+def clean_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    _ensure_real_git_available(monkeypatch)
     _git(tmp_path, "init", "-b", "master")
     _git(tmp_path, "config", "user.email", "test@example.com")
     _git(tmp_path, "config", "user.name", "Tester")

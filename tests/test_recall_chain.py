@@ -5,8 +5,8 @@ SQLite+FTS + 本地 ngram 嵌入 + 假向量库（仅替换外部网络 embeddin
 BFS 逐层展开 / 去重 / 自匹配排除 / 总量封顶 全部真实执行。
 """
 
-import os
 import uuid
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from unittest.mock import patch
 
@@ -17,6 +17,7 @@ from sqlmodel import Session, SQLModel, create_engine
 import lantai.storage.db as db_module
 from lantai.models.tables import MemoryItem
 from lantai.storage.fts import init_fts, sync_fts
+from tests.support.harness_state import env_context
 
 
 def _utcnow():
@@ -134,7 +135,10 @@ class ChainHarness:
         return _StoreProxy(self)
 
     def __enter__(self):
-        os.environ["LANTAI_INTENT_OFF"] = "1"  # 意图分类确定性（不调 LLM）
+        # 意图分类确定性（不调 LLM）。走登记式写入器：离开 with 时**精确复原**——
+        # 宿主原本配过这个变量就写回原值，原本没配才删除（票 05 续14，G2）。
+        self._intent_stack = ExitStack()
+        self._intent_stack.enter_context(env_context("LANTAI_INTENT_OFF", "1"))
         self._patches = [
             patch.object(db_module, "get_session", self.session_factory),
             patch("lantai.retrieval.hybrid.embed", side_effect=self._embed),
@@ -148,7 +152,7 @@ class ChainHarness:
     def __exit__(self, *exc):
         for p in reversed(self._patches):
             p.stop()
-        os.environ.pop("LANTAI_INTENT_OFF", None)
+        self._intent_stack.close()
 
 
 @pytest.fixture()

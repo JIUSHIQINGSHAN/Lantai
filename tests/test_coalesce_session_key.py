@@ -13,21 +13,25 @@ from lantai.ingestion.coalesce import CoalesceBuffer
 
 
 @pytest.fixture()
-def buf():
-    """独立缓冲实例（全局单例不跨用例串场）+ 快窗口让判定可测。"""
+def buf(monkeypatch):
+    """独立缓冲实例（全局单例不跨用例串场）+ 快窗口让判定可测。
+
+    general profile 的 window/idle 缺省太大，这里换上一份**改小窗口的副本**并用
+    monkeypatch 整体替换（用例结束自动还原）——不再原地 mutate 生产单例里的嵌套
+    dict：手写 clear()/update() 中途抛异常就漏，且改写面是整个进程（票 05 续14，
+    这是 G2 静态扫描顺带抓到的第五处裸改）。
+    """
     b = CoalesceBuffer()
-    # general profile: window/idle 缺省大——把窗口改小以便窗口冲刷可触发
-    orig = dict(settings.LANE_COALESCE_PROFILES)
-    settings.LANE_COALESCE_PROFILES["general"] = {
-        **orig["general"],
+    profiles = dict(settings.LANE_COALESCE_PROFILES)
+    profiles["general"] = {
+        **profiles["general"],
         "window": 0.05,
         "idle_timeout": 0.05,
         "max_parts": 100,
         "max_chars": 100000,
     }
+    monkeypatch.setattr(settings, "LANE_COALESCE_PROFILES", profiles)
     yield b
-    settings.LANE_COALESCE_PROFILES.clear()
-    settings.LANE_COALESCE_PROFILES.update(orig)
 
 
 # ---------------------------------------------------------------- 分键隔离

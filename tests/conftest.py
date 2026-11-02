@@ -11,13 +11,18 @@
    且偶发顺序污染）。详见 `.scratch/test-env-parity/issues/02-*.md`。
 """
 
-import os
 import sys
 import types
 
-# 必须在任何 lantai.* import 之前生效（client.py 模块级 OpenAI() 需要非空 key）
-os.environ.setdefault("OPENAI_API_KEY", "test-key")
-os.environ.setdefault("OPENAI_BASE_URL", "https://api.openai.com/v1")
+# 必须在任何 lantai.* import 之前生效（client.py 模块级 OpenAI() 需要非空 key）。
+# v0.66 票 05 续14（G2）：这里不再裸写 os.environ——全部经 tests/support/harness_state.py
+# 这个唯一登记式写入器：写入前登记原值，会话结束由 pytest_unconfigure 复原。
+# 且用强制覆盖而非 setdefault：宿主已配真 key 时 setdefault 静默放行，测试就会带着真凭据
+# 指向 https://api.openai.com/v1（该 host 在 ALLOWED_API_HOSTS 白名单里，连 validate_api_url
+# 都不拦），替身网一漏一个绑定就是真连网、真外传记忆全文。
+from tests.support import harness_state
+
+harness_state.apply_env_policy()
 
 import pytest
 from sqlalchemy.pool import StaticPool
@@ -25,11 +30,10 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from lantai.core.settings import settings
 
-settings.FEATURE_OBSIDIAN = True
-settings.FEATURE_WIKI = True
-settings.FEATURE_WORK_ITEMS = True
-settings.FEATURE_VISION = True
-settings.FEATURE_TERMINAL = True
+# 特性开关：测试要五条线全开，但这属于装配期改写生产单例，必须登记并在会话结束复原
+# （G2）——否则「全量跑绿」悄悄替出厂默认（FEATURE_OBSIDIAN/FEATURE_VISION 都是 False）
+# 背了书，评审看见的配置面是被改写过的。
+harness_state.apply_feature_flag_policy(settings)
 
 
 def _install_otel_stub() -> None:
@@ -295,6 +299,19 @@ def pytest_sessionfinish(session, exitstatus=0):
         session.exitstatus = 1
 
 
+def pytest_unconfigure(config):
+    """会话结束复原装配期写过的全局环境/配置（票 05 续14，验收底线 G2）。
+
+    `tests/support/harness_state.py` 是 tests/ 内唯一允许改全局的地方，且每次写入都登记
+    原值；这里在 pytest 卸载插件前把 `OPENAI_API_KEY` / `OPENAI_BASE_URL`、
+    `settings.FEATURE_*`、隔离数据目录三项一律还原——复原不改变任何测试结果，它只保证
+    「本会话的装配改写」不会被下一个进程或子会话继承，也不再给「宿主真凭据 + 公网端点」
+    留出网通道。判据见 `tests/test_harness_global_state_isolation.py`：AST 静态扫描 +
+    真实子会话（ambient 真凭据被覆盖 → 会话退出被精确复原）。
+    """
+    harness_state.restore()
+
+
 # ── 数据目录隔离（票 02）───────────────────────────────────────
 # 背景：本地 .env 的 LANTAI_HOME 指向真实开发库，而 db.engine 在 import 时就按
 # settings.DATABASE_URL 建好——测试因此读写宿主真实 SQLite/ChromaDB。
@@ -326,9 +343,12 @@ def _isolate_data_dir(tmp_path_factory):
     db_file = home / "remembrance.db"
     db_file.touch()  # SQLite 不会自动建父目录/文件
 
-    settings.LANTAI_HOME = str(home)
-    settings.DATABASE_URL = f"sqlite:///{db_file}"
-    settings.CHROMADB_PATH = str(home / ".chromadb")
+    harness_state.set_settings_fields(
+        settings,
+        LANTAI_HOME=str(home),
+        DATABASE_URL=f"sqlite:///{db_file}",
+        CHROMADB_PATH=str(home / ".chromadb"),
+    )
 
     engine = create_engine(
         settings.DATABASE_URL,
