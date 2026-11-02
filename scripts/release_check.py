@@ -9,6 +9,9 @@
   python scripts/release_check.py v0.3.8 --online # 同时检查远程 origin tag（需网络）
 
 退出码 0 = 可上传，1 = 有问题。
+
+任何旗标（--skip-suite / --allow-mcp-full-exposure / --allow-dirty）都不会换来
+0：被跳过的检查等于少一份证据，门禁据此阻断（票 05 续6 实测「旗标合成绿灯」）。
 """
 
 import argparse
@@ -47,6 +50,36 @@ results: list[tuple[str, str, str]] = []
 def check(name: str, ok: bool, detail: str = "") -> None:
     results.append((PASS if ok else FAIL, name, detail))
     print(f"[{PASS if ok else FAIL}] {name}" + (f" — {detail}" if detail else ""))
+
+
+def summarize(results: list[tuple[str, str, str]], n_skip: int = 0) -> tuple[str, int]:
+    """汇总门禁结果：FAIL 阻断，SKIP 同样阻断——没取证不等于取到证。
+
+    分母始终按「应当跑过的检查数」算（已判定 + 被跳过），否则 4 项判定 + 2 项跳过
+    会被写成「4/4 通过」，读者无从看出证据是残缺的。
+    """
+    n_fail = sum(1 for status, _, _ in results if status == FAIL)
+    n_skipped_in_list = sum(1 for status, _, _ in results if status == SKIP)
+    n_skip = n_skipped_in_list + max(0, n_skip)
+    n_pass = len(results) - n_fail - n_skipped_in_list
+    total = len(results) + n_skip
+    if n_skip:
+        return (
+            f"结果: {n_pass}/{total} 通过, {n_fail} 失败, {n_skip} 跳过"
+            "（跳过项未取证，不构成发布证据）",
+            1,
+        )
+    return f"结果: {n_pass}/{total} 通过, {n_fail} 失败", (1 if n_fail else 0)
+
+
+def announce_skip(skips: list[str] | None, name: str, detail: str) -> None:
+    """记下一项被旗标跳过的检查：打印 [SKIP] 并计入调用方持有的清单。
+
+    计数交给调用方的局部 list，不写模块全局——测试里调用这些函数不得污染门禁状态。
+    """
+    print(f"[{SKIP}] {name} — {detail}")
+    if skips is not None:
+        skips.append(name)
 
 
 def normalize_version(raw: str) -> str:
@@ -157,7 +190,13 @@ def lint_gate_issues(repo_root: Path) -> list[str]:
     return issues
 
 
-def git_issues(repo_root: Path, version: str, allow_dirty: bool, online: bool = False) -> list[str]:
+def git_issues(
+    repo_root: Path,
+    version: str,
+    allow_dirty: bool,
+    online: bool = False,
+    skips: list[str] | None = None,
+) -> list[str]:
     issues: list[str] = []
     branch = _git(repo_root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     if branch != "master":
@@ -165,7 +204,11 @@ def git_issues(repo_root: Path, version: str, allow_dirty: bool, online: bool = 
     status = _git(repo_root, "status", "--porcelain").stdout
     if status.strip():
         if allow_dirty:
-            print(f"[{SKIP}] 工作区不干净 — 已用 --allow-dirty 跳过")
+            announce_skip(
+                skips,
+                "Git 状态",
+                "工作区不干净 — 已用 --allow-dirty 跳过（未提交内容不在发布物里）",
+            )
         else:
             issues.append("工作区不干净：\n" + status.strip())
     tags = _git(repo_root, "tag", "--list", f"v{version}").stdout.strip()
@@ -266,10 +309,15 @@ def host_lantai_home(repo_root: Path) -> str:
 def host_home_for_watch(repo_root: Path) -> str:
     """绊线该盯哪个宿主库——必须在**父进程侧**定下来。
 
-    `.env` / 环境变量优先；都没有时回落到 settings 推导的机器默认目录。不能拿
+    优先级：`LANTAI_GATE_HOST_HOME`（维护者/运行器显式声明）> ambient
+    `LANTAI_HOME` / 仓库 `.env` > settings 推导的机器默认目录。不能拿
     "子进程将被重定向到的 home" 当宿主库：一旦运行器注入了临时 LANTAI_HOME，绊线
-    就武装在沙箱上，[HIT]=0 变成恒真——实测踩过（票 05 本轮复现）。
+    就武装在沙箱上，[HIT]=0 变成恒真——实测踩过（票 05 本轮复现）。显式声明的存在
+    正是为了让「跑在隔离 home 里」和「证明没碰宿主库」两件事同时成立。
     """
+    declared = (os.environ.get("LANTAI_GATE_HOST_HOME") or "").strip()
+    if declared:
+        return declared
     home = host_lantai_home(repo_root)
     if home:
         return home
@@ -421,6 +469,21 @@ def mcp_exposure_issue(active: int, total: int) -> str | None:
     return None
 
 
+def mcp_probe_visibility_issue(active: int, total: int) -> str | None:
+    """注册表读到 0 个工具 = 探针没看见默认暴露面，不能读成「已收窄」。
+
+    `mcp_exposure_issue()` 的 `if total and ...` 是结构性判据（0/0 确实不构成
+    「全量暴露」），但发布证据要的是「默认面可见」；探针跑不起来与不回报都已经
+    阻了，唯独 `MCPCOUNT 0 0` 会溜过去——按同一条 fail-closed 口径补上。
+    """
+    if total > 0:
+        return None
+    return (
+        f"MCP 默认面无法读取：探针回报注册表 {active}/{total} 个工具（0 个 = 没看到工具表，"
+        "多半是导入路径/注册表被改名）——无法证明默认暴露未收窄，按 fail-closed 阻断"
+    )
+
+
 def mcp_exposure_issues(
     repo_root: Path, *, python: str | None = None, timeout: int = 240
 ) -> list[str]:
@@ -443,7 +506,8 @@ def mcp_exposure_issues(
     for line in (proc.stdout or "").splitlines():
         parts = line.split()
         if parts and parts[0] == "MCPCOUNT" and len(parts) == 3:
-            issue = mcp_exposure_issue(int(parts[1]), int(parts[2]))
+            active, total = int(parts[1]), int(parts[2])
+            issue = mcp_probe_visibility_issue(active, total) or mcp_exposure_issue(active, total)
             return [issue] if issue else []
     return [
         f"MCP 探针没有回报工具数（exit={proc.returncode}）：" + (proc.stderr or "")[-300:],
@@ -563,18 +627,18 @@ def main(argv: list[str] | None = None) -> int:
     else:
         check("版本一致性", True, f"{len(refs)} 处版本引用 + CHANGELOG 最新段 = v{version}")
 
-    git_failures = git_issues(REPO_ROOT, version, args.allow_dirty, online=args.online)
+    skips: list[str] = []
+    git_failures = git_issues(REPO_ROOT, version, args.allow_dirty, online=args.online, skips=skips)
     for issue in git_failures:
         check("Git 状态", False, issue)
-    if not git_failures:
-        detail = "master / tag 不存在 / origin 存在"
-        if args.allow_dirty:
-            detail += "（工作区未检查）"
-        check("Git 状态", True, detail)
+    if not git_failures and "Git 状态" not in skips:
+        check("Git 状态", True, "master / 工作区干净 / tag 不存在 / origin 存在")
 
     mcp_failures = [] if args.allow_mcp_full_exposure else mcp_exposure_issues(REPO_ROOT)
     if args.allow_mcp_full_exposure:
-        print(f"[{SKIP}] MCP 默认暴露 — 已用 --allow-mcp-full-exposure 跳过（默认面仍需定策）")
+        announce_skip(
+            skips, "MCP 默认暴露", "已用 --allow-mcp-full-exposure 跳过（默认面仍需定策）"
+        )
     else:
         for issue in mcp_failures:
             check("MCP 默认暴露", False, issue)
@@ -592,8 +656,8 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.skip_suite:
-        print(
-            f"[{SKIP}] 全量测试 + 宿主目录绊线 — 已用 --skip-suite 跳过（仅排查用，不代表可发布）"
+        announce_skip(
+            skips, "全量测试 + 宿主目录绊线", "已用 --skip-suite 跳过（仅排查用，不代表可发布）"
         )
     else:
         print("[....] 全量测试 + 宿主数据目录绊线进行中（约数分钟）…")
@@ -608,9 +672,9 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     print("=" * 60)
-    n_fail = sum(1 for s, _, _ in results if s == FAIL)
-    print(f"结果: {len(results) - n_fail}/{len(results)} 通过, {n_fail} 失败")
-    return 1 if n_fail else 0
+    line, code = summarize(results, n_skip=len(skips))
+    print(line)
+    return code
 
 
 if __name__ == "__main__":

@@ -305,11 +305,85 @@ def test_tripwire_watch_must_be_armed_on_the_host_db():
 
 
 def test_host_home_for_watch_is_never_unknown(tmp_path, monkeypatch):
-    """宿主库路径必须由门禁在父进程侧解析出来，不能依赖被子进程重定向的 home。"""
+    """宿主库路径必须由门禁在父进程侧解析出来，不能依赖被子进程重定向的 home。
+
+    本例只锁「无显式声明 => 回落 settings 默认」这一条分支，必须清掉
+    `LANTAI_GATE_HOST_HOME`：门禁/CI 口径跑全量时运行器会显式声明宿主库（让绊线盯
+    住宿主库而不是沙箱），ambient 值一旦优先返回，断言就被环境牵着走——实证：票 05
+    续6 首轮 CI 口径全量 1 failed 正是这条（与顺序无关，纯环境泄漏）。
+    """
     monkeypatch.delenv("LANTAI_HOME", raising=False)
     monkeypatch.delenv("REMEMBRANCE_HOME", raising=False)
+    monkeypatch.delenv("LANTAI_GATE_HOST_HOME", raising=False)
     home = RC.host_home_for_watch(tmp_path)
     assert home.strip(), "返回空 => 绊线只能看护沙箱，[HIT]=0 不可证明"
     from lantai.core.settings import settings
 
     assert os.path.normcase(str(settings.LANTAI_HOME)) == os.path.normcase(home)
+
+
+# ── 票 05 续6：三处「旗标 / 空值 / 沙箱自看护」合成绿灯的回归锁 ──
+
+
+def test_summarize_treats_skip_as_blocking_not_as_pass():
+    """回归锁：跳过一项 = 少一项证据，不能读成「全部通过」。
+
+    实测事故（票 05 本轮复现）：`release_check.py v0.66.0 --skip-suite
+    --allow-mcp-full-exposure --allow-dirty` 打印两行 [SKIP] 仍报
+    「结果: 4/4 通过, 0 失败」并 exit 0 —— 旗标可以合成绿灯，门禁自证失效。
+    """
+    judged = [
+        (RC.PASS, "CI lint 门禁", ""),
+        (RC.PASS, "版本一致性", ""),
+        (RC.PASS, "Git 状态", ""),
+        (RC.PASS, "迁移与列约束漂移", ""),
+    ]
+    line, code = RC.summarize(judged, n_skip=0)
+    assert code == 0, f"全判定且无失败时必须放行：{line}"
+    assert "4/4 通过" in line, line
+
+    line, code = RC.summarize(judged, n_skip=2)
+    assert code != 0, f"存在 [SKIP] 仍 exit 0 = 旗标可合成绿灯：{line}"
+    assert "跳过" in line, f"汇总必须显式写出跳过项数：{line}"
+    assert "4/6" in line, f"分母必须含未判定的检查项：{line}"
+
+    mixed = judged[:2] + [(RC.FAIL, "MCP 默认暴露", "全量暴露")]
+    line, code = RC.summarize(mixed, n_skip=1)
+    assert code != 0, line
+    assert "1 失败" in line and "1 跳过" in line, line
+
+    inlist = [(RC.PASS, "a", ""), (RC.SKIP, "b", "旗标跳过")]
+    line, code = RC.summarize(inlist)
+    assert code != 0, f"SKIP 记进 results 也被当成通过：{line}"
+
+
+def test_mcp_probe_visibility_issue_blocks_unreadable_registry():
+    """回归锁：探针读到 0 个注册工具 = 看不见默认面，不得当成「已收窄」。
+
+    判据 `if total and active >= total` 让 `mcp_exposure_issue(0, 0)` 返回 None；
+    探针本身不回报或跑不起来都已经阻（fail-closed），唯独 `MCPCOUNT 0 0` 漏网——
+    注册表被改名/导入到半个模块时会伪装成「默认暴露已收窄」。
+    """
+    assert RC.mcp_probe_visibility_issue(0, 0) is not None, "空注册表被放行 => 看不见默认面也 GO"
+    assert RC.mcp_probe_visibility_issue(3, 0) is not None
+    assert RC.mcp_probe_visibility_issue(96, 96) is None, (
+        "全量暴露仍由 mcp_exposure_issue 阻断，不在此处重复计"
+    )
+    assert RC.mcp_probe_visibility_issue(5, 96) is None, "已收窄不该在这里新增误杀"
+
+
+def test_host_home_for_watch_prefers_declared_host_home(tmp_path, monkeypatch):
+    """回归锁：运行器把进程 env 沙箱化后，绊线仍必须盯住维护者声明的宿主库。
+
+    若 `LANTAI_HOME` 被注入临时目录且没有显式声明宿主库，`host_home_for_watch()`
+    会回落到 settings 推导值——在沙箱化环境里那正是沙箱自己，watch == armed，
+    [HIT]=0 变成恒真（vacuous-but-pass）。`LANTAI_GATE_HOST_HOME` 必须优先，
+    才能让「跑在隔离 home 里」与「证明没碰宿主库」同时成立。
+    """
+    declared = str(tmp_path / "host-declared" / "remembrance-data")
+    monkeypatch.setenv("LANTAI_GATE_HOST_HOME", declared)
+    monkeypatch.setenv("LANTAI_HOME", str(tmp_path / "sandbox-home"))
+    monkeypatch.setenv("REMEMBRANCE_HOME", str(tmp_path / "stale-legacy-home"))
+    assert RC.host_home_for_watch(tmp_path) == declared, (
+        "显式声明的宿主库被 ambient LANTAI_HOME 覆盖 => 绊线看护沙箱自己"
+    )
