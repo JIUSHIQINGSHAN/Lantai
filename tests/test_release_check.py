@@ -412,3 +412,77 @@ def test_allow_dirty_records_skip_not_pass(clean_repo):
     clean_skips: list[str] = []
     assert RC.git_issues(clean_repo, "0.3.8", allow_dirty=True, skips=clean_skips) == []
     assert clean_skips == [], "工作区本就干净时不该记跳过（不给门禁新增误杀）"
+
+
+# ── 票 05 续7：门禁自身的「skip 当 pass / 空跑当绿灯」漏网 ──
+
+
+def test_suite_counts_parses_pytest_tail_line():
+    """计数必须来自 pytest 收尾行，供门禁把证据写进日志（不再只说「退出码 0」。"""
+
+    assert RC.suite_counts(".... [100%]\n2743 passed, 5 skipped, 2 warnings in 384.08s\n") == {
+        "passed": 2743,
+        "skipped": 5,
+    }
+
+    assert RC.suite_counts("1 skipped in 0.05s\n") == {"skipped": 1}
+
+    assert RC.suite_counts("5 failed, 10 passed in 2.00s\n") == {"failed": 5, "passed": 10}
+
+    assert RC.suite_counts("1 error in 0.30s\n") == {"error": 1}
+
+    assert RC.suite_counts("no tests ran in 0.01s\n") == {}, "空跑必须解析成「没有计数」"
+
+    assert RC.suite_counts("random noise without summary\n") == {}
+
+
+def test_suite_summary_issue_requires_real_passes():
+    """结构性判据：退出码 0 不算数，必须至少有一条真跑过的通过用例。
+
+
+
+    不含可调阈值：只问「passed 是否为 0 / 有没有收尾计数行」，不比较总数、不设比例。
+
+    """
+
+    assert RC.suite_summary_issue("1 passed in 0.10s\n") is None
+
+    assert RC.suite_summary_issue("2743 passed, 5 skipped in 384.08s\n") is None, (
+        "有真实通过就有证据：5 条 skip 只要求写进日志，不新增误杀"
+    )
+
+    issue = RC.suite_summary_issue("1 skipped in 0.05s\n")
+
+    assert issue and "没有任何真实通过" in issue, f"全 skip 被放行了：{issue}"
+
+    issue = RC.suite_summary_issue("no tests ran in 0.01s\n")
+
+    assert issue and "收尾计数行" in issue, f"空跑被放行了：{issue}"
+
+
+def test_suite_gate_blocks_when_nothing_actually_ran(tmp_path):
+    """决定性复现（修复前为 [] —— 假绿）：整个项目只有 skip，门禁却报「全量测试 PASS」。
+
+
+
+    实测：`suite_gate_issues()` 对「1 条 @pytest.mark.skip 用例」的临时项目返回空列表
+
+    ——pytest 退出码 0、绊线照常武装、没人连接宿主库，三条判据全过，于是「一个用例
+
+    都没跑」被读成绿灯。这正是验收底线禁止的 skip 当 pass。
+
+    """
+
+    (tmp_path / "tests").mkdir()
+
+    (tmp_path / "tests" / "test_all_skipped.py").write_text(
+        "import pytest\n\n\n@pytest.mark.skip(reason=\x27演示用\x27)\n"
+        "def test_never_runs():\n    assert False\n",
+        encoding="utf-8",
+    )
+
+    issues = RC.suite_gate_issues(tmp_path, timeout=180, real_home=str(tmp_path / "nohome"))
+
+    assert issues, "全 skip 的空跑必须被门禁拦下，不能当成「全量测试通过」"
+
+    assert any("真实通过" in i or "收尾计数行" in i for i in issues), issues

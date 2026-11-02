@@ -379,6 +379,43 @@ def tripwire_report_issues(report_text: str, *, home: str, watch: str = "") -> l
     return []
 
 
+_SUITE_COUNT_RE = re.compile(r"\b(\d+) (passed|failed|errors?|skipped|xfailed|xpassed)\b")
+_SUITE_EMPTY_RE = re.compile(r"no tests ran|collected 0 items")
+
+
+def suite_counts(output: str) -> dict[str, int]:
+    """从 pytest 收尾行取计数（最后一条命中行）；取不到就返回空 dict = 没有证据。"""
+    for line in reversed(output.splitlines()):
+        found = _SUITE_COUNT_RE.findall(line)
+        if found or _SUITE_EMPTY_RE.search(line):
+            counts: dict[str, int] = {}
+            for num, kind in found:
+                key = "error" if kind.startswith("error") else kind
+                counts[key] = counts.get(key, 0) + int(num)
+            return counts
+    return {}
+
+
+def suite_summary_issue(output: str) -> str | None:
+    """退出码 0 还不够：必须至少有一条真跑过的通过用例，空跑/skip 不算测试通过。
+
+    判据是结构性的（passed 是否为 0、有没有收尾计数行），不含可调阈值、不比比例，
+    因此不会因为「把 skip 白名单调大」而失效。
+    """
+    counts = suite_counts(output)
+    if not counts:
+        return (
+            "全量测试没有可解析的收尾计数行（退出码 0 却拿不到 passed/failed/skipped）"
+            "——证据缺失，不放行"
+        )
+    if not counts.get("passed"):
+        return (
+            f"全量测试没有任何真实通过的用例：{counts}——skip/空跑不等于测试通过，不放行"
+            "（要豁免某条评测线就得写成显式白名单，不能靠 skip 蒙过门禁）"
+        )
+    return None
+
+
 def suite_gate_issues(
     repo_root: Path,
     *,
@@ -391,6 +428,8 @@ def suite_gate_issues(
     与 CI 同口径，但显式清掉 `addopts`（本地 pyproject 的覆盖率参数不该变成
     「到底跑没跑」的隐式变量），并把 `tests/support/real_home_tripwire.py`
     挂成插件（按**连接路径**判定，不按 mtime——开发机上常驻服务自己也在写库）。
+    退出码 0 之外还要求「至少一条真实通过的用例」，并把计数打进日志：全项目只剩
+    skip 时退出码也是 0，旧判据会把它读成「全量测试通过」（票 05 续7 实测漏洞）。
     """
     py = python or sys.executable
     home = host_home_for_watch(repo_root) if real_home is None else real_home
@@ -438,6 +477,11 @@ def suite_gate_issues(
     except OSError:
         report_text = ""
 
+    counts = suite_counts(output)
+    print(
+        "[....] 全量测试计数: "
+        + (", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "解析不到收尾行（空跑）")
+    )
     issues: list[str] = []
     if exit_code != 0:
         summary = next(
@@ -453,6 +497,11 @@ def suite_gate_issues(
         )
     elif "[TRIPEWIRE-ARMED]" not in report_text:
         issues.append("全量测试没有真正跑起来（退出码 0 却没有绊线报告）——不放行")
+    else:
+        summary_issue = suite_summary_issue(output)
+        if summary_issue:
+            issues.append(summary_issue)
+
     issues.extend(tripwire_report_issues(report_text, home=home or "(宿主目录未指明)", watch=watch))
     return issues
 
