@@ -166,3 +166,47 @@ class TestShiyiPipelineSmoke:
         # 绝不应泄露其他租户的记忆
         leaked_ids = [r["memory"]["id"] for r in res]
         assert "mem-secret-tenant-corp" not in leaked_ids
+
+    def test_seam5_shiyi_defaults_to_off_at_every_entry(self, param_env):
+        """N-01 锁（票 05-v0660-release-gate.md）：拾遗默认不召回，且必须被钉住。
+
+        评审清单 N-01：v0.56 曾把拾遗（零召回兜底的全表补救）默认打开，旧/跨域
+        记忆因此进注入面。生产代码已把三个入口的签名默认改回 `False`，但**没有
+        任何用例锁默认值**——下次「顺手改成 True」不会让任何测试变红，门禁对
+        「默认暴露」的判定就少了一条真实证据。
+
+        判据取行为 + 签名两层，防假绿：
+          · 同一种子同一查询，默认调用必须空返回（真走一遍零召回路径）；
+          · 显式 `enable_shiyi=True` 必须补救召回（对照，排除「一律空返回」变绿）；
+          · 三个入口的签名默认值都必须逐字是 False（默认值漂移即时可见）。
+        """
+        import inspect
+
+        from lantai.retrieval import hybrid as hybrid_module
+
+        session_factory, _engine = param_env
+        with session_factory() as session:
+            _seed_memory(
+                session,
+                id="mem-n01-default-off",
+                content="Kubernetes生产集群中核心微服务容器重启策略统一配置为Always",
+                user_id="user-n01",
+                tenant_id="tenant-n01",
+            )
+            session.commit()
+
+        principal = Principal(user_id="user-n01", tenant_id="tenant-n01")
+        query = "K8S微服务重启总是生效"
+
+        assert hybrid_search(query=query, top_k=3, principal=principal) == [], (
+            "拾遗未显式开启却召回了记忆——N-01 默认不召回契约被破坏"
+        )
+        remedied = hybrid_search(query=query, top_k=3, principal=principal, enable_shiyi=True)
+        assert [r["memory"]["id"] for r in remedied] == ["mem-n01-default-off"], (
+            f"对照组失效：显式开启也召不回，上一条断言就失去意义: {remedied!r}"
+        )
+
+        for fn_name in ("hybrid_search", "_hybrid_search_impl", "_keyword_fallback"):
+            fn = getattr(hybrid_module, fn_name)
+            default = inspect.signature(fn).parameters["enable_shiyi"].default
+            assert default is False, f"{fn_name} 的 enable_shiyi 默认值漂移为 {default!r}"

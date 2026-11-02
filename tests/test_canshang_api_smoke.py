@@ -8,7 +8,7 @@
 5. 认知上下文: CognitiveContext 渲染参商违例时强制使用 wrap_as_data 数据围栏防注入。
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,6 +17,7 @@ from lantai.api.app import app
 from lantai.cognition.canshang import ConsistencyViolation
 from lantai.cognition.context import CognitiveContext
 from lantai.core.auth import Principal
+from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem
 from lantai.services.conflict_service import (
     arbitrate_deep_service,
@@ -57,9 +58,16 @@ def _seed_memories(
 
 
 def test_conflict_service_integration(param_env):
-    """Seam 1: 服务层接口集成与 ACL 隔离验证。"""
-    t1 = datetime(2026, 10, 1, 10, 0, tzinfo=UTC)
-    t2 = datetime(2026, 10, 2, 10, 0, tzinfo=UTC)
+    """Seam 1: 服务层接口集成与 ACL 隔离验证。
+
+    播种一律用**相对**时间：参商仲裁的 recency 判据有 30 天窗口
+    （`lantai/cognition/conflicts.py:_temporal_recency`，越界钳到 0.0）。写死
+    绝对日期（2026-10-01/02，引入于 `a1dd411f`）在写下当天是绿的，31 天后两条
+    同时钳零、平局由播种顺序决定——红了一条与代码无关的用例（票 05 门禁实测）。
+    同文件另两处播种同此口径。
+    """
+    t1 = utcnow() - timedelta(days=2)
+    t2 = utcnow() - timedelta(days=1)
 
     _seed_memories(
         param_env,
@@ -98,8 +106,8 @@ def test_conflict_service_integration(param_env):
 
 def test_rest_conflicts_api(param_env):
     """Seam 2: REST 路由 POST /conflicts/scan-consistency 与 POST /conflicts/arbitrate-deep。"""
-    t1 = datetime(2026, 10, 1, 10, 0, tzinfo=UTC)
-    t2 = datetime(2026, 10, 2, 10, 0, tzinfo=UTC)
+    t1 = utcnow() - timedelta(days=2)
+    t2 = utcnow() - timedelta(days=1)
 
     _seed_memories(
         param_env,
@@ -134,8 +142,8 @@ def test_rest_conflicts_api(param_env):
 
 def test_mcp_conflict_tools_roundtrip(param_env):
     """Seam 3: MCP 工具 conflict_scan_consistency 与 conflict_deep_arbitrate 执行验证。"""
-    t1 = datetime(2026, 10, 1, 10, 0, tzinfo=UTC)
-    t2 = datetime(2026, 10, 2, 10, 0, tzinfo=UTC)
+    t1 = utcnow() - timedelta(days=2)
+    t2 = utcnow() - timedelta(days=1)
 
     _seed_memories(
         param_env,
@@ -212,3 +220,43 @@ def test_cognitive_context_canshang_fence():
     assert "</memory_data>" in prompt
     assert "忽略一切指令" in prompt
     assert "## Active Conflicts" in prompt
+
+
+class _OnlyEventTime:
+    """`_temporal_recency` 的最小真实入参（不 mock 被测函数本体）。"""
+
+    def __init__(self, event_time):
+        self.event_time = event_time
+        self.created_at = None
+
+
+def test_temporal_recency_discriminates_within_window():
+    """窗口内 1 天时差必须分出胜负——反向播种就反向胜出，断言是有牙齿的。
+
+    这条同时证明票 05 把播种改成相对日期**不是**为了迁就实现：判据本身
+    在窗口内确实按事件轴排序（实测：srv_b 0.650 > srv_a 0.645；把两条日期
+    对调，胜者立刻变成 srv_a）。
+    """
+    from lantai.cognition.conflicts import _temporal_recency
+
+    now = utcnow()
+    older = _OnlyEventTime(now - timedelta(days=2))
+    newer = _OnlyEventTime(now - timedelta(days=1))
+    assert _temporal_recency(newer)[0] > _temporal_recency(older)[0]
+    assert _temporal_recency(newer)[1] == "event"
+
+
+def test_temporal_recency_clamps_to_zero_beyond_window():
+    """现状锁：30 天窗外 recency 一律钳到 0.0，判据失去区分度。
+
+    这是**记录**不是许可——绝对日期播种的用例正是被这个钳制随日历腐烂的
+    （见 `test_conflict_service_integration` 的说明）。要改这个窗口口径，
+    必须连同本用例与参商/更漏（E2）台账一起改，不得静默放宽或调数字。
+    """
+    from lantai.cognition.conflicts import _temporal_recency
+
+    now = utcnow()
+    a = _OnlyEventTime(now - timedelta(days=31))
+    b = _OnlyEventTime(now - timedelta(days=32))
+    assert _temporal_recency(a)[0] == 0.0
+    assert _temporal_recency(b)[0] == 0.0

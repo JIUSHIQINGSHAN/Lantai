@@ -23,7 +23,11 @@ from lantai.eval.longmemeval import (
     session_recall_hit,
 )
 
-DATASET = Path("data/longmemeval/longmemeval_s_cleaned.json")
+# 票 05：必须仓库根锚定。原来的相对路径使整模块 skipif 的判据随调用 cwd 变化——
+# 同一提交在仓库根跑（5 passed）、在 tests/ 目录跑（5 skipped），门禁红绿不可复现。
+# 数据集仍是被 gitignore 的本地产物：缺失则如实 skip，但“跑不跑”不再取决于 cwd。
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DATASET = REPO_ROOT / "data" / "longmemeval" / "longmemeval_s_cleaned.json"
 
 pytestmark = pytest.mark.skipif(not DATASET.exists(), reason="数据集未下载（本地跑测专用）")
 

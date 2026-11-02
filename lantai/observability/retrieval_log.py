@@ -134,6 +134,59 @@ def _backfill_owner_ok(ev, principal) -> bool:
     return ev.user_id is None or ev.user_id == viewer
 
 
+def _touch_keepalive(mem_ids: list[str], *, principal=None, event_id: str = "") -> int:
+    """注入回执的保活回写：刷新 `use_count` 与 `last_used_at`（票 03 P0-4 病灶 2）。
+
+    病灶：Hermes 插件注入记忆后，经 `POST /retrieval/backfill` / MCP / shell_hook
+    注入回执通道把「真正被用进回答」的 id 回写给检索事件，但 `MemoryItem` 上的
+    `use_count` / `last_used_at` 从未被刷新——衰减公式的输入只有 `last_used_at`，
+    于是天天被注入使用的记忆在它眼里仍是「65 天没人用过」，被 `apply_forgetting`
+    归档。保活因此必须落在这条回写链上（而不是给记忆加永久免疫标记）。
+
+    边界（都是本票的硬约束，不是顺手加的）：
+      · 只动**本次事件召回过**（`RetrievalEvent.result_ids`）且**首次被回执**的 id：
+        夹带外来 id 刷不到别人的计数，重放同一回执也不会把 `use_count` 累加；
+      · 只动 `status == "active"` 的行——保活不是复活（archived 没有 undo 入口）；
+      · 带身份时逐条过 `acl.ensure_can_delete`：这两个字段是考功与遗忘的**输入**，
+        非属主不得代刷（同 `evolution/reflector.record_usage` 口径，宁 miss 不脏写）；
+      · 不碰 `helpful_count`（用户裁决，走 reflector 反馈），不碰 `importance` /
+        `decay_score`（改它们等于间接操控演化结果）。
+    失败非致命：回执已经先落库，回写炸了不许把 acked 拖回 pending。
+    """
+    if not mem_ids:
+        return 0
+    touched = 0
+    try:
+        with db.get_session() as s:
+            for mid in mem_ids:
+                item = s.get(MemoryItem, mid)
+                if not item or item.status != "active":
+                    continue
+                if principal is not None:
+                    from lantai.core.acl import ensure_can_delete
+
+                    try:
+                        ensure_can_delete(
+                            principal,
+                            resource_user_id=item.user_id,
+                            resource_tenant_id=item.tenant_id,
+                            lane=item.lane,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "receipt keepalive skipped (not owner): mem=%s ev=%s", mid, event_id
+                        )
+                        continue
+                item.use_count = int(item.use_count or 0) + 1
+                item.last_used_at = utcnow()
+                s.add(item)
+                touched += 1
+            s.commit()
+    except Exception:
+        logger.exception("receipt keepalive writeback failed (non-fatal)")
+    return touched
+
+
 def backfill_used_ids(
     event_id: str, used_ids: list[str], request_id: str | None = None, *, principal=None
 ) -> None:
@@ -142,6 +195,9 @@ def backfill_used_ids(
     回执链一等化（ADR-0049）：回执成功 → receipt_status="acked" + receipt_at 落定。
     request_id 提供时与事件列核对——不一致如实记日志（不拒绝、不改状态；
     宁 miss 不脏写，回执归属以 event_id 为准）。
+
+    保活回写（票 `.scratch/v0.66-next-window-2026-11/03`）：回执成功后把本轮新增的
+    used_ids 刷回 `MemoryItem.use_count` / `last_used_at`，见 `_touch_keepalive`。
 
     归属（票 `.scratch/mcp-identity-gaps/01c`）：此前**一个身份都不取**——
     A 拿 B 的 `event_id` 就能把 B 的回执从 `pending` 改成 `acked` 并覆盖成
@@ -153,24 +209,36 @@ def backfill_used_ids(
     所以日志是唯一可观测处——这正是"宁 miss 不脏写"的形态。
     """
     try:
+        bump: list[str] = []
         with db.get_session() as s:
             ev = s.get(RetrievalEvent, event_id)
-            if ev:
-                if request_id and ev.request_id and request_id != ev.request_id:
-                    logger.warning(
-                        "receipt request_id mismatch (kept by event_id): ev=%s ev_req=%s got=%s",
-                        event_id,
-                        ev.request_id,
-                        request_id,
-                    )
-                if not _backfill_owner_ok(ev, principal):
-                    logger.warning("receipt backfill refused (owner mismatch): ev=%s", event_id)
-                    return
-                ev.used_ids = list(used_ids)
-                ev.receipt_status = "acked"
-                ev.receipt_at = utcnow()
-                s.add(ev)
-                s.commit()
+            if not ev:
+                return
+            if request_id and ev.request_id and request_id != ev.request_id:
+                logger.warning(
+                    "receipt request_id mismatch (kept by event_id): ev=%s ev_req=%s got=%s",
+                    event_id,
+                    ev.request_id,
+                    request_id,
+                )
+            if not _backfill_owner_ok(ev, principal):
+                logger.warning("receipt backfill refused (owner mismatch): ev=%s", event_id)
+                return
+            # 覆盖写之前先取「本轮新增的 used_ids」与「本事件召回过的 id」：
+            # 保活回写只认这两者的交集（重放同一回执不累加、夹带外来 id 不计）。
+            already = set(ev.used_ids or [])
+            recalled = set(ev.result_ids or [])
+            ev.used_ids = list(used_ids)
+            ev.receipt_status = "acked"
+            ev.receipt_at = utcnow()
+            s.add(ev)
+            s.commit()
+            bump = [mid for mid in used_ids if mid not in already and mid in recalled]
+        # 回执先落库，再单开事务做保活回写（票 03 病灶 2）：回写失败不能倒过来把
+        # acked 拖回 pending（ADR-0049 弱标注地基完整性优先）；顺序执行也避免在同一
+        # 引擎上套嵌两个 Session——内存库的 StaticPool 共用一条 DBAPI 连接，套嵌会
+        # 让两边的未提交状态互相看见。
+        _touch_keepalive(bump, principal=principal, event_id=event_id)
     except Exception:
         logger.exception("retrieval used_ids backfill failed (non-fatal)")
 

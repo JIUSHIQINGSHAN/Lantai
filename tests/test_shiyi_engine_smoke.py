@@ -52,9 +52,19 @@ def _seed_memory(
 class TestShiyiEngineSmoke:
     """拾遗 Ticket 01 冒烟测试集。"""
 
-    def test_seam1_zero_recall_fuzzy_remedy(self):
-        """Seam 1: 零召回情境下的分级模糊补救召回。"""
-        with db.get_session() as session:
+    def test_seam1_zero_recall_fuzzy_remedy(self, param_env):
+        """Seam 1: 零召回情境下的分级模糊补救召回。
+
+        隔离（票 05-v0660-release-gate.md 排查所得，断言逐字未动）：本用例判的是
+        **榜首**命中 id，而它此前把数据写进会话级共享测试库（conftest
+        `_isolate_data_dir` 的 tmp home DB）且不清场。`test_shiyi_pipeline_smoke.py
+        ::test_seam1` 留下的 `mem-k8s-pod-remedy-001` 正文与这里几乎同形，先跑
+        pipeline 就会把榜首换掉——实测 pipeline→engine 顺序必红，而全量按字母序
+        engine 在前，把这条顺序敏感永久掩盖了（正是工单禁止的「靠运行顺序变绿」）。
+        改挂 `param_env` 的独立内存库：数据环境干净，两个顺序都得绿。
+        """
+        session_factory, _engine = param_env
+        with session_factory() as session:
             _seed_memory(
                 session,
                 id="mem-k8s-pod-001",

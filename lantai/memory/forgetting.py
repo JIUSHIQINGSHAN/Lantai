@@ -16,6 +16,44 @@ def _lane_strength(importance: float, use_count: int, lane: str) -> float:
     return base_s + boost * importance + 2 * math.log1p(use_count)
 
 
+# ---- 票 03（v0.66 P0-4）：豁免分两档，两条归档路各自明确认哪些标记 ----
+# 病灶：`is_exempt` 此前只挡 `ttl_expired`，`decay_score < ARCHIVE_DECAY_THRESHOLD`
+# 那条路照样把高重要度/语义记忆归档——TTL 豁免被衰减路开了后门（实测 65 天即误杀
+# importance=0.95 的 chat 泳道记忆、200 天即误杀 semantic 记忆）。
+#
+#   · `_decay_exempt`：**结构性豁免标记**（高重要度、语义/程序性衰减类）——声明
+#     「本条不受衰减归档」，衰减路与 TTL 路都必须尊重；
+#   · `_ttl_exempt`：60 天未使用突击的豁免集，口径与改动前的 `is_exempt` 逐字一致
+#     （再加偏好/画像泳道与 `use_count > 0`）。
+#
+# `use_count > 0` 与偏好泳道**不进** `_decay_exempt`，是刻意的：把「用过一次」做成
+# 永久豁免等于让衰减归档整体空转（工单红线），而仓内已有冻结契约——
+# `lantai/eval/chinese_memory_cases.py` 的 stale 用例（偏好泳道 + importance 0.1 +
+# 200 天零使用必须归档）与 `test_forgetting_quality.py` 的 `stale_hit_rate == 0.0`。
+# 使用保活走另一条路：注入回执回写 `last_used_at` / `use_count`（修复目标 2），
+# 它直接改变衰减公式的输入，不需要免疫标记，也就不会把语义做成「永生」。
+_DECAY_EXEMPT_CLASSES = ("semantic", "procedural")
+_TTL_EXEMPT_LANES = ("preference", "profile")
+
+
+def _decay_exempt(m) -> bool:
+    """结构性豁免标记：高重要度或语义/程序性衰减类——两条归档路都不得动它们。
+
+    下限走 `settings.FORGET_IMPORTANCE_EXEMPTION_FLOOR`（P0-B「阈值可配置」），
+    不再写死在模块常量：调高下限必须能真实放宽归档、调低必须能真实收紧，
+    否则「可配置」只是文档上的承诺（回归见
+    `tests/test_forgetting_exempt_archive.py::TestImportanceFloorIsConfigurable`）。
+    """
+    if getattr(m, "decay_class", None) in _DECAY_EXEMPT_CLASSES:
+        return True
+    return m.importance is not None and (m.importance >= settings.FORGET_IMPORTANCE_EXEMPTION_FLOOR)
+
+
+def _ttl_exempt(m) -> bool:
+    """working TTL 突击的豁免集（与改动前 `is_exempt` 逐字同口径，只是拆成命名判据）。"""
+    return _decay_exempt(m) or (m.lane in _TTL_EXEMPT_LANES) or (getattr(m, "use_count", 0) > 0)
+
+
 def _forgetting_scope(principal):
     """遗忘候选集的归属条件（票 .scratch/readside-gaps/12）。
 
@@ -44,6 +82,7 @@ def apply_forgetting(principal=None, *, page_size: int = 500):
     - 跳过 |Δdecay| < 0.001 的更新，减少数据库无谓写入 (Ticket 2.4 [DD-06])
     - 分批 commit 减少 WAL 锁竞争 (Ticket 2.4 [DD-06])
     - decay 低于 ARCHIVE_DECAY_THRESHOLD 时自动转 archived
+      （高重要度 / 语义 / 程序性等结构性豁免标记不受此路归档，票 03）
     - working memory 超过 TTL 且无帮助时转 archived
     - archived 记忆不参与检索（WHERE status='active'），但物理不删
 
@@ -100,23 +139,19 @@ def apply_forgetting(principal=None, *, page_size: int = 500):
                         m.decay_score = new_decay
                         changed = True
 
-                    # 自动归档：decay 极低 或 working memory 过期且无用（彻底消灭 X-02 误归档高重要度偏好隐患）
-                    # 豁免原则：高重要度 (>=0.8)、偏好/画像 (preference/profile)、语义/程序性记忆永不因 60 天 TTL 归档
-                    is_exempt = (
-                        (m.importance is not None and m.importance >= 0.8)
-                        or (m.lane in ("preference", "profile"))
-                        or (getattr(m, "decay_class", None) in ("semantic", "procedural"))
-                        or (getattr(m, "use_count", 0) > 0)
-                    )
+                    # 自动归档：decay 跌破阈值 或 working memory 超 TTL 且零帮助。
+                    # 票 03：两条路分别取自己的豁免集——衰减路也严格认豁免标记。
+                    is_exempt = _ttl_exempt(m)
                     ttl_expired = (
                         m.tier == "working"
                         and days > settings.WORKING_MEMORY_TTL_DAYS
                         and m.helpful_count == 0
                         and not is_exempt
                     )
-                    if (
-                        m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD or ttl_expired
-                    ) and m.status != "archived":
+                    decay_breached = (
+                        m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD and not _decay_exempt(m)
+                    )
+                    if (decay_breached or ttl_expired) and m.status != "archived":
                         m.status = "archived"
                         changed = True
 

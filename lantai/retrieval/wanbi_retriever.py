@@ -14,12 +14,20 @@ from lantai.core.time import utcnow
 from lantai.models.tables import FactAtomic, FactEntity, MemoryItem
 
 
-def _source_alive_clause():
+def fact_source_alive_clause():
     """来源存活谓词（需配合 FactAtomic LEFT JOIN MemoryItem 使用）。
 
     无来源事实放行；有来源事实要求来源记忆存在且 status == 'active'。
+
+    X-01（票 05-v0660-release-gate.md · P0-A）升为**公开**单一真源：`memory`
+    是软删除、`fact_atomic` 不级联，所以任何读 `fact_atomic` 的通道都必须用同一
+    口径判存活——此前只有本文件三处用了它，贯珠与探颐各自裸查事实表，已删隐私
+    照样回流。私有名保留为别名（本文件内既有调用点不动，避免无意义 churn）。
     """
     return (col(FactAtomic.source_memory_id).is_(None)) | (col(MemoryItem.status) == "active")
+
+
+_source_alive_clause = fact_source_alive_clause
 
 
 def _fact_scope(principal: Any = None):

@@ -3,8 +3,26 @@
 import logging
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from lantai.core.settings import settings
 from lantai.retrieval.intent import classify_intent
 from lantai.retrieval.reranker import _parse_response, rerank
+
+
+@pytest.fixture(autouse=True)
+def _pin_reranker_key(monkeypatch):
+    """X-09（v0.65）后跨服务商精排必须自带独立密钥——用例自带假 key 补齐前置条件。
+
+    出厂默认 `RERANKER_API_KEY=""` + `RERANKER_BASE_URL="https://api.siliconflow.cn/v1"`，
+    `rerank()` 在出网前就安全短路返回 `[]`：于是这批「mock requests.post 之后断言解析
+    正确」的用例根本没能跑到被修的那段代码（CI 没有 .env，同样红——门禁不可复现）。
+    补齐前置条件 ≠ 绕过防线：见
+    `TestRerank.test_rerank_skips_when_cross_provider_key_missing`，它把 key 清回空值，
+    证明短路仍在、且一次网络调用都不发。
+    """
+    monkeypatch.setattr(settings, "RERANKER_API_KEY", "test-rerank-key")
+    monkeypatch.setattr(settings, "RERANKER_BASE_URL", "https://api.siliconflow.cn/v1")
 
 
 class TestRerank:
@@ -42,6 +60,13 @@ class TestRerank:
         result = rerank("query", ["apple"], top_k=1)
         assert len(result) == 1
         assert mock_post.call_count == 2
+
+    def test_rerank_skips_when_cross_provider_key_missing(self, monkeypatch):
+        """防线仍在：清空独立 key + 硅基流 host → 不出网、返回 []（mock 零调用）。"""
+        monkeypatch.setattr(settings, "RERANKER_API_KEY", "")
+        with patch("lantai.retrieval.reranker.requests.post") as mock_post:
+            assert rerank("query", ["apple", "banana"], top_k=2) == []
+            assert mock_post.call_count == 0, "X-09 短路被绕过：仍然发起了出网调用"
 
     @patch("lantai.retrieval.reranker.requests.post")
     def test_rerank_all_fail_returns_empty(self, mock_post):

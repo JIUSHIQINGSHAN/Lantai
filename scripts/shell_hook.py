@@ -15,11 +15,18 @@ try:
 except (AttributeError, ValueError):
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 幂等插入（票 .scratch/v0.66-next-window-2026-11/issues/01）：宿主 CLI 只 import 一次，
+# 但测试/插件路径会对同一文件反复 exec_module——无条件 insert 让进程级 sys.path
+# 无界增长（全量实测 +2574 条、收尾 2752 条重复项）。搜索语义不变：仓库根仍在
+# sys.path 上（且保持首位优先），只是不再重复堆叠同一目录。
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
-from sqlmodel import select
+from sqlmodel import col, select
 
 from lantai.core.ids import new_id
+from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.core.text import apply_recall_budget as _apply_recall_budget
 from lantai.core.text import truncate_codepoints as _truncate_codepoints
@@ -72,6 +79,50 @@ def _build_tools_guide(truncated: bool) -> str:
     parts.append("- " + _RECALL_TOOLS_GUIDE_RULES)
     parts.append("- " + _RECALL_TOOLS_GUIDE_WRITE)
     return "\n".join(parts)
+
+
+def _live_atomic_facts(facts: list) -> list:
+    """注入前来源存活断言（X-01 · P0-A 要求 3）：只放行来源记忆仍 active 的事实。
+
+    读侧三处 JOIN 过滤（完璧 / 贯珠 / 探颐）是第一道闸；本函数是**注入前的最后一
+    道闸**——上游任何通道（含未来新增的检索器）把已软删除记忆的原子事实递过来，
+    都不进 prompt。`memory` 是软删除、`fact_atomic` 不级联，正文删不掉只能靠这里。
+
+    口径与 `wanbi_retriever.fact_source_alive_clause()` 逐字一致：无来源事实放行；
+    有来源事实要求来源行存在且 status == 'active'。
+    **fail-closed**：来源查不动（异常）时一条都不注入——宁 miss 不脏写。
+    """
+    if not facts:
+        return []
+    sources = {
+        f.get("source_memory_id")
+        for f in facts
+        if isinstance(f, dict) and f.get("source_memory_id")
+    }
+    if not sources:
+        return [f for f in facts if isinstance(f, dict)]
+    try:
+        with db.get_session() as s:
+            live = set(
+                s.exec(
+                    select(MemoryItem.id)
+                    .where(col(MemoryItem.id).in_(sources))
+                    .where(MemoryItem.status == "active")
+                ).all()
+            )
+    except Exception as exc:
+        logger.warning("完璧事实来源存活断言失败，放弃注入全部事实: %s", exc)
+        return []
+    kept = [
+        f
+        for f in facts
+        if isinstance(f, dict)
+        and (not f.get("source_memory_id") or f.get("source_memory_id") in live)
+    ]
+    dropped = len(facts) - len(kept)
+    if dropped:
+        logger.info("完璧事实注入断言：丢弃 %d 条来源已不存活的原子事实", dropped)
+    return kept
 
 
 def _format_memory_entry(
@@ -240,8 +291,15 @@ def build_context(query: str, session_id: str | None = None) -> dict:
     if not query or len(query.strip()) <= settings.SHELL_HOOK_MIN_CHARS:
         return _persona_only()
 
-    # 前置闸门检查（低信度/无信号闲聊跳过昂贵的检索计算）
-    gate_decision = relevance_check(query)
+    # 前置闸门检查（低信度/无信号闲聊跳过昂贵的检索计算）。
+    # 票 04（P0-3）：判定必须带**会话身份**。闸门的「追问沿用」热缓存是进程级
+    # 状态，此前不带身份 → 落进 `relevance_check` 的无身份全局桶 `_LAST_GATE_DECISION`；
+    # 常驻 serve 进程里 A 会话一次带信号的查询，会让 B 会话的无关短消息
+    # （如「你先看看」，自身判 no_signal）继承 needs_memory=True——实测白跑昂贵
+    # 检索并落一条 zero_result 的 RetrievalEvent，把别人的判定噪声带进无关对话。
+    # `session_id` 本来就在调用处手里；无 session 的调用方（桌面/CLI 单用户）
+    # 仍落 "default" 桶，行为零漂移。
+    gate_decision = relevance_check(query, user_id=session_id or "default")
     if not gate_decision.get("needs_memory", False):
         return _persona_only()
 
@@ -293,7 +351,7 @@ def build_context(query: str, session_id: str | None = None) -> dict:
             score = round(float(r.get("score", 0.0)), 2)
 
             # 若结果项包含完璧 FactAtomic 原子事实列表，则优先连同事实结构保整注入
-            atomic_facts = r.get("atomic_facts") or []
+            atomic_facts = _live_atomic_facts(r.get("atomic_facts") or [])
             atomic_suffix = ""
             if atomic_facts:
                 fact_stmts = [
@@ -500,9 +558,9 @@ def _handle_checkpoint_write(session_id: str, blocks: dict) -> dict:
 def _run_with_timeout(func, timeout, *args, _fallback=None):
     """超时包装（D-04，票 `.scratch/v0.65-next-window-2026-11/01`）。
 
-    超时返回 `_fallback()`（降级工厂，零参回调——QUERY 通道传常驻画像，
-    免得超时把画像段一并丢弃）；未传保持原行为返回 `{}`。非超时路径
-    不碰工厂。daemon 线程不可取消是 Python 线程模型限制，预算控制在
+    超时**与执行异常**都返回 `_fallback()`（降级工厂，零参回调——QUERY 通道传
+    常驻画像，免得超时/抛错把画像段一并丢弃）；未传工厂时保持原行为返回 `{}`。
+    正常返回路径不碰工厂。daemon 线程不可取消是 Python 线程模型限制，预算控制在
     build_context 内传导（见其 docstring）。
     """
     import threading
@@ -511,22 +569,45 @@ def _run_with_timeout(func, timeout, *args, _fallback=None):
         def __init__(self):
             super().__init__()
             self.result = {}
+            self.exc: Exception | None = None
             self.daemon = True
 
         def run(self):
-            import contextlib
-
-            with contextlib.suppress(Exception):
+            try:
                 self.result = func(*args)
+            except Exception as exc:
+                # 线程内异常不会传播回主线程；此前被 `contextlib.suppress` 直接吞掉，
+                # 结果停在 `{}`——票 04 要求把它记下来，交给主线程降级。
+                self.exc = exc
+
+    def _degrade(reason: str) -> dict:
+        """降级出口：留痕 + 常驻画像兜底（无工厂/工厂自身失败时才空返回）。
+
+        留痕用模块顶部的 `logger`（stderr）——降级路径上绝不做 import：被掐掉的
+        worker 线程此刻正在首次 import jieba/chromadb（冷启动 0.9–1.4s），主线程
+        若在这里触发一次 import，会撞 import 锁把 hook 预算整个吃掉（实测
+        0.2s 的墙被拖到 1.8s，把超时预算用例拖红）。
+        """
+        logger.warning("shell_hook %s，按降级兜底（画像仍在，检索段可能缺失）", reason)
+        if _fallback is None:
+            return {}
+        try:
+            return _fallback()
+        except Exception:
+            logger.exception("shell_hook 降级工厂自身失败")
+            return {}
 
     t = TaskThread()
     t.start()
     t.join(timeout)
     if t.is_alive():
-        try:
-            return _fallback() if _fallback is not None else {}
-        except Exception:
-            return {}
+        return _degrade(f"超时（{timeout}s）")
+    if t.exc is not None:
+        # 票 04（P0-3）：异常路径同样不得丢常驻画像。此前只有「线程还活着（超时）」
+        # 才走 _fallback，而 worker 里的异常把 result 留在 `{}` 且不留任何日志；
+        # `build_context` 的内部 try 只兜住检索段，闸门调用与收尾拼串都在它之外，
+        # 那一段任何抛错都会让 Hermes 拿到空上下文（画像静默消失、且完全不可观测）。
+        return _degrade(f"执行异常（{t.exc!r}）")
     return t.result
 
 

@@ -10,12 +10,24 @@
 import logging
 from unittest.mock import MagicMock, patch
 
+import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
+from lantai.core.settings import settings
 from lantai.models.tables import MemoryItem
 from lantai.retrieval.hybrid import RetrievalParams, hybrid_search
 from lantai.retrieval.reranker import _parse_response
+
+
+@pytest.fixture(autouse=True)
+def _pin_reranker_key(monkeypatch):
+    """口径同 `tests/test_reranker.py`：X-09 后须自带独立 key，否则 `rerank()` 在出网前
+    短路返回 `[]`，「缺 index 不错配 + 留痕」这条用例压根到不了 `_parse_response`
+    （warning 断言长期空转，修没修好都看不出来）。
+    """
+    monkeypatch.setattr(settings, "RERANKER_API_KEY", "test-rerank-key")
+    monkeypatch.setattr(settings, "RERANKER_BASE_URL", "https://api.siliconflow.cn/v1")
 
 
 def test_parse_response_retains_index():

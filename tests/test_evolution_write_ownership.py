@@ -357,10 +357,33 @@ class TestConsolidationWriteOwnership:
         assert a is not None, "A 自己的记忆没了"
 
     def test_internal_call_unfiltered(self, ew_env):
-        """principal=None 内部调用行为不变。"""
+        """principal=None 内部调用行为不变。
+
+        `importance=0.5` 是**显式脱离豁免区**（票 .scratch/v0.66-next-window-2026-11/03：
+        沉潜修剪现在尊重结构性豁免标记，`_add` 默认的 0.9 属于豁免区）。本条断言保护的是
+        「无身份调用不被收窄成单用户」这一归属口径，与重要度无关——两条记忆仍必须被
+        全表裁剪掉，谁把候选集收窄给 principal，这里照样红。豁免口径本身由
+        `tests/test_forgetting_exempt_archive.py::TestConsolidationPrunerRespectsExemption` 守。
+        """
         sf = ew_env
-        _add(sf, "mem-A", "user-A", decay_score=0.01, helpful_count=0, last_used_at=utcnow())
-        _add(sf, "mem-B", "user-B", decay_score=0.01, helpful_count=0, last_used_at=utcnow())
+        _add(
+            sf,
+            "mem-A",
+            "user-A",
+            importance=0.5,
+            decay_score=0.01,
+            helpful_count=0,
+            last_used_at=utcnow(),
+        )
+        _add(
+            sf,
+            "mem-B",
+            "user-B",
+            importance=0.5,
+            decay_score=0.01,
+            helpful_count=0,
+            last_used_at=utcnow(),
+        )
 
         from lantai.core.settings import settings
         from lantai.services.consolidation_service import run_consolidation_cycle

@@ -100,8 +100,12 @@ class TestFenceAtExits:
             def search(self, qv, top_k=5, filters=None):
                 return [{"id": "mem_f1", "distance": 0.1}]
 
-        monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
-        out = mod.build_context("部署流程怎么做")
+        # 撤销必须发生在测试体内（v0.66 票 01）：`monkeypatch` 夹具的撕卸晚于
+        # param_env 自带的 MonkeyPatch.context()，两层叠加会把 param_env 的替身当
+        # 「原值」写回并永久遗留在进程里（conftest 规范绑定复位台账点名过本例）。
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
+            out = mod.build_context("部署流程怎么做")
         assert fence_declaration() in out.get("context", "")
         assert out.get("context", "").count(DATA_FENCE_OPEN) >= 1
         assert "部署流程：先备份" in out.get("context", "")
@@ -250,8 +254,12 @@ class TestFenceAtExits:
             def search(self, qv, top_k=5, filters=None):
                 return [{"id": "mem_evil", "distance": 0.1}]
 
-        monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
-        out = mod.build_context("这条记忆说了什么")
+        # 撤销必须发生在测试体内（v0.66 票 01）：`monkeypatch` 夹具的撕卸晚于
+        # param_env 自带的 MonkeyPatch.context()，两层叠加会把 param_env 的替身当
+        # 「原值」写回并永久遗留在进程里（conftest 规范绑定复位台账点名本例）。
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _FakeStore())
+            out = mod.build_context("这条记忆说了什么")
         ctx = out.get("context", "")
         # 正文里的闭合被中性化 → 围栏结构不被截断；闭合总数 = 围栏自身数量
         assert ctx.count("</memory_data>") == ctx.count(DATA_FENCE_OPEN)

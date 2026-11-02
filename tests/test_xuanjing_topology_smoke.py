@@ -220,7 +220,7 @@ def test_xuanjing_api_and_mcp_contracts(xuanjing_env, monkeypatch):
         s.commit()
 
     test_user = Principal(user_id="user-1", tenant_id="t-1", role="user")
-    app.dependency_overrides[get_current_user] = lambda: test_user
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: test_user)
     client = TestClient(app)
 
     # 1. 验证 REST 端点

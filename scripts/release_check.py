@@ -4,17 +4,21 @@
   python scripts/release_check.py                 # 以 pyproject.toml 当前版本为目标
   python scripts/release_check.py v0.3.8          # 指定目标版本（v 前缀可选）
   python scripts/release_check.py --allow-dirty   # 允许未提交文件（仅排查用）
+  python scripts/release_check.py --skip-suite    # 跳过全量测试（仅排查用；默认必跑）
+  python scripts/release_check.py --allow-mcp-full-exposure  # 承认默认全量暴露（仅排查用）
   python scripts/release_check.py v0.3.8 --online # 同时检查远程 origin tag（需网络）
 
 退出码 0 = 可上传，1 = 有问题。
 """
 
 import argparse
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -179,12 +183,353 @@ def git_issues(repo_root: Path, version: str, allow_dirty: bool, online: bool = 
     return issues
 
 
+# ── 票 05（v0.66）：四类阻断项——红主干 / 生产全局污染 / 默认全暴露 / 约束漂移 ──
+#
+# 这一节存在的原因：v0.39–v0.59 共 21 个标签带着红主干发布（评审报告 N-07），而
+# 本脚本此前只查「版本引用 + git 干净 + ruff」——**从不跑测试**。「发布门禁通过」
+# 与「主干是绿的」从来不是同一件事，门禁是个漏检的橡皮图章。评审点名的另外三类
+# 同样无处可拦：默认 MCP 全量暴露（N-04/C-15/R-02，69→94→96）、测试可能连宿主
+# 真实库（生产全局污染）、迁移与列约束漂移（D-13）。
+#
+# 判据一律写成**结构性**规则（默认集是否等于全量注册表、绊线报告里有没有
+# `[HIT]`、metadata 与实表的 NULL 约束是否一致），不引入任何可调数字——数字就是
+# 「把阈值调大来造假绿」的抓手。探针一律跑在临时 `LANTAI_HOME` 里。
+
+SUITE_TIMEOUT_S = 3600
+_TRIPWIRE_PLUGIN = "real_home_tripwire"
+_PROBE_KEY = "gate-probe-key"
+
+_MCP_PROBE_CODE = (
+    "from lantai.cli import mcp\nprint('MCPCOUNT', len(mcp._get_active_tools()), len(mcp.TOOLS))\n"
+)
+
+_SCHEMA_PROBE_CODE = """
+import json
+import os
+from sqlmodel import SQLModel, create_engine
+
+import lantai.models.tables  # noqa: F401  注册全部表
+import lantai.parameters.trust_models  # noqa: F401
+from sqlalchemy import inspect
+
+from lantai.core.settings import settings
+from lantai.storage import db
+from lantai.storage.migrations import get_migration_failures
+
+db.engine = create_engine(settings.DATABASE_URL)
+db.init_db()
+insp = inspect(db.engine)
+db_tables = set(insp.get_table_names())
+meta = SQLModel.metadata.tables
+missing = sorted(set(meta) - db_tables)
+drift = []
+for name, table in meta.items():
+    if name not in db_tables:
+        continue
+    cols = {c["name"]: c for c in insp.get_columns(name)}
+    for col in table.columns:
+        if col.name not in cols:
+            drift.append(f"{name}.{col.name} 建库缺列")
+        elif bool(cols[col.name]["nullable"]) != bool(col.nullable):
+            drift.append(
+                f"{name}.{col.name} NULL 约束漂移 "
+                f"model_nullable={col.nullable} db_nullable={cols[col.name]['nullable']}"
+            )
+payload = {
+    "migration_failures": get_migration_failures(),
+    "missing_tables": missing,
+    "drift": drift,
+    "tables_checked": len(meta),
+    "tables_built": len(db_tables),
+    "home_used": str(settings.LANTAI_HOME),
+    "home_isolated": os.path.normcase(str(settings.LANTAI_HOME))
+    != os.path.normcase(os.environ.get("LANTAI_GATE_HOST_HOME", "__none__")),
+}
+print("SCHEMAPAYLOAD" + json.dumps(payload, ensure_ascii=False))
+"""
+
+
+def host_lantai_home(repo_root: Path) -> str:
+    """宿主真实数据目录：环境变量优先，其次仓库 `.env` 里的 LANTAI_HOME。"""
+    env_home = (os.environ.get("LANTAI_HOME") or "").strip()
+    if env_home:
+        return env_home
+    dotenv = repo_root / ".env"
+    if dotenv.exists():
+        for line in dotenv.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if line.startswith("LANTAI_HOME") and "=" in line:
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return ""
+
+
+def host_home_for_watch(repo_root: Path) -> str:
+    """绊线该盯哪个宿主库——必须在**父进程侧**定下来。
+
+    `.env` / 环境变量优先；都没有时回落到 settings 推导的机器默认目录。不能拿
+    "子进程将被重定向到的 home" 当宿主库：一旦运行器注入了临时 LANTAI_HOME，绊线
+    就武装在沙箱上，[HIT]=0 变成恒真——实测踩过（票 05 本轮复现）。
+    """
+    home = host_lantai_home(repo_root)
+    if home:
+        return home
+    from lantai.core.settings import settings  # 懒导入：不改变门禁自身的环境语义
+
+    return str(settings.LANTAI_HOME)
+
+
+def isolated_probe_env(probe_home: str) -> dict[str, str]:
+    """探针环境：临时 LANTAI_HOME + 非空 API_KEY（禁 DEV MODE 回退）+ 不设 MCP profile。"""
+    os.makedirs(probe_home, exist_ok=True)
+    env = os.environ.copy()
+    env["LANTAI_HOME"] = probe_home
+    env["REMEMENTRANCE_HOME"] = probe_home  # 旧变量名兼容（settings 仍会读它）
+    env["DATABASE_URL"] = ""  # 空值 => 由 LANTAI_HOME 推导
+    env["API_KEY"] = _PROBE_KEY
+    env["OPENAI_API_KEY"] = _PROBE_KEY
+    env.pop("LANTAI_MCP_PROFILE", None)
+    env.pop("MCP_TOOL_PROFILE", None)
+    return env
+
+
+def real_home_hits(report_text: str) -> list[str]:
+    return [ln for ln in report_text.splitlines() if ln.startswith("[HIT]")]
+
+
+def tripwire_armed_path(report_text: str) -> str:
+    """从报告里取绊线实际武装的库路径。"""
+    for ln in report_text.splitlines():
+        if ln.startswith("[TRIPEWIRE-ARMED]"):
+            return ln.split(None, 1)[1].strip() if " " in ln else ""
+    return ""
+
+
+def tripwire_report_issues(report_text: str, *, home: str, watch: str = "") -> list[str]:
+    """绊线报告的判读：没报告 / 没装载 / 命中宿主库，三种都必须阻。
+
+    「静默不检测」按红处理——绊线没装载成功时返回空 hits 和返回干净报告长得
+    一样，只看 hits 数量就会把「没测」读成「测过且干净」。
+    """
+    if not report_text.strip():
+        return [
+            f"宿主数据目录绊线没有产出报告——无法证明测试未连真实库（LANTAI_HOME={home}），不放行"
+        ]
+    if "[TRIPEWIRE-ARMED]" not in report_text:
+        return ["宿主数据目录绊线未装载（报告里没有 [TRIPEWIRE-ARMED]）——没检测不等于干净，不放行"]
+    hits = real_home_hits(report_text)
+    if hits:
+        return [f"测试连接了宿主真实数据目录（LANTAI_HOME={home}）：\n" + "\n".join(hits[:5])]
+    if watch:
+        armed = tripwire_armed_path(report_text)
+        if armed and os.path.normcase(os.path.abspath(armed)) != os.path.normcase(
+            os.path.abspath(watch)
+        ):
+            return [
+                f"宿主数据目录绊线看护错了对象：武装在 {armed}，宿主库是 {watch}——"
+                "没人盯宿主库，[HIT]=0 只是因为沙箱被当成了看护目标，等于没检测，不放行"
+            ]
+    return []
+
+
+def suite_gate_issues(
+    repo_root: Path,
+    *,
+    timeout: int = SUITE_TIMEOUT_S,
+    real_home: str | None = None,
+    python: str | None = None,
+) -> list[str]:
+    """全量测试 + 宿主数据目录绊线：红主干、或被测进程连真实库都必须拦下上传。
+
+    与 CI 同口径，但显式清掉 `addopts`（本地 pyproject 的覆盖率参数不该变成
+    「到底跑没跑」的隐式变量），并把 `tests/support/real_home_tripwire.py`
+    挂成插件（按**连接路径**判定，不按 mtime——开发机上常驻服务自己也在写库）。
+    """
+    py = python or sys.executable
+    home = host_home_for_watch(repo_root) if real_home is None else real_home
+    watch = os.path.join(home, "remembrance.db") if home else ""
+    support = REPO_ROOT / "tests" / "support"
+    with tempfile.NamedTemporaryFile(prefix="lantai_tripwire_", suffix=".txt") as fh:
+        report_path = fh.name
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join([str(support), env.get("PYTHONPATH", "")]).strip(os.pathsep)
+    env["LANTAI_GATE_REAL_HOME"] = watch
+    env["LANTAI_GATE_REPORT"] = report_path
+    env.setdefault("API_KEY", _PROBE_KEY)
+    cmd = [
+        py,
+        "-m",
+        "pytest",
+        "tests/",
+        "-q",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "-p",
+        _TRIPWIRE_PLUGIN,
+    ]
+    try:
+        proc = subprocess.run(  # noqa: S603
+            cmd,
+            cwd=str(repo_root),
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+        exit_code = proc.returncode
+        output = (proc.stdout or "") + (proc.stderr or "")
+    except subprocess.TimeoutExpired:
+        return [f"全量测试超时（>{timeout}s）——超时不是绿灯，不放行"]
+    except OSError as exc:
+        return [f"全量测试无法执行（{exc}）——跑不动就等于没跑，不放行"]
+    try:
+        report_text = Path(report_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        report_text = ""
+
+    issues: list[str] = []
+    if exit_code != 0:
+        summary = next(
+            (ln for ln in reversed(output.splitlines()) if re.search(r"\d+ (failed|error)", ln)),
+            "",
+        )
+        failed_lines = [ln for ln in output.splitlines() if ln.startswith("FAILED")]
+        issues.append(
+            "全量测试未绿（红主干不得上传）："
+            + (summary.strip() or "见失败清单")
+            + "\n"
+            + "\n".join(failed_lines[:40])
+        )
+    elif "[TRIPEWIRE-ARMED]" not in report_text:
+        issues.append("全量测试没有真正跑起来（退出码 0 却没有绊线报告）——不放行")
+    issues.extend(tripwire_report_issues(report_text, home=home or "(宿主目录未指明)", watch=watch))
+    return issues
+
+
+def mcp_exposure_issue(active: int, total: int) -> str | None:
+    """默认暴露 == 全量注册表 => 阻断。结构性判据，不含可调数字。"""
+    if total and active >= total:
+        return (
+            f"默认 MCP 暴露未收窄：不设 profile 时 tools/list 返回全部 {active}/{total} 个工具"
+            "（评审报告 N-04/C-15/R-02：69→94→96 一路涨，默认仍是全量）——阻断发布，"
+            "直到维护者显式声明默认策略（改 `_get_active_tools()` 的默认档，"
+            "或在部署侧设 LANTAI_MCP_PROFILE 并把它写进发布流程）"
+        )
+    return None
+
+
+def mcp_exposure_issues(
+    repo_root: Path, *, python: str | None = None, timeout: int = 240
+) -> list[str]:
+    py = python or sys.executable
+    with tempfile.TemporaryDirectory(prefix="lantai_gate_home_") as probe_home:
+        env = isolated_probe_env(probe_home)
+        try:
+            proc = subprocess.run(  # noqa: S603
+                [py, "-c", _MCP_PROBE_CODE],
+                cwd=str(repo_root),
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return [f"MCP 默认暴露探针无法执行（{exc}）——看不见默认面就不放行"]
+    for line in (proc.stdout or "").splitlines():
+        parts = line.split()
+        if parts and parts[0] == "MCPCOUNT" and len(parts) == 3:
+            issue = mcp_exposure_issue(int(parts[1]), int(parts[2]))
+            return [issue] if issue else []
+    return [
+        f"MCP 探针没有回报工具数（exit={proc.returncode}）：" + (proc.stderr or "")[-300:],
+    ]
+
+
+def schema_drift_issues_from_payload(payload: dict) -> list[str]:
+    issues = [
+        f"迁移失败（红着也不能发布）：{item}" for item in payload.get("migration_failures") or []
+    ]
+    issues += [f"建库缺表：{name}" for name in payload.get("missing_tables") or []]
+    issues += [f"列/约束漂移：{item}" for item in payload.get("drift") or []]
+    return issues
+
+
+def schema_drift_probe(repo_root: Path, *, python: str | None = None, timeout: int = 300) -> dict:
+    """临时 LANTAI_HOME 里真跑一次 `init_db()`（建表 + 全量迁移），回报漂移面。"""
+    py = python or sys.executable
+    probe: dict = {
+        "migration_failures": [],
+        "missing_tables": [],
+        "drift": [],
+        "tables_checked": 0,
+        "tables_built": 0,
+        "home_isolated": False,
+    }
+    with tempfile.TemporaryDirectory(prefix="lantai_gate_schema_") as probe_home:
+        env = isolated_probe_env(probe_home)
+        env["LANTAI_GATE_HOST_HOME"] = host_lantai_home(repo_root) or "__none__"
+        try:
+            proc = subprocess.run(  # noqa: S603
+                [py, "-c", _SCHEMA_PROBE_CODE],
+                cwd=str(repo_root),
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            probe["migration_failures"] = [{"step": "probe", "error": f"探针无法执行：{exc}"}]
+            return probe
+        line = next(
+            (ln for ln in (proc.stdout or "").splitlines() if ln.startswith("SCHEMAPAYLOAD")), ""
+        )
+    if not line:
+        probe["migration_failures"] = [
+            {"step": "probe", "error": (proc.stderr or "")[-400:] or f"exit={proc.returncode}"}
+        ]
+        return probe
+    try:
+        payload = json.loads(line[len("SCHEMAPAYLOAD") :])
+    except ValueError as exc:
+        probe["migration_failures"] = [{"step": "probe", "error": f"回报不可解析：{exc}"}]
+        return probe
+    for key, value in probe.items():
+        payload.setdefault(key, value)
+    return payload
+
+
+def schema_drift_issues(repo_root: Path) -> list[str]:
+    payload = schema_drift_probe(repo_root)
+    issues = schema_drift_issues_from_payload(payload)
+    if not payload.get("home_isolated"):
+        issues.append("schema 探针没有跑在临时 LANTAI_HOME 里——它自己就可能污染生产，不放行")
+    return issues
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="发布前检查（只读）")
     parser.add_argument("version", nargs="?", help="目标版本，默认读 pyproject.toml")
     parser.add_argument("--allow-dirty", action="store_true", help="允许未提交文件（仅排查用）")
     parser.add_argument(
         "--online", action="store_true", help="联网检查远程 origin 是否已存在同名 tag"
+    )
+    parser.add_argument(
+        "--skip-suite", action="store_true", help="跳过全量测试（仅排查用；默认必跑并据此阻断）"
+    )
+    parser.add_argument(
+        "--allow-mcp-full-exposure",
+        action="store_true",
+        help="承认默认 MCP 全量暴露（仅排查用；默认阻断）",
+    )
+    parser.add_argument(
+        "--suite-timeout", type=int, default=SUITE_TIMEOUT_S, help="全量测试超时秒数"
     )
     args = parser.parse_args(argv)
 
@@ -226,6 +571,41 @@ def main(argv: list[str] | None = None) -> int:
         if args.allow_dirty:
             detail += "（工作区未检查）"
         check("Git 状态", True, detail)
+
+    mcp_failures = [] if args.allow_mcp_full_exposure else mcp_exposure_issues(REPO_ROOT)
+    if args.allow_mcp_full_exposure:
+        print(f"[{SKIP}] MCP 默认暴露 — 已用 --allow-mcp-full-exposure 跳过（默认面仍需定策）")
+    else:
+        for issue in mcp_failures:
+            check("MCP 默认暴露", False, issue)
+        if not mcp_failures:
+            check("MCP 默认暴露", True, "默认 tools/list 不等于全量注册表")
+
+    schema_failures = schema_drift_issues(REPO_ROOT)
+    for issue in schema_failures:
+        check("迁移与列约束漂移", False, issue)
+    if not schema_failures:
+        check(
+            "迁移与列约束漂移",
+            True,
+            "临时 LANTAI_HOME 内 init_db() 全链通过，metadata 与实表列/NULL 约束一致",
+        )
+
+    if args.skip_suite:
+        print(
+            f"[{SKIP}] 全量测试 + 宿主目录绊线 — 已用 --skip-suite 跳过（仅排查用，不代表可发布）"
+        )
+    else:
+        print("[....] 全量测试 + 宿主数据目录绊线进行中（约数分钟）…")
+        suite_failures = suite_gate_issues(REPO_ROOT, timeout=args.suite_timeout)
+        for issue in suite_failures:
+            check("全量测试 + 宿主目录绊线", False, issue)
+        if not suite_failures:
+            check(
+                "全量测试 + 宿主目录绊线",
+                True,
+                "pytest tests/ 退出码 0，且全程未连接宿主真实 LANTAI_HOME",
+            )
 
     print("=" * 60)
     n_fail = sum(1 for s, _, _ in results if s == FAIL)

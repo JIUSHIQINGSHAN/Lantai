@@ -40,6 +40,10 @@ def _child_env(home: Path, host: str) -> dict:
     # 替身目录在前，使 sitecustomize 先于 lantai 生效（只替外部 embedding 网络）
     env["PYTHONPATH"] = os.pathsep.join([str(STUB_DIR), str(REPO)])
     env["LANTAI_TEST_STUB_EMBED"] = "1"
+    # 票 05：密钥前置必须由用例自己声明（shell_hook 的 assert_hook_api_key_configured
+    # 要求非空 API_KEY 且禁止 DEV MODE 回退）。固定为与 CI 同口径的假密钥：
+    # 既不再随宿主环境翻转红绿，也不会把真实密钥带进子进程。
+    env["API_KEY"] = "test-key"
     env["PYTHONIOENCODING"] = "utf-8"
     return env
 
@@ -202,3 +206,15 @@ class TestMatrixCoverage:
         """≥3 宿主口径：矩阵含三宿主。"""
         assert len(MATRIX_HOSTS) == 3
         assert set(MATRIX_HOSTS) == {"hermes", "claude-code", "codex"}
+
+
+def test_child_env_declares_api_key_not_inherited(tmp_path, monkeypatch):
+    """回归锁（票 05）：hook 密钥闸门要求非空 API_KEY（scripts/shell_hook.py:618，
+    禁止 DEV MODE 回退），用例必须自带测试密钥，不得继承宿主环境——否则同一提交在
+    配了/没配 API_KEY 的机器上给出不同红绿（实测 8 条随环境翻转），发布门禁不可复现。
+    CI 的 env: API_KEY: test-key（.github/workflows/tests.yml）只是这条前置条件的
+    外部补丁；补进测试后不再依赖宿主环境。
+    """
+    monkeypatch.delenv("API_KEY", raising=False)
+    env = _child_env(tmp_path, "hermes")
+    assert env.get("API_KEY"), "_child_env 未声明 API_KEY：结果将随宿主环境漂移"

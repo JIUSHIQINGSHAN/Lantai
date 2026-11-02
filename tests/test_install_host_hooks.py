@@ -6,11 +6,24 @@
 """
 
 import json
+import os
 import sys
 
 import pytest
 
 import scripts.install_host_hooks as cli
+
+
+def _hook_subprocess_env(home):
+    """子进程环境：隔离 LANTAI_HOME（票 05：还须自带 API_KEY，不继承宿主）。"""
+    env = dict(os.environ)
+    env["LANTAI_HOME"] = str(home)
+    env["PYTHONIOENCODING"] = "utf-8"
+    # 票 05：密钥前置必须由用例自己声明（shell_hook 的 assert_hook_api_key_configured
+    # 要求非空 API_KEY 且禁止 DEV MODE 回退）。固定为与 CI 同口径的假密钥：
+    # 既不再随宿主环境翻转红绿，也不会把真实密钥带进子进程。
+    env["API_KEY"] = "test-key"
+    return env
 
 
 class TestBuildSnippet:
@@ -53,15 +66,12 @@ class TestBuildSnippet:
 
     def test_generated_command_actually_runs(self, tmp_path):
         """真实执行生成的命令（win32 实证：非零退出即失败）。"""
-        import os
         import subprocess
 
         cmd = cli._hook_command("claude-code")
         data = json.loads(cli.build_snippet("claude-code"))
         real = data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
-        env = dict(os.environ)
-        env["LANTAI_HOME"] = str(tmp_path / "home")
-        env["PYTHONIOENCODING"] = "utf-8"
+        env = _hook_subprocess_env(tmp_path / "home")
         r = subprocess.run(
             real,
             shell=True,
@@ -178,3 +188,10 @@ class TestCursorDegradedLane:
         assert rc != 0
         text = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
         assert text.count("兰台记忆") == 1
+
+
+def test_hook_subprocess_env_declares_api_key(tmp_path, monkeypatch):
+    """回归锁（票 05）：同 _child_env——密钥前置条件必须由测试自己声明。"""
+    monkeypatch.delenv("API_KEY", raising=False)
+    env = _hook_subprocess_env(tmp_path / "home")
+    assert env.get("API_KEY"), "_hook_subprocess_env 未声明 API_KEY：结果将随宿主环境漂移"

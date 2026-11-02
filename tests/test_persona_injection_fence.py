@@ -175,7 +175,10 @@ class TestFenceDeclarationOrder:
         (tmp_path / "user_profile.md").write_text("乌龙茶偏好", encoding="utf-8")
 
         mod, _ = _fresh_hook(monkeypatch, tmp_path=tmp_path)
-        monkeypatch.setattr(mod, "relevance_check", lambda q: {"needs_memory": True})
+        # 票 .scratch/v0.66-next-window-2026-11/04：闸门调用改为带会话身份
+        # （`relevance_check(query, user_id=session_id)`），替身必须接住关键字；
+        # 断言与用例意图零改动。
+        monkeypatch.setattr(mod, "relevance_check", lambda q, **kw: {"needs_memory": True})
         monkeypatch.setattr(mod, "hybrid_search", lambda *a, **kw: [])
 
         out = mod.build_context("这是一个超过三字符的测试查询")
@@ -203,7 +206,7 @@ class TestTimeoutFallbackFenced:
         monkeypatch.setattr(
             mod, "embed", lambda texts, timeout=None: (time.sleep(1), [[0.1] * 8])[1]
         )
-        monkeypatch.setattr(mod, "relevance_check", lambda q: {"needs_memory": True})
+        monkeypatch.setattr(mod, "relevance_check", lambda q, **kw: {"needs_memory": True})
 
         import io
         import json
@@ -229,7 +232,7 @@ class TestTimeoutFallbackFenced:
         monkeypatch.setattr(
             mod, "embed", lambda texts, timeout=None: (time.sleep(1), [[0.1] * 8])[1]
         )
-        monkeypatch.setattr(mod, "relevance_check", lambda q: {"needs_memory": True})
+        monkeypatch.setattr(mod, "relevance_check", lambda q, **kw: {"needs_memory": True})
 
         import json
 

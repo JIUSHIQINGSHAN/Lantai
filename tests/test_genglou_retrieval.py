@@ -27,7 +27,7 @@ from lantai.retrieval.temporal import (
 from lantai.storage.fts import init_fts
 
 
-def _hash_embed(texts):
+def _hash_embed(texts, timeout: float | None = None):
     out = []
     for text in texts:
         v = [0.0] * 512

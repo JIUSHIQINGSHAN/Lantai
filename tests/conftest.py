@@ -70,6 +70,15 @@ def param_env():
     内存 SQLite + 真实建表 + patch db.get_session。
     返回 (session_factory, engine)；测试用 session_factory() 开新会话。
     teardown 恢复 settings 白名单参数（审批测试会原位修改单例）。
+
+    v0.66 票 01 试过把这里的 patch 改挂到函数级 `monkeypatch` 上（与测试体内
+    的 patch 共用一个撤销栈），结果**更糟**：仓库里 14 个 fixture 手写
+    `db.get_session = ...` + try/finally 自还（test_injection_guard /
+    test_idempotency_receipt / test_runwu_api_smoke / test_tanyi_api_smoke …），
+    它们的「原值」是在 param_env 已经打过补丁之后抓的，于是撤销顺序反过来把
+    param_env 的替身当原值写回——基线红 20 例当场变 1452 例 setup error。
+    保持现状（自带 context，param_env 的撤销发生在这些手写 fixture 之前），
+    跨层错位由下面的「规范绑定复位」兜底并在总结里点名。
     """
     import lantai.models.tables  # noqa: F401  注册全部表
     import lantai.parameters.trust_models  # noqa: F401  注册信号/矛盾表
@@ -169,6 +178,7 @@ def pytest_configure(config):
 
     _ORIG_GET_SESSION = dbm.get_session
     _ORIG_ENGINE = dbm.engine
+    _capture_canonical_bindings()
 
 
 def pytest_runtest_setup(item):
@@ -184,6 +194,75 @@ def pytest_runtest_setup(item):
             f"前置测试 {_PREV_TEST['id']} 污染了 lantai.storage.db.engine"
             f"（未还原：{_ORIG_ENGINE!r} → {dbm.engine!r}）"
         )
+
+
+# ── 规范绑定复位（v0.66 票 01）───────────────────────────────────
+# 背景：`param_env` 用的是自带 `MonkeyPatch.context()`（不能改成共享 monkeypatch，
+# 理由见它自己的 docstring），而测试体内的 `monkeypatch.setattr(hybrid, ...)` 挂在
+# **另一个撤销栈**上。两层叠加时后撤销的那层会把「另一层的替身」当作原值写回，
+# 并把替身永久留在进程里——实证：`test_fence.py` 两例之后
+# `lantai.retrieval.hybrid.get_vector_store` 一直是假向量库，检索静默走空替身，
+# staged-eval 家族 8 例连坐（单跑永远绿，全量必红）。
+# 对策：`pytest_configure`（早于任何 fixture 打补丁）抓一次规范绑定快照，
+# 每个测试的**全部 fixture 撕卸之后**（hookwrapper + tryfirst）比对并复位；
+# 谁留的脏值记进台账，terminal summary 点名——复位是兜底，不是藏污。
+_GUARDED_BINDINGS = (
+    ("lantai.retrieval.hybrid", "get_vector_store"),
+    ("lantai.retrieval.hybrid", "embed"),
+    ("lantai.retrieval.hybrid", "rerank"),
+    ("lantai.storage.vector_store", "get_vector_store"),
+    ("lantai.services.memory_service", "get_vector_store"),
+    ("lantai.retrieval.reranker", "rerank"),
+    ("lantai.gate.decision", "embed"),
+    ("lantai.gate.scorer", "embed"),
+    ("lantai.llm.client", "embed"),
+    ("lantai.llm.client", "chat_json"),
+)
+_CANONICAL_BINDINGS = {}
+_BINDING_RESIDUE = []
+
+
+def _capture_canonical_bindings():
+    """抓规范绑定快照：此刻还没有任何 fixture/测试改过这些属性。"""
+    import importlib
+
+    for mod_name, attr in _GUARDED_BINDINGS:
+        try:
+            mod = importlib.import_module(mod_name)
+        except Exception:
+            continue
+        if hasattr(mod, attr):
+            _CANONICAL_BINDINGS[(mod_name, attr)] = getattr(mod, attr)
+
+
+def _repair_canonical_bindings(nodeid):
+    """把被测试遗留的模块绑定复位到规范实现，并记台账（只记不改断言）。"""
+    if not _CANONICAL_BINDINGS:
+        return
+    dirty = []
+    for (mod_name, attr), canonical in _CANONICAL_BINDINGS.items():
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            continue
+        current = getattr(mod, attr, None)
+        if current is canonical:
+            continue
+        setattr(mod, attr, canonical)
+        dirty.append(f"{mod_name}.{attr}: 遗留 {current!r} 已复位为 {canonical!r}")
+    if dirty:
+        _BINDING_RESIDUE.append((nodeid, dirty))
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus=0, config=None):
+    if not _BINDING_RESIDUE:
+        return
+    terminalreporter.write_sep("=", "跨测试模块绑定残留（护栏已复位；请修污染源，勿依赖兜底）")
+    for nodeid, notes in _BINDING_RESIDUE[:20]:
+        terminalreporter.write_line(nodeid)
+        for note in notes:
+            terminalreporter.write_line("    " + note)
+    if len(_BINDING_RESIDUE) > 20:
+        terminalreporter.write_line(f"...另有 {len(_BINDING_RESIDUE) - 20} 例")
 
 
 # ── 数据目录隔离（票 02）───────────────────────────────────────
@@ -229,6 +308,8 @@ def _isolate_data_dir(tmp_path_factory):
     SQLModel.metadata.create_all(engine)
 
     db_module.engine = engine
+    global _SESSION_DB_ENGINE
+    _SESSION_DB_ENGINE = engine
     # 绊线基线随之更新：隔离后的 engine 即「合法身份」。
     # ⚠ 这两行必须成对出现：只更新 _ORIG_ENGINE 而不重定向 db_module.engine
     # （或反之）会让每个测试被绊线误报「前置测试污染了 db.engine」
@@ -330,40 +411,98 @@ def _stub_external_llm(monkeypatch):
             monkeypatch.setattr(mod.llm_client, "chat_json", _fake_chat_json)
 
 
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
 def pytest_runtest_teardown(item, nextitem):
+    # tryfirst + wrapper：post-yield 发生在默认实现（全部 fixture 撕卸）之后，
+    # 与 conftest 里其他 fixture 的撕卸顺序无关，因此无竞争。
+    yield
     _PREV_TEST["id"] = item.nodeid
+    _repair_canonical_bindings(item.nodeid)
+
+
+# ── 常驻注入面复位（v0.66 票 01）─────────────────────────────────────
+# SQLModel 默认表名；这些行会被 shell_hook._build_resident_persona 无条件
+# 置顶注入，api_keys 还会把 DEV MODE 鉴权整体翻面。
+_RESIDENT_TABLES = (
+    "corememoryblock",  # 核心记忆块
+    "persona_profile",  # 器识人格基座
+    "session_checkpoint",  # 会话检查点
+    "prompttemplate",  # 提示词模板覆写
+    "api_keys",  # Bearer key 表（DEV MODE 开关的数据源）
+)
+
+
+_SESSION_DB_ENGINE = None
+
+
+def _wipe_resident_channels():
+    """清空**会话级共享测试库**上的常驻注入面（真 DELETE，不用替身糊断言）。
+
+    只碰 `_isolate_data_dir` 那一个 engine：不少用例会把 `db.engine` 临时换成
+    自己的最小/早期 schema 引擎（test_document_cascade_ownership、test_offload、
+    test_hybrid_none_principal 等迁移形态冒烟），对它们乱 DELETE 会炸出
+    `no such table`——隔离护栏没有资格去动别人的实验台。
+    """
+    from sqlalchemy import text
+    from sqlmodel import SQLModel
+
+    engine = _SESSION_DB_ENGINE
+    if engine is None:
+        return
+    available = set(SQLModel.metadata.tables)
+    with engine.connect() as conn:
+        for table in _RESIDENT_TABLES:
+            if table not in available:
+                continue
+            conn.execute(text(f"DELETE FROM {table}"))
+        conn.commit()
 
 
 @pytest.fixture(autouse=True)
-def _isolate_resident_persona(monkeypatch):
-    """常驻画像测试隔离（v0.64 票 03/05 连带修复）。
+def _reset_resident_channels(_isolate_data_dir):
+    """常驻注入面每例前后各复位一次（v0.66 票 01 的正解）。
 
-    `_build_resident_persona`（shell_hook）在测试进程里经真实
-    `db.get_session()` 读到宿主机的 PersonaProfile（2026-10-31 实证：
-    本机 remembrance-data 库有激活人格 → `{"context": 人格}` 非空），
-    使「空查询/无命中 → `{}`」类断言变成**依赖宿主机状态的巧合测试**
-    ——本机全量 8 例连坐（shell_hook/fence/retrieval_log/hook_api_key_gate）。
+    取代旧 `_isolate_resident_persona`——那个 fixture 从文件 exec 一份 shell_hook
+    **副本**再 patch 副本里的 `_build_resident_persona`，而被测模块是各测试自己
+    用别的模块名加载的，patch 落在一次性对象上，等于「看着像护栏、实际在空转」
+    的假隔离；更糟的是它每个测试 exec 一次 shell_hook，把 import 期的
+    `sys.path.insert` 放大成全量 +2574 条重复项。
 
-    测试基线：resident persona 恒空（既有全部「{}」断言的隐含前提）。
-    需要画像内容的用例在测试体内自行 patch `_build_resident_persona`
-    （晚于本 fixture 生效）。
+    真根因在数据：`_isolate_data_dir` 是 **session 级共享库**，写库用例
+    （test_console_api_contracts 的核心记忆+模板、test_diben_api/engine_smoke
+    的 41 行会话检查点、test_shishi_api_smoke 的核心记忆）把数据留在里面，
+    后续 `build_context("你好") == {}` 一类断言读出脏数据——单跑永远绿，
+    全量必红（v0.65 基线 6 例）。
+
+    口径：需要常驻注入内容的用例在自己的测试体内造数据（既有
+    test_persona / test_checkpoint_* / test_mcp 全是这个形态），不依赖前序残留。
     """
-    import importlib.util
-    import os as _os
-
-    hook_path = _os.path.join(
-        _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
-        "scripts",
-        "shell_hook.py",
-    )
-    try:
-        spec = importlib.util.spec_from_file_location("_shell_hook_persona_base", hook_path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        monkeypatch.setattr(mod, "_build_resident_persona", lambda: "", raising=False)
-    except Exception:
-        pass
+    _wipe_resident_channels()
     yield
+    _wipe_resident_channels()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_app_dependency_overrides():
+    """`app.dependency_overrides` 是进程级生产全局，逐例回收（v0.66 票 01）。
+
+    测试体内裸赋值 `app.dependency_overrides[get_current_user] = ...` 而不还原，
+    后续 API 用例就带着别人的 user_id/tenant_id 打路由——行级 ACL 把目标行滤空，
+    表现为与业务无关的 404 / 零召回（实证：test_xuanjing_topology_smoke:223
+    连坐 test_zuozheng_api_smoke::test_seam2 与 test_zero_recall_remediation
+    ::test_search_with_force_bypasses_gate）。
+
+    只回收「测试体自己加的那层」：先快照，撕卸时若表已变则整体回滚到快照，
+    因此 module/class 级 fixture 合法预设的覆盖（如
+    tests/cognitive/test_cognitive_routes.py 对 get_session 的覆盖）原样保留。
+    """
+    from lantai.api.app import app
+
+    saved = dict(app.dependency_overrides)
+    yield
+    if app.dependency_overrides != saved:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(saved)
 
 
 @pytest.fixture(autouse=True)

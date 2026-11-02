@@ -236,6 +236,10 @@ class Settings(BaseSettings):
 
     # 遗忘配置
     ARCHIVE_DECAY_THRESHOLD: float = 0.01  # decay 低于此值自动 archived
+    # 高重要度豁免下限（P0-B「阈值可配置」）：importance >= 此值的记忆不得被
+    # 自动归档（衰减路与 TTL 路共用同一判据 `forgetting._decay_exempt`）。
+    # 出厂 0.8 = 票 03 落地时写死的模块常量，提为配置后行为逐字不变。
+    FORGET_IMPORTANCE_EXEMPTION_FLOOR: float = 0.8
 
     # 底本（session checkpoint，ADR-0021）：五段会话快照
     CHECKPOINT_MAX_SESSIONS: int = 5  # 保留最近 N 个会话的快照

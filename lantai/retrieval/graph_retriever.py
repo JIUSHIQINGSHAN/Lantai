@@ -142,11 +142,16 @@ def expand_graph_associations(
             from sqlmodel import col
 
             from lantai.models.tables import FactAtomic, FactEntity
+            from lantai.retrieval.wanbi_retriever import fact_source_alive_clause
 
             # 1. 从已访问的种子与邻居关联的 source_memory_id 反查对应事实
             source_ids = list(visited)
+            # X-01（P0-A）：fact_atomic 不随 memory 软删除级联，一跳反查必须 JOIN
+            # 回来源判存活，否则已归档记忆的隐私原文以 content 回流图谱联想。
             f_stmt = (
                 select(FactAtomic)
+                .outerjoin(MemoryItem, col(FactAtomic.source_memory_id) == col(MemoryItem.id))
+                .where(fact_source_alive_clause())
                 .where(col(FactAtomic.source_memory_id).in_(source_ids))
                 .where(FactAtomic.confidence >= min_edge_conf)
             )
@@ -173,8 +178,14 @@ def expand_graph_associations(
                     )
                     co_fact_ids = list(set(s.exec(co_fact_ids_stmt).all()))
                     if co_fact_ids:
+                        # X-01（P0-A）：二度实体扩散同样必须判来源存活（同上一跳）
                         f2_stmt = (
                             select(FactAtomic)
+                            .outerjoin(
+                                MemoryItem,
+                                col(FactAtomic.source_memory_id) == col(MemoryItem.id),
+                            )
+                            .where(fact_source_alive_clause())
                             .where(col(FactAtomic.id).in_(co_fact_ids))
                             .where(FactAtomic.confidence >= min_edge_conf)
                         )

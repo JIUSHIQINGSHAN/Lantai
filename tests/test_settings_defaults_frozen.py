@@ -143,6 +143,7 @@ FROZEN_DEFAULTS = {
         "general": {"idle_timeout": 4.0, "window": 12.0, "max_parts": 8, "max_chars": 2000},
     },
     "ARCHIVE_DECAY_THRESHOLD": 0.01,
+    "FORGET_IMPORTANCE_EXEMPTION_FLOOR": 0.8,
     "CHECKPOINT_MAX_SESSIONS": 5,
     "CHECKPOINT_STALENESS_DAYS": 30,
     "CHECKPOINT_MIN_CONTENT": 3,

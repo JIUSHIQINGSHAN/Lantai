@@ -92,22 +92,10 @@ _VENV_PY, _SHELL_HOOK = resolve_hook_paths()
 _REQUEST_TIMEOUT = 5.0  # 注入请求超时（秒）
 _DIALOGUE_TIMEOUT = 30.0  # 对话写入请求超时（秒，含 LLM 提取）
 _MIN_QUERY_CHARS = 2
-# 触发词（与 gate 语义对齐：包含老习惯与口语偏好短句）
-_TRIGGER_WORDS = (
-    "记得",
-    "上次",
-    "回忆",
-    "帮我查",
-    "之前",
-    "忘记",
-    "以前",
-    "曾经",
-    "老样子",
-    "照旧",
-    "按我习惯",
-    "帮我挑",
-    "看下之前",
-)
+# 注：此处曾有 `_TRIGGER_WORDS` 触发词表，服务于「≤15 字且无触发词就跳过」的
+# 插件侧硬预过滤。该预过滤已在续审 2026-10-31 P0-3 删除（它先于 serve 的
+# gate.prefilter.relevance_check 拦截，使短问句的常驻画像对 Hermes 全部失效）；
+# 表本身无人引用，一并清除——插件侧不得留第二道门，也不得留下诱饵。
 # 会话缓冲上限（防膨胀）：条数与总字符
 _SESSION_BUFFER_MAX_MSGS = 200
 _SESSION_BUFFER_MAX_CHARS = 200_000

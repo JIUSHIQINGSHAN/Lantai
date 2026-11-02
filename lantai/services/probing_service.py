@@ -9,16 +9,67 @@
 import re
 
 import jieba
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 from ulid import ULID
 
 from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import ConflictEvent, FactAtomic, MemoryCheckpoint, MemoryItem
+from lantai.retrieval.wanbi_retriever import fact_source_alive_clause
 from lantai.services.record_ops_service import sync_vector_upsert
 from lantai.storage import db
 from lantai.storage.fts import sync_fts
+
+# ==================== 票 02（v0.66）：CJK 语义判定基础件 ====================
+#
+# 「probe reply / resolve」的判据不能是裸子串包含。中文词间无空格，`re.search`
+# 的「包含」等于把「是不是」读成「不是」、把「没有问题」读成「没有」、把
+# 「还是改成…」读成「还是（留旧）」——前两条在实测里真的归档掉了一条正确记忆
+# （分支 B：status=archived / confidence=0.1）并废弃掉未决冲突（分支 A：dismissed）。
+# 判定因此拆成三层：**小句边界 → 疑问守卫 → 带守卫的短语**，含糊一律不写库。
+#
+# 全角标点一律用 Unicode 转义写进字符类（工单修复目标 2）：字面全角字符在源码
+# 格式化中最容易被重排或吞掉，边界类少一个标点，「「对」」「对；」「对——」这类
+# 常见肯定句就整体不识别。字符类里的标点是唯一需要转义的地方，词本身保持字面。
+_PUNCT_FW = (
+    "\u3002\uff0c\uff1b\uff1a\uff01\uff1f\u3001\uff5e"  # 。，；：！？、～
+    "\uff08\uff09\u300c\u300d\u300e\u300f"  # （）「」『』
+    "\u201c\u201d\u2018\u2019\u2014\u2026"  # “”‘’—…
+)
+_PUNCT_ASCII = r"\s,.!?;:"
+_EDGE_CLASS = "[" + _PUNCT_FW + _PUNCT_ASCII + "]"
+_EDGE_STRIP_RE = re.compile("^" + _EDGE_CLASS + "+|" + _EDGE_CLASS + "+$")
+_CLAUSE_SPLIT_RE = re.compile(_EDGE_CLASS)
+# 肯定词的后接边界：标点 + 确认语气词（口径同改动前，标点扩到全角转义类）。
+_AFFIRM_BOUNDARY_CLASS = "[" + _PUNCT_FW + r"\s,.!?~" + "的啊呀吧呢]"
+# 改变动词：「还是」后面跟着它们就不是「留旧」。
+_CHANGE_VERB = "改成|改为|换成|改用|变成|换用|改动|改"
+_HAISHI_KEEP_OLD = "还是(?![^" + _PUNCT_FW + r"\s]*?(?:" + _CHANGE_VERB + "))"
+
+# 正反问 / 是非问：用户把问题丢回来，这不是答复，任何分支都不得据此写库。
+_INTERROGATIVE_PATTERNS = ["是不是", "有没有", "要不要", "能不能", "是否", "难道"]
+_MOOD_QUESTION_RE = re.compile("吗" + _EDGE_CLASS + "*$")  # 句末「吗」
+
+
+def _clauses(reply: str) -> list[str]:
+    """按标点切小句：CJK 词与词之间唯一可靠的边界就是标点。"""
+    return [c for c in _CLAUSE_SPLIT_RE.split(reply) if c]
+
+
+def _strip_edges(reply: str) -> str:
+    return _EDGE_STRIP_RE.sub("", reply)
+
+
+def _is_interrogative(reply: str) -> bool:
+    """反问/疑问判定：句尾问号、句末「吗」、或正反问格式（是不是/有没有/…）。"""
+    body = _strip_edges(reply)
+    if body.endswith("\uff1f") or body.endswith("?"):
+        return True
+    if _MOOD_QUESTION_RE.search(reply):
+        return True
+    return any(re.search(pat, reply, re.IGNORECASE) for pat in _INTERROGATIVE_PATTERNS)
+
 
 # 肯定与否定词库模式
 _AFFIRMATIVE_PATTERNS = [
@@ -39,6 +90,8 @@ _AFFIRMATIVE_PATTERNS = [
     r"确有此事",
     r"属实",
     r"准确",
+    r"正确",
+    r"是对的",
     r"yes",
     r"yep",
     r"yeah",
@@ -47,21 +100,31 @@ _AFFIRMATIVE_PATTERNS = [
     r"true",
 ]
 _NEGATIVE_PATTERNS = [
-    # CJK 否定词：整词语义、词间无子串误伤面（「没错」不含「没有」），保持裸匹配
-    r"不是",
+    # 分支 A 问「新说法要不要替换旧的」。**每条都带边界守卫，禁止裸子串**（票 02
+    # 病灶：裸 `不是` / `没有` / `还是` 分别把疑问句、应允话、采纳新说法读成否定，
+    # 实测把未决冲突直接 dismissed 掉）。
+    r"(?<!是)不是",  # 「是不是…」是正反问，不是否定（此前只有 B/C 有这条守卫）
+    r"没有(?!问题)",  # 「没有问题」是应允，不是否定（工单证据 3）
     r"不对",
-    r"没有",
     r"写错",
     r"搞错",
     r"弄错",
-    r"别改",
-    r"未变",
-    r"还是",
-    r"依然",
-    r"没变",
-    r"保持",
+    r"错了",
+    r"并非",
+    r"不成立",
     r"不属实",
     r"不准确",
+    r"别(?:改|记|录|用|加|这样|这么|把)",
+    r"勿(?:改|用|记|录|采|把)",
+    r"不可(?:采信|信|当真|算|作为)",
+    # 分支 A 问「要不要替换」，「禁止改这条」= 留旧；B/C 的否定组不含「改」。
+    r"禁止(?:改|将|把|记|录|采|用|当|作)",
+    r"未(?:变|采纳|使用|曾|记录)",  # 「未确认」是未决不是否认（票 02）
+    _HAISHI_KEEP_OLD,  # 「还是」= 留旧；但「还是改成…」恰恰是采纳新说法
+    r"没变",
+    r"依然",
+    r"保持",
+    # CJK 否定词：整词语义、词间无子串误伤面（「没错」不含「没有」），保持裸匹配
     # 裸「假」会命中「放假/假期/请假」并把记忆归档（续审 2026-10-31 实测），收窄为「假的」
     r"假的",
     # 英文否定词：**整词匹配（\b 边界）**（票 `.scratch/v0.64-next-window-2026-11/09`
@@ -122,6 +185,10 @@ def detect_memory_probes(
         item = s.get(MemoryItem, conf.memory_id)
         if item is None:
             # 挂载记忆已不存在：账本本身无归属可判，不泄露任何正文
+            return False
+        if item.status != "active":
+            # X-01（P0-A）：挂载记忆已软删除（归档/拒绝）——探针会把正文包装成
+            # 问句直接送给用户，比列表更直接的泄漏面；已删隐私不得再被求证。
             return False
         from lantai.services.work_item_service import _viewer_of
 
@@ -207,8 +274,13 @@ def detect_memory_probes(
                 )
 
         # 2b. 临界模糊原子事实（FactAtomic）
+        # X-01（P0-A）：模糊记忆项一条 `status == "active"` 就挡住了软删除回流，
+        # 事实这一路此前裸查 fact_atomic——已归档记忆的隐私照样被「顺便向您求证
+        # 确认下：关于「…」」原样复述出来。JOIN 回来源判存活，口径同完璧。
         fact_query = (
             select(FactAtomic)
+            .outerjoin(MemoryItem, col(FactAtomic.source_memory_id) == col(MemoryItem.id))
+            .where(fact_source_alive_clause())
             .where(FactAtomic.confidence >= 0.3)
             .where(FactAtomic.confidence <= 0.6)
         )
@@ -263,21 +335,43 @@ def format_probing_context(probes: list[dict]) -> str:
 # 分支 B/C 问的是「这条记忆还对不对」，同样的词恰恰是**确认**。共用 _NEGATIVE_PATTERNS
 # 会把「对，没变」「是的，还是喝乌龙茶」直接归档掉一条正确记忆。
 _CLAIM_NEGATIVE_PATTERNS = [
-    r"不对",
     r"(?<!是)不是",  # 「是不是」是疑问不是否定
+    r"不对",
     r"写错",
     r"搞错",
     r"弄错",
     r"错了",
+    r"并非",
+    r"不成立",
     r"不属实",
     r"不准确",
     r"假的",
+    # 票 02：「并非/不成立/请勿记录/别记/不可采信/禁止当作/未采纳」都是**明确**
+    # 否定，此前全部落到 unclear 而永远挂审；按短语边界承认，不用裸单字
+    # （裸「别」会命中「别的」、裸「未」会命中「未来/未必」）。
+    # 票 02：B/C 只承认「不要这条记忆」，不承认「不要改动这条记忆」——
+    # 「别改/勿改/未确认」在「这条还对吗」的问句下是**留旧/未决**，
+    # 据此归档就是把正确记忆删掉，全部落到 unclear。
+    r"别(?:记|录|用|把|这样|这么)",
+    r"勿(?:记|录|采|用|把)",
+    r"不可(?:采信|信|当真|算|作为)",
+    r"禁止(?:将|把|记|录|采|用|当|作)",
+    r"未(?:采纳|使用|曾|记录)",  # 不含「未变/未确认」：前者是确认口径，后者是未决
     r"\bno\b",
     r"\bnope\b",
     r"\bfalse\b",
     r"\bwrong\b",
 ]
-_UNCHANGED_PATTERNS = [r"没变", r"未变", r"没有变", r"还是", r"依然", r"保持", r"一直"]
+
+_UNCHANGED_PATTERNS = [
+    r"没变",
+    r"未变",
+    r"没有变",
+    _HAISHI_KEEP_OLD,  # 「还是喝乌龙茶」= 确认；「还是改成…」不是
+    r"依然",
+    r"保持",
+    r"一直",
+]
 # 含糊/转折：任何分支都不自动改写或归档，留待审（宁可多问一次，不可错删一条）。
 _HEDGE_PATTERNS = [
     r"但",
@@ -298,9 +392,14 @@ def _matches_any(patterns: list[str], text: str) -> bool:
     return any(re.search(pat, text, re.IGNORECASE) for pat in patterns)
 
 
+def _is_noncommittal(reply: str) -> bool:
+    """含糊（转折/未决）或反问：任何分支都不自动改写、不归档，留待审。"""
+    return _matches_any(_HEDGE_PATTERNS, reply) or _is_interrogative(reply)
+
+
 def _classify_claim_reply(reply: str) -> str:
     """分支 B/C：返回 'negative' / 'affirmative' / 'unclear'。两边都沾或含糊一律 unclear。"""
-    if _matches_any(_HEDGE_PATTERNS, reply):
+    if _is_noncommittal(reply):
         return "unclear"
     neg = _matches_any(_CLAIM_NEGATIVE_PATTERNS, reply)
     aff = _is_affirmative_reply(reply) or _matches_any(_UNCHANGED_PATTERNS, reply)
@@ -312,15 +411,17 @@ def _classify_claim_reply(reply: str) -> str:
 
 
 def _is_affirmative_reply(reply: str) -> bool:
-    """整句确认才算肯定:以肯定词开头,其后接结束、标点或"的"等确认语气,而非另一个词。"""
-    body = re.sub(
-        r"^[\s。,.!?~!?,、\uff0c\uff01\uff1f]+|[\s。,.!?~!?,、\uff0c\uff01\uff1f]+$", "", reply
-    )
-    for pat in _AFFIRMATIVE_PATTERNS:
-        if re.match(
-            rf"(?:{pat})(?:$|[\s,.!?~,。!?、\uff0c\uff01\uff1f的啊呀吧呢])", body, re.IGNORECASE
-        ):
-            return True
+    """小句开头的确认词才算肯定：其后接结束、标点或「的啊呀吧呢」等语气，而非另一个词。
+
+    票 02：CJK 无空格，只判整句开头会把「嗯，对的」「「对」」这类答复整体漏判，
+    而全角引号/分号一旦从边界类里被格式化吞掉，常见肯定句就识别不出来。改为
+    **逐小句开头**判定，边界标点统一走 Unicode 转义类（见 `_PUNCT_FW`）。
+    """
+    clauses = _clauses(reply) or [_strip_edges(reply)]
+    for clause in clauses:
+        for pat in _AFFIRMATIVE_PATTERNS:
+            if re.match(rf"(?:{pat})(?:$|{_AFFIRM_BOUNDARY_CLASS})", clause, re.IGNORECASE):
+                return True
     return False
 
 
@@ -392,7 +493,7 @@ def resolve_probe_response(
                 )
 
             # 1. 优先匹配否定词（否定意图优先）
-            hedged = _matches_any(_HEDGE_PATTERNS, clean_reply)
+            hedged = _is_noncommittal(clean_reply)  # 含糊或反问一律不写库（票 02）
             is_neg = not hedged and _matches_any(_NEGATIVE_PATTERNS, clean_reply)
             is_aff = not hedged and _is_affirmative_reply(clean_reply)
 

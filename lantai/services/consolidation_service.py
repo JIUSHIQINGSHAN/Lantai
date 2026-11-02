@@ -464,6 +464,17 @@ def prune_decayed_synapses(
 
     归属（票 .scratch/readside-gaps/12）：archived 没有 undo 入口，
     此前任何持 key 者都能借此把别人的记忆休眠。宁 miss 不脏写。
+
+    豁免（票 .scratch/v0.66-next-window-2026-11/03）：本函数同样是**自动归档**
+    选择器——它把行置为 `archived`，而 archived 没有 undo 入口。因此它必须与
+    `apply_forgetting` 认同一套结构性豁免标记（`forgetting._decay_exempt`：
+    高重要度 ≥0.8、`decay_class ∈ {semantic, procedural}`）。此前这里只看
+    `decay_score < 阈值 + helpful_count == 0`，且修剪阈值（0.05）比归档阈值
+    （0.01）更高更早，于是「遗忘当晚判定保活」的豁免记忆会在同一个夜里被
+    沉潜修剪掉——只修 `forgetting.py` 等于豁免漏了第二扇后门。
+
+    本改动只收紧候选集（哪些行**有资格**被修剪），不改阈值、不改衰减公式、
+    不改归属过滤：非豁免碎片的修剪行为逐字不变。
     """
     if threshold is None:
         threshold = settings.CONSOLIDATION_PRUNE_THRESHOLD
@@ -479,6 +490,12 @@ def prune_decayed_synapses(
         if scope is not None:
             q = q.where(scope)
         decayed_items = s.exec(q).all()
+
+        # 票 03：豁免判据**不在这里复制一份 SQL 口径**，而是复用遗忘侧的同一个
+        # 函数——两条归档路共享单一事实来源，防止语义漂移。
+        from lantai.memory.forgetting import _decay_exempt
+
+        decayed_items = [m for m in decayed_items if not _decay_exempt(m)]
 
         pruned = 0
         for item in decayed_items:
