@@ -2,6 +2,7 @@
 
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -111,6 +112,152 @@ def test_stale_uv_lock_is_reported_by_consistency_check(tmp_path):
     )
     fixed = RC.check_version_consistency("9.9.9", RC.collect_version_refs(tmp_path), None)
     assert not any("uv.lock" in i for i in fixed), fixed
+
+
+@pytest.fixture(autouse=True)
+def _isolate_gate_ledger():
+    """门禁账本是模块全局：进出处都快照还原，用例既不继承它、也不污染它。
+
+    这条 fixture 本身就是「测试不得污染生产全局」的证据之一：跑完本文件任何用例，
+    `release_check.results` 与用例开始前逐字相同（票 05 续19，配合 D2 修复）。
+    """
+    before = list(RC.results)
+    RC.results.clear()
+    yield
+    RC.results[:] = before
+
+
+def _stub_gate_producers(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    issues: bool = False,
+    stub_lint: bool = True,
+) -> None:
+    """把 10 项判据的**生产者**换成固定回报，只让「记账 + 汇总 + 打印」这段真跑。
+
+    续19 的被测对象是门禁自身的记账与诊断输出，不是各项探针——探针已在各自用例里
+    真实执行过（lint / 构建 / schema 漂移 / 绊线 / 遗忘质量）。这里不 stub
+    `check()`/`summarize()`/`main()`：那三个正是被测物。
+    `stub_lint=False` 留给 D1 用例，让真实 lint 在「找不到 ruff」下走一遍。
+    """
+    verdict = ["示例问题（测试构造）"] if issues else []
+    if stub_lint:
+        monkeypatch.setattr(RC, "lint_gate_issues", lambda root, skips=None: list(verdict))
+    monkeypatch.setattr(RC, "ci_step_coverage_issues", lambda root: list(verdict))
+    monkeypatch.setattr(RC, "gate_suite_flag_issues", lambda root: list(verdict))
+    monkeypatch.setattr(RC, "addopts_fidelity_issues", lambda root: list(verdict))
+    monkeypatch.setattr(
+        RC, "collect_version_refs", lambda root: [("pyproject.toml", "pyproject.toml", "0.66.0")]
+    )
+    monkeypatch.setattr(RC, "check_version_consistency", lambda v, refs, log: list(verdict))
+    monkeypatch.setattr(
+        RC,
+        "run_build_gate",
+        lambda root, expected_version: (list(verdict), "demo-0.0.1-py3-none-any.whl"),
+    )
+    monkeypatch.setattr(
+        RC,
+        "git_issues",
+        lambda root, version, allow_dirty, online=False, skips=None: list(verdict),
+    )
+    monkeypatch.setattr(RC, "mcp_exposure_issues", lambda root: list(verdict))
+    monkeypatch.setattr(RC, "schema_drift_issues", lambda root: list(verdict))
+    monkeypatch.setattr(
+        RC, "legacy_parity_probe", lambda root, **kw: {"anchors": [{"source_tag": "v0.0.1"}]}
+    )
+    monkeypatch.setattr(RC, "legacy_parity_issues_from_payload", lambda payload: list(verdict))
+    monkeypatch.setattr(RC, "suite_gate_issues", lambda root, timeout=None: list(verdict))
+    monkeypatch.setattr(RC, "run_forgetting_gate", lambda root: list(verdict))
+
+
+def _last_summary(text: str) -> str:
+    lines = [ln for ln in text.splitlines() if ln.startswith("结果:")]
+    assert lines, f"门禁没打印汇总行：{text!r}"
+    return lines[-1]
+
+
+def test_gate_ledger_is_not_inherited_across_runs(monkeypatch, capsys):
+    """续19 D2：门禁账本必须「每次运行一本」，同进程连跑结果逐字可复现。
+
+    修复前实测（.scratch/gate/r19/repro_d2_accumulate.py）：模块级 `results`
+    从不清空，同进程第二次 `main()` 报「**16/19 通过, 2 失败**」——上一轮的判定
+    被重复计数，读者看到的分母、通过率、失败条数全是编的。
+    """
+    _stub_gate_producers(monkeypatch)
+    codes: list[int] = []
+    summaries: list[str] = []
+    for _ in range(2):
+        codes.append(RC.main(["v0.66.0"]))
+        summaries.append(_last_summary(capsys.readouterr().out))
+    assert codes == [0, 0], codes
+    assert summaries[0] == summaries[1], f"两次运行汇总不同 = 账本跨运行累积：{summaries}"
+    assert "10/10 通过" in summaries[0], summaries[0]
+    assert len(RC.results) == 10, f"账本残留上一轮判定：{RC.results}"
+
+
+def test_lint_gate_missing_ruff_registers_skip(monkeypatch, tmp_path):
+    """续19 D1：找不到 ruff 时不得回报「无问题」——必须登记为未取证。
+
+    修复前实测（.scratch/gate/r19/repro_d1_failopen.py）：`_find_ruff` 返回空串时
+    `lint_gate_issues()` 打印一行 [SKIP] 就 `return []`，而 skipped 账上根本没有
+    这一项。缺的是开发期工具，不该判红，但**绝不能记成通过**。
+    """
+    monkeypatch.setattr(RC, "_find_ruff", lambda root: "")
+    skips: list[str] = []
+    issues = RC.lint_gate_issues(tmp_path, skips=skips)
+    assert issues == [], issues
+    assert skips == ["CI lint 门禁"], skips
+
+
+def test_main_never_claims_pass_for_lint_it_never_ran(monkeypatch, capsys):
+    """续19 D1 消费侧：lint 未执行时 main() 不得打 [PASS]，且必须以未取证阻断。"""
+    _stub_gate_producers(monkeypatch, stub_lint=False)
+    monkeypatch.setattr(RC, "_find_ruff", lambda root: "")
+    code = RC.main(["v0.66.0"])
+    out = capsys.readouterr().out
+    assert "[PASS] CI lint 门禁" not in out, out
+    assert "[SKIP] CI lint 门禁" in out, out
+    assert "1 跳过" in _last_summary(out), out
+    assert code == 1, f"有检查项未取证却 exit 0：{code}"
+
+
+def test_failure_line_carries_category_and_minimal_repro(capsys):
+    """续19 D3：失败输出必须含失败阶段、根因分类、最小复现（验收线点名要求）。"""
+    RC.check("版本一致性", False, "示例：某处版本引用不等")
+    out = capsys.readouterr().out
+    assert "失败阶段=版本一致性" in out, out
+    assert "根因分类=发布元数据漂移" in out, out
+    assert "最小复现=" in out, out
+
+
+def test_unknown_item_failure_is_not_silently_undiagnosed(capsys):
+    """反向保险：诊断清单缺项时也要显式标「未分类」，不许静默少一段诊断。"""
+    RC.check("全新门禁项", False, "x")
+    out = capsys.readouterr().out
+    assert "未分类" in out, out
+
+
+def test_every_gate_item_exercised_by_main_has_a_diagnosis_entry(monkeypatch, capsys):
+    """结构性锁：main() 实际判定的每一项都必须有根因分类 + 最小复现。"""
+    _stub_gate_producers(monkeypatch, issues=True)
+    RC.main(["v0.66.0"])
+    out = capsys.readouterr().out
+    names = {m.group(1) for m in re.finditer(r"^\[FAIL\] (.+?) —", out, re.M)}
+    assert len(names) >= 10, f"main() 只判定出 {len(names)} 项：{sorted(names)}"
+    missing = sorted(names - set(RC.FAILURE_DIAGNOSIS))
+    assert not missing, f"这些门禁项缺根因分类/最小复现：{missing}"
+    assert not [ln for ln in out.splitlines() if "未分类" in ln], out
+
+
+def test_diagnosis_entries_use_declared_vocabulary():
+    """诊断清单不得为空、不得跑野口径：分类必须落在申报词表内。"""
+    assert RC.FAILURE_DIAGNOSIS, "门禁根因诊断清单为空"
+    assert all(len(v) == 2 and v[0] and v[1] for v in RC.FAILURE_DIAGNOSIS.values())
+    bad = {k: v for k, v in RC.FAILURE_DIAGNOSIS.items() if v[0] not in RC.DIAGNOSIS_CATEGORIES}
+    assert not bad, bad
+    assert {"测试污染", "约束漂移", "依赖缺失", "逻辑缺陷", "契约/策略违反"} <= set(
+        RC.DIAGNOSIS_CATEGORIES
+    )
 
 
 def test_changelog_snapshot_parses_latest_release():

@@ -57,10 +57,66 @@ VERSION_REF_SPECS = [
 
 results: list[tuple[str, str, str]] = []
 
+# 红灯必须自带诊断（票 05 续19 D3）：拿到一条 [FAIL] 就得当场知道「哪一段红、
+# 属于哪类根因、用哪条最小命令复现」，而不是回头翻门禁代码猜。分类口径固定成词表，
+# test_diagnosis_entries_use_declared_vocabulary 锁住不许跑野口径。
+DIAGNOSIS_CATEGORIES = (
+    "测试污染",
+    "约束漂移",
+    "依赖缺失",
+    "逻辑缺陷",
+    "契约/策略违反",
+    "发布元数据漂移",
+    "仓库状态",
+    "环境/工具缺失",
+)
+
+# 门禁项名 -> (根因分类, 最小复现命令)。main() 实际判定的每一项都必须在这里登记，
+# 漏一项由 test_every_gate_item_exercised_by_main_has_a_diagnosis_entry 判红。
+FAILURE_DIAGNOSIS: dict[str, tuple[str, str]] = {
+    "CI lint 门禁": (
+        "依赖缺失",
+        "ruff check lantai/ tests/ scripts/ && ruff format --check lantai/ tests/ scripts/",
+    ),
+    "CI 步骤覆盖核对": (
+        "契约/策略违反",
+        "python scripts/release_check.py <版本> --skip-suite",
+    ),
+    "目标版本格式": ("发布元数据漂移", "python scripts/release_check.py --help"),
+    "版本一致性": (
+        "发布元数据漂移",
+        "python -m pytest tests/test_release_check.py -q -k=version",
+    ),
+    "构建产物（wheel）": (
+        "逻辑缺陷",
+        "python -m build --wheel --no-isolation --outdir <临时目录>",
+    ),
+    "Git 状态": ("仓库状态", "git status --porcelain && git tag --list 'v*'"),
+    "MCP 默认暴露": (
+        "契约/策略违反",
+        'python -c "from lantai.cli import mcp; print(len(mcp._get_active_tools()), len(mcp.TOOLS))"',
+    ),
+    "迁移与列约束漂移": ("约束漂移", "python -m pytest tests/test_legacy_schema_parity.py -q"),
+    "老库升级回放与列对齐": ("约束漂移", "python scripts/legacy_parity_probe.py"),
+    "全量测试 + 宿主目录绊线": ("测试污染", 'python -m pytest tests/ -q -o addopts=""'),
+    "遗忘质量离线门禁": ("逻辑缺陷", "python scripts/run_forgetting_quality.py --check"),
+}
+
 
 def check(name: str, ok: bool, detail: str = "") -> None:
     results.append((PASS if ok else FAIL, name, detail))
     print(f"[{PASS if ok else FAIL}] {name}" + (f" — {detail}" if detail else ""))
+    if not ok:
+        # 失败阶段 / 根因分类 / 最小复现三项齐了才算可诊断的红灯；清单缺项也要显式
+        # 标「未分类」，不许静默少一段（那正是「看不见就等于没有」的老毛病）。
+        category, repro = FAILURE_DIAGNOSIS.get(
+            name,
+            (
+                "未分类（门禁诊断清单缺该项）",
+                f"python scripts/release_check.py <版本> 后定位「{name}」",
+            ),
+        )
+        print(f"    └ 失败阶段={name}｜根因分类={category}｜最小复现={repro}")
 
 
 def summarize(results: list[tuple[str, str, str]], n_skip: int = 0) -> tuple[str, int]:
@@ -165,7 +221,7 @@ def _find_ruff(repo_root: Path) -> str:
     return str(beside) if beside.exists() else ""
 
 
-def lint_gate_issues(repo_root: Path) -> list[str]:
+def lint_gate_issues(repo_root: Path, *, skips: list[str] | None = None) -> list[str]:
     """CI 门禁自查：`ruff check` + `ruff format --check`（票 21）。
 
     为什么加这一步：`.github/workflows/tests.yml` 的 test job 里 lint 步骤
@@ -175,11 +231,13 @@ def lint_gate_issues(repo_root: Path) -> list[str]:
     （`6c07da7d` 起，累积 9 个文件），全量测试在 CI 上又静默停跑了 5 个提交。
 
     只查 `ruff` 是否可用 + 是否干净；ruff 未安装时 SKIP 而不是 FAIL
-    （发布检查不该因为缺一个开发期工具就拦下上传）。
+    （发布检查不该因为缺一个开发期工具就拦下上传）。但 SKIP 必须进 `skips` 账：
+    没跑过的检查不等于跑过且通过——票 05 续19 实测缺 ruff 时这里只打印一行提示就
+    `return []`，main() 随即据此打印 `[PASS] CI lint 门禁`，门禁自己造了个假绿。
     """
     ruff = _find_ruff(repo_root)
     if not ruff:
-        print(f"[{SKIP}] ruff 不可用 — 跳过 lint 自查（装 dev 依赖可启用）")
+        announce_skip(skips, "CI lint 门禁", "ruff 不可用 — lint 自查未执行（装 dev 依赖可启用）")
         return []
 
     issues: list[str] = []
@@ -1103,6 +1161,12 @@ def run_build_gate(
 
 
 def main(argv: list[str] | None = None) -> int:
+    # 每次运行一本账（票 05 续19 D2）：results 是模块全局，入口不清空就会把上一轮的
+    # 判定重复计入分母——同进程连跑两次实测第二次报「16/19 通过, 2 失败」，通过率、
+    # 失败条数全是编的，门禁不再可复现。announce_skip() 早已改用调用方局部 list，
+    # 这里同口径把旧账归零（保留全局只为不动 ~25 处 check() 调用面）。
+    results.clear()
+
     parser = argparse.ArgumentParser(description="发布前检查（只读）")
     parser.add_argument("version", nargs="?", help="目标版本，默认读 pyproject.toml")
     parser.add_argument("--allow-dirty", action="store_true", help="允许未提交文件（仅排查用）")
@@ -1120,14 +1184,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--suite-timeout", type=int, default=SUITE_TIMEOUT_S, help="全量测试超时秒数"
     )
-    args = parser.parse_args(argv)
+    parsed_argv = list(argv) if argv is not None else sys.argv[1:]
+    args = parser.parse_args(parsed_argv)
+    # 诊断四要素里的「失败命令」：逐项最小复现写在 FAIL 诊断行，这里补上本次门禁
+    # 到底是带着哪些旗标跑的（旗标合成绿灯是老事故，见模块 docstring）。
+    print("门禁命令：python scripts/release_check.py " + " ".join(parsed_argv))
+
+    # 未取证账本必须在 lint 自查之前就存在（票 05 续19 D1）：晚创建一项就把那一项
+    # 漏在账外，漏账的 [SKIP] 会被下面的 PASS 分支读成「已执行且通过」。
+    skips: list[str] = []
 
     # lint 自查放在最前（票 21）：它红 = CI 的全量测试一步不跑，
     # 这时再查版本/tag 没有意义——先让人看见门禁本身是红的。
-    lint_failures = lint_gate_issues(REPO_ROOT)
+    lint_failures = lint_gate_issues(REPO_ROOT, skips=skips)
     for issue in lint_failures:
         check("CI lint 门禁", False, issue)
-    if not lint_failures:
+    if not lint_failures and "CI lint 门禁" not in skips:
         check("CI lint 门禁", True, "ruff check + ruff format --check 均通过")
 
     fidelity_failures = (
@@ -1178,7 +1250,6 @@ def main(argv: list[str] | None = None) -> int:
             "含 lantai/ 载荷与 lantai-mcp / lantai-server 入口",
         )
 
-    skips: list[str] = []
     git_failures = git_issues(REPO_ROOT, version, args.allow_dirty, online=args.online, skips=skips)
     for issue in git_failures:
         check("Git 状态", False, issue)
