@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib.util
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -176,3 +177,44 @@ def test_forgetting_gate_really_runs_and_pollutes_nothing():
     issues = RC.run_forgetting_gate(REPO)
     assert issues == [], f"遗忘质量离线门禁没通过：{issues}"
     assert _porcelain() == before, "跑遗忘质量门禁改变了工作区状态（生产污染）"
+
+
+# ---------------------------------------------------------------------------
+# 5. 门禁自己不许留污染（票 05 续10 实测：绊线报告每跑一次留一个文件）
+# ---------------------------------------------------------------------------
+
+
+def _temp_names(*prefixes):
+    root = Path(tempfile.gettempdir())
+    out = set()
+    for pre in prefixes:
+        out |= {q.name for q in root.glob(pre + "*")}
+    return out
+
+
+def test_suite_gate_leaves_no_temp_residue(tmp_path):
+    """门禁跑完全量必须把临时产物收干净，且不把 .coverage 落进工作区。
+
+    病灶（实测）：`suite_gate_issues` 用 `tempfile.NamedTemporaryFile` 造绊线报告路径，
+    `with` 块一退出就把文件删了，随后 pytest 子进程在 `pytest_configure` 里按同名
+    `open(..., "w")` 把它**重建**出来，父进程再也不管——每跑一次门禁就在 %TEMP% 里
+    留一个文件（本机已积到 200 个）。门禁自己制造「文件状态残留」同样违反验收底线。
+    现在报告与覆盖率数据都落在一个由门禁独占的临时目录里，退出即销毁。
+    """
+    repo = tmp_path / "repo"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "tests" / "test_tiny.py").write_text(
+        "def test_tiny():\n    assert True\n", encoding="utf-8"
+    )
+    home = tmp_path / "fakehome"
+    home.mkdir()
+
+    before = _temp_names("lantai_gate_suite_", "lantai_tripwire_")
+    issues = RC.suite_gate_issues(repo, timeout=900, real_home=str(home))
+    after = _temp_names("lantai_gate_suite_", "lantai_tripwire_")
+
+    assert after == before, f"门禁残留了临时产物：{sorted(after - before)}"
+    assert not (repo / ".coverage").exists(), "门禁把覆盖率数据文件写进了被测仓库工作区"
+    assert not any("没有真正跑起来" in i for i in issues), (
+        f"报告换了位置就读不到（等于门禁失去绊线证据）：{issues}"
+    )

@@ -439,63 +439,77 @@ def suite_gate_issues(
     home = host_home_for_watch(repo_root) if real_home is None else real_home
     watch = os.path.join(home, "remembrance.db") if home else ""
     support = REPO_ROOT / "tests" / "support"
-    with tempfile.NamedTemporaryFile(prefix="lantai_tripwire_", suffix=".txt") as fh:
-        report_path = fh.name
-    env = os.environ.copy()
-    env["PYTHONPATH"] = os.pathsep.join([str(support), env.get("PYTHONPATH", "")]).strip(os.pathsep)
-    env["LANTAI_GATE_REAL_HOME"] = watch
-    env["LANTAI_GATE_REPORT"] = report_path
-    env.setdefault("API_KEY", _PROBE_KEY)
-    cmd = suite_pytest_command(py=py)
-    try:
-        proc = subprocess.run(  # noqa: S603
-            cmd,
-            cwd=str(repo_root),
-            env=env,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
+    # 门禁自己造的临时产物（绊线报告 + 覆盖率数据文件）必须放在一个门禁独占的临时目录
+    # 里、退出即销毁。旧写法用 NamedTemporaryFile 造报告路径：with 一退出就把文件删了，
+    # 子进程 pytest_configure 再以写模式把同名文件重建出来，父进程从此不管——每跑
+    # 一次门禁就在 %TEMP% 留一个文件（票 05 续10 实测已积到 200 个）。COVERAGE_FILE 不
+    # 指走则把 .coverage 落在被测仓库工作区。两条都是「门禁污染文件状态」，一并堵住。
+    with tempfile.TemporaryDirectory(prefix="lantai_gate_suite_") as work_dir:
+        report_path = os.path.join(work_dir, "tripwire_report.txt")
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.pathsep.join([str(support), env.get("PYTHONPATH", "")]).strip(
+            os.pathsep
         )
-        exit_code = proc.returncode
-        output = (proc.stdout or "") + (proc.stderr or "")
-    except subprocess.TimeoutExpired:
-        return [f"全量测试超时（>{timeout}s）——超时不是绿灯，不放行"]
-    except OSError as exc:
-        return [f"全量测试无法执行（{exc}）——跑不动就等于没跑，不放行"]
-    try:
-        report_text = Path(report_path).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        report_text = ""
+        env["LANTAI_GATE_REAL_HOME"] = watch
+        env["LANTAI_GATE_REPORT"] = report_path
+        env["COVERAGE_FILE"] = os.path.join(work_dir, "coverage.dat")
+        env.setdefault("API_KEY", _PROBE_KEY)
+        cmd = suite_pytest_command(py=py)
+        try:
+            proc = subprocess.run(  # noqa: S603
+                cmd,
+                cwd=str(repo_root),
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+            )
+            exit_code = proc.returncode
+            output = (proc.stdout or "") + (proc.stderr or "")
+        except subprocess.TimeoutExpired:
+            return [f"全量测试超时（>{timeout}s）——超时不是绿灯，不放行"]
+        except OSError as exc:
+            return [f"全量测试无法执行（{exc}）——跑不动就等于没跑，不放行"]
+        try:
+            report_text = Path(report_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            report_text = ""
 
-    counts = suite_counts(output)
-    print(
-        "[....] 全量测试计数: "
-        + (", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "解析不到收尾行（空跑）")
-    )
-    issues: list[str] = []
-    if exit_code != 0:
-        summary = next(
-            (ln for ln in reversed(output.splitlines()) if re.search(r"\d+ (failed|error)", ln)),
-            "",
+        counts = suite_counts(output)
+        print(
+            "[....] 全量测试计数: "
+            + (", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "解析不到收尾行（空跑）")
         )
-        failed_lines = [ln for ln in output.splitlines() if ln.startswith("FAILED")]
-        issues.append(
-            "全量测试未绿（红主干不得上传）："
-            + (summary.strip() or "见失败清单")
-            + "\n"
-            + "\n".join(failed_lines[:40])
-        )
-    elif "[TRIPEWIRE-ARMED]" not in report_text:
-        issues.append("全量测试没有真正跑起来（退出码 0 却没有绊线报告）——不放行")
-    else:
-        summary_issue = suite_summary_issue(output)
-        if summary_issue:
-            issues.append(summary_issue)
+        issues: list[str] = []
+        if exit_code != 0:
+            summary = next(
+                (
+                    ln
+                    for ln in reversed(output.splitlines())
+                    if re.search(r"\d+ (failed|error)", ln)
+                ),
+                "",
+            )
+            failed_lines = [ln for ln in output.splitlines() if ln.startswith("FAILED")]
+            issues.append(
+                "全量测试未绿（红主干不得上传）："
+                + (summary.strip() or "见失败清单")
+                + "\n"
+                + "\n".join(failed_lines[:40])
+            )
+        elif "[TRIPEWIRE-ARMED]" not in report_text:
+            issues.append("全量测试没有真正跑起来（退出码 0 却没有绊线报告）——不放行")
+        else:
+            summary_issue = suite_summary_issue(output)
+            if summary_issue:
+                issues.append(summary_issue)
 
-    issues.extend(tripwire_report_issues(report_text, home=home or "(宿主目录未指明)", watch=watch))
-    return issues
+        issues.extend(
+            tripwire_report_issues(report_text, home=home or "(宿主目录未指明)", watch=watch)
+        )
+        return issues
 
 
 def mcp_exposure_issue(active: int, total: int) -> str | None:
