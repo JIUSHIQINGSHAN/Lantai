@@ -260,6 +260,37 @@ def test_diagnosis_entries_use_declared_vocabulary():
     )
 
 
+def test_addopts_check_fail_closed_when_pin_is_gone(monkeypatch, tmp_path):
+    """续19 D4（与 D1 同族）：钉子被摘掉时，一致性核对不许自己关掉还报无问题。
+
+    修复前实测：`addopts_fidelity_issues()` 第一句就是
+    `if "addopts=" not in suite_pytest_command(): return []`——谁把门禁命令里的
+    `-o addopts=` 删掉，这项检查立刻变成恒空的摆设，且以 `[]` 的形式被 main() 记成
+    `[PASS] CI 步骤覆盖核对`。同类病灶第 N 次复现：没取证被当成取到证。
+    """
+    monkeypatch.setattr(
+        RC, "suite_pytest_command", lambda **kw: ["python", "-m", "pytest", "tests/"]
+    )
+    issues = RC.addopts_fidelity_issues(tmp_path)
+    assert issues and "addopts" in issues[0], issues
+
+
+def test_addopts_check_fail_closed_when_pyproject_is_missing(monkeypatch, tmp_path):
+    """续19 D4：读不到 pyproject 也要判「未取证」，不许 `return []` 蒙过去。"""
+    monkeypatch.setattr(
+        RC,
+        "suite_pytest_command",
+        lambda **kw: ["python", "-m", "pytest", "tests/", "-o", "addopts="],
+    )
+    issues = RC.addopts_fidelity_issues(tmp_path)  # tmp_path 下没有 pyproject.toml
+    assert issues and "pyproject" in issues[0], issues
+
+
+def test_addopts_check_still_passes_on_real_repo():
+    """反向保险：收紧不许误伤现况——钉子在场 + pyproject 未声明 addopts = 惰性钉子。"""
+    assert RC.addopts_fidelity_issues(RC.REPO_ROOT) == [], "真实仓库现况被误判"
+
+
 def test_changelog_snapshot_parses_latest_release():
     text = "## [Unreleased]\n\n## [0.3.7] - 2026-08-04\n"
     assert RC.changelog_snapshot(text) == (True, "0.3.7")

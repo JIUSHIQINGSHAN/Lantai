@@ -995,12 +995,20 @@ def addopts_fidelity_issues(repo_root: Path) -> list[str]:
 
     钉子本身是有意为之（防止有人往 addopts 塞参数而悄悄改门禁含义），但它必须**可核对**：
     声明一旦非空，门禁必须判红逼人显式对齐，而不是让钉子悄悄生效、让门禁系统性比 CI 宽松。
+
+    票 05 续19 D4：这条检查自己也有两个「没取证就当取到证」的出口——钉子从门禁命令里
+    消失、或 pyproject 读不到时，原先都 `return []`，于是「把核对拆掉」这件事本身永远绿。
+    两处都改成显式判红：核对的前提不成立就是未取证，未取证就不放行。
     """
     if "addopts=" not in suite_pytest_command():
-        return []
+        return [
+            "门禁的 pytest 命令不再钉 `-o addopts=`：addopts 一致性核对失去依据，这项检查"
+            "成了恒空的摆设（票 05 续19 D4，与「缺 ruff 记成通过」同族）——"
+            "要么把钉子加回门禁命令，要么把两边口径写进 CI 与门禁共同的命令定义"
+        ]
     path = Path(repo_root) / "pyproject.toml"
     if not path.is_file():
-        return []
+        return [f"找不到 pyproject.toml（{path}），无法核对 addopts：依据缺失 = 未取证，不放行"]
     try:
         import tomllib
     except ModuleNotFoundError:  # pragma: no cover - 运行环境 < 3.11
