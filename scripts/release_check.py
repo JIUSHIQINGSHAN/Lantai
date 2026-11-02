@@ -43,6 +43,16 @@ VERSION_REF_SPECS = [
         "lantai/cli/mcp.py",
         re.compile(r'"serverInfo":\s*\{[^}]*"version":\s*"([0-9.]+)"'),
     ),
+    # 票 05 续18：被提交的依赖锁文件同样是发布元数据。0.66.0 bump 只改了上面 5 处
+    # tracked 引用，`uv.lock` 里根包版本仍停在 0.65.0（外部校验器 `uv lock --locked
+    # --offline` 实测 exit 1），而门禁从不读它 —— 于是漂移一路被当作 PASS 放过。
+    # 锚定 name+version 两行，只取根包（`name = "lantai"` 精确闭合引号，不会误抓
+    # lantai-* 之类同前缀包）。
+    (
+        "uv.lock 根包版本",
+        "uv.lock",
+        re.compile(r'^name = "lantai"\nversion = "([^"]+)"', re.M),
+    ),
 ]
 
 results: list[tuple[str, str, str]] = []

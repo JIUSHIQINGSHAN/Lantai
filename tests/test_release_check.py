@@ -73,6 +73,46 @@ def test_collect_refs_real_repo_all_match_pyproject():
         assert value == pyproject_version, f"{label} 与 pyproject 不一致"
 
 
+def test_uv_lock_self_version_is_a_checked_ref_on_real_repo():
+    """票 05 续18：被提交的 `uv.lock` 自版本必须进版本一致性判据（当前是门禁盲区）。
+
+    实测漂移：`pyproject.toml` = 0.66.0，而 `uv.lock` 里 `[[package]] name = "lantai"`
+    仍是 **0.65.0**（0.66 bump 只改了 5 处 tracked 引用，没有重新 lock）。外部校验器
+    `uv lock --locked --offline` 直接 exit 1：「The lockfile at `uv.lock` needs to be
+    updated, but `--locked` was provided」——而门禁的版本一致性项从不读这个文件，
+    于是这条漂移在 9/10 的绿灯里一路被当作 PASS 放过去。
+    """
+    refs = RC.collect_version_refs(RC.REPO_ROOT)
+    lock_refs = [(label, value) for label, rel, value in refs if rel == "uv.lock"]
+    assert lock_refs, "版本一致性判据没有覆盖 uv.lock（门禁盲区）"
+    pyproject_version = next(v for label, _, v in refs if label == "pyproject.toml")
+    for label, value in lock_refs:
+        assert value == pyproject_version, f"{label} = {value}，期望 {pyproject_version}"
+
+
+def test_stale_uv_lock_is_reported_by_consistency_check(tmp_path):
+    """决定性反例：合成仓库里 lock 自版本落后一格，判据必须点名它，不许放过。"""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "lantai"\nversion = "9.9.9"\n', encoding="utf-8"
+    )
+    (tmp_path / "uv.lock").write_text(
+        'version = 1\n\n[[package]]\nname = "other"\nversion = "9.9.9"\n\n'
+        '[[package]]\nname = "lantai"\nversion = "8.8.8"\nsource = { editable = "." }\n',
+        encoding="utf-8",
+    )
+    refs = RC.collect_version_refs(tmp_path)
+    issues = RC.check_version_consistency("9.9.9", refs, None)
+    assert any("uv.lock" in i and "8.8.8" in i for i in issues), issues
+    # 反向保险：lock 与 pyproject 齐平时不得报这条
+    (tmp_path / "uv.lock").write_text(
+        'version = 1\n\n[[package]]\nname = "lantai"\nversion = "9.9.9"\n'
+        'source = { editable = "." }\n',
+        encoding="utf-8",
+    )
+    fixed = RC.check_version_consistency("9.9.9", RC.collect_version_refs(tmp_path), None)
+    assert not any("uv.lock" in i for i in fixed), fixed
+
+
 def test_changelog_snapshot_parses_latest_release():
     text = "## [Unreleased]\n\n## [0.3.7] - 2026-08-04\n"
     assert RC.changelog_snapshot(text) == (True, "0.3.7")
