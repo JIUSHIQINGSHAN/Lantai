@@ -387,3 +387,28 @@ def test_host_home_for_watch_prefers_declared_host_home(tmp_path, monkeypatch):
     assert RC.host_home_for_watch(tmp_path) == declared, (
         "显式声明的宿主库被 ambient LANTAI_HOME 覆盖 => 绊线看护沙箱自己"
     )
+
+
+def test_allow_dirty_records_skip_not_pass(clean_repo):
+    """回归锁：`--allow-dirty` 只能留下「跳过」痕迹，不得再冒充 Git 状态 PASS。
+
+    实测（票 05 续6 修复前）：`--skip-suite --allow-mcp-full-exposure --allow-dirty`
+    打印 `[PASS] Git 状态 — master / tag 不存在 / origin 存在（工作区未检查）`，
+    一个根本没被看过的检查项计入通过数；旧签名里也没有任何通道把跳过传给汇总
+    （`git_issues(..., skips=[])` 直接 TypeError）。
+    """
+    assert RC.git_issues(clean_repo, "0.3.8", allow_dirty=False) == []
+
+    (clean_repo / "uncommitted.txt").write_text("x", encoding="utf-8")
+    skips: list[str] = []
+    issues = RC.git_issues(clean_repo, "0.3.8", allow_dirty=True, skips=skips)
+    assert issues == [], f"--allow-dirty 仍把脏工作区报成硬失败：{issues}"
+    assert skips == ["Git 状态"], "脏工作区被跳过必须留下可计数的痕迹"
+
+    line, code = RC.summarize([(RC.PASS, "版本一致性", "")], n_skip=len(skips))
+    assert code != 0, f"跳过 Git 状态后仍能 GO：{line}"
+
+    (clean_repo / "uncommitted.txt").unlink()
+    clean_skips: list[str] = []
+    assert RC.git_issues(clean_repo, "0.3.8", allow_dirty=True, skips=clean_skips) == []
+    assert clean_skips == [], "工作区本就干净时不该记跳过（不给门禁新增误杀）"
