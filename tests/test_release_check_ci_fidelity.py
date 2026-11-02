@@ -218,3 +218,42 @@ def test_suite_gate_leaves_no_temp_residue(tmp_path):
     assert not any("没有真正跑起来" in i for i in issues), (
         f"报告换了位置就读不到（等于门禁失去绊线证据）：{issues}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 6. 门禁口径必须是 CI 的**超集**，且 `-o addopts=` 这个钉子必须保持惰性
+# ---------------------------------------------------------------------------
+
+
+def test_gate_suite_command_is_a_superset_of_ci_pytest_steps():
+    issues = RC.gate_suite_flag_issues(REPO)
+    assert issues == [], f"门禁少带了 CI 会执行的项（门禁绿推不出 CI 绿）：{issues}"
+
+
+def test_ci_flag_missing_from_gate_command_is_reported(tmp_path):
+    """阴性对照：CI 多一项而门禁没带上 -> 必须判红。这是续10 病灶的同一类，只是方向相反：
+    此前是门禁少跑一步，将来可能是门禁悄悄比 CI 宽松。"""
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "x.yml").write_text(
+        "jobs:\n  t:\n    steps:\n      - run: pytest tests/ -q -W error::DeprecationWarning\n",
+        encoding="utf-8",
+    )
+    issues = RC.gate_suite_flag_issues(tmp_path)
+    assert any("-W" in i for i in issues), f"CI 独有项被门禁漏掉却放行：{issues}"
+
+
+def test_declared_addopts_breaks_gate_ci_equivalence(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\naddopts = "-q"\n',
+        encoding="utf-8",
+    )
+    issues = RC.addopts_fidelity_issues(tmp_path)
+    assert issues and "addopts" in issues[0], f"声明了 addopts 却没报警：{issues}"
+
+
+def test_addopts_pin_is_inert_today():
+    """现状锁：本仓 pyproject 不声明 addopts，所以门禁里的 `-o addopts=` 是惰性的钉子
+    （不是掩盖手段）。哪天真加了 addopts，这条会红——那是要求 CI 与门禁当面对账的信号，
+    不许删断言、也不许靠它把 CI 的口径悄悄改掉。"""
+    assert RC.addopts_fidelity_issues(REPO) == []

@@ -874,6 +874,65 @@ def ci_step_coverage_issues(repo_root: Path) -> list[str]:
     return issues
 
 
+def ci_test_steps(repo_root: Path) -> list[str]:
+    """CI 里真正跑测试的那些步骤（`python -m pytest` 归一到 `pytest`）。"""
+    out: list[str] = []
+    for cmd in ci_run_commands(repo_root):
+        if cmd.startswith("python -m pytest "):
+            cmd = "pytest " + cmd[len("python -m pytest ") :]
+        if cmd.startswith("pytest "):
+            out.append(cmd)
+    return out
+
+
+def gate_suite_flag_issues(repo_root: Path) -> list[str]:
+    """门禁的 pytest 命令必须是 CI 测试步骤的**超集**。
+
+    续10 抓的是「门禁少跑一步 CI」；反方向同样致命：门禁自己少带一个旗标（`-W`、
+    `--cov`、`-p`……）就等于换了口径，「门禁绿」再也推不出「CI 绿」。门禁可以额外加
+    隔离用的旗标（绊线插件、`no:cacheprovider`、`-o addopts=`），但不许少带 CI 带的。
+    """
+    gate = suite_pytest_command()
+    issues: list[str] = []
+    for step in ci_test_steps(repo_root):
+        tokens = [t for t in step.split()[1:] if t != "pytest"]
+        missing = [t for t in tokens if t not in gate]
+        if missing:
+            issues.append(
+                f"门禁的 pytest 命令缺少 CI 步骤 `{step}` 的项 {missing}——"
+                "门禁口径必须包含 CI 口径，否则门禁绿推不出 CI 绿"
+            )
+    return issues
+
+
+def addopts_fidelity_issues(repo_root: Path) -> list[str]:
+    """门禁把 `addopts` 钉成空，CI 不钉：一旦 pyproject 真声明了 addopts，两边跑的就不是同一件事。
+
+    钉子本身是有意为之（防止有人往 addopts 塞参数而悄悄改门禁含义），但它必须**可核对**：
+    声明一旦非空，门禁必须判红逼人显式对齐，而不是让钉子悄悄生效、让门禁系统性比 CI 宽松。
+    """
+    if "addopts=" not in suite_pytest_command():
+        return []
+    path = Path(repo_root) / "pyproject.toml"
+    if not path.is_file():
+        return []
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - 运行环境 < 3.11
+        return ["无法读取 pyproject 的 addopts（缺 tomllib）——没取证不等于取到证，不放行"]
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        return [f"pyproject.toml 解析失败，无法核对 addopts：{exc}"]
+    addopts = data.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("addopts")
+    if addopts:
+        return [
+            f"pyproject 声明了 addopts={addopts!r}，而门禁用 `-o addopts=` 把它强制清空，"
+            "CI 却按声明执行——两边口径不等价，请把差异显式对齐（改 CI 命令或去掉 addopts）"
+        ]
+    return []
+
+
 def forgetting_gate_issues(returncode: int, output: str) -> list[str]:
     """纯判据：退出码 0 且必须回报结论标记，才算取到证。"""
     if returncode != 0:
@@ -938,14 +997,19 @@ def main(argv: list[str] | None = None) -> int:
     if not lint_failures:
         check("CI lint 门禁", True, "ruff check + ruff format --check 均通过")
 
-    fidelity_failures = ci_step_coverage_issues(REPO_ROOT)
+    fidelity_failures = (
+        ci_step_coverage_issues(REPO_ROOT)
+        + gate_suite_flag_issues(REPO_ROOT)
+        + addopts_fidelity_issues(REPO_ROOT)
+    )
     for issue in fidelity_failures:
         check("CI 步骤覆盖核对", False, issue)
     if not fidelity_failures:
         check(
             "CI 步骤覆盖核对",
             True,
-            f"{len(CI_STEP_OWNERS)} 条 CI 检查步骤都有发布门禁项认领，且无失配死账",
+            f"{len(CI_STEP_OWNERS)} 条 CI 检查步骤都有门禁项认领、无失配死账，"
+            "且门禁 pytest 口径包含 CI 口径、addopts 钉子仍惰性",
         )
 
     refs = collect_version_refs(REPO_ROOT)
