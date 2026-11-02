@@ -221,6 +221,20 @@ _GUARDED_BINDINGS = (
 _CANONICAL_BINDINGS = {}
 _BINDING_RESIDUE = []
 
+# 申报过的「污染哨兵」：test_isolation_shared_state.py::test_3a 故意造出两层撤销栈错位
+# （由 test_3b 验证受害者不受损），用来证明本护栏真的有效。除它以外的残留一律判红——
+# 护栏复位是兜底，不能因为横幅每次都出现就被当成噪音（票 05 续8）。
+DECLARED_POLLUTION_SENTINELS = frozenset(
+    {"tests/test_isolation_shared_state.py::test_3a_overlay_patch_on_param_env_target"}
+)
+
+
+def unexpected_binding_residue(residue):
+    """筛出未申报的模块绑定残留：返回空列表才意味着没人依赖兜底复位。"""
+    return [
+        (nodeid, notes) for nodeid, notes in residue if nodeid not in DECLARED_POLLUTION_SENTINELS
+    ]
+
 
 def _capture_canonical_bindings():
     """抓规范绑定快照：此刻还没有任何 fixture/测试改过这些属性。"""
@@ -256,13 +270,29 @@ def _repair_canonical_bindings(nodeid):
 def pytest_terminal_summary(terminalreporter, exitstatus=0, config=None):
     if not _BINDING_RESIDUE:
         return
-    terminalreporter.write_sep("=", "跨测试模块绑定残留（护栏已复位；请修污染源，勿依赖兜底）")
+    bad = unexpected_binding_residue(_BINDING_RESIDUE)
+    title = (
+        "跨测试模块绑定残留（存在未申报污染源：会话已判红）"
+        if bad
+        else "跨测试模块绑定残留（仅申报哨兵 test_3a，预期内）"
+    )
+    terminalreporter.write_sep("=", title)
     for nodeid, notes in _BINDING_RESIDUE[:20]:
-        terminalreporter.write_line(nodeid)
+        tag = "申报哨兵" if nodeid in DECLARED_POLLUTION_SENTINELS else "未申报"
+        terminalreporter.write_line(f"[{tag}] {nodeid}")
         for note in notes:
             terminalreporter.write_line("    " + note)
     if len(_BINDING_RESIDUE) > 20:
         terminalreporter.write_line(f"...另有 {len(_BINDING_RESIDUE) - 20} 例")
+
+
+def pytest_sessionfinish(session, exitstatus=0):
+    """未申报的绑定残留把会话判红：复位过不等于测试干净（票 05 续8）。
+
+    只在「本来全绿」时升级为 1，不覆盖已经红的会话，也不新增 skip/xfail。
+    """
+    if int(exitstatus) == 0 and unexpected_binding_residue(_BINDING_RESIDUE):
+        session.exitstatus = 1
 
 
 # ── 数据目录隔离（票 02）───────────────────────────────────────

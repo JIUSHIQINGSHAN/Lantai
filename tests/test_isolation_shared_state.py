@@ -194,3 +194,30 @@ def test_4b_hook_contract_survives_reimport():
     """冒烟：幂等修复后 hook 仍按契约工作（空查询且库干净 → 返回 {}）。"""
     mod = _load_hook_copy("probe3")
     assert mod.build_context("") == {}
+
+
+# ── 5. 绑定残留：兜底复位不得被当成容忍（票 05 续8）────────────────
+
+
+def test_binding_residue_policy_tolerates_only_the_declared_sentinel():
+    """意外残留必须阻断会话——「护栏已复位」不等于「测试没问题」。
+
+    `test_3a` 是**申报过的**污染哨兵（它故意造出两层撤销栈错位，由 `test_3b` 验证
+    受害者不受损），所以 conftest 允许它留残留。问题是：全量每次都会打那一行
+    「请修污染源，勿依赖兜底」，却没有任何机制区分「申报的哨兵」和「新出现的泄漏」——
+    下一次真有人忘了还原 `hybrid.embed`，横幅会和今天的噪音混在一起，绿灯照拿。
+    """
+    import conftest
+
+    sentinel = "tests/test_isolation_shared_state.py::test_3a_overlay_patch_on_param_env_target"
+    assert sentinel in conftest.DECLARED_POLLUTION_SENTINELS, (
+        "哨兵 nodeid 改名了就要同步改申报表，否则策略空转"
+    )
+    assert conftest.unexpected_binding_residue([(sentinel, ["脏"])]) == []
+
+    accidental = "tests/test_something_else.py::test_forgets_to_restore"
+    bad = conftest.unexpected_binding_residue([(accidental, ["脏"])])
+    assert len(bad) == 1 and bad[0][0] == accidental, f"意外残留被容忍了：{bad}"
+
+    mixed = conftest.unexpected_binding_residue([(sentinel, ["a"]), (accidental, ["b"])])
+    assert [nodeid for nodeid, _ in mixed] == [accidental]
