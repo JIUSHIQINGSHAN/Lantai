@@ -257,3 +257,93 @@ def test_addopts_pin_is_inert_today():
     （不是掩盖手段）。哪天真加了 addopts，这条会红——那是要求 CI 与门禁当面对账的信号，
     不许删断言、也不许靠它把 CI 的口径悄悄改掉。"""
     assert RC.addopts_fidelity_issues(REPO) == []
+
+
+# ---------------------------------------------------------------------------
+# 7. 构建维度：CI 的 run 命令必须**全部**对账，wheel 必须真构建真核对
+# ---------------------------------------------------------------------------
+
+
+def _make_wheel(dirpath, *, version, packages=("lantai/__init__.py",), with_entries=True):
+    """造一个最小真 wheel（zip），不用 mock：dist-info/METADATA + 载荷文件。"""
+    import zipfile
+
+    dirpath.mkdir(parents=True, exist_ok=True)
+    path = dirpath / f"lantai-{version}-py3-none-any.whl"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(f"lantai-{version}.dist-info/METADATA", f"Name: lantai\nVersion: {version}\n")
+        if with_entries:
+            zf.writestr(
+                f"lantai-{version}.dist-info/entry_points.txt",
+                "[console_scripts]\nlantai-mcp = lantai.cli.mcp:main\nlantai-server = lantai.api.app:main\n",
+            )
+        for pkg in packages:
+            zf.writestr(pkg, "")
+    return path
+
+
+def test_unaccounted_ci_step_is_reported(tmp_path):
+    """旧判据只把命中 CI_CHECK_PREFIXES 的命令当检查项（fail-open）：`python -m mypy`、
+    `python -m build --wheel` 这类既不在前缀表也不在认领表，会从缝里滑走——门禁绿而 CI 红。
+    现在默认全部要对账，这条负向对照锁住那个缝。"""
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "x.yml").write_text(
+        "jobs:\n  t:\n    steps:\n      - run: python -m mypy lantai/\n",
+        encoding="utf-8",
+    )
+    issues = RC.ci_step_coverage_issues(tmp_path)
+    assert any("mypy" in i for i in issues), f"新增 CI 命令不对账也能放行：{issues}"
+
+
+def test_no_real_check_can_hide_in_the_exemption_list():
+    """豁免清单只能装环境准备类命令。把 pytest/ruff/scripts 塞进豁免清单 = 把检查洗成豁免。"""
+    for cmd in RC.CI_STEP_EXEMPTIONS:
+        assert not cmd.startswith(("pytest ", "python -m pytest ", "ruff ", "python scripts/")), (
+            f"检查类命令被塞进豁免清单：{cmd}"
+        )
+        assert RC.CI_STEP_EXEMPTIONS[cmd].strip(), f"豁免没写理由：{cmd}"
+
+
+def test_build_step_is_owned_by_a_gate_item():
+    assert "python -m build --wheel" in RC.CI_STEP_OWNERS
+
+
+def test_wheel_metadata_issues_reject_wrong_version_empty_package_and_no_entries(tmp_path):
+    good = _make_wheel(tmp_path / "good", version="9.9.9")
+    assert RC.wheel_metadata_issues(good, expected_version="9.9.9") == []
+
+    wrong = _make_wheel(tmp_path / "wrong", version="0.0.1")
+    assert any("Version" in i for i in RC.wheel_metadata_issues(wrong, expected_version="9.9.9"))
+
+    empty = _make_wheel(tmp_path / "empty", version="9.9.9", packages=("other/__init__.py",))
+    assert any("lantai" in i for i in RC.wheel_metadata_issues(empty, expected_version="9.9.9"))
+
+    noentry = _make_wheel(tmp_path / "noentry", version="9.9.9", with_entries=False)
+    assert any(
+        "entry_point" in i for i in RC.wheel_metadata_issues(noentry, expected_version="9.9.9")
+    )
+
+
+def test_build_gate_never_passes_without_an_artifact(tmp_path):
+    """构建前端跑不出 wheel 时必须判红：没有产物就没有证据，静默跳过等于没检查。"""
+    issues, wheel = RC.run_build_gate(tmp_path, expected_version="9.9.9", timeout=60)
+    assert wheel is None, f"空目录不该构建出东西：{wheel}"
+    assert issues, "构建未取证却被读成通过"
+    assert any("构建" in i for i in issues), issues
+
+
+def test_run_build_gate_smoke_real_build():
+    """不 mock 的冒烟：真调用一次构建。有产物 -> 版本与载荷必须对齐；
+    无产物（本机没有离线构建前端）-> 必须判红。两个分支都不许静默绿。"""
+    import tomllib
+
+    version = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "version"
+    ]
+    issues, wheel = RC.run_build_gate(REPO, expected_version=version, timeout=600)
+    if wheel is None:
+        assert issues, "构建前端不可用必须判红"
+    else:
+        assert issues == [], f"真实 wheel 未通过对账：{issues}"
+        assert Path(wheel).name.endswith(".whl")

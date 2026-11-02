@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -772,7 +773,15 @@ FORGETTING_SCRIPT = "scripts/run_forgetting_quality.py"
 FORGETTING_PASS_MARKER = "门禁结果: PASS"
 _RUN_RE = re.compile(r"^(?:-\s+)?run:\s*(.*)$")
 _BLOCK_CHARS = {"|", ">", "|-", ">-", "|+", ">+"}
-CI_CHECK_PREFIXES = ("pytest ", "python -m pytest ", "python scripts/", "ruff ")
+# 非判据命令的**书面**豁免清单：CI 里每条 run 命令都要么被认领、要么在这里写明理由。
+# 检查类命令（pytest / ruff / python scripts/...）不许出现在这里，有测试盯着。
+CI_STEP_EXEMPTIONS: dict[str, str] = {
+    "pip install -e .[dev]": "环境准备：安装本包与 dev extra，不是判据；"
+    "装不上会在「构建产物」与「全量测试」两项里暴露",
+    "pip install build": "取构建前端；发布门禁自己用 uv / python -m build 直接出产物取证",
+    'echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT': "Actions 输出变量赋值，不是检查",
+    'echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_OUTPUT': "Actions 输出变量赋值，不是检查",
+}
 
 # CI 检查步骤 -> 认领它的门禁项。键必须与 CI 里解析出的命令逐字一致。
 CI_STEP_OWNERS: dict[str, str] = {
@@ -781,6 +790,7 @@ CI_STEP_OWNERS: dict[str, str] = {
     "pytest tests/ -q": "全量测试 + 宿主目录绊线",
     "pytest tests/ -q --cov=lantai --cov-report=term-missing": "全量测试 + 宿主目录绊线",
     "python scripts/run_forgetting_quality.py --check": "遗忘质量离线门禁",
+    "python -m build --wheel": "构建产物（wheel）",
 }
 
 
@@ -856,21 +866,28 @@ def ci_run_commands(repo_root: Path) -> list[str]:
 
 
 def ci_step_coverage_issues(repo_root: Path) -> list[str]:
-    """双向核对：CI 有步骤没认领 -> 红；认领的步骤已不在 CI 里 -> 也红。"""
-    checks = [c for c in ci_run_commands(repo_root) if c.startswith(CI_CHECK_PREFIXES)]
+    """fail-closed 对账：CI 里每一条 run 命令都必须「被认领」或「被书面豁免」。
+
+    续10 的判据只把命中 `CI_CHECK_PREFIXES` 的命令当检查项——那张前缀表是 fail-open 的：
+    `python -m build --wheel`、`python -m mypy`、任何换个写法的检查步骤都不在表里，于是
+    既不需要认领、也不会有人发现，门禁绿而 CI 红。v0.66 的构建维度正是这样滑出去的。
+    现在反过来：默认全部要对账；认领清单里的命令若已从 CI 消失，同样判红（死账）。
+    """
+    cmds = list(dict.fromkeys(ci_run_commands(repo_root)))
     issues = [
-        f"CI 检查步骤 `{cmd}` 没有任何发布门禁项认领——门禁绿推不出 CI 绿（票 05 病灶）"
-        for cmd in checks
-        if cmd not in CI_STEP_OWNERS
+        f"CI 步骤 `{cmd}` 既没有被发布门禁项认领，也没有写进豁免清单——"
+        "门禁绿推不出 CI 绿（票 05 续12：前缀白名单是 fail-open 的）"
+        for cmd in cmds
+        if cmd not in CI_STEP_OWNERS and cmd not in CI_STEP_EXEMPTIONS
     ]
-    seen = set(checks)
+    seen = set(cmds)
     issues += [
         f"发布门禁声称覆盖 `{owned}`，但 CI 里已无此命令——认领清单成了死账，删掉它或恢复步骤"
         for owned in CI_STEP_OWNERS
         if owned not in seen
     ]
-    if not checks:
-        issues.append("没从 .github/workflows 解析到任何检查步骤：核对形同虚设，不放行")
+    if not cmds:
+        issues.append("没从 .github/workflows 解析到任何 run 命令：核对形同虚设，不放行")
     return issues
 
 
@@ -969,6 +986,112 @@ def run_forgetting_gate(
     return forgetting_gate_issues(proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
 
 
+def wheel_metadata_issues(wheel: str | Path, *, expected_version: str) -> list[str]:
+    """只读核对构建产物：版本必须等于发布目标，包里必须真有代码和入口。
+
+    「版本一致性」只看仓库里的文本；产物里带的什么版本、打包了没有，此前没人管。
+    """
+    path = Path(wheel)
+    if not path.is_file():
+        return [f"构建产物不存在：{path}"]
+    try:
+        zf = zipfile.ZipFile(path)
+    except (OSError, zipfile.BadZipFile) as exc:
+        return [f"构建产物不是合法 wheel/zip（{path.name}）：{exc}"]
+    with zf:
+        names = zf.namelist()
+        metas = [n for n in names if n.endswith(".dist-info/METADATA")]
+        if len(metas) != 1:
+            return [f"wheel 里 .dist-info/METADATA 数量异常：{len(metas)}（期望 1）"]
+        found = ""
+        for line in zf.read(metas[0]).decode("utf-8", "replace").splitlines():
+            if line.startswith("Version:"):
+                found = line.split(":", 1)[1].strip()
+                break
+        issues: list[str] = []
+        if found != expected_version:
+            issues.append(
+                f"wheel 的 METADATA Version={found!r} 与发布目标 {expected_version!r} 不一致"
+                "——发出去的产物和声称的版本不是同一个"
+            )
+        if not [n for n in names if n.startswith("lantai/")]:
+            issues.append("wheel 里没有任何 lantai/ 模块：构建出来的不是这个包")
+        eps = [n for n in names if n.endswith(".dist-info/entry_points.txt")]
+        if not eps:
+            issues.append("wheel 缺少 entry_points.txt：lantai-mcp / lantai-server 不会注册")
+        else:
+            text = zf.read(eps[0]).decode("utf-8", "replace")
+            for script in ("lantai-mcp", "lantai-server"):
+                if script not in text:
+                    issues.append(f"wheel 的 console_scripts 缺少 {script}")
+    return issues
+
+
+def build_wheel_commands(
+    repo_root: Path, outdir: str, *, python: str | None = None
+) -> list[list[str]]:
+    """离线可用的构建前端候选。"""
+    py = python or sys.executable
+    cmds: list[list[str]] = []
+    uv = shutil.which("uv")
+    if uv:
+        cmds.append([uv, "build", "--offline", "--wheel", "--out-dir", str(outdir)])
+    cmds.append([py, "-m", "build", "--wheel", "--no-isolation", "--outdir", str(outdir)])
+    return cmds
+
+
+def run_build_gate(
+    repo_root: Path, *, expected_version: str, python: str | None = None, timeout: int = 600
+) -> tuple[list[str], str | None]:
+    """真构建一次 wheel 并核对产物；跑不出产物就判红，不给静默跳过留口子。
+
+    返回 (issues, wheel_path)。CI 的发布链路（ci.yml）是 `pip install build` +
+    `python -m build --wheel` 再进 Docker；门禁不在这里复现 Docker（要 registry 凭据与
+    网络，属人工闸门），但至少必须证明**进镜像的那个 wheel 能构建、且版本对得上**。
+    """
+    with tempfile.TemporaryDirectory(prefix="lantai_gate_build_") as outdir:
+        problems: list[str] = []
+        for cmd in build_wheel_commands(repo_root, outdir, python=python):
+            try:
+                proc = subprocess.run(  # noqa: S603
+                    cmd,
+                    cwd=str(repo_root),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                problems.append(f"{cmd[0]}: {exc}")
+                continue
+            wheels = sorted(Path(outdir).glob("*.whl"))
+            if proc.returncode == 0 and wheels:
+                return wheel_metadata_issues(wheels[0], expected_version=expected_version), str(
+                    wheels[0]
+                )
+            tail = " | ".join(
+                [
+                    ln
+                    for ln in ((proc.stdout or "") + (proc.stderr or "")).splitlines()
+                    if ln.strip()
+                ][-2:]
+            )
+            problems.append(f"{cmd[0]} rc={proc.returncode}: {tail[:240]}")
+        wheels = sorted(Path(outdir).glob("*.whl"))
+        if wheels:
+            return wheel_metadata_issues(wheels[0], expected_version=expected_version), str(
+                wheels[0]
+            )
+    return (
+        [
+            f"构建维度未取证：没有可用的离线构建前端，也没产出 wheel——没取证不等于取到证，不放行。"
+            f"尝试过：{'; '.join(problems) or '（无候选命令）'}"
+        ],
+        None,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="发布前检查（只读）")
     parser.add_argument("version", nargs="?", help="目标版本，默认读 pyproject.toml")
@@ -1033,6 +1156,17 @@ def main(argv: list[str] | None = None) -> int:
             check("版本一致性", False, issue)
     else:
         check("版本一致性", True, f"{len(refs)} 处版本引用 + CHANGELOG 最新段 = v{version}")
+
+    build_failures, build_wheel = run_build_gate(REPO_ROOT, expected_version=version)
+    for issue in build_failures:
+        check("构建产物（wheel）", False, issue)
+    if not build_failures:
+        check(
+            "构建产物（wheel）",
+            True,
+            f"{Path(build_wheel).name} 离线构建成功，METADATA 版本 = v{version}，"
+            "含 lantai/ 载荷与 lantai-mcp / lantai-server 入口",
+        )
 
     skips: list[str] = []
     git_failures = git_issues(REPO_ROOT, version, args.allow_dirty, online=args.online, skips=skips)
