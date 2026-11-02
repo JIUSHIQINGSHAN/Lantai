@@ -3724,7 +3724,7 @@ def handle(msg: dict) -> dict | None:
             "result": {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "lantai", "version": "0.65.0"},
+                "serverInfo": {"name": "lantai", "version": "0.66.0"},
             },
         }
     if method == "notifications/initialized":

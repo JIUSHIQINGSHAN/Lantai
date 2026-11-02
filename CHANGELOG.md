@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.66.0] - 2026-11-02 - 探赜（Tanze · 续审 P0 收口与发布门禁去橡皮图章）
+
+> 版本代号「探赜」：探赜索隐、钩深致远，语出《周易·系辞上》——对应本版主题「v0.38–v0.60 续审 P0 清单收口 + 发布门禁可信度」：已删隐私不再重新注入（X-01）、豁免/重要记忆不再被 60 天零反馈误归档（X-02）、私密记忆数据停止入库（X-05）、测试隔离与全局态污染护栏（票 01）、探颐中文否定语义误归档（票 02）、插件短查询画像注入（票 04）、门禁新增四类结构性阻断（票 05）。票据 `.scratch/v0.66-next-window-2026-11/`（票 01–04 resolved；票 05 结论 **blocked**：默认 MCP 暴露未收窄，见「Known limitations」）。
+
+### Security
+
+- **已删隐私不再重新注入 Hermes（X-01，票 05 P0-A）**：`memory` 是软删除而 `fact_atomic` 有意不级联，「删掉的隐私还能不能被读到」完全取决于每条读通道是否 JOIN 回来源判存活。补齐三处漏网——`lantai/retrieval/wanbi_retriever.py`（公开 `fact_source_alive_clause()`，完璧/一跳/二度共用）、`lantai/retrieval/graph_retriever.py`（贯珠两处 outerjoin）、`lantai/services/probing_service.py`（探颐事实查询 outerjoin + `_visible()` 状态闸）；注入侧 `scripts/shell_hook.py::_live_atomic_facts()` 在拼进 prompt 前 fail-closed 复核来源存活（新增 `tests/test_x01_privacy_reinjection.py` 13 项）。既有契约未动：`as_of` 视图、领域/agent 隔离、`verbatim` 默认不召回、软删不级联、硬删级联。
+- **私密记忆数据停止进入公开仓库（X-05，票 05 P0-C）**：`docs/memory-offload/`、`docs/memory-wiki/` 自提交 `bbbc4496` 起撤出 git 跟踪并写入 `.gitignore`（`git ls-files` 为 0）。**未闭合**：历史提交里仍存在已入库内容，历史清除属维护者决策（R-5）。
+
+### Fixed
+
+- **重要/豁免记忆不再被误归档（X-02，票 03 P0-B）**：归档判据 `tier==working AND helpful_count==0 AND age>60d` 此前不看 `importance`。现由 `lantai/memory/forgetting.py::_decay_exempt` 读 `settings.FORGET_IMPORTANCE_EXEMPTION_FLOOR=0.8`（出厂行为逐字不变、阈值可配；衰减路 / TTL 路 / `consolidation_service.prune_decayed_synapses` 共用同一判据，三处一起生效）。使用保活走注入回执路径：`lantai/observability/retrieval_log.py` 在宿主 backfill 成功时回写 `use_count += 1` 与 `last_used_at`，带属主校验、失败非致命——仅经插件/检索注入使用的记忆不再恒被当成「零反馈」（新增 `tests/test_forgetting_exempt_archive.py`）。
+- **测试隔离与生产全局态污染（票 01）**：`tests/conftest.py` 新增规范绑定登记表与 `_repair_canonical_bindings` 复位护栏，会话收尾打印「跨测试模块绑定残留」点名污染源；`tests/test_isolation_shared_state.py` 保留一对演示用例（3a 故意制造污染、3b 证明护栏能复位并指名来源）。基线 `ac30af91`（v0.60.0）全量 46–50 红中有 16 条纯属运行顺序泄漏受害者，与产品代码无关。
+- **探颐中文答复误归档（票 02）**：`lantai/services/probing_service.py` 的否定/短语边界判定不再依赖裸 substring 包含（回归锁 `tests/test_probe_reply_cjk_semantics.py`）。
+- **插件短查询丢常驻画像（票 04，D-02）**：`hermes-plugin/lantai-hook/__init__.py` 的 15 字硬编码预过滤不再把短问句/短追问挡在画像注入之外（回归锁 `tests/test_plugin_short_query_persona.py`）。
+- **用例结果不再随宿主环境翻转（票 05）**：`tests/test_host_matrix.py`、`tests/test_hook_stdout_protocol.py`、`tests/test_install_host_hooks.py` 的子进程环境自带 `API_KEY`（hook 的密钥闸门要求非空且禁止 DEV MODE 回退——生产契约未动，只是用例如实声明前置）。实测无密钥环境由 8 failed 转 27 passed，全量在无 ambient 密钥下 2744 passed。`tests/test_longmemeval_core.py` 的数据集改为仓库根锚定，消除「这条评测线跑不跑取决于调用 cwd」（锁：`tests/test_eval_dataset_path_determinism.py`）。
+
+### Added
+
+- **发布门禁去橡皮图章（票 05）**：`scripts/release_check.py` 新增四类结构性阻断（判据一律结构性，不含可调阈值）——全量测试 + 宿主数据目录绊线（`suite_gate_issues`：红主干不得上传，超时不是绿灯）、默认 MCP 暴露 == 全量注册表即阻断（`mcp_exposure_issue`）、临时 `LANTAI_HOME` 内真跑 `init_db()` 并比对 metadata 与实表的 schema/NULL 约束漂移探针、绊线看护对象校验（`host_home_for_watch` 在父进程侧解析宿主库 + `tripwire_armed_path` 比对武装路径：武装在沙箱而非宿主库时，`[HIT]=0` 属于「没检测」，按红处理）。配套 `tests/support/real_home_tripwire.py`（按连接路径判定，不按 mtime——开发机常驻服务自己也在写库）与 `tests/test_release_check.py` 反例集（红项目必须拦、绿项目必须放、真实库被连必须拦、绊线没装载必须拦）。背景：v0.60.0 与 v0.65.0 两个 tag 都由 237/238 行、**一行测试都不跑**的旧门禁放行，而 `cba93612`（= tag v0.65.0）自身实测 22 failed。
+
+### Known limitations
+
+- **默认 MCP `tools/list` 仍返回全量 96/96**（`lantai/cli/mcp.py::_get_active_tools()`，未设 `LANTAI_MCP_PROFILE` 时）：本版按硬约束不改默认暴露策略，门禁已能阻断 ⇒ 发布结论仍为 blocked，需维护者定策（改默认档，或部署侧设 profile 并写进发布流程）。
+- 仓库无类型检查步骤（无 mypy 配置、未安装）；精确工具数由单一魔数哨兵 `tests/test_mokan_service_and_mcp.py::test_seam3_mcp_96_tools_parity` 钉住。
+- 老库（`user_version<N`）迁移后的列漂移不在 schema 探针覆盖内（D-13 另票）；`conflicts._temporal_recency` 的 30 天墙上时钟钳制本轮只加现状锁（R-3）。
+
 ## [0.65.0] - 2026-11-01 - 钩玄（Gouxuan · 存量积弊清仓与防注入强化）
 
 > 版本代号「钩玄」：钩沉存量积弊，探赜索隐补遗，语出韩愈《进学解》「拔萃便适，钩玄提要」——对应本版主题「两份深度评审报告存量清仓」：常驻画像樊篱防注入与截断兜底（D-05）、网络调用预算传导与超时不丢画像（D-04）、RRF 与 Reranker 检索分路阈值（D-03）、SiliconFlow 跨服务商密钥泄露阻断（X-09）、README 动态徽章与私有路径彻底剥离（X-10, C-03）。票据 `.scratch/v0.65-next-window-2026-11/`（票 01–06 全部收口）。
