@@ -626,6 +626,131 @@ def schema_drift_issues(repo_root: Path) -> list[str]:
     return issues
 
 
+# ---------------------------------------------------------------------------
+# 老库升级回放（票 06：补齐门禁的 legacy 盲区）
+#
+# 既有「迁移与列约束漂移」项只比对 create_all 建出来的全新库，结构上看不见
+# 「老库缺列」——memorycandidate.shared_scope 正是这么躲过门禁的（票 05 续9）。
+# 该项把基线换成「上一版真实 schema + 真实迁移链升级」，判据仍走唯一真源
+# scripts/schema_parity.py，与全新库共用同一套比对口径，避免两套规则分叉。
+# ---------------------------------------------------------------------------
+
+LEGACY_SNAPSHOT_DIR = Path("tests") / "fixtures" / "legacy-schema"
+_LEGACY_PROBE_SCRIPT = "scripts/legacy_parity_probe.py"
+_LEGACY_MARKER = "LEGACYPAYLOAD"
+
+
+def load_schema_parity():
+    """载入 schema 判据唯一真源（按路径加载，不塞 sys.path、不写模块全局）。"""
+    import importlib.util
+
+    path = REPO_ROOT / "scripts" / "schema_parity.py"
+    spec = importlib.util.spec_from_file_location("lantai_gate_schema_parity", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法载入 schema 判据模块：{path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def legacy_parity_issues_from_payload(payload: dict) -> list[str]:
+    """把老库回放回报翻成阻断项。纯函数：单测可直接喂变异样本，不必起子进程。"""
+    parity = load_schema_parity()
+    issues: list[str] = []
+    for item in payload.get("probe_errors") or []:
+        issues.append(f"老库回放探针自身异常（没取证不等于取到证）：{item}")
+    anchors = payload.get("anchors") or []
+    if not anchors:
+        issues.append("没有任何老库 schema 快照锚点：该项形同虚设，不放行（票 06 门禁盲区）")
+        return issues
+
+    target = payload.get("target_schema_version")
+    measured_nulls: set[str] = set()
+    for anchor in anchors:
+        tag = anchor.get("source_tag", "?")
+        for item in anchor.get("migration_failures") or []:
+            issues.append(f"[{tag}] 迁移失败（红着也不能发布）：{item}")
+        for item in anchor.get("missing_tables") or []:
+            issues.append(f"[{tag}] 老库升级后仍缺表：{item}")
+        for item in anchor.get("absent_columns") or []:
+            issues.append(f"[{tag}] 跑完整条迁移链仍缺列，老库上写入会直接崩：{item}")
+        for item in anchor.get("pk_drift") or []:
+            issues.append(f"[{tag}] 主键约束漂移：{item}")
+        for item in anchor.get("index_drift") or []:
+            issues.append(f"[{tag}] 模型声明 index=True 但老库没有索引：{item}")
+        for item in parity.ungated_null_drift(anchor):
+            issues.append(f"[{tag}] 不在书面豁免清单内的 NULL 约束漂移：{item}")
+        end_version = anchor.get("end_version")
+        if isinstance(target, int) and end_version != target:
+            issues.append(
+                f"[{tag}] 迁移链没跑到目标版本：end_version={end_version} target={target}"
+            )
+        measured_nulls.update(anchor.get("null_drift_keys") or [])
+
+    for key in parity.null_drift_waivers_without_evidence(measured_nulls):
+        issues.append(
+            f"NULL 豁免清单里的 {key} 已无法由任何老库锚点复现——清单成了死账，"
+            f"要么漂移真被修好了（删掉该条），要么锚点覆盖退化了"
+        )
+    if not payload.get("home_isolated"):
+        issues.append("老库回放探针没有跑在临时 LANTAI_HOME 里——它自己就可能污染生产，不放行")
+    return issues
+
+
+def legacy_parity_probe(repo_root: Path, *, python: str | None = None, timeout: int = 300) -> dict:
+    """临时 LANTAI_HOME 里子进程跑老库回放，回报各锚点的结构性漂移。"""
+    py = python or sys.executable
+    probe: dict = {
+        "anchors": [],
+        "probe_errors": [],
+        "home_isolated": False,
+        "target_schema_version": None,
+    }
+    snap_dir = repo_root / LEGACY_SNAPSHOT_DIR
+    host_home = host_lantai_home(repo_root) or "__none__"
+    with tempfile.TemporaryDirectory(prefix="lantai_gate_legacy_") as probe_home:
+        env = isolated_probe_env(probe_home)
+        env["LANTAI_GATE_HOST_HOME"] = host_home
+        script = repo_root / _LEGACY_PROBE_SCRIPT
+        try:
+            proc = subprocess.run(  # noqa: S603
+                [py, "-u", str(script), str(snap_dir)],
+                cwd=str(repo_root),
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            probe["probe_errors"] = [f"探针无法执行：{exc}"]
+            return probe
+    line = next(
+        (ln for ln in (proc.stdout or "").splitlines() if ln.startswith(_LEGACY_MARKER)), ""
+    )
+    if not line:
+        probe["probe_errors"] = [
+            f"探针没有回报（exit={proc.returncode}）：" + (proc.stderr or "")[-400:]
+        ]
+        return probe
+    try:
+        payload = json.loads(line[len(_LEGACY_MARKER) :])
+    except ValueError as exc:
+        probe["probe_errors"] = [f"回报不可解析：{exc}"]
+        return probe
+    payload["home_isolated"] = os.path.normcase(
+        str(payload.get("home_used", ""))
+    ) != os.path.normcase(host_home) and bool(payload.get("home_used"))
+    for key, value in probe.items():
+        payload.setdefault(key, value)
+    return payload
+
+
+def legacy_parity_issues(repo_root: Path) -> list[str]:
+    return legacy_parity_issues_from_payload(legacy_parity_probe(repo_root))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="发布前检查（只读）")
     parser.add_argument("version", nargs="?", help="目标版本，默认读 pyproject.toml")
@@ -702,6 +827,19 @@ def main(argv: list[str] | None = None) -> int:
             "迁移与列约束漂移",
             True,
             "临时 LANTAI_HOME 内 init_db() 全链通过，metadata 与实表列/NULL 约束一致",
+        )
+
+    legacy_payload = legacy_parity_probe(REPO_ROOT)
+    legacy_failures = legacy_parity_issues_from_payload(legacy_payload)
+    for issue in legacy_failures:
+        check("老库升级回放与列对齐", False, issue)
+    if not legacy_failures:
+        tags = " / ".join(str(a.get("source_tag")) for a in legacy_payload["anchors"])
+        check(
+            "老库升级回放与列对齐",
+            True,
+            f"{len(legacy_payload['anchors'])} 个老库锚点（{tags}）"
+            "经真实迁移链升到目标版本后与模型对齐（缺列=0、索引齐、NULL 漂移仅在书面清单内）",
         )
 
     if args.skip_suite:

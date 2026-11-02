@@ -1,0 +1,4694 @@
+{
+ "contains_row_data": false,
+ "schema_version": 1,
+ "source_tag": "v0.25.0",
+ "source_target_version": 30,
+ "source_user_version": 0,
+ "tables": {
+  "actionoutcome": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "task_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "action_type",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "action_summary",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "success",
+     "nullable": false,
+     "pk": false,
+     "type": "BOOLEAN"
+    },
+    {
+     "default": null,
+     "name": "score",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "side_effects",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "feedback",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": []
+  },
+  "api_keys": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "key_hash",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "allowed_lanes",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "rate_limit_rpm",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "is_active",
+     "nullable": false,
+     "pk": false,
+     "type": "BOOLEAN"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_api_keys_user_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "key_hash"
+     ],
+     "name": "ix_api_keys_key_hash",
+     "unique": true
+    }
+   ]
+  },
+  "cognitivepattern": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "pattern_type",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "description",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "source_ids",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "occurrence_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "independent_source_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "confidence",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "novelty",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "status",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "dedup_key",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "updated_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "dedup_key"
+     ],
+     "name": "ix_cognitivepattern_dedup_key",
+     "unique": false
+    }
+   ]
+  },
+  "conflictevent": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "memory_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "incoming_ref",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "rule_name",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "kind",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "status",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "resolved_by",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "resolved_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "memory_id"
+     ],
+     "name": "ix_conflictevent_memory_id",
+     "unique": false
+    }
+   ]
+  },
+  "consolidation_run": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "ran_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "mode",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "clusters",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "purified_ok",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "proposals_created",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "skipped_dupes",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "skipped_rejected_cooldown",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "skipped_lowq",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "pruned",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "error",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "ran_at"
+     ],
+     "name": "ix_consolidation_run_ran_at",
+     "unique": false
+    }
+   ]
+  },
+  "corememoryblock": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "block",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "namespace",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "content",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "version",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "updated_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "namespace"
+     ],
+     "name": "ix_corememoryblock_namespace",
+     "unique": false
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_corememoryblock_user_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_corememoryblock_agent_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "block"
+     ],
+     "name": "ix_corememoryblock_block",
+     "unique": false
+    },
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_corememoryblock_tenant_id",
+     "unique": false
+    }
+   ]
+  },
+  "documentchunk": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "session_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "document_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "chunk_index",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "text",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "token_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "embedding",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_documentchunk_user_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "document_id"
+     ],
+     "name": "ix_documentchunk_document_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "session_id"
+     ],
+     "name": "ix_documentchunk_session_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_documentchunk_tenant_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_documentchunk_agent_id",
+     "unique": false
+    }
+   ]
+  },
+  "episode_record": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "session_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "outcome",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "step_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_episode_record_user_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "session_id"
+     ],
+     "name": "ix_episode_record_session_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "created_at"
+     ],
+     "name": "ix_episode_record_created_at",
+     "unique": false
+    }
+   ]
+  },
+  "episode_step": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "episode_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "position",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "memory_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "rank",
+     "nullable": true,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "credit",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "memory_id"
+     ],
+     "name": "ix_episode_step_memory_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "episode_id"
+     ],
+     "name": "ix_episode_step_episode_id",
+     "unique": false
+    }
+   ]
+  },
+  "evidence": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "session_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "evidence_type",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "source_memory_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "content",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "reliability",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "independence",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "observed_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "provenance",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "status",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "session_id"
+     ],
+     "name": "ix_evidence_session_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_evidence_tenant_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_evidence_agent_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "source_memory_id"
+     ],
+     "name": "ix_evidence_source_memory_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_evidence_user_id",
+     "unique": false
+    }
+   ]
+  },
+  "failurerecord": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "task",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "action",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "expected",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "actual",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "cause",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "lesson",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "severity",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "recurrence_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "source_ids",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": []
+  },
+  "idempotency_keys": {
+   "columns": [
+    {
+     "default": null,
+     "name": "key",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "fingerprint",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "response_json",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "state",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "created_at"
+     ],
+     "name": "ix_idempotency_keys_created_at",
+     "unique": false
+    }
+   ]
+  },
+  "ingestjob": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "source_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "status",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "stats",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "started_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "finished_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "error",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    }
+   ],
+   "indexes": []
+  },
+  "llm_call_event": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "channel",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "outcome",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "duration_ms",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "created_at"
+     ],
+     "name": "ix_llm_call_event_created_at",
+     "unique": false
+    },
+    {
+     "cols": [
+      "channel"
+     ],
+     "name": "ix_llm_call_event_channel",
+     "unique": false
+    },
+    {
+     "cols": [
+      "outcome"
+     ],
+     "name": "ix_llm_call_event_outcome",
+     "unique": false
+    }
+   ]
+  },
+  "memory_audit_events": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "memory_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "action",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "actor",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "reason",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "content_hash",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "content_len",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "version_at",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "memory_id"
+     ],
+     "name": "ix_memory_audit_events_memory_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "action"
+     ],
+     "name": "ix_memory_audit_events_action",
+     "unique": false
+    }
+   ]
+  },
+  "memorycandidate": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "session_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "document_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "topic",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "summary",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "claims",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "methods",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "constraints",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "actions",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "contradictions",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "extractor_confidence",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "provenance",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "role",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR(11)"
+    },
+    {
+     "default": null,
+     "name": "lane",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "domain",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "status",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "review_due_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "deferred_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "previous_review_due_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "defer_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "defer_reason",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_memorycandidate_tenant_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "session_id"
+     ],
+     "name": "ix_memorycandidate_session_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "document_id"
+     ],
+     "name": "ix_memorycandidate_document_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_memorycandidate_agent_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_memorycandidate_user_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "domain"
+     ],
+     "name": "ix_memorycandidate_domain",
+     "unique": false
+    },
+    {
+     "cols": [
+      "role"
+     ],
+     "name": "ix_memorycandidate_role",
+     "unique": false
+    }
+   ]
+  },
+  "memorycheckpoint": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "memory_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "version",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "before",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "after",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "proposal_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "trigger",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "memory_id"
+     ],
+     "name": "ix_memorycheckpoint_memory_id",
+     "unique": false
+    }
+   ]
+  },
+  "memoryedge": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "session_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "source_memory_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "target_memory_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "relation",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "confidence",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "reason",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_memoryedge_agent_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_memoryedge_user_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "session_id"
+     ],
+     "name": "ix_memoryedge_session_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "target_memory_id"
+     ],
+     "name": "ix_memoryedge_target_memory_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "source_memory_id"
+     ],
+     "name": "ix_memoryedge_source_memory_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_memoryedge_tenant_id",
+     "unique": false
+    }
+   ]
+  },
+  "memoryitem": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "session_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "memory_type",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "namespace",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "key",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "content",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "structure",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "provenance",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "tags",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "scene_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tree_path",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "confidence",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "reason",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "importance",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "tier",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "role",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR(11)"
+    },
+    {
+     "default": null,
+     "name": "lane",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "domain",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "source_ids",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "version",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "status",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "last_used_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "use_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "helpful_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "decay_score",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "decay_class",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "event_time",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "event_time_precision",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "valid_from",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "valid_to",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "updated_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "promotion_trace",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "lifecycle_status",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "superseded_by",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "weakened_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "superseded_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "retired_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_memoryitem_agent_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "memory_type"
+     ],
+     "name": "ix_memoryitem_memory_type",
+     "unique": false
+    },
+    {
+     "cols": [
+      "lifecycle_status"
+     ],
+     "name": "ix_memoryitem_lifecycle_status",
+     "unique": false
+    },
+    {
+     "cols": [
+      "lane"
+     ],
+     "name": "ix_memoryitem_lane",
+     "unique": false
+    },
+    {
+     "cols": [
+      "role"
+     ],
+     "name": "ix_memoryitem_role",
+     "unique": false
+    },
+    {
+     "cols": [
+      "namespace"
+     ],
+     "name": "ix_memoryitem_namespace",
+     "unique": false
+    },
+    {
+     "cols": [
+      "valid_to"
+     ],
+     "name": "ix_memoryitem_valid_to",
+     "unique": false
+    },
+    {
+     "cols": [
+      "valid_from"
+     ],
+     "name": "ix_memoryitem_valid_from",
+     "unique": false
+    },
+    {
+     "cols": [
+      "domain"
+     ],
+     "name": "ix_memoryitem_domain",
+     "unique": false
+    },
+    {
+     "cols": [
+      "key"
+     ],
+     "name": "ix_memoryitem_key",
+     "unique": false
+    },
+    {
+     "cols": [
+      "event_time"
+     ],
+     "name": "ix_memoryitem_event_time",
+     "unique": false
+    },
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_memoryitem_tenant_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "tree_path"
+     ],
+     "name": "ix_memoryitem_tree_path",
+     "unique": false
+    },
+    {
+     "cols": [
+      "session_id"
+     ],
+     "name": "ix_memoryitem_session_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "superseded_by"
+     ],
+     "name": "ix_memoryitem_superseded_by",
+     "unique": false
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_memoryitem_user_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "scene_id"
+     ],
+     "name": "ix_memoryitem_scene_id",
+     "unique": false
+    }
+   ]
+  },
+  "memorynode": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "parent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "name",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "node_path",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "depth",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "description",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "namespace",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "namespace"
+     ],
+     "name": "ix_memorynode_namespace",
+     "unique": false
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_memorynode_user_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "name"
+     ],
+     "name": "ix_memorynode_name",
+     "unique": false
+    },
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_memorynode_tenant_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "node_path"
+     ],
+     "name": "ix_memorynode_node_path",
+     "unique": true
+    },
+    {
+     "cols": [
+      "parent_id"
+     ],
+     "name": "ix_memorynode_parent_id",
+     "unique": false
+    }
+   ]
+  },
+  "memoryproposal": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "session_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "proposal_type",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "target_memory_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "candidate_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "evidence_ids",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "reason",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "proposed_patch",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "confidence",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "conflict_ids",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "status",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "decided_by",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "decision_reason",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "provenance",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "applied_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "decided_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_memoryproposal_tenant_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "session_id"
+     ],
+     "name": "ix_memoryproposal_session_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_memoryproposal_agent_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_memoryproposal_user_id",
+     "unique": false
+    }
+   ]
+  },
+  "memoryscene": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "name",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "summary",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "heat",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "member_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "centroid",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "updated_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "name"
+     ],
+     "name": "ix_memoryscene_name",
+     "unique": false
+    }
+   ]
+  },
+  "memoryusagefeedback": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "memory_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "query",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "session_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "used",
+     "nullable": false,
+     "pk": false,
+     "type": "BOOLEAN"
+    },
+    {
+     "default": null,
+     "name": "helped",
+     "nullable": false,
+     "pk": false,
+     "type": "BOOLEAN"
+    },
+    {
+     "default": null,
+     "name": "user_accepted",
+     "nullable": false,
+     "pk": false,
+     "type": "BOOLEAN"
+    },
+    {
+     "default": null,
+     "name": "hallucination_risk",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "score_delta",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "memory_id"
+     ],
+     "name": "ix_memoryusagefeedback_memory_id",
+     "unique": false
+    }
+   ]
+  },
+  "operation_logs": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "endpoint",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "latency_ms",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "status_code",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "endpoint"
+     ],
+     "name": "ix_operation_logs_endpoint",
+     "unique": false
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_operation_logs_user_id",
+     "unique": false
+    }
+   ]
+  },
+  "paper_quality_signal": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "raw_document_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "arxiv_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "version",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "published_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "updated_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "comment_raw",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "journal_ref",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "doi",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "primary_category",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "categories",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "authors",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "author_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "venue_class",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tier",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tier_reason",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "staleness_level",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "signal_source",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "raw_document_id"
+     ],
+     "name": "ix_paper_quality_signal_raw_document_id",
+     "unique": true
+    },
+    {
+     "cols": [
+      "arxiv_id"
+     ],
+     "name": "ix_paper_quality_signal_arxiv_id",
+     "unique": false
+    }
+   ]
+  },
+  "param_advice_paper": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "raw_document_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "state",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "attempt_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "run_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "available_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "claimed_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "consumed_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "last_error_code",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "updated_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "raw_document_id"
+     ],
+     "name": "ix_param_advice_paper_raw_document_id",
+     "unique": true
+    },
+    {
+     "cols": [
+      "run_id"
+     ],
+     "name": "ix_param_advice_paper_run_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "state"
+     ],
+     "name": "ix_param_advice_paper_state",
+     "unique": false
+    }
+   ]
+  },
+  "param_advice_run": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "status",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "source_document_ids",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "base_snapshot",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "base_snapshot_hash",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "registry_version",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "llm_output",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "error_code",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "finished_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": []
+  },
+  "param_contradiction_report": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "run_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "param_key",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "nature",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "side_a",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "side_b",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "scope_note",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "status",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "acknowledged_by",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "acknowledged_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "status"
+     ],
+     "name": "ix_param_contradiction_report_status",
+     "unique": false
+    },
+    {
+     "cols": [
+      "param_key"
+     ],
+     "name": "ix_param_contradiction_report_param_key",
+     "unique": false
+    },
+    {
+     "cols": [
+      "run_id"
+     ],
+     "name": "ix_param_contradiction_report_run_id",
+     "unique": false
+    }
+   ]
+  },
+  "param_override": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "revision",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "operation",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "suggestion_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "rollback_of_override_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "before_snapshot",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "after_snapshot",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "before_snapshot_hash",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "after_snapshot_hash",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "changes",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "registry_version",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "actor",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "note",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "revision"
+     ],
+     "name": "ix_param_override_revision",
+     "unique": true
+    },
+    {
+     "cols": [
+      "operation"
+     ],
+     "name": "ix_param_override_operation",
+     "unique": false
+    },
+    {
+     "cols": [
+      "after_snapshot_hash"
+     ],
+     "name": "ix_param_override_after_snapshot_hash",
+     "unique": false
+    }
+   ]
+  },
+  "param_suggestion": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "run_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "status",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "confidence",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "title",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "summary",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "rationale",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "expected_benefit",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "risk_notes",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "validation_plan",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "source_document_ids",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "evidence",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "changes",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "before_snapshot",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "after_snapshot",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "base_snapshot_hash",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "registry_version",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "fingerprint",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "decided_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "decided_by",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "decision_note",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "override_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "fingerprint"
+     ],
+     "name": "ix_param_suggestion_fingerprint",
+     "unique": true
+    },
+    {
+     "cols": [
+      "base_snapshot_hash"
+     ],
+     "name": "ix_param_suggestion_base_snapshot_hash",
+     "unique": false
+    },
+    {
+     "cols": [
+      "run_id"
+     ],
+     "name": "ix_param_suggestion_run_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "status"
+     ],
+     "name": "ix_param_suggestion_status",
+     "unique": false
+    }
+   ]
+  },
+  "persona_profile": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "session_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "name",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "is_active",
+     "nullable": false,
+     "pk": false,
+     "type": "BOOLEAN"
+    },
+    {
+     "default": null,
+     "name": "linguistic_style",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "guidelines",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "epistemic_facts",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "updated_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_persona_profile_agent_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "name"
+     ],
+     "name": "ix_persona_profile_name",
+     "unique": true
+    },
+    {
+     "cols": [
+      "is_active"
+     ],
+     "name": "ix_persona_profile_is_active",
+     "unique": false
+    },
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_persona_profile_tenant_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "session_id"
+     ],
+     "name": "ix_persona_profile_session_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_persona_profile_user_id",
+     "unique": false
+    }
+   ]
+  },
+  "prompttemplate": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "template",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "description",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "updated_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_prompttemplate_tenant_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_prompttemplate_agent_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_prompttemplate_user_id",
+     "unique": false
+    }
+   ]
+  },
+  "rawdocument": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "session_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "source_type",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "source_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "url",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "title",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "authors",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "published_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "fetched_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "lang",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "content_hash",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "content",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "meta",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "content_hash"
+     ],
+     "name": "ix_rawdocument_content_hash",
+     "unique": true
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_rawdocument_user_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "session_id"
+     ],
+     "name": "ix_rawdocument_session_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_rawdocument_agent_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_rawdocument_tenant_id",
+     "unique": false
+    }
+   ]
+  },
+  "reflect_run": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "run_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "source",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "waterline",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "skipped",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "curate_failed",
+     "nullable": false,
+     "pk": false,
+     "type": "BOOLEAN"
+    },
+    {
+     "default": null,
+     "name": "rejecter_failed",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "health_before",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "health_after",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "proposals_created",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "auto_applied",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "pending",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "discarded",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "error",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "run_at"
+     ],
+     "name": "ix_reflect_run_run_at",
+     "unique": false
+    }
+   ]
+  },
+  "retrieval_event": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "trace_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "query_text",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "query_norm_hash",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "lane",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "session_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "intent_bucket",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "param_snapshot_hash",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "result_ids",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "result_scores",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "used_ids",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "latency_ms",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "zero_result",
+     "nullable": false,
+     "pk": false,
+     "type": "BOOLEAN"
+    },
+    {
+     "default": null,
+     "name": "scene_ids",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "estimated_tokens",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "is_system_noise",
+     "nullable": false,
+     "pk": false,
+     "type": "BOOLEAN"
+    },
+    {
+     "default": null,
+     "name": "request_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "receipt_status",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "receipt_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "session_id"
+     ],
+     "name": "ix_retrieval_event_session_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "receipt_status"
+     ],
+     "name": "ix_retrieval_event_receipt_status",
+     "unique": false
+    },
+    {
+     "cols": [
+      "intent_bucket"
+     ],
+     "name": "ix_retrieval_event_intent_bucket",
+     "unique": false
+    },
+    {
+     "cols": [
+      "zero_result"
+     ],
+     "name": "ix_retrieval_event_zero_result",
+     "unique": false
+    },
+    {
+     "cols": [
+      "param_snapshot_hash"
+     ],
+     "name": "ix_retrieval_event_param_snapshot_hash",
+     "unique": false
+    },
+    {
+     "cols": [
+      "query_norm_hash"
+     ],
+     "name": "ix_retrieval_event_query_norm_hash",
+     "unique": false
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_retrieval_event_user_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "created_at"
+     ],
+     "name": "ix_retrieval_event_created_at",
+     "unique": false
+    },
+    {
+     "cols": [
+      "request_id"
+     ],
+     "name": "ix_retrieval_event_request_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_retrieval_event_agent_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "is_system_noise"
+     ],
+     "name": "ix_retrieval_event_is_system_noise",
+     "unique": false
+    },
+    {
+     "cols": [
+      "trace_id"
+     ],
+     "name": "ix_retrieval_event_trace_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_retrieval_event_tenant_id",
+     "unique": false
+    }
+   ]
+  },
+  "scheduler_run": {
+   "columns": [
+    {
+     "default": null,
+     "name": "name",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "last_run_utc",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    }
+   ],
+   "indexes": []
+  },
+  "session_checkpoint": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "session_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "block_key",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "content",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_session_checkpoint_tenant_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_session_checkpoint_agent_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_session_checkpoint_user_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "session_id"
+     ],
+     "name": "ix_session_checkpoint_session_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "created_at"
+     ],
+     "name": "ix_session_checkpoint_created_at",
+     "unique": false
+    }
+   ]
+  },
+  "session_scratchpad": {
+   "columns": [
+    {
+     "default": null,
+     "name": "session_id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "content",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "updated_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_session_scratchpad_tenant_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_session_scratchpad_agent_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_session_scratchpad_user_id",
+     "unique": false
+    }
+   ]
+  },
+  "shadow_window": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "override_id",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "base_revision",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "param_overrides",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "base_snapshot",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "status",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "started_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "finished_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "check_deadline",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "metrics_base",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "metrics_shadow",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "rollback_reason",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "verdict_reason",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "status"
+     ],
+     "name": "ix_shadow_window_status",
+     "unique": false
+    },
+    {
+     "cols": [
+      "override_id"
+     ],
+     "name": "ix_shadow_window_override_id",
+     "unique": false
+    }
+   ]
+  },
+  "signal_reliability_stat": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "venue_class",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "pass_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "fail_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "fail_streak",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "last_verified_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "venue_class"
+     ],
+     "name": "ix_signal_reliability_stat_venue_class",
+     "unique": false
+    }
+   ]
+  },
+  "skillcrystal": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "skill_name",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "trigger_rule",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "procedure",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "source_lanes",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "sample_keys",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "hit_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "candidate_count",
+     "nullable": false,
+     "pk": false,
+     "type": "INTEGER"
+    },
+    {
+     "default": null,
+     "name": "status",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "decision_reason",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    },
+    {
+     "default": null,
+     "name": "updated_at",
+     "nullable": false,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_skillcrystal_tenant_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "skill_name"
+     ],
+     "name": "ix_skillcrystal_skill_name",
+     "unique": true
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_skillcrystal_user_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_skillcrystal_agent_id",
+     "unique": false
+    }
+   ]
+  },
+  "source": {
+   "columns": [
+    {
+     "default": null,
+     "name": "id",
+     "nullable": false,
+     "pk": true,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "tenant_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "user_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "agent_id",
+     "nullable": true,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "kind",
+     "nullable": false,
+     "pk": false,
+     "type": "VARCHAR"
+    },
+    {
+     "default": null,
+     "name": "config",
+     "nullable": true,
+     "pk": false,
+     "type": "JSON"
+    },
+    {
+     "default": null,
+     "name": "enabled",
+     "nullable": false,
+     "pk": false,
+     "type": "BOOLEAN"
+    },
+    {
+     "default": null,
+     "name": "trust_score",
+     "nullable": false,
+     "pk": false,
+     "type": "FLOAT"
+    },
+    {
+     "default": null,
+     "name": "last_fetched_at",
+     "nullable": true,
+     "pk": false,
+     "type": "DATETIME"
+    }
+   ],
+   "indexes": [
+    {
+     "cols": [
+      "agent_id"
+     ],
+     "name": "ix_source_agent_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "user_id"
+     ],
+     "name": "ix_source_user_id",
+     "unique": false
+    },
+    {
+     "cols": [
+      "tenant_id"
+     ],
+     "name": "ix_source_tenant_id",
+     "unique": false
+    }
+   ]
+  }
+ }
+}

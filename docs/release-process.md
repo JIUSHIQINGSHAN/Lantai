@@ -31,6 +31,7 @@
 4. 版本代号（若该版本需要）已按 [ADR-0013](adr/0013-naming-system.md) R7 登记到 `CONTEXT.md` 词汇表与 ADR-0013 映射表。
 5. 文档同步：README 徽章 / README Docker 示例 / `api_server.py` FastAPI version / `scripts/mcp_server.py` serverInfo version / CHANGELOG 最新发布段一致（门禁自动核对）。
 6. Git 状态干净：当前分支为 `master`，除待提交的发布变更外无修改或未跟踪文件，`vX.Y.Z` tag 本地不存在；加 `--online` 时同时确认远程不存在，远程 `origin` 存在。
+7. 老库升级回放通过（门禁自动执行，票 06）：`tests/fixtures/legacy-schema/*.json`里每个锚点（上一发布标签的真实 DDL 快照，**不含任何行数据**）经当前迁移链升到目标版本后，必须与模型完全对齐——缺表 / 缺列 / 主键 / 索引一律为零，NULL 方向差异只能落在`scripts/schema_parity.py` 的书面清单内。锚点为空、迁移链没跑到目标版本、清单里出现复现不出来的死条目，都判红。**每次发布后补一份上一个标签的快照**：`python scripts/legacy_schema_snapshot.py --tag v<上一版>`。
 
 ## 上传步骤
 
