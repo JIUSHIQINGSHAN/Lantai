@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 35
+TARGET_SCHEMA_VERSION = 36
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -697,6 +697,35 @@ def _migrate_v35(conn) -> None:
     )
 
 
+def _migrate_v36(conn) -> None:
+    """v35 -> v36: memoryitem / skillcrystal / memorycandidate 的 shared_scope 兜底补齐。
+
+    票 05 续9（D-13/R-4）实测：v35 只给 memoryitem 与 skillcrystal 补了
+    shared_scope，漏了 memorycandidate。老库迁到 user_version=35 后整列不存在，
+    任何候选写入直接 `sqlite3.OperationalError: table memorycandidate has no
+    column named shared_scope`；而发布门禁的 schema 探针只验 create_all 全新库，
+    看不见这类漂移，于是长期假绿。
+
+    这一跳把三张表的 shared_scope 统一兜底（幂等：已存在即跳过），顺带把
+    memoryitem / skillcrystal 的列也再验一遍——万一有库在 v35 那跳中途失败过、
+    version 却已被推进，这里能自愈。
+    """
+    for table in ("memoryitem", "skillcrystal", "memorycandidate"):
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone():
+            continue
+        if not _has_column(conn, table, "shared_scope"):
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN shared_scope TEXT DEFAULT 'private'")
+        try:
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS ix_{table}_shared_scope ON {table} (shared_scope)"
+            )
+        except Exception as exc:
+            logger.warning("迁移 v36 %s.shared_scope 索引创建跳过: %s", table, exc)
+    logger.info("Migrated v36: 三张表 shared_scope 兜底补齐（修 v35 漏掉 memorycandidate）")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -732,6 +761,7 @@ MIGRATIONS = [
     (33, _migrate_v33),
     (34, _migrate_v34),
     (35, _migrate_v35),
+    (36, _migrate_v36),
 ]
 
 
