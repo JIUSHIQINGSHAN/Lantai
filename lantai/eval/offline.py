@@ -9,9 +9,7 @@
 from __future__ import annotations
 
 import sys
-import tempfile
 import types
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 from sqlalchemy.pool import StaticPool
@@ -20,6 +18,7 @@ from sqlmodel import Session, SQLModel, create_engine
 import lantai.models.tables  # noqa: F401  注册全部表
 import lantai.storage.db as db_module
 from lantai.core.settings import settings as _settings
+from lantai.eval import temp_paths
 from lantai.storage.fts import init_fts
 
 
@@ -59,43 +58,54 @@ def run_offline_eval(dataset: dict | None = None, top_k: int = 5, judge: str = "
 
     judge：回答层判官（"rule" 离线确定性；"llm" 需真实 API，离线门禁勿用）。
     返回 evaluate_forgetting_quality 的完整结果（metrics + answer + per_query）。
-    每次调用独立临时 DB，finally 清理种子，不污染真实库。
+    每次调用独立临时 DB，finally 既清种子也不污染真实库，还回收自己的临时目录
+    （票 05 续17；被第三方句柄按住时交给 temp_paths.reclaim_stale 超龄清扫）。
     """
     from lantai.eval.chinese_memory_cases import build_chinese_dataset
     from lantai.eval.forgetting_quality import evaluate_forgetting_quality
     from lantai.retrieval.hybrid import hybrid_search
 
     ds = dataset or build_chinese_dataset()
-    tmp = Path(tempfile.mkdtemp(prefix="lantai-fq-check-"))
-    engine = create_engine(
-        f"sqlite:///{tmp / 'eval.db'}",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    SQLModel.metadata.create_all(engine)
-    init_fts(engine.raw_connection())
+    tmp = temp_paths.new_temp_dir("lantai-fq-check-")
+    engine = None
+    try:
+        engine = create_engine(
+            f"sqlite:///{tmp / 'eval.db'}",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        SQLModel.metadata.create_all(engine)
+        init_fts(engine.raw_connection())
 
-    def session_factory() -> Session:
-        return Session(engine)
+        def session_factory() -> Session:
+            return Session(engine)
 
-    # 8 维 mock embed：从属于确定性真源 lantai.eval.deterministic_embed（512 维）。
-    # 因 get_vector_store 已被 mock（下行），向量永不触达 Chroma，维度无混写风险，
-    # 仅需保证写入/查询两侧一致（均 8 维）——真源换维时此处无需跟随。
-    vector_store_mock = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
-    with (
-        patch.object(db_module, "get_session", session_factory),
-        patch("lantai.llm.client.embed", return_value=[[0.1] * 8]),
-        patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
-        patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock),
-        patch(
-            "lantai.retrieval.hybrid.classify_intent",
-            return_value={
-                "intent": _settings.DEFAULT_INTENT,
-                "candidate_n": _settings.INTENT_CANDIDATE_SIZES.get(_settings.DEFAULT_INTENT, 10),
-            },
-        ),
-    ):
-        return evaluate_forgetting_quality(ds, search=hybrid_search, top_k=top_k, judge=judge)
+        # 8 维 mock embed：从属于确定性真源 lantai.eval.deterministic_embed（512 维）。
+        # 因 get_vector_store 已被 mock（下行），向量永不触达 Chroma，维度无混写风险，
+        # 仅需保证写入/查询两侧一致（均 8 维）——真源换维时此处无需跟随。
+        vector_store_mock = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
+        with (
+            patch.object(db_module, "get_session", session_factory),
+            patch("lantai.llm.client.embed", return_value=[[0.1] * 8]),
+            patch("lantai.retrieval.hybrid.embed", return_value=[[0.1] * 8]),
+            patch("lantai.retrieval.hybrid.get_vector_store", return_value=vector_store_mock),
+            patch(
+                "lantai.retrieval.hybrid.classify_intent",
+                return_value={
+                    "intent": _settings.DEFAULT_INTENT,
+                    "candidate_n": _settings.INTENT_CANDIDATE_SIZES.get(
+                        _settings.DEFAULT_INTENT, 10
+                    ),
+                },
+            ),
+        ):
+            return evaluate_forgetting_quality(ds, search=hybrid_search, top_k=top_k, judge=judge)
+    finally:
+        # 票 05 续17：临时目录必须自己收。SQLite 句柄不 dispose 就删不掉（探针
+        # .scratch/gate/r17/probe_dispose.py），而 dispose 之后当场即可回收。
+        if engine is not None:
+            engine.dispose()
+        temp_paths.reclaim(tmp)
 
 
 # 评测集 v1 契约门槛（发布稿同源）：FTS 兜底最严格基准下的确定性底线。

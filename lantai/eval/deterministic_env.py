@@ -25,7 +25,6 @@ import logging
 import os
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from tempfile import mkdtemp
 from unittest.mock import patch
 
 from sqlalchemy.pool import StaticPool
@@ -34,6 +33,7 @@ from sqlmodel import SQLModel, create_engine
 import lantai.storage.db as db_module
 import lantai.storage.vector_store as vs_module
 from lantai.core.settings import settings
+from lantai.eval import temp_paths
 from lantai.eval.deterministic_embed import embed_for_eval
 from lantai.storage.fts import init_fts
 
@@ -60,7 +60,10 @@ def staged_deterministic_env(
     real_llm_chat：True 则 chat_json 不替（真 LLM）；embed 面恒为确定性 512。
     data_dir：独立评测数据目录（双闸：settings 三项 + db.engine 全重指）。
     """
-    tmp = Path(tmp_dir) if tmp_dir else Path(mkdtemp(prefix="lantai-staged-env-"))
+    # 票 05 续17：只有「自己 mkdtemp 出来的」那一个才归自己回收；调用方传进来的
+    # tmp_dir / data_dir 属于调用方（run_e1_e2_formal.py 要拿它当跑测证据），绝不删。
+    created = tmp_dir is None
+    tmp = temp_paths.new_temp_dir("lantai-staged-env-") if created else Path(tmp_dir)
 
     engine = create_engine(
         "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
@@ -122,15 +125,20 @@ def staged_deterministic_env(
         ]
     )
 
-    with ExitStack() as stack:
-        for p in patches:
-            stack.enter_context(p)
-        root.addHandler(captor)
-        try:
-            yield captor
-        finally:
-            root.removeHandler(captor)
-            if old_intent is None:
-                os.environ.pop("LANTAI_INTENT_OFF", None)
-            else:
-                os.environ["LANTAI_INTENT_OFF"] = old_intent
+    try:
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            root.addHandler(captor)
+            try:
+                yield captor
+            finally:
+                root.removeHandler(captor)
+                if old_intent is None:
+                    os.environ.pop("LANTAI_INTENT_OFF", None)
+                else:
+                    os.environ["LANTAI_INTENT_OFF"] = old_intent
+    finally:
+        # 覆盖三条出口：正常退出、body 抛错、patch 装载抛错——都要把自建目录收掉。
+        if created:
+            temp_paths.reclaim(tmp)
