@@ -167,8 +167,14 @@ def test_belief_persists(session: Session):
     engine = ReflectionEngine(db=session)
     report = engine.run_reflection()
 
-    if not report.failure_belief_candidates:
-        pytest.skip("没有产出 failure BELIEF candidate，跳过持久化测试")
+    # 票 05 续16：这里原来在晋升无产出时整条弃权（skip）。把晋升链路打挂之后，
+    # 同前提的 BL-02（test_pattern_to_belief）判 AssertionError，本用例却只是 Skipped——
+    # 「BELIEF 有没有真的落库」在被测逻辑坏掉时永久让路，等于给晋升回归留了一条静默通道。
+    # 前提不成立必须是失败，不是跳过（判据锁：tests/test_skip_mask_inventory.py）。
+    assert report.failure_belief_candidates, (
+        f"run_reflection 未产出 failure BELIEF candidate，持久化前提不成立："
+        f"{report.failure_belief_candidates}"
+    )
 
     # commit 已在 run_reflection 内部完成，重新查询验证持久化
     beliefs_in_db = session.exec(
