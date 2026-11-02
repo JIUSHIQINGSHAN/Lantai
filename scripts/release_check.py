@@ -425,8 +425,12 @@ def suite_gate_issues(
 ) -> list[str]:
     """全量测试 + 宿主数据目录绊线：红主干、或被测进程连真实库都必须拦下上传。
 
-    与 CI 同口径，但显式清掉 `addopts`（本地 pyproject 的覆盖率参数不该变成
-    「到底跑没跑」的隐式变量），并把 `tests/support/real_home_tripwire.py`
+    口径由 `suite_pytest_command()` 给出，与 `.github/workflows/tests.yml` 一致：
+    含 `--cov=lantai --cov-report=term-missing`。票 05 实测病灶：门禁此前不带覆盖率
+    插桩，而 CI 带——`test_hook_timeout_budget.py` 的零余量墙钟断言在 CI 判红、在门禁
+    判绿，红了三周没人知道。插桩只增加耗时不减少工作，因此这一条是更严的口径。
+    `-o addopts=` 只是把口径钉死（本仓 pyproject 目前没有 addopts），防止将来有人
+    往 addopts 里塞参数而悄悄改变门禁含义。挂 `tests/support/real_home_tripwire.py`
     挂成插件（按**连接路径**判定，不按 mtime——开发机上常驻服务自己也在写库）。
     退出码 0 之外还要求「至少一条真实通过的用例」，并把计数打进日志：全项目只剩
     skip 时退出码也是 0，旧判据会把它读成「全量测试通过」（票 05 续7 实测漏洞）。
@@ -442,19 +446,7 @@ def suite_gate_issues(
     env["LANTAI_GATE_REAL_HOME"] = watch
     env["LANTAI_GATE_REPORT"] = report_path
     env.setdefault("API_KEY", _PROBE_KEY)
-    cmd = [
-        py,
-        "-m",
-        "pytest",
-        "tests/",
-        "-q",
-        "-o",
-        "addopts=",
-        "-p",
-        "no:cacheprovider",
-        "-p",
-        _TRIPWIRE_PLUGIN,
-    ]
+    cmd = suite_pytest_command(py=py)
     try:
         proc = subprocess.run(  # noqa: S603
             cmd,
@@ -751,6 +743,159 @@ def legacy_parity_issues(repo_root: Path) -> list[str]:
     return legacy_parity_issues_from_payload(legacy_parity_probe(repo_root))
 
 
+# ---------------------------------------------------------------------------
+# CI 口径一致性（票 05）
+#
+# 发布门禁此前只跑自己那套命令，与 CI 的步骤并不等价：少了覆盖率插桩、少了
+# 遗忘质量离线门禁。于是「门禁绿」根本推不出「CI 绿」。这里做两件事：
+#   1. 门禁的测试命令与 CI 完全一致（含 --cov）；
+#   2. 结构核对：CI 里每一条检查命令都必须被某个门禁项认领，认领的命令也必须
+#      真的还存在于 CI 里——两边都对不上就判红，防止盲区再次长出。
+# ---------------------------------------------------------------------------
+
+SUITE_COV_ARGS = ["--cov=lantai", "--cov-report=term-missing"]
+FORGETTING_SCRIPT = "scripts/run_forgetting_quality.py"
+FORGETTING_PASS_MARKER = "门禁结果: PASS"
+_RUN_RE = re.compile(r"^(?:-\s+)?run:\s*(.*)$")
+_BLOCK_CHARS = {"|", ">", "|-", ">-", "|+", ">+"}
+CI_CHECK_PREFIXES = ("pytest ", "python -m pytest ", "python scripts/", "ruff ")
+
+# CI 检查步骤 -> 认领它的门禁项。键必须与 CI 里解析出的命令逐字一致。
+CI_STEP_OWNERS: dict[str, str] = {
+    "ruff check lantai/ tests/ scripts/": "CI lint 门禁",
+    "ruff format --check lantai/ tests/ scripts/": "CI lint 门禁",
+    "pytest tests/ -q": "全量测试 + 宿主目录绊线",
+    "pytest tests/ -q --cov=lantai --cov-report=term-missing": "全量测试 + 宿主目录绊线",
+    "python scripts/run_forgetting_quality.py --check": "遗忘质量离线门禁",
+}
+
+
+def suite_pytest_command(*, py: str | None = None) -> list[str]:
+    """门禁的全量测试命令，口径 = tests.yml 的 CI 步骤（含覆盖率插桩）。"""
+    return [
+        py or sys.executable,
+        "-m",
+        "pytest",
+        "tests/",
+        "-q",
+        *SUITE_COV_ARGS,
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "-p",
+        _TRIPWIRE_PLUGIN,
+    ]
+
+
+def normalize_run_commands(text: str) -> list[str]:
+    """把 run 块正文拆成一条条命令：去空行、去注释、压缩多余空白。"""
+    out: list[str] = []
+    for raw_line in text.splitlines():
+        line = " ".join(raw_line.strip().split())
+        if not line or line.startswith("#"):
+            continue
+        out.append(line)
+    return out
+
+
+def iter_run_bodies(text: str):
+    """从 workflow 文本里抽出每个 `run:` 的正文（标量与 | > 块两种写法）。"""
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        raw_line = lines[i]
+        stripped = raw_line.strip()
+        m = _RUN_RE.match(stripped)
+        if not m:
+            i += 1
+            continue
+        inline = m.group(1).strip()
+        indent = len(raw_line) - len(raw_line.lstrip())
+        i += 1
+        if inline in _BLOCK_CHARS:
+            block = []
+            while i < len(lines):
+                nxt = lines[i]
+                if not nxt.strip():
+                    block.append("")
+                    i += 1
+                    continue
+                if (len(nxt) - len(nxt.lstrip())) <= indent:
+                    break
+                block.append(nxt)
+                i += 1
+            yield "\n".join(block)
+        else:
+            yield inline
+
+
+def ci_run_commands(repo_root: Path) -> list[str]:
+    cmds: list[str] = []
+    wf_dir = Path(repo_root) / ".github" / "workflows"
+    if not wf_dir.is_dir():
+        return cmds
+    for path in sorted(wf_dir.glob("*.yml")) + sorted(wf_dir.glob("*.yaml")):
+        for body_text in iter_run_bodies(path.read_text(encoding="utf-8", errors="replace")):
+            cmds.extend(normalize_run_commands(body_text))
+    return cmds
+
+
+def ci_step_coverage_issues(repo_root: Path) -> list[str]:
+    """双向核对：CI 有步骤没认领 -> 红；认领的步骤已不在 CI 里 -> 也红。"""
+    checks = [c for c in ci_run_commands(repo_root) if c.startswith(CI_CHECK_PREFIXES)]
+    issues = [
+        f"CI 检查步骤 `{cmd}` 没有任何发布门禁项认领——门禁绿推不出 CI 绿（票 05 病灶）"
+        for cmd in checks
+        if cmd not in CI_STEP_OWNERS
+    ]
+    seen = set(checks)
+    issues += [
+        f"发布门禁声称覆盖 `{owned}`，但 CI 里已无此命令——认领清单成了死账，删掉它或恢复步骤"
+        for owned in CI_STEP_OWNERS
+        if owned not in seen
+    ]
+    if not checks:
+        issues.append("没从 .github/workflows 解析到任何检查步骤：核对形同虚设，不放行")
+    return issues
+
+
+def forgetting_gate_issues(returncode: int, output: str) -> list[str]:
+    """纯判据：退出码 0 且必须回报结论标记，才算取到证。"""
+    if returncode != 0:
+        tail = "\n".join([ln for ln in (output or "").splitlines() if ln.strip()][-8:])
+        return [f"遗忘质量离线门禁失败（exit={returncode}）——CI 的这一步红则不可发布：\n{tail}"]
+    if FORGETTING_PASS_MARKER not in (output or ""):
+        return [
+            f"遗忘质量门禁退出码 0 但没有回报「{FORGETTING_PASS_MARKER}」：空跑/没取证不等于取到证"
+        ]
+    return []
+
+
+def run_forgetting_gate(
+    repo_root: Path, *, python: str | None = None, timeout: int = 900
+) -> list[str]:
+    """临时 LANTAI_HOME 里真跑一次 CI 的遗忘质量门禁步骤。"""
+    py = python or sys.executable
+    with tempfile.TemporaryDirectory(prefix="lantai_gate_forget_") as probe_home:
+        env = isolated_probe_env(probe_home)
+        env["LANTAI_GATE_HOST_HOME"] = host_lantai_home(repo_root) or "__none__"
+        try:
+            proc = subprocess.run(  # noqa: S603
+                [py, "-u", str(repo_root / FORGETTING_SCRIPT), "--check"],
+                cwd=str(repo_root),
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return [f"遗忘质量门禁探针无法执行：{exc}"]
+    return forgetting_gate_issues(proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="发布前检查（只读）")
     parser.add_argument("version", nargs="?", help="目标版本，默认读 pyproject.toml")
@@ -778,6 +923,16 @@ def main(argv: list[str] | None = None) -> int:
         check("CI lint 门禁", False, issue)
     if not lint_failures:
         check("CI lint 门禁", True, "ruff check + ruff format --check 均通过")
+
+    fidelity_failures = ci_step_coverage_issues(REPO_ROOT)
+    for issue in fidelity_failures:
+        check("CI 步骤覆盖核对", False, issue)
+    if not fidelity_failures:
+        check(
+            "CI 步骤覆盖核对",
+            True,
+            f"{len(CI_STEP_OWNERS)} 条 CI 检查步骤都有发布门禁项认领，且无失配死账",
+        )
 
     refs = collect_version_refs(REPO_ROOT)
     pyproject_version = next((v for label, _, v in refs if label == "pyproject.toml"), "")
@@ -855,8 +1010,18 @@ def main(argv: list[str] | None = None) -> int:
             check(
                 "全量测试 + 宿主目录绊线",
                 True,
-                "pytest tests/ 退出码 0，且全程未连接宿主真实 LANTAI_HOME",
+                "pytest tests/ --cov=lantai 退出码 0（与 CI 同口径），且全程未连接宿主真实 LANTAI_HOME",
             )
+
+    forgetting_failures = run_forgetting_gate(REPO_ROOT)
+    for issue in forgetting_failures:
+        check("遗忘质量离线门禁", False, issue)
+    if not forgetting_failures:
+        check(
+            "遗忘质量离线门禁",
+            True,
+            "scripts/run_forgetting_quality.py --check 通过（CI tests.yml 的同一条步骤）",
+        )
 
     print("=" * 60)
     line, code = summarize(results, n_skip=len(skips))

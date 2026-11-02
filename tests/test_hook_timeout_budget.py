@@ -162,9 +162,12 @@ class TestEmbedBudgetPropagation:
         monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
 
         # embed 延迟 3s > 预算 2s：预算传导后向量路径在预算内放弃 → 兜底命中
+        captured: dict = {}
+
         def slow_embed(texts, timeout=None):
             # 预算传导语义复刻：真 SDK 收到 timeout 在窗口内放弃 + embed
             # 预算模式不做多次重试（新契约）——一次机会睡满预算即抛
+            captured["timeout"] = timeout
             time.sleep(min(3.0, timeout) if timeout is not None else 3.0)
             raise TimeoutError("embed budget exceeded (simulated)")
 
@@ -174,10 +177,31 @@ class TestEmbedBudgetPropagation:
         out = mod.build_context("这是一个超过三字符的查询")
         elapsed = time.perf_counter() - start
 
-        # 修复前：hybrid_search 内 embed 挂 3s+retry，外层 _run_with_timeout 2s 掐掉 → {}；
-        # 修复后：embed 收到预算 timeout，快速失败 → BM25/FTS 兜底返回结果
-        assert elapsed < 2.0, f"预算未传导，hook 耗时 {elapsed:.2f}s 超外层预算"
+        outer = mod.settings.SHELL_HOOK_TIMEOUT
+
+        # 契约 1（确定性，与机器快慢无关）：预算真的传导给了 embed。
+        # 修复前 hybrid 调 embed 不带 timeout，这里会拿到 None —— 直接红。
+        assert captured.get("timeout") is not None, "预算未传导：embed 没有收到 timeout 形参"
+        assert 0 < captured["timeout"] < outer, (
+            f"传导的预算 {captured['timeout']!r} 不在 (0, 外层预算 {outer}) 内："
+            "要么没传，要么传了一个照样会撞外层墙的值"
+        )
+
+        # 契约 2（结果面）：向量面在预算内放弃后仍要兜底注入。
+        # 修复前被外层 _run_with_timeout 掐掉返回 {}，画像与召回整段静默丢失。
         assert out.get("context"), f"预算内降级后应仍有注入（兜底命中）: {out!r}"
+
+        # 契约 3（耗时上界）：上界锚在「未传导」的真实代价上，而不是锚在与 sleep
+        # 等长的外层预算上。旧断言 `elapsed < 2.0` 只有约 0.3s 余量：传导后的预算是
+        # SHELL_HOOK_TIMEOUT * 0.85 ≈ 1.7s（scripts/shell_hook.py:316），剩下的 0.3s
+        # 要装下 BM25/FTS 兜底的全部工作——覆盖率插桩加满载直接吃掉。
+        # v0.66 发布门禁实测：CI 口径 `pytest tests/ -q --cov=lantai` 全量跑到此用例
+        # elapsed=2.11s 判红，而无插桩单跑通过——同一条契约在 CI 永远红、在本地永远绿。
+        # 现在取「未传导即睡满 3s」为界：睡 3s 在任何机器上都保证 elapsed >= 3.0，
+        # 因此这条界拦得住真回归，又不受插桩开销影响，是同一契约更强的表达。
+        assert elapsed < 3.0, (
+            f"hook 耗时 {elapsed:.2f}s 已等于未传导的代价（睡满 3s），预算传导失效"
+        )
 
     def test_fast_path_zero_regression(self, monkeypatch, tmp_path):
         """快速路径零回归：embed 正常 → 命中注入带 evidence（既有契约）。"""
