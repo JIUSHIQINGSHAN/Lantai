@@ -4,6 +4,19 @@
 标准 MCP JSON-RPC 2.0 协议
 """
 
+# 票 05 续15：这里原来有两条 **import 期**进程全局改写，已移进服务入口 main()：
+#   1) `sys.path.insert(0, <repo>/lantai)`——注释说「让子进程无论 cwd 在哪都能 import
+#      lantai」，但插进去的是包目录本身；`import lantai` 需要的是仓库根，而本文件往下
+#      几行就要 `from lantai.core... import`，所以那条 insert 从没兜住它声称的场景。
+#      它真正的作用是给**每个 importer**（测试进程、`scripts/release_check.py` 的 MCP
+#      探针、把本模块当库用的调用方）的 sys.path 头部塞进 core/models/api/eval…
+#      共 16 个影子解析名（实测，且排在 site-packages 之前），而仓库里 `from core|…`
+#      平铺 import 的消费者数为 0。真实启动路径（console script `lantai-mcp`、
+#      `python -m lantai.cli.mcp`）都要求包已可导入，由安装态保证，不在模块导入期补救。
+#   2) `sys.stdin/stdout.reconfigure("utf-8")`——这是 stdio 服务进程的需求（见下面
+#      _configure_stdio_utf8 的说明），不该发生在别人 import 的时候。
+# 判据：tests/test_mcp_import_side_effects.py（子进程取证 + lantai/** 模块级写 AST 锁）。
+
 import hashlib
 import json
 import math
@@ -13,19 +26,6 @@ import threading
 import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
-
-# 使子进程无论 cwd 在哪都能 import lantai（Hermes 拉 MCP 时 cwd 不可控）
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# ── 强制 UTF-8 I/O ──────────────────────────────────────────────
-# Windows 默认用 GBK 解码 stdin/stdout；Hermes 按 UTF-8 写 JSON（含中文 query），
-# 若按 GBK 读则中文全变乱码（如「你好」→「浣犲ソ」）→ 检索零命中、注入全失效。
-# 必须在任何 stdin/stdout 读写前执行。Python 3.7+ reconfigure；旧版靠环境变量兜底。
-try:
-    sys.stdin.reconfigure(encoding="utf-8")
-    sys.stdout.reconfigure(encoding="utf-8")
-except (AttributeError, ValueError):
-    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 from pydantic import ValidationError
 
@@ -3814,7 +3814,24 @@ def handle(msg: dict) -> dict | None:
     }
 
 
+def _configure_stdio_utf8() -> None:
+    """stdio 服务入口专用：把标准流强制成 UTF-8（不在 import 期做）。
+
+    Windows 默认用 GBK 读写 stdin/stdout；Hermes 按 UTF-8 传 JSON（含中文 query），
+    若按 GBK 读则中文全变乱码（如「你好」→「浣犲ソ」）→ 检索零命中、注入全失效。
+    必须在任何 stdin/stdout 读写前执行，但**只在该进程真被当 stdio 服务拉起时**执行；
+    写在模块顶部会波及一切 importer 的进程标准流（票 05 续15）。Python 3.7+ reconfigure；
+    旧版靠 PYTHONIOENCODING 兜底。
+    """
+    try:
+        sys.stdin.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
+
 def main():
+    _configure_stdio_utf8()
     for line in sys.stdin:
         line = line.strip()
         if not line:
