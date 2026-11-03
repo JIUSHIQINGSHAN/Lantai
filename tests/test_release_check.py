@@ -503,6 +503,59 @@ def test_mcp_exposure_issues_on_real_repo_explains_itself():
         assert "未收窄" in issue, f"阻断项必须点名病灶与口径：{issues}"
 
 
+def _advertised_remedies(msg: str) -> list[str]:
+    """从门禁提示里解析「处方」：它必须显式点明哪些取值会收窄（固定句式，便于对账）。"""
+    hit = re.search(r"只有\s+([A-Za-z_/]+)\s+这组取值会把 tools/list", msg)
+    return sorted(hit.group(1).split("/")) if hit else []
+
+
+def test_mcp_fail_message_only_advertises_remedies_that_really_narrow(monkeypatch):
+    """门禁红灯不许递出「设了也不收窄」的处方（票 05 续21，全程真调生产代码，不 mock）。
+
+    实测依据（`.scratch/gate/r21/mcp_narrow.py` 直调 `lantai/cli/mcp.py:3705-3713`）：
+    `core|hermes|minimal|slim` ⇒ tools/list 收到核心集；`safe|none|拼错|不设` ⇒
+    **静默保持 96/96，无告警**；而本项判据只看默认档（`isolated_probe_env()` 主动剥掉
+    profile 变量，既有哨兵钉着）。旧文案「或在部署侧设 LANTAI_MCP_PROFILE」两头都不成立。
+
+    本用例做**双向对账**（不是子串打卡）：提示里点名的每个取值都必须真的能收窄，
+    生产侧真的能收窄的取值也必须都被点名；抽掉警告语、塞进假取值（safe）、漏掉真取值
+    都会判红（变异 M-A/M-B/M-C 实测各判红一次）。采样集外若再新增可收窄档，需要同时
+    扩充 SAMPLED——这是有意的显式成本，逼后来者重读生产实现。
+    """
+    from lantai.cli import mcp
+
+    total = len(mcp.TOOLS)
+    core = set(mcp.HERMES_CORE_TOOLS)
+    SAMPLED = ("hermes", "core", "slim", "minimal", "safe", "none", "typo-value")
+
+    def narrows(value: str) -> bool:
+        monkeypatch.setenv("LANTAI_MCP_PROFILE", value)
+        try:
+            return set(mcp._get_active_tools()) == core
+        finally:
+            monkeypatch.delenv("LANTAI_MCP_PROFILE", raising=False)
+
+    measured = sorted(v for v in SAMPLED if narrows(v))
+    assert measured, "生产侧一个能收窄的取值都没有：本用例的前提已经不成立，请改判据而不是改断言"
+    assert not narrows("safe") and not narrows("none"), "safe/none 忽然会收窄了：门禁口径要重估"
+    monkeypatch.delenv("LANTAI_MCP_PROFILE", raising=False)
+    assert len(mcp._get_active_tools()) == total, "不设 profile 时默认面不是全量，判据失效"
+
+    msg = RC.mcp_exposure_issue(total, total)
+    assert msg is not None, "默认全量暴露必须判红——本用例不是来放宽它的"
+
+    advertised = _advertised_remedies(msg)
+    assert advertised, (
+        "提示必须显式点名会收窄的取值（固定句式：只有 X/Y 这组取值会把 tools/list …）"
+    )
+    assert advertised == measured, f"提示的处方与生产实测不一致：广告={advertised} 实测={measured}"
+
+    assert "静默" in msg and "无告警" in msg, f"提示必须说破其余取值静默保持全量：{msg}"
+    assert "默认档" in msg and "不会让它变绿" in msg, f"提示必须说破本项只看默认档：{msg}"
+    assert "LANTAI_MCP_EXPOSE" in msg and "不存在" in msg, f"提示必须点名缺失的开关：{msg}"
+    assert "阻断发布" in msg and "可以放行" not in msg, "口径仍是阻断，不许出现放行措辞"
+
+
 def test_isolated_probe_env_isolates_home_and_forbids_dev_mode(tmp_path):
     home = str(tmp_path / "probe_home")
     env = RC.isolated_probe_env(home)

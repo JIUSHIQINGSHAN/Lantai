@@ -582,13 +582,28 @@ def suite_gate_issues(
 
 
 def mcp_exposure_issue(active: int, total: int) -> str | None:
-    """默认暴露 == 全量注册表 => 阻断。结构性判据，不含可调数字。"""
+    """默认暴露 == 全量注册表 => 阻断。结构性判据，不含可调数字。
+
+    提示文本只准开「实测真能收窄」的处方（票 05 续21）。直调
+    `lantai/cli/mcp.py::_get_active_tools()` 实测：`core|hermes|minimal|slim` 把
+    tools/list 从 96 收到 5，而 `safe|none|拼错|不设` 一律**静默保持 96/96、无告警**；
+    本项判据又只看默认档（`isolated_probe_env()` 主动剥掉 profile 变量）。
+    旧文案那句「或在部署侧设 LANTAI_MCP_PROFILE」两头都不成立——照做既不会让本项变绿，
+    取值不当连运行时暴露面都没变，维护者还会以为已经收窄。那是门禁自己递出去的
+    一条假绿通道，现由 `test_mcp_fail_message_only_advertises_remedies_that_really_narrow`
+    钉住（断言用实测集合比对提示里点名的取值，生产侧一改提示就得同步）。
+    """
     if total and active >= total:
         return (
             f"默认 MCP 暴露未收窄：不设 profile 时 tools/list 返回全部 {active}/{total} 个工具"
-            "（评审报告 N-04/C-15/R-02：69→94→96 一路涨，默认仍是全量）——阻断发布，"
-            "直到维护者显式声明默认策略（改 `_get_active_tools()` 的默认档，"
-            "或在部署侧设 LANTAI_MCP_PROFILE 并把它写进发布流程）"
+            "（评审报告 N-04/C-15/R-02：69→94→96 一路涨，默认仍是全量）——阻断发布。"
+            "本项只看默认档：门禁探针会剥掉 profile 环境变量，单在部署侧设变量"
+            "不会让它变绿。实测 `LANTAI_MCP_PROFILE` 只有 core/hermes/minimal/slim "
+            "这组取值会把 tools/list 收到 `HERMES_CORE_TOOLS` 核心集；其余取值"
+            "（safe/none/拼错/不设）静默保持全量、无告警、不报错，设了也等于没收窄。"
+            "评审要求的 `LANTAI_MCP_EXPOSE` 在代码里不存在（全仓 grep 0 命中）。"
+            "放行需要维护者显式签字：默认档改成白名单 + 未知取值 fail-closed，"
+            "并把口径写进发布流程。"
         )
     return None
 
