@@ -40,9 +40,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # 双闸保护对象：历史实配路径 + 本机当前用户默认库（2026-10-28 事故后补：
 # 8793 曾被一台lane收窄的兰台实例占用，health 探测撞上它导致 ingest 打错门；
 # 该实例拒收未绑定 lane、零落库——见票 03 Comments）
+# 保护性路径由运行时推导，不硬编码本机身份字面量（避免进入公开版本库）
 PROD_LANTAI_HOMES = (
     r"C:\Users\Asus\AppData\Local\remembrance-data",
-    r"C:\Users\董红阳\AppData\Local\remembrance-data",
+    str(Path.home() / "AppData" / "Local" / "remembrance-data"),
 )
 TS_BASE = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
 
