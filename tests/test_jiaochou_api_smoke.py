@@ -11,14 +11,19 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel.pool import StaticPool
 
 from lantai.api.app import app
 from lantai.cli.mcp import TOOL_HANDLERS, TOOLS, handle
 from lantai.cognition.context import CognitiveContext
+from lantai.cognition.jiaochou import JiaochouEngine
 from lantai.core.auth import Principal
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem
@@ -28,15 +33,59 @@ from lantai.services.jiaochou_service import (
 )
 from lantai.storage import db
 
+# seam1 的证据作用域：本用例自带一个别的文件写不进去的租户。
+#
+# 为什么不能留在 `default`：`scan_redundancy` 的 `limit` 是「先扫到的 N 对」，不是
+# 「最相似的 N 对」——`lantai/cognition/jiaochou.py:200-203` 凑够 limit 就 break，
+# `:205` 才排序；而全量测试共用一个会话级 SQLite（`tests/conftest.py::_isolate_data_dir`）。
+# 撒进公共 `default` 租户后，「前面跑了哪些文件、撒进去多少对」决定了本用例的对进不进
+# 得了窗口：逆序全量与乱序全量（seed=20261103）各判红一条，正序绿只是运气（票 05 续20）。
+#
+# 为什么换租户是**隔离**而不是**绕过**：读侧 ACL（`jiaochou.py::_check_access`）只放行
+# 同属主行 + `user_id IS NULL` 行 + `swarm_shared` 行。实测逆序全量跑到本用例时共享库为
+# `active=46 / owner_null=0 / swarm_shared=0`——外来租户的可见集为空，竞争对手是被 ACL
+# 挡在门外，不是被断言视而不见；截断机制另有 `test_jiaochou_scan_limit_keeps_first_found_*`
+# 钉住，防止有人把「窗口里恰好有我」当成正确性证据。
+SEAM1_USER = f"jc-seam1-{uuid.uuid4().hex[:8]}"
 
-def _seed_test_pair() -> tuple[MemoryItem, MemoryItem]:
+
+def _mem(owner: str, tag: str, content: str, t) -> MemoryItem:
+    return MemoryItem(
+        id=f"mem-{tag}-{uuid.uuid4().hex[:8]}",
+        content=content,
+        confidence=0.9,
+        user_id=owner,
+        created_at=t,
+        updated_at=t,
+    )
+
+
+@contextlib.contextmanager
+def _private_store():
+    """私有内存库：给「机制锁」一个不受跑测顺序影响的现场（不碰会话级共享库）。"""
+    import lantai.models.tables  # noqa: F401  注册全部表
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    try:
+        with Session(engine) as session:
+            yield session
+    finally:
+        engine.dispose()
+
+
+def _seed_test_pair(user_id: str = "default") -> tuple[MemoryItem, MemoryItem]:
     t = utcnow()
     with db.get_session() as s:
         m1 = MemoryItem(
             id=f"mem-jc-api-1-{t.timestamp()}",
             content="生产集群已开启两级本地与分布式缓存",
             confidence=0.92,
-            user_id="default",
+            user_id=user_id,
             created_at=t,
             updated_at=t,
         )
@@ -44,7 +93,7 @@ def _seed_test_pair() -> tuple[MemoryItem, MemoryItem]:
             id=f"mem-jc-api-2-{t.timestamp()}",
             content="生产环境集群配置了两级本地与分布式缓存架构",
             confidence=0.95,
-            user_id="default",
+            user_id=user_id,
             created_at=t,
             updated_at=t,
         )
@@ -61,8 +110,8 @@ class TestJiaochouApiSmoke:
 
     def test_seam1_jiaochou_service(self):
         """Seam 1: 服务层纯净调用验证。"""
-        m1, m2 = _seed_test_pair()
-        p = Principal(user_id="default")
+        m1, m2 = _seed_test_pair(SEAM1_USER)
+        p = Principal(user_id=SEAM1_USER)
 
         # 1. collate_memories_service
         collate_res = collate_memories_service(
@@ -78,7 +127,12 @@ class TestJiaochouApiSmoke:
 
         # 2. scan_redundancy_service
         scan_res = scan_redundancy_service(limit=10, similarity_threshold=0.5, principal=p)
-        assert scan_res["total_pairs"] >= 1
+        # 原为 `>= 1`：只证明「窗口里有任何一对」，不证明「那是我的对」，所以它会被
+        # 别人的数据挤成假红、也会被别人的数据挤成假绿。收紧成精确可见集＝隔离本身可证。
+        assert scan_res["total_pairs"] == 1, (
+            f"专用作用域里本该只看得见本用例自己的一对，实测 {scan_res['total_pairs']} 对："
+            "有别的文件往这个作用域写进了数据，隔离已破"
+        )
         assert any(
             {p["memory_id_a"], p["memory_id_b"]} == {m1.id, m2.id}
             for p in scan_res["redundant_pairs"]
@@ -187,3 +241,76 @@ class TestJiaochouApiSmoke:
         assert "<memory_data" in prompt
         assert "统一将生产数据库端口设定为 5432" in prompt
         assert "表述同义合并" in prompt
+
+
+def test_jiaochou_scan_limit_keeps_first_found_not_most_similar():
+    """机制锁（真库真引擎，不 mock）：`limit` 是「先扫到的 N 对」，不是「最相似的 N 对」。
+
+    根因位置 `lantai/cognition/jiaochou.py:200-203`：凑够 limit 对就 break，`:205` 才按
+    相似度排序——排序作用在一个**已经被截断**的集合上，结果只取决于行的插入顺序。而
+    seam1 读写的是会话级共享库（`tests/conftest.py::_isolate_data_dir`），插入顺序又取决于
+    「前面跑了哪些文件」，于是「窗口里有没有我」变成一个跑测顺序的函数。这条锁用私有库
+    把截断机制本身钉住（本票不改校雠的返回契约），防止有人把「正序绿」当成正确性证据。
+    """
+    t = utcnow()
+    crowd = []
+    for i in range(12):
+        text = f"冗余簇 {i}：同一句完全一样的话"
+        crowd.append(_mem("jc-crowd", f"crowd-a{i}", text, t))
+        crowd.append(_mem("jc-crowd", f"crowd-b{i}", text, t))
+    mine = [
+        _mem("jc-crowd", "mine-a", "生产集群已开启两级本地与分布式缓存", t),
+        _mem("jc-crowd", "mine-b", "生产环境集群配置了两级本地与分布式缓存架构", t),
+    ]
+    with _private_store() as session:
+        for m in [*crowd, *mine]:  # 竞争对先进库 = 先被扫到
+            session.add(m)
+        session.commit()
+        res = JiaochouEngine(
+            session=session, principal=Principal(user_id="jc-crowd")
+        ).scan_redundancy(limit=10, similarity_threshold=0.5)
+    mine_ids = {mine[0].id, mine[1].id}
+    assert res["total_pairs"] == 10, res["total_pairs"]
+    assert mine_ids not in [{p["memory_id_a"], p["memory_id_b"]} for p in res["redundant_pairs"]], (
+        "窗口居然装得下：这条锁没测到截断机制"
+    )
+
+
+def test_jiaochou_seam1_evidence_survives_a_crowded_shared_store():
+    """隔离锁：seam1 的证据不许取决于「别的文件先往同一个作用域撒了多少对」。
+
+    实测事故（票 05 续20）：逆序全量与乱序全量（seed=20261103）各判红一条，都是
+    `test_seam1_jiaochou_service`——它曾把样本撒进共享 `default` 租户，而扫描凑够 limit
+    就 break，竞争对先占满窗口时本用例的对就被挤出去；正序绿只是运气。本锁在私有库里
+    重放那个拥挤现场：谁把 `SEAM1_USER` 改回公共租户，这条锁立刻判红。
+    """
+    t = utcnow()
+    crowd = []
+    for i in range(12):
+        text = f"别的文件先撒进来的冗余对 {i}"
+        crowd.append(_mem("default", f"rival-a{i}", text, t))
+        crowd.append(_mem("default", f"rival-b{i}", text, t))
+    with _private_store() as session:
+        for m in crowd:
+            session.add(m)
+        session.commit()
+        m1, m2 = _seed_scoped_pair(session, t)
+        res = JiaochouEngine(
+            session=session, principal=Principal(user_id=SEAM1_USER)
+        ).scan_redundancy(limit=10, similarity_threshold=0.5)
+    hits = [{p["memory_id_a"], p["memory_id_b"]} for p in res["redundant_pairs"]]
+    assert {m1.id, m2.id} in hits, (
+        f"窗口被别人的数据占满，本用例的证据进不来：{len(hits)} 对里没有它"
+    )
+
+
+def _seed_scoped_pair(session: Session, t) -> tuple[MemoryItem, MemoryItem]:
+    """按 seam1 当前的作用域播种一对冗余样本（私有库里直插，避免污染会话级共享库）。"""
+    pair = [
+        _mem(SEAM1_USER, "own-a", "生产集群已开启两级本地与分布式缓存", t),
+        _mem(SEAM1_USER, "own-b", "生产环境集群配置了两级本地与分布式缓存架构", t),
+    ]
+    for m in pair:
+        session.add(m)
+    session.commit()
+    return pair[0], pair[1]

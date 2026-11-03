@@ -114,17 +114,26 @@ def test_stale_uv_lock_is_reported_by_consistency_check(tmp_path):
     assert not any("uv.lock" in i for i in fixed), fixed
 
 
-@pytest.fixture(autouse=True)
-def _isolate_gate_ledger():
-    """门禁账本是模块全局：进出处都快照还原，用例既不继承它、也不污染它。
+def _ledger_guard():
+    """门禁账本护栏（普通生成器，可被不 mock 地直调）：进入归零，退出逐字还原。
 
-    这条 fixture 本身就是「测试不得污染生产全局」的证据之一：跑完本文件任何用例，
-    `release_check.results` 与用例开始前逐字相同（票 05 续19，配合 D2 修复）。
+    为什么不只是留在 fixture 里：fixture 由 pytest 托管，既不能直接调用，也就不能
+    被单测「真实驱动一遍」。护栏本身必须可证伪（票 05 续20）。
     """
     before = list(RC.results)
     RC.results.clear()
-    yield
-    RC.results[:] = before
+    try:
+        yield
+    finally:
+        # 用例抛错时 pytest 会把异常从 yield 点扔进来：不套 finally 的话这一行不执行，
+        # 残渣就会串给同文件后续用例（续20 实测：异常路径留下的判定会连带第二条假失败）。
+        RC.results[:] = before
+
+
+@pytest.fixture(autouse=True)
+def _isolate_gate_ledger():
+    """用例进入时账本归零、退出时逐字还原（票 05 续19 D2 的测试侧护栏）。"""
+    yield from _ledger_guard()
 
 
 def _stub_gate_producers(
@@ -289,6 +298,59 @@ def test_addopts_check_fail_closed_when_pyproject_is_missing(monkeypatch, tmp_pa
 def test_addopts_check_still_passes_on_real_repo():
     """反向保险：收紧不许误伤现况——钉子在场 + pyproject 未声明 addopts = 惰性钉子。"""
     assert RC.addopts_fidelity_issues(RC.REPO_ROOT) == [], "真实仓库现况被误判"
+
+
+def test_gate_ledger_writer_really_leaves_residue_in_the_module_global():
+    """污染者：证明门禁账本**确实**是用例间共享的模块全局（护栏不是空转）。
+
+    沿用票 01 的「污染者 → 受害者」配对写法：同文件内按定义顺序执行，配对顺序本身
+    就是断言的一部分——护栏缺失时下一条必红。
+    """
+    RC.check("用例内留下的残渣", False, "x")
+    assert [name for _, name, _ in RC.results] == ["用例内留下的残渣"], RC.results
+
+
+def test_gate_ledger_is_pristine_for_the_next_case():
+    """受害者：进入本用例时账本必须为空——上一例的残渣不许跨用例活着。
+
+    修复前（无 `_isolate_gate_ledger` 护栏）实测：污染者的判定会留在模块全局里，
+    既串到后续用例，也让 `main()` 的账本起点不再确定（D2 的同族形态）。
+    """
+    assert RC.results == [], f"上一个用例把门禁账本带进了本用例：{RC.results}"
+
+
+def test_gate_ledger_guard_clears_on_entry_and_restores_on_exit():
+    """腿一：正常路径——进入时归零，退出时把进入前的状态**逐字**还原（不是清成空）。"""
+    sentinel = [(RC.PASS, "用例开始前就存在的判定", "")]
+    RC.results[:] = sentinel
+    gen = _ledger_guard()
+    next(gen)
+    assert RC.results == [], "护栏进入时没有归零门禁账本（clear 腿缺失 = D2 同族）"
+    RC.check("用例内的污染", False, "x")
+    assert len(RC.results) == 1, RC.results
+    with pytest.raises(StopIteration):
+        next(gen)
+    assert RC.results == sentinel, f"护栏没把进入前的账本逐字还原：{RC.results}"
+    RC.results.clear()
+
+
+def test_gate_ledger_guard_restores_even_when_the_case_raises():
+    """腿二：异常路径——用例抛错时护栏仍必须还原，否则残渣串给后续用例造第二个假失败。
+
+    裸 `yield` 的写法在用例失败时由 pytest `gen.throw()` 进入，异常直接从 yield 点
+    穿出去，后半段还原语句根本不执行。这不是理论问题：门禁用例里任何一条断言判红，
+    同文件后面的账本类用例都会因为读到上一轮的残渣而连带判红，根因被噪声盖住。
+    """
+    sentinel = [(RC.PASS, "用例开始前就存在的判定", "")]
+    RC.results[:] = sentinel
+    gen = _ledger_guard()
+    next(gen)
+    assert RC.results == []
+    RC.check("用例内炸之前的污染", False, "x")
+    with pytest.raises(RuntimeError):
+        gen.throw(RuntimeError("用例内炸了"))
+    assert RC.results == sentinel, f"异常路径没还原账本，残渣会串给下一条：{RC.results}"
+    RC.results.clear()
 
 
 def test_changelog_snapshot_parses_latest_release():
