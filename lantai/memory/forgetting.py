@@ -24,16 +24,25 @@ def _lane_strength(importance: float, use_count: int, lane: str) -> float:
 #   · `_decay_exempt`：**结构性豁免标记**（高重要度、语义/程序性衰减类）——声明
 #     「本条不受衰减归档」，衰减路与 TTL 路都必须尊重；
 #   · `_ttl_exempt`：60 天未使用突击的豁免集，口径与改动前的 `is_exempt` 逐字一致
-#     （再加偏好/画像泳道与 `use_count > 0`）。
+#     （再加偏好/画像泳道与「用过」：`use_count + injection_count > 0`）。
 #
 # `use_count > 0` 与偏好泳道**不进** `_decay_exempt`，是刻意的：把「用过一次」做成
 # 永久豁免等于让衰减归档整体空转（工单红线），而仓内已有冻结契约——
 # `lantai/eval/chinese_memory_cases.py` 的 stale 用例（偏好泳道 + importance 0.1 +
 # 200 天零使用必须归档）与 `test_forgetting_quality.py` 的 `stale_hit_rate == 0.0`。
-# 使用保活走另一条路：注入回执回写 `last_used_at` / `use_count`（修复目标 2），
+# 使用保活走另一条路：注入回执回写 `last_used_at` / `injection_count`（修复目标 2），
 # 它直接改变衰减公式的输入，不需要免疫标记，也就不会把语义做成「永生」。
+#
+# 巡检 2026-11-03 P0（改法①）：注入次数从 `use_count` 拆到 `injection_count`，
+# 因为考功/三省把 `use_count` 当「显式反馈次数」用，混进注入会把天天在用的记忆
+# 判成高频低效。遗忘这边两本账都算使用（`_usage_signal`），保活强度与 v0.66 等价。
 _DECAY_EXEMPT_CLASSES = ("semantic", "procedural")
 _TTL_EXEMPT_LANES = ("preference", "profile")
+
+
+def _usage_signal(m) -> int:
+    """遗忘眼里的「用过几次」：显式反馈次数 + 宿主注入回执次数。"""
+    return int(getattr(m, "use_count", 0) or 0) + int(getattr(m, "injection_count", 0) or 0)
 
 
 def _decay_exempt(m) -> bool:
@@ -51,7 +60,7 @@ def _decay_exempt(m) -> bool:
 
 def _ttl_exempt(m) -> bool:
     """working TTL 突击的豁免集（与改动前 `is_exempt` 逐字同口径，只是拆成命名判据）。"""
-    return _decay_exempt(m) or (m.lane in _TTL_EXEMPT_LANES) or (getattr(m, "use_count", 0) > 0)
+    return _decay_exempt(m) or (m.lane in _TTL_EXEMPT_LANES) or (_usage_signal(m) > 0)
 
 
 def _forgetting_scope(principal):
@@ -131,7 +140,7 @@ def apply_forgetting(principal=None, *, page_size: int = 500):
                     elif last.tzinfo is None and now.tzinfo is not None:
                         last = last.replace(tzinfo=now.tzinfo)
                     days = max(0.0, (now - last).total_seconds() / 86400.0)
-                    strength = _lane_strength(m.importance, m.use_count, m.lane)
+                    strength = _lane_strength(m.importance, _usage_signal(m), m.lane)
                     new_decay = math.exp(-days / strength)
 
                     # Ticket 2.4 [DD-06]: 跳过极微小更新

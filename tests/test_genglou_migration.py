@@ -82,9 +82,9 @@ def v20_file_db(tmp_path):
         "INSERT INTO memoryitem (id, content, valid_from, created_at, updated_at,"
         " memory_type, namespace, confidence, reason, importance, tier, role, lane,"
         " domain, version, status, use_count, helpful_count, decay_score, decay_class,"
-        " lifecycle_status, shared_scope) VALUES (?, ?, ?, ?, ?, 'text', 'default', 0.5, '', 0.5,"
-        " 'working', 'observation', 'general', 'user', 1, 'active', 0, 0, 1.0,"
-        " 'episodic', 'active', 'private')",
+        " lifecycle_status, shared_scope, injection_count) VALUES (?, ?, ?, ?, ?, 'text',"
+        " 'default', 0.5, '', 0.5, 'working', 'observation', 'general', 'user', 1, 'active',"
+        " 0, 0, 1.0, 'episodic', 'active', 'private', 0)",
         seeds,
     )
     conn.commit()
