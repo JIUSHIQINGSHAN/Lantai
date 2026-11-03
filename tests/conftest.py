@@ -185,6 +185,29 @@ def pytest_configure(config):
     _capture_canonical_bindings()
 
 
+def _report_module_state(terminalreporter) -> None:
+    if not (_MODULE_STATE_RESIDUE or _MODULE_STATE_RESTORE_FAILURES or _MODULE_STATE_UNCAPTURED):
+        return
+    blocking = bool(_MODULE_STATE_RESTORE_FAILURES or _MODULE_STATE_UNCAPTURED)
+    title = (
+        "模块级生产状态：回滚失败或初值缺失（护栏失效，会话已判红）"
+        if blocking
+        else "模块级生产状态残留（已由护栏逐例回滚，点名供排期）"
+    )
+    terminalreporter.write_sep("=", title)
+    for note in _MODULE_STATE_UNCAPTURED[:10]:
+        terminalreporter.write_line("[初值缺失] " + note)
+    for nodeid, notes in _MODULE_STATE_RESTORE_FAILURES[:10]:
+        terminalreporter.write_line(f"[回滚失败] {nodeid}")
+        for note in notes:
+            terminalreporter.write_line("    " + note)
+    rows = sorted(_MODULE_STATE_RESIDUE.items(), key=lambda kv: -kv[1]["count"])
+    for name, row in rows:
+        terminalreporter.write_line(
+            f"[已回滚] {name} 被 {row['count']} 例造脏，例：{'; '.join(row['examples'])}"
+        )
+
+
 def pytest_runtest_setup(item):
     import lantai.storage.db as dbm
 
@@ -271,7 +294,151 @@ def _repair_canonical_bindings(nodeid):
         _BINDING_RESIDUE.append((nodeid, dirty))
 
 
+# ── 模块级生产状态逐例隔离（票 05 续22，G2 的门禁盲区）───────────────────
+# 上面的绑定绊线只看「函数对象有没有被换掉」，harness_state 只登记 env 与
+# settings 字段：两者都不看**模块级容器的内容**，也不看**懒单例里攒下的状态**。
+# 实测证据（同一进程会话首/尾快照差分：`.scratch/gate/r22/smain.start.json` 与
+# `smain.finish.json`，那一轮 2857 passed 全绿）——结束时下面这些生产模块级状态
+# 仍带着测试造出来的内容，而生产代码会把它们当决策输入读：
+#   * `cehou._SHADOW_WINDOWS` 0→9 条，键名就是 `win-svc-api-test-01` 这类测试自
+#     用 id，而 cezhou 聚合会遍历全表；
+#   * `scheduler.WORKER_LAST_RUN` 0→6 条，`get_last_run()` 拿它当「DB 查不到时
+#     的兜底真值」——前序测试的 stamp 会让后续判定「刚跑过」而静默跳过；
+#   * `prefilter._PATTERN_CACHE` 键没变、**值被原地改掉**（只比对象身份的检查抓
+#     不到），`_KEYWORD_WARNED` 是「只吼一次」的抑制位；
+#   * `mcp._guard_instance._states` 留着 3 个测试调用指纹（mcp.py:3777 复用该单例，
+#     断路状态 `open_until` 会跨测试放行 -32005）；
+#   * `metrics._collector._records` / `telemetry._writer._pending`/`_seen` 攒着前序
+#     测试的请求记录；
+#   * `kaogong._LATEST_KAOGONG_REPORT` / `consolidation_service._LAST_CONSOLIDATION_REPORT`
+#     带着测试跑出来的时间戳与计数——`test_consolidation.py:838` 名义上验「初值契
+#     约」，全量顺序里读到的却是上一个测试运行后的报告，顺序 A/B 不等价。
+# 口径与 `_reset_gate_hot_cache`、`_isolate_app_dependency_overrides` 一致：每例
+# 从出厂初值冷启动，需要热态语义的用例自行预填；容器**原地**回滚（生产代码可能
+# 持有同一个 dict 引用，只改变量指向等于没回滚）。回滚不生效或初值抓不到就判红，
+# 不做「看着像护栏、实际在空转」的假隔离。
+
+_GUARDED_MODULE_STATE = (
+    ("lantai.cognition.cehou", "_SHADOW_WINDOWS"),
+    ("lantai.core.scheduler", "WORKER_LAST_RUN"),
+    ("lantai.gate.prefilter", "_PATTERN_CACHE"),
+    ("lantai.gate.prefilter", "_KEYWORD_WARNED"),
+    ("lantai.cognition.kaogong", "_LATEST_KAOGONG_REPORT"),
+    ("lantai.services.consolidation_service", "_LAST_CONSOLIDATION_REPORT"),
+    ("lantai.api.routes_health", "_git_sha_cache"),
+    ("lantai.parameters.runtime", "_last_applied_revision"),
+    ("lantai.cli.mcp", "_guard_instance"),
+    ("lantai.llm.client", "_llm_gate"),
+    ("lantai.llm.client", "_gate_init_args"),
+    ("lantai.observability.metrics", "_collector"),
+    ("lantai.observability.telemetry", "_writer"),
+)
+
+_MODULE_STATE_PRISTINE: dict[tuple[str, str], object] = {}
+_MODULE_STATE_RESIDUE: dict[str, dict] = {}
+_MODULE_STATE_RESTORE_FAILURES: list[tuple[str, list[str]]] = []
+_MODULE_STATE_UNCAPTURED: list[str] = []
+
+
+def _copy_module_state(value):
+    """浅拷贝容器内容：懒单例/标量按引用即可（它们的隔离靠「写回 None」）。"""
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, set):
+        return set(value)
+    if isinstance(value, frozenset):
+        return frozenset(value)
+    if isinstance(value, tuple):
+        return tuple(value)
+    return value
+
+
+def _ensure_module_state_baseline() -> None:
+    """在第一个测试体执行之前抓齐 12 个通道的出厂初值。
+
+    抓不到不静默跳过：记进 `_MODULE_STATE_UNCAPTURED` 并由会话判红——否则「护栏
+    指向一个改过名的属性」会永远「复位成功」而真实泄漏一条都没管（本票探针起草时
+    就把 `mcp._active_profile_cache` 猜成了不存在的名字，实测 MISSING）。
+    """
+    import importlib
+
+    for mod_name, attr in _GUARDED_MODULE_STATE:
+        key = (mod_name, attr)
+        if key in _MODULE_STATE_PRISTINE:
+            continue
+        try:
+            mod = importlib.import_module(mod_name)
+            _MODULE_STATE_PRISTINE[key] = _copy_module_state(getattr(mod, attr))
+        except Exception as exc:  # noqa: BLE001
+            note = f"{mod_name}.{attr}: {type(exc).__name__}: {str(exc)[:120]}"
+            if note not in _MODULE_STATE_UNCAPTURED:  # 每个测试都会重试，只留一条
+                _MODULE_STATE_UNCAPTURED.append(note)
+
+
+def _write_module_state(key, value):
+    """把单个通道写回目标值（容器原地回滚）；返回 None 表示确实写干净了。"""
+    mod_name, attr = key
+    mod = sys.modules.get(mod_name)
+    if mod is None:
+        return f"{mod_name} 未加载"
+    try:
+        current = getattr(mod, attr)
+    except AttributeError:
+        return f"{mod_name}.{attr} 已不存在（改名/删除使护栏失效）"
+    if isinstance(value, dict) and isinstance(current, dict):
+        current.clear()
+        current.update(value)
+    elif isinstance(value, list) and isinstance(current, list):
+        del current[:]
+        current.extend(value)
+    elif isinstance(value, set) and isinstance(current, set):
+        current.clear()
+        current.update(value)
+    else:
+        setattr(mod, attr, value)
+    after = getattr(mod, attr, None)
+    if isinstance(value, (dict, list, set)) and isinstance(after, type(value)):
+        ok = after == value
+    else:
+        ok = after is value or after == value
+    return None if ok else f"{mod_name}.{attr} 回滚后仍不一致：{after!r} != {value!r}"
+
+
+def _snapshot_module_state() -> dict:
+    """当前值快照（护栏与回归测试共用同一份读法，避免两边口径漂移）。"""
+    out = {}
+    for key in _GUARDED_MODULE_STATE:
+        mod = sys.modules.get(key[0])
+        if mod is None:
+            continue
+        out[key] = _copy_module_state(getattr(mod, key[1], None))
+    return out
+
+
+def _restore_module_state(snapshot: dict) -> list[str]:
+    problems = []
+    for key, value in snapshot.items():
+        err = _write_module_state(key, _copy_module_state(value))
+        if err:
+            problems.append(err)
+    return problems
+
+
+def _dirty_module_channels() -> list[str]:
+    dirty = []
+    for key, pristine in _MODULE_STATE_PRISTINE.items():
+        mod = sys.modules.get(key[0])
+        if mod is None:
+            continue
+        if getattr(mod, key[1], None) != pristine:
+            dirty.append(f"{key[0]}.{key[1]}")
+    return dirty
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus=0, config=None):
+    _report_module_state(terminalreporter)
     if not _BINDING_RESIDUE:
         return
     bad = unexpected_binding_residue(_BINDING_RESIDUE)
@@ -295,7 +462,11 @@ def pytest_sessionfinish(session, exitstatus=0):
 
     只在「本来全绿」时升级为 1，不覆盖已经红的会话，也不新增 skip/xfail。
     """
-    if int(exitstatus) == 0 and unexpected_binding_residue(_BINDING_RESIDUE):
+    if int(exitstatus) == 0 and (
+        unexpected_binding_residue(_BINDING_RESIDUE)
+        or _MODULE_STATE_RESTORE_FAILURES
+        or _MODULE_STATE_UNCAPTURED
+    ):
         session.exitstatus = 1
 
 
@@ -572,6 +743,33 @@ def _reset_gate_hot_cache():
     if hasattr(pf, "_USER_GATE_DECISIONS"):
         pf._USER_GATE_DECISIONS.clear()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_module_state(request):
+    """模块级生产状态每例冷启动 + 撕卸回滚（票 05 续22）。
+
+    冷启动放在 setup：即使上一个测试的 teardown 因异常没跑完，下一个测试也不会
+    继承脏值；撕卸时再回滚一次并把造脏者点名。回滚不生效是护栏自己的缺陷，
+    记红并由 `pytest_sessionfinish` 升级会话退出码——不靠「复位过」冒充干净。
+    """
+    _ensure_module_state_baseline()
+    cold_problems = _restore_module_state(_MODULE_STATE_PRISTINE)
+    if cold_problems:
+        _MODULE_STATE_RESTORE_FAILURES.append(("<setup>", cold_problems))
+    yield
+    dirty = _dirty_module_channels()
+    if not dirty:
+        return
+    nodeid = request.node.nodeid
+    for name in dirty:
+        row = _MODULE_STATE_RESIDUE.setdefault(name, {"count": 0, "examples": []})
+        row["count"] += 1
+        if len(row["examples"]) < 3 and nodeid not in row["examples"]:
+            row["examples"].append(nodeid)
+    problems = _restore_module_state(_MODULE_STATE_PRISTINE)
+    if problems:
+        _MODULE_STATE_RESTORE_FAILURES.append((request.node.nodeid, problems))
 
 
 @pytest.fixture(autouse=True)
