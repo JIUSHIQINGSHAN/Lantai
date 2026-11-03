@@ -634,7 +634,7 @@ def test_tripwire_watch_must_be_armed_on_the_host_db():
     issues = RC.tripwire_report_issues(bad, home="(未指明)", watch=host)
     assert any("看护" in i for i in issues), f"绊线武装在沙箱却被判干净：{issues}"
     good = f"[TRIPEWIRE-ARMED] {host}\n[miss] x\n"
-    assert RC.tripwire_report_issues(good, home="c:\host", watch=host) == []
+    assert RC.tripwire_report_issues(good, home=r"c:\host", watch=host) == []
     assert RC.tripwire_report_issues(bad, home="(未指明)", watch="") == []
 
 

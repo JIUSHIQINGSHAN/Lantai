@@ -49,8 +49,16 @@ SHADOW_NAMES = (
     "cli",
 )
 
+# 探针先载入 pkg_resources（巡检 2026-11-03）：jieba._compat 在 import 时 try 导入
+# pkg_resources，而 setuptools<81 的 pkg_resources 会把自己的 setuptools/_vendor 追加进
+# sys.path。CI 的 toolcache Python 3.11 自带这类 setuptools，于是本用例在 CI 稳定失败，
+# 本地 uv 环境（uv.lock 不含 setuptools）却稳定通过。这是 setuptools 自己的行为，
+# 不是兰台生产代码改 sys.path；先载入只排除这一个来源，兰台模块和其余三方库
+# 在 import 期对 sys.path 的任何改动仍然会被报出来。
 _PROBE_IMPORT = """
 import importlib.util, json, sys
+if importlib.util.find_spec("pkg_resources") is not None:
+    import pkg_resources  # noqa: F401  setuptools 自己的 sys.path 追加，见上方注释
 before = list(sys.path)
 out_before = sys.stdout.encoding
 in_before = sys.stdin.encoding
