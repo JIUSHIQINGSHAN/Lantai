@@ -14,6 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # test_legacy_schema_parity 需要 v0.25.0 / v0.65.0 等历史 tag；默认浅克隆
+          # （depth=1、不带 tag）下这两条稳定失败（巡检 2026-11-03）
+          fetch-depth: 0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'

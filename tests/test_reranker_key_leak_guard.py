@@ -31,6 +31,10 @@ def test_siliconflow_host_does_not_leak_openai_key(monkeypatch):
 def test_openai_host_allows_openai_key_fallback(monkeypatch):
     """当重排 host 同为 api.openai.com 时，允许正常回退复用 OPENAI_API_KEY。"""
     monkeypatch.setattr(settings, "RERANKER_BASE_URL", "https://api.openai.com/v1")
+    # 「同一服务商」按 OPENAI_BASE_URL 的实际 host 判定（巡检 2026-11-03）：本用例的前提
+    # 是 OPENAI_API_KEY 属于 api.openai.com，须显式声明——v0.66 起测试装配把
+    # OPENAI_BASE_URL 强制指向黑洞地址，不能再依赖出厂默认值。
+    monkeypatch.setattr(settings, "OPENAI_BASE_URL", "https://api.openai.com/v1")
     monkeypatch.setattr(settings, "RERANKER_API_KEY", "")
     monkeypatch.setattr(settings, "OPENAI_API_KEY", "dummy-test-mock-key-only")
 

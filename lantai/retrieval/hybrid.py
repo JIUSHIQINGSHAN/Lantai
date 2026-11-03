@@ -509,7 +509,11 @@ def _hybrid_search_impl(
         # NULL 属主在向量库里的落点，332/353 条真实向量都是它）。
         filters = vector_owner_filter(principal, extra or None)
 
-        qv = embed([query], timeout=budget_s)[0]  # D-04 预算传导
+        # D-04 预算传导：只在调用方给了预算时才传 timeout。无预算时按旧签名
+        # embed([query]) 调用——评测替身 embed_for_eval、各测试的 _hash_embed
+        # 等单参实现被 patch 到 hybrid.embed 上，无条件传 timeout=None 会让它们
+        # TypeError，被下面的 except 吞掉后静默退化为纯关键词检索（v0.65 回归）。
+        qv = (embed([query], timeout=budget_s) if budget_s is not None else embed([query]))[0]
         vector_store = get_vector_store()
         vector_results = vector_store.search(
             qv, top_k=fetch_n, filters=filters if filters else None

@@ -40,9 +40,13 @@ def rerank(
 
     url = f"{settings.RERANKER_BASE_URL}/rerank"
     # X-09 跨服务商密钥防泄漏：仅当未配 RERANKER_API_KEY 且 host 与 OPENAI 同域 (api.openai.com) 时才允许回退
+    # 同一服务商的判定按 OPENAI_BASE_URL 的实际 host，而不是写死 api.openai.com：
+    # .env.example 推荐的配置就是 OPENAI_BASE_URL=https://api.siliconflow.cn/v1，
+    # 此时 OPENAI_API_KEY 本来就是硅基流密钥，回退不外发、也不该把精排静默关掉。
+    openai_host = (urlparse(settings.OPENAI_BASE_URL or "").hostname or "").lower()
     api_key = settings.RERANKER_API_KEY
     if not api_key:
-        if host in ("api.openai.com",):
+        if host == openai_host:
             api_key = settings.OPENAI_API_KEY
         else:
             logger.warning(
@@ -70,13 +74,16 @@ def rerank(
     # 首次 + 重试 1 次（单调用点循环；失败返回空列表由调用方降级）
     # 预算传导（D-04）：timeout 覆盖 RERANKER_TIMEOUT（hook 传剩余预算）
     eff_timeout = float(timeout) if timeout is not None else settings.RERANKER_TIMEOUT
-    for attempt in range(2):
+    # 预算模式只给一次机会：「请求 + sleep(RERANKER_RETRY_DELAY) + 再请求」最坏是
+    # 2×timeout+1s，剩余预算 1.6s 时就是 4.2s，必撞 2s 外墙、丢掉整段检索结果。
+    attempts = 1 if timeout is not None else 2
+    for attempt in range(attempts):
         try:
             resp = requests.post(url, json=payload, headers=headers, timeout=eff_timeout)
             resp.raise_for_status()
             return _parse_response(resp.json(), documents, top_k)
         except Exception:
-            if attempt == 0:
+            if attempt < attempts - 1:
                 time.sleep(settings.RERANKER_RETRY_DELAY)
                 continue
             return []
