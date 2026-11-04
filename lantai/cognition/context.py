@@ -684,7 +684,9 @@ class CognitiveContextBuilder:
             # 单一真源（粒度 SHELL_HOOK_INJECT_DATE，off 时空串不加 meta）。
             from lantai.core.time import render_event_time
 
-            time_str = render_event_time(mem, settings.SHELL_HOOK_INJECT_DATE)
+            time_str = render_event_time(
+                mem, settings.SHELL_HOOK_INJECT_DATE, settings.SHELL_HOOK_INJECT_TZ
+            )
             if time_str:
                 record["event_time"] = time_str
             if mem.role == CognitiveRole.PRINCIPLE and isinstance(mem.structure, dict):

@@ -141,7 +141,7 @@ def _format_memory_entry(
 
 def _event_time_str(item) -> str:
     """单条记忆的时间段渲染（粒度由 SHELL_HOOK_INJECT_DATE 决定；空串=不带）。"""
-    return render_event_time(item, settings.SHELL_HOOK_INJECT_DATE)
+    return render_event_time(item, settings.SHELL_HOOK_INJECT_DATE, settings.SHELL_HOOK_INJECT_TZ)
 
 
 def _format_offload_entry(item, score: float, max_chars: int) -> tuple[str, str]:

@@ -1,4 +1,9 @@
-from datetime import UTC, datetime
+import logging
+import re
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
+from functools import lru_cache
+
+logger = logging.getLogger(__name__)
 
 
 def utcnow() -> datetime:
@@ -43,8 +48,67 @@ _INJECT_DATE_FORMATS = {
     "minute": "%Y-%m-%d %H:%M",
 }
 
+# 注入帧显示时区（巡检 2026-11-04 改进：库里一律存 UTC，但给模型看的日期要按
+# 使用者的墙上时钟——北京时间 0:00–8:00 写的记忆按 UTC 渲染会落到前一天，
+# minute 粒度则整体差 8 小时）。只影响「显示」，不改存储与任何时间计算。
+DEFAULT_INJECT_TZ = "Asia/Shanghai"
 
-def render_event_time(item, granularity: str = "day") -> str:
+# Windows 的 Python 不自带 IANA 时区库（zoneinfo 要靠 tzdata 包）。下列时区自
+# 1991 年起无夏令时，取不到 tzdata 时退回固定偏移，结果与 zoneinfo 一致。
+_FIXED_OFFSET_FALLBACK_HOURS = {
+    "Asia/Shanghai": 8,
+    "Asia/Chongqing": 8,
+    "Asia/Harbin": 8,
+    "Asia/Urumqi": 6,
+    "PRC": 8,
+    "Asia/Hong_Kong": 8,
+    "Asia/Macau": 8,
+    "Asia/Taipei": 8,
+    "Asia/Singapore": 8,
+    "Asia/Tokyo": 9,
+    "Asia/Seoul": 9,
+}
+
+_OFFSET_RE = re.compile(r"^(?:UTC|GMT)?([+-])(\d{1,2})(?::?(\d{2}))?$", re.IGNORECASE)
+
+
+@lru_cache(maxsize=32)
+def resolve_display_tz(name: str | None) -> tzinfo | None:
+    """把配置里的时区名解析成 tzinfo（只用于注入帧显示）。
+
+    认的写法：IANA 名（``Asia/Shanghai``）| ``UTC`` | ``local``（本机系统时区，
+    返回 None，调用方 ``astimezone(None)``）| 固定偏移（``+08:00`` / ``UTC+8``）。
+    空值、写错值都回落 ``DEFAULT_INJECT_TZ``，并只告警一次（lru_cache）——
+    与粒度写错回落 day 同一裁决：不因一个拼写错误让注入时间整段失真或抛异常。
+    """
+    raw = (name or "").strip()
+    if not raw:
+        raw = DEFAULT_INJECT_TZ
+    if raw.lower() == "local":
+        return None
+    if raw.upper() in ("UTC", "Z", "GMT"):
+        return UTC
+    m = _OFFSET_RE.match(raw)
+    if m:
+        sign, hh, mm = m.group(1), int(m.group(2)), int(m.group(3) or 0)
+        if hh <= 14 and mm < 60:
+            delta = timedelta(hours=hh, minutes=mm)
+            return timezone(-delta if sign == "-" else delta)
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(raw)
+    except Exception:  # ZoneInfoNotFoundError / ValueError（非法名）/ 无 tzdata
+        pass
+    if raw in _FIXED_OFFSET_FALLBACK_HOURS:
+        return timezone(timedelta(hours=_FIXED_OFFSET_FALLBACK_HOURS[raw]))
+    if raw != DEFAULT_INJECT_TZ:
+        logger.warning("SHELL_HOOK_INJECT_TZ=%r 无法识别，注入时间回落 %s", raw, DEFAULT_INJECT_TZ)
+        return resolve_display_tz(DEFAULT_INJECT_TZ)
+    return UTC  # 理论不可达：默认时区已在固定偏移表里
+
+
+def render_event_time(item, granularity: str = "day", tz: str | None = None) -> str:
     """注入帧的时间段渲染：优先事件轴，回落主张轴，取不到不硬造。
 
     双轴语义（更漏 ADR-0048）：
@@ -58,6 +122,10 @@ def render_event_time(item, granularity: str = "day") -> str:
 
     granularity：``day``（%Y-%m-%d）| ``minute``（%Y-%m-%d %H:%M）| ``off``（不带）。
     写错值/None 回落 day——不因一个拼写错误把时间整段丢掉（上游同款裁决）。
+
+    tz：显示时区（配置 SHELL_HOOK_INJECT_TZ），None/空/写错回落
+    ``DEFAULT_INJECT_TZ``（Asia/Shanghai）。存储是 UTC，这里只换算显示——
+    北京时间 07:30 的记忆显示为当天，而不是 UTC 的前一天 23:30。
 
     item：MemoryItem 或含同名字段的 dict；datetime 与 ISO 字符串都认
     （SQLModel 跨版本读回形态不同），解析失败返回空串而非抛异常——
@@ -86,6 +154,6 @@ def render_event_time(item, granularity: str = "day") -> str:
 
     fmt = _INJECT_DATE_FORMATS[granularity]
     try:
-        return ensure_aware(value).strftime(fmt)
-    except (ValueError, AttributeError, OverflowError):
+        return ensure_aware(value).astimezone(resolve_display_tz(tz)).strftime(fmt)
+    except (ValueError, AttributeError, OverflowError, OSError):
         return ""
