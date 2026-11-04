@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **注入次数与显式反馈分账，考功/三省不再把天天在用的记忆降级（巡检 2026-11-03 P0，改法①）**：v0.66 的注入保活把宿主回执记进 `use_count`，而 Hermes 插件每轮注入都回执、从不发「有用」反馈——考功（`use_count>=3` 且采纳率 `<=0.2` → 重要度 0.1）与三省（`use_count>=5` 且 `helpful_count==0`）于是把最常用的记忆判成高频低效（实测重要度 0.95 的过敏记忆注入 3 次、跑一次考功即降到 0.1，160 天后被归档）。现在 `MemoryItem` 新增 `injection_count`，`retrieval_log._touch_keepalive` 只刷 `last_used_at` 并累加 `injection_count`；`use_count` 回到「显式反馈次数」原义，考功/三省/reflector 不动。遗忘侧 `forgetting._usage_signal` 把两者相加，衰减强度与 TTL 豁免与 v0.66 等价。迁移 v37 给老库补列，并按 `memoryusagefeedback` 账本把 v0.66 灌进 `use_count` 的注入次数挪回 `injection_count`（两者之和不变；无反馈表时只补列）。回归锁：`tests/test_kaogong_injection_count.py`。
+
 ## [0.66.0] - 2026-11-02 - 探赜（Tanze · 续审 P0 收口与发布门禁去橡皮图章）
 
 > 版本代号「探赜」：探赜索隐、钩深致远，语出《周易·系辞上》——对应本版主题「v0.38–v0.60 续审 P0 清单收口 + 发布门禁可信度」：已删隐私不再重新注入（X-01）、豁免/重要记忆不再被 60 天零反馈误归档（X-02）、私密记忆数据停止入库（X-05）、测试隔离与全局态污染护栏（票 01）、探颐中文否定语义误归档（票 02）、插件短查询画像注入（票 04）、门禁新增四类结构性阻断（票 05）。票据 `.scratch/v0.66-next-window-2026-11/`（票 01–04 resolved；票 05 结论 **blocked**：默认 MCP 暴露未收窄，见「Known limitations」）。

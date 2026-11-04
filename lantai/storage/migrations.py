@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 36
+TARGET_SCHEMA_VERSION = 37
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -726,6 +726,53 @@ def _migrate_v36(conn) -> None:
     logger.info("Migrated v36: 三张表 shared_scope 兜底补齐（修 v35 漏掉 memorycandidate）")
 
 
+def _table_exists(conn, table: str) -> bool:
+    return bool(
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+    )
+
+
+def _migrate_v37(conn) -> None:
+    """v36 -> v37: memoryitem 补 injection_count，并把 v0.66 灌进 use_count 的注入次数挪回去。
+
+    巡检 2026-11-03 P0（改法①）：v0.66（`93e73ac7`）让宿主注入回执给记忆
+    `use_count += 1`，而 Hermes 从不发「有用」反馈——考功（use_count>=3 且采纳率
+    <=0.2 → 重要度写成 0.1）与三省（use_count>=5 且 helpful=0）于是把天天在用的
+    记忆判成「高频低效」。改后注入只记 `injection_count`，`use_count` 回到
+    「显式反馈次数」的原义（`reflector.record_feedback` 是它唯一的写入点）。
+
+    老库数据修复：`record_feedback` 每加一次 use_count 必写一行
+    `memoryusagefeedback`（仓内没有删这张表的代码），所以
+    `use_count - 反馈行数` 就是 v0.66 回执灌进来的注入次数。只处理
+    `use_count > 反馈行数` 的行，把差额挪进 `injection_count`、use_count 收回到
+    反馈行数；两者之和不变，遗忘的保活强度也就不变（见 `forgetting._usage_signal`）。
+    反馈表不存在时无从分辨，宁 miss 不脏写：只补列不改数。幂等：修完后差额为 0。
+    """
+    if not _table_exists(conn, "memoryitem"):
+        return
+    if not _has_column(conn, "memoryitem", "injection_count"):
+        conn.execute("ALTER TABLE memoryitem ADD COLUMN injection_count INTEGER NOT NULL DEFAULT 0")
+    if _table_exists(conn, "memoryusagefeedback"):
+        cur = conn.execute(
+            "UPDATE memoryitem SET"
+            " injection_count = COALESCE(injection_count, 0) + (COALESCE(use_count, 0) - ("
+            "   SELECT COUNT(*) FROM memoryusagefeedback f WHERE f.memory_id = memoryitem.id)),"
+            " use_count = ("
+            "   SELECT COUNT(*) FROM memoryusagefeedback f WHERE f.memory_id = memoryitem.id)"
+            " WHERE COALESCE(use_count, 0) > ("
+            "   SELECT COUNT(*) FROM memoryusagefeedback f WHERE f.memory_id = memoryitem.id)"
+        )
+        moved = cur.rowcount if cur.rowcount is not None else -1
+    else:
+        moved = 0
+        logger.info("迁移 v37：无 memoryusagefeedback 表，只补 injection_count 列、不改 use_count")
+    logger.info(
+        "Migrated v37: memoryitem.injection_count（注入次数与显式反馈分账），修正 %s 行", moved
+    )
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -762,6 +809,7 @@ MIGRATIONS = [
     (34, _migrate_v34),
     (35, _migrate_v35),
     (36, _migrate_v36),
+    (37, _migrate_v37),
 ]
 
 

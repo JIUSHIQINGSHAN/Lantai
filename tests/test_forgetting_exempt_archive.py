@@ -76,9 +76,10 @@ def _same_moment(a, b) -> bool:
 
 
 def _status_and_decay(engine, mid):
+    """第 3 项是注入回执计数 `injection_count`（巡检 2026-11-03 P0 起与 `use_count` 分账）。"""
     with Session(engine) as s:
         m = s.get(MemoryItem, mid)
-        return m.status, m.decay_score, m.use_count, m.last_used_at
+        return m.status, m.decay_score, m.injection_count, m.last_used_at
 
 
 def _pred_decay(importance, use_count, lane, days) -> float:
@@ -259,9 +260,13 @@ def _recall(engine, mid, *, session_id="s-1", principal=None, query="我的编�
 
 
 class TestInjectionReceiptKeepsMemoryAlive:
-    """病灶 2：Hermes 注入回执必须刷新 `use_count` 与 `last_used_at`（修复目标 2）。"""
+    """病灶 2：Hermes 注入回执必须刷新保活字段与 `last_used_at`（修复目标 2）。
 
-    def test_receipt_updates_use_count_and_last_used_at(self, engine):
+    保活计数自巡检 2026-11-03 P0（改法①）起写 `injection_count`，不再写 `use_count`
+    （后者是考功/三省只认的显式反馈次数，见 `test_kaogong_injection_count.py`）。
+    """
+
+    def test_receipt_updates_injection_count_and_last_used_at(self, engine):
         stale = _ago(65)
         _seed(engine, "ka-1", lane="chat", importance=0.95, last_used_at=stale, created_at=stale)
         ev = _recall(engine, "ka-1")
@@ -271,8 +276,10 @@ class TestInjectionReceiptKeepsMemoryAlive:
 
         backfill_used_ids(ev, ["ka-1"])
 
-        _status, _decay, use_count, last_used = _status_and_decay(engine, "ka-1")
-        assert use_count == 1, f"注入回执没刷 use_count（病灶 2）: {use_count}"
+        _status, _decay, injected, last_used = _status_and_decay(engine, "ka-1")
+        assert injected == 1, f"注入回执没刷 injection_count（病灶 2）: {injected}"
+        with Session(engine) as s:
+            assert s.get(MemoryItem, "ka-1").use_count == 0, "注入回执不得再写 use_count"
         assert ensure_aware(last_used) > ensure_aware(stale), (
             f"注入回执没刷 last_used_at（病灶 2）: {last_used}"
         )
@@ -294,12 +301,12 @@ class TestInjectionReceiptKeepsMemoryAlive:
         ev = _recall(engine, "ka-live")
         backfill_used_ids(ev, ["ka-live"])
         apply_forgetting()
-        status, decay, use_count, _ = _status_and_decay(engine, "ka-live")
-        assert status == "active", f"被注入使用的记忆仍被归档: decay={decay} use_count={use_count}"
+        status, decay, injected, _ = _status_and_decay(engine, "ka-live")
+        assert status == "active", f"被注入使用的记忆仍被归档: decay={decay} injected={injected}"
         assert decay == pytest.approx(1.0, abs=1e-3), "刚使用过的记忆 decay 应回到 ~1.0"
 
-    def test_receipt_replay_does_not_inflate_use_count(self, engine):
-        """整体覆盖语义下重放同一回执不得把 use_count 累加（保活字段是考功输入）。"""
+    def test_receipt_replay_does_not_inflate_injection_count(self, engine):
+        """整体覆盖语义下重放同一回执不得把 injection_count 累加（保活字段是遗忘输入）。"""
         _seed(engine, "ka-replay", last_used_at=_ago(10), created_at=_ago(10))
         ev = _recall(engine, "ka-replay")
         backfill_used_ids(ev, ["ka-replay"])
@@ -322,8 +329,8 @@ class TestInjectionReceiptKeepsMemoryAlive:
         stale = _ago(65)
         _seed(engine, "ka-recall", last_used_at=stale, created_at=stale)
         _recall(engine, "ka-recall")
-        _status, _decay, use_count, last_used = _status_and_decay(engine, "ka-recall")
-        assert use_count == 0
+        _status, _decay, injected, last_used = _status_and_decay(engine, "ka-recall")
+        assert injected == 0
         assert _same_moment(last_used, stale)
 
     def test_receipt_does_not_touch_helpful_count(self, engine):
@@ -341,7 +348,7 @@ class TestInjectionReceiptKeepsMemoryAlive:
         ev = _recall(engine, "ka-in")
         backfill_used_ids(ev, ["ka-in", "ka-out"])
         assert _status_and_decay(engine, "ka-in")[2] == 1
-        assert _status_and_decay(engine, "ka-out")[2] == 0, "外来 id 被刷了 use_count"
+        assert _status_and_decay(engine, "ka-out")[2] == 0, "外来 id 被刷了 injection_count"
 
     def test_receipt_skips_other_users_memory(self, engine):
         """归属：保活字段是遗忘/考功的输入，非属主不得代刷（宁 miss 不脏写）。"""
@@ -369,13 +376,14 @@ class TestInjectionReceiptKeepsMemoryAlive:
             m = s.get(MemoryItem, "ka-arch")
             assert m.status == "archived"
             assert m.use_count == 0
+            assert m.injection_count == 0
 
     def test_empty_used_ids_receipt_writes_nothing(self, engine):
         _seed(engine, "ka-empty", last_used_at=_ago(65), created_at=_ago(65))
         ev = _recall(engine, "ka-empty")
         backfill_used_ids(ev, [])
-        _status, _decay, use_count, _lu = _status_and_decay(engine, "ka-empty")
-        assert use_count == 0
+        _status, _decay, injected, _lu = _status_and_decay(engine, "ka-empty")
+        assert injected == 0
         with Session(engine) as s:
             assert s.get(RetrievalEvent, ev).used_ids == []
 

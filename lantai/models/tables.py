@@ -141,8 +141,12 @@ class MemoryItem(SQLModel, table=True):
     version: int = 1
     status: str = "active"
     last_used_at: datetime | None = None
-    use_count: int = 0
+    use_count: int = 0  # 显式反馈次数（reflector.record_feedback）；考功/三省的输入
     helpful_count: int = 0
+    # 宿主注入回执次数（Hermes 每轮注入都回执）：只喂遗忘保活，不进考功/三省——
+    # 注入不等于「有用」，混进 use_count 会让考功把天天在用的记忆判成高频低效
+    # （巡检 2026-11-03 P0，迁移 v37）。
+    injection_count: int = 0
     decay_score: float = 1.0
     decay_class: str = "episodic"  # procedural(永不衰减)/semantic(慢)/episodic(快)；与 tier 正交
     # 更漏（ADR-0048）双时间轴：事件轴回答「现实何时发生/何时为真」，

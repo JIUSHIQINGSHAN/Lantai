@@ -135,7 +135,14 @@ def _backfill_owner_ok(ev, principal) -> bool:
 
 
 def _touch_keepalive(mem_ids: list[str], *, principal=None, event_id: str = "") -> int:
-    """注入回执的保活回写：刷新 `use_count` 与 `last_used_at`（票 03 P0-4 病灶 2）。
+    """注入回执的保活回写：刷新 `last_used_at`、累加 `injection_count`（票 03 P0-4 病灶 2）。
+
+    注入次数与显式反馈分账（巡检 2026-11-03 P0，改法①）：v0.66 最初把回执记进
+    `use_count`，可 Hermes 每轮注入都回执、却从不发「有用」反馈——考功
+    （`use_count >= 3` 且采纳率 <= 0.2 → 重要度 0.1）与三省（`use_count >= 5` 且
+    helpful=0）于是把天天在用的记忆判成「高频低效」。现在回执只写
+    `injection_count`，`use_count` 保持「显式反馈次数」原义；遗忘侧用
+    `forgetting._usage_signal`（两者之和），保活效果与 v0.66 等价。
 
     病灶：Hermes 插件注入记忆后，经 `POST /retrieval/backfill` / MCP / shell_hook
     注入回执通道把「真正被用进回答」的 id 回写给检索事件，但 `MemoryItem` 上的
@@ -145,11 +152,11 @@ def _touch_keepalive(mem_ids: list[str], *, principal=None, event_id: str = "") 
 
     边界（都是本票的硬约束，不是顺手加的）：
       · 只动**本次事件召回过**（`RetrievalEvent.result_ids`）且**首次被回执**的 id：
-        夹带外来 id 刷不到别人的计数，重放同一回执也不会把 `use_count` 累加；
+        夹带外来 id 刷不到别人的计数，重放同一回执也不会把 `injection_count` 累加；
       · 只动 `status == "active"` 的行——保活不是复活（archived 没有 undo 入口）；
-      · 带身份时逐条过 `acl.ensure_can_delete`：这两个字段是考功与遗忘的**输入**，
+      · 带身份时逐条过 `acl.ensure_can_delete`：这两个字段是遗忘的**输入**，
         非属主不得代刷（同 `evolution/reflector.record_usage` 口径，宁 miss 不脏写）；
-      · 不碰 `helpful_count`（用户裁决，走 reflector 反馈），不碰 `importance` /
+      · 不碰 `use_count` / `helpful_count`（显式反馈，走 reflector），不碰 `importance` /
         `decay_score`（改它们等于间接操控演化结果）。
     失败非致命：回执已经先落库，回写炸了不许把 acked 拖回 pending。
     """
@@ -177,7 +184,7 @@ def _touch_keepalive(mem_ids: list[str], *, principal=None, event_id: str = "") 
                             "receipt keepalive skipped (not owner): mem=%s ev=%s", mid, event_id
                         )
                         continue
-                item.use_count = int(item.use_count or 0) + 1
+                item.injection_count = int(item.injection_count or 0) + 1
                 item.last_used_at = utcnow()
                 s.add(item)
                 touched += 1
@@ -197,7 +204,8 @@ def backfill_used_ids(
     宁 miss 不脏写，回执归属以 event_id 为准）。
 
     保活回写（票 `.scratch/v0.66-next-window-2026-11/03`）：回执成功后把本轮新增的
-    used_ids 刷回 `MemoryItem.use_count` / `last_used_at`，见 `_touch_keepalive`。
+    used_ids 刷回 `MemoryItem.injection_count` / `last_used_at`，见 `_touch_keepalive`
+    （不再写 `use_count`：那是考功/三省只认的显式反馈次数）。
 
     归属（票 `.scratch/mcp-identity-gaps/01c`）：此前**一个身份都不取**——
     A 拿 B 的 `event_id` 就能把 B 的回执从 `pending` 改成 `acked` 并覆盖成
