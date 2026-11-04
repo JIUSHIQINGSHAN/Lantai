@@ -8,7 +8,7 @@ import importlib.util
 import io
 import json
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import patch
 
 HOOK_PATH = os.path.join(
@@ -26,8 +26,9 @@ def test_render_event_time_prefers_event_time_over_valid_from():
         "event_time": datetime(2026, 9, 20, 14, 30, tzinfo=UTC),
         "valid_from": datetime(2026, 10, 1, tzinfo=UTC),
     }
-    assert render_event_time(item, "day") == "2026-09-20"
-    assert render_event_time(item, "minute") == "2026-09-20 14:30"
+    # tz="UTC"：本测试只钉双轴优先级，显示时区另由 test_inject_frame_tz.py 覆盖
+    assert render_event_time(item, "day", tz="UTC") == "2026-09-20"
+    assert render_event_time(item, "minute", tz="UTC") == "2026-09-20 14:30"
 
 
 def test_render_event_time_falls_back_to_valid_from():
@@ -70,7 +71,7 @@ def test_render_event_time_accepts_iso_strings():
     from lantai.core.time import render_event_time
 
     item = {"event_time": "2026-09-20T14:30:00+00:00", "valid_from": None}
-    assert render_event_time(item, "minute") == "2026-09-20 14:30"
+    assert render_event_time(item, "minute", tz="UTC") == "2026-09-20 14:30"
     # 非 ISO 垃圾串：不硬造，返回空
     assert render_event_time({"event_time": "not-a-date", "valid_from": None}, "day") == ""
 
@@ -154,7 +155,8 @@ def test_shell_hook_inject_line_carries_event_time():
     ctx = out.get("context", "")
     assert "mem_t" in ctx
     # 时间段落在行内：[2026-09-XX | score 0.9]
-    day = et.strftime("%Y-%m-%d")
+    # 注入按显示时区（默认北京时间）渲染：期望值也按 +08:00 算，避免 UTC 16–24 点假红
+    day = et.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
     assert day in ctx, f"注入行缺事件时间 {day}: {ctx[:300]}"
     assert "| score" in ctx
 
@@ -262,7 +264,8 @@ def test_shell_hook_minute_granularity():
     ):
         out = mod.build_context("这是一个超过三字符的查询")
 
-    assert "2026-09-20 14:30" in out.get("context", "")
+    # 存的是 UTC 14:30，默认按北京时间显示 = 22:30
+    assert "2026-09-20 22:30" in out.get("context", "")
 
 
 # ---------------------------------------------------------------- cognitive context

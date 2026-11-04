@@ -291,6 +291,10 @@ class Settings(BaseSettings):
     # 召回条目带不带事件时间、带到什么粒度，是使用者的偏好不是系统的判断——
     # day(默认,只到天)|minute(到分,区分同一天先后)|off。写错值回落 day。
     SHELL_HOOK_INJECT_DATE: str = "day"
+    # 注入帧时间的显示时区（存储一律 UTC，只换算显示）：IANA 名 | UTC | local
+    # （本机系统时区）| +08:00。默认北京时间——按 UTC 显示时，北京 0–8 点写的
+    # 记忆会落到前一天。写错值回落 Asia/Shanghai。
+    SHELL_HOOK_INJECT_TZ: str = "Asia/Shanghai"
     # 上下文卸载（借鉴 TencentDB Agent Memory offload_server/compact 窄版）：
     # 超长记忆全文落文件，上下文只注入摘要 + 路径；需要时经 MCP offload_read 取全文
     SHELL_HOOK_OFFLOAD_CHARS: int = 2000  # 记忆内容超过此长度 → 落文件 + 摘要注入
