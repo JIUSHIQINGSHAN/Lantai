@@ -113,7 +113,10 @@ def test_terminal_graph_edge_shape(term_env):
 
 
 def test_terminal_chat_stream_passes_principal_to_list_edges(term_env):
-    """决定性：chat stream Step 4 必须按新形状调 `list_edges` 并下传 principal。
+    """决定性：chat stream Step 4 必须按新形状取边并下传 principal。
+
+    （perf：Step 4 已从逐节点 `list_edges` 改为一次 `list_edges_batch`，
+    这里 spy 换成批量函数，锁的仍是「收到 principal + 边进 SSE 流」。）
 
     **为什么 patch hybrid_search**：这条路径的 nodes 来自 `hybrid_search`，
     测试环境没有向量库/embedding，nodes 恒为空——不断「边进了 SSE 流」，
@@ -133,11 +136,11 @@ def test_terminal_chat_stream_passes_principal_to_list_edges(term_env):
     from lantai.api.routes_terminal import ChatReq, terminal_chat_stream
 
     calls = []
-    real_list_edges = routes_terminal.list_edges
+    real_list_edges = routes_terminal.list_edges_batch
 
-    def spy(memory_id, relation=None, principal=None):
-        calls.append({"memory_id": memory_id, "principal": principal})
-        return real_list_edges(memory_id, relation, principal=principal)
+    def spy(memory_ids, relation=None, principal=None):
+        calls.append({"memory_ids": list(memory_ids), "principal": principal})
+        return real_list_edges(memory_ids, relation, principal=principal)
 
     def fake_hybrid(*args, **kwargs):
         return [{"memory": {"id": "mem-A", "content": "c", "domain": "user"}, "score": 1.0}]
@@ -145,7 +148,7 @@ def test_terminal_chat_stream_passes_principal_to_list_edges(term_env):
     # hybrid_search 是函数内局部导入，patch 它所在的模块才生效
     import lantai.retrieval.hybrid as hybrid_mod
 
-    routes_terminal.list_edges = spy
+    routes_terminal.list_edges_batch = spy
     real_hybrid = hybrid_mod.hybrid_search
     hybrid_mod.hybrid_search = fake_hybrid
     try:
@@ -159,12 +162,12 @@ def test_terminal_chat_stream_passes_principal_to_list_edges(term_env):
 
         chunks = asyncio.run(_collect())
     finally:
-        routes_terminal.list_edges = real_list_edges
+        routes_terminal.list_edges_batch = real_list_edges
         hybrid_mod.hybrid_search = real_hybrid
 
-    assert calls, "list_edges 一次都没被调用——nodes 是空的，边推送逻辑没被走到"
+    assert calls, "list_edges_batch 一次都没被调用——nodes 是空的，边推送逻辑没被走到"
     for c in calls:
-        assert c["principal"] is not None, f"list_edges 没收到 principal：{c}"
+        assert c["principal"] is not None, f"list_edges_batch 没收到 principal：{c}"
 
     edge_events = [c for c in chunks if '"edges"' in c]
     assert edge_events, "SSE 里没有 edges 事件"

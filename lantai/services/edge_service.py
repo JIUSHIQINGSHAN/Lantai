@@ -5,6 +5,7 @@ from lantai.storage.edges import (
     create_edge,
     delete_edge,
     get_edges,
+    get_edges_for_memories,
     get_supersed_chain,
 )
 from lantai.storage.edges import (
@@ -70,6 +71,77 @@ def _edge_visible(e, principal, viewer: str) -> bool:
             if (mem.user_id or None) not in (None, viewer):
                 return False
     return True
+
+
+def _edge_to_dict(e) -> dict:
+    return {
+        "id": e.id,
+        "source": e.source_memory_id,
+        "target": e.target_memory_id,
+        "relation": e.relation,
+        "confidence": e.confidence,
+    }
+
+
+def _filter_visible_batch(edges, viewer: str) -> list:
+    """`_edge_visible` 的批量版：端点记忆一次查回，判定口径逐字相同。
+
+    端点属主 `NULL` 或等于 viewer 才放行；两端有一个不可见（含端点记忆
+    不存在）就整条隐藏。只是把逐边 `s.get` 换成一条 `IN` 查询。
+    """
+    from sqlmodel import select
+
+    from lantai.models.tables import MemoryItem
+    from lantai.storage.db import get_session
+
+    if not edges:
+        return []
+    endpoint_ids = list({mid for e in edges for mid in (e.source_memory_id, e.target_memory_id)})
+    owners: dict[str, str | None] = {}
+    with get_session() as s:
+        for i in range(0, len(endpoint_ids), 400):
+            chunk = endpoint_ids[i : i + 400]
+            rows = s.exec(
+                select(MemoryItem.id, MemoryItem.user_id).where(MemoryItem.id.in_(chunk))
+            ).all()
+            for mid, uid in rows:
+                owners[mid] = uid
+
+    def _ok(mid: str) -> bool:
+        if mid not in owners:
+            return False
+        return (owners[mid] or None) in (None, viewer)
+
+    return [e for e in edges if _ok(e.source_memory_id) and _ok(e.target_memory_id)]
+
+
+def list_edges_batch(
+    memory_ids, relation: str | None = None, principal=None
+) -> dict[str, list[dict]]:
+    """批量查询多条记忆的关系边——`list_edges` 的批量等价物。
+
+    返回 `{memory_id: [edge_dict, ...]}`，每个 id 对应的列表与单独调
+    `list_edges(memory_id, relation, principal=principal)["edges"]` 内容相同
+    （同一归属口径、同一字段形状）；查不到边的 id 映射到空列表。
+    一条边连着两个输入 id 时，两边各出现一次——与逐个调用一致，
+    去重留给调用方（如 `terminal_graph`）。
+
+    归属：admin / `principal=None` 不过滤，其余按端点记忆判（同 `list_edges`）。
+    """
+    ids = list(dict.fromkeys(m for m in memory_ids if m))
+    result: dict[str, list[dict]] = {mid: [] for mid in ids}
+    if not ids:
+        return result
+    edges = get_edges_for_memories(ids, relation=relation)
+    if principal is not None and not bool(getattr(principal, "is_admin", False)):
+        edges = _filter_visible_batch(edges, viewer_of(principal))
+    for e in edges:
+        d = _edge_to_dict(e)
+        if e.source_memory_id in result:
+            result[e.source_memory_id].append(d)
+        if e.target_memory_id in result and e.target_memory_id != e.source_memory_id:
+            result[e.target_memory_id].append(dict(d))
+    return result
 
 
 def list_edges(memory_id: str, relation: str | None = None, principal=None) -> dict:

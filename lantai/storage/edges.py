@@ -90,6 +90,38 @@ def get_edges(
         return s.exec(stmt).all()
 
 
+# SQLite 单语句绑定变量上限保守取 999；IN 两侧各占一份，故按 400 分块。
+_BATCH_CHUNK = 400
+
+
+def get_edges_for_memories(memory_ids, relation: str | None = None) -> list[MemoryEdge]:
+    """批量查询一组记忆的关系边（`source IN ids OR target IN ids`）。
+
+    `get_edges` 的批量版：terminal 图谱/SSE 此前对前 N 个节点逐个调
+    `get_edges`，N+1 次查询。这里一条语句取回（超过 `_BATCH_CHUNK` 才分块），
+    跨块按边 id 去重，保持首次出现的顺序。**不做归属过滤**——归属在
+    service 层 `list_edges_batch` 做，口径与 `list_edges` 一致。
+    """
+    ids = list(dict.fromkeys(m for m in memory_ids if m))
+    if not ids:
+        return []
+    out: list[MemoryEdge] = []
+    seen: set[str] = set()
+    with db.get_session() as s:
+        for i in range(0, len(ids), _BATCH_CHUNK):
+            chunk = ids[i : i + _BATCH_CHUNK]
+            stmt = select(MemoryEdge).where(
+                MemoryEdge.source_memory_id.in_(chunk) | MemoryEdge.target_memory_id.in_(chunk)
+            )
+            if relation:
+                stmt = stmt.where(MemoryEdge.relation == relation)
+            for e in s.exec(stmt).all():
+                if e.id not in seen:
+                    seen.add(e.id)
+                    out.append(e)
+    return out
+
+
 def delete_edge(edge_id: str) -> bool:
     """删除记忆关系"""
     with db.get_session() as s:
