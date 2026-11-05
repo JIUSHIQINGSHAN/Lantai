@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **注入次数与显式反馈分账，考功/三省不再把天天在用的记忆降级（巡检 2026-11-03 P0，改法①）**：v0.66 的注入保活把宿主回执记进 `use_count`，而 Hermes 插件每轮注入都回执、从不发「有用」反馈——考功（`use_count>=3` 且采纳率 `<=0.2` → 重要度 0.1）与三省（`use_count>=5` 且 `helpful_count==0`）于是把最常用的记忆判成高频低效（实测重要度 0.95 的过敏记忆注入 3 次、跑一次考功即降到 0.1，160 天后被归档）。现在 `MemoryItem` 新增 `injection_count`，`retrieval_log._touch_keepalive` 只刷 `last_used_at` 并累加 `injection_count`；`use_count` 回到「显式反馈次数」原义，考功/三省/reflector 不动。遗忘侧 `forgetting._usage_signal` 把两者相加，衰减强度与 TTL 豁免与 v0.66 等价。迁移 v37 给老库补列，并按 `memoryusagefeedback` 账本把 v0.66 灌进 `use_count` 的注入次数挪回 `injection_count`（两者之和不变；无反馈表时只补列）。回归锁：`tests/test_kaogong_injection_count.py`。
+- **模块级生产状态台账头部五条改为「有主纳管」（票 05 续23，G2 排期项）**：续22 的兜底护栏在全量结束时点名 `telemetry._writer` 366 例、`metrics._collector` 356 例、`prefilter._PATTERN_CACHE` 86 例、`_KEYWORD_WARNED` 83 例、`scheduler.WORKER_LAST_RUN` 68 例——都是真实生产代码被执行到时的正常副作用（懒单例首次使用、惰性编译缓存、`record_run()` 完成戳），却把台账撑到几百行。`tests/conftest.py` 新增三个显式依赖 `_isolate_module_state` 的主人 fixture（`_own_observability_singletons` / `_own_prefilter_keyword_cache` / `_own_worker_last_run`），**只释放能证明出自生产写入路径的状态**（自己预装的那个实例、`_self_reference_pattern()` 产物形状的缓存、ISO 时间戳形状的完成戳），外来实例/植入值/空串占位原样留给兜底护栏点名；护栏表 13 项与判红逻辑一行未动。`test_scheduler.sched_db` / `test_ingest_job_gone.ingest_db` 不再用 `setitem` 塞空串占位（撤销晚于护栏检查，每例被误点名）。生产代码零改动。回归锁：`tests/test_module_state_ownership.py`（不 mock 冒烟 + 越权拒绝 + 真实子会话含对照组）。
 
 ## [0.66.0] - 2026-11-02 - 探赜（Tanze · 续审 P0 收口与发布门禁去橡皮图章）
 
