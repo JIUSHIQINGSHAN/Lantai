@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Hermes 否决的一轮不再写进记忆（周报 2026-11-03 P0-1）**：Hermes v0.22.6 起插件可在 `pre_llm_call` 返回 `{"action": "block"}` 否决一轮（DLP 拦密码、密钥），这一轮不发给模型，`on_session_end` 的 `turn_exit_reason` 为 `blocked_by_plugin_pre_llm_call`。`lantai-hook` 在 `pre_llm_call` 开头就把原话放进会话缓冲，`on_session_end` 又不看退出原因，原话照样进了对话写通道（`ingest_dialogue`）和底本五段块。现在缓冲条目记下宿主给的 `turn_id`，否决时按 `turn_id` 剔除那一轮（旧版宿主不传 `turn_id` 时剔末条），之前正常的轮次照常落库。回归锁：`tests/test_plugin_veto_no_write.py`。
+
 - **注入次数与显式反馈分账，考功/三省不再把天天在用的记忆降级（巡检 2026-11-03 P0，改法①）**：v0.66 的注入保活把宿主回执记进 `use_count`，而 Hermes 插件每轮注入都回执、从不发「有用」反馈——考功（`use_count>=3` 且采纳率 `<=0.2` → 重要度 0.1）与三省（`use_count>=5` 且 `helpful_count==0`）于是把最常用的记忆判成高频低效（实测重要度 0.95 的过敏记忆注入 3 次、跑一次考功即降到 0.1，160 天后被归档）。现在 `MemoryItem` 新增 `injection_count`，`retrieval_log._touch_keepalive` 只刷 `last_used_at` 并累加 `injection_count`；`use_count` 回到「显式反馈次数」原义，考功/三省/reflector 不动。遗忘侧 `forgetting._usage_signal` 把两者相加，衰减强度与 TTL 豁免与 v0.66 等价。迁移 v37 给老库补列，并按 `memoryusagefeedback` 账本把 v0.66 灌进 `use_count` 的注入次数挪回 `injection_count`（两者之和不变；无反馈表时只补列）。回归锁：`tests/test_kaogong_injection_count.py`。
 
 ## [0.66.0] - 2026-11-02 - 探赜（Tanze · 续审 P0 收口与发布门禁去橡皮图章）

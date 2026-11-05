@@ -111,6 +111,10 @@ _session_turns: dict[str, int] = {}
 # v0.15（ADR-0022）：已注入底本（checkpoint）的会话集——每会话首轮注入一次
 _checkpoint_injected: set[str] = set()
 _CHECKPOINT_INJECTED_MAX = 50  # 防会话集无限膨胀（只影响首轮注入标记）
+# Hermes v0.22.6+：别的插件在 pre_llm_call 返回 {"action": "block"} 否决这一轮时，
+# 本轮 on_session_end 的 turn_exit_reason 就是这个值（agent/turn_context.py）。
+# 被否决的一轮从未发给模型（多用于 DLP 拦截密码、密钥），兰台也不能把原话写进记忆。
+_PRE_LLM_BLOCK_EXIT_REASON = "blocked_by_plugin_pre_llm_call"
 
 # 块来源规则前缀/句式（宁 miss：命中才填，拿不准留空）
 _NEXT_PREFIXES = ("接下来", "下一步", "然后", "待办")
@@ -394,12 +398,14 @@ def build_session_blocks(messages: list[str]) -> dict:
 # ── 会话缓冲（v0.5 对话写通道原料）──────────────────────────────
 
 
-def _buffer_turn(session_id: str, user_message: str) -> None:
+def _buffer_turn(session_id: str, user_message: str, turn_id: str = "") -> None:
     """累积一轮 user_message 到会话缓冲（有界，防长期会话膨胀）。
 
     turn = 该会话内 1-based 单调轮次计数（P0 票02 来源链，fd03b184 起：
     计数独立于缓冲内容，缓冲淘汰不回退）；同一消息重复投递
     会占用新序号——如实反映「说了两遍」，不做去重猜测。
+    turn_id = Hermes 给这一轮的 id（pre_llm_call 与 on_session_end 都带），
+    只在宿主提供时记下，用于这一轮被否决时精确剔除（_drop_vetoed_turn）。
     """
     if not session_id:
         return
@@ -410,11 +416,43 @@ def _buffer_turn(session_id: str, user_message: str) -> None:
         buf = _session_buffers.setdefault(session_id, [])
         next_turn = _session_turns.get(session_id, 0) + 1
         _session_turns[session_id] = next_turn
-        buf.append({"text": msg, "turn": next_turn})
+        entry = {"text": msg, "turn": next_turn}
+        if turn_id:
+            entry["turn_id"] = str(turn_id)
+        buf.append(entry)
         total = sum(len(m["text"]) for m in buf)
         while len(buf) > _SESSION_BUFFER_MAX_MSGS or total > _SESSION_BUFFER_MAX_CHARS:
             dropped = buf.pop(0)
             total -= len(dropped["text"])
+
+
+def _drop_vetoed_turn(session_id: str, turn_id: str = "") -> int:
+    """剔除被 pre_llm_call 否决的那一轮缓冲，返回剔除条数。
+
+    - 宿主给了 turn_id：只剔除 turn_id 相同的条目；一条都对不上就什么也不删
+      （比如这一轮是空消息，本就没进缓冲），绝不误删之前正常的轮次。
+    - 宿主没给 turn_id（旧版 Hermes）：剔除末条——否决与 on_session_end 在同一轮内
+      先后发生，末条就是这一轮；末条若带着别的 turn_id，说明不是这一轮，不删。
+    """
+    if not session_id:
+        return 0
+    with _lock:
+        buf = _session_buffers.get(session_id)
+        if not buf:
+            return 0
+        if turn_id:
+            tid = str(turn_id)
+            keep = [e for e in buf if e.get("turn_id") != tid]
+            dropped = len(buf) - len(keep)
+            if dropped:
+                buf[:] = keep
+                return dropped
+            if any("turn_id" in e for e in buf):
+                return 0
+        if "turn_id" in buf[-1]:
+            return 0
+        buf.pop()
+        return 1
 
 
 def _flush_session(session_id: str) -> None:
@@ -434,7 +472,8 @@ def _on_pre_llm_call(**kwargs) -> dict | None:
         return None
     q = query.strip()
     # v0.5：无论是否注入，都把用户消息累积为对话写通道原料
-    _buffer_turn(session_id, q)
+    # （这一轮若被别的插件否决，on_session_end 会按 turn_id 把它剔掉）
+    _buffer_turn(session_id, q, turn_id=str(kwargs.get("turn_id") or ""))
     # ADR-0022：会话首轮先注入底本（与查询长度/触发词无关，每会话一次）
     ck = None
     if session_id and session_id not in _checkpoint_injected:
@@ -476,6 +515,9 @@ def _on_session_end(**kwargs) -> None:
     session_id = kwargs.get("session_id") or ""
     if not session_id:
         return
+    if kwargs.get("turn_exit_reason") == _PRE_LLM_BLOCK_EXIT_REASON:
+        # 被否决的一轮：不进对话写通道，也不进底本五段块（之前正常的轮次照常落）
+        _drop_vetoed_turn(session_id, str(kwargs.get("turn_id") or ""))
     with _lock:
         entries = list(_session_buffers.get(session_id, []))
     blocks = build_session_blocks([e["text"] for e in entries])
