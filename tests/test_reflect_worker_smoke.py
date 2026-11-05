@@ -107,3 +107,58 @@ def test_reflect_worker_end_to_end_smoke(worker_db_env, monkeypatch):
         assert proposal.target_memory_id == mem_id
         assert proposal.proposal_type == "deprecate"
         assert proposal.decided_by == "reflect"
+
+
+def _run_worker_on_empty_db():
+    """空库真实执行 worker；仅屏蔽外部网络（LLM/embedding/向量库）。"""
+    from lantai.workers.reflect_worker import run_reflect_once
+
+    with (
+        patch("lantai.evolution.reflector.chat_json", return_value={"proposals": []}),
+        patch("lantai.storage.vector_store.ChromaVectorStore", Mock()),
+        patch("lantai.llm.client.embed", return_value=[[0.1] * 8]),
+    ):
+        return run_reflect_once()
+
+
+def test_reflect_worker_cognitive_reflection_normal_path(worker_db_env):
+    """不 mock 冒烟：认知反思主路径真实执行，结果带 cognitive_reflection 统计。"""
+    res = _run_worker_on_empty_db()
+
+    assert res["ok"] is True
+    cog = res["cognitive_reflection"]
+    assert "ok" not in cog  # 成功路径结构保持不变
+    for key in (
+        "new_patterns",
+        "belief_candidates",
+        "rule_candidates",
+        "rules_weakened",
+        "failures",
+        "failures_scoped",
+        "summary",
+    ):
+        assert key in cog
+
+
+def test_reflect_worker_cognitive_reflection_failure_not_silent(worker_db_env, monkeypatch, caplog):
+    """认知反思抛错时：留日志 + 结构化失败，且不破坏 worker 其余结果。
+
+    monkeypatch 仅用于外部故障注入（强制 ReflectionEngine 抛错），不跳过被测逻辑。
+    """
+    from lantai.cognition.reflection import ReflectionEngine
+
+    def _boom(self):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ReflectionEngine, "run_reflection", _boom)
+
+    with caplog.at_level("ERROR", logger="lantai"):
+        res = _run_worker_on_empty_db()
+
+    assert res["ok"] is True
+    assert res["skipped"] == "idle"  # 主反思结果原样保留
+    assert "health" in res
+    assert res["cognitive_reflection"] == {"ok": False, "error": "RuntimeError: boom"}
+    assert any(
+        "cognitive reflection failed" in r.getMessage() and r.exc_info for r in caplog.records
+    )
