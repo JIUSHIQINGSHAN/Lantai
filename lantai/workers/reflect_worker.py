@@ -11,6 +11,7 @@ worker 的全表权限（票 04/05/06 连续三票同一根因）。
 """
 
 from lantai.core.acl import SYSTEM_VIEWER, Principal
+from lantai.core.logger import logger
 from lantai.evolution.reflector import run_reflect_once as _run_reflect
 
 
@@ -44,6 +45,9 @@ def run_reflect_once() -> dict:
                 "failures_scoped": report.failures_scoped,
                 "summary": report.summary,
             }
-    except Exception:
-        pass
+    except Exception as exc:
+        # 认知反思失败不得静默吞掉：留日志 + 在结果里留结构化失败，
+        # 且不影响上面 `_run_reflect` 已产出的结果。
+        logger.exception("cognitive reflection failed")
+        res["cognitive_reflection"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     return res
