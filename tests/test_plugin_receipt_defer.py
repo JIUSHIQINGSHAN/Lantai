@@ -138,7 +138,10 @@ class TestReceiptDefer:
 class TestHookResponseWithoutEventId:
     def test_search_hit_but_no_event_id_no_receipt(self, mod):
         """检索命中但响应没带 event_id：无回执可发也不挂载（宁 miss 不脏写）。"""
-        hook = {"context": "【相关记忆】…", "evidence": [{"id": "m1", "content": "x", "score": 0.9}]}
+        hook = {
+            "context": "【相关记忆】…",
+            "evidence": [{"id": "m1", "content": "x", "score": 0.9}],
+        }
         bf, _vt = _pre(mod, "部署怎么做", turn_id="t1", hook=hook)
         bf.assert_not_called()
         entry = mod._session_buffers["s1"][-1]
