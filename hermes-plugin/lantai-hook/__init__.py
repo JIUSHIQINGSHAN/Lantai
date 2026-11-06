@@ -307,6 +307,39 @@ def _call_backfill(event_id: str, used_ids: list[str]) -> None:
         _proc_ready = False
 
 
+def _call_veto(event_id: str) -> None:
+    """检索事件否决帧（ADR-0084，v0.67 票 01）：这一轮被否决 → 服务端作废检索事件。
+
+    服务端 mark_vetoed 抹 query_text/query_norm_hash、清 used_ids、置 vetoed 终态。
+    失败静默——否决帧缺失只影响检索日志卫生与弱标注纯度，不侵入宿主主流程。
+    """
+    proc = _ensure_proc()
+    if proc is None or not event_id:
+        return
+    if not _wait_ready():
+        return
+    try:
+        with _lock:
+            line = (
+                json.dumps({"type": "retrieval_veto", "event_id": event_id}, ensure_ascii=False)
+                + "\n"
+            ).encode("utf-8")
+            assert proc.stdin is not None and proc.stdout is not None
+            proc.stdin.write(line)
+            proc.stdin.flush()
+            buf = bytearray()
+            while True:
+                ch = proc.stdout.read(1)
+                if not ch or ch == b"\n":
+                    break
+                buf += ch
+    except (OSError, ValueError, AssertionError) as exc:
+        logger.warning("lantai-hook: veto call failed: %r", exc)
+        global _proc, _proc_ready
+        _proc = None
+        _proc_ready = False
+
+
 def _call_checkpoint() -> str | None:
     """向 serve 子进程发底本注入请求（会话首轮，失败静默降级）。"""
     proc = _ensure_proc()
@@ -398,20 +431,24 @@ def build_session_blocks(messages: list[str]) -> dict:
 # ── 会话缓冲（v0.5 对话写通道原料）──────────────────────────────
 
 
-def _buffer_turn(session_id: str, user_message: str, turn_id: str = "") -> None:
-    """累积一轮 user_message 到会话缓冲（有界，防长期会话膨胀）。
+def _buffer_turn(session_id: str, user_message: str, turn_id: str = "") -> dict | None:
+    """累积一轮 user_message 到会话缓冲（有界，防长期会话膨胀），返回该条目。
 
     turn = 该会话内 1-based 单调轮次计数（P0 票02 来源链，fd03b184 起：
     计数独立于缓冲内容，缓冲淘汰不回退）；同一消息重复投递
     会占用新序号——如实反映「说了两遍」，不做去重猜测。
     turn_id = Hermes 给这一轮的 id（pre_llm_call 与 on_session_end 都带），
     只在宿主提供时记下，用于这一轮被否决时精确剔除（_drop_vetoed_turn）。
+
+    返回条目引用供调用方在检索之后回填 event_id/used_ids（v0.67 票 01 回执
+    延后）；无 session 或空消息返回 None——那些轮次没有否决链，调用方按旧行为
+    立即回执。条目若在检索期间被缓冲头部淘汰，回填落在孤儿对象上，无害。
     """
     if not session_id:
-        return
+        return None
     msg = (user_message or "").strip()
     if not msg:
-        return
+        return None
     with _lock:
         buf = _session_buffers.setdefault(session_id, [])
         next_turn = _session_turns.get(session_id, 0) + 1
@@ -424,48 +461,61 @@ def _buffer_turn(session_id: str, user_message: str, turn_id: str = "") -> None:
         while len(buf) > _SESSION_BUFFER_MAX_MSGS or total > _SESSION_BUFFER_MAX_CHARS:
             dropped = buf.pop(0)
             total -= len(dropped["text"])
+        return entry
 
 
-def _drop_vetoed_turn(session_id: str, turn_id: str = "") -> int:
-    """剔除被 pre_llm_call 否决的那一轮缓冲，返回剔除条数。
+def _drop_vetoed_turn(session_id: str, turn_id: str = "") -> list[dict]:
+    """剔除被 pre_llm_call 否决的那一轮缓冲，返回被剔条目列表。
 
     - 宿主给了 turn_id：只剔除 turn_id 相同的条目；一条都对不上就什么也不删
       （比如这一轮是空消息，本就没进缓冲），绝不误删之前正常的轮次。
     - 宿主没给 turn_id（旧版 Hermes）：剔除末条——否决与 on_session_end 在同一轮内
       先后发生，末条就是这一轮；末条若带着别的 turn_id，说明不是这一轮，不删。
+
+    返回被剔条目（v0.67 票 01）：否决分支要拿条目上的 event_id 逐个发
+    retrieval_veto 帧作废检索事件；无剔除返回空列表。
     """
     if not session_id:
-        return 0
+        return []
     with _lock:
         buf = _session_buffers.get(session_id)
         if not buf:
-            return 0
+            return []
         if turn_id:
             tid = str(turn_id)
             keep = [e for e in buf if e.get("turn_id") != tid]
-            dropped = len(buf) - len(keep)
-            if dropped:
+            if len(keep) != len(buf):
+                dropped = [e for e in buf if e.get("turn_id") == tid]
                 buf[:] = keep
                 return dropped
             if any("turn_id" in e for e in buf):
-                return 0
+                return []
         if "turn_id" in buf[-1]:
-            return 0
-        buf.pop()
-        return 1
+            return []
+        return [buf.pop()]
 
 
 def _flush_session(session_id: str) -> None:
-    """清空并提交某会话的缓冲消息（on_session_end 调用），逐条携带来源。"""
+    """清空并提交某会话的缓冲消息（on_session_end 调用），逐条携带来源。
+
+    回执延后出口（v0.67 票 01）：pre_llm_call 挂在条目上的 event_id/used_ids
+    在这里才发——走到 flush 说明这一轮**未被否决**，上下文确实进了本轮 prompt。
+    崩溃在 turn 中途 → 回执保持 pending → 服务端 mark_missed_receipts 如实置
+    missed：宁 miss 不脏写。
+    """
     with _lock:
         entries = _session_buffers.pop(session_id, [])
         _session_turns.pop(session_id, None)
     for entry in entries:
         _call_dialogue(entry["text"], session_id=session_id, turn=entry["turn"])
+        event_id = entry.get("event_id")
+        used_ids = entry.get("used_ids")
+        if event_id and used_ids:
+            _call_backfill(str(event_id), list(used_ids))
 
 
 def _on_pre_llm_call(**kwargs) -> dict | None:
-    """pre_llm_call 回调：底本首轮注入 + 检索注入 + 会话缓冲 + 注入回执。"""
+    """pre_llm_call 回调：底本首轮注入 + 检索注入 + 会话缓冲 + 回执延后挂载。"""
     query = kwargs.get("user_message") or ""
     session_id = kwargs.get("session_id") or ""
     if not isinstance(query, str):
@@ -473,7 +523,7 @@ def _on_pre_llm_call(**kwargs) -> dict | None:
     q = query.strip()
     # v0.5：无论是否注入，都把用户消息累积为对话写通道原料
     # （这一轮若被别的插件否决，on_session_end 会按 turn_id 把它剔掉）
-    _buffer_turn(session_id, q, turn_id=str(kwargs.get("turn_id") or ""))
+    entry = _buffer_turn(session_id, q, turn_id=str(kwargs.get("turn_id") or ""))
     # ADR-0022：会话首轮先注入底本（与查询长度/触发词无关，每会话一次）
     ck = None
     if session_id and session_id not in _checkpoint_injected:
@@ -491,14 +541,23 @@ def _on_pre_llm_call(**kwargs) -> dict | None:
     ctx = str(data.get("context") or "")
     if ck:
         ctx = ck + "\n\n" + ctx
-    # 注入回执（P0 票02）：上下文已拼进本轮回包 = 弱标注「已注入」；
-    # 按 event_id 回填 evidence 记忆 id。回执失败静默（缺失只影响弱标注覆盖）。
+    # 注入回执（P0 票02）延后（v0.67 票 01）：此刻 Hermes 尚未裁决是否否决这一轮，
+    # 先发回执会给从未发给模型的轮次刷出假 injection_count。把 event_id/used_ids
+    # 挂到缓冲条目上，_on_session_end 知道本轮未被否决才经 _flush_session 发；
+    # 被否决则改发 retrieval_veto 作废检索事件（含 DLP 拦下的原话痕迹）。
+    # 无缓冲条目（无 session）的轮次保持旧行为立即回执：那些轮次的否决链
+    # 本来就不可达（_on_session_end 无 session 早退）。
     event_id = data.get("event_id")
     used_ids = [
         e.get("id") for e in (data.get("evidence") or []) if isinstance(e, dict) and e.get("id")
     ]
     if event_id and used_ids:
-        _call_backfill(str(event_id), used_ids)
+        if entry is not None:
+            # dict 单键赋值原子（GIL）；消费方在同一 Hermes 线程的 on_session_end。
+            entry["event_id"] = str(event_id)
+            entry["used_ids"] = list(used_ids)
+        else:
+            _call_backfill(str(event_id), used_ids)
     return {"context": ctx}
 
 
@@ -516,8 +575,12 @@ def _on_session_end(**kwargs) -> None:
     if not session_id:
         return
     if kwargs.get("turn_exit_reason") == _PRE_LLM_BLOCK_EXIT_REASON:
-        # 被否决的一轮：不进对话写通道，也不进底本五段块（之前正常的轮次照常落）
-        _drop_vetoed_turn(session_id, str(kwargs.get("turn_id") or ""))
+        # 被否决的一轮：不进对话写通道，也不进底本五段块（之前正常的轮次照常落）。
+        # 被剔条目若挂了检索事件（v0.67 票 01），逐个发 veto 作废——该轮从未发给
+        # 模型，回执不发（假注入计数从根上不产生），检索日志原话由服务端抹除。
+        for dropped in _drop_vetoed_turn(session_id, str(kwargs.get("turn_id") or "")):
+            if dropped.get("event_id"):
+                _call_veto(str(dropped["event_id"]))
     with _lock:
         entries = list(_session_buffers.get(session_id, []))
     blocks = build_session_blocks([e["text"] for e in entries])

@@ -215,12 +215,18 @@ def backfill_used_ids(
     越权时**不抛异常**：宿主在生成链路上，抛错会打断主流程。如实记
     warning 后返回（不写），调用方从 `used_count` 之外没有别的信号，
     所以日志是唯一可观测处——这正是"宁 miss 不脏写"的形态。
+
+    vetoed 是终态（ADR-0084）：被否决的一轮从未发给模型，迟到的回执
+    不得把它拖回 acked、更不得回写保活计数——否则假注入计数从后门回来。
     """
     try:
         bump: list[str] = []
         with db.get_session() as s:
             ev = s.get(RetrievalEvent, event_id)
             if not ev:
+                return
+            if ev.receipt_status == "vetoed":
+                logger.info("receipt backfill ignored (vetoed is terminal): ev=%s", event_id)
                 return
             if request_id and ev.request_id and request_id != ev.request_id:
                 logger.warning(
@@ -249,6 +255,43 @@ def backfill_used_ids(
         _touch_keepalive(bump, principal=principal, event_id=event_id)
     except Exception:
         logger.exception("retrieval used_ids backfill failed (non-fatal)")
+
+
+def mark_vetoed(event_id: str) -> bool:
+    """宿主否决了一轮（ADR-0084，v0.67 票 01）：该轮检索事件作废，返回是否发生转移。
+
+    被否决的一轮从未发给模型（DLP 拦密码/密钥等），检索日志却把原话留在了
+    `query_text`/`query_norm_hash` 里——DLP 拦它是不让它到模型，兰台不能自己
+    把它落库。这里抹原文：`query_text`/`query_norm_hash` 清空（归一化哈希对
+    低熵原文就是可验证口令，留着等于没抹）、清 `used_ids`、置
+    `receipt_status="vetoed"`（新终态）+ `receipt_at`。
+
+    不做 `injection_count` 反冲：延后回执方案下否决轮从未回执（插件侧
+    `_on_session_end` 知道未被否决才发回执），假计数从根上不产生；对已回执
+    行做并发反冲会误伤同窗内合法回执——宁 miss 不脏写。
+
+    行本身保留：vetoed 单列计数可观测（守门命中了多少轮），`result_ids`/
+    `latency_ms` 等无原文元数据不动。
+
+    返回值语义：找到且此前不是 vetoed（发生了状态转移）→ True；
+    已 vetoed（幂等重放，无转移）或缺失 id → False。
+    """
+    try:
+        with db.get_session() as s:
+            ev = s.get(RetrievalEvent, event_id)
+            if not ev or ev.receipt_status == "vetoed":
+                return False
+            ev.query_text = ""
+            ev.query_norm_hash = ""
+            ev.used_ids = []
+            ev.receipt_status = "vetoed"
+            ev.receipt_at = utcnow()
+            s.add(ev)
+            s.commit()
+            return True
+    except Exception:
+        logger.exception("retrieval veto marking failed (non-fatal)")
+        return False
 
 
 RECEIPT_MISS_TIMEOUT_SECONDS = 300
@@ -288,8 +331,9 @@ def receipt_traceability_report() -> dict:
     """可追溯率统计出口（ADR-0049；票 06 宿主冒烟与自证复用）。
 
     口径（票据 04 交付 4）：acked 事件中，used_ids 非空且每个 used_id 均能
-    回溯到现存 MemoryItem 行的比例（missed/pending 不入分子）。全部计数如实
-    分列，不混计；无 acked 样本时 rate 如实返回 None（不编造）。
+    回溯到现存 MemoryItem 行的比例（missed/pending/vetoed 不入分子）。全部
+    计数如实分列，不混计；无 acked 样本时 rate 如实返回 None（不编造）。
+    vetoed 单列（ADR-0084）：守门命中轮数可观测，不计入任何回执质量分母。
     """
     try:
         with db.get_session() as s:
@@ -297,7 +341,7 @@ def receipt_traceability_report() -> dict:
                 select(RetrievalEvent.receipt_status, RetrievalEvent.used_ids)
             ).all()
             acked_used: list[list[str]] = []
-            pending = missed = acked_plain = 0
+            pending = missed = vetoed = acked_plain = 0
             for status, used_ids in status_rows:
                 if status == "acked":
                     if used_ids:
@@ -306,6 +350,8 @@ def receipt_traceability_report() -> dict:
                         acked_plain += 1
                 elif status == "missed":
                     missed += 1
+                elif status == "vetoed":
+                    vetoed += 1
                 else:
                     pending += 1
         traceable = 0
@@ -321,6 +367,7 @@ def receipt_traceability_report() -> dict:
             "acked": acked_total,
             "acked_with_used_ids": len(acked_used),
             "missed": missed,
+            "vetoed": vetoed,
             "traceable": traceable,
             # 口径：acked 事件中可完整回溯的比例（used_ids 空的 acked 不入分子）
             "traceability_rate": (round(traceable / len(acked_used), 4) if acked_used else None),

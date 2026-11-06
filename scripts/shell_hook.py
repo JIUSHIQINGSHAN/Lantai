@@ -40,6 +40,7 @@ from lantai.integrations.host_protocol import (
     ACTION_CHECKPOINT_WRITE,
     ACTION_DIALOGUE,
     ACTION_QUERY,
+    ACTION_VETO,
     parse_host_request,
     render_host_response,
 )
@@ -629,6 +630,23 @@ def _handle_backfill(event_id: str, used_ids, request_id: str | None = None) -> 
         return {}
 
 
+def _handle_veto(event_id: str) -> dict:
+    """检索事件否决通道（ADR-0084，v0.67 票 01）：宿主否决一轮 → 作废该检索事件。
+
+    抹原话/清 used_ids/置 vetoed 终态（服务端 `mark_vetoed`）。ok=True 一律返回
+    （帧本身合法送达）；`vetoed=False` 表示幂等重放或事件不存在——如实上报，
+    不编造成功。异常静默降级 `{}`（守门通道不得拖垮 serve 循环）。
+    """
+    if not isinstance(event_id, str) or not event_id.strip():
+        return {}
+    try:
+        from lantai.observability.retrieval_log import mark_vetoed
+
+        return {"ok": True, "event_id": event_id, "vetoed": bool(mark_vetoed(event_id))}
+    except Exception:
+        return {}
+
+
 def _handle_checkpoint() -> dict:
     """底本注入通道（ADR-0022）：会话启动读取上次会话五段快照。
 
@@ -756,6 +774,9 @@ def _dispatch_one(raw: str) -> dict:
             list(req.used_ids),
             req.request_id,
         )
+
+    if req.action == ACTION_VETO:
+        return _run_with_timeout(_handle_veto, settings.SHELL_HOOK_TIMEOUT, req.event_id)
 
     if req.action == ACTION_CHECKPOINT:
         return _run_with_timeout(_handle_checkpoint, settings.SHELL_HOOK_TIMEOUT)

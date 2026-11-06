@@ -146,7 +146,9 @@ class TestCheckpointInjection:
         bf.assert_not_called()  # 无 evidence 不回执
 
     def test_injection_receipt_backfills_used_ids(self, mod):
-        """注入回执（P0 票02）：context 注入成功 → 按 event_id 回填 evidence id（弱标注）。"""
+        """注入回执（P0 票02；v0.67 票 01 起延后）：pre_llm_call 挂条目不回执，
+        on_session_end flush 时按 event_id 回填 evidence id（弱标注）——
+        此刻 Hermes 尚未裁决否决，先发会给从未发给模型的轮次刷假注入计数。"""
         with (
             patch.object(mod, "_call_checkpoint", return_value=None),
             patch.object(
@@ -163,7 +165,14 @@ class TestCheckpointInjection:
             r = mod._on_pre_llm_call(user_message="帮我回忆部署流程", session_id="sess_rc")
         assert "【相关记忆】" in r["context"]
         hk.assert_called_once()
-        bf.assert_called_once_with("rev_9", ["m1", "m2"])
+        bf.assert_not_called()  # 不再立即回执（ADR-0084）
+        entry = mod._session_buffers["sess_rc"][-1]
+        assert entry["event_id"] == "rev_9"
+        # flush 时经 _call_backfill("rev_9", ["m1", "m2"]) 发出
+        assert entry["used_ids"] == ["m1", "m2"]
+        with patch.object(mod, "_call_dialogue"), patch.object(mod, "_call_backfill") as bf2:
+            mod._flush_session("sess_rc")
+        bf2.assert_called_once_with("rev_9", ["m1", "m2"])
 
     def test_no_receipt_when_hook_misses(self, mod):
         """检索无命中（_call_hook None）→ 无注入无回执。"""

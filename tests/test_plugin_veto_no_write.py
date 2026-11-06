@@ -126,14 +126,16 @@ def test_turn_id_mismatch_drops_nothing(mod):
 
 
 def test_drop_vetoed_turn_unit(mod):
+    # 返回口径（v0.67 票 01）：int → 被剔条目列表（否决分支要拿 event_id 发 veto 帧）
     mod._buffer_turn("s1", "a", turn_id="t1")
     mod._buffer_turn("s1", "b", turn_id="t2")
-    assert mod._drop_vetoed_turn("s1", "t9") == 0
-    assert mod._drop_vetoed_turn("s1", "") == 0  # 末条带着别的 turn_id，不删
-    assert mod._drop_vetoed_turn("s1", "t2") == 1
+    assert mod._drop_vetoed_turn("s1", "t9") == []
+    assert mod._drop_vetoed_turn("s1", "") == []  # 末条带着别的 turn_id，不删
+    dropped = mod._drop_vetoed_turn("s1", "t2")
+    assert [e["text"] for e in dropped] == ["b"]
     assert [e["text"] for e in mod._session_buffers["s1"]] == ["a"]
-    assert mod._drop_vetoed_turn("", "t1") == 0
-    assert mod._drop_vetoed_turn("nope", "t1") == 0
+    assert mod._drop_vetoed_turn("", "t1") == []
+    assert mod._drop_vetoed_turn("nope", "t1") == []
 
 
 def test_buffer_entry_shape_unchanged_without_turn_id(mod):

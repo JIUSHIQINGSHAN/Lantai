@@ -109,6 +109,27 @@ class TestParseHostRequest:
         )
         assert blank is not None and blank.request_id is None
 
+    def test_veto_action(self):
+        """type=retrieval_veto → 否决动作，event_id 透传（ADR-0084，v0.67 票 01）。"""
+        req = parse_host_request(json.dumps({"type": "retrieval_veto", "event_id": "rev_1"}))
+        assert req is not None
+        assert req.action == "retrieval_veto"
+        assert req.event_id == "rev_1"
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"type": "retrieval_veto"},
+            {"type": "retrieval_veto", "event_id": ""},
+            {"type": "retrieval_veto", "event_id": "   "},
+            {"type": "retrieval_veto", "event_id": 123},
+            {"type": "retrieval_veto", "event_id": None},
+        ],
+    )
+    def test_veto_invalid_returns_none(self, payload):
+        """无效否决帧 → None（缺 event_id 无法定位事件，整帧拒绝）。"""
+        assert parse_host_request(json.dumps(payload)) is None
+
     def test_checkpoint_actions(self):
         cp = parse_host_request(json.dumps({"type": "checkpoint"}))
         assert cp is not None and cp.action == "checkpoint"
