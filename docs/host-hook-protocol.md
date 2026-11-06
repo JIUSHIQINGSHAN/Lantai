@@ -47,6 +47,7 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 | `query`（缺省） | 无 `type`，或 `type` 未匹配，且带查询字段 | 检索并注入上下文（读路径） |
 | `dialogue` | `"type": "dialogue"` | 写入一轮对话（写路径） |
 | `backfill` | `"type": "backfill"` | 注入回执：哪些召回记忆真被用上 |
+| `retrieval_veto` | `"type": "retrieval_veto"` | 否决作废：这一轮被宿主否决，作废其检索事件（ADR-0084） |
 | `checkpoint` | `"type": "checkpoint"` | 读取上次会话五段快照（底本注入） |
 | `checkpoint_write` | `"type": "checkpoint_write"` | 落五段快照（会话结束） |
 
@@ -99,13 +100,25 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 
 > **已知不一致（如实登记）**：`checkpoint_write` 的 `session_id` **不**经归一化函数（`query`/`dialogue` 经）。此为抽取前的既有差异，为免改变已落库的来源链值而保留。后续如需统一，须评估存量数据迁移。
 
+### 2.5 `retrieval_veto`（否决作废，ADR-0084）
+
+宿主否决了一轮（如 DLP 拦截密码，`pre_llm_call` 返回 `{"action": "block"}`）——该轮从未发给模型。此帧作废那一轮的检索事件：服务端 `mark_vetoed` 抹 `query_text`/`query_norm_hash`（低熵秘密的哈希就是可验证口令）、清 `used_ids`、置 `receipt_status="vetoed"`（终态，见 ADR-0049 状态机扩展）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `event_id` | str | 是 | 被否决轮回执凭据；缺失/空/非字符串 → 整帧拒绝（`{}`） |
+
+响应：`{"ok": true, "event_id": ..., "vetoed": bool}`。`vetoed=true` 表示发生了状态转移；`vetoed=false` 为幂等重放或事件不存在——**如实上报，不编造成功**；失败/超时 → `{}`。
+
+回执链配套语义（ADR-0084）：`vetoed` 是终态，迟到的 `backfill` 不把它拖回 `acked`、不回写保活计数；`missed` 扫描不碰它；可追溯报告单列计数。注入侧约定：插件把回执延后到 `on_session_end`（确认未被否决才发），被否决轮发本帧而非回执——假注入计数从根上不产生。
+
 ---
 
 ## 3. 超时与降级
 
 | 设置 | 默认 | 适用 |
 |---|---|---|
-| `SHELL_HOOK_TIMEOUT` | 2s | `query` / `backfill` / `checkpoint` / `checkpoint_write` |
+| `SHELL_HOOK_TIMEOUT` | 2s | `query` / `backfill` / `retrieval_veto` / `checkpoint` / `checkpoint_write` |
 | `SHELL_HOOK_DIALOGUE_TIMEOUT` | 30s | `dialogue`（含 LLM 提取） |
 
 - **超时只返回空帧**：部分结果比无结果更危险（误导 LLM），故超时 → `{}`。
