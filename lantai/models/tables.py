@@ -645,8 +645,8 @@ class RetrievalEvent(SQLModel, table=True):
     )  # 一次注入调用的整体标识（new_id("req")），与 event_id/session_id 并列不替代
     receipt_status: str = Field(
         default="pending", index=True
-    )  # pending（未回执）/ acked（宿主已回执）/ missed（超时未回执——事实非错误）
-    receipt_at: datetime | None = None  # 回执状态落定时刻（acked/missed 置位时写）
+    )  # pending（未回执）/ acked（宿主已回执）/ missed（超时未回执——事实非错误）/ vetoed（该轮被宿主否决，终态，ADR-0084）
+    receipt_at: datetime | None = None  # 回执状态落定时刻（acked/missed/vetoed 置位时写）
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
