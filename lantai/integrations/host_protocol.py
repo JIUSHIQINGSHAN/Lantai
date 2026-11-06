@@ -23,6 +23,7 @@ from lantai.core.text import normalize_session_id
 ACTION_QUERY = "query"
 ACTION_DIALOGUE = "dialogue"
 ACTION_BACKFILL = "backfill"
+ACTION_VETO = "retrieval_veto"
 ACTION_CHECKPOINT = "checkpoint"
 ACTION_CHECKPOINT_WRITE = "checkpoint_write"
 
@@ -99,6 +100,14 @@ def parse_host_request(raw: str) -> HostRequest | None:
             used_ids=tuple(used_ids),
             request_id=request_id,
         )
+
+    if action == ACTION_VETO:
+        # 否决帧（ADR-0084）：宿主否决了一轮，按 event_id 作废该检索事件。
+        # 缺 event_id 无法定位事件，整帧拒绝（同 backfill 的整体拒绝语义）。
+        event_id = data.get("event_id")
+        if not (isinstance(event_id, str) and event_id.strip()):
+            return None
+        return HostRequest(action=ACTION_VETO, event_id=event_id)
 
     if action == ACTION_CHECKPOINT:
         return HostRequest(action=ACTION_CHECKPOINT)
