@@ -21,6 +21,10 @@ from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import ConflictEvent, MemoryCheckpoint, MemoryItem
+from lantai.security.injection_guard import (
+    assert_no_prompt_injection,
+    is_blocked_by_injection_guard,
+)
 from lantai.services.record_ops_service import sync_vector_upsert
 from lantai.storage.fts import sync_fts
 
@@ -174,10 +178,25 @@ def execute_tanyi_resolution(
         }
 
     if intent in (ResolutionIntent.AFFIRMATIVE, ResolutionIntent.CORRECTION):
-        before_snapshot = item.model_dump(mode="json")
         applied_content = (
             correction if intent == ResolutionIntent.CORRECTION else (conf.incoming_ref or "")
         )
+        # 獬豸（巡检 2026-11-06）：肯定写 incoming_ref、修正写用户答复里的新说法，
+        # 两者都会成为正文并注入后续上下文——与终端编辑同闸，命中整条拒、不落库
+        try:
+            assert_no_prompt_injection(applied_content)
+        except ValueError as e:
+            logger.warning("探颐：冲突 %s 的待写正文未过獬豸闸，拒绝写入", conflict_id)
+            return {
+                "status": "rejected",
+                "action": "guard_rejected",
+                "intent": intent,
+                "conflict_id": conflict_id,
+                "memory_id": item.id,
+                "message": str(e),
+            }
+
+        before_snapshot = item.model_dump(mode="json")
 
         item.content = applied_content
         item.version = (item.version or 1) + 1
@@ -301,6 +320,9 @@ class TanyiEngine:
             .where(ConflictEvent.status == "open", *item_scope)
         ).all()
         for conf, item in conflict_rows:
+            # 獬豸：incoming_ref 会被 generate_clarification_prompts 渲染进追问
+            if is_blocked_by_injection_guard(conf.incoming_ref):
+                continue
             if clean_q and not self._matches_query(clean_q, item.content, conf.incoming_ref):
                 continue
             probes.append(
@@ -465,6 +487,9 @@ class TanyiProbingEngine:
 
                 existing_content = mem_item.content if mem_item else ""
                 incoming_ref = conf.incoming_ref or ""
+                # 獬豸：incoming_ref 会被渲染进问句
+                if is_blocked_by_injection_guard(incoming_ref):
+                    continue
 
                 text_to_match = f"{existing_content} {incoming_ref}"
                 text_tokens = set(

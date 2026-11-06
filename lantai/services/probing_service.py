@@ -17,6 +17,10 @@ from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import ConflictEvent, FactAtomic, MemoryCheckpoint, MemoryItem
 from lantai.retrieval.wanbi_retriever import fact_source_alive_clause
+from lantai.security.injection_guard import (
+    assert_no_prompt_injection,
+    is_blocked_by_injection_guard,
+)
 from lantai.services.record_ops_service import sync_vector_upsert
 from lantai.storage import db
 from lantai.storage.fts import sync_fts
@@ -204,6 +208,10 @@ def detect_memory_probes(
             item = s.get(MemoryItem, conf.memory_id)
             existing_content = item.content if item else ""
             incoming_ref = conf.incoming_ref or ""
+            # 獬豸（巡检 2026-11-06）：incoming_ref 是候选摘要（RSS/arxiv 等摄取不过闸），
+            # 这里会被渲染成问句注入 Agent 上下文——命中注入载荷的冲突不出探针
+            if is_blocked_by_injection_guard(incoming_ref):
+                continue
 
             # 判断当前查询是否涉及冲突的主题词，或指定了 memory_ids
             all_text = f"{existing_content} {incoming_ref}"
@@ -511,6 +519,21 @@ def resolve_probe_response(
                 }
 
             elif is_aff:
+                # 獬豸（巡检 2026-11-06）：肯定分支把 incoming_ref 写进正文，与
+                # correct_memory / 终端编辑同族同闸。命中整条拒：不改正文、
+                # 不动冲突账本、不 commit（拒绝了不落库）
+                try:
+                    assert_no_prompt_injection(conf.incoming_ref or "")
+                except ValueError as e:
+                    logger.warning("探颐：冲突 %s 的新说法未过獬豸闸，拒绝写入", actual_conflict_id)
+                    return {
+                        "status": "rejected",
+                        "action": "guard_rejected",
+                        "conflict_id": actual_conflict_id,
+                        "memory_id": item.id,
+                        "message": str(e),
+                    }
+
                 # 记录 Checkpoint 快照
                 before_snapshot = item.model_dump(mode="json")
                 item.content = conf.incoming_ref
