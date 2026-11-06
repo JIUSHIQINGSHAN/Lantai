@@ -3699,8 +3699,19 @@ TOOL_HANDLERS = {
 }
 
 
-# 5 核心工具列表（针对 Hermes 等对话宿主上下文瘦身，ADR-0029/Ticket 06）
-HERMES_CORE_TOOLS = frozenset({"search", "add", "feedback", "core_memory_get", "mem_recent"})
+# 核心工具列表（针对 Hermes 等对话宿主上下文瘦身，ADR-0029/Ticket 06）。
+# 票 05 续31 起它也是 MCP 默认档（不设 LANTAI_MCP_PROFILE 时）的全部暴露面。
+#
+# `offload_read`（巡检 2026-11-06 22:00 补入）：shell_hook 注入帧里超长记忆只放
+# 摘要 + 「可调用 offload_read 工具查看」（`scripts/shell_hook.py::_OFFLOAD_SUFFIX`
+# 与 `_RECALL_TOOLS_GUIDE_TRUNCATED`），续31 收窄后默认档却拒绝它（-32602
+# unknown tool）——注入帧在叫模型调一个默认根本不存在的工具。它只读、按
+# memory_id 反查归属（principal=None 也收敛校验，见 offload_service 票 10）、
+# 文件名白名单 + 防穿越，属于日常读链路本身的一环。合同锁：
+# `tests/test_hook_named_tools_in_default_profile.py`——注入帧点名的工具必须都在本集合内。
+HERMES_CORE_TOOLS = frozenset(
+    {"search", "add", "feedback", "core_memory_get", "mem_recent", "offload_read"}
+)
 
 # 显式全量档：唯一能把暴露面放回全量注册表的取值（票 05 续31，G3 收窄）。
 MCP_FULL_PROFILE = "full"
