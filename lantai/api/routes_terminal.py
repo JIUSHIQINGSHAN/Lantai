@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from lantai.core.auth import get_current_user
 from lantai.core.logger import logger
 from lantai.core.time import utcnow
-from lantai.services.edge_service import list_edges
+from lantai.services.edge_service import list_edges_batch
 from lantai.services.memory_service import list_memories
 from lantai.storage.db import get_session
 
@@ -127,25 +127,26 @@ async def terminal_chat_stream(req: ChatReq, principal=Depends(get_current_user)
         # Step 4: 推送边关系
         yield _sse("step", {"phase": "edges", "message": "正在加载记忆关系图谱..."})
         edges = []
-        for n in nodes[:20]:  # 最多查前 20 个节点的边
-            try:
-                # 归属（票 .scratch/readside-gaps/22）：`list_edges` 返回的是
-                # dict `{"edges": [...]}`，此前写 `isinstance(node_edges, list)`
-                # 恒为 False——循环体一次都没执行过，边推送是死代码，
-                # 却照样 yield 一个空 `{"edges": []}`。
-                node_edges = list_edges(n["id"], principal=principal).get("edges") or []
-                for e in node_edges:
-                    edges.append(
-                        {
-                            "id": e.get("id", ""),
-                            "source": e.get("source", ""),
-                            "target": e.get("target", ""),
-                            "relation": e.get("relation", "related"),
-                            "confidence": e.get("confidence", 0.5),
-                        }
-                    )
-            except Exception:
-                pass
+        # 最多查前 20 个节点的边。批量一次取回（此前逐节点 `list_edges`，N+1
+        # 次查询）；归属口径同 `list_edges`（票 .scratch/readside-gaps/22），
+        # 结果按节点顺序展开，与逐个调用的输出逐字一致。
+        edge_nodes = nodes[:20]
+        try:
+            by_node = list_edges_batch([n["id"] for n in edge_nodes], principal=principal)
+        except Exception:
+            logger.exception("terminal chat: edge batch lookup failed, degrade to no edges")
+            by_node = {}
+        for n in edge_nodes:
+            for e in by_node.get(n["id"]) or []:
+                edges.append(
+                    {
+                        "id": e.get("id", ""),
+                        "source": e.get("source", ""),
+                        "target": e.get("target", ""),
+                        "relation": e.get("relation", "related"),
+                        "confidence": e.get("confidence", 0.5),
+                    }
+                )
         yield _sse("edges", {"edges": edges})
 
         # Step 5: 完成
@@ -199,27 +200,28 @@ def terminal_graph(domain: str = "", limit: int = 100, principal=Depends(get_cur
 
     edges = []
     seen = set()
-    for n in nodes[:50]:
-        try:
-            # 归属（票 .scratch/readside-gaps/22）：同 `terminal_chat_stream`
-            # Step 4——`list_edges` 返回 dict，此前 `isinstance(..., list)`
-            # 恒 False，循环体从未执行。两处一起修，只修一处等于修活一半。
-            node_edges = list_edges(n["id"], principal=principal).get("edges") or []
-            for e in node_edges:
-                eid = e.get("id", "")
-                if eid not in seen:
-                    seen.add(eid)
-                    edges.append(
-                        {
-                            "id": eid,
-                            "source": e.get("source", ""),
-                            "target": e.get("target", ""),
-                            "relation": e.get("relation", "related"),
-                            "confidence": e.get("confidence", 0.5),
-                        }
-                    )
-        except Exception:
-            pass
+    # 前 50 个节点的边批量一次取回（此前逐节点 `list_edges`，N+1 次查询）。
+    # 归属同 `terminal_chat_stream` Step 4（票 .scratch/readside-gaps/22）。
+    edge_nodes = nodes[:50]
+    try:
+        by_node = list_edges_batch([n["id"] for n in edge_nodes], principal=principal)
+    except Exception:
+        logger.exception("terminal graph: edge batch lookup failed, degrade to no edges")
+        by_node = {}
+    for n in edge_nodes:
+        for e in by_node.get(n["id"]) or []:
+            eid = e.get("id", "")
+            if eid not in seen:
+                seen.add(eid)
+                edges.append(
+                    {
+                        "id": eid,
+                        "source": e.get("source", ""),
+                        "target": e.get("target", ""),
+                        "relation": e.get("relation", "related"),
+                        "confidence": e.get("confidence", 0.5),
+                    }
+                )
 
     return {"nodes": nodes, "edges": edges}
 
