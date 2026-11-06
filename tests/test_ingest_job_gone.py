@@ -89,8 +89,12 @@ def ingest_db(monkeypatch):
     )
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
-    monkeypatch.setitem(scheduler_mod.WORKER_LAST_RUN, "ingest", "")
-    return engine
+    # 内存兜底清空且自己复原（不用 setitem 塞空串占位，理由同 test_scheduler.sched_db，票 05 续23）
+    saved = scheduler_mod.WORKER_LAST_RUN.pop("ingest", None)
+    yield engine
+    scheduler_mod.WORKER_LAST_RUN.pop("ingest", None)
+    if saved is not None:
+        scheduler_mod.WORKER_LAST_RUN["ingest"] = saved
 
 
 def _seed_source(session_factory) -> None:

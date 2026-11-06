@@ -32,9 +32,18 @@ def sched_db(monkeypatch):
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
     monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
-    monkeypatch.setitem(scheduler_mod.WORKER_LAST_RUN, "digest", "")
-    monkeypatch.setitem(scheduler_mod.WORKER_LAST_RUN, "reflect", "")
-    return engine
+    # 内存兜底清空（缺键与空串对 `get_last_run` 的 `or` 等价）。不用 setitem 塞空串占位：
+    # 占位要等 monkeypatch 撤销才消失，而那晚于模块级状态护栏的撕卸检查，每例都会被
+    # 误点名为 WORKER_LAST_RUN 残留（票 05 续23）。本 fixture 自己撕卸、自己复原。
+    saved = {
+        k: scheduler_mod.WORKER_LAST_RUN.pop(k)
+        for k in ("digest", "reflect")
+        if k in scheduler_mod.WORKER_LAST_RUN
+    }
+    yield engine
+    for k in ("digest", "reflect"):
+        scheduler_mod.WORKER_LAST_RUN.pop(k, None)
+    scheduler_mod.WORKER_LAST_RUN.update(saved)
 
 
 def _seed_run(engine, name: str, last_run_utc: str) -> None:

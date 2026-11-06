@@ -792,6 +792,141 @@ def _isolate_module_state(request):
         _MODULE_STATE_RESTORE_FAILURES.append((request.node.nodeid, problems))
 
 
+# ── 模块级生产状态「有主纳管」（票 05 续23：清掉续22 点名台账的头部条目）────────
+# 续22 的 `_isolate_module_state` 是**兜底**：谁留了脏值就点名、回滚，台账供排期。
+# 全量台账里排在最前的五条并不是「测试写坏了什么」，而是**真实生产代码被测试执
+# 行到时的正常副作用**——懒单例首次使用被建出来（`telemetry._writer` 366 例、
+# `metrics._collector` 356 例，任何经过 TelemetryMiddleware 的请求都会触发）、
+# 关键词正则的惰性编译缓存（`prefilter._PATTERN_CACHE` / `_KEYWORD_WARNED`）、
+# worker 完成戳（`scheduler.WORKER_LAST_RUN`，`record_run()` 写入）。
+# 这类状态的隔离应当**有主**：由专门的 fixture 明确声明「这一通道归我管」，
+# 而不是每例都落进兜底台账，把真正的新泄漏淹没在几百行噪音里。
+#
+# 纳管口径（不削弱护栏的关键）：主人**只释放它能证明是自己/生产写入路径产出**的
+# 状态，其余一律原样留给 `_isolate_module_state` 点名——
+#   * 观测懒单例：setup 预装一个全新空实例（与 `get_writer()`/`get_collector()`
+#     首次调用建出来的完全等价：构造器纯内存、零 I/O），撕卸时**只在仍是那个实例
+#     时**才写回出厂值；测试自己 `set_writer/set_collector` 塞进去又没还原的对象
+#     不归主人管，照样被兜底台账点名。
+#   * 关键词缓存：只有「`key` 是 str、`pattern` 是以 `_BASE_SELF_REFERENCE` 开头的
+#     已编译正则」——即 `_self_reference_pattern()` 的产物形状——才释放（连同
+#     `_KEYWORD_WARNED`，它只会在同一条生产路径里被置真）；植入的字符串/伪对象不放行。
+#   * worker 完成戳：只摘掉出厂值里没有、且值是可解析 ISO 时间戳（`record_run()`
+#     的产物形状）的条目；空串占位、乱码等异形值留给兜底台账。
+# 释放一律走 `_write_module_state` + 续22 抓到的出厂快照（容器原地回滚，不另抄一份
+# 初值），主人 fixture 显式依赖 `_isolate_module_state`，保证它们晚于护栏 setup、
+# 早于护栏撕卸检查——护栏仍然看得见主人漏掉或不认领的一切。
+
+_MISSING_PRISTINE = object()
+
+
+def _pristine_of(mod_name: str, attr: str):
+    key = (mod_name, attr)
+    if key not in _MODULE_STATE_PRISTINE:
+        return _MISSING_PRISTINE
+    return _copy_module_state(_MODULE_STATE_PRISTINE[key])
+
+
+def _release_owned_singleton(mod_name: str, attr: str, owned) -> bool:
+    """懒单例仍是主人预装的那个实例才写回出厂值；否则原样留给兜底护栏。"""
+    mod = sys.modules.get(mod_name)
+    if mod is None or getattr(mod, attr, None) is not owned:
+        return False
+    pristine = _pristine_of(mod_name, attr)
+    if pristine is _MISSING_PRISTINE:
+        return False
+    return _write_module_state((mod_name, attr), pristine) is None
+
+
+def _is_production_keyword_cache(pf) -> bool:
+    """`_PATTERN_CACHE` 是否为 `_self_reference_pattern()` 的产物形状。"""
+    import re
+
+    cache = getattr(pf, "_PATTERN_CACHE", None)
+    if not isinstance(cache, dict) or set(cache) != {"key", "pattern"}:
+        return False
+    pattern = cache.get("pattern")
+    return (
+        isinstance(cache.get("key"), str)
+        and isinstance(pattern, re.Pattern)
+        and pattern.pattern.startswith(pf._BASE_SELF_REFERENCE)
+    )
+
+
+def _release_prefilter_keyword_cache() -> bool:
+    """生产惰性编译留下的关键词缓存（及同路径置真的告警位）写回出厂值。"""
+    mod_name = "lantai.gate.prefilter"
+    pf = sys.modules.get(mod_name)
+    if pf is None or not _is_production_keyword_cache(pf):
+        return False
+    released = True
+    for attr in ("_PATTERN_CACHE", "_KEYWORD_WARNED"):
+        pristine = _pristine_of(mod_name, attr)
+        if pristine is _MISSING_PRISTINE:
+            released = False
+            continue
+        if _write_module_state((mod_name, attr), pristine) is not None:
+            released = False
+    return released
+
+
+def _is_iso_stamp(value) -> bool:
+    from datetime import datetime
+
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _release_worker_stamps() -> list[str]:
+    """摘掉 `record_run()` 写入的完成戳（出厂没有 + 值是 ISO 时间戳），原地修改。"""
+    mod_name, attr = "lantai.core.scheduler", "WORKER_LAST_RUN"
+    mod = sys.modules.get(mod_name)
+    pristine = _pristine_of(mod_name, attr)
+    if mod is None or not isinstance(pristine, dict):
+        return []
+    table = getattr(mod, attr, None)
+    if not isinstance(table, dict):
+        return []
+    released = [k for k, v in table.items() if k not in pristine and _is_iso_stamp(v)]
+    for k in released:
+        del table[k]
+    return released
+
+
+@pytest.fixture(autouse=True)
+def _own_observability_singletons(_isolate_module_state):
+    """司天观测懒单例逐例纳管：预装全新空实例，撕卸时只认领自己那一个。"""
+    import lantai.observability.metrics as metrics_module
+    import lantai.observability.telemetry as telemetry_module
+
+    collector = metrics_module.MetricsCollector()
+    writer = telemetry_module.TelemetryWriter()
+    metrics_module.set_collector(collector)
+    telemetry_module.set_writer(writer)
+    yield
+    _release_owned_singleton("lantai.observability.telemetry", "_writer", writer)
+    _release_owned_singleton("lantai.observability.metrics", "_collector", collector)
+
+
+@pytest.fixture(autouse=True)
+def _own_prefilter_keyword_cache(_isolate_module_state):
+    """闸门关键词惰性编译缓存逐例纳管：只释放生产编译产物形状的缓存。"""
+    yield
+    _release_prefilter_keyword_cache()
+
+
+@pytest.fixture(autouse=True)
+def _own_worker_last_run(_isolate_module_state):
+    """worker 完成戳逐例纳管：只摘 `record_run()` 写入形状的条目。"""
+    yield
+    _release_worker_stamps()
+
+
 @pytest.fixture(autouse=True)
 def _no_background_scheduler(monkeypatch):
     """全量顺序污染防护：测试进程内关闭真实后台调度器。
