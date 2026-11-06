@@ -134,6 +134,22 @@ def check_prompt_injection(content: str) -> tuple[bool, str]:
     return False, ""
 
 
+def is_blocked_by_injection_guard(content: str | None) -> bool:
+    """獬豸闸的非抛出形态：给「只能跳过、不能拒」的读侧渲染点用。
+
+    与 `assert_no_prompt_injection` 同一开关、同一判据：
+    INJECTION_GUARD_ENABLED=False 时恒为 False（关 = 行为退回无检测）。
+    典型调用方是探颐：未决冲突的 `incoming_ref` 来自候选摘要，
+    没有经过记忆写入闸，却会被渲染成问句注入 Agent 上下文。
+    """
+    if not settings.INJECTION_GUARD_ENABLED:
+        return False
+    hit, layer = check_prompt_injection(content or "")
+    if hit:
+        logger.warning("獬豸 SKIPPED layer=%s chars=%s", layer, len(content or ""))
+    return hit
+
+
 def assert_no_prompt_injection(content: str) -> None:
     """獬豸闸：写入漏斗接线点。命中即 raise ValueError（整条拒，不改写）。
 
