@@ -425,8 +425,17 @@ def build_context(query: str, session_id: str | None = None) -> dict:
 
         results = [r for r in (raw_results or []) if isinstance(r, dict) and _score_passes(r)]
         if not results:
-            _try_log(query, [], int((time.perf_counter() - t0) * 1000), session_id=session_id)
-            return _persona_only()
+            # v0.68 票 01：零命中也把已落库事件的 event_id 带出——DLP 否决零命中轮时
+            # 插件才构造得出 retrieval_veto 帧（ADR-0084 否决链只认 event_id）。
+            # 对齐 REST routes_search / MCP handle_search 零命中分支的既有口径；
+            # request_id 此分支本就没生成，如实不带。
+            zero_event_id = _try_log(
+                query, [], int((time.perf_counter() - t0) * 1000), session_id=session_id
+            )
+            out = _persona_only()
+            if zero_event_id:
+                out["event_id"] = zero_event_id
+            return out
 
         # 磨勘（v0.29 · MCMA 建议项 6）：信息密度优先重排与条目硬顶（<= SHELL_HOOK_MAX_INJECT_ITEMS，默认 5）
         max_items = getattr(settings, "SHELL_HOOK_MAX_INJECT_ITEMS", 5)

@@ -158,6 +158,94 @@ class TestTraceabilityReportVetoed:
         assert report["traceability_rate"] is None
 
 
+class TestZeroHitVetoReachable:
+    """v0.68 票 01：零命中轮的检索事件也必须够得着 veto（响应契约补 event_id）。
+
+    病灶：零命中路径（shell_hook build_context `if not results:`）落库后经
+    `_persona_only()` 返回，event_id 被丢——DLP 否决零命中轮时插件构造不出
+    retrieval_veto 帧，`mark_vetoed` 永远够不着，原话永久留在
+    query_text/query_norm_hash。对照臂：REST routes_search 与 MCP handle_search
+    的同名零命中分支本就带 event_id，本票把 shell_hook 对齐到同一口径。
+    """
+
+    def test_zero_hit_response_carries_event_id_and_veto_scrubs(self, veto_env, monkeypatch):
+        """空库 + 带秘密查询：响应带 event_id → veto 帧抹原话、置 vetoed 终态。"""
+        mod = _load_hook_module(monkeypatch)
+        # 验证语义 ≠ 验证墙宽（watch/build-context-2s-timeout-flaky）：放宽硬墙，
+        # 防全量后段擦线超时走降级把断点遮成假绿；monkeypatch 自动恢复。
+        monkeypatch.setattr(mod.settings, "SHELL_HOOK_TIMEOUT", 30)
+
+        out = mod._handle_one(
+            json.dumps(
+                {
+                    "type": "query",
+                    "query": "我的银行卡密码是 864213，帮我记一下",
+                    "session_id": "s-zero-hit",
+                }
+            )
+        )
+        # 红点：零命中响应必须带已落库事件的 event_id（自指词「我的」自然过
+        # relevance gate，不 mock gate；空库必零命中）
+        event_id = out.get("event_id")
+        assert event_id, out
+
+        vout = mod._handle_one(json.dumps({"type": "retrieval_veto", "event_id": event_id}))
+        assert vout.get("ok") is True
+        assert vout.get("vetoed") is True
+
+        from lantai.models.tables import RetrievalEvent
+
+        sf, _engine = veto_env
+        with sf() as s:
+            ev = s.get(RetrievalEvent, event_id)
+            assert ev.receipt_status == "vetoed"
+            assert ev.query_text == ""
+            assert ev.query_norm_hash == ""
+            assert ev.used_ids == []  # 零命中本就无 used_ids，veto 不受影响
+
+    def test_hit_path_response_unchanged(self, veto_env, monkeypatch):
+        """对照臂：命中路径响应带 event_id + evidence，修复不得改坏命中路径。
+
+        命中走真库 FTS/BM25（种子 + sync_fts，同 test_plugin_short_query_persona
+        的实证模式）——不在 param_env 之上二次 patch `get_vector_store`：同一绑定
+        两层替身撤销错位会被模块状态护栏点名（票 05 续8，conftest 明文警告的
+        手写 fixture 反模式）。
+        """
+        from lantai.models.tables import MemoryItem
+        from lantai.storage.fts import sync_fts
+
+        mod = _load_hook_module(monkeypatch)
+        monkeypatch.setattr(mod.settings, "SHELL_HOOK_TIMEOUT", 30)
+
+        sf, _engine = veto_env
+        with sf() as s:
+            m = MemoryItem(
+                id="mem-hit",
+                content="青梧仓库盘点截止日是每月 26 号，负责人是老魏。",
+                lane="fact",
+                tier="longterm",
+                status="active",
+                importance=0.8,
+            )
+            s.add(m)
+            s.commit()
+            sync_fts(s, m.id, m.content)
+            s.commit()
+
+        out = mod._handle_one(
+            json.dumps(
+                {
+                    "type": "query",
+                    "query": "青梧仓库每月的盘点截止日是哪一天",
+                    "session_id": "s-hit-ctrl",
+                }
+            )
+        )
+        assert out.get("event_id")
+        assert out.get("evidence"), out
+        assert out["evidence"][0]["id"] == "mem-hit"
+
+
 class TestProtocolDispatch:
     """协议帧 → shell_hook 分发 → 真库收口（不 mock，同 test_receipt_chain 冒烟形态）。"""
 

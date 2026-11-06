@@ -187,11 +187,15 @@ class TestShortQueryPersonaRealServe:
         assert MEM_MARK in ctx, f"真实 FTS/BM25 检索未命中种子记忆: {ctx!r}"
 
     def test_empty_persona_short_query_returns_empty(self, serve):
-        """空画像 + 短查询：返回空 dict，不裸奔声明行、不伪造注入。"""
+        """空画像 + 短查询：不裸奔声明行、不伪造注入；event_id 照带出（v0.68 票 01）。"""
         mod, _ = serve(with_persona=False, with_memories=False)
         with _network_off(mod):
             out = _frame(mod, "我对什么过敏？", "s-p4")
-        assert out == {}, f"无画像时短查询应空返回: {out!r}"
+        # 画像/注入内容必须为空；event_id 是协议簿记字段（零命中检索事件的
+        # 否决链入口），不算伪造注入——「空响应」契约自 v0.68 票 01 起收窄
+        assert not out.get("context"), f"无画像时短查询不得带注入内容: {out!r}"
+        assert "fence" not in str(out).lower() and "【" not in str(out), out
+        assert out.get("event_id"), f"零命中事件的 event_id 应带出: {out!r}"
 
     def test_irrelevant_short_closer_does_not_pull_memories(self, serve):
         """冷缓存下的无关短消息：只给画像，不得把记忆噪声塞进去。"""
