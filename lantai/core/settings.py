@@ -295,6 +295,10 @@ class Settings(BaseSettings):
     # （本机系统时区）| +08:00。默认北京时间——按 UTC 显示时，北京 0–8 点写的
     # 记忆会落到前一天。写错值回落 Asia/Shanghai。
     SHELL_HOOK_INJECT_TZ: str = "Asia/Shanghai"
+    # 更正闸（记忆研究周报 2026-11-03 P0-2）：已被明确取代（superseded_by 非空）的旧值，
+    # 新值也在本次注入里时不再注入；新值不在或问句在问「以前」时保留并加「已更正」
+    # 标记。false = 旧行为（新旧并列、无标记）。只影响注入帧，库与 MCP search 不变。
+    SHELL_HOOK_SUPERSEDED_GUARD: bool = True
     # 上下文卸载（借鉴 TencentDB Agent Memory offload_server/compact 窄版）：
     # 超长记忆全文落文件，上下文只注入摘要 + 路径；需要时经 MCP offload_read 取全文
     SHELL_HOOK_OFFLOAD_CHARS: int = 2000  # 记忆内容超过此长度 → 落文件 + 摘要注入
