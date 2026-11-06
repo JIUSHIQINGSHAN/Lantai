@@ -9,7 +9,7 @@
 本文件是修复的红→绿锁，四条判据各咬一个面：
 
 1. **默认面 = 最小集**：不设任何 profile 变量时，活跃面恰好等于 `HERMES_CORE_TOOLS`
-   （5 个），绝不等于全量注册表。
+   （核心集，见 `HERMES_CORE_TOOLS`），绝不等于全量注册表。
 2. **未知取值 fail-closed**：`safe`/`none`/拼错的档位此前**静默回落全量**——一个
    大小写笔误就把暴露面从 5 放回 96。修复后未知/非法取值必须落到最小集，
    并且**可观测地告警**（不许静默）。
@@ -49,7 +49,7 @@ def _strip_profiles():
 
 
 def test_default_active_face_is_minimal_not_full():
-    """判据 1：什么都不设 ⇒ 活跃面 == 核心 5，且必须显著小于全量注册表。"""
+    """判据 1：什么都不设 ⇒ 活跃面 == 核心集，且必须显著小于全量注册表。"""
     _strip_profiles()
     active = _active_set()
     assert active == set(mcp.HERMES_CORE_TOOLS), f"默认活跃面不是最小核心集：{sorted(active)}"
@@ -119,7 +119,7 @@ def test_tools_call_refuses_non_core_tool_and_never_runs_handler():
 
 
 def test_core_tools_still_callable_under_default():
-    """反向保险：收窄不许把核心 5 个工具自己也关在门外。"""
+    """反向保险：收窄不许把核心工具自己也关在门外。"""
     _strip_profiles()
     with env_context("LANTAI_MCP_PROFILE", "core"):
         for name in mcp.HERMES_CORE_TOOLS:
