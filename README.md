@@ -104,7 +104,7 @@ docker run -d -p 8767:8767 \
 
 > 容器默认 `HOST=0.0.0.0` 对外暴露，**必须注入 `API_KEY`**——启动守卫（`assert_secure_binding`）会在非回环地址且无密钥时拒绝运行；请求路径也会校验 `X-API-Key`（或库内 Bearer key），非回环不再回退 DEV MODE。
 > 
-> ⚠️ **部署约束（单进程部署）**：当前版本的后台定时任务调度器（APScheduler）与嵌入式底座（SQLite WAL + 内嵌 ChromaDB）按单进程架构设计。请在部署时保持单进程运行（`--workers 1`，默认行为）；多 Worker 运行会导致遗忘与蒸馏任务重复触发及向量库写锁争用。
+> ⚠️ **部署约束（单进程部署）**：当前版本的后台定时任务调度器（APScheduler）与嵌入式底座（SQLite journal_mode=delete + 内嵌 ChromaDB）按单进程架构设计。请在部署时保持单进程运行（`--workers 1`，默认行为）；多 Worker 运行会导致遗忘与蒸馏任务重复触发及向量库写锁争用。
 
 ## 接口列表
 

@@ -216,7 +216,7 @@ Lantai 在 v0.6 之后系统性地研究并选择性吸收了多个开源记忆�
 │  └──────────┘  └──────────┘  └──────────┘  └─────────┘ │
 ├─────────────────────────────────────────────────────────┤
 │                  存储层 (Storage)                         │
-│  SQLite (WAL) + FTS5 trigram  ·  ChromaDB (cosine HNSW)  │
+│  SQLite (delete) + FTS5 trigram · ChromaDB (cosine HNSW) │
 │  Schema v20 增量迁移  ·  APScheduler 持久化 jobstore     │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -444,7 +444,7 @@ X-API-Key（命中即 admin）→ 库内 Bearer Token → DEV MODE（仅回环+�
 |------|-----|
 | 语言 | Python 3.11+ |
 | Web 框架 | FastAPI + Uvicorn |
-| 结构化存储 | SQLite（WAL mode，busy_timeout=30s） |
+| 结构化存储 | SQLite（delete journal mode，busy_timeout=30s） |
 | 全文索引 | FTS5 trigram |
 | 向量存储 | ChromaDB（嵌入式，cosine HNSW） |
 | 词级检索 | jieba + rank-bm25 |

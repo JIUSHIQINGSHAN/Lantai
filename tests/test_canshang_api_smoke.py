@@ -24,6 +24,8 @@ from lantai.services.conflict_service import (
     audit_consistency_service,
 )
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 def _principal(user_id: str, *, admin: bool = False, lanes=None) -> Principal:
     return Principal(

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from lantai.api.app import app
@@ -24,6 +25,8 @@ from lantai.services.shishi_service import (
     seal_core_memory_service,
     verify_shishi_integrity_service,
 )
+
+pytestmark = pytest.mark.mcp_full_surface()
 
 
 class TestShishiApiSmoke:

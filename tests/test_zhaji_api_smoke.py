@@ -24,6 +24,8 @@ from lantai.services.scratchpad_service import (
     zhaji_distill_service,
 )
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 @pytest.fixture(name="db_session")
 def fixture_db_session():

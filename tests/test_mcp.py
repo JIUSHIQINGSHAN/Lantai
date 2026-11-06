@@ -12,6 +12,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 MCP_PATH = Path(__file__).parent.parent / "lantai" / "cli" / "mcp.py"
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 def _load_mcp():
     spec = importlib.util.spec_from_file_location("mcp_server", MCP_PATH)

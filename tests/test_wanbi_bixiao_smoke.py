@@ -1,7 +1,6 @@
 """完璧（ADR-0057）与笔削（ADR-0047）生命周期操作不 mock 冒烟测试。"""
 
 import pytest
-from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -12,15 +11,18 @@ from lantai.services.record_ops_service import delete_fact_atomic, retract_fact_
 
 @pytest.fixture
 def bixiao_wanbi_db():
+    """生产同构的临时库：不手动开 `PRAGMA foreign_keys`。
+
+    旧 fixture 用 connect 事件把 foreign_keys 打开，而生产 engine（`db.py:25`）
+    从不设置该 pragma（SQLite 每连接默认 OFF）——测试连接与生产连接配置发散，
+    `test_delete_fact_atomic_cascades` 于是靠 DB 级 CASCADE「假绿」，掩盖了生产里
+    `delete_fact_atomic` 只删主表、实体投影残留孤儿行的真实缺陷（票 05 续28）。
+    去掉这层发散后，级联必须由被测函数自己兑现——修复前该用例如期转红，修复后
+    经应用级显式删投影转绿，测的是真实生产机制而非一次性的连接开关。
+    """
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
-
-    @event.listens_for(engine, "connect")
-    def set_sqlite_pragma(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
 
     SQLModel.metadata.create_all(engine)
     yield engine

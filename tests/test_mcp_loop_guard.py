@@ -10,7 +10,11 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 MCP_PATH = Path(__file__).parent.parent / "lantai" / "cli" / "mcp.py"
+
+pytestmark = pytest.mark.mcp_full_surface()
 
 
 def _load_mcp():

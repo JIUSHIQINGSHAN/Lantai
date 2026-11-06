@@ -23,6 +23,8 @@ from lantai.models.tables import MemoryCandidate
 from lantai.services.refine_service import batch_refine_candidates, pisha_refine_service
 from lantai.storage import db
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 @pytest.fixture
 def test_db():

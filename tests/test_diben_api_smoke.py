@@ -29,6 +29,8 @@ from lantai.services.diben_service import (
 )
 from lantai.storage import db
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 def _seed_test_diben_fixture(session_id: str = "sess-api-diben-01") -> None:
     t = utcnow()

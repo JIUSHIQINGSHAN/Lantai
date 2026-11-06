@@ -15,6 +15,8 @@ REPO_ROOT = Path(__file__).parent.parent
 HOOK_PATH = REPO_ROOT / "scripts" / "shell_hook.py"
 MCP_PATH = REPO_ROOT / "lantai" / "cli" / "mcp.py"
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 def _load_module(path: Path, name: str):
     spec = importlib.util.spec_from_file_location(name, path)

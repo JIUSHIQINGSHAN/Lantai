@@ -781,7 +781,7 @@ def delete_fact_atomic(
 
     物理删除事实原子记录，触发 FactEntity 级联删除，彻底移出系统。
     """
-    from lantai.models.tables import FactAtomic
+    from lantai.models.tables import FactAtomic, FactEntity
 
     def _run(s: Session) -> dict:
         fact = s.get(FactAtomic, fact_id)
@@ -790,6 +790,13 @@ def delete_fact_atomic(
 
         stmt_text = fact.statement
         src_id = fact.source_memory_id or fact.id
+        # 显式清空实体投影（票 05 续28）：fact_entity 的 FK ondelete=CASCADE 在 SQLite
+        # 里**每连接默认关闭**，生产 engine（db.py:25）从不设 PRAGMA foreign_keys，
+        # 单删主表会留下孤儿投影行——实体反查索引会命中已删除的事实。这里与
+        # retract_fact_atomic / purge_facts_for_memory 同口径，在同一事务里显式删投影，
+        # 兑现本函数 docstring 承诺的「触发 FactEntity 级联删除」。
+        for ent in s.exec(select(FactEntity).where(FactEntity.fact_id == fact_id)).all():
+            s.delete(ent)
         s.delete(fact)
 
         audit_event(

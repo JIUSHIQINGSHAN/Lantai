@@ -48,6 +48,8 @@ from lantai.storage import db
 # 钉住，防止有人把「窗口里恰好有我」当成正确性证据。
 SEAM1_USER = f"jc-seam1-{uuid.uuid4().hex[:8]}"
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 def _mem(owner: str, tag: str, content: str, t) -> MemoryItem:
     return MemoryItem(

@@ -21,6 +21,8 @@ from lantai.core.auth import Principal
 from lantai.models.tables import MemoryItem
 from lantai.services.kaogong_service import kaogong_inspect_service, run_kaogong_cycle
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 @pytest.fixture(name="db_session")
 def fixture_db_session():

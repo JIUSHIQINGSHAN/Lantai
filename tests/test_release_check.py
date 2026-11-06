@@ -370,6 +370,92 @@ def test_consistency_reports_mismatch_and_changelog_drift():
     assert any("CHANGELOG 最新发布段" in i for i in issues)
 
 
+# ---- 票 05 续46：CHANGELOG 缺失被静默豁免 = 门禁脚本假绿 ----------------------
+# 病灶（修复前真实字节直调实测，见 .scratch/gate/baseline/r62-red-before-fix.log）：
+# main() :1269 用 `changelog_path.exists() else None` 取文本，而判据 :190 写的是
+# `if changelog_text is not None:`——CHANGELOG.md 被删/改名/路径打错时，两个
+# CHANGELOG 子判据整体不执行，版本一致性照样 [PASS]（红样输出逐字：
+# `[PASS] 版本一致性 — 2 处版本引用 + CHANGELOG 最新段 = v0.66.0`，而文件不存在）。
+# CHANGELOG.md 不在 VERSION_REF_SPECS（7 处=pyproject/README×2/app.py/mcp.py/uv.lock），
+# refs 侧兜不住。与同脚本法典化口径矛盾：addopts「依据缺失 = 未取证，不放行」(:1038)、
+# 遗忘门禁「没回报结论标记 ≠ 取到证」(:1061)、MCP 探针「0 个 = fail-closed」(:630)。
+
+
+def test_missing_changelog_text_blocks_not_waived():
+    """判据级（零 mock）：changelog_text=None 必须产出阻断项，不得读成「无需核对」。"""
+    refs = [
+        ("pyproject.toml", "pyproject.toml", "0.66.0"),
+        ("uv.lock 根包版本", "uv.lock", "0.66.0"),
+    ]
+    issues = RC.check_version_consistency("0.66.0", refs, None)
+    assert issues, "CHANGELOG 文本缺失被豁免——版本一致性假绿（依据缺失=未取证）"
+    assert any("CHANGELOG" in i for i in issues), issues
+
+
+_ALIGNED_REFS = [
+    ("pyproject.toml", "pyproject.toml", "0.66.0"),
+    ("uv.lock 根包版本", "uv.lock", "0.66.0"),
+]
+
+
+def _stub_other_gate_producers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """把版本维度以外 9 项的生产者钉成「已取证且通过」，check_version_consistency
+    与取文本/记账/汇总路径**保持真实**——比 _stub_gate_producers 更严：被追责的判据
+    不许被 stub（stub 它就是把病灶豁免写进测试）。"""
+    monkeypatch.setattr(RC, "lint_gate_issues", lambda root, skips=None: [])
+    monkeypatch.setattr(RC, "ci_step_coverage_issues", lambda root: [])
+    monkeypatch.setattr(RC, "gate_suite_flag_issues", lambda root: [])
+    monkeypatch.setattr(RC, "addopts_fidelity_issues", lambda root: [])
+    monkeypatch.setattr(RC, "collect_version_refs", lambda root: list(_ALIGNED_REFS))
+    monkeypatch.setattr(RC, "run_build_gate", lambda root, expected_version: ([], "demo.whl"))
+    monkeypatch.setattr(RC, "git_issues", lambda root, v, ad, online=False, skips=None: [])
+    monkeypatch.setattr(RC, "mcp_exposure_issues", lambda root: [])
+    monkeypatch.setattr(RC, "schema_drift_issues", lambda root: [])
+    monkeypatch.setattr(
+        RC, "legacy_parity_probe", lambda root, **kw: {"anchors": [{"source_tag": "v0.0.1"}]}
+    )
+    monkeypatch.setattr(RC, "legacy_parity_issues_from_payload", lambda payload: [])
+    monkeypatch.setattr(RC, "suite_gate_issues", lambda root, timeout=None: [])
+    monkeypatch.setattr(RC, "run_forgetting_gate", lambda root: [])
+
+
+def test_main_fails_version_check_when_changelog_absent(monkeypatch, capsys, tmp_path):
+    """消费级单变量实验：其余版本引用全齐平、只缺 CHANGELOG.md——修复前这里
+    [PASS] + exit 0（假绿），修复后必须 [FAIL] 版本一致性 + exit 1。"""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "lantai"\nversion = "0.66.0"\n', encoding="utf-8"
+    )
+    assert not (tmp_path / "CHANGELOG.md").exists()
+    monkeypatch.setattr(RC, "REPO_ROOT", tmp_path)
+    _stub_other_gate_producers(monkeypatch)
+
+    code = RC.main(["v0.66.0"])
+    out = capsys.readouterr().out
+    assert "[PASS] 版本一致性" not in out, (
+        f"CHANGELOG 不存在仍打 [PASS]（依据缺失被读成通过）：\n{out[-600:]}"
+    )
+    assert any(ln.startswith("[FAIL] 版本一致性") for ln in out.splitlines()), out[-600:]
+    assert code == 1, f"该维度未取证却整体 exit 0：{code}"
+
+
+def test_main_passes_version_check_when_changelog_present(monkeypatch, capsys, tmp_path):
+    """反向保险（防判据修成恒红摆设）：CHANGELOG 齐备且与目标版本对齐时，
+    版本一致性必须仍 [PASS]、整体 exit 0。"""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "lantai"\nversion = "0.66.0"\n', encoding="utf-8"
+    )
+    (tmp_path / "CHANGELOG.md").write_text(
+        "## [Unreleased]\n\n## [0.66.0]\n- 本次发布\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(RC, "REPO_ROOT", tmp_path)
+    _stub_other_gate_producers(monkeypatch)
+
+    code = RC.main(["v0.66.0"])
+    out = capsys.readouterr().out
+    assert "[PASS] 版本一致性" in out, out[-600:]
+    assert code == 0, f"依据齐全时不得误杀：{code}\n{out[-400:]}"
+
+
 def test_normalize_version_accepts_v_prefix():
     assert RC.normalize_version("v0.3.8") == "0.3.8"
     assert RC.normalize_version("0.3.8") == "0.3.8"
@@ -499,58 +585,75 @@ def test_mcp_exposure_issue_is_structural_not_threshold():
 
 def test_mcp_exposure_issues_on_real_repo_explains_itself():
     issues = RC.mcp_exposure_issues(RC.REPO_ROOT)
+    assert issues == [], f"真实仓库的默认档必须经门禁探针实测收窄（票 05 续31），实得：{issues}"
+    # 兜住「探针自己坏了」的形态：若该列表将来非空（回归或被拦），每一项都得点名病灶。
     for issue in issues:
         assert "未收窄" in issue, f"阻断项必须点名病灶与口径：{issues}"
 
 
-def _advertised_remedies(msg: str) -> list[str]:
-    """从门禁提示里解析「处方」：它必须显式点明哪些取值会收窄（固定句式，便于对账）。"""
-    hit = re.search(r"只有\s+([A-Za-z_/]+)\s+这组取值会把 tools/list", msg)
-    return sorted(hit.group(1).split("/")) if hit else []
+def _advertised_widening(msg: str) -> str | None:
+    """从门禁提示里解析「唯一放宽到全量的取值」（固定句式，便于与生产实测对账）。"""
+    hit = re.search(r"只有显式声明 ([A-Za-z_]+) 才允许全量", msg)
+    return hit.group(1) if hit else None
 
 
 def test_mcp_fail_message_only_advertises_remedies_that_really_narrow(monkeypatch):
-    """门禁红灯不许递出「设了也不收窄」的处方（票 05 续21，全程真调生产代码，不 mock）。
+    """门禁提示点名的「唯一放宽取值」必须与生产实测双向对账（票 05 续21 立约，续31 换绑新语义）。
 
-    实测依据（`.scratch/gate/r21/mcp_narrow.py` 直调 `lantai/cli/mcp.py:3705-3713`）：
-    `core|hermes|minimal|slim` ⇒ tools/list 收到核心集；`safe|none|拼错|不设` ⇒
-    **静默保持 96/96，无告警**；而本项判据只看默认档（`isolated_probe_env()` 主动剥掉
-    profile 变量，既有哨兵钉着）。旧文案「或在部署侧设 LANTAI_MCP_PROFILE」两头都不成立。
-
-    本用例做**双向对账**（不是子串打卡）：提示里点名的每个取值都必须真的能收窄，
-    生产侧真的能收窄的取值也必须都被点名；抽掉警告语、塞进假取值（safe）、漏掉真取值
-    都会判红（变异 M-A/M-B/M-C 实测各判红一次）。采样集外若再新增可收窄档，需要同时
-    扩充 SAMPLED——这是有意的显式成本，逼后来者重读生产实现。
+    续21 时的病灶：默认档 `return TOOLS`，提示却可能开出「设 safe/none 就收窄」的
+    假处方。续31 把生产语义改成 fail-closed 白名单后，不变量换了一头——现在要钉的是
+    「除显式 `full` 之外没有任何取值能拿到全量」。本用例全程真调
+    `lantai/cli.mcp::_get_active_tools()`（monkeypatch 只是档位入口，不 mock 计算），
+    做双向对账：提示点名的放宽取值实测必须真放宽；实测能放宽的取值必须只是它的
+    大小写/空格变体（混进第二条放宽路径 = 没被说破的后门，判红）。抽掉告警语、
+    把处方换成 safe、生产加一条 `all` 后门、默认档被改回全量——四个方向各咬一次。
     """
     from lantai.cli import mcp
 
     total = len(mcp.TOOLS)
     core = set(mcp.HERMES_CORE_TOOLS)
-    SAMPLED = ("hermes", "core", "slim", "minimal", "safe", "none", "typo-value")
+    registry = set(mcp.TOOLS)
+    SAMPLED = (
+        "hermes",
+        "core",
+        "slim",
+        "minimal",
+        "safe",
+        "none",
+        "typo-value",
+        "all",  # 评审线 N-04 的 LANTAI_MCP_EXPOSE 档位名：绝不容许成为第二条放宽后门
+        "full",
+        "FULL",
+        " full ",
+    )
 
-    def narrows(value: str) -> bool:
+    def active_for(value: str) -> set:
         monkeypatch.setenv("LANTAI_MCP_PROFILE", value)
         try:
-            return set(mcp._get_active_tools()) == core
+            return set(mcp._get_active_tools())
         finally:
             monkeypatch.delenv("LANTAI_MCP_PROFILE", raising=False)
 
-    measured = sorted(v for v in SAMPLED if narrows(v))
-    assert measured, "生产侧一个能收窄的取值都没有：本用例的前提已经不成立，请改判据而不是改断言"
-    assert not narrows("safe") and not narrows("none"), "safe/none 忽然会收窄了：门禁口径要重估"
+    wideners = [v for v in SAMPLED if active_for(v) == registry]
+    assert wideners and all(v.strip().lower() == "full" for v in wideners), (
+        f"能拿到全量注册表的取值不止显式 full：{wideners}——多出来的是没被说破的放宽后门"
+    )
+    for value in SAMPLED:
+        if value not in ("full", "FULL", " full "):
+            assert active_for(value) == core, f"非 full 取值 {value!r} 没有落到核心集"
     monkeypatch.delenv("LANTAI_MCP_PROFILE", raising=False)
-    assert len(mcp._get_active_tools()) == total, "不设 profile 时默认面不是全量，判据失效"
+    assert set(mcp._get_active_tools()) == core, (
+        "不设 profile 的默认档不再是核心集——续31 的收窄被改回去了"
+    )
 
     msg = RC.mcp_exposure_issue(total, total)
     assert msg is not None, "默认全量暴露必须判红——本用例不是来放宽它的"
 
-    advertised = _advertised_remedies(msg)
-    assert advertised, (
-        "提示必须显式点名会收窄的取值（固定句式：只有 X/Y 这组取值会把 tools/list …）"
-    )
-    assert advertised == measured, f"提示的处方与生产实测不一致：广告={advertised} 实测={measured}"
+    advertised = _advertised_widening(msg)
+    assert advertised, "提示必须显式点名唯一放宽取值（固定句式：只有显式声明 X 才允许全量…）"
+    assert advertised == "full", f"提示点名的放宽取值漂移：{advertised!r}（生产认的是 full）"
 
-    assert "静默" in msg and "无告警" in msg, f"提示必须说破其余取值静默保持全量：{msg}"
+    assert "未知取值" in msg and "告警" in msg, f"提示必须说破未知取值 fail-closed 且告警：{msg}"
     assert "默认档" in msg and "不会让它变绿" in msg, f"提示必须说破本项只看默认档：{msg}"
     assert "LANTAI_MCP_EXPOSE" in msg and "不存在" in msg, f"提示必须点名缺失的开关：{msg}"
     assert "阻断发布" in msg and "可以放行" not in msg, "口径仍是阻断，不许出现放行措辞"
@@ -562,6 +665,62 @@ def test_isolated_probe_env_isolates_home_and_forbids_dev_mode(tmp_path):
     assert os.path.normcase(env["LANTAI_HOME"]) == os.path.normcase(home)
     assert env.get("API_KEY"), "探针需要非空 API_KEY（空则 DEV MODE 回退掩盖真实分支）"
     assert "LANTAI_MCP_PROFILE" not in env, "探针必须模拟『不设 profile』的默认暴露现场"
+
+
+def test_isolated_probe_env_neutralizes_ambient_legacy_home(tmp_path, monkeypatch):
+    """回归锁（票 05 续25）：探针 env 必须把旧名 REMEMBRANCE_HOME 也指进沙箱。
+
+    实测病灶：`release_check.py` 的 `isolated_probe_env()` 写的是
+    `REMEMENTRANCE_HOME`（多一个 E，settings 里根本没有这个字段），注释却声称
+    "旧变量名兼容（settings 仍会读它）"——防线只有注释没有实现。本机装机史里
+    REMEMBRANCE_HOME 是真实写过的用户级变量（docs/hermes-install-handoff.md:55
+    「写用户级环境变量 REMEMBRANCE_HOME」），ambient 宿主值会原样穿透进探针 env；
+    settings 靠 LANTAI_HOME 优先才没走偏——那是运气不是设计。同仓
+    `scripts/legacy_schema_snapshot.py:112` 用的就是正确键名，两条隔离路径口径分叉。
+
+    判据：塞一个敌意 ambient 旧名目录，探针 env 必须已被改写为沙箱；拼错的死键
+    不许留在 env 里（留着也只是噪声，settings 读不到）。
+    """
+    home = str(tmp_path / "probe_home")
+    monkeypatch.setenv("REMEMBRANCE_HOME", str(tmp_path / "HOST-legacy-home"))
+    env = RC.isolated_probe_env(home)
+    assert os.path.normcase(env.get("REMEMBRANCE_HOME", "")) == os.path.normcase(home), (
+        "旧名 REMEMBRANCE_HOME 未被沙箱化：探针继承宿主旧名目录——注释声称的兼容兜底"
+        "因键名拼错（REMEMENTRANCE）而虚设（票 05 续25）"
+    )
+    assert "REMEMENTRANCE_HOME" not in env, "拼错的死键名仍挂在探针 env 上"
+
+
+def test_isolated_probe_env_blackholes_llm_egress(tmp_path, monkeypatch):
+    """回归锁（票 05 续27 环境泄漏）：探针 env 必须把 LLM/精排出网端点钉到环回黑洞，
+
+    且不得让 ambient 的真实端点/凭据穿透进探针子进程。
+
+    实测病灶：`isolated_probe_env()` 只把 API_KEY / OPENAI_API_KEY 两把 key 中和成
+    探针假 key，却原样 `os.environ.copy()` 携带了 ambient（以及 settings 经 env_file
+    加载的仓根 .env）的 `OPENAI_BASE_URL` / `RERANKER_BASE_URL`，且从不处理
+    `RERANKER_API_KEY`。于是探针子进程可能拿着假 key 指向**真实白名单端点**：一旦某条
+    代码路径真的发起调用，请求会在拿到 401 之前就已出网——这与 harness_state 的
+    「失败即断网，不是失败即外传」黑洞纪律（`127.0.0.1:9` discard）正好相反。同仓
+    测试侧早已把 `OPENAI_BASE_URL` 钉成黑洞，唯独门禁探针这条隔离路径漏了这一维。
+
+    判据（不依赖被测常量，独立口径）：出网端点必须落在环回地址（含 127.0.0.1），
+    绝不含被植入的真实主机；ambient 的 RERANKER_API_KEY 不得原样穿透（要么不存在、
+    要么已是探针假 key）。
+    """
+    hostile_base = "https://api.hostile-ambient.test/v1"  # 虚构主机，非任何真实凭据
+    hostile_key = "hostile-ambient-reranker-key"
+    monkeypatch.setenv("OPENAI_BASE_URL", hostile_base)
+    monkeypatch.setenv("RERANKER_BASE_URL", hostile_base)
+    monkeypatch.setenv("RERANKER_API_KEY", hostile_key)
+    env = RC.isolated_probe_env(str(tmp_path / "probe_home"))
+    for key in ("OPENAI_BASE_URL", "RERANKER_BASE_URL"):
+        val = env.get(key, "")
+        assert "127.0.0.1" in val, f"{key} 未钉到黑洞端点：探针可能向真实端点出网（当前 {val!r}）"
+        assert hostile_base not in val, f"{key} 仍指向被植入的真实主机——ambient 端点穿透"
+    assert env.get("RERANKER_API_KEY", RC._PROBE_KEY) != hostile_key, (
+        "ambient RERANKER_API_KEY 原样穿透进探针 env——真实凭据进入探针子进程"
+    )
 
 
 def test_schema_drift_issues_from_payload_reports_every_class():

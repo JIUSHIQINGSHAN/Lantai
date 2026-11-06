@@ -17,6 +17,8 @@ from lantai.cognition.context import CognitiveContext
 from lantai.core.auth import Principal, get_current_user
 from lantai.models.tables import ConflictEvent, MemoryItem
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 def _principal(user_id: str, tenant_id: str | None = None) -> Principal:
     return Principal(

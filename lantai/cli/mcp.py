@@ -24,6 +24,7 @@ import os
 import sys
 import threading
 import time
+import warnings
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 
@@ -3701,16 +3702,45 @@ TOOL_HANDLERS = {
 # 5 核心工具列表（针对 Hermes 等对话宿主上下文瘦身，ADR-0029/Ticket 06）
 HERMES_CORE_TOOLS = frozenset({"search", "add", "feedback", "core_memory_get", "mem_recent"})
 
+# 显式全量档：唯一能把暴露面放回全量注册表的取值（票 05 续31，G3 收窄）。
+MCP_FULL_PROFILE = "full"
+
 
 def _get_active_tools() -> dict:
+    """当前 profile 下允许广告/执行的工具集。
+
+    票 05 续31 之前的旧语义是「白名单外一律全量」：不设 `LANTAI_MCP_PROFILE`
+    直接 `return TOOLS`（96/96），`safe`/`none`/拼错的档位同样**静默保持全量**
+    ——一个大小写笔误就把暴露面从 5 放回 96，`tools/call` 的分发面随之放行全部
+    工具的真实执行（评审线 N-04/C-15/R-02，G3 契约违反）。旧语义等于把「没人
+    配置」当成「全都想要」，安全默认恰恰是最不安全的那一档。
+
+    现语义（默认最小暴露 + fail-closed）：
+    - 不设 / 空 / 未知取值 ⇒ `HERMES_CORE_TOOLS` 核心集；未知非空取值额外告警，
+      绝不静默（「设了个看着安全的值却一点没收窄」正是被禁的形态）。
+    - 只有显式 `LANTAI_MCP_PROFILE=full`（别名 `MCP_TOOL_PROFILE`）才给全量注册表
+      ——要 96 个工具必须有人白纸黑字选它。
+
+    口径写进发布流程：见 `docs/release-process.md`「MCP 默认最小暴露」与
+    `scripts/release_check.py::mcp_exposure_issue()` 的判据说明。
+    """
     profile = (
         (os.environ.get("LANTAI_MCP_PROFILE") or os.environ.get("MCP_TOOL_PROFILE") or "")
         .strip()
         .lower()
     )
-    if profile in ("hermes", "core", "slim", "minimal"):
-        return {k: v for k, v in TOOLS.items() if k in HERMES_CORE_TOOLS}
-    return TOOLS
+    if profile == MCP_FULL_PROFILE:
+        return TOOLS
+    if profile and profile not in ("hermes", "core", "slim", "minimal"):
+        # fail-closed：认不出来的档位一律按最小面走，并且说破——静默回落是全量
+        # 暴露的入口，不是「宽容」。
+        warnings.warn(
+            f"未知的 MCP 工具档位 {profile!r}：已 fail-closed 到核心集 "
+            f"{sorted(HERMES_CORE_TOOLS)}；要全量注册表请显式设 "
+            f"LANTAI_MCP_PROFILE={MCP_FULL_PROFILE}",
+            stacklevel=2,
+        )
+    return {k: v for k, v in TOOLS.items() if k in HERMES_CORE_TOOLS}
 
 
 def handle(msg: dict) -> dict | None:

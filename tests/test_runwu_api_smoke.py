@@ -22,6 +22,8 @@ from lantai.core.ids import new_id
 from lantai.models.tables import CognitiveRole, FailureRecord, MemoryItem
 from lantai.storage import db as db_module
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 @pytest.fixture(name="client_and_db")
 def client_and_db_fixture():

@@ -22,6 +22,8 @@ from lantai.services.provenance_service import (
     trace_decision_provenance,
 )
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 def _principal(user_id: str, *, admin: bool = False, lanes=None) -> Principal:
     return Principal(

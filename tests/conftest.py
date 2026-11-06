@@ -178,11 +178,31 @@ _PREV_TEST = {"id": ""}
 
 def pytest_configure(config):
     global _ORIG_GET_SESSION, _ORIG_ENGINE
+    config.addinivalue_line(
+        "markers",
+        "mcp_full_surface: 本模块需要 MCP 全量注册表，显式声明 full 档（票 05 续31：默认档已收窄为核心集）",
+    )
     import lantai.storage.db as dbm
 
     _ORIG_GET_SESSION = dbm.get_session
     _ORIG_ENGINE = dbm.engine
     _capture_canonical_bindings()
+
+
+@pytest.fixture(autouse=True)
+def _mcp_full_surface_opt_in(request):
+    """`mcp_full_surface` 标记的模块临时拿全量注册表（票 05 续31）。
+
+    默认档收窄后，任何想验证「非核心工具能被广告/执行」的测试都必须**显式声明**
+    这一档，而不是靠没人配置时的惯性全量。写入器是登记式 `env_context`（离开 with
+    即精确复原，不裸写 os.environ——G2/AST 扫描锁盯着 tests/），所以会话里没打标的
+    文件看到的始终是默认核心集；打了标的模块内的 handle() 调用拿到全量面。
+    """
+    if request.node.get_closest_marker("mcp_full_surface"):
+        with harness_state.env_context("LANTAI_MCP_PROFILE", "full"):
+            yield
+    else:
+        yield
 
 
 def _report_module_state(terminalreporter) -> None:

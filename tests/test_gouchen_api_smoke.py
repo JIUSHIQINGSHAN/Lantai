@@ -27,6 +27,8 @@ from lantai.services.gouchen_service import (
     gouchen_snapshot_service,
 )
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 @pytest.fixture(name="db_session")
 def fixture_db_session():

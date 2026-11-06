@@ -24,6 +24,8 @@ from lantai.services.sanxing_service import (
     sanxing_remedy_service,
 )
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 @pytest.fixture(name="db_session")
 def fixture_db_session():

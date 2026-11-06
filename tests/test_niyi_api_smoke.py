@@ -28,6 +28,8 @@ from lantai.services.niyi_service import (
 )
 from lantai.storage import db
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 def _seed_test_evolution_fixture() -> tuple[MemoryItem, MemoryProposal]:
     t = utcnow()

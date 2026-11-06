@@ -27,6 +27,8 @@ from lantai.services.cehou_service import (
     scan_cehou_windows_service,
 )
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 class TestCehouApiSmoke:
     """Cehou Ticket 02 冒烟测试集。"""

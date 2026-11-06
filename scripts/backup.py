@@ -5,6 +5,7 @@ import hashlib
 import json
 import shutil
 import sqlite3
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -19,16 +20,25 @@ def backup(dest: str = "", dry_run: bool = False) -> str:
         print(f"[dry-run] would backup to: {dest_dir}")
         return str(dest_dir)
 
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
     # SQLite 一致性快照（online backup API，避免热拷脏数据）
     db_path = home / "remembrance.db"
-    if db_path.exists():
-        src_conn = sqlite3.connect(str(db_path))
-        dst_conn = sqlite3.connect(str(dest_dir / "remembrance.db"))
-        src_conn.backup(dst_conn)
-        dst_conn.close()
-        src_conn.close()
+    # X-07（票 05 续24）：缺库判红，不再静默跳过拷贝段后照常打印
+    # "Backup completed"。旧行为下 LANTAI_HOME 配错/库未生成时备份目录里只有
+    # manifest.json（files 为空），运维照字面收下"成功"，灾备实为空。
+    # 宁 miss 不脏写：明确失败并指名路径，且发生在建目标目录之前（不留 litter）。
+    if not db_path.exists():
+        raise FileNotFoundError(
+            f"SQLite 数据库缺失，拒绝产出空备份: {db_path}"
+            "（检查 LANTAI_HOME 配置，或确认服务至少初始化过一次）"
+        )
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    src_conn = sqlite3.connect(str(db_path))
+    dst_conn = sqlite3.connect(str(dest_dir / "remembrance.db"))
+    src_conn.backup(dst_conn)
+    dst_conn.close()
+    src_conn.close()
 
     # ChromaDB 目录
     chroma_path = home / ".chromadb"
@@ -58,4 +68,8 @@ if __name__ == "__main__":
     parser.add_argument("dest", nargs="?", default="", help="目标目录")
     parser.add_argument("--dry-run", action="store_true", help="只打印将备份到的目录名")
     args = parser.parse_args()
-    backup(args.dest, dry_run=args.dry_run)
+    try:
+        backup(args.dest, dry_run=args.dry_run)
+    except (FileNotFoundError, OSError) as e:
+        print(f"[backup] 备份失败: {e}")
+        sys.exit(1)

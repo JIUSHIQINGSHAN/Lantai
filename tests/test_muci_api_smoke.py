@@ -25,6 +25,8 @@ from lantai.models.tables import MemoryItem
 from lantai.services.muci_service import get_catalog_service
 from lantai.storage import db
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 def _seed_db(
     content: str, domain: str = "user", lane: str = "fact", user_id: str = "test-user"

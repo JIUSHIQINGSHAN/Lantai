@@ -29,6 +29,8 @@ from lantai.services.qijuzhu_service import (
 )
 from lantai.storage import db
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 def _seed_db(
     content: str, domain: str = "user", lane: str = "fact", user_id: str = "test-user"

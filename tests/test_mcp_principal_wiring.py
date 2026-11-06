@@ -24,6 +24,7 @@ SQLite 真建表 + `patch db_module.get_session`。mock 只允许覆盖外部
 
 import importlib.util
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -33,6 +34,8 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 MCP_PATH = Path(__file__).parent.parent / "lantai" / "cli" / "mcp.py"
+
+pytestmark = pytest.mark.mcp_full_surface()
 
 
 def _load_mcp():
@@ -86,6 +89,23 @@ def _call_ok(mod, name, args):
     resp = _call(mod, name, args)
     assert "error" not in resp, f"{name} 报错（该成功）：{resp.get('error')}"
     return json.loads(resp["result"]["content"][0]["text"])
+
+
+def _drain_task(ais, task_id: str, timeout: float = 15.0) -> dict:
+    """轮询到后台摄取任务终结（票 05 续26：孤儿竞态修复）。
+
+    `submit_async_dialogue` 提交的是真实线程池任务；`finally` 里裸
+    `clear_tasks()` 会在 worker 仍在写 `_TASKS[task_id]` 时清空注册表，
+    worker 于 except 内二次 KeyError——错误被 logger 吞掉、future 无人
+    retrieve，测试照样绿。等在终结后再进 teardown，孤儿窗口即关闭。
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        st = ais.get_task_status(task_id)
+        if st.get("status") in ("completed", "failed"):
+            return st
+        time.sleep(0.05)
+    raise AssertionError(f"任务 {task_id} 在 {timeout}s 内未终结")
 
 
 def _seed_memory(s, mid, content, *, user_id="default", lane="fact", status="active"):
@@ -737,6 +757,7 @@ class TestDialogueTaskStatusScoped:
                 f"A 查到了 B 的任务（该 not_found）：status={out.get('status')}"
             )
             assert "result" not in out, f"返回里带了 B 的提取结果：{list(out)}"
+            _drain_task(ais, tid)
         finally:
             ais.clear_tasks()
 
@@ -754,6 +775,7 @@ class TestDialogueTaskStatusScoped:
             assert out.get("status") in ("queued", "processing", "completed", "failed"), (
                 f"A 查不到自己的任务：{out}"
             )
+            _drain_task(ais, tid)
         finally:
             ais.clear_tasks()
 

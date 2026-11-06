@@ -28,6 +28,8 @@ from lantai.services.zuozheng_service import (
 )
 from lantai.storage import db
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 def _seed_test_data() -> tuple[MemoryItem, MemoryItem, Evidence]:
     t = utcnow()

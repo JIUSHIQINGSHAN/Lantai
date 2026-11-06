@@ -27,6 +27,8 @@ from lantai.services.qingniao_service import (
     fetch_inbox_service,
 )
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 @pytest.fixture(autouse=True)
 def clean_mailbox():

@@ -453,6 +453,37 @@ def hybrid_search(
     )
 
 
+def _remedy_contract_conflict(
+    *,
+    memory_types,
+    lanes,
+    as_of,
+    time_from,
+    time_to,
+    as_of_recorded,
+    shared_scope,
+    principal,
+) -> bool:
+    """调用方契约是零召回兜底（拾遗）兑现不了的 ⇒ 不许唤醒兜底（评审 N-01 修法后半句，票 05 续32）。
+
+    兜底只拿得到 `query/domain/limit`：子串匹配不分类型、不看 lane/scope、没有
+    时效视图；principal=None 时引擎 ACL 放行一切行。实测（`.scratch/gate/r41_probe2.py`）：
+    默认档 verbatim 被兜底捞回、as_of 历史视图下兜底照样召回、lanes=['meeting']
+    召出 lane=coding 的行——主流水线施加的契约，兜底一条都不带。宁 miss 不脏召：
+    这些参数在场时零召回就如实返空。
+    """
+    return bool(
+        memory_types
+        or lanes
+        or shared_scope
+        or as_of is not None
+        or time_from is not None
+        or time_to is not None
+        or as_of_recorded is not None
+        or principal is None
+    )
+
+
 def _hybrid_search_impl(
     query: str,
     top_k: int = 5,
@@ -690,7 +721,21 @@ def _hybrid_search_impl(
         )
 
     if not items:
-        if enable_shiyi and query and query.strip():
+        if (
+            enable_shiyi
+            and query
+            and query.strip()
+            and not _remedy_contract_conflict(
+                memory_types=memory_types,
+                lanes=lanes,
+                as_of=as_of,
+                time_from=time_from,
+                time_to=time_to,
+                as_of_recorded=as_of_recorded,
+                shared_scope=shared_scope,
+                principal=principal,
+            )
+        ):
             try:
                 from lantai.cognition.shiyi import ShiyiEngine
 
@@ -1179,7 +1224,21 @@ def _keyword_fallback(
             logger.warning(f"LIKE fallback failed, retrieval exhausted: {e}")
 
     if not candidate_ids:
-        if enable_shiyi and query and query.strip():
+        if (
+            enable_shiyi
+            and query
+            and query.strip()
+            and not _remedy_contract_conflict(
+                memory_types=memory_types,
+                lanes=lanes,
+                as_of=as_of,
+                time_from=time_from,
+                time_to=time_to,
+                as_of_recorded=as_of_recorded,
+                shared_scope=shared_scope,
+                principal=principal,
+            )
+        ):
             try:
                 from lantai.cognition.shiyi import ShiyiEngine
 
@@ -1270,7 +1329,21 @@ def _keyword_fallback(
     items, target_layer = filter_and_resolve_layer(items, query, p)
 
     if not items:
-        if enable_shiyi and query and query.strip():
+        if (
+            enable_shiyi
+            and query
+            and query.strip()
+            and not _remedy_contract_conflict(
+                memory_types=memory_types,
+                lanes=lanes,
+                as_of=as_of,
+                time_from=time_from,
+                time_to=time_to,
+                as_of_recorded=as_of_recorded,
+                shared_scope=shared_scope,
+                principal=principal,
+            )
+        ):
             try:
                 from lantai.cognition.shiyi import ShiyiEngine
 

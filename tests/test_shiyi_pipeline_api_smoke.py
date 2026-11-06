@@ -23,6 +23,8 @@ from lantai.models.tables import MemoryItem
 from lantai.services.shiyi_service import remedy_pipeline_service
 from lantai.storage import db
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 def _seed_memory(
     session,

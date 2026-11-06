@@ -29,6 +29,8 @@ from lantai.services.famen_service import (
 )
 from lantai.storage import db
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 def _seed_crystal(name: str, trigger: str, procedure: str) -> SkillCrystal:
     with db.get_session() as s:

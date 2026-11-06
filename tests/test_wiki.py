@@ -21,6 +21,9 @@ REPO_ROOT = Path(__file__).parent.parent
 MCP_PATH = REPO_ROOT / "lantai" / "cli" / "mcp.py"
 
 
+pytestmark = pytest.mark.mcp_full_surface()
+
+
 @pytest.fixture()
 def mem_db(monkeypatch):
     """内存 SQLite 真实建表（wiki 全链路测试用）。"""

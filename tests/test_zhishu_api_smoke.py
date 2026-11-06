@@ -20,6 +20,8 @@ from lantai.api.app import app
 from lantai.cli.mcp import TOOL_HANDLERS, TOOLS, handle
 from lantai.services.zhishu_service import match_zhishu_service
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 class TestZhishuApiSmoke:
     """Zhishu Ticket 02 冒烟测试集。"""

@@ -21,6 +21,8 @@ from lantai.core.auth import Principal, get_current_user
 from lantai.models.tables import MemoryItem
 from lantai.services.edge_service import add_edge
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 def _principal(user_id: str, *, admin: bool = False, lanes=None) -> Principal:
     return Principal(

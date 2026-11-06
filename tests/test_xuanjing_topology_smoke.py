@@ -22,6 +22,8 @@ from lantai.models.enums import EdgeRelation
 from lantai.models.tables import MemoryEdge, MemoryItem, MemoryScene
 from lantai.services.xuanjing_service import build_xuanjing_topology, get_xuanjing_graph
 
+pytestmark = pytest.mark.mcp_full_surface()
+
 
 @pytest.fixture()
 def xuanjing_env():

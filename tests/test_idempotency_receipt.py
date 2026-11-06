@@ -459,3 +459,5 @@ class TestSubmitIntegration:
         r2 = ais.submit_async_dialogue(self.TEXT, user_id="default")
         assert set(r1.keys()) <= set(r2.keys()) | {"replayed"}
         assert r2["status"] in ("queued", "completed", "processing", "pending")
+        # 重放返回的是原任务号，等它终结再进 teardown（票 05 续26 孤儿竞态）
+        _wait_task(r2["task_id"])

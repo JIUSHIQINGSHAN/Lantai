@@ -165,6 +165,12 @@ class ShiyiEngine:
         #    b) 扫描预算熔断——超 SHIYI_SCAN_BUDGET_MS 即中断，partial 语义
         #       标注 scan_truncated；拾遗 best-effort，宁 miss 不拖延。
         stmt = select(MemoryItem).where(MemoryItem.status == "active")
+        # verbatim「默认不召回」契约（票 05 续32，评审 N-01/R-02 同族）：主流水线
+        # 在 hybrid.py 过滤段排除逐字原文，但拾遗有 `/shiyi/remedy` 直连入口，
+        # 守卫挂在水线侧管不到它——契约必须在扫描侧同样成立（VERBATIM_IN_RECALL
+        # 显式打开时放行，与主流水线同一开关、同一方向）。
+        if not settings.VERBATIM_IN_RECALL:
+            stmt = stmt.where(MemoryItem.memory_type != "verbatim")
         if domain != "all" and not allow_domain_relax:
             stmt = stmt.where(MemoryItem.domain == domain)
         if tokens:

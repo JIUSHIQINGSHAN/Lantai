@@ -1,5 +1,6 @@
 """压缩前抢救测试：_render 纯函数 + flush_before_compress + metadata 落库"""
 
+import threading
 from unittest.mock import Mock, patch
 
 import pytest
@@ -103,14 +104,30 @@ class TestFlush:
         }
 
     def test_flush_passes_correct_params(self):
-        """冒烟：mock add_memory（内部依赖 LLM 提取），验证参数与 metadata 传递。"""
-        with patch(
-            "lantai.integrations.pre_compress.add_memory",
-            return_value={"document_id": "doc1", "candidate_id": "c1"},
-        ) as m:
+        """冒烟：mock add_memory（内部依赖 LLM 提取），验证参数与 metadata 传递。
+
+        r57（票 05 续41）：`flush_before_compress` 是 fire-and-forget daemon 线程
+        （`pre_compress.py:60` 不 join）。旧写法在 `with patch` 退出后才断言
+        `m.assert_called_once()`——主线程赢则绿、worker 输则红（门禁全量套件实测
+        `1 failed, 2908 passed`；`.scratch/gate/r57_starve.py` 压 GIL 切换间隔
+        两档各 2/5 红、默认间隔 5/5 绿）。patch 先退还有个更脏的出口：worker 随后打到
+        **真实** `add_memory`（LLM/DB 面）。修法=在 patch 作用域内等 worker 真进门
+        ——把「终结」变成被断言的事实而非许愿（续26 `_drain_task` 同纪律），
+        零 skip、零删断言、不改生产语义。
+        """
+        called = threading.Event()
+
+        def _record(req):
+            called.set()
+            return {"document_id": "doc1", "candidate_id": "c1"}
+
+        with patch("lantai.integrations.pre_compress.add_memory", side_effect=_record) as m:
             res = flush_before_compress([_msg("user", "这是一段足够长的对话内容")])
-        assert res["flushed"] is True
-        assert res["chars"] > 10
+            assert res["flushed"] is True
+            assert res["chars"] > 10
+            assert called.wait(timeout=15), (
+                "worker 线程 15s 内未调用被 patch 的 add_memory（孤儿竞态）"
+            )
         m.assert_called_once()
         req = m.call_args.args[0]
         assert req.lane == "chat"
@@ -118,12 +135,22 @@ class TestFlush:
         assert req.title == "压缩前会话快照"
 
     def test_flush_worker_failure_swallowed(self):
-        """add_memory 抛异常 → flush_before_compress 仍返回 flushed，线程内吞掉。"""
-        with patch(
-            "lantai.integrations.pre_compress.add_memory", side_effect=RuntimeError("llm down")
-        ):
+        """add_memory 抛异常 → flush_before_compress 仍返回 flushed，线程内吞掉。
+
+        同样必须等 worker 进入被 patch 的 add_memory 再拆 patch，否则竞态下
+        worker 打到真实函数（异常被 _worker 吞掉，测试假绿、真调用已发生）。
+        """
+        entered = threading.Event()
+
+        def _boom(req):
+            entered.set()
+            raise RuntimeError("llm down")
+
+        with patch("lantai.integrations.pre_compress.add_memory", side_effect=_boom) as m:
             res = flush_before_compress([_msg("user", "足够长的内容避免 too_short")])
-        assert res["flushed"] is True  # 返回值不受线程内异常影响
+            assert res["flushed"] is True  # 返回值不受线程内异常影响
+            assert entered.wait(timeout=15), "worker 线程 15s 内未进入被 patch 的 add_memory"
+        assert m.call_count == 1  # 异常路径同样只调一次，且被吞掉不重抛
 
 
 def test_metadata_persisted_to_raw_document():
