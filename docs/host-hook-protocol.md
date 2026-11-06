@@ -64,10 +64,10 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 |---|---|
 | `context` | 注入上下文（含樊篱包裹的记忆正文）；无命中/超短查询 → 无此键 |
 | `evidence` | 被注入记忆的 `[{id, content, score}]` |
-| `event_id` | 本次检索事件标识，**回执凭据** |
-| `request_id` | 本次注入调用整体标识（回执对账用，ADR-0049） |
+| `event_id` | 本次检索事件标识，**回执/否决凭据**；零命中且事件落库成功时同样带出（v0.68 票 01——DLP 否决零命中轮时插件据此构造 `retrieval_veto` 帧） |
+| `request_id` | 本次注入调用整体标识（回执对账用，ADR-0049）；零命中分支不生成，如实不带 |
 
-**命中为空、查询过短（≤ `SHELL_HOOK_MIN_CHARS`，默认 3）或异常 → 返回 `{}`。**
+**命中为空 → `{event_id}`（事件已落库时；与 REST/MCP 零命中分支同口径，v0.68 票 01）。查询过短（≤ `SHELL_HOOK_MIN_CHARS`，默认 3，不落事件）或异常 → `{}`。**
 
 ### 2.2 `dialogue`
 

@@ -48,6 +48,17 @@ ADR-0049 的状态机从 `pending → {acked, missed}` 扩展为 `pending → {a
 
 宿主协议新增 `{"type": "retrieval_veto", "event_id": ...}`（`host_protocol.ACTION_VETO` + `shell_hook._handle_veto`），响应 `{"ok": true, "event_id": ..., "vetoed": bool}`——`vetoed=False` 表示幂等重放或事件不存在，如实上报不编造成功。当前唯一调用方是 `lantai-hook` 插件的否决分支；REST/MCP 侧不设 veto 入口（插件走 serve 通道已够达，不为用不到的面扩 API）。
 
+### 2.5 零命中轮的否决链可达性（v0.68 票 01 增补，2026-11-07）
+
+初版收口只覆盖「检索有命中且 evidence 非空」的轮次，留了一个覆盖洞：**零命中轮 / 空 evidence 轮**的检索事件同样带原话落库，但 (a) `build_context` 零命中分支经 `_persona_only()` 返回，`event_id` 被丢；(b) 插件挂载条件 `if event_id and used_ids` 把挂载与 `used_ids` 耦合——两端合起来，DLP 否决零命中轮时插件构造不出 `retrieval_veto` 帧，`mark_vetoed` 永远够不着，原话（含 `query_norm_hash`）永久留库，正是本 ADR §1 要消灭的状态。
+
+增补决策（不改变 §2.1–2.4 的任何语义）：
+
+- **响应契约对齐**：`query` 零命中分支把已落库事件的 `event_id` 带出（REST `routes_search` 与 MCP `handle_search` 的同名零命中分支本就如此，三条入口口径归一）；`request_id` 该分支本就没生成，如实不带。
+- **挂载与 `used_ids` 解耦**：插件挂载只看 `event_id` 非空（`used_ids` 有则一并挂）；**回执条件不变**（`event_id and used_ids`）——回执语义是「用了哪些」，零 `used_ids` 无可回执；否决分支不变（条目有 `event_id` 即发 veto）。
+- **`mark_vetoed` 零改动**：对零命中事件（`result_ids`/`used_ids` 本为空）同样正确——抹原文痕迹、置 `vetoed` 终态即可，无反冲问题（延后回执下该轮从未回执）。
+- 边界不变：查询过短（≤ `SHELL_HOOK_MIN_CHARS`）不落事件、无 veto 可言；gate 判 `needs_memory=False` 同样不落事件。
+
 ## 3. 命名
 
 不引入新中文正名：`vetoed`/否决沿用 Hermes 已有词汇（PR #26 起），`retrieval_veto` 为协议动作英文名。ADR-0013 的登记义务只对**新的正式中文名**生效，本决策无新增。
@@ -64,4 +75,4 @@ ADR-0049 的状态机从 `pending → {acked, missed}` 扩展为 `pending → {a
 - [ADR-0049](0049-receipt-chain.md)（回执链——本 ADR 扩展其状态机）
 - [ADR-0049 终态语义在本仓库的现行描述](../host-hook-protocol.md) §2.3/§2.5
 - PR #26（否决轮不写记忆——对话写通道侧，本 ADR 是检索侧补全）
-- 票据：`.scratch/v0.67-next-window-2026-11/issues/01-veto-round-retrieval-trace.md`
+- 票据：`.scratch/v0.67-next-window-2026-11/issues/01-veto-round-retrieval-trace.md`（初版收口）、`.scratch/v0.68-next-window-2026-11/issues/01-veto-coverage-hole-zero-hit.md`（§2.5 零命中覆盖洞）
