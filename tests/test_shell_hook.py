@@ -316,8 +316,16 @@ def test_dialogue_to_candidate_real_db(param_env, monkeypatch):
 
 
 def test_build_context_passes_session_to_log(param_env, monkeypatch):
-    """检索埋点透传 session_id（写线活性判据：带 session 的读才算真实会话读）。"""
+    """检索埋点透传 session_id（写线活性判据：带 session 的读才算真实会话读）。
+
+    放宽 SHELL_HOOK_TIMEOUT（watch 2026-11-07）：本测试验证的是透传语义，
+    不该依赖机器速度——全量后段进程重载时 2s 硬墙偶发擦线，`_run_with_timeout`
+    走 `_query_fallback` 降级（只回画像、不调 log_retrieval），mock 未被调用
+    即报 AttributeError。超时降级行为本身由 test_hook_timeout_budget.py 专门
+    验证，这里隔离墙宽不是遮蔽信号。
+    """
     mod = _load_hook(monkeypatch)
+    monkeypatch.setattr(mod.settings, "SHELL_HOOK_TIMEOUT", 30.0)
     from unittest.mock import patch
 
     with patch("lantai.observability.retrieval_log.log_retrieval", return_value="rev_x") as m:
