@@ -28,9 +28,9 @@ from fastapi.testclient import TestClient
 
 from lantai.api.app import app
 from lantai.services.probing_service import (
-    PROBE_REPLY_MAX_LENGTH,
     _NEGATIVE_PATTERNS,
     _UNCHANGED_PATTERNS,
+    PROBE_REPLY_MAX_LENGTH,
     _classify_claim_reply,
     _matches_any,
 )
