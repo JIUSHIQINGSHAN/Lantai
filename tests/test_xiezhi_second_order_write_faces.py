@@ -229,3 +229,158 @@ class TestConsolidationMasterGuard:
                 res = consolidate_cluster(cluster, session=s)
             assert res is not None, "真实表格/日志被误杀——模式有病，禁止提交"
             assert "| col1 | col2 |" in res.content
+
+
+# ── 面 2：promoter apply（proposed_patch 是第二手 LLM 文本）───────────────
+
+
+def _seed_fragments_plain(session_factory):
+    with session_factory() as s:
+        s.add(
+            MemoryItem(
+                id="xz_frag_1",
+                content="部署前必须跑全量测试与冒烟",
+                lane="general",
+                status="active",
+            )
+        )
+        s.add(
+            MemoryItem(
+                id="xz_frag_2",
+                content="部署前必须跑全量测试和冒烟用例",
+                lane="general",
+                status="active",
+            )
+        )
+        s.commit()
+
+
+def _add_proposal(session_factory, prop_id, *, content, ptype="add", target_id=None, key=None):
+    with session_factory() as s:
+        s.add(
+            MemoryProposal(
+                id=prop_id,
+                proposal_type=ptype,
+                target_memory_id=target_id,
+                evidence_ids=["xz_frag_1", "xz_frag_2"] if ptype == "consolidation" else [],
+                reason="test",
+                proposed_patch={
+                    "memory_type": "semantic",
+                    "key": key or f"key_{prop_id}",
+                    "content": content,
+                    "domain": "user",
+                    "lane": "general",
+                    "confidence": 0.9,
+                    "importance": 0.8,
+                },
+                confidence=0.9,
+                status="pending",
+            )
+        )
+        s.commit()
+
+
+class TestPromoterApplyGuard:
+    def test_consolidation_apply_blocked_no_master(self, param_env):
+        """consolidation 提案 apply：patch 文本命中 → 提案落终态 REJECTED，
+        主记忆与折叠都不发生（反查库内无 payload 行）。"""
+        from lantai.evolution.promoter import apply_proposal
+
+        session_factory, _ = param_env
+        _seed_fragments_plain(session_factory)
+        _add_proposal(
+            session_factory,
+            "prop_xz_consol",
+            content=PAYLOAD_EN,
+            ptype="consolidation",
+        )
+        with patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]):
+            res = apply_proposal("prop_xz_consol")
+        assert res["ok"] is False
+        assert "injection guard" in res["reason"]
+
+        with session_factory() as s:
+            prop = s.get(MemoryProposal, "prop_xz_consol")
+            assert prop.status == "rejected", (
+                "不落终态会被 run_pending_proposals（专捞 APPROVED）每轮重捞＝livelock"
+            )
+            assert prop.decided_at is not None
+            assert s.exec(select(MemoryItem).where(MemoryItem.content == PAYLOAD_EN)).all() == []
+            # 碎片未被折叠
+            assert s.get(MemoryItem, "xz_frag_1").status == "active"
+
+    def test_add_apply_blocked_no_memory(self, param_env):
+        """add 提案 apply：patch 正文命中 → REJECTED 终态，无任何记忆行落库。"""
+        from lantai.evolution.promoter import apply_proposal
+
+        session_factory, _ = param_env
+        _add_proposal(session_factory, "prop_xz_add", content=PAYLOAD_ZH)
+        with patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]):
+            res = apply_proposal("prop_xz_add")
+        assert res["ok"] is False
+        with session_factory() as s:
+            assert s.get(MemoryProposal, "prop_xz_add").status == "rejected"
+            assert s.exec(select(MemoryItem).where(MemoryItem.content == PAYLOAD_ZH)).all() == []
+
+    def test_update_apply_blocked_existing_content_untouched(self, param_env):
+        """update 提案 apply：patch 新文命中 → REJECTED，既有记忆正文一字不动。"""
+        from lantai.evolution.promoter import apply_proposal
+
+        session_factory, _ = param_env
+        _seed_fragments_plain(session_factory)
+        _add_proposal(
+            session_factory,
+            "prop_xz_update",
+            content=PAYLOAD_EN,
+            ptype="update",
+            target_id="xz_frag_1",
+        )
+        with patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]):
+            res = apply_proposal("prop_xz_update")
+        assert res["ok"] is False
+        with session_factory() as s:
+            assert s.get(MemoryProposal, "prop_xz_update").status == "rejected"
+            assert s.get(MemoryItem, "xz_frag_1").content == "部署前必须跑全量测试与冒烟"
+
+    def test_worker_batch_survives_blocked_proposal(self, param_env):
+        """不拖停臂（evolve_worker 批循环无逐条保护）：同批一条命中一条正常，
+        正常提案照常 APPLIED、命中提案 REJECTED——不得炸整批。"""
+        from lantai.workers.evolve_worker import run_pending_proposals
+
+        session_factory, _ = param_env
+        _add_proposal(session_factory, "prop_xz_bad", content=PAYLOAD_EN)
+        _add_proposal(session_factory, "prop_xz_good", content="团队统一用 PostgreSQL 16")
+        with session_factory() as s:
+            for pid in ("prop_xz_bad", "prop_xz_good"):
+                s.get(MemoryProposal, pid).status = "approved"
+            s.commit()
+
+        with patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]):
+            run_pending_proposals()
+
+        with session_factory() as s:
+            assert s.get(MemoryProposal, "prop_xz_bad").status == "rejected"
+            assert s.get(MemoryProposal, "prop_xz_good").status == "applied"
+            good = s.exec(
+                select(MemoryItem).where(MemoryItem.content == "团队统一用 PostgreSQL 16")
+            ).one()
+            assert good.status == "active"
+            assert s.exec(select(MemoryItem).where(MemoryItem.content == PAYLOAD_EN)).all() == []
+
+    def test_patch_redline_table_and_log_applies_fine(self, param_env):
+        """误拒红线：patch 正文是真实表格/日志（错误报告类记忆常态）必须照常落库。"""
+        from lantai.evolution.promoter import apply_proposal
+
+        session_factory, _ = param_env
+        content = f"发布检查单：\n{REDLINE_TABLE}\n构建失败记录：\n{REDLINE_LOG}"
+        _add_proposal(session_factory, "prop_xz_redline", content=content)
+        with patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]):
+            res = apply_proposal("prop_xz_redline")
+        assert res["ok"] is True, "真实表格/日志被误杀——禁止提交"
+        with session_factory() as s:
+            mem = s.exec(
+                select(MemoryItem).where(
+                    MemoryItem.key == "key_prop_xz_redline", MemoryItem.status == "active"
+                )
+            ).one()
+            assert "| col1 | col2 |" in mem.content

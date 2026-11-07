@@ -20,6 +20,7 @@ from lantai.models.tables import (
     MemoryProposal,
 )
 from lantai.retrieval.hybrid import delete_memory_item, index_memory_item
+from lantai.security.injection_guard import check_prompt_injection
 from lantai.storage import db
 from lantai.storage.fts import sync_fts
 
@@ -30,6 +31,32 @@ from lantai.storage.fts import sync_fts
 # consolidation 由 consolidation_service 直写产生，必须含；
 # 与 reflector._VALID_TYPES 的差异（后者无 consolidation）是两者产出面不同。
 VALID_PROPOSAL_TYPES = {"add", "update", "merge", "deprecate", "consolidation"}
+
+# 獬豸二阶闸的适用类型：这四类的 apply 都把 proposed_patch.content 写成记忆
+# 正文（第二手 LLM 文本，可能携带从对话里引渡的载荷）。deprecate 只归档不写
+# 正文，闸它只会误伤（patch.content 字段对 deprecate 无写入意义）。
+_XIEZHI_CONTENT_TYPES = ("add", "update", "merge", "consolidation")
+
+
+def _xiezhi_reject_if_injection(prop: MemoryProposal, text: str) -> dict | None:
+    """獬豸二阶闸（v0.68 票 14）：patch 正文命中注入 → 提案落终态 REJECTED。
+
+    命中**不抛出**：run_evolve_once / run_pending_proposals 的批循环没有逐条
+    保护，异常会炸整批；转 REJECTED 终态与 stale 硬门同构（终态防 livelock），
+    同批其它提案照常 apply。宁 miss 不脏写，不清洗不截断不改一字。
+    """
+    if not text or prop.proposal_type not in _XIEZHI_CONTENT_TYPES:
+        return None
+    if not settings.INJECTION_GUARD_ENABLED:
+        return None
+    hit, layer = check_prompt_injection(text)
+    if not hit:
+        return None
+    reason = f"injection guard (layer={layer}): patch content rejected by xiezhi"
+    logger.warning(
+        "提案 %s apply 拒绝：%s（type=%s，宁 miss 不脏写）", prop.id, reason, prop.proposal_type
+    )
+    return _reject_proposal(prop, reason, {"layer": layer})
 
 
 def _make_checkpoint(session, mem: MemoryItem, before: dict, proposal_id: str, trigger: str):
@@ -286,6 +313,16 @@ def apply_proposal(proposal_id: str, principal=None) -> dict:
                 s.add(prop)
                 s.commit()
                 return out
+
+        # ── 獬豸二阶闸（v0.68 票 14）────────────────────────────────
+        # 四个写内容分支（update/merge/consolidation/add）的正文都取自
+        # proposed_patch——LLM 二手文本。闸位在 embed 之前、任何写库之前：
+        # 命中即 REJECTED 终态（不抛出，批循环不炸），同批其它提案照常。
+        out = _xiezhi_reject_if_injection(prop, content)
+        if out is not None:
+            s.add(prop)
+            s.commit()
+            return out
 
         emb = embed([content])[0] if content else []
         # 分支附加返回（ADR-0050：evidence 三分缺口记入 apply 返回与日志）；其余分支为空
