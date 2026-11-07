@@ -310,6 +310,30 @@ class TestSettleRelease:
         assert _row("k1") is not None
         assert _row("k1").state == "done"
 
+    def test_release_without_token_spares_done(self, mem_env):
+        """无令牌的 release 同样不删 done 回执（票 75）。
+
+        此前 `state != "done"` 守卫只在带 claimed_at 分支内生效，无令牌调用把
+        同键 done 回执一并删净——同键同文重投从 replay 退化为 re-execution
+        （重复建候选，勘合立项要防的原病；探针
+        `.scratch/_v068_probe_r9_release_nukes_done.py` 实锤）。
+        """
+        binding, fp = self._binding()
+        settle(binding, ok=True, task_id="task_a")
+        release("k1", "default", "")
+        row = _row("k1")
+        assert row is not None
+        assert row.state == "done"
+        # 后果臂：done 回执在，同键同文重投仍走 replay 原任务号
+        assert claim("k1", "default", "", fp, task_id="task_b")["action"] == "replay"
+
+    def test_release_without_token_clears_accepted(self, mem_env):
+        """无令牌 release 的保留语义：清 accepted（运维面强释放），只保 done。"""
+        fp = fingerprint_payload("文本", "default", "dialogue", "", None)
+        assert claim("k2", "default", "", fp, task_id="task_c")["action"] == "new"
+        release("k2", "default", "")
+        assert _row("k2") is None
+
 
 # ------------------------------------------------------------------ purge
 
@@ -340,6 +364,31 @@ class TestPurge:
         assert _row("fresh") is not None
         assert _row("old_done") is None
         assert _row("old_acc") is None
+
+    def test_purge_keeps_done_within_ttl(self, mem_env):
+        """done 回执未超 TTL 必须保留（票 75：purge 下推 SQL 后的语义锁）。
+
+        既有 purge 用例的 fresh 行是 accepted 态，「done 但年轻」这一态没有锁——
+        SQL 下推写错（漏 or_ 的 state 臂）时它第一个被误删。
+        """
+        fp = fingerprint_payload("文本", "default", "dialogue", "", None)
+        v = claim("young_done", "default", "", fp, task_id="t9")
+        settle(
+            {
+                "key": "young_done",
+                "user_id": "default",
+                "tenant_id": "",
+                "claimed_at": v["claimed_at"],
+                "explicit": True,
+            },
+            ok=True,
+            task_id="t9",
+        )
+        _set_created("young_done", "default", "", TTL_SECONDS // 2)
+
+        assert purge_expired() == 0
+        row = _row("young_done")
+        assert row is not None and row.state == "done"
 
 
 # ------------------------------------------------------------------ 潜移集成（真 worker）
