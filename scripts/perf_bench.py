@@ -20,9 +20,10 @@
     python scripts/perf_bench.py --profile          # 附带 cProfile 热点（原始 .pstats 落 --out 目录）
     python scripts/perf_bench.py --only hybrid_search --iterations 30
 
-注意：请用项目虚拟环境（.venv，Python 3.11）运行；宿主若有 PYTHONPATH 指向
-其他环境，请先清空（hermes 宿主的 PYTHONPATH 会把 py3.14 的 pydantic 混进来，
-import 即炸）。
+注意：请用带 chromadb 的 py3.11 虚拟环境运行（本工作树为 .venv311；主仓 .venv
+与工作树根 .venv 都没有 chromadb——用错环境向量库会静默降级纯 Python 替身，
+数字对不上基线）；宿主若有 PYTHONPATH 指向其他环境，请先清空（hermes 宿主的
+PYTHONPATH 会把 py3.14 的 pydantic 混进来，import 即炸）。
 """
 
 from __future__ import annotations
