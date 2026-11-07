@@ -242,6 +242,92 @@ def expand_graph_associations(
         return _traverse(s)
 
 
+def _guard_associated_superseded(
+    associated: list[dict],
+    primary_results: list,
+    query: str,
+    session: Session | None,
+) -> list[dict]:
+    """联想面的更正闸：口径与 `supersede._apply_supersede_guard` 逐条对齐。
+
+    - 只动 lifecycle_status == superseded 且 superseded_by 非空的记忆邻居；
+    - 问句不带回看词、且取代它的新记忆就在本次响应里（primary 或联想面）→ 丢掉；
+    - 否则保留，content 前加「[已更正：YYYY-MM-DD 起不再成立，仅作历史]」。
+
+    完璧事实条目（lane == "fact"）不在本闸范围：它们的时态边界由更正链
+    级联对齐（late_correction 步骤 c），条目上也没有记忆级 lifecycle 字段。
+    开关沿用 SHELL_HOOK_SUPERSEDED_GUARD；不改入参、不写库。
+    """
+    from lantai.core.settings import settings
+    from lantai.retrieval.supersede import _RETROSPECTIVE_RE, _superseded_marker
+
+    if not associated or not getattr(settings, "SHELL_HOOK_SUPERSEDED_GUARD", True):
+        return associated
+
+    mem_ids = [
+        a.get("memory_id")
+        for a in associated
+        if isinstance(a, dict) and a.get("lane") != "fact" and a.get("memory_id")
+    ]
+    if not mem_ids:
+        return associated
+
+    def _load(s: Session) -> dict[str, dict]:
+        from sqlmodel import col
+
+        rows = s.exec(select(MemoryItem).where(col(MemoryItem.id).in_(mem_ids))).all()
+        info: dict[str, dict] = {}
+        for row in rows:
+            if str(row.lifecycle_status or "") == "superseded" and row.superseded_by:
+                info[row.id] = {
+                    "superseded_by": row.superseded_by,
+                    "valid_to": row.valid_to,
+                    "superseded_at": row.superseded_at,
+                }
+        return info
+
+    try:
+        if session is not None:
+            superseded = _load(session)
+        else:
+            with db.get_session() as s:
+                superseded = _load(s)
+    except Exception as exc:  # best-effort：查不到就按旧行为返回，不拖垮检索
+        logger.warning("贯珠更正闸：联想面 lifecycle 查询失败，原样返回: %s", exc)
+        return associated
+    if not superseded:
+        return associated
+
+    present: set[str] = set()
+    for r in primary_results or []:
+        if not isinstance(r, dict):
+            continue
+        mem = r.get("memory")
+        rid = (mem.get("id") if isinstance(mem, dict) else None) or r.get("id")
+        if rid:
+            present.add(rid)
+    present.update(mid for mid in mem_ids if mid)
+    retrospective = bool(_RETROSPECTIVE_RE.search(query or ""))
+
+    out: list[dict] = []
+    dropped = 0
+    for a in associated:
+        mid = a.get("memory_id") if isinstance(a, dict) and a.get("lane") != "fact" else None
+        meta = superseded.get(mid) if mid else None
+        if meta is None:
+            out.append(a)
+            continue
+        if not retrospective and meta["superseded_by"] in present:
+            dropped += 1
+            continue
+        marked = dict(a)
+        marked["content"] = _superseded_marker(meta) + (a.get("content") or "")
+        out.append(marked)
+    if dropped:
+        logger.info("贯珠更正闸：%d 条已被取代的旧值未进联想面（新值已在本次响应里）", dropped)
+    return out
+
+
 def graph_augmented_search(
     query: str,
     top_k: int = 5,
@@ -296,6 +382,13 @@ def graph_augmented_search(
     from lantai.retrieval.supersede import _apply_supersede_guard
 
     primary_results = _apply_supersede_guard(primary_results, query)
+
+    # 5. 更正闸·联想面（巡检 2026-11-07 22:00）：票 13 只给 primary_results 套了闸，
+    # 可 `late_correction.apply_supersede_correction` 会写一条 new → old 的
+    # `supersedes` 边——新值一进种子，旧值就沿这条边以 hop=1 回到
+    # associated_memories，正文裸返、不带任何标记（旧值 status 仍是 active，
+    # 邻居判定只看 status）。同一响应里 primary 刚丢掉的旧值又从联想面回来了。
+    associated = _guard_associated_superseded(associated, primary_results, query, session)
 
     return {
         "query": query,

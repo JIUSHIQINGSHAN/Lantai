@@ -51,8 +51,8 @@ def _aggregate_reflection(s, start: datetime, end: datetime, *, principal=None) 
 
     反思提案 = `decided_by == 'reflect'`（reflector 唯一打标；evolve auto /
     autodream 等其他无候选提案不混入——校准口径修复 2026-08-15）。start/end 为
-    aware UTC（sqlmodel ≥0.0.47 要求查询绑定参数带时区，见
-    `_local_day_window_utc` 注记）。全部计数统一用 created_at 窗口（「今日创建」语义，与
+    aware UTC（绑定参数恒 aware 是本仓纪律：锁定 0.0.42 无库级防护、naive
+    也静默落库，见 `_local_day_window_utc` 注记）。全部计数统一用 created_at 窗口（「今日创建」语义，与
     渲染行一致）；applied 也按创建窗口而非 applied_at，避免跨日应用导致「今日 0（自动
     应用 1）」自相矛盾。other = 窗口内 created 中非三类状态者（approved/
     rolled_back 等），保证 applied+pending+rejected+other == created。
@@ -184,9 +184,10 @@ def _local_day_window_utc(day: date | None = None) -> tuple[datetime, datetime]:
     """本地日历日 → (start_utc, end_utc)，aware UTC。
 
     先把本地日界换算成 UTC，再与库值比较（避免 Chronos 时区类 bug）。
-    aware：sqlmodel ≥0.0.47 的 UTCDateTime 拒绝 naive 查询绑定参数
-    （`process_bind_param` 强制 utcoffset() is not None）；落盘文本不变
-    （入库时 astimezone(UTC) 去偏移），区间语义与 naive 版逐条一致。
+    aware：锁定的 sqlmodel 0.0.42 无库级防护（datetime 字段映射裸
+    DateTime，naive 查询绑定参数也静默落库）——绑定参数恒 aware UTC
+    靠约定与读侧 _ensure_utc 归一，非库强制；落盘文本形态与 naive 版
+    逐条一致（SQLite 按分量格式化、无偏移后缀）。
     """
     local_now = datetime.now().astimezone()
     if day is None:
@@ -437,9 +438,9 @@ def collect_calibration_stats(days: int | None = None) -> dict:
     # 窗口边界秒级截断 + 1s 顶边过悬（2026-08-15 竞态修复）：微秒精度下
     # 「写入毫秒前 + 采样 now」可能同秒撞界（run_at < end 字符串比较失败），
     # 秒级边界 + 1s 过悬使窗口对采样时刻免疫。
-    # aware UTC 窗口：sqlmodel ≥0.0.47 的 UTCDateTime 对 naive 值直接 raise
-    # （`process_bind_param` 强制 utcoffset() is not None），查询绑定参数须带时区。
-    # 落盘仍是 naive UTC 文本（UTCDateTime 入库时 astimezone(UTC) 去偏移），
+    # aware UTC 窗口：锁定 sqlmodel 0.0.42 无库级防护（naive 绑定参数也
+    # 静默落库），绑定参数恒 aware UTC 是约定纪律（core/time.py 单点）。
+    # 落盘仍是 naive UTC 文本（SQLite 按分量格式化、无偏移后缀），
     # 区间语义与旧版逐条一致——只补 tzinfo，不改时刻本身。
     end = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
     start = end - timedelta(days=days)

@@ -754,9 +754,12 @@ def rollback(memory_id: str, principal=None) -> dict:
         before = mem.model_dump(mode="json")
         # 快照类型还原（票 .scratch/review-fixes-2026-10/issues/04 测试实证的另一根因）：
         # `prev.after` 是 `model_dump(mode="json")` 的 JSON 形态——datetime 字段是
-        # ISO 字符串。直接 setattr 回 datetime 列会在 commit 时被 sqlmodel 的
-        # UTCDateTime 拒写（StatementError: 'str' object has no attribute 'utcoffset'），
-        # 真实 checkpoint（全字段快照）的回滚整笔 500。先经 `parse_iso_utc`
+        # ISO 字符串。直接 setattr 回 datetime 列会在 commit 时被 DateTime 绑定
+        # 处理器拒写（str 非 datetime 实例；报错文案随 sqlmodel 版本而异——锁定
+        # 0.0.42 为 StatementError/TypeError「SQLite DateTime type only accepts
+        # Python datetime and date objects as input」，0.0.47 才是「'str' object
+        # has no attribute 'utcoffset'」），真实 checkpoint（全字段快照）的回滚
+        # 整笔 500。先经 `parse_iso_utc`
         # （lantai.core.time 为「时间字符串写回 datetime 列」场景的既定入口）还原；
         # 非法时间戳拒绝回滚、一个字段都不写（宁 miss 不脏写）。
         try:

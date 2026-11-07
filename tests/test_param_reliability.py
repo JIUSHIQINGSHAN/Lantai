@@ -119,7 +119,7 @@ class TestReliabilityPenalty:
             stat = s.exec(
                 select(SignalReliabilityStat).where(SignalReliabilityStat.venue_class == "workshop")
             ).first()
-            # aware（sqlmodel ≥0.0.47 的 UTCDateTime 拒绝 naive 写库）。
+            # aware（恒 aware UTC 是本仓纪律：0.0.42 无库级防护，naive 静默落库）。
             # 相对时刻不变——仍是「现在前 200 天」，TTL 180 天到期判定照旧触发。
             stat.last_verified_at = utcnow() - timedelta(days=200)
             s.add(stat)

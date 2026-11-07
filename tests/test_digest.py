@@ -26,9 +26,9 @@ from lantai.models.tables import (
 
 
 def _now_aware() -> datetime:
-    """当前时刻（aware UTC）：sqlmodel ≥0.0.47 的 UTCDateTime 拒绝 naive
-    datetime 写库（`process_bind_param` 强制 `utcoffset() is not None`），
-    测试夹具须写 aware。时刻数值语义不变——只补 tzinfo，不改变时刻本身。"""
+    """当前时刻（aware UTC）：测试夹具须写 aware——恒 aware UTC 是本仓
+    纪律（锁定 sqlmodel 0.0.42 无库级防护，naive 也静默落库）。
+    时刻数值语义不变——只补 tzinfo，不改变时刻本身。"""
     return datetime.now(UTC)
 
 

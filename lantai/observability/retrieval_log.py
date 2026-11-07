@@ -301,6 +301,43 @@ def mark_vetoed(event_id: str) -> bool:
         return False
 
 
+def mark_abandoned(event_id: str) -> bool:
+    """硬墙超时后的孤儿事件收尾（巡检 2026-11-07 12:00），返回是否发生转移。
+
+    shell_hook 的 QUERY 通道超过 `SHELL_HOOK_TIMEOUT` 时，主线程先把画像兜底回给
+    宿主——**不带 event_id**；daemon worker 不可取消，跑完仍会 `log_retrieval`
+    落一条带原话的事件。宿主手里没有这个 id：回执发不了，这一轮若被否决
+    （ADR-0084）`retrieval_veto` 也发不了，原话就永久留在库里。
+
+    这里就地归结：宿主并未得到本轮检索结果，事件应为 missed（与
+    `mark_missed_receipts` 300s 后的结论一致，只是不必等）；同时按
+    `mark_vetoed` 的口径抹掉 `query_text`/`query_norm_hash`/`used_ids`——无法确认
+    宿主是否否决了这一轮时，宁可不留。行本身保留：`latency_ms`/`result_ids`
+    等无原文元数据照旧可观测（超时轮有多慢）。
+
+    只动 pending：已 vetoed/acked/missed 的不改写（理论上宿主拿不到 id，
+    不会先一步回执或否决；这是防御性的宁 miss 不脏写）。缺失 id 或非 pending → False。
+    """
+    if not event_id:
+        return False
+    try:
+        with db.get_session() as s:
+            ev = s.get(RetrievalEvent, event_id)
+            if not ev or ev.receipt_status != "pending":
+                return False
+            ev.query_text = ""
+            ev.query_norm_hash = ""
+            ev.used_ids = []
+            ev.receipt_status = "missed"
+            ev.receipt_at = utcnow()
+            s.add(ev)
+            s.commit()
+            return True
+    except Exception:
+        logger.exception("retrieval abandon marking failed (non-fatal)")
+        return False
+
+
 RECEIPT_MISS_TIMEOUT_SECONDS = 300
 
 
