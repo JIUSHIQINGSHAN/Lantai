@@ -316,3 +316,36 @@ patch 仅落 settings 开关、向量库接缝（单层）与 conftest 既定外
 - 分支状态：领先 origin/master 11 提交（10 笔收口/合并 + 本节）、落后 0、
   工作树干净；push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项
   死代码待维护者裁决）。
+
+## 14. 第十次复验（2026-11-07）：审计逐字节复现 + 门禁复跑（含两次环境瞬态与一次日志教训的诚实记录）
+
+环境检查：origin/master 零推进（领先 11 / 落后 0），无合并事项。按 §1 口径全量重验：
+
+- **审计工具重跑**：与在库 `audit.json` **逐字节一致**（`cmp` 全等，与 §13 同
+  口径）：inventory 1728 / core 1083 / real-smoke 659 / hollow 0 / mocked-only
+  1=`_digest_dir` 接缝豁免 / indirect-only 321 / never-executed 102。
+- **诚实性复核（8 文件全部逐行通读）**：全部真输入直调 + 真库断言；patch 仅落
+  settings 开关（SECRET_GUARD_MODE / DIALOGUE_MIN_CHARS）与向量库单层接缝
+  （test_vector_item_wrappers，docstring 注明不叠 param_env 双层撤销栈病根），
+  MCP 帧测试走 exec 副本规避 `_guard_instance` 台账通道；其余 5 文件自身零
+  patch。8 文件 `--collect-only` 恰 22 例，直跑 22 passed（3.27s）。
+- **过程插曲（诚实记录，第一轮门禁两例环境瞬态 + 一次日志教训）**：第一轮
+  全量 1 failed + 1 error（余量 3086 passed / 5 skipped）。两例单独复跑甄别：
+  `test_wheel_ships_ui` 稳定复现，根因取证为 `uv build` 向 PyPI 拉取
+  setuptools 时 **TLS 握手失败**（`tls handshake eof`，3 次重试 30.3s）——
+  外部网络瞬态，非产品回归；`test_seam3_mcp_82_tools_parity` 通过。后者无
+  直接 fixture，其全量 ERROR 只能出自 conftest autouse 基建层
+  （`_wipe_resident_channels`），且由通过数推算 call 阶段已过、异常落
+  fixture 撕卸侧——与 §13 记录的 sqlite3 连接复用瞬态同位同形（该轮具体
+  异常串未捕获，原因见下）。**日志教训**：第一轮只保留了输出尾部 60 行、
+  失败详情随之丢失，第二轮起改为完整日志落仓库外临时目录再分析；此教训
+  与 §10 记录的「门禁运行期不得动工作树」同属复验流程自身的过程纪律。
+- **全量门禁（第二轮，干净树）**：**3087 passed / 5 skipped / 0 failed**
+  （5m09s，exit 0，venv=主检出 `.venv`，`PYTHONPATH=.`），与 §12/§13 数字
+  一致。隔离护栏台账零新增：模块级残留恰为既有 8 通道（_guard_instance /
+  kaogong / consolidation / routes_health / llm gate×2 / cehou / param
+  runtime，例证全部来自既有测试文件），绑定残留仅 test_3a 申报哨兵；本票
+  8 个补强测试文件在两本台账全文零出现（全量日志 grep 计数均为 0）。
+- 分支状态：领先 origin/master 12 提交（11 笔收口/合并 + 本节）、落后 0、
+  工作树干净；push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项
+  死代码待维护者裁决）。
