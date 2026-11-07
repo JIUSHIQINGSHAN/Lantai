@@ -710,7 +710,7 @@ def mcp_exposure_issue(active: int, total: int) -> str | None:
             "`LANTAI_MCP_PROFILE`/`MCP_TOOL_PROFILE`）。本项只看默认档：门禁探针会剥掉 "
             "profile 环境变量，单在部署侧设变量不会让它变绿。这里报全量说明默认档被改回"
             "`return TOOLS`（或新增第二条放宽路径）。放行需要维护者显式签字，并把口径"
-            "同步进 docs/release-process.md「MCP 默认最小暴露」。"
+            "同步进 docs/release-process.md「MCP 默认暴露」。"
         )
     return None
 

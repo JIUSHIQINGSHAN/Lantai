@@ -66,14 +66,15 @@ C:/Users/Asus/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe scripts/
 ```yaml
 mcp_servers:
   remembrance:
-    command: C:/Users/Asus/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe
+    command: <仓库根>/.venv/Scripts/python.exe
     args:
-      - C:/Users/Asus/Desktop/记忆/scripts/mcp_server.py
+      - -m
+      - lantai.cli.mcp
     connect_timeout: 30.0
     enabled: true
 ```
 
-**注意**：mcp_server.py 已内置 sys.path 处理，子进程无论 cwd 都能 import remembrance；REMEMBRANCE_HOME 已设用户级环境变量，子进程继承后自动生效。
+**注意**：MCP 入口为现行 `lantai.cli.mcp`（console script `lantai-mcp` 同源，旧 `scripts/mcp_server.py` 已删除）；数据目录由 `LANTAI_HOME` 指定（旧 `REMEMBRANCE_HOME` 仍兼容读取），子进程继承环境后自动生效。
 
 ---
 
@@ -129,7 +130,7 @@ C:/Users/Asus/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe scripts/
 
 | 文件 | 用途 |
 |---|---|
-| `scripts/mcp_server.py` | MCP 服务（已补 sys.path） |
+| `lantai/cli/mcp.py`（console script `lantai-mcp`） | MCP 服务（现行入口；原 `scripts/mcp_server.py` 已删除） |
 | `scripts/shell_hook.py` | Shell Hook 注入（协议兼容） |
 | `scripts/migrate_home.py` | 数据迁移（备份优先、不删旧） |
 | `scripts/verify_lantai.py` | 接入自检（8 项） |
