@@ -155,7 +155,7 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 
 **响应形状差异**：Hermes 直接消费兰台自有形状（`context`/`evidence`/`event_id` 顶层）；Claude Code 与 Codex 走 `hookSpecificOutput.additionalContext` 通道，兰台元数据（`event_id`/`request_id`/`evidence`）作为**顶层兄弟字段**带出——宿主侧 wrapper 捕获 `event_id` 供稍后回执。未知顶层字段在 CC `UserPromptSubmit` 上被静默忽略（仅记 debug 日志），不报错；**仅 `Stop` 事件严格校验**，本协议不用该事件。
 
-**写路径结果不翻译**：`backfill`/`dialogue`/`checkpoint*` 的控制面应答（含 `receipt_status`）原样返回——包成 `additionalContext` 会抹掉宿主侧所需的字段。
+**写路径结果不翻译**：`backfill`/`dialogue`/`checkpoint_write` 的控制面应答（含 `receipt_status`）原样返回——包成 `additionalContext` 会抹掉宿主侧所需的字段。`checkpoint`（读）不在此列：其应答 `{"context": ...}` 是注入类帧，与 `query` 同样被翻译（底本注入本就面向上下文；判定口径在实现里就是「有非空 `context` 键才翻译」，见 `lantai/integrations/host_adapters.py::adapt_response`）。
 
 ---
 
