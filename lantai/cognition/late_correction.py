@@ -30,9 +30,10 @@ from lantai.retrieval.temporal import _ensure_utc
 def correction_anchor(new_item: MemoryItem) -> datetime:
     """锚(new) = new.event_time ?? new.valid_from；两者皆无时用 new.created_at（approximated）。
 
-    票 13：三支一律过 _ensure_utc——DB 读回（UTCDateTime）虽归一 aware，但内存
-    直传的 naive created_at（无偏移 ISO 串解析产物）会以裸值进入锚比较面/落库面，
-    与 aware old.valid_from 比较抛 TypeError 被吞成静默失败。
+    票 13：三支一律过 _ensure_utc——DB 读回形态随 sqlmodel 版本而变
+    （锁定 0.0.42 为 naive），内存直传的 naive created_at（无偏移 ISO 串
+    解析产物）也会以裸值进入锚比较面/落库面，与 aware old.valid_from
+    比较抛 TypeError 被吞成静默失败。
     """
     if new_item.event_time:
         return _ensure_utc(new_item.event_time)

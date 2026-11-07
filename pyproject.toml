@@ -5,13 +5,16 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
-  # sqlmodel 0.0.47 起 UTCDateTime.process_bind_param 对 naive datetime 直接 raise
-  # （ValueError: Datetime values must have timezone information）。原无上界时
+  # sqlmodel 0.0.42 是锁定基线：datetime 字段映射裸 DateTime，无 UTCDateTime
+  # 库级时区防护（naive 写库静默落库）——aware UTC 纪律全靠约定
+  # （lantai/core/time.py 单点 + 读侧 _ensure_utc 归一），守护测试
+  # tests/test_sqlmodel_datetime_contract.py 钉死该契约。
+  # 历史教训（v0.22.1，票据 .scratch/naive-datetime-gate/issues/01）：上界不锁时
   # CI 装 0.0.47、本地装 0.0.42，同一次代码在两边一红一绿——v0.22.1 后 CI 全量
   # 测试第一次真正跑起来就红 37 例，全部源于此漂移。
-  # 兰台产品链路已全部写 aware（lantai/core/time.py:utcnow 及 ensure_aware），
-  # 上界 <0.0.48 挡的是「未评估的破坏性行为变更」；0.0.48+ 升级单独开票评测。
-  "sqlmodel>=0.0.22,<0.0.48",
+  # 0.0.47 起 UTCDateTime 对 naive 直接 raise、读回值变 aware——升级前必须
+  # 先清 naive 写入面与 naive 读取假设（另票评测），故上界钉死 <0.0.43。
+  "sqlmodel>=0.0.42,<0.0.43",
   "pydantic>=2.7",
   "pydantic-settings>=2.4",
   "httpx>=0.27",

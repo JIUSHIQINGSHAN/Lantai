@@ -255,7 +255,7 @@ class TestShadowIntegration:
         with sf() as s:
             got = s.get(ShadowWindow, w.id)
             assert got is not None
-            # 读回值的 tzinfo 取决于 sqlmodel 版本（≥0.0.47 aware / 0.0.42 naive），
+            # 读回值的 tzinfo 随 sqlmodel 版本而变（锁定 0.0.42 为 naive），
             # 归一后再比，否则会 TypeError: can't compare offset-naive and offset-aware。
             # 阈值语义不变（仍是「现在前 1 小时」）。
             deadline = got.check_deadline
@@ -289,8 +289,8 @@ class TestShadowIntegration:
         sf = shadow_db
         self._seed_query_set(sf)
         w = open_shadow("rev_7", {"RETRIEVAL_W_VECTOR": 0.7}, observe_days=1)
-        # 手动把 deadline 拨到过去，触发到期判定。aware：sqlmodel ≥0.0.47 的
-        # UTCDateTime 拒绝 naive 写库（`process_bind_param` 强制 utcoffset() is not None）。
+        # 手动把 deadline 拨到过去，触发到期判定。aware：恒 aware UTC 是
+        # 本仓纪律（锁定 0.0.42 无库级防护，naive 写库静默落库）。
         # 相对时刻不变——仍是「现在前 1 天」，到期判定照旧触发。
         with sf() as s:
             got = s.get(ShadowWindow, w.id)

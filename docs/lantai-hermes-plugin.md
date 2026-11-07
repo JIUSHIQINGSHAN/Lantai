@@ -37,7 +37,8 @@
 ## 部署
 
 ```bash
-# 默认 Hermes home = C:/Users/Asus/AppData/Local/hermes
+# 默认 Hermes home 自动探测：HERMES_HOME 环境变量 → Windows %LOCALAPPDATA%\hermes → 其他 ~/.hermes
+# （scripts/install_hermes_plugin.py::get_default_hermes_home）
 python scripts/install_hermes_plugin.py
 # 自定义路径：
 python scripts/install_hermes_plugin.py --hermes-home <path>
