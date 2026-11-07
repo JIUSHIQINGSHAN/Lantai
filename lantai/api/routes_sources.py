@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 
-from lantai.core.auth import get_current_user
+from lantai.core.auth import Principal, get_current_user, require_admin
 from lantai.models.schemas import SourceReq
 from lantai.services.source_service import (
     add_source,
@@ -29,7 +29,10 @@ def list_sources_route(ctx=Depends(get_current_user)):
 
 
 @router.post("/ingest/run")
-def ingest_run_route():
+def ingest_run_route(principal: Principal = Depends(require_admin)):
+    """直跑摄取 worker（票 19 复查补刀：此前零身份——与 `/workers/ingest/run`
+    触发同一 `run_ingest_once`，不挂闸则守卫被平行 URL 整体架空）。全局
+    动作面，仅 admin（runner 系统身份）。"""
     return run_ingest()
 
 

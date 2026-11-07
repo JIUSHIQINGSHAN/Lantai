@@ -29,11 +29,14 @@ from lantai.core.auth import Principal, get_current_user
 from lantai.core.settings import settings
 from lantai.storage.fts import init_fts
 
-# 五条全局动作路由（票 19 病灶 4 条 + 立案外同族姊妹路由 /kaogong/report）
+# 六条全局动作路由（票 19 病灶 4 条 + 立案外同族姊妹 /kaogong/report + 复查
+# 补刀 /ingest/run——与 /workers/ingest/run 触发同一 run_ingest_once，平行
+# URL 不挂闸即整体架空守卫）
 GUARDED = [
     ("/evolve/run", "POST"),
     ("/workers/{worker_name}/run", "POST"),
     ("/monitor/workers/{worker_name}/run", "POST"),
+    ("/ingest/run", "POST"),
     ("/evolution/kaogong/report", "GET"),
     ("/kaogong/report", "GET"),
 ]
@@ -98,6 +101,7 @@ TARGET_ENDPOINTS = {
     "evolve_run_route": "POST",
     "run_worker_route": "POST",
     "monitor_run_worker": "POST",
+    "ingest_run_route": "POST",
     "kaogong_report_route": "GET",
     "kaogong_report_endpoint": "GET",
 }
@@ -105,8 +109,12 @@ NEGATIVE_CONTROL = "list_proposals_route"
 
 
 def _all_api_routes() -> dict[str, object]:
-    """遍历 app 的懒挂载路由器（fastapi.routing._IncludedRouter.
-    original_router），返回 {endpoint 名: APIRoute}。"""
+    """遍历 app 的路由注册面，返回 {endpoint 名: route}。
+
+    双形态兼容：本仓 pin 的 fastapi 走懒挂载（fastapi.routing._IncludedRouter
+    包 original_router）；fastapi ≥0.136 include_router 直接扁平化（app.routes
+    里是裸 APIRoute）。两形态都枚举，防止依赖版本漂移把结构锁变成空表假红。
+    """
     from lantai.api.app import app
 
     out: dict[str, object] = {}
@@ -116,6 +124,10 @@ def _all_api_routes() -> dict[str, object]:
             name = getattr(getattr(route, "endpoint", None), "__name__", None)
             if name:
                 out[name] = route
+        # 扁平形态回退：wrapped 自身就是 APIRoute（有 dependant/endpoint）
+        name = getattr(getattr(wrapped, "endpoint", None), "__name__", None)
+        if name and hasattr(wrapped, "dependant") and name not in out:
+            out[name] = wrapped
     return out
 
 
@@ -217,6 +229,59 @@ class TestWorkerTriggerRoutesAdminOnly:
             r = c.post("/workers/ingest/run", headers={"X-API-Key": ADMIN_KEY})
             assert r.status_code == 200, f"admin 真 worker 触发应 200：{r.status_code} {r.text}"
             assert r.json()["ok"] is True
+
+
+class TestIngestRunRouteAdminOnly:
+    def test_admin_runs_bearer_user_403(self, engine, monkeypatch):
+        """复查补刀（票 19 阻塞项 1）：`POST /ingest/run` 与 `/workers/ingest/run`
+        触发**同一** `run_ingest_once`——零身份形态不修，守卫被平行 URL 整体
+        架空。admin → 200 真跑；受限 Bearer user → 403。"""
+        monkeypatch.setattr(settings, "API_KEY", ADMIN_KEY, raising=False)
+        raw = _seed_bearer_user(engine, monkeypatch)
+
+        from lantai.api.app import app
+
+        with TestClient(app) as c:
+            r_admin = c.post("/ingest/run", headers={"X-API-Key": ADMIN_KEY})
+            assert r_admin.status_code == 200, (
+                f"admin 真摄取触发应 200：{r_admin.status_code} {r_admin.text}"
+            )
+            assert r_admin.json()["ok"] is True
+            r_user = c.post("/ingest/run", headers={"Authorization": f"Bearer {raw}"})
+            assert r_user.status_code == 403, (
+                f"受限 Bearer user 走平行 URL 触发全库摄取应 403，实际 {r_user.status_code}"
+            )
+
+
+class TestRecallReportRoutePrincipalPassthrough:
+    def test_route_passes_principal_narrowing(self, engine, monkeypatch):
+        """复查补刀（票 19 阻塞项 2）：`GET /retrieval/recall-report` 此前零身份
+        调 `recall_report(days)`——服务本就按 viewer 收窄（readside-gaps/05，
+        `_recall_scope` 口径同票 04），MCP 透传（mcp.py:995）而 REST 丢弃——
+        与考功报告病灶同构（服务收窄、路由绕过）。修后路由透传：user 视角
+        只见自己的事件（+NULL 老行），admin 全量。"""
+        monkeypatch.setattr(settings, "API_KEY", ADMIN_KEY, raising=False)
+        _patch_db(monkeypatch, engine)
+
+        from lantai.api.app import app
+        from lantai.observability.retrieval_log import log_retrieval
+
+        log_retrieval("user-a 的私有问句", [], latency_ms=1, principal=Principal(user_id="k19-ua"))
+        log_retrieval("user-b 的私有问句", [], latency_ms=1, principal=Principal(user_id="k19-ub"))
+
+        ua = Principal(user_id="k19-ua", role="user")
+        with TestClient(app) as c:
+            r_admin = c.get("/retrieval/recall-report", headers={"X-API-Key": ADMIN_KEY})
+            assert r_admin.status_code == 200, f"admin 全量报告应 200：{r_admin.text}"
+            assert r_admin.json()["total"] == 2, (
+                f"admin/全量口径应见两用户事件，实际 {r_admin.json()['total']}"
+            )
+            r_user = _as_override(ua, lambda: c.get("/retrieval/recall-report"))
+            assert r_user.status_code == 200
+            assert r_user.json()["total"] == 1, (
+                f"user 视角不应聚合他人检索事件（服务收窄被路由绕过=跨属主统计"
+                f"投毒面），实际 total={r_user.json()['total']}"
+            )
 
 
 class TestEvolveRunRouteAdminOnly:
