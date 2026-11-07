@@ -211,3 +211,17 @@
   - **D-4（P3）** 手册「`force` 绕过闸门」与更正闸边界未注明（force 绕拾遗 relevance gate，不绕更正闸——`lantai/cli/mcp.py` handle_search 中 guard 在 force 旁路之外，仅时效视图跳过）。→ 票 14。
 
 **合并随行预告（非缺陷）**：本流分支与本增量交叠 3 文件——`CHANGELOG.md`（双方都在 `[Unreleased]` Fixed 顶部插入，冲突几乎必然）、`docs/host-hook-protocol.md`（票 05 回执延后段 vs §2.1 契约行，相邻不同 hunk）、`lantai/cli/mcp.py`（票 03 `handle_add` vs 增量 `handle_search`，不同函数，可自动合并）。合流时按此预估工作量；使用面补写（D-3/D-4）在合流后落笔，避免两头改。
+
+## 十、增量审计（2026-11-07 第五轮：master 前进 2 提交，PR #35 记忆研究周报）
+
+第五轮收口后 master 再前进 2 提交（`004dcc0f` 新增 `docs/research/papers/memory-weekly-2026-11-07.md` + `b2c941a0` merge PR #35），纯新增 1 个 dated 研究文档（+169，零既有文件改动）。同口径核查：
+
+**结论：无 P0/P1，无新票，总体评级对增量保持 ✅。**
+
+- 文档类别豁免：dated 研究周报（`docs/research/papers/`，同目录已有 11-03 周报先例），按本流门禁口径属归档历史文档豁免类（票 11 草案），非使用面；无独立 CHANGELOG 条目符合惯例（11-03 周报同样仅在建议被采纳时以出处形式进 CHANGELOG）。
+- 代码断言逐条取证（对周报自报基线 `57cf71a6`），**全部属实、行号精确**：插件仅注册两回调（`hermes-plugin/lantai-hook/__init__.py:611-613`，master 行号精确；本 worktree 分支停 `1195d29c` 差 6 行，系 v0.68 票 01 增量所致，无矛盾）、`:498` `_flush_session`、`:112`/`:529` `_checkpoint_injected`、`checkpoint_service.py:200`、`retrieval_log.py:260` `mark_vetoed`、`supersede.py:59` 更正闸及其「superseded 且 superseded_by 非空才动」规则（与 docstring 逐字一致）、`enums.py:44-52` supports/causes/leads_to、`late_correction.py:73-78` 同事务直写 supersedes 边、全仓 `def purge` 恰为 `purge_expired`+`purge_facts_for_memory`（佐证「无按会话删除」）、`injection_count` 双文件（`forgetting.py:36,45`、`retrieval_log.py:138,144`）、`lantai/ingestion/dialogue.py`/`lantai/parsing/`/`lantai/llm/prompts.py` 存在、`scripts/shell_hook.py` 存在。
+- 文档间引用同样属实：0.88 = LongMemEval-S cleaned 25 题会话级 recall@5（`docs/benchmarks/selfproof-report-2026-10.md:7,38`）；「被否决轮也触发 `post_llm_call`」查实内容在 `improve-2026-11-05-veto-no-write.md:79`（周报引 `:77`，±2 行漂移，对象本身是 dated 报告，不计发现）；handoff 第 3 步 = cli-config.yaml shell hook；PR #26/#30/#31/#33 合并记录核对（merge commits `77c49f50`/`8a725e15`/`dbde7dd2`/`1195d29c`）；「v0.66.0 之后 76 个提交」实测 `git rev-list --count v0.66.0..57cf71a6` = 76。
+- 运行时观察（删除会话后 `rawdocument.session_id` 为空等）系作者标注的本地实测，静态审计不可复核，不计。
+- 票 10/11/13/14 状态不变、无维护者批注；合并随行预告不扩大（PR #35 仅新增文件，与本流分支零交叠）。
+
+本流 agent 侧继续保持收口：票 10（两项决策）、票 11（落点）、票 13（三选一）、票 14（落点/命名形式）全部等维护者批注。
