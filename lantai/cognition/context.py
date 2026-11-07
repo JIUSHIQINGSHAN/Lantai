@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from sqlmodel import Session, select
 
 from lantai.core.settings import settings
-from lantai.models.tables import CognitiveRole, FailureRecord, MemoryItem
+from lantai.models.tables import CognitiveRole, FailureRecord, LifecycleStatus, MemoryItem
 
 _ROLE_TO_SECTION = {
     CognitiveRole.OBSERVATION: "facts",
@@ -630,11 +630,22 @@ class CognitiveContextBuilder:
         admin 也不例外：retracted 对 admin 同样是"已停止使用"）。
         归档例外白名单若将来有产品诉求，须开票明列。
 
+        lifecycle 过滤（v0.68 票 02）：被更正的旧说（lifecycle_status=superseded）
+        不进产物——build() 无问句语境、无「新值在场」可判，直接不进是最小正确
+        语义（tables.py 枚举自述 superseded「退出检索」）；历史回看场景不经此
+        入口（MCP search 带 as_of 的时效视图才是历史查询面）。刻意与注入面
+        `_apply_supersede_guard` 口径不同、不统一：闸丢弃要「superseded 且
+        superseded_by 非空且新值在场」，这里无条件排除（DDL NOT NULL
+        DEFAULT 'active'，无 NULL 误杀面）。排序与七切面分流不动。
+
         admin/system 全权（不走本函数的归属半边）。
         """
         from lantai.services.work_item_service import _viewer_of
 
-        stmt = select(MemoryItem).where(MemoryItem.status == "active")
+        stmt = select(MemoryItem).where(
+            MemoryItem.status == "active",
+            MemoryItem.lifecycle_status != LifecycleStatus.SUPERSEDED,
+        )
         principal = self.principal
         if principal is not None and bool(getattr(principal, "is_admin", False)):
             return stmt
