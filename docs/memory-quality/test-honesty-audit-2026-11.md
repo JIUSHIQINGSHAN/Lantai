@@ -109,7 +109,10 @@ patch `digest_worker._digest_dir` 是**文件系统接缝**（纪律允许的文
 - worker 分发入口 2（forgetting / candidate_ttl）→ 已补
 - 摄取总入口 1（run_ingest + 路由）→ 已补
 - MCP 广告工具 2（crystal_promote / recall_report）→ 已补
-- `lantai.cli.mcp.main`（CLI 子命令入口，薄壳）→ 未补（低价值，登记待排期）
+- `lantai.cli.mcp.main`（stdio 服务入口，console script `lantai-mcp` 与
+  `launcher_mcp.py` 的唯一入口契约）→ 已补（§24：`tests/test_mcp_stdio_entry_smoke.py`
+  2 例，子进程真 stdio + 真库全链；工具静态口径仍记 never-executed，§6 盲区族，
+  证据以测试文件为准）
 - `LoopGuard.begin/cancel/finish` → 工具伪影（见 §6）
 
 ## 6. 静态工具的已知边界（诚实声明）
@@ -120,6 +123,11 @@ patch `digest_worker._digest_dir` 是**文件系统接缝**（纪律允许的文
 - **LoopGuard.begin/cancel/finish**：`tests/test_mcp_loop_guard.py:114-135`
   用真 LoopGuard 实例（只 patch `_get_guard` 取件器）经 handle() 真实驱动，
   判 real-smoke（工具因 `_get_guard()` 返回值上的方法调用无法静态解析而漏记）。
+- **`lantai.cli.mcp.main`（§24 起）**：测试以 exec 副本加载（`spec_from_file_location`）
+  与子进程两种形态真实执行——工具对两者都静态不可见（`mod.main()` 的 `mod` 是本地
+  加载函数的返回值，既不在 import 表也不在 `x = Foo(...)` 实例流），判定维持
+  never-executed，证据以测试文件为准（同 LoopGuard 条口径：文档化边界，不改三态
+  判定；`handle_core_memory_get` 等可静态解析的下游函数已由帧回填正常入账）。
 - **DTO / dataclass / `to_dict` / 私有 helper**：不进核心表；`_digest_dir` 等
   私有函数的 patch 见 §3 口径注。
 - **调用方 grep 范围**：死代码判定的 prod_calls grep 初版只扫 `lantai/` +
@@ -865,3 +873,56 @@ push 部分，按本轮任务书口径执行；tag 上传闸门不涉及）。
   票据均引用本路径，不迁移以免断链，特此注明）；⑤ ambient 值第二段
   （另一 venv site-packages）的依赖遮蔽面未逐包排查。
 
+
+## 24. 第二十次复验（2026-11-07）：遗留缺口 `lantai.cli.mcp.main` 收口 + 审计逐字节复现 + 门禁一轮全绿（假绿陷阱同族二次取证与本会话环境两则新形态）
+
+独立复验会话按 §23 收尾后的 HEAD（`83f0c4a9`，与 origin 同步）冷启动，先复现后补强：
+
+- **审计复现（逐字节一致）**：`audit_honesty.py` 重跑（venv=主检出 `.venv`、
+  `-I` 隔离、输出落仓库外临时目录）与在库 `audit.json` `cmp` 全等：inventory
+  1729 / core 1083 / real-smoke 659 / hollow 0 / mocked-only 1=`_digest_dir`
+  接缝豁免 / indirect-only 321 / never-executed 102。
+- **遗留缺口收口（§23 未竟清单第②项）**：新增
+  `tests/test_mcp_stdio_entry_smoke.py`（2 例，提交 `00359ded`）——
+  ① 子进程真 stdio 端到端：真拉起 `main()`（console script `lantai-mcp` 唯一
+  契约），10 帧进恰 5 响应出；空行/坏帧/超长行/通知一律静默；默认档广告面
+  恰为 `HERMES_CORE_TOOLS`；敌意编码（`PYTHONIOENCODING=gbk` + `-X utf8=0`，
+  test_mcp_import_side_effects.py 同款取证手法）下中文请求→中文响应完整回路
+  ——`_configure_stdio_utf8` 的存在理由在任何主机上乱码即红，不靠本地 GBK
+  缺省碰巧绿。② 进程内 exec 副本 + 真库：`CoreMemoryBlock` 落库后经
+  `main()` 行循环→分发→handler→memory_service 真库读回；`sys.stdin/stdout`
+  替换属 I/O 接缝（test_shell_hook.py 同款既有口径），内部逻辑零 mock。
+  真跑：本文件单跑 **2 passed（8.63s，exit 0，`PIPESTATUS` 显式核验）**；
+  MCP/shell_hook 相关子集 6 文件 **93 passed（38.30s）**，与姊妹 stdio 入口
+  测试无串扰。
+- **工具盲区归因（§6 已补第 4 条）**：`main` 的工具判定维持 never-executed
+  （659/321/102 计数零变化）——exec 副本与子进程两种真实执行形态都静态
+  不可见（`mod.main()` 的 `mod` 是本地加载函数返回值，不在 import 表也不在
+  实例流），按 LoopGuard 条先例文档化边界、不改三态判定；可静态解析的
+  6 个既有覆盖函数（`_principal_from_params` / `handle_core_memory_get` /
+  `Principal` / `CoreMemoryBlock` / `get_core_memory` / `get_session`）的
+  direct/indirect 证据明细各 +1 条（全部来自新文件），verdict 集合逐项不变。
+- **全量门禁（单轮全绿）**：**3119 passed / 5 skipped / 0 failed**
+  （602.36s / 10m02s，exit 0 直调捕获，venv=主检出 `.venv`，`PYTHONPATH=`
+  空值）= §23 同树 3117 + 本轮 2 例。隔离护栏台账：本会话新文件名在台账
+  全文 grep 计数为 0，绑定残留仅 test_3a 申报哨兵，与 §17–§23 各轮一致。
+- **假绿陷阱同族二次取证（本会话现场，§23 形态完整重演）**：本会话首次
+  基线尝试踩中同两层叠加——ambient `PYTHONPATH`（宿主 hermes-agent 两路径）
+  致 conftest `ImportError`（`No module named 'tests.support'`）、零用例
+  执行，而外层 `| tail` 管道把退出码掩蔽成 0；本次以读全输出 + 显式
+  `PIPESTATUS` 当场抓获，未误判为绿。置空 `PYTHONPATH` 后一切正常，
+  再证病根在宿主环境不在本仓（§23③ 口径维持）。
+- **本会话环境两则新形态（如实）**：① 全量门禁第一次尝试被会话后台时限
+  （10 分钟预算）杀停在 83%，无终数——被杀轮次一律不算门禁，与「假绿」
+  同论：没有 passed 计数 + exit 0 双证据的运行不构成绿；收口轮改 30 分钟
+  预算一次跑完。② 门禁日志与基线日志落在 `%TEMP%`，读取后数分钟内被宿主
+  临时目录清理所吞（PowerShell 通配核查证实不存在）——终数与退出码已当场
+  落本记录；教训：长会话的门禁证据必须当场入账，不留待「稍后整理」。
+- **本次没能查清/没敢动（如实）**：① 票 02 三项死代码仍留维护者裁决
+  （needs-triage 未动）；② ambient `PYTHONPATH` 病根在宿主环境，只复验
+  置空缓解、不修；③ 工具对 exec 副本/子进程形态的盲区未改工具——按
+  §6 先例文档化（改三态判定复杂化工具，收益低，留待有真实误判损失再做）；
+  ④ ambient 值第二段（另一 venv site-packages）的依赖遮蔽面未逐包排查
+  （§23⑤ 沿袭）；⑤ 模块级残留通道的**全清单**因门禁日志被清未能当轮
+  留存全文（本轮只直接核验了「新文件零出现 + 绑定残留仅 test_3a」两点），
+  通道全等声明沿 §17–§23 台账，下一轮复验可低成本补验。
