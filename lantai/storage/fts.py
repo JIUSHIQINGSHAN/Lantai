@@ -82,9 +82,19 @@ def _tenant_filter_clause(principal) -> tuple[str, str] | None:
     """租户过滤子句（票 18）：tenant/session 维此前逐读侧手写严格等值、漏
     `OR IS NULL` 半边——带头调用把 NULL 租户老行（真实库主体形态）整批滤掉，
     向量降级时关键词即全部召回通道 → 半召回塌缩。半边口径对齐终闸
-    `_query_items`（`hybrid.py`）；豁免口径（system viewer / admin 全豁免）
-    与 `_owner_filter_clause` 同一——由外层守卫负责，修前 admin 带头在
-    关键词通道比向量通道看得更少。"""
+    `_query_items`（`hybrid.py`）；修前 admin 带头在关键词通道比向量通道
+    看得更少。
+
+    与 `_owner_filter_clause` 同构：principal=None（worker 契约＝不过滤）、
+    system viewer、admin 三种豁免在**函数内自查**——现两调用点的外层守卫
+    与此重复是冗余保险，防未来新调用点忘挂守卫（单一真源不自豁免就等于
+    重新发明「改一处漏一处」）。"""
+    if principal is None:
+        return None
+    if _is_system_viewer(principal):
+        return None
+    if bool(getattr(principal, "is_admin", False)):
+        return None
     tenant_id = getattr(principal, "tenant_id", None)
     if not tenant_id:
         return None

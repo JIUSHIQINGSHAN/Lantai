@@ -13,7 +13,8 @@ tenant/session 过滤是严格等值（无 `OR IS NULL` 半边），带头调用
 形态镜像立案探针 `.scratch/_v068_probe_r4_header_null_recall.py`：
 真内存库 + 真 `hybrid_search` 全链（embed 抛错走真 `_keyword_fallback`；
 向量在场对照臂替身 VS 只断外部网络）；`search_fts` / `search_fts_bm25` /
-`_keyword_fallback` 直调各一组。修复前本文件红（亲证 11F），修复后全绿。
+`_keyword_fallback` 直调各一组。修复前本文件红（亲证 13F/2P，两绿为
+fixture 真值锁与隔离现状锁），修复后全绿。
 """
 
 import pytest
@@ -189,6 +190,7 @@ class TestSearchFtsNullScopeVisibleWithHeaders:
                 )
             )
         assert {"mem_a", "mem_b"} <= got, f"BM25 带租户头后 NULL 老行消失：{got}"
+        assert "mem_d" not in got, f"跨租户隔离被修穿（bm25 臂 tenant-other 行可见）：{got}"
 
     def test_cross_tenant_nonnull_row_still_blocked(self, engine):
         """隔离现状锁：跨租户**非 NULL** 行仍被阻断——修 NULL 半边不得把隔离修穿
@@ -363,6 +365,12 @@ class TestChannelAgreementVectorVsDegraded:
         assert degraded_arm >= {"mem_a", "mem_b"}, (
             f"通道打架：向量臂可见 {sorted(vector_arm)}，降级臂只剩 {sorted(degraded_arm)}"
         )
+        # 集等值：两臂必须一个宽——superset 不足以钉「一致」（降级臂多召回
+        # 一行同样是通道打架，只是方向相反）。真值锚由上面的 inclusion 断言
+        # 承担（防两臂同时空转的假绿）。
+        assert degraded_arm == vector_arm, (
+            f"通道打架（集不等）：向量臂 {sorted(vector_arm)} vs 降级臂 {sorted(degraded_arm)}"
+        )
 
     def test_channel_agreement_like_query(self, engine, monkeypatch):
         _seed_all(engine)
@@ -377,6 +385,9 @@ class TestChannelAgreementVectorVsDegraded:
 
         assert "mem_c" in degraded_arm, (
             f"通道打架（LIKE 面）：向量臂 {sorted(vector_arm)}，降级臂 {sorted(degraded_arm)}"
+        )
+        assert degraded_arm == vector_arm, (
+            f"通道打架（LIKE 集不等）：向量臂 {sorted(vector_arm)} vs 降级臂 {sorted(degraded_arm)}"
         )
 
 

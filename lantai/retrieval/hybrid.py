@@ -774,8 +774,9 @@ def _hybrid_search_impl(
     bm25_ranks = {r[0]: idx for idx, r in enumerate(fts_bm25_results)}
 
     # 回声抑制（v022 吸收 M2，ADR-0046 时间窗语义；默认关）：仅抑制本会话
-    # 窗口期内新写入的回声，窗口外同会话记忆照常召回（session 域检索本就
-    # 按 session 圈定候选池，删光同 session 会清空会话内召回）。
+    # 窗口期内新写入的回声，窗口外同会话记忆照常召回（票 18 摘除 FTS/LIKE
+    # 的 session 收窄后跨会话行同样进入关键词通道——回声抑制按行属性 +
+    # 时间窗工作，与召回通道的 scope 无关，不受影响）。
     # 开关与出身都显式——空 session 不过滤（上游纪律）。
     echo_session = None
     echo_cutoff = None
