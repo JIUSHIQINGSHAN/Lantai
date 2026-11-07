@@ -4,6 +4,7 @@
 - **审计对象**: HEAD `1195d29c`（= master，PR #33 合入后），worktree `.wt-v068-docs`，分支 `chore/v068-docs-audit`
 - **审计方法**: 4 路并行子审计（协议/插件文档、MCP/API 面文档、流程治理文档、ADR 治理与版本一致性）+ 主线 CONTEXT.md 词汇表逐条核对。每条发现均双侧取证（文档侧 文件:行号 + 原文引句；代码侧 文件:行号 + 原文引句），主审计员对全部 P0 与关键 P1 逐条亲自复核。
 - **范围说明**: 只读审计，未改动任何被审文件。docs/ 下自 dated 的历史报告（`dry-run-*`、`param-*`、`step7-*`、`agent-handoff-*`、`aidumem-port-results.md`、`docs/research/`、`docs/benchmarks/`、`docs/memory-quality/`）按归档口径处理，仅对被现役文档引用的做核对。
+- **复核（第二轮，同日）**: 票 01-09 修复后重审（HEAD `115d9834`）：**P0×8 / P1×11 全部消除，总体评级反转为 ✅ 通过**（见 §七）；复核另发现修复文本自身引入的问题 3 项（P2×1、P3×2）与一处存量引文疑点，见 §七「复核新发现」。
 
 ---
 
@@ -136,3 +137,48 @@
 ---
 
 *审计执行：主审计员 1 名（主线词汇表 + 全部复核）+ 并行子审计 4 路（协议/插件 13 条、MCP/API 14 条、流程治理 13 条、ADR/版本 7 条），合计约 50 条原始发现，去重合并如上。全部发现为只读取证，未改动仓库文件。*
+
+---
+
+## 七、复核（2026-11-07 第二轮：票 01-09 修复后）
+
+- **复核对象**: HEAD `115d9834`（diff 范围 `1195d29c..115d9834`，9 提交 20 文件：3 张代码票 01/02/03 + 6 张文档票 04-09 + CHANGELOG 补记）
+- **方法**: P0×8 主审计员逐条双侧亲核；P1×11 子审计逐条取证、新发现主审计员亲核；全仓陈旧模式扫描；代码票回归实测。本轮仍为只读复核，未改动被审文件。
+
+### 复核结论：总体评级反转为 ✅ 通过（文档可发布性，按本报告口径）
+
+**P0 × 8 组全部消除**（双侧证据，逐组）：
+
+1. **P0-1 闲聊去向**：`docs/lantai-hermes-plugin.md:15` 与 `hermes-plugin/lantai-hook/plugin.yaml` 描述均改「闲聊直接 rejected（沙汰，ADR-0026）」，与 `lantai/ingestion/dialogue.py:115-127`（`_is_chitchat` → `status="rejected"`）一致；插件文档验证段同步注明「纯闲聊被沙汰是预期行为而非部署失败」。
+2. **P0-2 版本同步步骤**：`docs/development-workflow.md:104` 与 `docs/release-process.md` 改列 `lantai/api/app.py` / `lantai/cli/mcp.py` / `uv.lock` 根包版本，与 `scripts/release_check.py:36-56` `VERSION_REF_SPECS` 逐项对上（含 uv.lock 锚定注释）。
+3. **P0-3 MCP 入口**：矩阵/手册/交接文档全部改 `lantai.cli.mcp`（console script `lantai-mcp`，`pyproject.toml:50`），旧 `scripts/mcp_server.py` 仅以「已删除」注记出现；代码侧三处（`launcher_mcp.py` / `launch_mcp.bat` / `scripts/verify_lantai.py`）已改现行入口，启动器仓库根与 venv 改脚本位置相对解析（`.venv` 优先、`.venv-audit` 兜底），旧机硬编码盘符清除；交接文档头部加「历史文档」横幅声明机器路径/品牌名按当时原貌保留。
+4. **P0-4 as_of 时态查询**：README 改「`POST /search` **请求体**传 `as_of`/`as_of_recorded`/`time_from`/`time_to`」并保留「写在 URL 上会被静默忽略、返回当前视图」警示；与 `lantai/models/schemas.py:74-77`、`lantai/api/routes_search.py`（query 参数仅 `trace`/`explain`）一致。
+5. **P0-5 工具面两档**：README 与矩阵统一「默认核心 6（search/add/feedback/offload_read/mem_recent/core_memory_get，fail-closed）/ `LANTAI_MCP_PROFILE=full` 全量 96」；实测 `HERMES_CORE_TOOLS`（`lantai/cli/mcp.py:3716-3718`）恰 6 项、`TOOLS`/`TOOL_HANDLERS` 注册表 AST 实测均 96 项、档位解析（不设/空/未知取值→核心集，未知额外告警）与文档一致；矩阵验证清单按档改写（raw_add 需 full 档、默认档 -32602 非部署故障）。
+6. **P0-6 手册示例**：端口 8767（`lantai/core/settings.py:27`，`lantai/api/app.py:195` uvicorn 同源）与「settings.PORT」注记属实；`title` 必填非空（schemas `min_length=1`）、`content` ≥10 字（model_validator）、`media_url` 二选一、`force` 绕闸（`SearchReq.force` + `mcp.py:193`）全部与代码对上；add 示例已补 title、正文 ≥10 字。
+7. **P0-7 runbook 命令**：每日盘点改 `POST /monitor/workers/digest/run`（`lantai/api/routes_monitor.py:78` `/monitor/workers/{worker_name}/run`）+ `GET /digest/today`（`lantai/api/routes_digest.py:18`）；`docker compose` 行改指 README「Docker 部署」的 `docker run` 单容器路径（README:97-102，Dockerfile `EXPOSE 8767`）。
+8. **P0-8 media_url 接线**：`handle_add` 透传 `media_url`（`lantai/cli/mcp.py:362`），非法组合由 `AddMemoryReq`「media/content 二选一」校验拒绝（与 REST 同口径，不静默丢弃）；不 mock 冒烟 ×2 通过（caption 落 RawDocument 正文 + provenance 带 media_url；二选一拒绝 → -32602），视觉替身属 AGENTS.md 允许的外部 LLM mock。
+
+**P1 × 11 全部消除**（子审计逐条双侧取证，关键项主审计员亲核）：host-hook-protocol 画像兜底（:65-72，`shell_hook.py` 三路 `_persona_only`、未配置常驻画像才退 `{}`）与 query 通道超时兜底（:127-130，`shell_hook.py:792-809` `_query_fallback`）；插件回执延后 + `retrieval_veto`（插件文档 ：22-30，与 ADR-0084 §2.1 逐句吻合，`mark_missed_receipts` 实证）；used-ids 指南两处（backfill 不在默认档需 full、REST 端点为主力，`POST /retrieval/backfill` 实证；import 改 `lantai.*`，全文件 remembrance 零残留）；交接文档 `LANTAI_HOME`（`scripts/migrate_home.py:98-117` 实证 setx/写入 .env）；release-process 镜像名（`ghcr.io/<owner>/lantai`，`ci.yml:85-86`）与门禁 11 项真清单（与 `release_check.py` main 检查序列逐项对应，pytest 参数口径逐字一致）；ADR-0013 §7 补登钩玄/探赜（与 CONTEXT.md:105-106、CHANGELOG 三方同代号）；CONTRIBUTING 示例换 `tests/test_features.py tests/test_prefilter.py`（均存在）；gate 口径三处统一（ADR-0028 放行通道、`force`、观察期 14 天窗口 ≥7 天 `settings.py:478-479`、`CANDIDATE_MIN_CONFIDENCE=0.15` `settings.py:71`、「帮我查」不在触发正则而「查…记忆」形状才算）。
+
+**P2 × 20 维持未动**（预期内，票 10 needs-triage 待维护者裁决）：抽查 7 项（plugin.yaml 品牌与 1.1.0 版本、CONTEXT.md:20 fastpath 缺前缀、矩阵数据目录回落漏 `%LOCALAPPDATA%\remembrance-data`、README:300 ADR 计数 0001-0053、CONTRIBUTING/glossary 测试数 700+/1200+、ADR 0042/0043/0046 状态行、daily-digest 反思提案统计行）确认原状未清。
+
+**代码票回归**：`tests/test_mcp.py` 全模块 **52 passed**（主仓 `.venv` 实测）；两个新增 media_url 冒烟为真不 mock——直调 `handle_add` + 真实 SQLite，符合 AGENTS.md 测试纪律。
+
+### 复核新发现（修复文本自身引入，3 项，均经主审计员亲核）
+
+| # | 级别 | 位置 | 问题 | 建议 |
+|---|------|------|------|------|
+| R-1 | **P2** | `docs/lantai-manual-call.md:26` | 新例子「⚠️ 孤立短名词（『大哥的电脑配置』，无技术词也无问句标记）→ 仍是 no_signal」与 gate 实际行为**相反**：`大哥` 命中自我指代正则（`lantai/gate/prefilter.py:71`），`配置` 命中技术词表（:76）且总长 7≥4——双通道放行，search 会真实检索。旧版只含糊说「大概率 no_signal」，新版把机制写死反制造直接矛盾 | 换真正不命中任何通道的例子（如「物业费在哪交」——单字「哪」不在 QUESTION_PATTERNS、无技术词、≤15 字） |
+| R-2 | P3 | `docs/release-process.md:36` | 第 7 项标题「MCP 默认最小暴露」与门禁输出名「MCP 默认暴露」（`release_check.py:1306,1308`）差一词；第 3 项「目标版本格式」仅失败路径记账（:1268-1271，成功不输出），绿灯汇总实为 10/10，与 :27「下表与门禁输出逐项点名一一对应」有轻微表述出入 | 标题对齐门禁输出名；第 3 项注明「仅失败时出现在输出」 |
+| R-3 | P3 | `docs/lantai-manual-call.md:22` | 「12 字内的短追问沿用上一轮判定」实为**单向**：仅上一轮 `needs_memory=True` 时短路沿用（`prefilter.py:193-195` `if cache["needs_memory"] and len(q) < 12`）；上一轮 no_signal 的短追问会继续走完整判定链并可能翻 True | 改「短追问沿用上一轮**命中**判定」 |
+
+存量疑点随票 08 扩散一处：ADR-0013:144（及既有 CONTEXT.md:105、CHANGELOG:53）称「钩玄」语出《进学解》「拔萃便适，钩玄提要」——《进学解》原句为「记事者必提其要，纂言者必钩其玄」，「拔萃」不出自该篇。措辞非本轮新造，但已随 §7 补登写入 ADR-0013，建议人工核对引文（P3）。
+
+### 其他复核记录
+
+- **陈旧模式扫描**：`scripts/mcp_server.py` 引用、旧机盘符路径、8000 端口、`docker compose`、`run_digest`、「40 个工具」在现役文档面清零；剩余命中全在 CHANGELOG 历史条目与 dated 归档报告（按头部范围说明不核对）。交接文档（hermes-install-handoff）残留的旧机路径由新增「历史文档」横幅显式声明为原貌保留，不再计为缺陷。
+- **P2-5 增量**：修复提交在 CHANGELOG（:18,:21）与代码注释（`lantai/cli/mcp.py`、`launcher_mcp.py`、`launch_mcp.bat`）新增多处 `.scratch/v068-docs-audit/` 引用——`.scratch/` 在 `.gitignore:48`，属已登记 P2-5「克隆侧链接悬空」类的增量，归票 10 一并决策。
+- **现役文档 scripts 路径对账**（票 11 关注面抽样）：ops-runbook/矩阵/交接文档引用的 9 个 `scripts/*.py` 全部存在。
+- **环境备注（复核可复现性）**：本机 venv 的 `PYTHONPATH` 混入 hermes-agent 路径，其自带正则包 `tests`（有 `__init__.py`）会遮蔽本仓库命名空间包 `tests`（无 `__init__.py`），conftest 加载即 ModuleNotFoundError——与 `launcher_mcp.py` 头注释所述 Hermes venv 污染同源；复测需先清 `PYTHONPATH`。
+
+*复核执行：主审计员（P0 逐条亲核 + 新发现亲核 + 扫描/回归实测）+ 子审计 1 路（P1×11 取证）。仍为只读取证，未改动仓库文件。*
