@@ -157,6 +157,9 @@ def test_manual_no_signal_example_matches_gate():
 
     m = re.search(r"孤立短[^。\n]*?「([^」]+)」", manual)
     assert m, "手册应给出「孤立短查询」反例（引号内为例句）"
+    # 清 15s 热缓存再判：否则同进程内前序命中查询会把反例带成 session_followup_hot
+    # （prefilter.py:193-195 单向短路——注释明示该常量可按测试口径重置）
+    prefilter._LAST_GATE_DECISION.update({"time": 0.0, "query": "", "needs_memory": False})
     verdict = prefilter.relevance_check(m.group(1))
     reason = verdict["reason"] if isinstance(verdict, dict) else getattr(verdict, "name", verdict)
     assert reason == "no_signal", f"文档反例 {m.group(1)!r} 实测判 {reason}，与文档口径不符"

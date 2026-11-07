@@ -62,12 +62,13 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 
 | 字段 | 说明 |
 |---|---|
-| `context` | 注入上下文（含樊篱包裹的记忆正文）；无命中/超短查询 → 无此键 |
+| `context` | 注入上下文（含樊篱包裹的记忆正文）；检索未发生（空/超短查询、闸门 no_signal、零命中、异常）时返回**画像兜底帧**——只有 `context` 键（樊篱声明 + 常驻画像），零命中且事件落库成功时还带 `event_id`（见下），无 `evidence` / `request_id` |
 | `evidence` | 被注入记忆的 `[{id, content, score}]` |
 | `event_id` | 本次检索事件标识，**回执/否决凭据**；零命中且事件落库成功时同样带出（v0.68 票 01——DLP 否决零命中轮时插件据此构造 `retrieval_veto` 帧） |
 | `request_id` | 本次注入调用整体标识（回执对账用，ADR-0049）；零命中分支不生成，如实不带 |
 
-**命中为空 → `{event_id}`（事件已落库时；与 REST/MCP 零命中分支同口径，v0.68 票 01）。查询过短（≤ `SHELL_HOOK_MIN_CHARS`，默认 3，不落事件）或异常 → `{}`。**
+**命中为空（事件落库成功）→ 画像兜底帧且带出 `{event_id}`（与 REST/MCP 零命中分支同口径，v0.68 票 01）；查询过短（≤ `SHELL_HOOK_MIN_CHARS`，默认 3，不落事件）或异常 → 画像兜底帧无 `event_id`（`_persona_only`，v0.65 D-04）：仅含 `context`（樊篱声明 + 常驻画像），无 `evidence` / `request_id`；未配置常驻画像时才退回 `{}`。**
+宿主侧判定「这轮有没有真实检索」应看 `event_id` 是否存在，不要用 `context` 键存在与否判断。
 
 ### 2.2 `dialogue`
 
@@ -121,7 +122,10 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 | `SHELL_HOOK_TIMEOUT` | 2s | `query` / `backfill` / `retrieval_veto` / `checkpoint` / `checkpoint_write` |
 | `SHELL_HOOK_DIALOGUE_TIMEOUT` | 30s | `dialogue`（含 LLM 提取） |
 
-- **超时只返回空帧**：部分结果比无结果更危险（误导 LLM），故超时 → `{}`。
+- **超时按通道分型**（v0.65 D-04）：写与簿记通道（`dialogue` / `backfill` /
+  `retrieval_veto` / `checkpoint` / `checkpoint_write`）超时 → `{}`——部分结果比
+  无结果更危险（误导 LLM）；`query` 通道例外：带 `_query_fallback` 兜底，超时
+  降级返回画像帧（置顶画像无检索依赖，不该被检索超时连带丢弃）。
 - **异常一律静默降级**：hook 绝不抛异常、不拖垮宿主。
 - **畸形/非对象 JSON 帧**（`null`/`[1,2]`/`123`/`"str"`）→ `{}`。常驻模式下逐个降级，**进程不被打死**。
 - **单宿主故障隔离**：任一宿主的坏帧/超时不影响其他宿主与服务端。

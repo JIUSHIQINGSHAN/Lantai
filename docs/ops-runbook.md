@@ -45,7 +45,8 @@ Prometheus 直接抓即可；该端点走 API Key 鉴权，非回环部署记得
 ```powershell
 python scripts/reflect_observation_status.py
 ```
-输出示例：`窗口内合格定时运行天数：4/7（14 天窗口）`——需要 7 天中至少 3 天有定时运行。
+输出示例：`窗口内合格定时运行天数：4/7（14 天窗口）`——需要 14 天滑动窗口
+（`REFLECT_OBSERVATION_WINDOW_DAYS=14`）内至少 7 天（`REFLECT_OBSERVATION_REQUIRED_RUNS=7`）有定时运行。
 
 **解决**：
 - 确保 API 服务器持续运行：`python api_server.py`（全天）
@@ -75,8 +76,9 @@ for r in c.execute('select cast(extractor_confidence as int) b, count(*) n from 
 
 **解决**：
 - 沙汰（ADR-0026）已修复：闲聊直接 rejected，不再排队
-- 若仍有大量低置信度候选，可调高 `CANDIDATE_MIN_CONFIDENCE`（当前 0.0，建议 0.15）
-- 在 `.env` 中设置 `CANDIDATE_MIN_CONFIDENCE=0.15`
+- 若仍有大量低置信度候选，可调高 `CANDIDATE_MIN_CONFIDENCE`（出厂默认已 0.15；
+  调高则更多低置信度候选被拦在待审队列外，注意与入库量的权衡——宁 miss 不脏写）
+- 需要更严/更宽时在 `.env` 中覆盖 `CANDIDATE_MIN_CONFIDENCE`
 
 ### 3. 召回回路空转
 
@@ -91,7 +93,10 @@ python scripts/recall_health.py
 
 **解决**：
 - 确保 Hermes 运行中加载了 `lantai-hook` 插件
-- 触发词检查：短句（≤15 字）且无触发词（记得/上次/回忆/帮我查/之前/忘记/以前/曾经）不触发检索
+- 触发词检查（gate 放行口径，ADR-0028 放宽）：纠错、自我指代、明确回忆
+  （记得/忘记/回忆/查…记忆）、指代延续（上次/之前/继续）命中即检索；
+  短查询含技术词（≥4 字）或成问句（≥5 汉字）也放行；都不命中才 no_signal。
+  「帮我查」单独出现**不在**触发正则内（「查…记忆」形状才算明确回忆）
 
 ### 4. 服务未启动
 
