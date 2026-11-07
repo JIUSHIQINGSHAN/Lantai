@@ -287,6 +287,16 @@ def graph_augmented_search(
         principal=principal,
     )
 
+    # 4. 更正闸（v0.68 票 13 病灶 5）：graph_expand 的 primary_results 与 /search
+    # 同形漏 superseded 行（探针 `.scratch/_t13_probe_graph_expand_supersede.py`
+    # 实锤 primary ids 含被取代旧值；立案探针读错返回键误判未复现，本轮实测翻案）。
+    # 种子提取保持取自未过滤集——图扩召行为逐字不变，闸只管输出面；本函数无
+    # 时效视图参数，无需 temporal 跳过分支；开关沿用 SHELL_HOOK_SUPERSEDED_GUARD
+    # （闸本体自检，与 /search、MCP、shell_hook 同一开关）。
+    from lantai.retrieval.supersede import _apply_supersede_guard
+
+    primary_results = _apply_supersede_guard(primary_results, query)
+
     return {
         "query": query,
         "primary_results": primary_results,

@@ -56,6 +56,19 @@ def search(
         results = result
     # ACL：检索结果按绑定 lane 集收窄（宁 miss 不放行未绑定 lane）
     results = filter_results_by_lanes(results, ctx.allowed_lanes)
+    # 更正闸（v0.68 票 13）：REST `/search` 是更正闸消费方普查的第三缺口——
+    # shell_hook 注入面（PR #30）、MCP handle_search（票 02）、context.py SQL
+    # 过滤（票 02）都已挂闸，本面此前新旧两条裸正文并列返回（探针
+    # `.scratch/_v068_probe_ticket13_rest_supersede.py` 实锤）。闸位对齐票 02
+    # mcp 半步：filter_results_by_lanes 之后、_try_log/build_evidence 之前——
+    # 「新值在场」按最终可见集判定，被丢旧值不进检索事件/回执/evidence；
+    # 时效视图（as_of/as_of_recorded/time_from/time_to 任一在场）是历史查询面，
+    # 整段跳过、逐字旧行为。开关沿用 SHELL_HOOK_SUPERSEDED_GUARD（跨面复用债
+    # 已在票 02 评审登记，不新增开关不还债）。
+    if not any((req.as_of, req.as_of_recorded, req.time_from, req.time_to)):
+        from lantai.retrieval.supersede import _apply_supersede_guard
+
+        results = _apply_supersede_guard(results, req.query)
     event_id = _try_log(req, results, latency_ms, gate, session_id=ctx.session_id, principal=ctx)
     from lantai.retrieval.evidence import build_evidence
 
