@@ -188,7 +188,9 @@ cognition/mcp）并入本分支（合并提交 `0fef5cc5`，零冲突，两侧�
 独立复验会话逐项复核 §9 收口声明：`audit_honesty.py` 重跑与在库 `audit.json`
 **逐项全等**（inventory 1728 / core 1083 / real-smoke 658 / hollow 0 /
 mocked-only 1=`_digest_dir` 接缝豁免 / indirect-only 321 / never-executed 103；
-verdict 集合与 pkg_counts 亦全等，可复现）。对 §7 四项死代码做真正全仓 grep
+verdict 集合与 pkg_counts 亦全等，可复现）。（勘误：该全等仅在其时点成立——
+在库快照生成早于本轮 2 例补测入库，HEAD 口径为 real-smoke 659 / never-executed
+102，见 §11。）对 §7 四项死代码做真正全仓 grep
 （含 `scripts/`、根目录脚本、hermes-plugin 与非 .py 文件）复核：
 
 - **撤回一项误报**：`build_scene_navigation_lines` 并非死代码——
@@ -219,3 +221,35 @@ verdict 集合与 pkg_counts 亦全等，可复现）。对 §7 四项死代码�
 分支现领先 origin/master 7 提交（票 01 补强、报告入库、流 A 合并、§9 增补、
 本轮误报改正 `13f4bb7c` 与格式 `89b00fb9`、本节），落后 0，工作树干净；
 push/PR 仍留维护者闸门。
+
+## 11. 第七次复验（2026-11-07）：§10 快照陈旧勘误 + 门禁复跑
+
+独立复验会话重跑 `audit_honesty.py`，与在库 `audit.json` **不全等**，逐项 diff
+定位：唯一判定差异为 `build_scene_navigation_lines`（§7 勘误的主角）never-executed
+→ real-smoke（real-smoke 658→659 / never-executed 103→102），其余 1082 项
+verdict、pkg_counts 与 inventory/core 总数逐项全等。
+
+**根因**：在库 `audit.json` 生成于 08:56（第六次复验当时之树），晚于它的 2 例
+scene 导航冒烟（`13f4bb7c`，tests/ 09:13）入库后，快照即陈旧一步——§10 的
+「逐项全等」在其时点成立，但补测提交使本函数转入 real-smoke，系补强的自洽
+翻转，非新缺口。在库 `audit.json` 已再生至 HEAD 状态（本节数字即 HEAD 口径）。
+审计面其余复核全部吻合：mocked-only 唯一残留仍为 `_digest_dir` 文件系统接缝
+豁免；never-executed 102 项构成 = 票 02 坐实死代码 3 项 + 已登记工具盲区
+（`lantai.cli.mcp.main` / LoopGuard×4 / `_GuardState` / `_configure_stdio_utf8`）
++ 私有 helper 与 DTO `to_dict`（§6 口径不进 §2 判定表）。
+
+诚实性复核：8 个补强测试文件全部逐行通读，确认真输入直调 + 真库断言，
+patch 仅落 settings 开关、向量库接缝（单层）与 conftest 既定外部替身；
+8 文件 `--collect-only` 恰 22 例，直跑 3.13s 全绿。
+
+门禁复跑（干净树，与 §10 同一 HEAD）：
+
+- **全量 pytest：3080 passed / 5 skipped / 0 failed**（5m31s，exit 0，
+  venv=主检出 `.venv`，`PYTHONPATH=.`），与 §10 数字一致。
+- 隔离护栏台账零新增：模块级残留仍为既有 8 通道（_guard_instance / kaogong /
+  consolidation / routes_health / llm gate×2 / cehou / param runtime，例证
+  全部来自既有测试文件），绑定残留仅 test_3a 申报哨兵；8 个补强测试文件在
+  两本台账全文零出现（全量日志 grep 计数均为 0）。
+
+分支现领先 origin/master 8 提交、落后 0、工作树干净；push/PR 仍留维护者
+闸门。票 02 仍 open / needs-triage（3 项死代码待维护者裁决）。
