@@ -175,3 +175,97 @@ def test_perf_bench_only_valid_scenario_runs_report(tmp_path):
     assert rc == 0
     report = json.loads((tmp_path / "baseline.json").read_text(encoding="utf-8"))
     assert set(report["60"]["scenarios"]) == {"hybrid_search"}
+
+
+def test_perf_bench_write_stream_continues_across_resolves(tmp_path):
+    """票 12 缺口 1：写场景唯一序号流挂在 ctx 上——timed 轮之后 profile 轮重新
+    _resolve_call 必须续接新内容，而不是从 0 重放已摄取内容（重放会被
+    rawdocument.content_hash 在场检查吸收成「复用文档」，profile 热点表把
+    真实摄取热点系统性低估成去重分支）。"""
+    import re
+    import sqlite3
+
+    mod = _load_bench_module()
+    db_file = tmp_path / "env" / "bench.db"
+    with mod.bench_env(20, seed=5, workdir=tmp_path / "env") as ctx:
+        timed = mod._resolve_call(ctx, "ingest_add_memory", 3)
+        for i in range(3):
+            timed(i)
+        profile = mod._resolve_call(ctx, "ingest_add_memory", 3)
+        for i in range(3):
+            profile(i)
+
+    conn = sqlite3.connect(f"file:{db_file.as_posix()}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT content FROM rawdocument WHERE content LIKE '基线摄取样本%'"
+        ).fetchall()
+    finally:
+        conn.close()
+    seqs = sorted(int(re.search(r"基线摄取样本(\d{5})", r[0]).group(1)) for r in rows)
+    assert seqs == list(range(6)), f"重放发生了：文档序号 {seqs}（应为 0..5 各一次）"
+
+
+def test_perf_bench_profile_round_ingests_fresh_content(tmp_path):
+    """票 12 缺口 1 端到端：run_scale(profile=True) 的 profile 轮对写场景续接
+    唯一序号流——RawDocument 行数 = warmup + timed + profile 全部调用数，
+    不因重放被 content_hash 在场检查吸收。"""
+    import sqlite3
+
+    mod = _load_bench_module()
+    workdir = tmp_path / "env"
+    res = mod.run_scale(
+        60,
+        seed=7,
+        iterations_scale=0.15,
+        profile=True,
+        only=["ingest_add_memory"],
+        workdir=workdir,
+    )
+    assert res["profiles"]["ingest_add_memory"], "profile 轮没跑"
+
+    conn = sqlite3.connect(f"file:{(workdir / 'bench.db').as_posix()}?mode=ro", uri=True)
+    try:
+        n_docs = conn.execute(
+            "SELECT COUNT(*) FROM rawdocument WHERE content LIKE '基线摄取样本%'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    timed_iters = max(1, int(60 * 0.15))
+    total_calls = 2 + timed_iters + 10  # warmup + timed + profile 默认 10 迭代
+    assert n_docs == total_calls, (
+        f"RawDocument {n_docs} 行 ≠ 全部 {total_calls} 次调用——profile 轮重放已摄取内容"
+    )
+
+
+@pytest.mark.parametrize(
+    "scenario,prefix",
+    [
+        ("ingest_add_memory", "基线摄取样本"),
+        ("ingest_fastpath", "我叫老周"),
+    ],
+    ids=["extract-path", "fastpath"],
+)
+def test_perf_bench_profile_no_content_replay(tmp_path, scenario, prefix):
+    """票 12 缺口 1：run_scale 的 profile 列表覆盖 ingest_fastpath 后，两条写
+    通道的 profile 轮都不得重放 timed 已摄取内容——断言落在真库行数：
+    timed（warmup 2 + iters max(1, int(60*0.1))=6）共 8 条全新文档；
+    profile 默认 10 迭代同为全新内容时共 18 条。"""
+    import sqlite3
+
+    mod = _load_bench_module()
+    workdir = tmp_path / "env"
+    mod.run_scale(20, seed=5, iterations_scale=0.1, only=[scenario], profile=True, workdir=workdir)
+    assert (workdir / "bench.db").exists(), "workdir 缝未生效——真库落点不存在"
+    conn = sqlite3.connect(workdir / "bench.db")
+    try:
+        (n_docs,) = conn.execute(
+            "SELECT COUNT(*) FROM rawdocument WHERE content LIKE ?", (f"{prefix}%",)
+        ).fetchone()
+    finally:
+        conn.close()
+    assert n_docs == 18, (
+        f"rawdocument {prefix}* 共 {n_docs} 行（期望 18 = timed 8 + profile 10）——"
+        "profile 轮在重放已摄取内容"
+    )
