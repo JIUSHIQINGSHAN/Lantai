@@ -216,13 +216,29 @@ class TestTimeoutFallbackFenced:
 
         monkeypatch.setattr("lantai.retrieval.hybrid.embed", _slow_hybrid_embed)
         monkeypatch.setattr(mod, "relevance_check", lambda q, **kw: {"needs_memory": True})
+        # intent 强制 fact_lookup：conftest 假 chat_json 会让 hybrid_search 在
+        # intent 短路零命中（不调 embed、墙内走完正常路径）——「超时」只剩 jieba
+        # 冷启动的自然耗时来撞墙。强制走检索路径后慢替身必被调、墙必触发。
+        monkeypatch.setattr(
+            "lantai.retrieval.intent.chat_json",
+            lambda *a, **k: {"intent": "fact_lookup", "reason": "test"},
+        )
 
         import io
         import json
 
         raw = json.dumps({"query": "这是一个超过三字符的慢查询", "type": "query"})
+        start = time.perf_counter()
         out = mod._handle_one(raw)
+        elapsed = time.perf_counter() - start
         ctx = out.get("context", None)
+        # 降级路径要真的走到（双确认，均与机器快慢无关）：
+        # 1) 降级签名——_query_fallback 不带 event_id；正常路径（含零命中分支）
+        #    必带。原本只断返回内容，墙失效等满替身走正常路径时内容断言照样绿
+        #    （降级与否都绿），「超时降级」名不副实。
+        assert "event_id" not in out, f"走了正常路径而非超时降级: {sorted(out)}"
+        # 2) 慢替身 1s 在真实检索链上、墙 0.05s：墙内降级必然远早于 1s 返回。
+        assert elapsed < 1.0, f"未在超时墙内降级（等满慢替身）: {elapsed:.2f}s"
         # 无画像时降级返回 {} 而非 {"context": ""}
         assert out == {} or ctx, f"无画像超时降级应返回 {{}} 或非空 context，实际: {out!r}"
         # 关键断言：context 不为空串
@@ -243,11 +259,32 @@ class TestTimeoutFallbackFenced:
         )
         monkeypatch.setattr(mod, "relevance_check", lambda q, **kw: {"needs_memory": True})
 
+        # 慢点必须在真实检索链上（同 test_no_persona：shell_hook 内 import 的
+        # embed 无调用点；本用例原本连 hybrid 慢替身都没有——「超时」全靠 jieba
+        # 冷启动的自然耗时撞墙，热身后墙永不触发、用例恒绿）。
+        def _slow_hybrid_embed(texts, timeout=None):
+            time.sleep(1)
+            return [[0.1] * 8]
+
+        monkeypatch.setattr("lantai.retrieval.hybrid.embed", _slow_hybrid_embed)
+        # intent 强制 fact_lookup（同上：短路零命中会让墙永不触发）。
+        monkeypatch.setattr(
+            "lantai.retrieval.intent.chat_json",
+            lambda *a, **k: {"intent": "fact_lookup", "reason": "test"},
+        )
+
         import json
 
         raw = json.dumps({"query": "这是一个超过三字符的慢查询", "type": "query"})
+        start = time.perf_counter()
         out = mod._handle_one(raw)
+        elapsed = time.perf_counter() - start
         ctx = out.get("context", "")
+
+        # 降级双确认（同 test_no_persona_timeout_returns_empty）：正常路径带
+        # event_id 且要等满 1s 慢替身——原内容断言在降级与否两条路径上都绿。
+        assert "event_id" not in out, f"走了正常路径而非超时降级: {sorted(out)}"
+        assert elapsed < 1.0, f"未在超时墙内降级（等满慢替身）: {elapsed:.2f}s"
 
         assert "用户偏好乌龙茶" in ctx, f"超时降级丢失画像: {out!r}"
         assert "<memory_data" in ctx, f"超时降级画像未加围栏: {out!r}"
