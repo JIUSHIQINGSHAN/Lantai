@@ -92,6 +92,10 @@ FAILURE_DIAGNOSIS: dict[str, tuple[str, str]] = {
         "python -m build --wheel --no-isolation --outdir <临时目录>",
     ),
     "Git 状态": ("仓库状态", "git status --porcelain && git tag --list 'v*'"),
+    "命名空间 provenance": (
+        "环境/工具缺失",
+        "echo %PYTHONPATH% 清空后复跑（宿主 PYTHONPATH 渗入）；细项见 docs/release-process.md 第 9 条",
+    ),
     "MCP 默认暴露": (
         "契约/策略违反",
         'python -c "from lantai.cli import mcp; print(len(mcp._get_active_tools()), len(mcp.TOOLS))"',
@@ -502,6 +506,92 @@ def suite_summary_issue(output: str) -> str | None:
             "（要豁免某条评测线就得写成显式白名单，不能靠 skip 蒙过门禁）"
         )
     return None
+
+
+# 票 04：命名空间 provenance 哨兵集——第一方入口 + 套件依赖链最深的三方根。
+_NAMESPACE_PROBE_MODULES = ("lantai", "tests", "pydantic", "sqlmodel", "fastapi")
+
+_NAMESPACE_PROBE_SRC = """\
+import importlib, json, sys
+names = json.loads(sys.argv[1])
+out = {
+    "prefix": sys.prefix,
+    "base_prefix": getattr(sys, "base_prefix", sys.prefix),
+    "modules": {},
+    "errors": {},
+}
+for name in names:
+    try:
+        mod = importlib.import_module(name)
+        out["modules"][name] = getattr(mod, "__file__", None)
+    except BaseException as exc:  # 遮蔽体的任何崩法（ImportError/二进制不兼容）都要如实带出
+        out["errors"][name] = f"{type(exc).__name__}: {exc}"
+print(json.dumps(out))
+"""
+
+
+def _path_under(path: str, base: Path) -> bool:
+    norm = os.path.normcase(os.path.realpath(path))
+    base_norm = os.path.normcase(os.path.realpath(str(base)))
+    return norm == base_norm or norm.startswith(base_norm + os.sep)
+
+
+def namespace_provenance_issues(repo_root: Path, *, env: dict[str, str] | None = None) -> list[str]:
+    """关键 import 的解析落点必须在本仓或活动解释器内（票 04），越界即阻断上传。
+
+    敌意 PYTHONPATH（宿主拉起的会话）从两个位次遮蔽：正式包压命名空间（tests
+    面，conftest 收集即死）、PYTHONPATH 先于 venv site-packages（pydantic 等
+    三方依赖面——实测 hermes venv 的 pydantic 抢解析直接二进制不兼容崩）。
+    CI 跑在干净环境永远探不到这两条，而发布门禁恰恰运行在维护者本机——
+    宿主会话里不拦，就是把「跑在别人的代码上」当绿灯发布。探针故意继承当前
+    环境（要探的就是门禁自己所在的会话）；任何哨兵解析到本仓/活动解释器
+    之外、或 import 即崩，都判红并给出可操作文案（清 PYTHONPATH 复跑）。
+    """
+    run_env = os.environ.copy() if env is None else dict(env)
+    try:
+        proc = subprocess.run(  # noqa: S603
+            [
+                sys.executable,
+                "-c",
+                _NAMESPACE_PROBE_SRC,
+                json.dumps(list(_NAMESPACE_PROBE_MODULES)),
+            ],
+            cwd=str(repo_root),
+            env=run_env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return [f"命名空间 provenance 探针无法执行（{exc}）——跑不动就等于没探，不放行"]
+    payload = None
+    for line in reversed((proc.stdout or "").splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                payload = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+    if payload is None:
+        return [
+            "命名空间 provenance 探针无有效输出（解释器自身被外来环境打崩）："
+            + ((proc.stderr or proc.stdout or "")[-400:])
+        ]
+    issues: list[str] = []
+    bases = [repo_root, Path(payload["prefix"]), Path(payload["base_prefix"])]
+    for name, err in payload["errors"].items():
+        issues.append(f"哨兵 import 失败（外来环境遮蔽/二进制不兼容）：{name} → {err}")
+    for name, file in payload["modules"].items():
+        if file and any(_path_under(file, b) for b in bases):
+            continue
+        issues.append(
+            f"命名空间遮蔽：`{name}` 解析到 {file or '<无 __file__>'}，"
+            "不在本仓或活动解释器内——宿主 PYTHONPATH 渗入，清 PYTHONPATH 后复跑门禁"
+        )
+    return issues
 
 
 def suite_gate_issues(
@@ -1306,6 +1396,17 @@ def main(argv: list[str] | None = None) -> int:
             check("MCP 默认暴露", False, issue)
         if not mcp_failures:
             check("MCP 默认暴露", True, "默认 tools/list 不等于全量注册表")
+
+    provenance_failures = namespace_provenance_issues(REPO_ROOT)
+    for issue in provenance_failures:
+        check("命名空间 provenance", False, issue)
+    if not provenance_failures:
+        check(
+            "命名空间 provenance",
+            True,
+            "第一方（lantai/tests）与三方哨兵（pydantic/sqlmodel/fastapi）全部解析到本仓"
+            "或活动解释器内——宿主 PYTHONPATH 未渗入门禁会话（票 04）",
+        )
 
     schema_failures = schema_drift_issues(REPO_ROOT)
     for issue in schema_failures:

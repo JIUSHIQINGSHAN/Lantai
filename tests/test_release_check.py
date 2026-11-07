@@ -176,6 +176,7 @@ def _stub_gate_producers(
     )
     monkeypatch.setattr(RC, "legacy_parity_issues_from_payload", lambda payload: list(verdict))
     monkeypatch.setattr(RC, "suite_gate_issues", lambda root, timeout=None: list(verdict))
+    monkeypatch.setattr(RC, "namespace_provenance_issues", lambda root, **kw: list(verdict))
     monkeypatch.setattr(RC, "run_forgetting_gate", lambda root: list(verdict))
 
 
@@ -200,8 +201,9 @@ def test_gate_ledger_is_not_inherited_across_runs(monkeypatch, capsys):
         summaries.append(_last_summary(capsys.readouterr().out))
     assert codes == [0, 0], codes
     assert summaries[0] == summaries[1], f"两次运行汇总不同 = 账本跨运行累积：{summaries}"
-    assert "10/10 通过" in summaries[0], summaries[0]
-    assert len(RC.results) == 10, f"账本残留上一轮判定：{RC.results}"
+    # 票 04 起 11 项（新增「命名空间 provenance」）；新增检查项时同步这里的分母。
+    assert "11/11 通过" in summaries[0], summaries[0]
+    assert len(RC.results) == 11, f"账本残留上一轮判定：{RC.results}"
 
 
 def test_lint_gate_missing_ruff_registers_skip(monkeypatch, tmp_path):
@@ -416,6 +418,7 @@ def _stub_other_gate_producers(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(RC, "legacy_parity_issues_from_payload", lambda payload: [])
     monkeypatch.setattr(RC, "suite_gate_issues", lambda root, timeout=None: [])
+    monkeypatch.setattr(RC, "namespace_provenance_issues", lambda root, **kw: [])
     monkeypatch.setattr(RC, "run_forgetting_gate", lambda root: [])
 
 
@@ -979,3 +982,52 @@ def test_suite_gate_blocks_when_nothing_actually_ran(tmp_path):
     assert issues, "全 skip 的空跑必须被门禁拦下，不能当成「全量测试通过」"
 
     assert any("真实通过" in i or "收尾计数行" in i for i in issues), issues
+
+
+# ── 票 04：命名空间 provenance 门禁（攻击模拟三臂）───────────────────────
+
+
+def test_namespace_provenance_clean_env_passes():
+    """干净环境（PYTHONPATH 清空）下五个哨兵全部落在本仓/活动解释器内。"""
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    assert RC.namespace_provenance_issues(RC.REPO_ROOT, env=env) == []
+
+
+def test_namespace_provenance_catches_dependency_binary_shadow(tmp_path):
+    """模拟攻击：PYTHONPATH 里的外来 site-packages 遮蔽第三方依赖 → 门禁必须阻断。
+
+    PYTHONPATH 条目在 sys.path 上先于 venv site-packages，外来 pydantic
+    （遮蔽体 import 即崩）抢在真依赖之前解析——依赖面是修复 tests 正包化
+    之后唯一还敞着的 PYTHONPATH 注入面。
+    """
+    foreign = tmp_path / "foreign-site"
+    (foreign / "pydantic").mkdir(parents=True)
+    (foreign / "pydantic" / "__init__.py").write_text(
+        "raise ImportError('遮蔽体：外来 pydantic 不得被解析')\n", encoding="utf-8"
+    )
+    env = {**os.environ, "PYTHONPATH": str(foreign)}
+    issues = RC.namespace_provenance_issues(RC.REPO_ROOT, env=env)
+    assert issues, "外来依赖遮蔽未被拦截——发布门禁对第三方劫持失守（票 04 红线）"
+    assert any("pydantic" in i for i in issues), issues
+
+
+def test_namespace_provenance_catches_first_party_shadow_pre_fix_world(tmp_path):
+    """tripwire 臂：门禁必须判红「tests 未正包化 + 外来正包」的修复前世界。
+
+    本仓正包化 + cwd 首位后，PYTHONPATH 直塞假一方包打不进来（实测：连
+    sitecustomize 的 sys.path.insert(0) 都会被 -c 的 cwd 迟插入顶到第 2 位）——
+    一方包哨兵的 tripwire 价值在**回归锁**：重建票 04 的病灶世界（受控假仓
+    无 tests/__init__.py 的命名空间形态 + 外来正式 tests 包），门禁必须报
+    `tests` 解析越界。删掉本仓 tests/__init__.py 的回归等价于此世界。
+    """
+    fake_repo = tmp_path / "repo"
+    (fake_repo / "lantai").mkdir(parents=True)
+    (fake_repo / "lantai" / "__init__.py").write_text("", encoding="utf-8")
+    (fake_repo / "tests").mkdir()  # 刻意不带 __init__.py——命名空间形态
+    shadow = tmp_path / "shadow"
+    (shadow / "tests").mkdir(parents=True)
+    (shadow / "tests" / "__init__.py").write_text("", encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(shadow)}
+    issues = RC.namespace_provenance_issues(fake_repo, env=env)
+    assert issues, "修复前世界（一方命名空间 + 外来正包）未被门禁判红——tripwire 失守"
+    assert any("`tests`" in i for i in issues), issues
