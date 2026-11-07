@@ -225,3 +225,19 @@
 - 票 10/11/13/14 状态不变、无维护者批注；合并随行预告不扩大（PR #35 仅新增文件，与本流分支零交叠）。
 
 本流 agent 侧继续保持收口：票 10（两项决策）、票 11（落点）、票 13（三选一）、票 14（落点/命名形式）全部等维护者批注。
+
+## 十一、增量审计（2026-11-07 第六轮：master 前进 2 个首父提交，PR #34/#36）
+
+第五轮基线 `b2c941a0` 之上 master 新增 2 个首父合并提交（`c91ab8f6` merge PR #34、`8175a745` merge PR #36，合计 11 个可达提交，16 文件 +1130/-39）：PR #34 收口 v0.68 票 05（MCP 入口三处断线：launcher/bat/verify 统一唯一入口 `lantai.cli.mcp:main`），并带 v0.68 票 07（add 工具 media_url 接线）、票 13（REST `/search` 与 graph_expand primary 面套更正闸）、票 15（拾遗补救扫描补 lifecycle 过滤）；PR #36 收口硬墙超时轮孤儿检索事件（`retrieval_log` 新增 `mark_abandoned` + `shell_hook._run_with_timeout` 新增 `_on_abandon`，巡检 2026-11-07 12:00）。对本增量做同口径核查：
+
+**结论：无 P0/P1，总体评级对增量保持 ✅（文档可发布性不回退）；发现集中在「两侧重复修复分叉」与「随行缺口扩大」，全部归票 14/票 10 记账，agent 侧不代修。**
+
+- **E-1（P2，合流协调——本流分支与 master 对同一批病灶各落一版修复）**：本流票 01/02/03（P0-3/P0-8 代码侧）与 master v0.68 票 05/07 是同一批病灶的两侧修复，交叠面从第四轮预告的 3 文件涨到 **5 文件**：`CHANGELOG.md`、`lantai/cli/mcp.py`、`launch_mcp.bat`、`launcher_mcp.py`、`scripts/verify_lantai.py`。其中 launcher/bat **语义分叉**：分支版保留 venv 候选 graft（`.venv` 优先、`.venv-audit` 兜底，把 site-packages 注入 sys.path）；master 版彻底不 graft（非项目 venv 如实死于可解释的 ModuleNotFoundError——graft 外来 venv 正是 launcher 要防的 Hermes 污染），bat 回落 `python` on PATH。**取侧建议：launcher/bat/verify/mcp.py 一律取 master**（master verify 是分支超集：Shell Hook 子进程 `encoding="utf-8"` 修复 + 「数据目录」改信息项 + `main` 可调用核验；`handle_add` 两侧同 hunk 语义等价，`params.get("media_url", "")` vs `or ""`）；分支侧丢代码版、保文档票修复（矩阵/手册/交接文档 master 增量未触碰，P0 文档修复仍只在本分支）。`docs/host-hook-protocol.md` 本轮增量未再动——第四轮预告的该文件冲突源自更早的 §2.1/§2.5 随行（分支 P1-1/P1-2 修复 vs master 票 01 增补），该冲突预告仍然成立、与本轮无关。
+- **E-1b（P2，随 E-1 产生的合流后假记载义务）**：分支 `CHANGELOG.md:18` 票 01-09 补记条目明文「venv 候选 `.venv` 优先、旧名 `.venv-audit` 兜底」——master 实现已移除该行为；合流时若原样保留该句，`[Unreleased]` 收口成发布历史后即为假记载。必须随取侧改写该句（或整条并入 master 票 05 条目、文档修复明细另列）。审计报告 §七 P0-3 的同款表述属 dated 历史记载，不改。
+- **E-2（P2，CHANGELOG 随行缺口扩大，归票 14 D-2 补记）**：v0.68 票 07/13/15 三个修复均无 `[Unreleased]` 条目；PR #36 hook 修复显式跳过 CHANGELOG（dated 巡检文档自述「为避免冲突，没有改 CHANGELOG.md」）。先例对照：票 05 有条目、2026-11-06 22:00 巡检修复（offload_read）有条目——发布收口前需统一补齐。
+- **E-3（P3，随行缺口，归票 14 D-3/D-5 补记）**：① 更正闸消费面扩大到 REST `/search` 与 graph_expand primary（票 13），使用面随行缺口覆盖面同步扩大——README:173 的 as_of 语义无被推翻（「写在 URL 上被静默忽略、返回当前视图」仍真；时效视图整段跳闸与该口径自洽），仍属补写非纠错；② 超时轮孤儿事件收尾（PR #36）：ADR-0084 状态机 `pending → {acked, missed, vetoed}` **无矛盾**（`mark_abandoned` 走既有 `pending→missed` 转移、只动 pending，与「missed 扫描只认 pending」互恰），但「超时轮就地抹原话置 missed」这一新入口路径在 ADR-0084 与协议文档 §3 均零记载（dated 巡检文档已完整记载），补写点候选：ADR-0084 §2.5 邻位或协议文档 §3 一行；③ 拾遗 lifecycle 过滤（票 15）：ADR-0069/0076 未钉扫描集含 superseded，无被推翻表述，零随行缺口。
+- **测试纪律合格**：5 个新测试文件均真内存库直调被测链路——`test_rest_search_supersede_guard.py`（真路由函数 + 真更正链）、`test_shiyi_supersede_filter.py`（真 `remedy_recall` + 真 `apply_supersede_correction`）、`test_mcp_entry_points.py`（子进程干跑 launcher/verify）、`test_mcp_add_media_url.py`（vision_caption/extract_candidate 外部替身 = AGENTS.md 允许的 LLM mock，`handle_add` + 真 SQLite 真实执行）、`test_hook_timeout_orphan_event.py`（真 `_handle_one` + 真 `mark_abandoned`，仅 `hybrid_search` 换睡过硬墙的替身模拟外部 embed/rerank 慢——被测的超时编排与收尾链路真实执行，在允许边界内）。
+- **巡检 dated 文档（`docs/research/兰台巡检-2026-11-07-1200.md`，豁免类）**：代码断言静态核对属实（`mark_abandoned` 只动 pending / 抹 `query_text`+`query_norm_hash`+`used_ids` / 置 missed、`_on_abandon` 完成与放弃同锁二选一、QUERY 分支接线 `_query_abandoned`）；其「其余新提交的审计结论」段对 v0.67 票 01 / v0.68 票 01-03 的复核与第四轮结论互证。其提出的 `scripts/reextract.py --apply` 绕獬豸闸建议属代码面事项、已记账于 dated 文档，非文档一致性缺陷，不另立票。
+- **P2-5 类增量**：本批代码注释/测试 docstring 新增 5+ 处 `.scratch/` 引用（`v0.68-next-window-2026-11/07`、`_v068_probe_ticket13_rest_supersede.py`、`_t13_probe_graph_expand_supersede.py` 等），属票 10 P2-5「克隆侧悬空引用」类增量，归票 10 一并决策。
+
+本流 agent 侧继续保持收口：票 10（两项决策 + P2-5 增量）、票 11（落点）、票 13（三选一）、票 14（落点/命名形式 + 本轮 E-1 取侧、E-1b 改写义务、E-2/E-3 补记）全部等维护者批注。
