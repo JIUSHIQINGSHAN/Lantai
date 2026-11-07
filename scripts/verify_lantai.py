@@ -59,7 +59,7 @@ def main() -> int:
 
     # 2) 代码层
     try:
-        import scripts.mcp_server  # noqa: F401
+        import lantai.cli.mcp  # noqa: F401  现行入口（console script lantai-mcp）
 
         check("MCP server 可导入", True)
     except Exception as e:
