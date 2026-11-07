@@ -194,3 +194,20 @@
 - 回归：`tests/test_release_check.py + test_prefilter.py + test_mcp_default_minimal_exposure.py` **91 passed**（PYTHONPATH 隔离实测）。
 - 存量疑点（钩玄引文「拔萃便适，钩玄提要」非《进学解》原文）开票 13 转 `ready-for-human`：取证与三选一裁决项已备，agent 不代决。
 - 票 10（P2 批量 + 两项维护者决策）、票 11（文档引用路径对账门禁）维持 needs-triage 不动；本流 agent 侧工作至此收口。
+
+## 九、增量审计（2026-11-07 第四轮：原基线上 master 前进 7 提交，v0.68 票 01-03）
+
+本报告原审计对象 `1195d29c`；当日其上 master 新增 7 提交（`22099ac9` 零命中轮检索响应补 event_id → `0295cace` 插件挂载解耦 → `70d60b39` ADR-0084 §2.5 + 协议文档 → `005cf702` 更正闸下沉 `lantai/retrieval/supersede.py` → `5ae6caf3` build() 排除 superseded → `3b1e8d23` MCP search 接闸 → `57cf71a6` RSS/arxiv 摄取挂獬豸闸与密钥检测）。对本增量做同口径核查（文件面 17 个，+1044/-113）：
+
+**结论：无 P0/P1，总体评级对增量保持 ✅（文档可发布性不回退）。**
+
+- 协议层已随行：ADR-0084 §2.5（零命中覆盖洞增补）、`docs/host-hook-protocol.md` §2.1（`event_id`/`request_id` 零命中契约行）随码更新，CHANGELOG 票 01 条目含回归锁明细。
+- 使用面无被推翻的表述：手册（gate 放行口径 / force / as_of）、README:173（as_of 请求体语义）、CONTEXT.md、ops-runbook 对新行为均无失真表述；WHITEPAPER「supersedes 降权」句仍为真且属历史快照（P2-10 待挂横幅）。检索排序（`_apply_supersedes_order`）零改动，既有降权描述不失效。
+- 测试纪律合格：新增 `tests/test_mcp_search_supersede_guard.py`（183 行）/ `test_context_supersede_guard.py`（181 行）/ `test_ingest_xiezhi_gate.py`（301 行）均明示不 mock 被测链路（真内存库 + 真 `handle_search` / 真 `apply_supersede_correction`，仅全局开关走 monkeypatch）；`supersede.py` 四符号自 shell_hook 逐字搬入、既有更正闸测试经别名即其回归锁。
+- 余项（P2/P3，立票 14 + 票 10 补记）：
+  - **D-1（P2）**「更正闸」未登记 CONTEXT.md 词汇表/ADR-0013 §3：v0.68 票 02 后跨 shell_hook 注入面、MCP search、context build 三面使用并出现在日志文案（`lantai/retrieval/supersede.py`）；且系描述性复合词、非传统意象取材，登记形式需裁决。→ 票 10 P2-7 同类，已补记票 10。
+  - **D-2（P2）** v0.68 票 02/03 无 CHANGELOG `[Unreleased]` 条目（票 01 已有），大概率随该流收口自消。→ 票 14 记账。
+  - **D-3（P2）** MCP search 更正闸 / 零命中轮 `event_id` 挂载语义在使用面（手册 search 行、插件文档回执段 `docs/lantai-hermes-plugin.md:22-27`）零随行；均为补写而非纠错。→ 票 14。
+  - **D-4（P3）** 手册「`force` 绕过闸门」与更正闸边界未注明（force 绕拾遗 relevance gate，不绕更正闸——`lantai/cli/mcp.py` handle_search 中 guard 在 force 旁路之外，仅时效视图跳过）。→ 票 14。
+
+**合并随行预告（非缺陷）**：本流分支与本增量交叠 3 文件——`CHANGELOG.md`（双方都在 `[Unreleased]` Fixed 顶部插入，冲突几乎必然）、`docs/host-hook-protocol.md`（票 05 回执延后段 vs §2.1 契约行，相邻不同 hunk）、`lantai/cli/mcp.py`（票 03 `handle_add` vs 增量 `handle_search`，不同函数，可自动合并）。合流时按此预估工作量；使用面补写（D-3/D-4）在合流后落笔，避免两头改。
