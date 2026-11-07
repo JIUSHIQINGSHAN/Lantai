@@ -985,3 +985,52 @@ push 部分，按本轮任务书口径执行；tag 上传闸门不涉及）。
   仅记录；⑦ `.scratch` 快照不入库意味着「逐字节复现」依赖本地工件存活，
   换机/换树后首次 cmp 必然失配（需一次基线对齐再生）——历轮未点破，
   本轮点破，属工具口径的已知边界而非新病。
+
+
+## 26. 第二十二次复验（2026-11-07）：审计逐字节复现（§25 刷新快照首次直接全等成立）+ 门禁单轮全绿零瞬态 + PR #38 状态经 API 核实
+
+独立复验会话按 §25 收尾后的 HEAD（`f4b231f3`）冷启动，任务书原样重发（重入）。
+环境检查（开工即查）：ambient `PYTHONPATH` 污染**第四度在场**（§23/§24/§25 同族
+第四次遭遇），全程显式置空执行，零用例假绿未遂；git 树干净，origin/master 零
+推进（`8175a745`），无需合并。
+
+- **审计复现（逐字节一致，历轮首次无失配直接全等）**：`audit_honesty.py`
+  重跑（venv=主检出 `.venv`、`-I` 隔离、输出落仓库外临时目录）与在库
+  `audit.json` `cmp` **全等**——§25 的「归因 → 刷新快照」处置在本树成立
+  （本树与 §25 验证树同为 `f4b231f3`，无新提交，符合 §25 教训的预期）。
+  counts：inventory 1729 / core 1083 / real-smoke 659 / hollow 0 /
+  mocked-only 1=`_digest_dir` 接缝豁免 / indirect-only 321 / never-executed 102。
+- **诚实性复核（9 补强文件中 3 个全文重读 + 全量直跑）**：重读
+  `test_worker_entry_smoke.py` / `test_mcp_stdio_entry_smoke.py` /
+  `test_scene_navigation_smoke.py`，确认真输入直调 + 真库断言、零内部逻辑
+  mock（worker 入口空库真执行 + 超龄三态断言；stdio 子进程真管道 + 敌意编码
+  下静默契约与中文回路；scene 导航真库行 heat 降序 + 双降级路径）；9 文件
+  直跑 **24 passed（14.90s，exit 0，落在门禁收笔后 17:23:01–17:23:22，
+  本轮全程错峰零并发窗）**。
+- **全量门禁（单轮全绿零瞬态）**：**3119 passed / 5 skipped / 0 failed**
+  （693.59s / 11m33s，exit 0 直调捕获，venv=主检出 `.venv`，`PYTHONPATH=`
+  空值；墙钟 17:10:55–17:22:41，落文件 `.scratch/v0.68-test-honesty/logs/
+  baseline-r22.log`）与 §24/§25 同树同数；时长居 §24（602s）与 §25（719s）
+  之间，同机仅主检出巡检会话（任务书明示）并发工作，无并行门禁窗，无瞬态。
+- **护栏台账（残留通道全等核验，§24⑤ 口径当轮留存）**：模块级残留恰为既有
+  **8 通道**，逐通道计数与 §25 台账全等（`_guard_instance`×30、kaogong×19、
+  consolidation×18、routes_health×8、llm gate×2 通道各×8、cehou×7、
+  param runtime×1）；跨模块绑定残留仅 test_3a 申报哨兵；9 个补强文件名在
+  门禁日志 grep 计数全为 0。6 warnings 逐族核对：4×`test_release_check`
+  的 fail-closed 档位 UserWarning（safe/none/typo-value 等负路径刻意产出）+
+  2×`test_promoter_rollback_vector` 的 pydantic 序列化 UserWarning，全部
+  既有、非新增（§25 同口径）。
+- **PR 状态核实（历轮首次经 GitHub API 落账）**：PR #38 open、head
+  `f4b231f3` 与本地 HEAD 全等、base master、mergeable_state=clean。
+  取证弯路（如实）：`head` 过滤参数前两次误用 `user:repo:branch` 与
+  `user/Lantai:branch` 形态均返回空数组，改列全量 PR 清单后确认——
+  API 空数组不等于「无 PR」，过滤形态错误与「unknown revision 被
+  `2>/dev/null` 吞掉」（§23）同属「查询静默失败被当结论」家族。
+- **本会话零新增缺口（如实声明）**：审计未发现新的 mocked-only / hollow /
+  假绿同族问题，零新增测试——不为「有产出」造无意义的用例（§25 口径维持）。
+- **本次没能查清/没敢动（如实，全部沿袭 §25 七项）**：① 票 02 三项死代码
+  留维护者裁决；② ambient `PYTHONPATH` 病根在宿主环境，只置空缓解；③
+  ambient 值第二段的依赖遮蔽面未逐包排查；④ 工具对 exec 副本/子进程形态
+  的盲区维持 §6 文档化边界；⑤ 任务书报告落点与实际路径口径差异维持 §23④；
+  ⑥ `audit_honesty.py` 不带 `--out` 会写 CWD 的行为未改；⑦ `.scratch`
+  快照不入库的换树首次 cmp 失配边界维持 §25⑦ 口径。
