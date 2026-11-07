@@ -23,7 +23,9 @@ JSON-RPC 分发）；`db.get_session` 的计数包装是**透传探针**（内�
 
 from __future__ import annotations
 
+import importlib.util
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -33,7 +35,6 @@ from sqlmodel.pool import StaticPool
 
 from lantai.api.app import app
 from lantai.cognition.causal import CausalEngine
-from lantai.cli.mcp import handle
 from lantai.core.auth import Principal, get_current_user
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem
@@ -42,6 +43,20 @@ pytestmark = pytest.mark.mcp_full_surface()
 
 _FAN = 3
 _LAYERS = 4  # 简单路径数 = fan**layers = 81；修复后应 ≤ 路径帽（票面建议 64）
+
+_MCP_PATH = Path(__file__).parent.parent / "lantai" / "cli" / "mcp.py"
+
+
+def _load_mcp():
+    """exec 副本加载 mcp 模块（test_jiaochou_scan_clamp.py 同款范式）。
+
+    服务层/引擎经 sys.modules 解析到唯一真实现，被测链路不 mock；副本只隔离
+    mcp 模块自身的模块级单例（_guard_instance），不给隔离护栏台账添新例证。
+    """
+    spec = importlib.util.spec_from_file_location("mcp_server_gewu_bounds", _MCP_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 # 语义对照臂的小图（与既有 engine smoke 同构）：root→trigger→target 与 alt→target
 _SMALL_GRAPH = {
@@ -252,6 +267,7 @@ def test_mcp_counterfactual_rejects_unbounded_depth(cf_env):
     """
     from lantai.cognition.causal import COUNTERFACTUAL_MAX_DEPTH_LIMIT
 
+    mod = _load_mcp()
     for bad in (0, -1, COUNTERFACTUAL_MAX_DEPTH_LIMIT + 1, 10**9):
         req = {
             "jsonrpc": "2.0",
@@ -266,7 +282,7 @@ def test_mcp_counterfactual_rejects_unbounded_depth(cf_env):
                 },
             },
         }
-        resp = handle(req)
+        resp = mod.handle(req)
         assert resp is not None and "error" in resp, f"max_depth={bad} 被静默接受"
         assert resp["error"]["code"] == -32602, f"拒绝语义不是 invalid params：{bad}"
 
@@ -286,7 +302,7 @@ def test_mcp_counterfactual_valid_depth_roundtrip(cf_env):
             },
         },
     }
-    resp = handle(req)
+    resp = _load_mcp().handle(req)
     assert resp is not None and "result" in resp
     assert "error" not in resp
     data = json.loads(resp["result"]["content"][0]["text"])
