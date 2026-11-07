@@ -122,22 +122,34 @@ patch `digest_worker._digest_dir` 是**文件系统接缝**（纪律允许的文
   判 real-smoke（工具因 `_get_guard()` 返回值上的方法调用无法静态解析而漏记）。
 - **DTO / dataclass / `to_dict` / 私有 helper**：不进核心表；`_digest_dir` 等
   私有函数的 patch 见 §3 口径注。
+- **调用方 grep 范围**：死代码判定的 prod_calls grep 初版只扫 `lantai/` +
+  `api_server.py`，会把 `scripts/` 里的装配点误判成零调用方——§7 的
+  `build_scene_navigation_lines` 误报即源于此；triage 工具已修
+  （扩为 `lantai/` + `scripts/` + 根目录 `*.py`）。
 - 工具脚本与全部判定明细（含每个函数的证据行）：
   `.scratch/v0.68-test-honesty/tools/audit_honesty.py` + `audit.json`
   （`.scratch` 不入库，重跑即可再生）。
 
 ## 7. 死代码发现（另立票）
 
-以下核心函数**产品代码零调用方**（grep 全仓 + 调用图双重确认），不是测试问题：
+以下核心函数**产品代码零调用方**（grep + 调用图双重确认），不是测试问题：
 
 | 函数 | 位置 |
 | --- | --- |
 | `KnowledgeLifecycleManager.scan_and_retire` | `lantai/cognition/lifecycle.py:106` |
 | `evaluate_and_evolve` | `lantai/services/evolution.py:8` |
-| `build_scene_navigation_lines` | `lantai/services/scene_service.py:444` |
 | `autodream_cron_days` | `lantai/workers/autodream_worker.py:19`（docstring 称「零硬编码」，实际无人读它，scheduler 直接用 settings） |
 
 → `.scratch/v0.68-test-honesty/issues/02-dead-code-findings.md`（needs-triage）。
+
+**勘误（2026-11-07 第六次复验）**：本节初稿曾把 `build_scene_navigation_lines`
+（`lantai/services/scene_service.py:444`）也列为死代码，系**误报**：triage 的
+prod_calls grep 只扫 `lantai/` + `api_server.py`，漏掉 `scripts/`——实际
+`scripts/shell_hook.py:433 → _build_scene_lines → 本函数`（import 在 277 行）
+自 v0.6（`2b41b47b`，2026-08-11）就是宿主 hook 检索响应的活链路。上表已剔除
+该项，其余 3 项经真正全仓 grep（含 scripts/、hermes-plugin 与非 .py 引用）
+复核仍零调用方。误报函数已补真冒烟（`tests/test_scene_navigation_smoke.py`，
+2 例），triage 工具 grep 范围已修（见 §6）。
 
 ## 8. 门禁
 
