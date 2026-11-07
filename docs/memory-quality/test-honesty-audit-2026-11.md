@@ -516,3 +516,42 @@ patch 仅落 settings 开关、向量库接缝（单层）与 conftest 既定外
   「准备第十三次复验」，与本段同号；本段先行落库（12:53），若其复验段后落，
   由其按 §16 先例改号，编号保持单调。
 
+## 18. 第十四次复验（2026-11-07）：审计逐字节复现 + 门禁一轮全绿零瞬态
+
+独立会话逐项复验收口声明。环境：origin/master 零推进（领先 17 / 落后 0），
+无合并事项；开工至收笔工作树零并行提交（§17 之后仓库静默），开工进程表取证
+无并发 pytest。
+
+按 §1 口径全量重验：
+
+- **审计复现**：`audit_honesty.py` 重跑与在库 `audit.json` **逐字节一致**
+  （`cmp` 全等）：inventory 1729 / core 1083 / real-smoke 659 / hollow 0 /
+  mocked-only 1=`_digest_dir` 接缝豁免 / indirect-only 321 / never-executed
+  102。另核明细：mocked-only 唯一条目 `lantai.workers.digest_worker._digest_dir`
+  （digest_worker.py:165，私有函数），self-patched 仅
+  `test_digest_ownership.py::digest_owned_env:75`，5 个测试文件经调用栈间接
+  真实执行，与 §3 口径注记逐项一致。
+- **诚实性复核（8 文件全部逐行通读）**：全部真输入直调 + 真库断言（真
+  worker 入口空库执行 + 超龄归档三态断言、真 HTTP 路由打 `/ingest/run`、
+  真 JSON-RPC 帧驱动 crystal_promote 并断言 promoted/swarm_shared/leads_to
+  落库、真单例缓冲不 patch 取件器与持久化、FactAtomic+FactEntity 真库物理
+  删除计数、MemoryScene 真行 heat 降序）。patch 仅落 settings 开关
+  （SECRET_GUARD_MODE / DIALOGUE_MIN_CHARS）与向量库单层接缝
+  （test_vector_item_wrappers，docstring 注明不叠 param_env 双层撤销栈病根），
+  MCP 帧测试走 exec 副本规避 `_guard_instance` 台账通道，其余文件自身零
+  patch。8 文件 `--collect-only` 恰 22 例，直跑 22 passed（3.25s）。
+- **票 02 复核**：3 项死代码（`scan_and_retire` / `evaluate_and_evolve` /
+  `autodream_cron_days`）全仓 grep（含 scripts/、hermes-plugin、根目录与
+  非 .py 文件）仅定义行与报告文档命中，零调用方，维持 needs-triage。
+- **全量门禁（一轮全绿，零瞬态）**：**3117 passed / 5 skipped / 0 failed**
+  （5m23s，exit 0，venv=主检出 `.venv`，`PYTHONPATH=.`）与 §17 数字一致
+  （树自 §17 收口仅增文档，测试面零变化）。隔离护栏台账零新增：模块级残留
+  恰为既有 8 通道（_guard_instance / kaogong / consolidation / routes_health /
+  llm gate×2 / cehou / param runtime，例证全部来自既有测试文件；seam3 例证
+  已随第二波合并为 86 工具版，与 §17 记录一致），绑定残留仅 test_3a 申报
+  哨兵；全量日志（`-q` 口径）对 8 个补强文件名全文 grep 计数均为 0。门禁窗
+  13:15:21–13:20:44（日志 mtime 推算），全程无并发 pytest、无让位事项。
+- 分支状态：本节落库后领先 origin/master 18 提交、落后 0、工作树干净；
+  push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项死代码待维护者
+  裁决）。
+
