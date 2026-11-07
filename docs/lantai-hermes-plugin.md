@@ -12,17 +12,22 @@
 
 对话写通道语义（`lantai/ingestion/dialogue.py`）：
 - 「记住：X」/ 自我声明 / 偏好表达 → fastpath 直通
-- 闲聊（过短/社交结束语）→ 候选进待审队列（不静默丢弃）
+- 闲聊（过短/社交结束语）→ 直接 rejected（沙汰，ADR-0026，不进待审队列）
 - LLM 提取低置信度 / 上游失败 → 兜底候选入队（不丢数据）
 
 来源链与注入回执（P0 票02，2026-09）：
 - 会话缓冲条目携带 `turn`（会话内 1-based 序号）；flush 时每条
   `{"type":"dialogue","text","session_id","turn"}` 透传 → 候选 `session_id`
   列 + `provenance.origin_turn`（缺会话留空、缺轮次 None，不补 0 不猜）
-- 检索注入成功后按响应 `event_id` + `evidence[].id` 发
-  `{"type":"backfill"}` → `RetrievalEvent.used_ids` 落库（弱标注「已注入」）；
+- 注入回执**延后到 `on_session_end`**（v0.67 票 01，ADR-0084 §2.1）：pre_llm_call
+  把响应 `event_id` + `evidence[].id` 挂到会话缓冲条目上，flush 时该轮**未被否决**
+  才发 `{"type":"backfill"}` → `RetrievalEvent.used_ids` 落库（弱标注「已注入」）。
+  轮中途崩溃 → 回执保持 pending → 服务端 `mark_missed_receipts` 如实置 missed
+  （宁 miss 不脏写）；被宿主否决的轮次改发 `{"type":"retrieval_veto"}` 作废检索
+  事件，不刷假注入计数；无会话缓冲的轮次（无 session）保持立即回执旧行为。
   回执失败静默，不影响注入
-- serve 协议新增 `{"type":"backfill","event_id","used_ids"}` 动作
+- serve 协议动作：`{"type":"backfill","event_id","used_ids"}` 与
+  `{"type":"retrieval_veto","event_id"}`（否决作废，ADR-0084）
 
 安全边界（插件绝不阻塞/搞崩 Hermes）：
 - 子进程启动失败/失活 → 静默降级
@@ -32,7 +37,8 @@
 ## 部署
 
 ```bash
-# 默认 Hermes home = C:/Users/Asus/AppData/Local/hermes
+# 默认 Hermes home 自动探测：HERMES_HOME 环境变量 → Windows %LOCALAPPDATA%\hermes → 其他 ~/.hermes
+# （scripts/install_hermes_plugin.py::get_default_hermes_home）
 python scripts/install_hermes_plugin.py
 # 自定义路径：
 python scripts/install_hermes_plugin.py --hermes-home <path>
@@ -45,7 +51,8 @@ python scripts/install_hermes_plugin.py --hermes-home <path>
 ## 验证
 
 1. 重启 Hermes 桌面版，日志出现 `on_session_end 对话写入已注册`
-2. 与 Hermes 聊一轮（说几句有价值的话），结束后：
+2. 与 Hermes 聊一轮（说几句有价值的话；纯闲聊会被沙汰为 rejected、不进待审队列，
+   这是 ADR-0026 的预期行为而非部署失败），结束后：
    - `GET /candidates/pending` 应出现候选（或已直通进记忆库）
    - `GET /usage` 每日新增数增长
    - 候选应带 `session_id` 与 `provenance.origin_turn`（来源链贯通）

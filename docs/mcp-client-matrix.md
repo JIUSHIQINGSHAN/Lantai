@@ -6,20 +6,27 @@
 
 ## 统一前提
 
-- 服务端：`scripts/mcp_server.py`（标准 MCP stdio JSON-RPC，协议 `2024-11-05`）
-- 启动命令（与 cwd 无关，脚本内部已把仓库根加入 sys.path；Windows 已强制 UTF-8）：
+- 服务端入口：`lantai-mcp` console script（= `lantai/cli/mcp.py:main`，标准 MCP stdio
+  JSON-RPC，协议 `2024-11-05`）。旧入口 `scripts/mcp_server.py` 已于 `bea001c1` 删除，
+  不要再引用。
+- 启动命令（需项目 venv：`uv sync` 后 lantai 为 editable 安装；未装时 cd 到仓库根
+  `python -m lantai.cli.mcp` 亦可。Windows 已强制 UTF-8）：
   ```bash
-  python C:\Users\Asus\Desktop\记忆\scripts\mcp_server.py
+  python -m lantai.cli.mcp    # 或 venv Scripts 里的 lantai-mcp
   ```
 - 数据目录：`LANTAI_HOME`（或 `REMEMBRANCE_HOME`）环境变量；未设置时用仓库默认目录
-- 双形态分工：Shell Hook 做读（上下文注入），MCP 做写/查（search/add/raw_add/
-  rollback/conflicts/candidates 等）
+- **工具档位（fail-closed）**：不设 `LANTAI_MCP_PROFILE`（或设空、设了不认识的值）时
+  只暴露 `HERMES_CORE_TOOLS` 核心 6 工具：`search` / `add` / `feedback` /
+  `offload_read` / `mem_recent` / `core_memory_get`；调用档外工具一律 `-32602`。
+  唯一全量入口是显式 `LANTAI_MCP_PROFILE=full`（96 项注册表）。
+- 双形态分工：Shell Hook 做读（上下文注入），MCP 做写/查（默认档 6 工具已覆盖
+  search/add/feedback；`raw_add`/`rollback`/`conflicts`/`candidates` 等需 full 档）
 
 ## 各客户端接入
 
 ### Claude Code（已验证命令形态）
 ```bash
-claude mcp add lantai -- python C:\Users\Asus\Desktop\记忆\scripts\mcp_server.py
+claude mcp add lantai -- <venv>\Scripts\python.exe -m lantai.cli.mcp
 claude mcp list          # 确认 lantai 已注册
 ```
 
@@ -29,9 +36,9 @@ claude mcp list          # 确认 lantai 已注册
 {
   "mcpServers": {
     "lantai": {
-      "command": "python",
-      "args": ["C:\\Users\\Asus\\Desktop\\记忆\\scripts\\mcp_server.py"],
-      "env": { "LANTAI_HOME": "C:\\Users\\Asus\\Desktop\\记忆" }
+      "command": "<venv>\\Scripts\\python.exe",
+      "args": ["-m", "lantai.cli.mcp"],
+      "env": { "LANTAI_HOME": "<数据目录>" }
     }
   }
 }
@@ -44,8 +51,8 @@ Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户
 {
   "mcpServers": {
     "lantai": {
-      "command": "python",
-      "args": ["C:\\Users\\Asus\\Desktop\\记忆\\scripts\\mcp_server.py"]
+      "command": "<venv>\\Scripts\\python.exe",
+      "args": ["-m", "lantai.cli.mcp"]
     }
   }
 }
@@ -55,25 +62,28 @@ Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户
 经 `scripts/install_hermes_plugin.py` 部署 lantai-hook 插件；MCP 由插件内嵌配置指向
 同一 server。
 
-## 工具清单（40）
+## 工具清单（full 档节选，全量 96 项以 `tools/list` 实测为准）
+
+> 下表为 full 档（`LANTAI_MCP_PROFILE=full`）注册表的节选；默认档部署只有
+> [统一前提](#统一前提)列出的核心 6 工具，表内其余工具调用即 `-32602`。
 
 | 工具 | 用途 |
 |---|---|
-| search / add / feedback | 检索 / 写入（add 支持 media_url 图片感知，v0.10 目识）/ 有用性反馈；search 可选 `session_id` 参数（来源链落检索事件，P0 票02） |
-| backfill | 弱标注回填（检索事件 → 实际使用的记忆 id） |
-| add_dialogue | 对话写通道（提炼候选，闲聊入队） |
-| candidates_pending / candidate_review | 待审队列查看 / 裁决（approve 仅生成 pending 提案，最终写入需再批准提案） |
-| raw_add | 原文直存（verbatim 零 LLM，sha256 幂等） |
-| rollback | 按 Checkpoint 回滚记忆 |
-| conflicts_list / conflict_resolve | 冲突账本查看 / 裁决 |
+| search / add / feedback | 检索 / 写入（add 支持 media_url 图片感知，v0.10 目识，content 二选一）/ 有用性反馈；search 可选 `session_id` 参数（来源链落检索事件，P0 票02）——三者均在默认档 |
+| backfill | 弱标注回填（检索事件 → 实际使用的记忆 id）；需 full 档，REST 端点为主力通道（见 used-ids 指南） |
+| add_dialogue | 对话写通道（提炼候选；闲聊沙汰为 rejected，ADR-0026） |
+| candidates_pending / candidate_review | 待审队列查看 / 裁决（approve 仅生成 pending 提案，最终写入需再批准提案）；需 full 档 |
+| raw_add | 原文直存（verbatim 零 LLM，sha256 幂等）；需 full 档 |
+| rollback | 按 Checkpoint 回滚记忆；需 full 档 |
+| conflicts_list / conflict_resolve | 冲突账本查看 / 裁决；需 full 档 |
 | scene_get / scenes_list | 场景层（ADR-0012）查询 |
 | recall_report | 零召回率监控报告（最近 N 天聚合） |
-| get_digest | 今日记忆盘点（摘要 + 五项统计） |
+| get_digest | 今日记忆盘点（摘要 + 统计） |
 | mem_help / mem_sync / mem_create_skill | mem: 命令式维护（帮助 / 资产刷新 / 沉淀 Skill） |
 | obsidian_sync | Obsidian 笔记同步（原文直存 + [[双链]] 实体/边沉淀） |
-| offload_read | 读取卸载全文（长记忆经上下文卸载后，按 memory_id 取回完整原文） |
+| offload_read | 读取卸载全文（长记忆经上下文卸载后，按 memory_id 取回完整原文）——默认档 |
 | wiki_read | 记忆 Wiki 下钻（先看 index/overview，再按 slug 取页面正文） |
-| mem_recent | 最近记忆（只读，按更新时间倒序） |
+| mem_recent | 最近记忆（只读，按更新时间倒序）——默认档 |
 | mem_stats | 记忆概览（总数/分布/待审候选/检查点/待审提案，只读聚合） |
 | mem_health | 深度健康检查（SQLite + 向量存储，不触发外部 LLM） |
 | autodream_report / autodream_trigger | 蒸馏预演（dry-run 不写库）/ 执行一轮蒸馏（落待审提案，人工裁决才应用） |
@@ -82,7 +92,7 @@ Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户
 | crystals_list / crystals_detect / crystal_decide | 技能结晶：候选项列表 / 检测（可 dry-run）/ 裁决（approve 需 steps） |
 | reflect_run | 执行一轮反思（健康扫描 → 提案 → 裁决，高置信 auto-apply） |
 | mem_usage | 用量统计（最近 N 天每日新增记忆数，缺日补零） |
-| core_memory_get | 核心记忆块只读（identity/task/policy） |
+| core_memory_get | 核心记忆块只读（identity/task/policy）——默认档 |
 | verbatim_search | 原文直存专用检索（FTS+向量，不进混合召回） |
 | graph_view | 记忆关系星图（只读）：节点 + MemoryEdge 链接 + lane/relation 统计（v0.9） |
 | recall_chain | 记忆广播链（烽燧，只读）：seed 记忆逐层触发关联记忆（v0.11） |
@@ -90,10 +100,12 @@ Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户
 ## 验证清单（接入后逐条过）
 
 1. `initialize` 返回 `serverInfo.name == "lantai"`、`protocolVersion == "2024-11-05"`
-2. `tools/list` 返回 40 个工具，每个都有 description + inputSchema
+2. `tools/list` 数量按档断言：默认档返回 **6** 个工具；`LANTAI_MCP_PROFILE=full`
+   返回 **96** 个，每个都有 description + inputSchema
 3. `ping` 有响应；`notifications/initialized` 无响应（不报错）
-4. `tools/call search` 传中文 query 返回结果（验证 UTF-8 无乱码）
-5. 用 `raw_add` 写一条原文 → `search` 能召回（验证写读闭环）
+4. `tools/call search` 传中文 query 返回结果（验证 UTF-8 无乱码）——默认档可验
+5. 用 `raw_add` 写一条原文 → `search` 能召回（验证写读闭环）——**需 full 档**
+   （默认档调用 raw_add 即 `-32602`，这不是部署故障）
 6. 无权限错误、超时按各客户端默认（stdio 进程常驻）
 7. `search` 传 `session_id` → 检索事件落 session（`retrieval_event.session_id`
    非空可查；写线活性判据「带 session 的读才算真实会话读」依赖此值，P0 票02）

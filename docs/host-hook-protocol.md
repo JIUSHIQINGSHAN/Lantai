@@ -36,6 +36,8 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 
 一个由本协议实现的新宿主**必须**在调用 hook 时设置 `LANTAI_HOST`，否则拿不到 `additionalContext`，注入静默失效。安装脚本生成的命令已包含该设置。
 
+**运行前置 `API_KEY`（宿主侧必须提供）**：hook 在处理任何帧之前校验 `settings.API_KEY`（环境变量 `API_KEY`），未配置即抛 `HookAuthError` 拒绝运行——单次与 `--serve` 模式都是进程级报错退出，不产出任何响应帧（`scripts/shell_hook.py::assert_hook_api_key_configured`，8d8f7610 起生效）。这是刻意的 fail-closed（错误信息原文「禁止 DEV MODE 回退」），不是可降级的软约束：宿主调用环境必须带 `API_KEY`（与兰台 REST 同源取值），插件通道经继承父进程环境获得。
+
 ---
 
 ## 2. 动作（actions）
@@ -62,12 +64,12 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 
 | 字段 | 说明 |
 |---|---|
-| `context` | 注入上下文（含樊篱包裹的记忆正文）；无命中/超短查询 → 无此键 |
+| `context` | 注入上下文（含樊篱包裹的记忆正文）；检索未发生（超短查询、闸门 no_signal、零命中、异常）时返回**画像兜底帧**——只有 `context` 键（樊篱声明 + 常驻画像，v0.65 D-04）；未配置常驻画像时才无此键 |
 | `evidence` | 被注入记忆的 `[{id, content, score}]` |
 | `event_id` | 本次检索事件标识，**回执/否决凭据**；零命中且事件落库成功时同样带出（v0.68 票 01——DLP 否决零命中轮时插件据此构造 `retrieval_veto` 帧） |
-| `request_id` | 本次注入调用整体标识（回执对账用，ADR-0049）；零命中分支不生成，如实不带 |
+| `request_id` | 本次注入调用整体标识（回执对账用，ADR-0049）；零命中/兜底轮不生成，如实不带 |
 
-**命中为空 → `{event_id}`（事件已落库时；与 REST/MCP 零命中分支同口径，v0.68 票 01）。查询过短（≤ `SHELL_HOOK_MIN_CHARS`，默认 3，不落事件）或异常 → `{}`。**
+**命中为空 → 画像兜底帧 + `event_id`（事件已落库时；与 REST/MCP 零命中分支同口径，v0.68 票 01）。查询过短（≤ `SHELL_HOOK_MIN_CHARS`，默认 3，不落事件）、闸门 no_signal、异常 → 画像兜底帧（无 `event_id`）；未配置常驻画像时以上兜底退回 `{}`。宿主侧判定「这轮有没有真实检索」看 `event_id` 是否存在，不要用 `context` 键存在与否判断。**
 
 ### 2.2 `dialogue`
 
@@ -121,7 +123,7 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 | `SHELL_HOOK_TIMEOUT` | 2s | `query` / `backfill` / `retrieval_veto` / `checkpoint` / `checkpoint_write` |
 | `SHELL_HOOK_DIALOGUE_TIMEOUT` | 30s | `dialogue`（含 LLM 提取） |
 
-- **超时只返回空帧**：部分结果比无结果更危险（误导 LLM），故超时 → `{}`。
+- **超时按通道分型**（v0.65 D-04）：写与簿记通道（`dialogue` / `backfill` / `retrieval_veto` / `checkpoint` / `checkpoint_write`）超时 → `{}`——部分结果比无结果更危险（误导 LLM）；`query` 通道例外：超时降级返回画像兜底帧（置顶画像无检索依赖，不该被检索超时连带丢弃）。超时轮的迟到检索事件由收尾回调就地抹原话置 `missed`（巡检 2026-11-07：宿主手里没有 event_id，回执与否决都够不着，原话不能永久挂库）。
 - **异常一律静默降级**：hook 绝不抛异常、不拖垮宿主。
 - **畸形/非对象 JSON 帧**（`null`/`[1,2]`/`123`/`"str"`）→ `{}`。常驻模式下逐个降级，**进程不被打死**。
 - **单宿主故障隔离**：任一宿主的坏帧/超时不影响其他宿主与服务端。
@@ -153,7 +155,7 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 
 **响应形状差异**：Hermes 直接消费兰台自有形状（`context`/`evidence`/`event_id` 顶层）；Claude Code 与 Codex 走 `hookSpecificOutput.additionalContext` 通道，兰台元数据（`event_id`/`request_id`/`evidence`）作为**顶层兄弟字段**带出——宿主侧 wrapper 捕获 `event_id` 供稍后回执。未知顶层字段在 CC `UserPromptSubmit` 上被静默忽略（仅记 debug 日志），不报错；**仅 `Stop` 事件严格校验**，本协议不用该事件。
 
-**写路径结果不翻译**：`backfill`/`dialogue`/`checkpoint*` 的控制面应答（含 `receipt_status`）原样返回——包成 `additionalContext` 会抹掉宿主侧所需的字段。
+**写路径结果不翻译**：`backfill`/`dialogue`/`checkpoint_write` 的控制面应答（含 `receipt_status`）原样返回——包成 `additionalContext` 会抹掉宿主侧所需的字段。`checkpoint`（读）不在此列：其应答 `{"context": ...}` 是注入类帧，与 `query` 同样被翻译（底本注入本就面向上下文；判定口径在实现里就是「有非空 `context` 键才翻译」，见 `lantai/integrations/host_adapters.py::adapt_response`）。
 
 ---
 
