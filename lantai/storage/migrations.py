@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 37
+TARGET_SCHEMA_VERSION = 38
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -773,6 +773,47 @@ def _migrate_v37(conn) -> None:
     )
 
 
+def _migrate_v38(conn) -> None:
+    """v37 -> v38: corememoryblock (block, namespace, user_id) 唯一约束（票 23）。
+
+    并发首写曾按「SELECT 判空 → INSERT」双插平行行（红测 F5a）。建索引前先
+    去重：同 (block, namespace, user_id) 保留 version 最高（并列取 id 最大，
+    稳定确定）的一行——幽灵行从未被 .first() 口径稳定寻址，留新不留旧；
+    user_id IS NULL 的老行不参与去重（SQLite UNIQUE 对 NULL 视为互异，老库
+    多行 NULL 属主不受影响）。老 schema 无此表时静默早退（同 v37 守卫：
+    表由模型 create_all 建出，届时 __table_args__ 的唯一约束随表自带）。
+    """
+    if not _table_exists(conn, "corememoryblock"):
+        return
+    try:
+        cur = conn.execute(
+            """
+            DELETE FROM corememoryblock
+            WHERE user_id IS NOT NULL
+              AND id NOT IN (
+                SELECT id FROM (
+                  SELECT id, ROW_NUMBER() OVER (
+                    PARTITION BY block, namespace, user_id
+                    ORDER BY version DESC, id DESC
+                  ) AS rn
+                  FROM corememoryblock
+                  WHERE user_id IS NOT NULL
+                )
+                WHERE rn = 1
+              )
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_corememoryblock_block_ns_user
+            ON corememoryblock (block, namespace, user_id)
+            """
+        )
+        logger.info("Migrated v38: corememoryblock 唯一约束（票 23），去重 %s 行", cur.rowcount)
+    except Exception as exc:
+        logger.warning("迁移 v38 corememoryblock 唯一索引创建跳过: %s", exc)
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -810,6 +851,7 @@ MIGRATIONS = [
     (35, _migrate_v35),
     (36, _migrate_v36),
     (37, _migrate_v37),
+    (38, _migrate_v38),
 ]
 
 

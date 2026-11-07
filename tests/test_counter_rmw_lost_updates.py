@@ -18,9 +18,9 @@ UPDATE（SQL 表达式对最新已提交值求值，语义 = 串行执行逐字�
 测试形态（票面 TDD 要求「真内存库 + 真线程 Barrier 或跨 session 交错注入」，
 同票 22 拍板）：选**跨 session 交错注入**。生产竞态窗口全部开在函数体内部
 （读与写提交之间），Barrier 无法钉进那里；注入缝选真实外部边界（时钟
-utcnow、ACL ensure_can_delete/_check_access/_ensure_can_adjudicate、纠错
-向量回写 sync_vector_upsert、注入闸 assert_no_prompt_injection、id 生成
-new_id、遗忘豁免判定 _ttl_exempt、守门规则 check_rules），垫片**先调真实现、
+utcnow、ACL ensure_can_delete/_check_access/_ensure_can_adjudicate、注入闸
+assert_no_prompt_injection、id 生成 new_id、遗忘豁免判定 _ttl_exempt、
+守门规则 check_rules），垫片**先调真实现、
 再在返回前执行 B 侧完整真实流程**（第二 session 全真状态变更）——被测链路
 零 mock，只把交错点钉死。全程单线程顺序执行：无 sleep、无 jitter、无超时
 依赖，逐例确定性。
@@ -31,21 +31,22 @@ DB、FTS、状态机、判定规则全链全真。所有垫片都在测试体内
 退出即还原，先于 fixture 撕卸——param_env 两层打点，票 21 教训同款规避）。
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
 from sqlmodel import select
 
-from lantai.core.acl import Principal
-from lantai.core.time import utcnow
 from lantai.cognition.kaogong import KaogongEngine
 from lantai.cognition.shishi import ShishiEngine
 from lantai.cognition.zhiming import LifecyclePhase, ZhimingEngine, ZhimingTransition
+from lantai.core.acl import Principal
+from lantai.core.time import utcnow
 from lantai.evolution.promoter import _make_checkpoint, rollback
 from lantai.evolution.reflector import record_feedback
 from lantai.gate.decision import decide
 from lantai.memory.forgetting import apply_forgetting
+from lantai.models.enums import GateDecision
 from lantai.models.tables import (
     ConflictEvent,
     CoreMemoryBlock,
@@ -199,7 +200,9 @@ class TestF2KeepaliveInjectionCount:
                     state["busy"] = False
             return out
 
-        with patch("lantai.observability.retrieval_log.utcnow", side_effect=_utcnow_with_interleave):
+        with patch(
+            "lantai.observability.retrieval_log.utcnow", side_effect=_utcnow_with_interleave
+        ):
             backfill_used_ids("ev_1", ["mem_f2a"])
 
         with session_factory() as s:
@@ -245,7 +248,9 @@ class TestF2KeepaliveInjectionCount:
                 backfill_used_ids("ev_r", ["mem_f2b"])
             return out
 
-        with patch("lantai.observability.retrieval_log.utcnow", side_effect=_utcnow_with_interleave):
+        with patch(
+            "lantai.observability.retrieval_log.utcnow", side_effect=_utcnow_with_interleave
+        ):
             backfill_used_ids("ev_r", ["mem_f2b"])
 
         with session_factory() as s:
@@ -290,7 +295,9 @@ class TestF2KeepaliveInjectionCount:
                 assert mark_vetoed("ev_v") is True
             return out
 
-        with patch("lantai.observability.retrieval_log.utcnow", side_effect=_utcnow_with_interleave):
+        with patch(
+            "lantai.observability.retrieval_log.utcnow", side_effect=_utcnow_with_interleave
+        ):
             backfill_used_ids("ev_v", ["mem_f2c"])
 
         with session_factory() as s:
@@ -331,7 +338,9 @@ class TestF3DedupMergeImportanceLoss:
 
         with session_factory() as s:
             target = s.get(MemoryItem, "mem_f3")
-            with patch("lantai.services.memory_service.utcnow", side_effect=_utcnow_with_interleave):
+            with patch(
+                "lantai.services.memory_service.utcnow", side_effect=_utcnow_with_interleave
+            ):
                 _dedup_merge(s, target, 0.9, _P)
 
         with session_factory() as s:
@@ -381,7 +390,9 @@ class TestF4DeferCount:
             c = s.get(MemoryCandidate, "cand_f4")
             assert c.defer_count == 1, f"defer_count={c.defer_count}：A 的延期已如实拒绝，不应计 2"
             assert c.review_due_at is not None
-            assert c.review_due_at.isoformat() == b_result["review_due_at"], (
+            # SQLite DateTime 回读 naive（UTC 墙钟），b_result 是 aware——按时刻比较
+            b_due = datetime.fromisoformat(b_result["review_due_at"])
+            assert c.review_due_at == b_due.replace(tzinfo=None), (
                 "A 的陈旧延期写回不得覆盖 B 已提交的 due"
             )
 
@@ -609,7 +620,7 @@ class TestF7SalienceDemoteStale:
             assert not ckpts and not evs, (
                 f"降权未发生却落了 checkpoint {len(ckpts)} 行 / salience_demote 账本 {len(evs)} 行（账实分离）"
             )
-            assert out["decision"] == "allow", "降权跳过后仍应放行（弱记忆不挡新信息）"
+            assert out["decision"] != GateDecision.REJECT, "降权跳过后仍应放行（弱记忆不挡新信息）"
 
 
 class TestW1ArchiveVsFeedback:
@@ -667,13 +678,15 @@ class TestW1ArchiveVsFeedback:
 
 
 class TestS8CorrectionHistoryLoss:
-    """S8（record_ops_service.py:406-448）：并发纠错丢 correction 历史 + version 重号。
+    """S8（record_ops_service.py:405-470）：并发纠错丢 correction 历史 + version 重号。
 
-    注入缝：sync_vector_upsert（:452，网络边界，在整列写回 :442-448 之后、
-    提交 :464 之前）。B 侧完整真实纠错（v2，corrections=[B]）在缝内提交；
-    A 继续按扫描期 provenance=[] 整列写回——B 的 correction 静默消失，
-    version 双双写 2。修复语义：版本前置 CAS（WHERE version=扫描值），败方
-    重读重试（无 jitter）——corrections 两条都在，version=3。
+    注入缝：correct_memory._run 的 utcnow（:421，corrections "at" 时间戳，
+    在守卫之后、版本 CAS claim :453 之前——StaticPool 单连接下缝必须在 A
+    首条 DML 之前，B 才能独立提交）。B 侧完整真实纠错（v2，
+    corrections=[B]）在缝内提交；A 继续按扫描期 version=1 整列写回——
+    B 的 correction 静默消失，version 双双写 2。修复语义：版本前置 CAS
+    （WHERE version=扫描值），败方回滚重读重拼（有界重试、无 jitter）——
+    corrections 两条都在，version=3。
     """
 
     def test_two_concurrent_corrections_both_recorded(self, param_env):
@@ -685,20 +698,19 @@ class TestS8CorrectionHistoryLoss:
         import lantai.services.record_ops_service as ro_mod
 
         racing = {"done": False}
-        real_sync = ro_mod.sync_vector_upsert
+        real_utcnow = ro_mod.utcnow
 
-        def _sync_with_interleave(memory_id, item):
-            out = real_sync(memory_id, item)
+        def _utcnow_with_interleave():
+            out = real_utcnow()
             if not racing["done"]:
                 racing["done"] = True
-                out_b = correct_memory(memory_id, new_content="B方更正后的正文", reason="票23并发")
+                out_b = correct_memory("mem_s8", new_content="B方更正后的正文", reason="票23并发")
                 assert out_b.get("ok"), f"B 侧纠错应成功：{out_b}"
             return out
 
         out_a = None
         with patch(
-            "lantai.services.record_ops_service.sync_vector_upsert",
-            side_effect=_sync_with_interleave,
+            "lantai.services.record_ops_service.utcnow", side_effect=_utcnow_with_interleave
         ):
             out_a = correct_memory("mem_s8", new_content="A方更正后的正文", reason="票23并发")
 

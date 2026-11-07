@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from ulid import ULID
 
@@ -23,6 +24,7 @@ from lantai.core.time import utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import CoreMemoryBlock
 from lantai.storage import db
+from lantai.storage.cas import atomic_update
 
 VALID_BLOCKS = frozenset({"identity", "policy", "task"})
 
@@ -156,16 +158,23 @@ class ShishiEngine:
                         f"CoreMemoryBlock '{block}' in namespace '{namespace}' is sealed in Shishi vault and immutable"
                     )
 
-                new_version = (row.version or 1) + 1
-                row.content = content
-                row.version = new_version
-                row.updated_at = utcnow()
-                # 编码签名与锁定元信息至 agent_id
                 lock_flag = ":sealed:immutable" if is_immutable else ":sealed"
-                row.agent_id = f"sha256={digest}{lock_flag}"
-                s.add(row)
+                # 票 23：版本号库端自增——两路并发封存各 +1 都落账（红测 F5b）；
+                # content/签名/锁定元信息同语句原子（末写者胜）。
+                atomic_update(
+                    s,
+                    CoreMemoryBlock,
+                    row.id,
+                    values={
+                        "content": content,
+                        "version": CoreMemoryBlock.version + 1,
+                        "updated_at": utcnow(),
+                        "agent_id": f"sha256={digest}{lock_flag}",
+                    },
+                )
                 s.commit()
                 s.refresh(row)
+                new_version = row.version
                 target_id = row.id
             else:
                 new_version = 1
@@ -184,8 +193,35 @@ class ShishiEngine:
                     updated_at=utcnow(),
                 )
                 s.add(row)
-                s.commit()
-                s.refresh(row)
+                try:
+                    s.commit()
+                except IntegrityError:
+                    # 票 23：并发首写撞 (block, namespace, user_id) 唯一约束——
+                    # 败方重读既有行按更新路收敛（末写者胜），不再双插双行；
+                    # 重读行可能是他人加锁的 sealed 行，不可变检查重验。
+                    s.rollback()
+                    row = s.exec(stmt).first()
+                    if row is None:
+                        raise
+                    if row.agent_id and ":sealed:immutable" in str(row.agent_id) and not is_admin:
+                        raise PermissionError(
+                            f"CoreMemoryBlock '{block}' in namespace '{namespace}' is sealed in Shishi vault and immutable"
+                        ) from None
+                    atomic_update(
+                        s,
+                        CoreMemoryBlock,
+                        row.id,
+                        values={
+                            "content": content,
+                            "version": CoreMemoryBlock.version + 1,
+                            "updated_at": utcnow(),
+                            "agent_id": encoded_agent,
+                        },
+                    )
+                    s.commit()
+                    s.refresh(row)
+                    new_version = row.version
+                    target_id = row.id
 
             fenced = wrap_as_data(content, item_id=f"shishi-{block}", score=1.0)
             vault_block = ShishiVaultBlock(

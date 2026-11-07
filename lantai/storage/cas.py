@@ -50,3 +50,27 @@ def cas_update(
         update(model).where(*conds).values(**values).execution_options(synchronize_session=False)
     )
     return result.rowcount
+
+
+def atomic_update(
+    session: Any,
+    model: type[SQLModel],
+    row_id: str,
+    values: dict[str, Any],
+    *extra_where: Any,
+) -> int:
+    """单语句原子更新（票 23，计数器/相对量写）：SET 里的 SQL 表达式（如
+    `use_count + 1`、`min(1.0, importance + :delta)`）由 SQLite 对**当前已
+    提交值**逐语句求值——两次并发各 +1 都落库，语义与串行执行逐字一致，
+    不存在「读快照 → Python 算术 → 写回」的丢失窗口。WHERE 主键 +
+    extra_where（写时重验判定输入）；rowcount==0 = 谓词不成立（行已消失或
+    判定输入已变），错误语义由调用方决定（跳过 / 冲突 / 重读重试）。
+
+    `synchronize_session=False` 承重理由同 cas_update：ORM 默认按内存陈旧
+    属性评估同步，会把旧值搭下次 commit 顺车写回。rowcount 是唯一事实。
+    """
+    conds = [model.id == row_id, *extra_where]
+    result = session.exec(
+        update(model).where(*conds).values(**values).execution_options(synchronize_session=False)
+    )
+    return result.rowcount

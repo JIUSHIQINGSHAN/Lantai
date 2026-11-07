@@ -22,7 +22,7 @@ from lantai.models.tables import (
 from lantai.retrieval.hybrid import delete_memory_item, index_memory_item
 from lantai.security.injection_guard import check_prompt_injection
 from lantai.storage import db
-from lantai.storage.cas import cas_update
+from lantai.storage.cas import atomic_update, cas_update
 from lantai.storage.fts import sync_fts
 
 # 提案类型白名单（票据 `.scratch/proposal-type-whitelist/`）：
@@ -772,6 +772,20 @@ def rollback(memory_id: str, principal=None) -> dict:
                 # service 契约是 dict（被 worker/eval/MCP 多处消费，形状不能动），
                 # 403 语义在路由边界由 _ok_or_raise 翻译；这里只报「不允许」。
                 return {"ok": False, "reason": f"forbidden: {exc.detail}"}
+        # 票 23：整行写回前先做入口版本 CAS（写阶段第一条 DML，对最新已提交
+        # 状态求值）——checkpoint 选取与写回之间该行被并发纠错/合并推进时，
+        # 陈旧快照会把对方正文整行抹掉、版本倒退重号（红测 rollback）。败方
+        # 如实拒绝（宁 miss 不脏写），重试即按最新版本重新选 prev。
+        entry_version = mem.version or 1
+        claimed = atomic_update(
+            s,
+            MemoryItem,
+            memory_id,
+            {"version": entry_version + 1},
+            MemoryItem.version == entry_version,
+        )
+        if not claimed:
+            return {"ok": False, "reason": "memory changed since checkpoint read; retry"}
         before = mem.model_dump(mode="json")
         # 快照类型还原（票 .scratch/review-fixes-2026-10/issues/04 测试实证的另一根因）：
         # `prev.after` 是 `model_dump(mode="json")` 的 JSON 形态——datetime 字段是
@@ -794,9 +808,11 @@ def rollback(memory_id: str, principal=None) -> dict:
             )
             return {"ok": False, "reason": f"corrupt checkpoint snapshot: {e}"}
         for k, v in restored.items():
-            if hasattr(mem, k) and k != "id":
+            # version 不随快照回写：版本号由上面的入口 CAS 认领（entry+1），
+            # ORM 属性须显式对齐，否则旧值搭 commit 顺车把认领号覆掉（票 23）
+            if hasattr(mem, k) and k != "id" and k != "version":
                 setattr(mem, k, v)
-        mem.version += 1
+        mem.version = entry_version + 1
         mem.updated_at = utcnow()
         s.add(mem)
         _make_checkpoint(s, mem, before, proposal_id="", trigger="rollback")

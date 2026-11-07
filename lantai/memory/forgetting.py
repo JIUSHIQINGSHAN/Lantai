@@ -6,6 +6,7 @@ from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
+from lantai.storage.cas import atomic_update
 
 
 def _lane_strength(importance: float, use_count: int, lane: str) -> float:
@@ -161,8 +162,29 @@ def apply_forgetting(principal=None, *, page_size: int = 500):
                         m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD and not _decay_exempt(m)
                     )
                     if (decay_breached or ttl_expired) and m.status != "archived":
-                        m.status = "archived"
-                        changed = True
+                        # 票 23：归档改条件 UPDATE 写时重验判定输入（status/tier/
+                        # importance/helpful_count/last_used_at）——扫描窗口内被
+                        # 反馈/保活救活的行跳过归档、连衰减分也不写，下轮按新
+                        # 状态重判（红测 W1；archived 没有 undo 入口，宁 miss
+                        # 不脏写）。判定输入未变时衰减分随同语句原子落库。
+                        archived = atomic_update(
+                            s,
+                            MemoryItem,
+                            m.id,
+                            {"status": "archived", "decay_score": new_decay},
+                            MemoryItem.status == "active",
+                            MemoryItem.tier == m.tier,
+                            MemoryItem.importance == m.importance,
+                            MemoryItem.helpful_count == m.helpful_count,
+                            MemoryItem.last_used_at == m.last_used_at,
+                        )
+                        if archived:
+                            changed = True
+                        else:
+                            # 判定输入已变：丢弃本行在本页累积的 ORM 脏属性
+                            # （如上面已赋的衰减分），不搭批间 commit 顺车写回。
+                            changed = False
+                            s.expunge(m)
 
                 if changed:
                     s.add(m)

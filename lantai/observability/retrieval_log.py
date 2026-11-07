@@ -7,6 +7,7 @@
 
 import hashlib
 
+from sqlalchemy import func
 from sqlmodel import select
 
 from lantai.core.ids import new_id
@@ -16,6 +17,7 @@ from lantai.models.tables import MemoryItem, RetrievalEvent
 from lantai.parameters.registry import default_snapshot
 from lantai.parameters.validation import snapshot_hash
 from lantai.storage import db
+from lantai.storage.cas import atomic_update
 
 
 def _norm_hash(query: str) -> str:
@@ -171,6 +173,7 @@ def _touch_keepalive(mem_ids: list[str], *, principal=None, event_id: str = "") 
         return 0
     touched = 0
     try:
+        now = utcnow()
         with db.get_session() as s:
             for mid in mem_ids:
                 item = s.get(MemoryItem, mid)
@@ -191,10 +194,19 @@ def _touch_keepalive(mem_ids: list[str], *, principal=None, event_id: str = "") 
                             "receipt keepalive skipped (not owner): mem=%s ev=%s", mid, event_id
                         )
                         continue
-                item.injection_count = int(item.injection_count or 0) + 1
-                item.last_used_at = utcnow()
-                s.add(item)
-                touched += 1
+                # 票 23：注入计数原子 UPDATE（coalesce+1 对当前已提交值求值，
+                # 两事件并发回执同一条记忆各 +1 都落库，红测 F2a）+ status
+                # 写时重验（保活不是复活）。sync=False 下 ORM 属性不参与写。
+                touched += atomic_update(
+                    s,
+                    MemoryItem,
+                    mid,
+                    {
+                        "injection_count": func.coalesce(MemoryItem.injection_count, 0) + 1,
+                        "last_used_at": now,
+                    },
+                    MemoryItem.status == "active",
+                )
             s.commit()
     except Exception:
         logger.exception("receipt keepalive writeback failed (non-fatal)")
@@ -229,32 +241,54 @@ def backfill_used_ids(
     try:
         bump: list[str] = []
         with db.get_session() as s:
-            ev = s.get(RetrievalEvent, event_id)
-            if not ev:
-                return
-            if ev.receipt_status == "vetoed":
-                logger.info("receipt backfill ignored (vetoed is terminal): ev=%s", event_id)
-                return
-            if request_id and ev.request_id and request_id != ev.request_id:
-                logger.warning(
-                    "receipt request_id mismatch (kept by event_id): ev=%s ev_req=%s got=%s",
+            # 票 23：回执覆盖写改认领式条件 UPDATE（WHERE receipt_status=扫描值），
+            # 败方 rowcount=0 → 回滚后重读最新状态重算增量（重放同一回执不再双计
+            # 保活，红测 F2b；vetoed 终态不再被迟到处回执拉回 acked，红测 F2c）。
+            for _attempt in range(3):
+                ev = s.get(RetrievalEvent, event_id)
+                if not ev:
+                    return
+                if ev.receipt_status == "vetoed":
+                    logger.info("receipt backfill ignored (vetoed is terminal): ev=%s", event_id)
+                    return
+                if request_id and ev.request_id and request_id != ev.request_id:
+                    logger.warning(
+                        "receipt request_id mismatch (kept by event_id): ev=%s ev_req=%s got=%s",
+                        event_id,
+                        ev.request_id,
+                        request_id,
+                    )
+                if not _backfill_owner_ok(ev, principal):
+                    logger.warning("receipt backfill refused (owner mismatch): ev=%s", event_id)
+                    return
+                # 覆盖写之前先取「本轮新增的 used_ids」与「本事件召回过的 id」：
+                # 保活回写只认这两者的交集（重放同一回执不累加、夹带外来 id 不计）。
+                already = set(ev.used_ids or [])
+                recalled = set(ev.result_ids or [])
+                now = utcnow()
+                scanned_status = ev.receipt_status
+                claimed = atomic_update(
+                    s,
+                    RetrievalEvent,
                     event_id,
-                    ev.request_id,
-                    request_id,
+                    {
+                        "used_ids": list(used_ids),
+                        "receipt_status": "acked",
+                        "receipt_at": now,
+                    },
+                    RetrievalEvent.receipt_status == scanned_status,
                 )
-            if not _backfill_owner_ok(ev, principal):
-                logger.warning("receipt backfill refused (owner mismatch): ev=%s", event_id)
+                if claimed:
+                    s.commit()
+                    bump = [mid for mid in used_ids if mid not in already and mid in recalled]
+                    break
+                s.rollback()
+                logger.info("receipt backfill raced; retrying on fresh state: ev=%s", event_id)
+            else:
+                logger.warning(
+                    "receipt backfill abandoned after retries (non-fatal): ev=%s", event_id
+                )
                 return
-            # 覆盖写之前先取「本轮新增的 used_ids」与「本事件召回过的 id」：
-            # 保活回写只认这两者的交集（重放同一回执不累加、夹带外来 id 不计）。
-            already = set(ev.used_ids or [])
-            recalled = set(ev.result_ids or [])
-            ev.used_ids = list(used_ids)
-            ev.receipt_status = "acked"
-            ev.receipt_at = utcnow()
-            s.add(ev)
-            s.commit()
-            bump = [mid for mid in used_ids if mid not in already and mid in recalled]
         # 回执先落库，再单开事务做保活回写（票 03 病灶 2）：回写失败不能倒过来把
         # acked 拖回 pending（ADR-0049 弱标注地基完整性优先）；顺序执行也避免在同一
         # 引擎上套嵌两个 Session——内存库的 StaticPool 共用一条 DBAPI 连接，套嵌会

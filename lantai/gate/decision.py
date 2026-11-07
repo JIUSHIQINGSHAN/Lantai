@@ -1,3 +1,4 @@
+from sqlalchemy import func
 from sqlmodel import select
 
 from lantai.core.acl import viewer_of
@@ -12,6 +13,7 @@ from lantai.llm.client import embed
 from lantai.models.enums import GateDecision
 from lantai.models.tables import ConflictEvent, MemoryCandidate, MemoryItem
 from lantai.storage import db
+from lantai.storage.cas import atomic_update
 from lantai.storage.vector_store import get_vector_store
 
 
@@ -132,7 +134,20 @@ def decide(candidate_id: str, principal=None) -> dict:
                 if m.importance < demote_t:
                     # salience 降权：弱旧记忆不挡新信息——降权（可回滚）+ 账本 resolved + 放行
                     old_imp = m.importance
-                    m.importance = max(0.0, old_imp - demote_step)
+                    # 票 23：降权改条件 UPDATE 写时重验扫描期 importance（判定
+                    # 输入）——扫描到落笔之间被并发反馈抬过线的行跳过降权、
+                    # 不落 checkpoint 与账本（红测 F7），否则账实分离。
+                    claimed = atomic_update(
+                        s,
+                        MemoryItem,
+                        m.id,
+                        {"importance": func.max(0.0, MemoryItem.importance - demote_step)},
+                        MemoryItem.importance == old_imp,
+                        MemoryItem.status == "active",
+                    )
+                    if not claimed:
+                        continue
+                    s.refresh(m)
                     _make_checkpoint(s, m, {"importance": old_imp}, "", trigger="salience_demote")
                     s.add(
                         ConflictEvent(

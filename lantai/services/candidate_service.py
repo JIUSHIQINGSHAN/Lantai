@@ -6,13 +6,14 @@
 
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import func
 from sqlmodel import select
 
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryCandidate
 from lantai.storage import db
-from lantai.storage.cas import cas_update
+from lantai.storage.cas import atomic_update, cas_update
 
 
 def enqueue_rejected(candidate_id: str) -> None:
@@ -205,13 +206,29 @@ def defer_candidate(
         max_due = _aware(c.created_at) + timedelta(days=30)
         if next_due > max_due:
             raise ValueError("candidate cannot be deferred beyond 30 days from creation")
-        c.previous_review_due_at = c.review_due_at
-        c.review_due_at = next_due
-        c.deferred_at = now
-        c.defer_count = int(c.defer_count or 0) + 1
-        c.defer_reason = (reason or "").strip()[:500]
-        s.add(c)
+        scanned_due = c.review_due_at
+        # 票 23：延期改条件 UPDATE（WHERE status + 扫描期 due 写时重验）——
+        # defer_count 库端自增，两路并发各 +1 都落账；due 已被并发方推进时
+        # 败方如实冲突（红测 F4a），不再按旧快照整行覆写。
+        claimed = atomic_update(
+            s,
+            MemoryCandidate,
+            candidate_id,
+            {
+                "previous_review_due_at": scanned_due,
+                "review_due_at": next_due,
+                "deferred_at": now,
+                "defer_count": func.coalesce(MemoryCandidate.defer_count, 0) + 1,
+                "defer_reason": (reason or "").strip()[:500],
+            },
+            MemoryCandidate.status == "pending_review",
+            MemoryCandidate.review_due_at == scanned_due,
+        )
+        if not claimed:
+            s.rollback()
+            raise CandidateStateConflict("candidate due date changed; refresh and retry")
         s.commit()
+        s.refresh(c)
         return {
             "ok": True,
             "candidate_id": candidate_id,
@@ -247,13 +264,30 @@ def undo_candidate_defer(
         if c.previous_review_due_at is None or c.deferred_at is None:
             raise ValueError("candidate has no defer action to undo")
         restored = c.previous_review_due_at
-        c.review_due_at = restored
-        c.previous_review_due_at = None
-        c.deferred_at = None
-        c.defer_count = max(0, int(c.defer_count or 0) - 1)
-        c.defer_reason = ""
-        s.add(c)
+        scanned_due = c.review_due_at
+        # 票 23：撤销延期同 defer——条件 UPDATE 写时重验扫描期 due 与「有可撤销
+        # 项」，并发新延期落在扫描与提交之间时败方如实冲突（红测 F4b），
+        # 不把 B 的延期审计四字段按旧快照抹掉。
+        claimed = atomic_update(
+            s,
+            MemoryCandidate,
+            candidate_id,
+            {
+                "review_due_at": restored,
+                "previous_review_due_at": None,
+                "deferred_at": None,
+                "defer_count": func.max(0, func.coalesce(MemoryCandidate.defer_count, 0) - 1),
+                "defer_reason": "",
+            },
+            MemoryCandidate.status == "pending_review",
+            MemoryCandidate.review_due_at == scanned_due,
+            MemoryCandidate.previous_review_due_at.is_not(None),
+        )
+        if not claimed:
+            s.rollback()
+            raise CandidateStateConflict("candidate due date changed; refresh and retry")
         s.commit()
+        s.refresh(c)
         return {
             "ok": True,
             "candidate_id": candidate_id,

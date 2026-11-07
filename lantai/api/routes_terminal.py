@@ -12,6 +12,7 @@ from lantai.core.logger import logger
 from lantai.core.time import utcnow
 from lantai.services.edge_service import list_edges_batch
 from lantai.services.memory_service import list_memories
+from lantai.storage.cas import atomic_update
 from lantai.storage.db import get_session
 
 router = APIRouter()
@@ -578,9 +579,24 @@ def merge_memories(req: MergeReq, principal=Depends(get_current_user)):
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
 
+        # 票 23：tgt 版本入口 CAS（写阶段第一条 DML，对最新已提交状态求值）——
+        # 读与写回之间 tgt 被并发纠错推进时，陈旧合并会把对方 correction 连同
+        # 正文整体抹掉、版本重号（红测 terminal merge）。败方 409（路由既有
+        # 冲突形状），重试即按最新版本重新合并。
+        tgt_entry_version = tgt.version or 1
+        claimed = atomic_update(
+            session,
+            MemoryItem,
+            tgt.id,
+            {"version": tgt_entry_version + 1},
+            MemoryItem.version == tgt_entry_version,
+        )
+        if not claimed:
+            raise HTTPException(409, "target memory changed concurrently; retry merge")
+
         tgt.content = merged_content
         tgt.importance = new_importance
-        tgt.version = (tgt.version or 1) + 1
+        tgt.version = tgt_entry_version + 1
         src_id, tgt_id = src.id, tgt.id
 
         # FTS 同事务强一致（ADR-0008，票 20）：合并改文 + 删源各同步一份索引。

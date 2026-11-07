@@ -4,6 +4,7 @@ from lantai.core.ids import new_id
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem, MemoryUsageFeedback
 from lantai.storage import db
+from lantai.storage.cas import atomic_update
 
 
 def record_feedback(
@@ -44,11 +45,23 @@ def record_feedback(
         delta = (
             (0.1 if helped else -0.05) + (0.1 if user_accepted else 0) - 0.2 * hallucination_risk
         )
-        mem.use_count += 1
-        mem.helpful_count += int(helped)
-        mem.importance = max(0.0, min(1.0, mem.importance + delta))
-        mem.last_used_at = utcnow()
-        s.add(mem)
+        now = utcnow()
+        # 票 23：计数器改单语句原子 UPDATE——SQL 表达式（use_count+1 /
+        # min(1.0, max(0.0, importance+:delta))）由 SQLite 对当前已提交值求值，
+        # 并发反馈各 +1 都落库；ORM 快照 RMW 会把另一路的计数整批吃掉
+        # （tests/test_counter_rmw_lost_updates.py F1 红测）。
+        atomic_update(
+            s,
+            MemoryItem,
+            memory_id,
+            values={
+                "use_count": func.coalesce(MemoryItem.use_count, 0) + 1,
+                "helpful_count": func.coalesce(MemoryItem.helpful_count, 0) + int(helped),
+                "importance": func.min(1.0, func.max(0.0, MemoryItem.importance + delta)),
+                "last_used_at": now,
+            },
+        )
+        s.refresh(mem)  # 返回值与账面读最新值（sync=False 下 ORM 属性是旧快照）
         fb = MemoryUsageFeedback(
             id=new_id("fb"),
             memory_id=memory_id,

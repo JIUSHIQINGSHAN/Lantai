@@ -3,6 +3,8 @@
 import hashlib
 from datetime import datetime
 
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from lantai.core.ids import new_id
@@ -34,6 +36,7 @@ from lantai.parsing.extractor import extract_candidate
 from lantai.parsing.fastpath import fastpath_check
 from lantai.retrieval.hybrid import index_memory_item
 from lantai.storage import db
+from lantai.storage.cas import atomic_update
 from lantai.storage.fts import sync_fts
 from lantai.storage.vector_store import get_vector_store
 
@@ -117,10 +120,24 @@ def _dedup_merge(s, target: MemoryItem, sim: float, principal=None) -> dict | No
     if not _owns(target, principal):
         logger.info("dedup merge: target %s 不归属当前主体，跳过（宁 miss 不脏写）", target.id)
         return None
-    target.last_used_at = utcnow()
-    target.importance = min(1.0, target.importance + 0.1)
-    s.add(target)
+    now = utcnow()
+    # 票 23：合并保活改原子 UPDATE（min(1.0, importance+0.1) 对当前已提交值
+    # 求值）——快照 RMW 会吃掉并发反馈的 +0.2（红测 F3）。refresh 让调用方
+    # 侧对象回到真值，避免 sync=False 的旧属性搭后续 commit 顺车写回。
+    atomic_update(
+        s,
+        MemoryItem,
+        target.id,
+        values={
+            "last_used_at": now,
+            "importance": func.min(1.0, MemoryItem.importance + 0.1),
+        },
+    )
     s.commit()
+    # refresh 要求 target persistent 于 s——生产调用方（_apply_dedup 链）恒同
+    # session 取行；detached 实例不再兼容：按旧实现 add() 复活提交会把陈旧
+    # 快照冲回库，恰是票 23 要消灭的 RMW，宁如实报错不复活。
+    s.refresh(target)
     return {"dedup_action": "merge", "target_memory_id": target.id, "similarity": round(sim, 4)}
 
 
@@ -596,13 +613,20 @@ def put_core_memory(block: str, content: str, namespace: str = "default", princi
                 (CoreMemoryBlock.user_id == user_id) | (CoreMemoryBlock.user_id.is_(None))
             )
         row = s.exec(stmt).first()
+        # 票 23：版本号改库端自增——两路并发更新各 +1 都落账（红测 F5b 的
+        # 姊妹场景）；content 末写者胜，updated_at/归属补写同语句原子。
+        bump_values = {
+            "content": content,
+            "version": CoreMemoryBlock.version + 1,
+            "updated_at": utcnow(),
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+            "agent_id": agent_id,
+        }
         if row:
-            row.content = content
-            row.version += 1
-            # 归属列补写：老行可能是 NULL（迁移前写的），首次覆写即登记归属
-            row.user_id = user_id
-            row.tenant_id = tenant_id
-            row.agent_id = agent_id
+            atomic_update(s, CoreMemoryBlock, row.id, values=bump_values)
+            s.commit()
+            s.refresh(row)
         else:
             row = CoreMemoryBlock(
                 id=new_id("core"),
@@ -613,9 +637,21 @@ def put_core_memory(block: str, content: str, namespace: str = "default", princi
                 user_id=user_id,
                 agent_id=agent_id,
             )
-        s.add(row)
-        s.commit()
-        s.refresh(row)
+            s.add(row)
+            try:
+                s.commit()
+            except IntegrityError:
+                # 票 23：并发首写撞 (block, namespace, user_id) 唯一约束
+                # （红测 F5a）——败方重读既有行转更新路（末写者胜），不再双插双行。
+                s.rollback()
+                row = s.exec(stmt).first()
+                if row is None:
+                    raise
+                atomic_update(s, CoreMemoryBlock, row.id, values=bump_values)
+                s.commit()
+            # 两路汇合后统一刷新：提交即过期，不刷新时 SQLModel 的
+            # model_dump 走不到惰性加载，返回空 dict（e2e put_core_memory 回归）。
+            s.refresh(row)
         return row.model_dump(mode="json")
 
 

@@ -32,7 +32,7 @@ class LifecycleStatus(StrEnum):
 
 from datetime import datetime
 
-from sqlalchemy import ForeignKey
+from sqlalchemy import ForeignKey, UniqueConstraint
 from sqlmodel import JSON, Column, Field, SQLModel
 
 from lantai.core.time import utcnow
@@ -374,7 +374,15 @@ class CoreMemoryBlock(SQLModel, table=True):
     `/core-memory` 又不带身份，于是 A 写的 policy 块任意登录用户一读就到。
     列由迁移 v25 补；老行留 NULL（「未记录」的事实状态，宁 miss 不脏写），
     读侧对 NULL 属主按调用方身份收窄——见 get_core_memory 的口径说明。
+
+    票 23：`(block, namespace, user_id)` 唯一约束——并发首写按「SELECT 判空
+    → INSERT」曾双插平行行（红测 F5a）；迁移 v38 建同名唯一索引，NULL 属主
+    老行不参与（SQLite UNIQUE 对 NULL 视为互异）。
     """
+
+    __table_args__ = (
+        UniqueConstraint("block", "namespace", "user_id", name="uq_corememoryblock_block_ns_user"),
+    )
 
     id: str = Field(primary_key=True)
     block: str = Field(index=True)
