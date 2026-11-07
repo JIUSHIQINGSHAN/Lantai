@@ -18,9 +18,9 @@
 
 import importlib.util
 import io
-import threading
 import json
 import os
+import threading
 import time
 
 import pytest
