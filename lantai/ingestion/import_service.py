@@ -23,11 +23,10 @@ def normalize_timestamp(value) -> datetime:
     接受 epoch 毫秒（≥1e11）/ epoch 秒（≥1e9）/ ISO-8601 字符串（含 Z/±时区）；
     非法输入抛 ValueError。
 
-    aware（带 UTC 时区）：sqlmodel ≥0.0.47 的 UTCDateTime 对 naive datetime 写库
-    直接 raise ValueError（`process_bind_param` 强制 utcoffset() is not None），
-    导入时间戳要落到 created_at/updated_at，故归一化结果必须带时区。
-    时刻数值不变——只是把 tzinfo 补上；落盘仍是 UTC 文本（UTCDateTime 入库时
-    astimezone(UTC) 去偏移），与历史 naive UTC 库值逐秒一致。
+    aware（带 UTC 时区）：锁定的 sqlmodel 0.0.42 无库级时区防护（naive
+    datetime 写库也静默落库），导入时间戳要落到 created_at/updated_at，
+    恒 aware UTC 是本仓纪律而非库强制。时刻数值不变——只是把 tzinfo 补上；
+    落盘仍是 UTC 文本（SQLite 按分量格式化），与历史 naive UTC 库值逐秒一致。
     """
     if isinstance(value, bool) or value is None:
         raise ValueError("timestamp must be numeric or ISO string")

@@ -69,7 +69,7 @@ class TestExplicitTimeExtraction:
         from lantai.core.time_precision import extract_explicit_event_time
 
         # aware UTC：提取结果要经 provenance → promoter 写入 MemoryItem.event_time，
-        # sqlmodel ≥0.0.47 的 UTCDateTime 拒绝 naive datetime 写库。时刻数值不变。
+        # 恒 aware UTC 是本仓纪律（锁定 0.0.42 无库级防护，naive 静默落库）。时刻数值不变。
         dt, prec = extract_explicit_event_time("系统 2026-09-15 完成迁移")
         assert prec == "day" and dt == datetime(2026, 9, 15, tzinfo=UTC)
         dt, prec = extract_explicit_event_time("2026年9月15日迁的库")
@@ -201,9 +201,9 @@ class TestEventTimeChain:
         with db_module.get_session() as s:
             cand = s.get(MemoryCandidate, res["candidate_id"])
             prov = cand.provenance or {}
-        # 带 +00:00：提取结果为 aware UTC（sqlmodel ≥0.0.47 的 UTCDateTime 拒绝
-        # naive datetime 写库，链路 candidate → proposal → MemoryItem.event_time
-        # 要求 aware）。时刻数值不变——仍是 2026-09-15 00:00:00 UTC。
+        # 带 +00:00：提取结果为 aware UTC（恒 aware UTC 是本仓纪律，链路
+        # candidate → proposal → MemoryItem.event_time 全程可比对、落盘形态
+        # 一致）。时刻数值不变——仍是 2026-09-15 00:00:00 UTC。
         assert prov.get("event_time") == "2026-09-15T00:00:00+00:00"
         assert prov.get("event_time_precision") == "day"
 

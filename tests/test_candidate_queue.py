@@ -61,8 +61,8 @@ class TestEnqueueRejected:
             assert c.review_due_at is not None
             expected = datetime.now(UTC) + timedelta(days=settings.CANDIDATE_TTL_DAYS)
             due = c.review_due_at
-            # 读回值在 sqlmodel ≥0.0.47 下已是 aware（UTCDateTime.process_result_value
-            # 对无偏移落盘文本补 tzinfo=utc）；naive 分支只是兼容旧版读回，比较前归一。
+            # 读回值形态随 sqlmodel 版本而变（锁定 0.0.42 为 naive）；比较前
+            # 归一，两种形态都兼容。
             if due.tzinfo is None:
                 due = due.replace(tzinfo=UTC)
             assert abs((due - expected).total_seconds()) < 60

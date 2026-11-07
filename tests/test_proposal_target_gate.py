@@ -284,7 +284,8 @@ class TestTargetResolutionHappyPaths:
 
 
 class TestDecidedAtIsAwareUtc:
-    """拒绝落时刻必须 aware（sqlmodel 0.0.47 起 naive datetime 写库直接被拒）。"""
+    """拒绝落时刻必须 aware（恒 aware UTC 纪律：锁定 sqlmodel 0.0.42
+    无库级防护，naive 也静默落库）。"""
 
     def test_rejection_decided_at_is_aware(self, param_env):
         sf, _ = param_env

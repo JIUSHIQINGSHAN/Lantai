@@ -3,8 +3,10 @@
 覆盖 utcnow / ensure_aware / parse_iso_utc 的主路径与边界：
 aware 归一、naive 按 UTC 解释、None 透传、非法 ISO 抛错。
 
-这些助手是 datetime 列写库的唯一时区守门员（sqlmodel ≥0.0.47 的 UTCDateTime
-拒绝 naive datetime，见 .scratch/naive-datetime-gate/issues/01-naive-datetime.md），
+这些助手是 datetime 列写库的唯一时区守门员（锁定 sqlmodel 0.0.42 无库级
+防护——naive 也静默落库，纪律全靠约定，见
+.scratch/naive-datetime-gate/issues/01-naive-datetime.md 与
+tests/test_sqlmodel_datetime_contract.py），
 产品链路（import_service / promoter / record_ops_service）写库前都要过它们。
 """
 
@@ -72,7 +74,8 @@ class TestParseIsoUtc:
         )
 
     def test_result_is_always_writable_to_datetime_column(self):
-        """写库守门：任何合法输入的结果都带 tzinfo（UTCDateTime 硬要求）。"""
+        """写库守门：任何合法输入的结果都带 tzinfo（恒 aware UTC 纪律的
+        单点出口；锁定 0.0.42 无库级防护，naive 也静默落库）。"""
         for text in ("2026-09-15T08:30:00", "2026-09-15T08:30:00Z", "2026-09-15T16:30:00+08:00"):
             assert parse_iso_utc(text).tzinfo is not None
 
