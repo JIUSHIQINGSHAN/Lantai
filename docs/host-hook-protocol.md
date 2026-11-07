@@ -36,6 +36,8 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 
 一个由本协议实现的新宿主**必须**在调用 hook 时设置 `LANTAI_HOST`，否则拿不到 `additionalContext`，注入静默失效。安装脚本生成的命令已包含该设置。
 
+**运行前置 `API_KEY`（宿主侧必须提供）**：hook 在处理任何帧之前校验 `settings.API_KEY`（环境变量 `API_KEY`），未配置即抛 `HookAuthError` 拒绝运行——单次与 `--serve` 模式都是进程级报错退出，不产出任何响应帧（`scripts/shell_hook.py::assert_hook_api_key_configured`，8d8f7610 起生效）。这是刻意的 fail-closed（错误信息原文「禁止 DEV MODE 回退」），不是可降级的软约束：宿主调用环境必须带 `API_KEY`（与兰台 REST 同源取值），插件通道经继承父进程环境获得。
+
 ---
 
 ## 2. 动作（actions）
