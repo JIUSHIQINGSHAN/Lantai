@@ -1384,7 +1384,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.31" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.16.0,<0.17.0" },
     { name = "scikit-learn", specifier = ">=1.5" },
-    { name = "sqlmodel", specifier = ">=0.0.22,<0.0.48" },
+    { name = "sqlmodel", specifier = ">=0.0.42,<0.0.43" },
     { name = "tenacity", specifier = ">=8.5" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
     { name = "watchdog", marker = "extra == 'obsidian'", specifier = ">=4" },
