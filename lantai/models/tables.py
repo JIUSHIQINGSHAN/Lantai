@@ -602,6 +602,38 @@ class ParamOverride(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+class CehouWindow(SQLModel, table=True):
+    """测候影子观察视窗持久化行（v0.68 票 60）。
+
+    替代 `lantai/cognition/cehou.py` 的模块级 `_SHADOW_WINDOWS` 内存注册表：
+    内存形态在多 worker 下各进程各持一份（同一 window_id 写入哪个进程不可控）、
+    重启即蒸发（按天观察的影子实验全丢），且创建路径无属主校验可被同名覆盖夺权。
+    window_id 直接作主键（SessionScratchpad 先例）：写入按 window_id upsert 且
+    属主校验——已存在且非本人/可信访问者 → 拒绝（宁 miss 不脏写，不静默覆盖）。
+    alerts 以 JSON 数组整列存放（内嵌报警只在 record_sample 采样面增量产生）。
+    """
+
+    __tablename__ = "cehou_window"
+
+    window_id: str = Field(primary_key=True)
+    target_type: str = Field(index=True)  # param | rule | proposal
+    target_id: str = ""
+    state: str = Field(default="observing", index=True)  # observing | graduated | rolled_back
+    required_days: int = 7
+    min_samples: int = 10
+    days_observed: int = 0
+    sample_count: int = 0
+    success_count: int = 0
+    failure_count: int = 0
+    total_latency_ms: float = 0.0
+    total_score_delta: float = 0.0
+    alerts: list = Field(default_factory=list, sa_column=Column(JSON))
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class RetrievalEvent(SQLModel, table=True):
     """检索事件日志（方向二弱标注源）：哪条记忆被召回、当时生效参数、延迟。
 

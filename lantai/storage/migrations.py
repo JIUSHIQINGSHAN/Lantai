@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 37
+TARGET_SCHEMA_VERSION = 38
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -773,6 +773,52 @@ def _migrate_v37(conn) -> None:
     )
 
 
+def _migrate_v38(conn) -> None:
+    """v37 -> v38: 新建 cehou_window——测候影子视窗落库（票 60）。
+
+    影子视窗此前存模块级 `_SHADOW_WINDOWS` 内存 dict：多 worker 各进程各持一份、
+    重启即蒸发、创建无属主校验可被同名覆盖夺权。落库后三者一并收口；老库升级时
+    存量内存视窗本就无法找回（内存形态已蒸发），空表起建即视为干净起点。
+    列形状与 `lantai/models/tables.py::CehouWindow` 的 create_all 输出逐列对齐
+    （探针实测：非 Optional 带默认值字段同为 NOT NULL；四个模型声明 index=True
+    的列建索引），否则老库回放 parity（missing_tables/null_drift/index_drift）红。
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS cehou_window ("
+        " window_id TEXT NOT NULL PRIMARY KEY,"
+        " target_type TEXT NOT NULL,"
+        " target_id TEXT NOT NULL DEFAULT '',"
+        " state TEXT NOT NULL DEFAULT 'observing',"
+        " required_days INTEGER NOT NULL DEFAULT 7,"
+        " min_samples INTEGER NOT NULL DEFAULT 10,"
+        " days_observed INTEGER NOT NULL DEFAULT 0,"
+        " sample_count INTEGER NOT NULL DEFAULT 0,"
+        " success_count INTEGER NOT NULL DEFAULT 0,"
+        " failure_count INTEGER NOT NULL DEFAULT 0,"
+        " total_latency_ms FLOAT NOT NULL DEFAULT 0.0,"
+        " total_score_delta FLOAT NOT NULL DEFAULT 0.0,"
+        " alerts JSON,"
+        " tenant_id TEXT,"
+        " user_id TEXT,"
+        " created_at DATETIME NOT NULL,"
+        " updated_at DATETIME NOT NULL"
+        ")"
+    )
+    for ix_name, ix_col in (
+        ("ix_cehou_window_target_type", "target_type"),
+        ("ix_cehou_window_state", "state"),
+        ("ix_cehou_window_tenant_id", "tenant_id"),
+        ("ix_cehou_window_user_id", "user_id"),
+    ):
+        try:
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS {ix_name} ON cehou_window ({ix_col})"
+            )
+        except Exception as exc:  # 索引失败不阻断启动，但必须留痕（同 v25/v26 口径）
+            logger.warning("迁移 v38 索引创建跳过 %s: %s", ix_name, exc)
+    logger.info("Migrated v38: cehou_window 影子视窗落库（票 60）")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -810,6 +856,7 @@ MIGRATIONS = [
     (35, _migrate_v35),
     (36, _migrate_v36),
     (37, _migrate_v37),
+    (38, _migrate_v38),
 ]
 
 
