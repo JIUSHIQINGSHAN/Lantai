@@ -442,3 +442,77 @@ patch 仅落 settings 开关、向量库接缝（单层）与 conftest 既定外
 - 分支状态：领先 origin/master 14 提交（13 笔收口/合并 + 本节）、落后 0、
   工作树干净；push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项
   死代码待维护者裁决）。
+
+## 17. 第十三次复验（2026-11-07）：审计复现（两波树）+ 门禁两轮绿（含与并行复验会话两波合并交叠、一次整段让位等待、一次消息 amend 与一例跨 %TEMP% 评测目录互踩瞬态的诚实记录）
+
+环境事件（两波，均经 reflog/进程表与并行复验会话交叠取证）：
+
+1. **第一波（docs-only）**：origin/master 推进 2 笔（`004dcc0f` 研究周报 +
+   `b2c941a0` 合并 PR #35，新增 `docs/research/papers/memory-weekly-2026-11-07.md`
+   169 行）。本会话按 §5/§8/§12 先例执行合并时发现**合并已被并行会话以默认
+   消息抢先完成**（`110f7cdf`，12:15:51；本会话 `git merge` 因此报
+   "Already up to date."）——本会话仅对该合并提交做了一次**消息 amend**
+   （`110f7cdf` → `d9361c8`，树内容逐字节不变，消息改为先例文案），系对并行
+   会话提交的有意改写，内容零影响。
+2. **第二波（产品代码）**：并行会话在其全量门禁（12:16:11–12:31:40，本工作树，
+   psutil cwd 取证）结束后提交 `a23ffa44`——origin/master 又推进 11 笔
+   （`8175a745`，PR #36：票 05 MCP 入口收口 / 票 07 media_url 接线 / 票 13
+   REST+graph_expand 更正闸 / 票 15 拾遗 lifecycle 过滤 / 巡检硬墙超时轮修复，
+   触及 routes_search / cli.mcp / cognition.shiyi / observability.retrieval_log /
+   retrieval.graph_retriever / scripts 两件 + 新增 5 个测试文件）。**本会话在其
+   门禁全程整段让位**（避免 §15 同工作树双门禁互踩），待其退出并在库快照再生
+   后才启动本会话门禁；本会话两轮门禁期间（12:33–12:53）工作树内无并发
+   pytest（进程表取证），会话间 pytest 窗口零重叠。
+
+按 §1 口径全量重验：
+
+- **审计工具重跑（两轮，对应两波树）**：第一轮在 `d9361c8`（周报合并后）与在库
+  快照**逐字节一致**（`cmp` 全等：inventory 1728 / core 1083 / real-smoke 659 /
+  hollow 0 / mocked-only 1=`_digest_dir` 接缝豁免 / indirect-only 321 /
+  never-executed 102）；第二轮在 `a23ffa44`（11 笔合并后）测得**唯一漂移
+  inventory 1728→1729**，core 与五个 verdict 计数逐项不变、verdict 明细零增删
+  零翻转、pkg_counts 全等——+1 项为合并带入的非核心函数（新代码集中在
+  transport/私有层），**合并零新增诚实性缺口、无需补强**。在库 `audit.json`
+  已再生至 `a23ffa44` 状态（本地工件，与 §11 同口径）。另核明细：mocked-only
+  唯一条目 `lantai.workers.digest_worker._digest_dir`（私有函数，self-patched
+  仅 `test_digest_ownership.py::digest_owned_env:75`，5 个测试文件经调用栈间接
+  真实执行，与 §3 口径注记一致）。
+- **诚实性复核（8 文件全部逐行通读）**：全部真输入直调 + 真库断言；patch 仅落
+  settings 开关（SECRET_GUARD_MODE / DIALOGUE_MIN_CHARS）与向量库单层接缝
+  （test_vector_item_wrappers，docstring 注明不叠 param_env 双层撤销栈病根），
+  MCP 帧测试走 exec 副本规避 `_guard_instance` 台账通道，其余 5 文件自身零
+  patch。8 文件 `--collect-only` 恰 22 例，直跑 22 passed（6.21s）。
+- **票 02 复核**：3 项死代码（`scan_and_retire` / `evaluate_and_evolve` /
+  `autodream_cron_days`）全仓 grep 仅定义行与报告文档命中，零调用方，维持
+  needs-triage。
+- **全量门禁（两轮，含一例新机理环境瞬态的完整甄别链）**：
+  - **第一轮 1 failed**（余量 **3116 passed / 5 skipped**，6m39s，exit 1）——
+    `tests/test_eval_temp_dir_cleanup.py::test_run_offline_eval_reclaims_temp_dir_
+    when_inner_eval_fails`（余量计数自洽：3116 = §16 的 3087 + 第二波合并带入
+    29 例）。甄别四证：① 该测试断言的是**共享 %TEMP% 里全部 `lantai-fq-check-*`
+    目录的增量**，其自身模块注释即写明回收器按「宁 miss 不脏写」设计、不动其他
+    并发进程的新鲜目录（跨进程敏感性是测试文件自己声明的设计边界）；② 泄漏
+    目录 `lantai-fq-check-rhfgbgs8` 事后已消失（属主进程自行回收）；③
+    `git diff d9361c8..a23ffa44 -- lantai/eval/ tests/test_eval_temp_dir_cleanup.py`
+    为空——eval 产品代码与该测试相对十二轮全绿状态**逐字节未动**，排除合并
+    回归；④ 进程/缓存取证：perf 流全量门禁（12:19:33–12:40:38，另一工作树）
+    时间窗**覆盖本会话失败时刻 12:38:22**（`记忆` 流门禁 12:36:02 收笔，已
+    排除）。机理：并发 pytest 在本测试 before/after 取证窗内创建同前缀临时
+    目录，落进增量断言——与 §13–§15 记录的瞬态同属环境类，但**机理为新种**
+    （跨工作树共享 %TEMP% 的评测目录互踩）。哪一具体进程持有该目录无法事后
+    逐字节取证，诚实存疑。
+  - **单文件复跑**：`tests/test_eval_temp_dir_cleanup.py` **12 passed（3.69s，
+    exit 0）**，同 HEAD 干净复现失败，瞬态判定成立。
+  - **第二轮全绿**：**3117 passed / 5 skipped / 0 failed**（5m14s，exit 0，
+    venv=主检出 `.venv`，`PYTHONPATH=.`；3117 = 3087 + 合并带入 29 + 首轮失败
+    例本轮转绿，计数自洽）。隔离护栏台账零新增：模块级残留恰为既有 8 通道
+    （_guard_instance / kaogong / consolidation / routes_health / llm gate×2 /
+    cehou / param runtime，例证全部来自既有测试文件；seam3 并位测试例证已随
+    第二波合并从 82 工具变为 86 工具），绑定残留仅 test_3a 申报哨兵；两轮
+    日志（`-q` 口径）对 8 个补强文件名全文 grep 计数均为 0。
+- 分支状态：领先 origin/master 17 提交（15 笔收口/合并 + 第二波合并 + 本节）、
+  落后 0、工作树干净；push/PR 仍留维护者闸门。票 02 仍 open / needs-triage
+  （3 项死代码待维护者裁决）。**占号说明**：并行复验会话的合并提交消息自称
+  「准备第十三次复验」，与本段同号；本段先行落库（12:53），若其复验段后落，
+  由其按 §16 先例改号，编号保持单调。
+
