@@ -22,6 +22,7 @@ from lantai.models.tables import (
 from lantai.retrieval.hybrid import delete_memory_item, index_memory_item
 from lantai.security.injection_guard import check_prompt_injection
 from lantai.storage import db
+from lantai.storage.cas import cas_update
 from lantai.storage.fts import sync_fts
 
 # 提案类型白名单（票据 `.scratch/proposal-type-whitelist/`）：
@@ -332,6 +333,26 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
             return out
 
         emb = embed([content])[0] if content else []
+        # 票 22 S3：apply 认领——「pending|approved → applied」条件 UPDATE 作为
+        # 本事务第一条 DML。此前状态门检查后隔 embed 网络往返才提交 APPLIED，
+        # REST decide 内联 × run_pending_proposals 定时逐条 × evolve/reflect
+        # 自动应用并发双跑各自落库（add 双平行记忆 / update checkpoint 重号 /
+        # consolidation 双主记忆——stale 硬门查的是自己 session 的快照，挡不住
+        # 并发另一路）。认领放在 embed 之后（方案 A：先无事务评估、后短事务
+        # 条件提交——网络调用不持写锁），rowcount=0 即并发败方：不写任何内容
+        # 直接让路；胜方回滚（含异常路径）认领一并撤销，无中间态残留。
+        claimed = cas_update(
+            s,
+            MemoryProposal,
+            prop.id,
+            {"status": [ProposalStatus.PENDING, ProposalStatus.APPROVED]},
+            {"status": ProposalStatus.APPLIED, "applied_at": utcnow()},
+        )
+        if claimed != 1:
+            logger.warning(
+                "提案 %s apply 认领失败：状态已被并发改写，跳过（并发胜方已落库）", prop.id
+            )
+            return {"ok": False, "reason": "not applicable"}
         # 分支附加返回（ADR-0050：evidence 三分缺口记入 apply 返回与日志）；其余分支为空
         apply_extra: dict = {}
 

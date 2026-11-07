@@ -9,6 +9,7 @@ from lantai.models.enums import ProposalStatus
 from lantai.models.schemas import FeedbackReq, ProposalDecisionReq
 from lantai.models.tables import MemoryCheckpoint, MemoryItem, MemoryProposal
 from lantai.storage import db
+from lantai.storage.cas import cas_update
 from lantai.workers.evolve_worker import run_evolve_once
 
 
@@ -126,27 +127,37 @@ def decide_proposal(proposal_id: str, req: ProposalDecisionReq, *, principal=Non
         if not req.approve and not (req.reason or "").strip():
             raise ValueError("reject reason is required")
         _ensure_can_decide(principal, prop)
-        prop.decision_reason = req.reason or ""
-        # decided_at（ADR-0053）：裁决即落时刻，不等 apply——approve 与 reject 同口径。
-        # 巩固拒绝冷却期按此起算（ADR-0050 边界「冷却期起算点用 created_at 近似」的修法）。
-        prop.decided_at = utcnow()
+        # 票 22 S2：裁决认领——「pending → 裁决态」条件 UPDATE 作为本事务第一条
+        # DML（CAS）。此前双 approve 都过状态门各自进 apply；reject 与 apply 交错
+        # 时 reject 持旧 ORM 对象可把已 APPLIED 覆写回 REJECTED（内容已写库、
+        # 账面显示拒绝的脏账）。rowcount=0 即并发败方：不回写、不进 apply
+        # （RuntimeError → 路由 409，契约同下方既有口径）。
+        decision = ProposalStatus.APPROVED if req.approve else ProposalStatus.REJECTED
+        claimed = cas_update(
+            s,
+            MemoryProposal,
+            proposal_id,
+            {"status": ProposalStatus.PENDING},
+            {
+                "status": decision,
+                "decision_reason": req.reason or "",
+                # decided_at（ADR-0053）：裁决即落时刻，不等 apply——approve 与 reject 同口径。
+                # 巩固拒绝冷却期按此起算（ADR-0050 边界「冷却期起算点用 created_at 近似」的修法）。
+                "decided_at": utcnow(),
+                "decided_by": "user",
+            },
+        )
+        if claimed != 1:
+            raise RuntimeError("proposal state changed; refresh and retry")
+        s.commit()
         if req.approve:
-            prop.status = ProposalStatus.APPROVED
-            prop.decided_by = "user"
-            s.add(prop)
-            s.commit()
             # principal 下传到 apply（票 .scratch/proposal-apply-gaps/issues/16）：
             # approve 会 `apply_proposal` 直接写库，而提案的三个寻址字段全部
             # 来自 LLM 输出——A 批准一条指向 B 的记忆的提案，就等于能改写
             # B 的记忆（deprecate 归档 / merge 除名 / consolidation 折叠，
             # 均无 undo）。归属校验在 service 层（worker/MCP 也走这条路）。
             return apply_proposal(proposal_id, principal=principal)
-        else:
-            prop.status = ProposalStatus.REJECTED
-            prop.decided_by = "user"
-            s.add(prop)
-            s.commit()
-            return {"ok": True}
+        return {"ok": True}
 
 
 def do_rollback(memory_id: str, principal=None) -> dict:

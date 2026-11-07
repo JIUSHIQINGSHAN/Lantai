@@ -75,6 +75,20 @@ def _seed_visibility(engine):
                 user_id="user_a",
             )
         )
+        # 票 22：propose 即认领（new → gated，终态不可重复提案）——同一候选
+        # 不能二次 propose，第二次捕获（principal=None 视野）换独立候选。
+        s.add(
+            MemoryCandidate(
+                id="cand_a2",
+                document_id="doc_cand_a2",
+                summary="用户A的候选摘要",
+                claims=["声明"],
+                actions=[],
+                lane="general",
+                status="new",
+                user_id="user_a",
+            )
+        )
         for mid, key, owner in (
             ("mem_a", "A的计划", "user_a"),
             ("mem_legacy", "老数据的计划", None),
@@ -96,7 +110,7 @@ def _seed_visibility(engine):
         s.commit()
 
 
-def _captured_prompt(engine, principal):
+def _captured_prompt(engine, principal, cand_id="cand_a"):
     from lantai.evolution.proposer import propose_from_candidate
 
     captured = {}
@@ -113,7 +127,7 @@ def _captured_prompt(engine, principal):
         }
 
     with patch("lantai.evolution.proposer.chat_json", side_effect=fake_chat_json):
-        propose_from_candidate("cand_a", {"decision": "promote_semantic"}, principal=principal)
+        propose_from_candidate(cand_id, {"decision": "promote_semantic"}, principal=principal)
     return captured["user"]
 
 
@@ -137,7 +151,7 @@ def test_admin_and_unidentified_caller_see_all_memory(owner_env):
     assert "老数据的计划正文" in admin_prompt
     assert "B的计划正文" in admin_prompt
 
-    none_prompt = _captured_prompt(owner_env, None)
+    none_prompt = _captured_prompt(owner_env, None, cand_id="cand_a2")
     assert "B的计划正文" in none_prompt
 
 

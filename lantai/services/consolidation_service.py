@@ -16,6 +16,7 @@ fail-loud：拒绝执行本周期巩固并 ERROR 留痕——宁巩固停摆，�
 import contextlib
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from threading import Lock
 
 import jieba.analyse
 from sqlmodel import Session, select
@@ -666,6 +667,18 @@ def _refused_report(mode: str, error: str) -> dict:
     }
 
 
+# 票 22 放大器互斥：cron 定时周期 × /evolution/consolidate 手动触发可并发
+# 双跑——聚类候选集相同，巩固产物（主记忆/折叠/checkpoint/FTS）双份落库。
+# 非阻塞单飞（路由映射 409），不排队叠加。**不走 run_worker 注册表**是刻意
+# 偏差（票 22 Answer 已说明）：run_consolidation_cycle(principal=ctx) 按
+# 调用者身份收窄候选集，改注册即改成 system 全表（票 19/12 的归属收窄被
+# 推翻），且 cron 直调本函数、路由级互斥挡不住 cron×手动——故锁在周期入口。
+# **非重入 Lock**：锁内无自递归路径，同线程重入也是真双跑，必须拒绝
+# （RLock 会放行同线程重入——那正是本锁要挡的并发形态）。
+# 跨进程（MCP 第二进程）不受进程内锁约束——ADR 级残留竞态（W2/W4 同口径）。
+_CYCLE_LOCK = Lock()
+
+
 def run_consolidation_cycle(session: Session | None = None, principal=None) -> dict:
     """运行一次完整的沉潜夜梦沉淀周期（ADR-0050：产物生效通道随模式分流）。
 
@@ -834,10 +847,15 @@ def run_consolidation_cycle(session: Session | None = None, principal=None) -> d
             )
         return report
 
-    if session is not None:
-        return _run(session)
-    with db.get_session() as s:
-        return _run(s)
+    if not _CYCLE_LOCK.acquire(blocking=False):
+        raise RuntimeError("consolidation cycle is already running")
+    try:
+        if session is not None:
+            return _run(session)
+        with db.get_session() as s:
+            return _run(s)
+    finally:
+        _CYCLE_LOCK.release()
 
 
 def consolidation_audit_report(window_days: int = 7) -> dict:

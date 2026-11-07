@@ -19,6 +19,7 @@ from sqlmodel import select
 from lantai.core.time import utcnow
 from lantai.models.tables import ConflictEvent, MemoryItem
 from lantai.storage import db
+from lantai.storage.cas import cas_update
 
 _ALLOWED_STATUSES = ("open", "resolved", "dismissed")
 
@@ -114,12 +115,22 @@ def resolve_conflict_event(event_id: str, decision: str, note: str = "", princip
                 lane=item.lane if item else None,
             )
 
-        ev.status = decision
-        ev.resolved_by = note.strip()[:200]
-        ev.resolved_at = utcnow()
-        s.add(ev)
+        # 票 22 S6：裁决认领——「open → 终态」条件 UPDATE 原子翻转。此前
+        # SELECT-判态-UPDATE 无守护：两人并发裁同一冲突双双 200、后写覆盖先写
+        # （裁决审计被静默替换）。rowcount=0 即并发败方：刷新取最新状态后按
+        # 既有契约报错（错误信息与 :104 同款，路由保持 ValueError 映射）。
+        claimed = cas_update(
+            s,
+            ConflictEvent,
+            event_id,
+            {"status": "open"},
+            {"status": decision, "resolved_by": note.strip()[:200], "resolved_at": utcnow()},
+        )
+        if claimed != 1:
+            s.refresh(ev)
+            raise ValueError(f"conflict event not open (status={ev.status})")
         s.commit()
-        return {"ok": True, "event_id": ev.id, "status": ev.status}
+        return {"ok": True, "event_id": ev.id, "status": decision}
 
 
 def audit_consistency_service(

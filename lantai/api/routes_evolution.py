@@ -8,8 +8,8 @@ from lantai.services.evolution_service import (
     do_rollback,
     list_proposals,
     record_feedback_entry,
-    run_evolve,
 )
+from lantai.services.worker_operation_service import run_worker
 
 router = APIRouter()
 
@@ -91,8 +91,17 @@ def feedback_route(req: FeedbackReq, ctx=Depends(get_current_user)):
 def evolve_run_route(principal: Principal = Depends(require_admin)):
     """直跑全表演化周期（票 19：此前零身份——任何持 key 者可直跑，LLM 批量
     消费 + 全库 tier/importance 写，runner 以系统身份执行）。全局动作面，
-    仅 admin。"""
-    return run_evolve()
+    仅 admin。
+
+    票 22 放大器：经 run_worker("evolve") 同名互斥执行——cron 定时任务与
+    手动触发并发进入只成功一个，互斥冲突映射 409；响应形状保持
+    run_evolve() 既有契约（{"ok": True}）。
+    """
+    try:
+        run_worker("evolve")
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+    return {"ok": True}
 
 
 @router.post("/evolution/kaogong")
@@ -127,10 +136,18 @@ def consolidate_run_route(ctx=Depends(get_current_user)):
     """沉潜（ADR-0036）：执行一次闲时夜梦记忆沉淀与折叠压缩周期。
 
     归属（票 .scratch/readside-gaps/12）：此前一个身份都不取，全表折叠/裁剪。
+
+    票 22 放大器：撞上运行中的周期（cron × 手动）→ 409。互斥在周期入口
+    （consolidation_service._CYCLE_LOCK），本路由不改调用身份——
+    principal=ctx 保持归属收窄（票 19/12 口径），不走 run_worker 注册表
+    （注册表以 system 身份跑会放大成全表，且 cron 直调绕过路由级互斥）。
     """
     from lantai.services.consolidation_service import run_consolidation_cycle
 
-    return run_consolidation_cycle(principal=ctx)
+    try:
+        return run_consolidation_cycle(principal=ctx)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 @router.get("/evolution/consolidate/report")

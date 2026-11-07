@@ -12,6 +12,7 @@ from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryCandidate
 from lantai.storage import db
+from lantai.storage.cas import cas_update
 
 
 def enqueue_rejected(candidate_id: str) -> None:
@@ -275,9 +276,26 @@ def run_candidate_ttl_once() -> dict:
             if due.tzinfo is None:
                 due = due.replace(tzinfo=UTC)
             if due <= now:
-                c.status = "rejected"
-                _clear_defer_state(c)
-                s.add(c)
-                archived += 1
+                # 票 22 S5：归档认领——条件 UPDATE 在写时对最新已提交行重验截止
+                # 时刻。此前扫描快照判超龄后无条件改写 + _clear_defer_state：扫描
+                # 与提交之间用户 defer 提交，延期与 defer 审计四字段被整体抹掉。
+                # rowcount=0 = 该候选已被并发 defer / 裁决，跳过不覆盖（宁 miss
+                # 不脏写）；归档与 defer 清空在同一语句原子完成（语义同
+                # _clear_defer_state，仅对真超龄生效）。
+                archived += cas_update(
+                    s,
+                    MemoryCandidate,
+                    c.id,
+                    {"status": "pending_review"},
+                    {
+                        "status": "rejected",
+                        "review_due_at": None,
+                        "deferred_at": None,
+                        "previous_review_due_at": None,
+                        "defer_reason": "",
+                    },
+                    MemoryCandidate.review_due_at.is_not(None),
+                    MemoryCandidate.review_due_at <= now,
+                )
         s.commit()
         return {"ok": True, "archived": archived}

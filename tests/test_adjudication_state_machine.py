@@ -64,6 +64,7 @@ from lantai.services.candidate_service import (
     run_candidate_ttl_once,
 )
 from lantai.services.conflict_service import resolve_conflict_event
+from lantai.services.consolidation_service import run_consolidation_cycle
 from lantai.services.evolution_service import decide_proposal
 
 
@@ -123,9 +124,7 @@ class TestS1RejectApproveRevival:
 
         raised = None
         try:
-            with patch(
-                "lantai.evolution.proposer.chat_json", side_effect=_llm_with_interleave
-            ):
+            with patch("lantai.evolution.proposer.chat_json", side_effect=_llm_with_interleave):
                 propose_from_candidate("cand_s1", {"decision": "promote_semantic"})
         except CandidateStateConflict as exc:
             raised = exc
@@ -258,7 +257,11 @@ class TestS2DecideOverwrite:
                     id="prop_s2",
                     proposal_type="update",
                     target_memory_id="mem_s2",
-                    proposed_patch={"memory_type": "semantic", "key": "目标键S2", "content": "S2 新正文"},
+                    proposed_patch={
+                        "memory_type": "semantic",
+                        "key": "目标键S2",
+                        "content": "S2 新正文",
+                    },
                     evidence_ids=[],
                     confidence=0.9,
                     status=ProposalStatus.PENDING,
@@ -283,7 +286,9 @@ class TestS2DecideOverwrite:
             return real_utcnow()
 
         with (
-            patch("lantai.evolution.promoter.embed", lambda texts, **kw: [[0.1] * 8 for _ in texts]),
+            patch(
+                "lantai.evolution.promoter.embed", lambda texts, **kw: [[0.1] * 8 for _ in texts]
+            ),
             patch("lantai.services.evolution_service.utcnow", side_effect=_now_with_interleave),
             pytest.raises(RuntimeError),
         ):
@@ -400,7 +405,9 @@ class TestW3DoubleClaim:
                 racing["active"] = False
             return real_grv()
 
-        with patch("lantai.parameters.queue.get_registry_version", side_effect=_grv_with_interleave):
+        with patch(
+            "lantai.parameters.queue.get_registry_version", side_effect=_grv_with_interleave
+        ):
             mine = claim_advice_batch()
 
         assert mine is None, f"并发败方不得带回认领批：{(mine or {}).get('run_id')}"
@@ -499,7 +506,9 @@ class TestAmplifierManualTriggerMutex:
         from lantai.api import routes_evolution
 
         if not hasattr(routes_evolution, "run_worker"):
-            pytest.fail("/evolve/run 未走 run_worker 同名互斥（票 22 放大器：直调 worker 函数绕锁）")
+            pytest.fail(
+                "/evolve/run 未走 run_worker 同名互斥（票 22 放大器：直调 worker 函数绕锁）"
+            )
 
         calls = []
         with patch.object(
