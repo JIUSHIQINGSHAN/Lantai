@@ -27,6 +27,12 @@ COUNTERFACTUAL_MAX_DEPTH_LIMIT = 10
 COUNTERFACTUAL_PATH_CAP = 64
 
 
+def _validate_counterfactual_depth(max_depth: int) -> None:
+    """票 39 深度上界校验（引擎内两遍历面共用；REST pydantic 与 MCP -32602 镜像同界）。"""
+    if not isinstance(max_depth, int) or not 1 <= max_depth <= COUNTERFACTUAL_MAX_DEPTH_LIMIT:
+        raise ValueError(f"max_depth must be an int in [1, {COUNTERFACTUAL_MAX_DEPTH_LIMIT}]")
+
+
 @dataclass
 class CausalHop:
     """因果跳跃单步实体。"""
@@ -193,8 +199,7 @@ class CausalEngine:
         - paths_truncated: 路径帽截断标注（先到先停，帽外路径未探索）
         - narrative: 自然语言解释
         """
-        if not isinstance(max_depth, int) or not 1 <= max_depth <= COUNTERFACTUAL_MAX_DEPTH_LIMIT:
-            raise ValueError(f"max_depth must be an int in [1, {COUNTERFACTUAL_MAX_DEPTH_LIMIT}]")
+        _validate_counterfactual_depth(max_depth)
 
         if not self._check_node_access(target_id):
             return {
@@ -204,6 +209,7 @@ class CausalEngine:
                 "is_necessary": False,
                 "reachable_without_node": False,
                 "alternative_paths": [],
+                "paths_truncated": False,
                 "narrative": f"目标节点 {target_id} 不存在或无访问权限",
             }
 
@@ -215,6 +221,7 @@ class CausalEngine:
                 "is_necessary": True,
                 "reachable_without_node": False,
                 "alternative_paths": [],
+                "paths_truncated": False,
                 "narrative": f"目标节点自身即为介入阻断节点 {intervened_node_id}，阻断后直接消除。",
             }
 
@@ -421,8 +428,7 @@ class CausalEngine:
         遍历与 evaluate_counterfactual 同款全简单路径枚举，受同一深度上界与
         路径帽约束；超帽先到先停，paths_truncated 标注（帽外路径不参与择优）。
         """
-        if not isinstance(max_depth, int) or not 1 <= max_depth <= COUNTERFACTUAL_MAX_DEPTH_LIMIT:
-            raise ValueError(f"max_depth must be an int in [1, {COUNTERFACTUAL_MAX_DEPTH_LIMIT}]")
+        _validate_counterfactual_depth(max_depth)
 
         if not self._check_node_access(target_id):
             return {

@@ -58,13 +58,6 @@ def _load_mcp():
     spec.loader.exec_module(mod)
     return mod
 
-# 语义对照臂的小图（与既有 engine smoke 同构）：root→trigger→target 与 alt→target
-_SMALL_GRAPH = {
-    "mem_root": ["mem_trigger"],
-    "mem_alt": ["mem_target"],
-    "mem_trigger": ["mem_target"],
-}
-
 
 def _principal(user_id: str, *, admin: bool = False) -> Principal:
     return Principal(user_id=user_id, allowed_lanes=None, role="admin" if admin else "user")
@@ -109,40 +102,53 @@ def _seed_node(session: Session, node_id: str) -> None:
     )
 
 
-def _build_diamond(session: Session) -> str:
-    """4 层 3 叉跨层全连接菱形：T ← A×3 ← B×3 ← C×3 ← D×3（D 为根，无父边）。
+def _build_diamond(
+    session: Session, *, fan: int = _FAN, layers: int = _LAYERS, prefix: str = "cfb"
+) -> str:
+    """fan 叉 layers 层跨层全连接菱形：T ← A×fan ← B×fan ← …（末层为根，无父边）。
 
     真建边走 CausalEngine.link_causality（与 REST/MCP 建边面同链路）。
     返回 target 节点 ID。
     """
-    layers: list[list[str]] = [["cfb-T"]]
-    for li in range(_LAYERS):
-        layers.append([f"cfb-{'ABCD'[li]}{i}" for i in range(_FAN)])
-    for row in layers:
+    rows: list[list[str]] = [[f"{prefix}-T"]]
+    for li in range(layers):
+        rows.append([f"{prefix}-{'ABCDE'[li]}{i}" for i in range(fan)])
+    for row in rows:
         for node_id in row:
             _seed_node(session, node_id)
     session.commit()
 
     engine = CausalEngine(principal=None)
-    for upper, lower in zip(layers, layers[1:]):
+    for upper, lower in zip(rows, rows[1:]):
         for parent in lower:
             for child in upper:
                 engine.link_causality(
                     source_id=parent, target_id=child, relation="causes", confidence=0.9
                 )
-    return layers[0][0]
+    return rows[0][0]
 
 
-def _build_small_graph(session: Session) -> None:
-    for node_id in ("mem_root", "mem_trigger", "mem_target", "mem_alt"):
+def _build_shared_parent_diamond(session: Session) -> str:
+    """双层共享父节点菱形（票面 TDD 3「防改成全局 visited 后结果错」的判别形状）。
+
+    边：B→A1、B→A2、D→A1、A1→T、A2→T。per-path 语义下从 T 逆向恰 3 条
+    双跳路径（B→A1→T / D→A1→T / B→A2→T）；若遍历被改成全局 visited，
+    A2 的父 B 已被 A1 侧访问，其路径被截成裸单跳 [A2→T]——逐跳集合全等
+    断言即红（平行独立支路的小图判别不出这个错，系自审 Spec 轴指出的原臂缺陷）。
+    """
+    for node_id in ("spd-T", "spd-A1", "spd-A2", "spd-B", "spd-D"):
         _seed_node(session, node_id)
     session.commit()
     engine = CausalEngine(principal=None)
-    for parent, children in _SMALL_GRAPH.items():
-        for child in children:
-            engine.link_causality(
-                source_id=parent, target_id=child, relation="causes", confidence=0.9
-            )
+    for parent, child in (
+        ("spd-B", "spd-A1"),
+        ("spd-B", "spd-A2"),
+        ("spd-D", "spd-A1"),
+        ("spd-A1", "spd-T"),
+        ("spd-A2", "spd-T"),
+    ):
+        engine.link_causality(source_id=parent, target_id=child, relation="causes", confidence=0.9)
+    return "spd-T"
 
 
 # ---------------------------------------------------------------------------
@@ -264,11 +270,13 @@ def test_mcp_counterfactual_rejects_unbounded_depth(cf_env):
     """MCP 边界锁：真 handle() JSON-RPC 分发，非法 max_depth 收 -32602 错误帧。
 
     修复前红：裸 int(params.get) 零校验，越界参数原样透传进无界枚举。
+    采纳项（Standards 轴「镜像不齐」）：非整型（2.5/True）此前被 int() 静默
+    收敛（2.5→2、True→1）——REST pydantic 拒非整型，MCP 面语义必须对齐。
     """
     from lantai.cognition.causal import COUNTERFACTUAL_MAX_DEPTH_LIMIT
 
     mod = _load_mcp()
-    for bad in (0, -1, COUNTERFACTUAL_MAX_DEPTH_LIMIT + 1, 10**9):
+    for bad in (0, -1, COUNTERFACTUAL_MAX_DEPTH_LIMIT + 1, 10**9, 2.5, True):
         req = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -307,32 +315,101 @@ def test_mcp_counterfactual_valid_depth_roundtrip(cf_env):
     assert "error" not in resp
     data = json.loads(resp["result"]["content"][0]["text"])
     assert "is_necessary" in data  # 空库 + 特权 principal 的既有语义：照常出推演帧
-    assert data.get("paths_truncated", False) is False
+    assert data["paths_truncated"] is False  # 采纳项：主帧必须带键，消费方不许 .get 兜缺键
 
 
 # ---------------------------------------------------------------------------
-# 对照臂：帽内小图语义零变化（帽与会话复用不得改写既有反事实结论）
+# 对照臂：帽内语义零变化（帽与会话复用不得改写既有反事实结论）
 # ---------------------------------------------------------------------------
 
 
-def test_small_graph_alternative_path_semantics_unchanged(cf_env):
-    """语义回归臂 1：阻断 trigger 后 alt 支路仍是唯一替代路径，逐跳一致且未截断。"""
+def test_shared_parent_diamond_per_path_semantics_unchanged(cf_env):
+    """语义回归臂（票面 TDD 3）：共享父菱形上替代路径集逐跳全等且未截断。
+
+    防的就是票面点名的「改成全局 visited 后结果错」：全局 visited 会把 A2
+    侧路径截成裸单跳 [A2→T]，逐跳集合全等断言即红。
+    """
     with Session(cf_env.engine) as session:
-        _build_small_graph(session)
+        target = _build_shared_parent_diamond(session)
 
-    cf_env.counter["opens"] = 0
     res = CausalEngine(principal=None).evaluate_counterfactual(
-        target_id="mem_target", intervened_node_id="mem_trigger", max_depth=10
+        target_id=target, intervened_node_id="spd-decoy", max_depth=10
     )
     assert res["found"] is True
     assert res["is_necessary"] is False
     assert res["reachable_without_node"] is True
-    assert res.get("paths_truncated") is False
-    assert len(res["alternative_paths"]) == 1
-    hops = res["alternative_paths"][0]
-    assert [(h["from_id"], h["to_id"], h["relation"]) for h in hops] == [
-        ("mem_alt", "mem_target", "causes")
+    assert res["paths_truncated"] is False
+    chains = [
+        [(h["from_id"], h["to_id"]) for h in path] for path in res["alternative_paths"]
     ]
+    assert sorted(chains) == sorted(
+        [
+            [("spd-B", "spd-A1"), ("spd-A1", "spd-T")],
+            [("spd-D", "spd-A1"), ("spd-A1", "spd-T")],
+            [("spd-B", "spd-A2"), ("spd-A2", "spd-T")],
+        ]
+    )
+
+
+def test_shared_parent_diamond_blocking_branch_semantics_unchanged(cf_env):
+    """语义回归臂：阻断 D 后存活路径恰为 B 侧两条双跳，阻断面语义不变。"""
+    with Session(cf_env.engine) as session:
+        target = _build_shared_parent_diamond(session)
+
+    res = CausalEngine(principal=None).evaluate_counterfactual(
+        target_id=target, intervened_node_id="spd-D", max_depth=10
+    )
+    assert res["found"] is True
+    assert res["reachable_without_node"] is True
+    assert res["is_necessary"] is False
+    assert res["paths_truncated"] is False
+    chains = [
+        [(h["from_id"], h["to_id"]) for h in path] for path in res["alternative_paths"]
+    ]
+    assert sorted(chains) == sorted(
+        [
+            [("spd-B", "spd-A1"), ("spd-A1", "spd-T")],
+            [("spd-B", "spd-A2"), ("spd-A2", "spd-T")],
+        ]
+    )
+
+
+def test_below_cap_diamond_enumerates_all_paths(cf_env):
+    """帽内语义臂（票面 TDD 3）：3 层 3 叉菱形恰 27 条 ≤ 帽——全枚举零截断。
+
+    帽只许截「确有更多」的情形：帽内路径数必须等于理论全枚举数 fan**layers，
+    一个不多（无重复枚举）一个不少（无提前熔断）。
+    """
+    from lantai.cognition.causal import COUNTERFACTUAL_PATH_CAP
+
+    assert COUNTERFACTUAL_PATH_CAP >= 27  # 形状前提：27 条确在帽内
+    with Session(cf_env.engine) as session:
+        target = _build_diamond(session, fan=3, layers=3, prefix="cf2")
+
+    res = CausalEngine(principal=None).evaluate_counterfactual(
+        target_id=target, intervened_node_id="cf2-decoy", max_depth=10
+    )
+    assert res["paths_truncated"] is False
+    assert len(res["alternative_paths"]) == 27
+    for path in res["alternative_paths"]:
+        assert len(path) == 3
+        assert path[-1]["to_id"] == "cf2-T"
+
+
+def test_early_return_frames_carry_truncation_marker(cf_env):
+    """采纳项（Spec 轴）：found=False 与 target==intervened 两 early-return 帧
+    与主帧同契约带 paths_truncated=False——消费方不必 .get(default) 兜缺键。"""
+    res = CausalEngine(principal=_principal("alice")).evaluate_counterfactual(
+        target_id="nope", intervened_node_id="nope2", max_depth=10
+    )
+    assert res["found"] is False
+    assert res["paths_truncated"] is False
+
+    res2 = CausalEngine(principal=None).evaluate_counterfactual(
+        target_id="same", intervened_node_id="same", max_depth=10
+    )
+    assert res2["found"] is True and res2["is_necessary"] is True
+    assert res2["paths_truncated"] is False
 
 
 def test_small_graph_necessary_root_semantics_unchanged(cf_env):

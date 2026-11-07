@@ -730,12 +730,16 @@ def handle_causal_counterfactual(params: dict) -> dict:
 
     target_id = params.get("target_memory_id", "")
     intervened_id = params.get("intervened_node_id", "")
-    max_depth = int(params.get("max_depth", 10))
-    if not 1 <= max_depth <= COUNTERFACTUAL_MAX_DEPTH_LIMIT:
+    max_depth = params.get("max_depth", 10)
+    if (
+        not isinstance(max_depth, int)
+        or isinstance(max_depth, bool)
+        or not 1 <= max_depth <= COUNTERFACTUAL_MAX_DEPTH_LIMIT
+    ):
         # 票 39：深度上界单一真源在引擎；无界深度是指数路径枚举的另一半入口面。
-        raise ValueError(
-            f"max_depth must be an int in [1, {COUNTERFACTUAL_MAX_DEPTH_LIMIT}]"
-        )
+        # 非整型一律拒绝（handle_search top_k 同款形状）——不 int() 静默收敛
+        # （2.5→2、True→1），与 REST pydantic 对非整型的拒绝语义镜像。
+        raise ValueError(f"max_depth must be an int in [1, {COUNTERFACTUAL_MAX_DEPTH_LIMIT}]")
     if not isinstance(target_id, str) or not target_id.strip():
         raise ValueError("target_memory_id must be a non-empty string")
     if not isinstance(intervened_id, str) or not intervened_id.strip():
