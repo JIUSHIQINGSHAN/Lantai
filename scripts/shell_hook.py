@@ -595,15 +595,25 @@ def _handle_checkpoint_write(session_id: str, blocks: dict) -> dict:
         return {}
 
 
-def _run_with_timeout(func, timeout, *args, _fallback=None):
+def _run_with_timeout(func, timeout, *args, _fallback=None, _on_abandon=None):
     """超时包装（D-04，票 `.scratch/v0.65-next-window-2026-11/01`）。
 
     超时**与执行异常**都返回 `_fallback()`（降级工厂，零参回调——QUERY 通道传
     常驻画像，免得超时/抛错把画像段一并丢弃）；未传工厂时保持原行为返回 `{}`。
     正常返回路径不碰工厂。daemon 线程不可取消是 Python 线程模型限制，预算控制在
     build_context 内传导（见其 docstring）。
+
+    `_on_abandon(result)`（巡检 2026-11-07 12:00）：主线程超时放弃等待后，worker
+    仍会把 func 跑完——它的返回值没人收，但它的副作用（QUERY 通道里 `_try_log`
+    落的 RetrievalEvent，带原话）已经发生，且宿主手里没有 event_id，回执与
+    retrieval_veto 都够不着。worker 跑完时若发现已被放弃，就在 worker 线程里把
+    迟到的结果交给 `_on_abandon` 收尾。「完成」与「放弃」在同一把锁下二选一：
+    worker 先完成 → 主线程照常拿结果（含 event_id）；主线程先放弃 → worker
+    必定走收尾。没有两边都不管的窗口。回调异常只记日志，不影响 serve 循环。
     """
     import threading
+
+    handoff = threading.Lock()
 
     class TaskThread(threading.Thread):
         def __init__(self):
@@ -611,14 +621,29 @@ def _run_with_timeout(func, timeout, *args, _fallback=None):
             self.result = {}
             self.exc: Exception | None = None
             self.daemon = True
+            self.finished = False  # handoff 锁下置位：结果已可交给主线程
+            self.abandoned = False  # handoff 锁下置位：主线程已放弃等待
 
         def run(self):
+            result = None
             try:
-                self.result = func(*args)
+                result = func(*args)
             except Exception as exc:
                 # 线程内异常不会传播回主线程；此前被 `contextlib.suppress` 直接吞掉，
                 # 结果停在 `{}`——票 04 要求把它记下来，交给主线程降级。
                 self.exc = exc
+            with handoff:
+                if not self.abandoned:
+                    if self.exc is None:
+                        self.result = result
+                    self.finished = True
+                    return
+            # 主线程已放弃：迟到的结果没人收，副作用交给收尾回调
+            if _on_abandon is not None and self.exc is None:
+                try:
+                    _on_abandon(result)
+                except Exception:
+                    logger.exception("shell_hook 超时收尾回调失败")
 
     def _degrade(reason: str) -> dict:
         """降级出口：留痕 + 常驻画像兜底（无工厂/工厂自身失败时才空返回）。
@@ -640,7 +665,10 @@ def _run_with_timeout(func, timeout, *args, _fallback=None):
     t = TaskThread()
     t.start()
     t.join(timeout)
-    if t.is_alive():
+    with handoff:
+        if not t.finished:
+            t.abandoned = True
+    if t.abandoned:
         return _degrade(f"超时（{timeout}s）")
     if t.exc is not None:
         # 票 04（P0-3）：异常路径同样不得丢常驻画像。此前只有「线程还活着（超时）」
@@ -724,12 +752,24 @@ def _dispatch_one(raw: str) -> dict:
             parts = [x for x in [decl, p] if x]
             return {"context": "\n\n".join(parts)}
 
+        # 巡检 2026-11-07 12:00：超时后 worker 仍会跑完并落一条带原话的检索事件，
+        # 而兜底响应不带 event_id——宿主既回执不了、也否决不了。就地抹原话置 missed。
+        def _query_abandoned(late: dict) -> None:
+            event_id = (late or {}).get("event_id") if isinstance(late, dict) else None
+            if not event_id:
+                return
+            from lantai.observability.retrieval_log import mark_abandoned
+
+            if mark_abandoned(event_id):
+                logger.info("shell_hook 超时轮检索事件已收尾（抹原话、置 missed）: %s", event_id)
+
         return _run_with_timeout(
             build_context,
             settings.SHELL_HOOK_TIMEOUT,
             req.query,
             req.session_id,
             _fallback=_query_fallback,
+            _on_abandon=_query_abandoned,
         )
 
     return {}
