@@ -959,6 +959,12 @@ def main(argv=None) -> int:
     )
     args = ap.parse_args(argv)
 
+    unknown = [n for n in (args.only or []) if n not in SCENARIOS]
+    if unknown:
+        # --only 拼错名曾静默跑零场景、exit 0、照常出「成功」报告（v0.68 票 12
+        # 缺口 2）——与「禁止假绿」直接冲突，必须在任何跑批前拒绝
+        ap.error(f"--only 含未知场景名 {unknown}，拒绝静默空跑；合法场景：{', '.join(SCENARIOS)}")
+
     out_dir = args.out or (
         REPO_ROOT
         / ".scratch"

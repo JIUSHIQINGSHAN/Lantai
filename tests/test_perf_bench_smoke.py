@@ -137,3 +137,41 @@ def test_hash_vector_store_filters(filters, meta, expected):
     store.add(["m1"], [mod.fake_embed(["测试文本"])[0]], [meta])
     hits = store.search(mod.fake_embed(["测试文本"])[0], top_k=5, filters=filters)
     assert (len(hits) == 1) is expected
+
+
+# ── v0.68 票 12 缺口 2：--only 口径闸（合并闸门项）──────────────────
+
+
+def test_perf_bench_only_unknown_scenario_fails_loudly(tmp_path, capsys):
+    """票 12 缺口 2（合并闸门项）：--only 拼错场景名必须非零退出并在 stderr
+    列出合法场景名——禁止静默跑零场景、照写「成功」基线报告。"""
+    mod = _load_bench_module()
+    with pytest.raises(SystemExit) as ei:
+        mod.main(["--scale", "60", "--only", "hybrid_sarch", "--out", str(tmp_path)])
+    assert ei.value.code != 0
+    err = capsys.readouterr().err
+    assert "hybrid_sarch" in err, "报错没点名拼错的名字"
+    for valid in ("hybrid_search", "ingest_add_memory", "apply_forgetting"):
+        assert valid in err, "报错没列出合法场景名"
+
+
+def test_perf_bench_only_valid_scenario_runs_report(tmp_path):
+    """票 12 缺口 2 对照臂（现状即绿）：合法名单正常跑、报告只含点名场景。"""
+    import json
+
+    mod = _load_bench_module()
+    rc = mod.main(
+        [
+            "--scale",
+            "60",
+            "--iterations",
+            "0.1",
+            "--only",
+            "hybrid_search",
+            "--out",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    report = json.loads((tmp_path / "baseline.json").read_text(encoding="utf-8"))
+    assert set(report["60"]["scenarios"]) == {"hybrid_search"}
