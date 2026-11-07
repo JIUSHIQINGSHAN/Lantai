@@ -359,6 +359,10 @@ def handle_add(params: dict) -> dict:
     req = AddMemoryReq(
         title=params.get("title", ""),
         content=params.get("content", ""),
+        # 目识接线（票 .scratch/v068-docs-audit/03）：schema 广告了 media_url
+        # 却在此丢弃——传了要么 -32602 要么静默丢。透传后由 AddMemoryReq
+        # 既有校验（media/content 二选一）兜非法组合，与 REST 口径一致。
+        media_url=params.get("media_url", ""),
         lane=params.get("lane", "general"),
     )
     return add_memory(req, user_id=params.get("user_id") or "default", principal=principal)
