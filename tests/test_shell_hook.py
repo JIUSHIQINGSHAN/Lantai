@@ -2,6 +2,7 @@
 
 import importlib.util
 import io
+import threading
 import json
 import os
 import time
@@ -77,10 +78,15 @@ def test_main_timeout_returns_empty_json(monkeypatch, capsys):
     # 0.2s 墙内跑完（v0.68 票 01 起完成路径的 event_id 可见，旧断言恰好遮住
     # 这一点）——把 hybrid 实际调用的 embed 换成慢替身，墙才真正触发降级。
     def _slow_hybrid_embed(texts, timeout=None):
-        time.sleep(5.0)
+        time.sleep(1.2)
         return [[0.1] * 8]
 
     monkeypatch.setattr("lantai.retrieval.hybrid.embed", _slow_hybrid_embed)
+    # 「超时后 worker 落孤儿事件并收尾」是 test_hook_timeout_orphan_event 的专责；
+    # 本用例的 5s 慢替身 daemon 线程在用例结束后醒来仍会 _try_log 落事件，
+    # 跨测试污染 orphan 用例的事件计数——这里关掉落库。
+    monkeypatch.setattr(mod, "_try_log", lambda *a, **k: None)
+    threads_before = set(threading.enumerate())
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"query": "这是一个超过三字符的查询"})))
     start = time.perf_counter()
     mod.main()  # 不再抛 SystemExit——超时静默返回 {}
@@ -92,6 +98,11 @@ def test_main_timeout_returns_empty_json(monkeypatch, capsys):
     # 双向钉死超时墙：下限——墙真的等了（≥0.2s，失效成「根本不等」时红）；
     # 上限——没等满 5s 慢替身（daemon 线程超时即弃，不拖测试）。
     assert 0.2 <= elapsed < 3.0, f"超时墙未按 0.2s 预算生效: {elapsed:.2f}s"
+
+    # 收尾：等被放弃的 daemon worker 跑完（join 期间 _try_log patch 仍生效，
+    # 零泄漏；否则 worker 在后续用例醒来落孤儿事件，污染 orphan 用例计数）。
+    for t in set(threading.enumerate()) - threads_before:
+        t.join(10)
 
 
 def test_stdin_forced_utf8_reconfigure(monkeypatch):

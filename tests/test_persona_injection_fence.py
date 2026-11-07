@@ -18,6 +18,7 @@
 
 import importlib.util
 import os
+import threading
 
 import pytest
 from sqlalchemy.pool import StaticPool
@@ -216,6 +217,10 @@ class TestTimeoutFallbackFenced:
 
         monkeypatch.setattr("lantai.retrieval.hybrid.embed", _slow_hybrid_embed)
         monkeypatch.setattr(mod, "relevance_check", lambda q, **kw: {"needs_memory": True})
+        # 「超时后 worker 落孤儿事件并收尾」是 test_hook_timeout_orphan_event 的
+        # 专责；1s 慢替身 daemon 线程在用例结束后醒来仍会 _try_log 落事件，
+        # 跨测试污染 orphan 用例的事件计数——这里关掉落库。
+        monkeypatch.setattr(mod, "_try_log", lambda *a, **k: None)
         # intent 强制 fact_lookup：conftest 假 chat_json 会让 hybrid_search 在
         # intent 短路零命中（不调 embed、墙内走完正常路径）——「超时」只剩 jieba
         # 冷启动的自然耗时来撞墙。强制走检索路径后慢替身必被调、墙必触发。
@@ -228,6 +233,7 @@ class TestTimeoutFallbackFenced:
         import json
 
         raw = json.dumps({"query": "这是一个超过三字符的慢查询", "type": "query"})
+        threads_before = set(threading.enumerate())
         start = time.perf_counter()
         out = mod._handle_one(raw)
         elapsed = time.perf_counter() - start
@@ -244,6 +250,11 @@ class TestTimeoutFallbackFenced:
         # 关键断言：context 不为空串
         if "context" in out:
             assert out["context"], f"context 不能是空串: {out!r}"
+
+        # 收尾 join：等被放弃的 daemon worker 干完（_try_log 已关，零泄漏），
+        # 否则它会在后续用例醒来落孤儿事件污染 orphan 用例计数。
+        for t in set(threading.enumerate()) - threads_before:
+            t.join(10)
 
     def test_with_persona_timeout_returns_fenced_context(self, monkeypatch, tmp_path):
         """有画像 + 超时：降级返回包含围栏的 context（声明行在前）。"""
@@ -267,6 +278,8 @@ class TestTimeoutFallbackFenced:
             return [[0.1] * 8]
 
         monkeypatch.setattr("lantai.retrieval.hybrid.embed", _slow_hybrid_embed)
+        # 关掉落库（同上：daemon 线程醒来不落孤儿事件，不污染 orphan 用例）。
+        monkeypatch.setattr(mod, "_try_log", lambda *a, **k: None)
         # intent 强制 fact_lookup（同上：短路零命中会让墙永不触发）。
         monkeypatch.setattr(
             "lantai.retrieval.intent.chat_json",
@@ -276,6 +289,7 @@ class TestTimeoutFallbackFenced:
         import json
 
         raw = json.dumps({"query": "这是一个超过三字符的慢查询", "type": "query"})
+        threads_before = set(threading.enumerate())
         start = time.perf_counter()
         out = mod._handle_one(raw)
         elapsed = time.perf_counter() - start
@@ -288,6 +302,10 @@ class TestTimeoutFallbackFenced:
 
         assert "用户偏好乌龙茶" in ctx, f"超时降级丢失画像: {out!r}"
         assert "<memory_data" in ctx, f"超时降级画像未加围栏: {out!r}"
+
+        # 收尾 join（同上：daemon worker 零泄漏）。
+        for t in set(threading.enumerate()) - threads_before:
+            t.join(10)
 
         from lantai.llm.fence import FENCE_DECLARATION
 

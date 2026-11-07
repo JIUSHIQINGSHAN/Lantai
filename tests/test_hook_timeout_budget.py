@@ -18,6 +18,7 @@
 
 import importlib.util
 import io
+import threading
 import json
 import os
 import time
@@ -99,16 +100,21 @@ class TestTimeoutFallbackKeepsPersona:
 
         # 慢点必须真的在检索链上：shell_hook 模块内 import 的 embed **没有调用点**
         # （_load_hook 的 embed_delay 是死参数），build_context 经 hybrid_search
-        # 调的是 lantai.retrieval.hybrid.embed。替身无视 timeout 形参睡满 5s
-        # （真实 SDK 的守约行为由 test_slow_embed_budget_degrades_within_deadline
-        # 单独测），任何机器上都必然撞 0.2s 外层墙——超时不再依赖 build_context
-        # 的自然耗时（原断言窗口 1.5s 下，机器快时墙可能根本不触发，降级与否都绿）。
+        # 调的是 lantai.retrieval.hybrid.embed。替身无视 timeout 形参睡 1.2s——
+        # 比 0.2s 墙长（墙必触发）、比墙失效成 10s 时短（worker 先完成走正常
+        # 路径、event_id 断言红），与机器冷热无关；真实 SDK 的守约行为由
+        # test_slow_embed_budget_degrades_within_deadline 单独测。
         def _slow_hybrid_embed(texts, timeout=None):
-            time.sleep(5.0)
+            time.sleep(1.2)
             return [[0.1] * 8]
 
         monkeypatch.setattr("lantai.retrieval.hybrid.embed", _slow_hybrid_embed)
+        # 本用例意图是「超时降级不丢画像」；「超时后 worker 落孤儿事件并收尾」是
+        # test_hook_timeout_orphan_event 的专责。worker 是 daemon 线程、被放弃后
+        # 仍会跑完 _try_log 落事件——先关掉落库，并在用例内 join 收尾（见下）。
+        monkeypatch.setattr(mod, "_try_log", lambda *a, **k: None)
         raw = json.dumps({"query": "这是一个超过三字符的慢查询", "type": "query"})
+        threads_before = set(threading.enumerate())
         start = time.perf_counter()
         out = mod._handle_one(raw)
         elapsed = time.perf_counter() - start
@@ -117,11 +123,18 @@ class TestTimeoutFallbackKeepsPersona:
         # 1) 降级签名——_query_fallback 只返回画像段不带 event_id；正常路径
         #    （含零命中分支，v0.68 票 01）必带 event_id。墙失效走正常路径时红。
         assert "event_id" not in out, f"走了正常路径而非超时降级: {sorted(out)}"
-        # 2) 墙真的等了（≥0.2s——失效成「根本不等」时红），且没等满慢替身（5s）。
+        # 2) 墙真的等了（≥0.2s——失效成「根本不等」时红），且没等满慢替身。
         assert 0.2 <= elapsed < 1.5, f"超时墙未按 0.2s 预算生效: {elapsed:.2f}s"
         # 3) 修复前：{}（画像丢失）；修复后：降级返回画像
         ctx = out.get("context") or ""
         assert "用户偏好乌龙茶" in ctx, f"超时降级丢失画像: {out!r}"
+
+        # 收尾：等被放弃的 daemon worker 跑完再结束用例。join 期间本用例的
+        # patch 仍生效（_try_log 已关），worker 干完活零泄漏；不 join 则 worker
+        # 会在 monkeypatch 撕卸后的后续用例里醒来落孤儿事件——全量实测污染
+        # test_hook_timeout_orphan_event 的事件计数（1 failed）。
+        for t in set(threading.enumerate()) - threads_before:
+            t.join(10)
 
     def test_run_with_timeout_fallback_factory(self, monkeypatch, tmp_path):
         """_run_with_timeout 超时路径调用降级工厂（非超时不调用）。"""
