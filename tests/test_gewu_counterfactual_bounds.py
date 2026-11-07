@@ -339,9 +339,7 @@ def test_shared_parent_diamond_per_path_semantics_unchanged(cf_env):
     assert res["is_necessary"] is False
     assert res["reachable_without_node"] is True
     assert res["paths_truncated"] is False
-    chains = [
-        [(h["from_id"], h["to_id"]) for h in path] for path in res["alternative_paths"]
-    ]
+    chains = [[(h["from_id"], h["to_id"]) for h in path] for path in res["alternative_paths"]]
     assert sorted(chains) == sorted(
         [
             [("spd-B", "spd-A1"), ("spd-A1", "spd-T")],
@@ -363,9 +361,7 @@ def test_shared_parent_diamond_blocking_branch_semantics_unchanged(cf_env):
     assert res["reachable_without_node"] is True
     assert res["is_necessary"] is False
     assert res["paths_truncated"] is False
-    chains = [
-        [(h["from_id"], h["to_id"]) for h in path] for path in res["alternative_paths"]
-    ]
+    chains = [[(h["from_id"], h["to_id"]) for h in path] for path in res["alternative_paths"]]
     assert sorted(chains) == sorted(
         [
             [("spd-B", "spd-A1"), ("spd-A1", "spd-T")],
