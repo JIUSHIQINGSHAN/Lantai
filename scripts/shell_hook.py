@@ -9,11 +9,22 @@ import sys
 # ── 强制 UTF-8 I/O ──────────────────────────────────────────────
 # Windows 默认 GBK 解码 stdin；Hermes 按 UTF-8 写 JSON，按 GBK 读则中文乱码
 # （「你好」→「浣犲ソ」）→ query 检索零命中、注入静默失效。必须在读 stdin 前执行。
+# stderr 同钉（票 30 A5）：logger.exception 的异常 repr 嵌 GBK 外字符时产
+# "--- Logging error ---" 噪声丢行。兜底 warnings.fail-loud（票 30 A5）：
+# 旧版 os.environ.setdefault("PYTHONIOENCODING") 是死代码——该变量只在解释器
+# 启动建流时被读，运行期 setdefault 对已建流编码毫无作用。
 try:
     sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 except (AttributeError, ValueError):
-    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    import warnings
+
+    warnings.warn(
+        "stdio reconfigure failed; streams stay locale-encoded "
+        "(PYTHONIOENCODING set at runtime has no effect on already-created streams)",
+        stacklevel=2,
+    )
 
 # 幂等插入（票 .scratch/v0.66-next-window-2026-11/issues/01）：宿主 CLI 只 import 一次，
 # 但测试/插件路径会对同一文件反复 exec_module——无条件 insert 让进程级 sys.path

@@ -155,3 +155,104 @@ class TestForgettingQualityReportArm:
         report_text = reports[0].read_text(encoding="utf-8")
         assert "𠮷字号查询" in report_text
         assert "𠮷字号查询" in proc.stdout.decode("utf-8")
+
+
+_SERVER_ENV_DRIVERS = {
+    "lme_run": (
+        "import os\n"
+        "os.environ.setdefault('OPENAI_API_KEY', 'test-key')\n"
+        "os.environ.setdefault('OPENAI_BASE_URL', 'http://127.0.0.1:9')\n"
+        "os.environ.setdefault('API_KEY', 'test-key')\n"
+        "import sys; sys.path.insert(0, 'scripts')\n"
+        "import lme_run\n"
+        "print(lme_run._server_env(None, None).get('PYTHONIOENCODING'))\n"
+    ),
+    "memprobe_microverify": (
+        "import os\n"
+        "os.environ.setdefault('OPENAI_API_KEY', 'test-key')\n"
+        "os.environ.setdefault('OPENAI_BASE_URL', 'http://127.0.0.1:9')\n"
+        "os.environ.setdefault('API_KEY', 'test-key')\n"
+        "import sys; sys.path.insert(0, 'scripts')\n"
+        "import memprobe_microverify\n"
+        "print(memprobe_microverify._server_env().get('PYTHONIOENCODING'))\n"
+    ),
+    "memprobe_lantai_adapter": (
+        "import os\n"
+        "os.environ.setdefault('OPENAI_API_KEY', 'test-key')\n"
+        "os.environ.setdefault('OPENAI_BASE_URL', 'http://127.0.0.1:9')\n"
+        "os.environ.setdefault('API_KEY', 'test-key')\n"
+        "os.environ['MEMPROBE_STORE_ROOT'] = r'{store}'\n"
+        "os.environ['MEMPROBE_EVIDENCE_DIR'] = r'{store}'\n"
+        "import sys; sys.path.insert(0, 'scripts')\n"
+        "import memprobe_lantai_adapter\n"
+        "print(memprobe_lantai_adapter.LantaiVerbatimAdapter()._server_env().get('PYTHONIOENCODING'))\n"
+    ),
+}
+
+
+class TestServerEnvPinsChildStdio:
+    """A3：eval server 子进程（uvicorn）日志句柄由 env 决定编码——不钉则兰台中文
+    日志按 cp936 落 server.log（调试产物损坏级）。三处 _server_env 逐一真调。"""
+
+    @pytest.mark.parametrize("module_name", sorted(_SERVER_ENV_DRIVERS))
+    def test_server_env_carries_pythonioencoding(self, module_name: str, tmp_path: Path):
+        driver = _SERVER_ENV_DRIVERS[module_name].format(store=str(tmp_path / "store"))
+        proc = subprocess.run(
+            [sys.executable, "-c", driver], cwd=REPO, capture_output=True, timeout=120
+        )
+        assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")[-1500:]
+        assert proc.stdout.decode("utf-8").strip() == "utf-8"
+
+
+def _stdio_probe_env() -> dict:
+    env = dict(os.environ)
+    # 故意清掉两枚解释器级编码钉：被测脚本必须自己把三股流钉成 UTF-8（修复前 cp936 即红）
+    env.pop("PYTHONIOENCODING", None)
+    env.pop("PYTHONUTF8", None)
+    return env
+
+
+class TestStdioServicesPinStderr:
+    """A5：两个 stdio 服务只 reconfigure stdin/stdout——logger 的 StreamHandler 绑
+    sys.stderr，异常 repr 嵌 GBK 外字符时 logger.exception 产 '--- Logging error ---'
+    噪声丢行。三股流必须全部钉 UTF-8。真子进程真函数，不 mock。"""
+
+    def test_mcp_configure_pins_all_three_streams(self):
+        driver = (
+            "import sys\n"
+            "from lantai.cli.mcp import _configure_stdio_utf8\n"
+            "_configure_stdio_utf8()\n"
+            "print(sys.stdin.encoding, sys.stdout.encoding, sys.stderr.encoding)\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", driver],
+            cwd=REPO,
+            env=_stdio_probe_env(),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=180,
+        )
+        assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")[-1500:]
+        assert proc.stdout.decode("utf-8").split() == ["utf-8", "utf-8", "utf-8"]
+
+    def test_shell_hook_top_level_pins_all_three_streams(self):
+        driver = (
+            "import runpy, sys\n"
+            "runpy.run_path(r'scripts/shell_hook.py', run_name='encoding_probe')\n"
+            "print(sys.stdin.encoding, sys.stdout.encoding, sys.stderr.encoding)\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", driver],
+            cwd=REPO,
+            env=_stdio_probe_env(),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=120,
+        )
+        assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")[-1500:]
+        assert proc.stdout.decode("utf-8").split() == ["utf-8", "utf-8", "utf-8"]
+
+    def test_launch_bat_pins_pythonutf8(self):
+        """修复目标 1 系统修：bat 层 PYTHONUTF8=1（MCP 服务进程整体 UTF-8 模式）。"""
+        bat = (REPO / "launch_mcp.bat").read_text(encoding="utf-8", errors="replace")
+        assert 'set "PYTHONUTF8=1"' in bat

@@ -3876,14 +3876,24 @@ def _configure_stdio_utf8() -> None:
     Windows 默认用 GBK 读写 stdin/stdout；Hermes 按 UTF-8 传 JSON（含中文 query），
     若按 GBK 读则中文全变乱码（如「你好」→「浣犲ソ」）→ 检索零命中、注入全失效。
     必须在任何 stdin/stdout 读写前执行，但**只在该进程真被当 stdio 服务拉起时**执行；
-    写在模块顶部会波及一切 importer 的进程标准流（票 05 续15）。Python 3.7+ reconfigure；
-    旧版靠 PYTHONIOENCODING 兜底。
+    写在模块顶部会波及一切 importer 的进程标准流（票 05 续15）。Python 3.7+ reconfigure。
+
+    stderr 同钉（票 30 A5）：logger 的 StreamHandler 绑 sys.stderr，异常 repr 嵌
+    GBK 外字符时 logger.exception 产 "--- Logging error ---" 噪声丢行。
+    兜底用 warnings.fail-loud（票 30 A5）：旧版此处 os.environ.setdefault(
+    "PYTHONIOENCODING") 是死代码——该变量只在解释器启动建流时被读，运行期
+    setdefault 对已建流的编码毫无作用，静默带着 GBK 继续跑恰是本函数要防的病。
     """
     try:
         sys.stdin.reconfigure(encoding="utf-8")
         sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
-        os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+        warnings.warn(
+            "stdio reconfigure failed; streams stay locale-encoded "
+            "(PYTHONIOENCODING set at runtime has no effect on already-created streams)",
+            stacklevel=2,
+        )
 
 
 def main():
