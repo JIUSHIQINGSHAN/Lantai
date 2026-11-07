@@ -101,9 +101,10 @@ python scripts/recall_health.py
 ```powershell
 python api_server.py
 ```
-或 Docker 模式：
+或 Docker 模式（本仓库无 compose 文件，用 README「Docker 部署」的 `docker run` 单容器路径）：
 ```bash
-docker compose up -d
+docker build -t lantai:X.Y.Z .
+docker run -d -p 8767:8767 -e API_KEY=... -e OPENAI_API_KEY=... -v /your/data:/data lantai:X.Y.Z
 ```
 
 ## 维护命令
@@ -113,7 +114,7 @@ docker compose up -d
 | `python scripts/memory_overview.py` | 记忆概览（总数、待审、检查点） |
 | `python scripts/reflect_observation_status.py` | 观察期门禁状态 |
 | `python scripts/recall_health.py` | 召回健康度 |
-| `python scripts/run_digest.py` | 手动生成每日盘点 |
+| `POST /monitor/workers/digest/run`（服务在跑时；或 `GET /digest/today` 取当日结果） | 手动生成每日盘点 |
 | `python scripts/release_check.py vX.Y.Z` | 发布准备检查 |
 | `pytest tests/ -q` | 全量测试 |
 | `python scripts/run_forgetting_quality.py --check` | 评测集门禁 |

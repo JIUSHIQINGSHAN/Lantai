@@ -170,7 +170,7 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 
 ### ⏱️ 更漏双时间轴（Genglou · 事件时间，ADR-0048）
 
-`valid_from` / `valid_to` 管「何时为真」，`event_time`（+ 精度标记）管「现实何时发生」——两轴分离，迟到更正有锚点。`POST /search?as_of=...` 查任意历史时点的世界快照，`time_from/time_to` 圈时间窗；无 `event_time` 的记忆**永不硬排除**（宁 miss 不脏写，I4 不变式）。
+`valid_from` / `valid_to` 管「何时为真」，`event_time`（+ 精度标记）管「现实何时发生」——两轴分离，迟到更正有锚点。`POST /search` **请求体**传 `as_of` / `as_of_recorded` / `time_from` / `time_to` 查任意历史时点的世界快照、圈时间窗（这些是请求体字段，不是 query 参数——写在 URL 上会被静默忽略、返回当前视图）；无 `event_time` 的记忆**永不硬排除**（宁 miss 不脏写，I4 不变式）。
 
 ### 🛰️ 注入回执链（ADR-0049）
 
@@ -189,7 +189,7 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 > 读有 Hook，写有 MCP——各走各的快路径。
 
 - **Shell Hook**（读，零依赖）：stdin 收 JSON，2s 硬超时返回 Markdown 上下文，≤3 字符不注入
-- **MCP server**（写，标准协议）：`search` / `add` / `feedback` 三工具，标准 JSON-RPC 2.0，输入校验 + 异常隔离
+- **MCP server**（写，标准协议）：入口 `lantai-mcp`（`python -m lantai.cli.mcp`），标准 JSON-RPC 2.0，输入校验 + 异常隔离。默认档只暴露核心 6 工具（`search` / `add` / `feedback` / `offload_read` / `mem_recent` / `core_memory_get`，fail-closed）；`LANTAI_MCP_PROFILE=full` 显式放开全量 96 项
 
 ### 🛡️ 护盾（安全基线）
 

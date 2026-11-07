@@ -29,7 +29,7 @@
 2. 发布门禁通过：`python scripts/release_check.py vX.Y.Z`（上传前可加 `--online` 检查远程 tag），0 FAIL。
 3. CHANGELOG 已收口：`## [Unreleased]` 内容迁移到 `## [X.Y.Z] - YYYY-MM-DD`，顶部保留新的 `## [Unreleased]`。
 4. 版本代号（若该版本需要）已按 [ADR-0013](adr/0013-naming-system.md) R7 登记到 `CONTEXT.md` 词汇表与 ADR-0013 映射表。
-5. 文档同步：README 徽章 / README Docker 示例 / `api_server.py` FastAPI version / `scripts/mcp_server.py` serverInfo version / CHANGELOG 最新发布段一致（门禁自动核对）。
+5. 版本同步：README 版本徽章 / README Docker 示例 / `lantai/api/app.py` FastAPI `version=` / `lantai/cli/mcp.py` serverInfo `version` / `uv.lock` 根包版本 与 `pyproject.toml` 全部一致（门禁按 `VERSION_REF_SPECS` 自动核对）。
 6. Git 状态干净：当前分支为 `master`，除待提交的发布变更外无修改或未跟踪文件，`vX.Y.Z` tag 本地不存在；加 `--online` 时同时确认远程不存在，远程 `origin` 存在。
 7. 老库升级回放通过（门禁自动执行，票 06）：`tests/fixtures/legacy-schema/*.json`里每个锚点（上一发布标签的真实 DDL 快照，**不含任何行数据**）经当前迁移链升到目标版本后，必须与模型完全对齐——缺表 / 缺列 / 主键 / 索引一律为零，NULL 方向差异只能落在`scripts/schema_parity.py` 的书面清单内。锚点为空、迁移链没跑到目标版本、清单里出现复现不出来的死条目，都判红。**每次发布后补一份上一个标签的快照**：`python scripts/legacy_schema_snapshot.py --tag v<上一版>`。
 8. MCP 默认最小暴露（票 05 续31，评审线 G3/N-04/C-15/R-02）：`lantai/cli/mcp.py::_get_active_tools()` 的**默认档必须是 `HERMES_CORE_TOOLS` 核心白名单**——不设 `LANTAI_MCP_PROFILE`/`MCP_TOOL_PROFILE`、设空、或设了认不出来的取值，一律 fail-closed 到核心集（未知取值额外可观测告警，绝不静默）。全量注册表只有一个入口：显式 `LANTAI_MCP_PROFILE=full`。门禁项「MCP 默认暴露」以探针实测判定（`isolated_probe_env()` 剥掉 profile 变量，只看默认档；部署侧设变量不能让该项变绿，也不能拿它冒充默认已收窄）。收窄/放宽属契约变更：动 `_get_active_tools()` 的语义必须同步改 `tests/test_mcp_default_minimal_exposure.py` 的判据与本条口径，需要全量测试面里依赖非核心工具的模块显式打标 `pytestmark = pytest.mark.mcp_full_surface()`（这是「白纸黑字选了 full」的登记形态，不许拿它当默认）。**注入帧点名约束（巡检 2026-11-06 22:00 P1）**：`scripts/shell_hook.py` 等给模型看的注入文案里点名的 MCP 工具必须在核心集内——往注入帧加新工具指引之前，先把该工具并入 `HERMES_CORE_TOOLS`（或换用已在核心集的工具），否则默认档部署的模型会去调一个 `tools/list` 里不存在的工具（-32602）。该约束由 `tests/test_hook_named_tools_in_default_profile.py` 自动拦截（PR #32），此处登记是给读门禁的人与 AI 说明约束来源。
@@ -38,12 +38,15 @@
 
 ### 1. 更新版本号
 
-`pyproject.toml` 是版本事实来源，其余四处同步：
+`pyproject.toml` 是版本事实来源，其余五处引用同步（README 两处；与门禁
+`VERSION_REF_SPECS` 一一对应，改漏任何一处都会被门禁打红）：
 
 - `pyproject.toml`：`version = "X.Y.Z"`
-- `README.md`：版本徽章 + Docker 示例（`lantai:X.Y.Z`）
-- `api_server.py`：`FastAPI(..., version="X.Y.Z", ...)`
-- `scripts/mcp_server.py`：`serverInfo` 的 `version`
+- `README.md`：版本徽章（`badge/version-X.Y.Z-blue`）+ Docker 示例（`lantai:X.Y.Z`）
+- `lantai/api/app.py`：`FastAPI(title=..., version="X.Y.Z", ...)`
+- `lantai/cli/mcp.py`：`serverInfo` 的 `version`
+- `uv.lock`：根包（`name = "lantai"`）的 `version`——bump 后跑 `uv lock` 重算；
+  uv.lock 漂移曾让 0.66.0 差点假绿（票 05 续18），门禁现已核对
 
 > `BACKUP_MANIFEST_VERSION` 是备份清单格式版本，不随发布版本递增；只有备份格式变更时才单独提升。
 

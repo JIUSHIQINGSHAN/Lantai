@@ -12,7 +12,7 @@
 
 对话写通道语义（`lantai/ingestion/dialogue.py`）：
 - 「记住：X」/ 自我声明 / 偏好表达 → fastpath 直通
-- 闲聊（过短/社交结束语）→ 候选进待审队列（不静默丢弃）
+- 闲聊（过短/社交结束语）→ 直接 rejected（沙汰，ADR-0026，不进待审队列）
 - LLM 提取低置信度 / 上游失败 → 兜底候选入队（不丢数据）
 
 来源链与注入回执（P0 票02，2026-09）：
@@ -45,7 +45,8 @@ python scripts/install_hermes_plugin.py --hermes-home <path>
 ## 验证
 
 1. 重启 Hermes 桌面版，日志出现 `on_session_end 对话写入已注册`
-2. 与 Hermes 聊一轮（说几句有价值的话），结束后：
+2. 与 Hermes 聊一轮（说几句有价值的话；纯闲聊会被沙汰为 rejected、不进待审队列，
+   这是 ADR-0026 的预期行为而非部署失败），结束后：
    - `GET /candidates/pending` 应出现候选（或已直通进记忆库）
    - `GET /usage` 每日新增数增长
    - 候选应带 `session_id` 与 `provenance.origin_turn`（来源链贯通）

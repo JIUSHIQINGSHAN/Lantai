@@ -101,6 +101,6 @@ flowchart LR
 
 遵循 `docs/release-process.md`：
 
-1. **一致性核对**：`scripts/release_check.py vX.Y.Z` 核对 `pyproject.toml`、`README.md`、`api_server.py`、`scripts/mcp_server.py` 与 `CHANGELOG.md`。
+1. **一致性核对**：`scripts/release_check.py vX.Y.Z` 核对 `pyproject.toml`、`README.md`（徽章 + Docker 示例）、`lantai/api/app.py`、`lantai/cli/mcp.py`、`uv.lock` 根包版本与 `CHANGELOG.md`。
 2. **版本代号**：在 CHANGELOG 与 `CONTEXT.md` 登记版本典籍代号。
 3. **人工闸门**：代码提交与 tag 打标由 Agent 准备，`git push origin master --tags` 必须由人类维护者显式授权或手动执行。
