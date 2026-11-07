@@ -743,3 +743,52 @@ patch 仅落 settings 开关、向量库接缝（单层）与 conftest 既定外
   push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项死代码待
   维护者裁决）。
 
+## 22. 第十八次复验（2026-11-07）：审计逐字节复现 + 门禁一轮全绿零瞬态
+
+独立会话逐项复验收口声明。环境：origin/master 零推进（领先 21 / 落后 0），
+无合并事项。**并行会话交叠（诚实记录）**：开工进程表取证发现并行 perf 会话
+（`.wt-v068-perf`）pytest 在跑（PID 19104 主进程 + PID 20932 uv cpython
+3.11 形态，两进程均经 venv 路径甄别为非本工作树）；按 §13/§20/§21 让位
+先例，前置复核活动（审计重跑、8 文件通读、`--collect-only` 与 22 例直跑、
+票 02 grep——均不依赖共享测试库）安排在其窗内进行；其计数归 0（14:37 前后
+取证 `NO_PYTEST_RUNNING`）后才启动本会话全量门禁（14:38:08），门禁窗内
+（14:38:08–14:46:47）无并发 pytest、无并行提交（收笔 `git status` 干净 +
+HEAD 未动双证）。
+
+按 §1 口径全量重验：
+
+- **审计复现（逐字节一致）**：`audit_honesty.py` 重跑（venv=主检出
+  `.venv`、`-I` 隔离模式、输出落仓库外临时目录）与在库 `audit.json`
+  `cmp` 全等：inventory 1729 / core 1083 / real-smoke 659 / hollow 0 /
+  mocked-only 1=`_digest_dir` 接缝豁免 / indirect-only 321 /
+  never-executed 102；mocked-only 明细（digest_worker.py:165，
+  self-patched 仅 `test_digest_ownership.py:75` + 5 个间接证据文件）与
+  §3 口径注记逐项一致；pkg_counts 复核：cognition 30 个引擎模块每模块
+  ≥1 real-smoke、零 hollow / mocked-only 模块（§2 模块级结论口径）。
+- **诚实性复核（8 文件全部逐行通读）**：全部真输入直调 + 真库断言
+  （真 worker 入口 / 真 HTTP 路由 / 真 JSON-RPC 帧 / 真单例缓冲 /
+  真库物理删除计数 / MemoryScene 真行），patch 仅落 settings 开关
+  （SECRET_GUARD_MODE / DIALOGUE_MIN_CHARS）与向量库单层接缝
+  （test_vector_item_wrappers，docstring 注明不叠 param_env 双层撤销栈
+  病根），MCP 帧测试走 exec 副本规避 `_guard_instance` 台账通道，其余
+  5 文件自身零 patch（全靠 conftest 外部替身）；8 文件 `--collect-only`
+  恰 22 例、直跑 22 passed（6.30s，exit 0）。
+- **票 02 复核**：3 项死代码（`scan_and_retire` / `evaluate_and_evolve`
+  / `autodream_cron_days`）两档 grep——受辖面（`lantai/` + `scripts/`
+  + `api_server.py` + `tests/` + `hermes-plugin/`）仅定义行命中；全仓
+  （含 `build/lib` 陈旧构建副本、`.scratch` 本地工件、docs 报告引用）
+  零调用方，维持 needs-triage。
+- **全量门禁（一轮全绿零瞬态）**：**3117 passed / 5 skipped / 0
+  failed**（14:38:08–14:46:47，8m30s / 510.37s，exit 0 经落文件 +
+  包装输出双证，venv=主检出 `.venv`，`PYTHONPATH=.`）与 §17–§21 一致；
+  隔离护栏台账零新增（模块级残留恰为既有 8 通道 `_guard_instance` /
+  kaogong / consolidation / routes_health / llm gate×2 / cehou /
+  param runtime，绑定残留仅 test_3a 申报哨兵，全量日志 8 个补强文件名
+  grep 计数均为 0；seam3 例证 86 工具版）。日志落仓库外临时目录 +
+  退出码落文件显式捕获（§14/§15 教训口径）。本窗时长 8m30s 长于历轮
+  ~5m：与并行 perf 门禁刚收笔的机器负载余波同期，无异常失败信号，
+  如实记录。
+- 分支状态：本节落库后领先 origin/master 22 提交、落后 0、工作树干净；
+  push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项死代码待
+  维护者裁决）。
+
