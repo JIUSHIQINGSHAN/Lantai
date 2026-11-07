@@ -59,6 +59,18 @@ ADR-0049 的状态机从 `pending → {acked, missed}` 扩展为 `pending → {a
 - **`mark_vetoed` 零改动**：对零命中事件（`result_ids`/`used_ids` 本为空）同样正确——抹原文痕迹、置 `vetoed` 终态即可，无反冲问题（延后回执下该轮从未回执）。
 - 边界不变：查询过短（≤ `SHELL_HOOK_MIN_CHARS`）不落事件、无 veto 可言；gate 判 `needs_memory=False` 同样不落事件。
 
+### 2.6 missed/pending 同样抹原文（v0.68 票 10 增补，2026-11-07）
+
+§2.1 接受崩溃窗 `pending→missed` 时只谈「少一次弱标注」的取舍，**从未谈原文留存**——这是一个真空带：missed 行的 `query_text`/`query_norm_hash` 与 vetoed 行形态完全相同（`query_norm_hash` 带索引，对低熵原文就是可验证口令，本 ADR §2.2 自己论证过），唯一区别是「宿主是否用过这轮」未得到确认而非已确认否定。原话不该因为回执缺失这个**事实**而无代价永留库。
+
+增补决策（不改变 §2.1–2.5 的任何语义）：
+
+- **missed 即抹文**：`mark_missed_receipts` 在 pending→missed 转移的同一事务里置 `query_text=""`、`query_norm_hash=""`——与 `mark_vetoed` 同源论证、同等待遇。**不清 `used_ids`**（弱标注源：missed→acked 回执仍合法，backfill 只拒 vetoed）、不回冲保活链（missed 行本就没刷过 `injection_count`，无假计数可回冲）。
+- **扫描必须进调度器**：抹文逻辑挂 `receipt_miss` interval job（`RECEIPT_MISS_CRON_MINUTES`，默认 10 分钟，取值 5–60）——没有这一半，转移逻辑永远不会在生产触发，未回执事件永停 pending（v0.68 票 10 立案时的实况）。
+- **存量一次性 scrub**：转移逻辑够不着已落库的存量 pending/missed 行；`scripts/scrub_retrieval_query_text.py`（缺省 dry-run、`--apply` 写库、幂等）按 `receipt_status in (pending, missed)` 一次性抹文，acked/vetoed 零接触。
+- **边界不变**：acked 行原话保留是弱标注源的设计前提（本票不扩展全表 TTL）；§2.4「REST/MCP 侧不设 veto 入口」不变——抹文不改变任何回执语义，只消灭原文留存。
+- **配套如实代价**：`build_query_set` 样本池排除空 query（抹文后空行不掺 `sample_count` 口径）；recall 报告对空 query 显示「(已抹除)」占位——抹文是可观测的，不是隐身的。
+
 ## 3. 命名
 
 不引入新中文正名：`vetoed`/否决沿用 Hermes 已有词汇（PR #26 起），`retrieval_veto` 为协议动作英文名。ADR-0013 的登记义务只对**新的正式中文名**生效，本决策无新增。

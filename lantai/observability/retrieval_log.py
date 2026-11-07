@@ -302,6 +302,13 @@ def mark_missed_receipts(timeout_seconds: int = RECEIPT_MISS_TIMEOUT_SECONDS, no
 
     missed 是事实不是错误（宁 miss 不脏写）：宿主未回执的事件如实置位，
     使「回执缺失」可观测、可统计，而不是永远 pending。幂等：已置位不重算。
+
+    原话同事务抹除（ADR-0084 §2.6，v0.68 票 10）：与 `mark_vetoed` 同源论证——
+    `query_norm_hash` 带索引，对低熵原文就是可验证口令，留着等于没抹；missed 行
+    的宿主是否真用过这轮从未得到确认，原话不该无代价永留。只抹
+    `query_text`/`query_norm_hash`，**不清 `used_ids`**（弱标注源，backfill 只拒
+    vetoed，missed→acked 仍合法）、不回冲保活链（`_touch_keepalive` 只认
+    「首次被回执」的增量，missed 行本就没刷过，无假计数可回冲）。
     """
     from datetime import timedelta
 
@@ -318,6 +325,8 @@ def mark_missed_receipts(timeout_seconds: int = RECEIPT_MISS_TIMEOUT_SECONDS, no
             for ev in rows:
                 ev.receipt_status = "missed"
                 ev.receipt_at = moment
+                ev.query_text = ""
+                ev.query_norm_hash = ""
                 s.add(ev)
             if rows:
                 s.commit()

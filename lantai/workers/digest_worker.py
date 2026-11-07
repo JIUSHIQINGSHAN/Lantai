@@ -159,6 +159,19 @@ def run_candidate_ttl() -> dict:
     return result
 
 
+def run_receipt_miss_scan() -> int:
+    """回执缺失扫描入口（scheduler job，v0.68 票 10 / ADR-0084 §2.6）。
+
+    超龄 pending → missed 并同事务抹原话（`mark_missed_receipts`）；没有这个
+    定时挂载，抹文逻辑永远不会触发——真实运行中未回执事件永停 pending。
+    """
+    from lantai.observability.retrieval_log import mark_missed_receipts
+
+    moved = mark_missed_receipts()
+    record_run("receipt_miss")
+    return moved
+
+
 # ── Daily Digest（Ticket 03）────────────────────────────────────────
 
 

@@ -77,6 +77,11 @@ class Settings(BaseSettings):
     DIALOGUE_MIN_EXTRACTOR_CONF: float = 0.55
     CANDIDATE_TTL_CRON_HOURS: int = 24
 
+    # 回执缺失扫描（v0.68 票 10，ADR-0084 §2.6）：超龄 pending 置 missed 并抹原话。
+    # 分钟级间隔——扫描只做状态转移与抹文（无 LLM/网络），高频廉价；取值范围 5–60，
+    # 过小徒增空转、过大拉长 DLP 剩余暴露窗（原话在库时间）。
+    RECEIPT_MISS_CRON_MINUTES: int = 10
+
     # Daily Digest（Ticket 03）：每日盘点报告 docs/memory-digest/YYYY-MM-DD.md
     DIGEST_ENABLED: bool = True
     DIGEST_CRON_HOUR: int = 22  # UTC 22:00 = 本地(Asia/Shanghai) 06:00 早晨
