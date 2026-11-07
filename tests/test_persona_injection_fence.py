@@ -206,6 +206,15 @@ class TestTimeoutFallbackFenced:
         monkeypatch.setattr(
             mod, "embed", lambda texts, timeout=None: (time.sleep(1), [[0.1] * 8])[1]
         )
+
+        # 超时前提要真实：conftest autouse 假 embed 瞬回，检索会在墙内跑完
+        # （完成路径 v0.68 票 01 起带 event_id）——把 hybrid 实际调用的 embed
+        # 换成慢替身，降级路径才真的被走到。
+        def _slow_hybrid_embed(texts, timeout=None):
+            time.sleep(1)
+            return [[0.1] * 8]
+
+        monkeypatch.setattr("lantai.retrieval.hybrid.embed", _slow_hybrid_embed)
         monkeypatch.setattr(mod, "relevance_check", lambda q, **kw: {"needs_memory": True})
 
         import io

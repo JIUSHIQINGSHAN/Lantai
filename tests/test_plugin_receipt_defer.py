@@ -135,6 +135,36 @@ class TestReceiptDefer:
         bf2.assert_not_called()
 
 
+class TestZeroHitVetoReachable:
+    """v0.68 票 01：event_id 挂载与 used_ids 解耦——空 evidence 的被否决轮也发 veto。
+
+    零命中/空 evidence 轮的检索事件已落库（query_text 带 DLP 原话）；挂载条件
+    若与 used_ids 耦合，event_id 上不了缓冲条目，_on_session_end 否决分支构造
+    不出 retrieval_veto 帧，mark_vetoed 永远够不着。回执条件不变：回执语义是
+    「用了哪些」，零 used_ids 无可回执。
+    """
+
+    def test_vetoed_zero_hit_entry_sends_veto_without_receipt(self, mod):
+        """命中但空 evidence：条目照挂 event_id；否决发 veto、回执不发。"""
+        hook = {"context": "【相关记忆】…", "event_id": "rev-zero", "evidence": []}
+        _pre(mod, "我的银行卡密码是 864213", turn_id="t1", hook=hook)
+        entry = mod._session_buffers["s1"][-1]
+        assert entry["event_id"] == "rev-zero"  # 红点：挂载只看 event_id
+        assert "used_ids" not in entry  # 空 evidence 无 used_ids 可挂
+
+        _dlg, _cw, bf, vt = _end(mod, turn_id="t1", turn_exit_reason=BLOCKED)
+        vt.assert_called_once_with("rev-zero")
+        bf.assert_not_called()  # 回执条件不变：used_ids 空则不回执
+
+    def test_zero_hit_normal_end_no_receipt_no_veto(self, mod):
+        """对照臂：空 evidence 轮正常结束（未否决）——不回执（无可回执）也不 veto。"""
+        hook = {"context": "…", "event_id": "rev-zero", "evidence": []}
+        _pre(mod, "部署怎么做", turn_id="t1", hook=hook)
+        _dlg, _cw, bf, vt = _end(mod, turn_id="t1", turn_exit_reason="text_response(stop)")
+        bf.assert_not_called()
+        vt.assert_not_called()
+
+
 class TestHookResponseWithoutEventId:
     def test_search_hit_but_no_event_id_no_receipt(self, mod):
         """检索命中但响应没带 event_id：无回执可发也不挂载（宁 miss 不脏写）。"""

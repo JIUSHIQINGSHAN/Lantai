@@ -60,6 +60,15 @@ def test_build_context_short_query_returns_empty(monkeypatch):
 def test_main_timeout_returns_empty_json(monkeypatch, capsys):
     """超时降级：返回 {} 且不退出（serve 模式需容错，不能再 os._exit）。"""
     mod = _load_hook(monkeypatch, embed_delay=1.0, timeout=0.2)
+
+    # 超时前提要真实：conftest autouse 假 embed 是瞬回的，build_context 会在
+    # 0.2s 墙内跑完（v0.68 票 01 起完成路径的 event_id 可见，旧断言恰好遮住
+    # 这一点）——把 hybrid 实际调用的 embed 换成慢替身，墙才真正触发降级。
+    def _slow_hybrid_embed(texts, timeout=None):
+        time.sleep(1.0)
+        return [[0.1] * 8]
+
+    monkeypatch.setattr("lantai.retrieval.hybrid.embed", _slow_hybrid_embed)
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"query": "这是一个超过三字符的查询"})))
     start = time.perf_counter()
     mod.main()  # 不再抛 SystemExit——超时静默返回 {}
@@ -175,7 +184,7 @@ def test_build_context_has_evidence(monkeypatch):
 
 
 def test_build_context_no_hits_no_evidence(monkeypatch):
-    """无命中：零侵入降级，context 不带依据段。"""
+    """无命中：零侵入降级，context 不带依据段；event_id 照带出（v0.68 票 01）。"""
     mod = _load_hook(monkeypatch)
 
     class _EmptyStore:
@@ -183,8 +192,21 @@ def test_build_context_no_hits_no_evidence(monkeypatch):
             return []
 
     monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: _EmptyStore())
+    # event_id 断言要确定：检索事件落内存库（同文件 hit 例的手搓引擎风格）
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import Session, SQLModel, create_engine
+
+    import lantai.storage.db as db_module
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(db_module, "get_session", lambda: Session(engine))
+
     out = mod.build_context("这是一个超过三字符的查询")
-    assert out == {}
+    assert "依据" not in str(out.get("context") or "")
+    assert out.get("event_id")  # 零命中事件也带 id——DLP 否决链的入口（v0.68 票 01）
 
 
 def test_handle_dialogue_channel(monkeypatch):
