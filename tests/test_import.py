@@ -16,8 +16,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import lantai.models.tables  # noqa: F401
 from lantai.models.tables import MemoryCandidate, MemoryItem
 
-# aware UTC：sqlmodel ≥0.0.47 的 UTCDateTime 拒绝 naive datetime（写库与查询
-# 绑定参数都查 tzinfo），导入链归一化结果须为 aware。时刻数值不变
+# aware UTC：导入链归一化结果须为 aware（恒 aware UTC 纪律：锁定
+# sqlmodel 0.0.42 无库级防护，naive 写库静默落库）。时刻数值不变
 # ——只补时区，1720000000000 epoch ms 仍是 2024-07-03 09:46:40 UTC。
 ORIGINAL_TS = datetime(2024, 7, 3, 9, 46, 40, tzinfo=UTC)
 
@@ -25,11 +25,10 @@ ORIGINAL_TS = datetime(2024, 7, 3, 9, 46, 40, tzinfo=UTC)
 def assert_same_moment(actual, expected):
     """断言两个 datetime 是**同一时刻**，不要求 tzinfo 形态一致。
 
-    库内读回值的 tzinfo 取决于 sqlmodel 版本：≥0.0.47 的
-    `UTCDateTime.process_result_value` 会给无偏移落盘文本补 `tzinfo=utc`（读回
-    aware），0.0.42 用原生 `DateTime`（读回 naive）。本测试套件要在这两个版本
-    下都跑（pyproject 锁 `sqlmodel>=0.0.22,<0.0.48`），所以断言必须只锁真正
-    不变的量——时刻本身，而不是时区标注。
+    库内读回值的 tzinfo 取决于 sqlmodel 版本：0.0.42 用原生 `DateTime`
+    （读回 naive），≥0.0.47 的 `UTCDateTime.process_result_value` 会给
+    无偏移落盘文本补 `tzinfo=utc`（读回 aware）。本仓锁定 0.0.42，但断言
+    只锁真正不变的量——时刻本身，而不是时区标注（升级评测时无需改断言）。
     """
     assert actual is not None
     a = actual if actual.tzinfo else actual.replace(tzinfo=UTC)
@@ -339,8 +338,8 @@ def test_chain_does_not_override_normal_created_at(mem_db):
     with session_factory() as s:
         mem = s.exec(select(MemoryItem).where(MemoryItem.key == "键")).one()
         assert mem.created_at is not None
-        # 读回值 tzinfo 取决于 sqlmodel 版本（≥0.0.47 aware / 0.0.42 naive），
-        # 先归一再比，否则 TypeError: can't compare offset-naive and offset-aware。
+        # 读回值 tzinfo 随 sqlmodel 版本而变（锁定 0.0.42 为 naive），先归一
+        # 再比，否则 TypeError: can't compare offset-naive and offset-aware。
         # 阈值日期语义不变（仍是 2024-07-03）。
         created = mem.created_at
         if created.tzinfo is None:

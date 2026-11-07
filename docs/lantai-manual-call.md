@@ -1,7 +1,7 @@
 # 兰台记忆 记忆主动调用手册
 
 > 场景：不依赖 pre_llm_call 自动注入，**手动**触发记忆检索/写入/反馈。
-> 工具名（Hermes 内）：`mcp__remembrance__search` / `mcp__remembrance__add` / `mcp__remembrance__feedback`
+> 工具名（Hermes 内）：`mcp__remembrance__search` / `mcp__remembrance__add` / `mcp__remembrance__feedback`——前缀源自 Hermes 配置里 `mcp_servers:` 的 **server key**（交接文档示例用的 key 是 `remembrance`），与 serverInfo.name=`lantai` 是两层命名；新部署建议 server key 直接用 `lantai`，前缀随之变为 `mcp__lantai__*`
 
 ---
 
@@ -19,13 +19,11 @@
 - 命中任一放行通道即检索：纠错（不对/你记错）、自我指代（我的/我是/大哥）、
   明确回忆（记得/忘记/回忆/查…记忆）、指代延续（上次/之前/继续）、
   技术词 ≥4 字的短查询、问句 ≥5 汉字、>15 字且含实词；
-  12 字内的短追问沿用上一轮**命中**判定（15s 热缓存；上一轮 no_signal 不沿用，
-  仍按上述通道重判）
+  12 字内的短追问沿用上一轮**命中**判定（15s 热缓存；上轮 no_signal 不沿用，照走完整判定）
 - 都不命中 → no_signal（设计如此，防误触发）
 - ✅ 推荐说法：自然完整问句（「龙井茶冲泡水温是多少」——问句 ≥5 汉字已放行，
   不再被 15 字硬卡）或带「记得/上次」的回忆句
-- ⚠️ 孤立短查询（「物业费在哪交」：无自指/回忆词、无技术词，疑问标记只收多字
-  疑问词与问号——单字「哪」不算）→ no_signal
+- ⚠️ 孤立短查询（如「物业费在哪交」——单字「哪」不在疑问模式、无技术词）→ no_signal
 - 绕过闸门：`search` 传 `force: true` 显式直接检索（拾遗 ADR-0028）
 
 想存记忆：

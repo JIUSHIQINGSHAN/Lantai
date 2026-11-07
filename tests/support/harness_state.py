@@ -15,6 +15,10 @@
 
 纪律：测试侧要动全局环境/配置，只允许经过本模块。每次写入登记「首次接触前的原值」，
 会话结束由 `tests/conftest.py::pytest_unconfigure` 调 `restore()` 无条件复原。
+第三类（票 .scratch/v0.68-next-window-2026-11/04）：`scrub_foreign_sys_path()` 对
+sys.path 只删不增、无残留面（进程退出即终），故不复原，但删除清单入
+`registry_view()["syspath_removals"]` 台账可审计——AST 扫描器对本文件的
+SYSPATH_WRITE 豁免仅限此形态。
 `tests/test_harness_global_state_isolation.py` 用 AST 静态扫描锁死这条边界（`tests/`
 内除本模块以外的裸写一律判红），并用**真实子会话**证明退出时复原确实发生。
 
@@ -27,7 +31,9 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import os
+import sys
 from contextlib import contextmanager
+from pathlib import Path
 
 # ── 装配策略（唯一声明处；conftest 只负责应用，测试据此核对）────────────
 # 黑洞端点：环回地址 + discard(9) 端口，任何进程都无从经它出网。刻意用 http://——
@@ -133,6 +139,41 @@ def apply_feature_flag_policy(settings_obj: object) -> None:
     set_settings_fields(settings_obj, **HARNESS_FEATURE_FLAG_POLICY)
 
 
+_SYSPATH_REMOVALS: list[str] = []
+
+
+def scrub_foreign_sys_path() -> list[str]:
+    """清出会遮蔽本仓依赖的外来 sys.path 条目（票 .scratch/v0.68-next-window-2026-11/04）。
+
+    PYTHONPATH 条目在 sys.path 上先于活动 venv 的 site-packages——宿主环境的
+    第三方包（实测：hermes venv 的 pydantic，为宿主解释器编译）会抢解析并
+    二进制不兼容崩。只清「既不在本仓根下、也不在活动解释器 prefix 下」的
+    条目：套件按声明 venv 的依赖运行，不吃宿主环境。会话级一次性装配，
+    只删不增、无残留面（进程退出即终），故不做复原；删了什么全在
+    `registry_view()["syspath_removals"]` 里可审计。调用时机必须早于
+    conftest 的任何 lantai./sqlmodel 级 import——晚了就已被遮蔽。
+    """
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    prefixes = [Path(sys.prefix).resolve()]
+    base_prefix = getattr(sys, "base_prefix", None)
+    if base_prefix:
+        prefixes.append(Path(base_prefix).resolve())
+    kept = [os.path.normcase(str(p)) for p in [repo_root, *prefixes]]
+    removed: list[str] = []
+    for entry in list(sys.path):
+        if not entry:
+            continue
+        norm = os.path.normcase(os.path.realpath(entry))
+        if any(norm == k or norm.startswith(k + os.sep) for k in kept):
+            continue
+        sys.path.remove(entry)
+        removed.append(entry)
+    _SYSPATH_REMOVALS.extend(removed)
+    if removed:
+        print(f"[harness] 已清外来 sys.path 条目（票 04 遮蔽防御）：{removed}", file=sys.stderr)
+    return removed
+
+
 def registry_view() -> dict:
     """当前登记面（供测试核对「写了什么、原值是什么」，敏感项只露指纹）。"""
     return {
@@ -140,6 +181,7 @@ def registry_view() -> dict:
         "settings_writes": {
             name: mask(name, rec["before"]) for (_, name), rec in _SETTINGS_WRITES.items()
         },
+        "syspath_removals": list(_SYSPATH_REMOVALS),
     }
 
 

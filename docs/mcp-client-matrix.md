@@ -14,7 +14,7 @@
   ```bash
   python -m lantai.cli.mcp    # 或 venv Scripts 里的 lantai-mcp
   ```
-- 数据目录：`LANTAI_HOME`（或 `REMEMBRANCE_HOME`）环境变量；未设置时用仓库默认目录
+- 数据目录（四段回落，`lantai/core/settings.py` 为准）：`LANTAI_HOME` 显式设置 → 旧 `REMEMBRANCE_HOME` 兼容沿用 → 用户持久目录 `~/AppData/Local/remembrance-data`（仅该目录与 `remembrance.db` 均在才沿用）→ 仓库默认目录
 - **工具档位（fail-closed）**：不设 `LANTAI_MCP_PROFILE`（或设空、设了不认识的值）时
   只暴露 `HERMES_CORE_TOOLS` 核心 6 工具：`search` / `add` / `feedback` /
   `offload_read` / `mem_recent` / `core_memory_get`；调用档外工具一律 `-32602`。

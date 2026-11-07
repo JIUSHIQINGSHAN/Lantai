@@ -20,6 +20,7 @@ from lantai.core.auth import get_current_user
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
 from lantai.models.tables import CognitiveRole, Evidence, MemoryItem
+from lantai.security.injection_guard import assert_no_prompt_injection
 from lantai.storage.db import get_session
 
 router = APIRouter(prefix="/cognitive", tags=["cognitive"])
@@ -59,7 +60,17 @@ def cognitive_observe(
     `content` 是自由文本，用户往里写什么完全不受控。
 
     四元组随 `ctx` 落列（`session_id` 不加：认知观测不是会话产物）。
+
+    獬豸（v0.68 票 14）：`content` 自由文本直写 MemoryItem + Evidence 双落，
+    且观测行是反思 LLM 的直接输入（reflection 扫描归纳 pattern 再进提案）——
+    用户直写面走断言式（对齐 dialogue/verbatim 既有形态），ValueError → 422
+    （routes_memory.py 既有范式；不补会把拒绝变成 500）。全仓复核无内部自动
+    调用方（hermes-plugin/宿主脚本/workers 零命中），422 不会打断自动链路。
     """
+    try:
+        assert_no_prompt_injection(req.content)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
     mem_id = new_id("mem")
     ev_id = new_id("ev")
 

@@ -69,6 +69,7 @@ DIAGNOSIS_CATEGORIES = (
     "约束漂移",
     "依赖缺失",
     "逻辑缺陷",
+    "文档断线",
     "契约/策略违反",
     "发布元数据漂移",
     "仓库状态",
@@ -96,11 +97,19 @@ FAILURE_DIAGNOSIS: dict[str, tuple[str, str]] = {
         "python -m build --wheel --no-isolation --outdir <临时目录>",
     ),
     "Git 状态": ("仓库状态", "git status --porcelain && git tag --list 'v*'"),
+    "命名空间 provenance": (
+        "环境/工具缺失",
+        "echo %PYTHONPATH% 清空后复跑（宿主 PYTHONPATH 渗入）；细项见 docs/release-process.md 第 10 条",
+    ),
     "MCP 默认暴露": (
         "契约/策略违反",
         'python -c "from lantai.cli import mcp; print(len(mcp._get_active_tools()), len(mcp.TOOLS))"',
     ),
     "迁移与列约束漂移": ("约束漂移", "python -m pytest tests/test_legacy_schema_parity.py -q"),
+    "文档引用对账": (
+        "文档断线",
+        "python -m pytest tests/test_release_check.py -q -k=docs_reference（红灯明细含 file:lineno 死链清单）",
+    ),
     "老库升级回放与列对齐": ("约束漂移", "python scripts/legacy_parity_probe.py"),
     "全量测试 + 宿主目录绊线": ("测试污染", 'python -m pytest tests/ -q -o addopts=""'),
     "遗忘质量离线门禁": ("逻辑缺陷", "python scripts/run_forgetting_quality.py --check"),
@@ -519,6 +528,92 @@ def suite_summary_issue(output: str) -> str | None:
             "（要豁免某条评测线就得写成显式白名单，不能靠 skip 蒙过门禁）"
         )
     return None
+
+
+# 票 04：命名空间 provenance 哨兵集——第一方入口 + 套件依赖链最深的三方根。
+_NAMESPACE_PROBE_MODULES = ("lantai", "tests", "pydantic", "sqlmodel", "fastapi")
+
+_NAMESPACE_PROBE_SRC = """\
+import importlib, json, sys
+names = json.loads(sys.argv[1])
+out = {
+    "prefix": sys.prefix,
+    "base_prefix": getattr(sys, "base_prefix", sys.prefix),
+    "modules": {},
+    "errors": {},
+}
+for name in names:
+    try:
+        mod = importlib.import_module(name)
+        out["modules"][name] = getattr(mod, "__file__", None)
+    except BaseException as exc:  # 遮蔽体的任何崩法（ImportError/二进制不兼容）都要如实带出
+        out["errors"][name] = f"{type(exc).__name__}: {exc}"
+print(json.dumps(out))
+"""
+
+
+def _path_under(path: str, base: Path) -> bool:
+    norm = os.path.normcase(os.path.realpath(path))
+    base_norm = os.path.normcase(os.path.realpath(str(base)))
+    return norm == base_norm or norm.startswith(base_norm + os.sep)
+
+
+def namespace_provenance_issues(repo_root: Path, *, env: dict[str, str] | None = None) -> list[str]:
+    """关键 import 的解析落点必须在本仓或活动解释器内（票 04），越界即阻断上传。
+
+    敌意 PYTHONPATH（宿主拉起的会话）从两个位次遮蔽：正式包压命名空间（tests
+    面，conftest 收集即死）、PYTHONPATH 先于 venv site-packages（pydantic 等
+    三方依赖面——实测 hermes venv 的 pydantic 抢解析直接二进制不兼容崩）。
+    CI 跑在干净环境永远探不到这两条，而发布门禁恰恰运行在维护者本机——
+    宿主会话里不拦，就是把「跑在别人的代码上」当绿灯发布。探针故意继承当前
+    环境（要探的就是门禁自己所在的会话）；任何哨兵解析到本仓/活动解释器
+    之外、或 import 即崩，都判红并给出可操作文案（清 PYTHONPATH 复跑）。
+    """
+    run_env = os.environ.copy() if env is None else dict(env)
+    try:
+        proc = subprocess.run(  # noqa: S603
+            [
+                sys.executable,
+                "-c",
+                _NAMESPACE_PROBE_SRC,
+                json.dumps(list(_NAMESPACE_PROBE_MODULES)),
+            ],
+            cwd=str(repo_root),
+            env=run_env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return [f"命名空间 provenance 探针无法执行（{exc}）——跑不动就等于没探，不放行"]
+    payload = None
+    for line in reversed((proc.stdout or "").splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                payload = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+    if payload is None:
+        return [
+            "命名空间 provenance 探针无有效输出（解释器自身被外来环境打崩）："
+            + ((proc.stderr or proc.stdout or "")[-400:])
+        ]
+    issues: list[str] = []
+    bases = [repo_root, Path(payload["prefix"]), Path(payload["base_prefix"])]
+    for name, err in payload["errors"].items():
+        issues.append(f"哨兵 import 失败（外来环境遮蔽/二进制不兼容）：{name} → {err}")
+    for name, file in payload["modules"].items():
+        if file and any(_path_under(file, b) for b in bases):
+            continue
+        issues.append(
+            f"命名空间遮蔽：`{name}` 解析到 {file or '<无 __file__>'}，"
+            "不在本仓或活动解释器内——宿主 PYTHONPATH 渗入，清 PYTHONPATH 后复跑门禁"
+        )
+    return issues
 
 
 def suite_gate_issues(
@@ -1075,6 +1170,59 @@ def addopts_fidelity_issues(repo_root: Path) -> list[str]:
     return []
 
 
+# 现役文档扫描面（顶层非递归）：docs/*.md + README.md + CONTRIBUTING.md。
+# docs/adr/、docs/research/、docs/plans/ 等子目录天然出界——ADR 是不可变决策记录、
+# dated 报告按归档口径不核对（工单 09 口径）。
+DOCS_REFERENCE_WHITELIST: frozenset[str] = frozenset(
+    {
+        # P0-3 修复的合法历史注记（矩阵/手册/交接文档的「旧入口已删除」反指），
+        # 票据 .scratch/v068-docs-audit 与 v0.68 票 06 评审确认的必要之恶
+        "scripts/mcp_server.py",
+    }
+)
+
+_DOCS_REF_RE = re.compile(r"scripts/[\w][\w-]*\.py")
+
+
+def docs_reference_issues(repo_root: Path) -> list[str]:
+    """现役文档引用的 scripts/*.py 必须真实存在（工单 09 防复发哨兵）。
+
+    流 C 审计 P0-3/6/7 三组同根因：入口文件被删/改名后，文档引用静默断线。
+    本探针结构性拦截该类断线进 release：引用对象不存在即判红，点名 file:lineno。
+    只读扫描（不联网、不改文件）；v1 只认 `scripts/` 前缀引用——裸名/伪码/
+    占位符（`<name>.py`、`probe_*.py`）误报面不可控，不入扫描面（Standards 轴
+    评审裁定）；新历史文档的豁免走显式白名单登记（fail-closed），不做横幅解析。
+    """
+    root = Path(repo_root)
+    targets = [root / "README.md", root / "CONTRIBUTING.md"]
+    docs_dir = root / "docs"
+    if docs_dir.is_dir():
+        targets.extend(sorted(p for p in docs_dir.glob("*.md") if p.is_file()))
+    issues: list[str] = []
+    for path in targets:
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            issues.append(f"{path.name} 读取失败（{exc}）——引用对账无法取证，不放行")
+            continue
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for token in _DOCS_REF_RE.findall(line):
+                if any(ch in token for ch in "<>*"):
+                    continue  # 占位符/通配示例
+                rel = token.replace("\\", "/")
+                if rel in DOCS_REFERENCE_WHITELIST:
+                    continue
+                if (root / rel).is_file():
+                    continue
+                issues.append(
+                    f"{path.name}:{lineno} 引用的 `{rel}` 不存在——"
+                    "引用已删/改名入口（P0-3 同族断线）；修文档或经白名单登记历史注记"
+                )
+    return issues
+
+
 def forgetting_gate_issues(returncode: int, output: str) -> list[str]:
     """纯判据：退出码 0 且必须回报结论标记，才算取到证。"""
     if returncode != 0:
@@ -1274,6 +1422,17 @@ def main(argv: list[str] | None = None) -> int:
             "且门禁 pytest 口径包含 CI 口径、addopts 钉子仍惰性",
         )
 
+    doc_ref_issues = docs_reference_issues(REPO_ROOT)
+    for issue in doc_ref_issues:
+        check("文档引用对账", False, issue)
+    if not doc_ref_issues:
+        check(
+            "文档引用对账",
+            True,
+            "现役文档（docs/*.md 顶层 + README + CONTRIBUTING）引用的 scripts/*.py 全部存在"
+            "（工单 09 防复发哨兵；白名单收编历史注记）",
+        )
+
     refs = collect_version_refs(REPO_ROOT)
     pyproject_version = next((v for label, _, v in refs if label == "pyproject.toml"), "")
     version = normalize_version(args.version) if args.version else pyproject_version
@@ -1323,6 +1482,17 @@ def main(argv: list[str] | None = None) -> int:
             check("MCP 默认暴露", False, issue)
         if not mcp_failures:
             check("MCP 默认暴露", True, "默认 tools/list 不等于全量注册表")
+
+    provenance_failures = namespace_provenance_issues(REPO_ROOT)
+    for issue in provenance_failures:
+        check("命名空间 provenance", False, issue)
+    if not provenance_failures:
+        check(
+            "命名空间 provenance",
+            True,
+            "第一方（lantai/tests）与三方哨兵（pydantic/sqlmodel/fastapi）全部解析到本仓"
+            "或活动解释器内——宿主 PYTHONPATH 未渗入门禁会话（票 04）",
+        )
 
     schema_failures = schema_drift_issues(REPO_ROOT)
     for issue in schema_failures:

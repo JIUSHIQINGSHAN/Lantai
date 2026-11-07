@@ -28,10 +28,11 @@ def extract_explicit_event_time(text: str) -> tuple:
 
     确定性格式优先级：完整日期（ISO/中文）→ 仅年份。匹配不到 → (None, "")。
 
-    aware UTC（`tzinfo=UTC`）：文本里的日期无时区，按 UTC 解释。带时区是因为
-    sqlmodel ≥0.0.47 的 UTCDateTime 拒绝 naive datetime 写库——提取结果经
-    `.isoformat()` 落 provenance，再由 promoter `fromisoformat` 解析后写入
-    `MemoryItem.event_time`，naive 值会在那一跳触发 ValueError。时刻数值不变
+    aware UTC（`tzinfo=UTC`）：文本里的日期无时区，按 UTC 解释。带时区是
+    本仓纪律而非库强制——锁定的 sqlmodel 0.0.42 无库级防护（naive 写库
+    静默落库），提取结果经 `.isoformat()` 落 provenance，再由 promoter
+    `fromisoformat` 解析后写入 `MemoryItem.event_time`，全链恒 aware 才能
+    时刻可比、落盘形态一致。时刻数值不变
     ——2026-09-15 仍是 2026-09-15 00:00:00 UTC。
     """
     text = text or ""

@@ -17,7 +17,7 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **tier**（层级） | 记忆的生命周期深度，区分为临时的“工作记忆”与长期的“长期记忆”，超时未被强化的临时记忆会自动归档。 | 命名：项目内部技术命名（层级）；设计：见 `lantai/models/tables.py`（`MemoryItem.tier`） |
 | **gate**（闸门） | 新记忆进入系统的第一道质检门；综合新颖度、置信度与矛盾检测做出放行、拒绝或转入待审的裁决。 | 命名：意象取材「水闸控流」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、`lantai/gate/decision.py` |
 | **coalesce**（潮波合并） | 连续短消息的异步缓冲机制；将相近对话合并后再调用大模型提炼，避免高频细碎调用消耗资源。 | 命名：意象取材「潮水成波、批量冲刷」；设计：见 [ADR-0003](docs/adr/0003-coalesce-buffer-key.md) |
-| **fastpath**（白名单直写） | 常见确定性句式（如用户自我声明、明确指令）绕过大模型直接安全存入记忆库的高速通道。 | 命名：项目内部技术名（ADR-0013 意象「直书」前身）；设计：见 `parsing/fastpath.py` 与 [ADR-0013](docs/adr/0013-naming-system.md) |
+| **fastpath**（白名单直写） | 常见确定性句式（如用户自我声明、明确指令）绕过大模型直接安全存入记忆库的高速通道。 | 命名：项目内部技术名（ADR-0013 意象「直书」前身）；设计：见 `lantai/parsing/fastpath.py` 与 [ADR-0013](docs/adr/0013-naming-system.md) |
 | **直书**（Zhishu，确定性规则直写引擎） | 常见确定性句式（自我声明、偏好表达、程序约束/铁律、参数配置、显式备忘）绕过大模型直接安全提取并存入记忆库的多轨高速规则引擎。 | 命名：《左传》「董狐直笔」，秉笔直书，不经润色；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0064](docs/adr/0064-zhishu-fastpath-engine.md) 及 `lantai/parsing/zhishu.py` |
 | **直书**（Zhishu，版本代号） | v0.43.0 发行版本代号；寓意秉笔直书、不加雕琢，对应本版「多轨确定性规则引擎、程序性铁律结构化沉淀与零Token高速直写（ADR-0064落地）」的主题（代号与功能同名，承既有演进先例）。 | 命名：《左传》「董狐直笔」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记及 [ADR-0064](docs/adr/0064-zhishu-fastpath-engine.md) |
 | **目次**（Muci，多维记忆知识目录与分级导航引擎） | 记忆库的结构化全局知识目录与分层路标；按辨域（domain）、分轨（lane）、核心实体/主题聚类与时序重要度分级编排，为 Agent 提供一眼全局的记忆知识导航，杜绝单点检索的盲人摸象。 | 命名：南朝梁·刘勰《文心雕龙·序志》「成岁既渐，目次来构」，部目次序、条贯井然；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0065](docs/adr/0065-muci-memory-catalog-engine.md) 及 `lantai/cognition/muci.py` |
@@ -127,6 +127,7 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | **稽古**（Jigu，版本代号） | v0.28.0 发行版本代号；寓意考订古今、时态立心，对应本版「as-of 时态查询引擎全链路打通、历史切片精确回放与迟到更正时态消解（ADR-0048）」的主题。 | 命名：《尚书·尧典》「曰若稽古」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
 | **磨勘**（Mokan，版本代号） | v0.29.0 发行版本代号；寓意核验功过、自愈长青，对应本版「抽象层级化选层检索（MCMA建议项4）、4~5条知识注入条目硬顶与抗干扰裁减（MCMA建议项6）及考功自证」的主题。 | 命名：《宋史·选举志》「磨勘之法」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
 | **探颐**（Tanyi，版本代号） | v0.34.0 发行版本代号（v0.38.0 复用）；寓意探赜索隐、钩深致远，对应 v0.34.0「记忆主动探针与自然交互消歧机制（ADR-0037落地）、冲突自然语言确认与闭环消解」与 v0.38.0「存储驱动主动探针巡检与归属安全收窄（ADR-0037 延伸落地）」的主题（代号与功能同名，承 v0.19.0 沉潜、v0.22.1 起复、v0.26.0 完璧先例）。 | 命名：《易·系辞上》「探赜索隐，钩深致远」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
+| **格物**（Gewu，因果时序拓扑与反事实推演） | 记忆间因果关系边（causes/supports/refines/leads_to）与事件溯源链的专职推演引擎；提供多跳因果溯源、反事实推演（counterfactual）、前瞻决策影响推演与关键因果路径量化。 | 命名：《礼记·大学》「致知在格物，物格而后知至」；设计：见 [ADR-0061](docs/adr/0061-gewu-counterfactual-causal-reasoning.md) 及 `lantai/cognition/causal.py` |
 | **格物**（Gewu，版本代号） | v0.35.0 发行版本代号（v0.40.0 复用）；寓意格物穷理、致知在格物，对应 v0.35.0「因果时序拓扑与事件溯源链、MemoryEdge 因果关系建模与归因推理闭环」与 v0.40.0「因果反事实推理、前瞻决策影响推演与关键因果路径量化（ADR-0061 延伸落地）」的主题（代号与功能同名，承 v0.19.0 沉潜、v0.22.1 起复、v0.26.0 完璧、v0.34.0/v0.38.0 探颐先例）。 | 命名：《礼记·大学》「致知在格物，物格而后知至」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记及 [ADR-0061](docs/adr/0061-gewu-counterfactual-causal-reasoning.md) |
 | **同袍**（Tongpao，记忆联邦） | 多智能体记忆联邦与公共知识殿堂机制；构建 Agent 私有工作区与 Swarm 公共典籍两级存储，支持群组知识共享与技能结晶跨 Agent 晋升。 | 命名：《诗经·秦风·无衣》「岂曰无衣？与子同袍」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 与 [ADR-0058](docs/adr/0058-tongpao-multi-agent-memory-federation.md) |
 | **同袍**（Tongpao，版本代号） | v0.32.0 发行版本代号；寓意多智能体协同、守望相助，对应本版「多智能体记忆联邦与公共知识殿堂、两级分级存储与跨智能体技能结晶晋升共享」的主题。 | 命名：《诗经·秦风·无衣》「岂曰无衣？与子同袍」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) 版本代号登记 |
@@ -143,6 +144,7 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | *search_trace*（技术字段） | 检索诊断调试数组；开启后记录检索执行各步骤的耗时、候选条数与得分分布。 | 命名：项目内部技术字段；设计：见 `lantai/retrieval/hybrid.py` 诊断输出 |
 | *water_level*（技术字段） | 潮波合并缓冲区的水位指标；实时反映未冲刷的消息堆积量与活跃会话数，用于写入节流监控。 | 命名：项目内部技术字段；设计：见 [ADR-0003](docs/adr/0003-coalesce-buffer-key.md) 及 `/stats` 路由 |
 | *promotion_trace*（技术字段） | 知识晋升评分快照（JSON 格式）；记录单条记忆被升格为高阶信念或规则时的多维度打分依据。 | 命名：项目内部技术字段；设计：见 `lantai/models/tables.py` 及 [ADR-0044](docs/adr/0044-cognition-evolution-boundary.md) |
+| *retrieval_veto / mark_vetoed*（技术字段） | 被否决轮的作废终态链路：宿主对被否决（如 DLP 拦截）的一轮发 `retrieval_veto` 动作，服务端 `mark_vetoed` 把该轮检索事件抹 `query_text`/`query_norm_hash`、清 `used_ids`、置 `receipt_status="vetoed"`（新终态：backfill 不复活、missed 扫描不碰、报表单列计数）。 | 命名：项目内部技术字段（ADR-0084）；设计：见 [ADR-0084](docs/adr/0084-vetoed-receipt-terminal-state.md) 及 `lantai/observability/retrieval_log.py` |
 | *failure_pattern*（技术字段） | 从失败记录中抽象出的认知模式标识；用于预警同类操作风险，防止 Agent 重蹈覆辙。 | 命名：项目内部技术字段；设计：见 `lantai/cognition/reflection.py` 及 [ADR-0044](docs/adr/0044-cognition-evolution-boundary.md) |
 | *facade rule*（工程规范） | 系统重构纪律：只搬迁模块位置、不更改业务语义与接口调用路径，保证旧 import 全绿。 | 命名：经典设计模式（外观模式 Facade）；设计：见 [ADR-0001](docs/adr/0001-facade-rule.md) |
 | *service layer*（工程规范） | 架构分层约定：接口层仅负责网络请求协议解析，所有核心业务逻辑统一沉淀在 service 服务层。 | 命名：经典企业应用架构模式（服务层）；设计：见 [ADR-0001](docs/adr/0001-facade-rule.md) |

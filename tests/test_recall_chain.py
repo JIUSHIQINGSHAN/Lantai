@@ -21,8 +21,8 @@ from tests.support.harness_state import env_context
 
 
 def _utcnow():
-    # aware（带 UTC 时区）：sqlmodel ≥0.0.47 拒绝 naive datetime 写库，
-    # 原 `.replace(tzinfo=None)` 在新版下触发 ValueError。时刻本身不变。
+    # aware（带 UTC 时区）：恒 aware UTC 是本仓纪律（锁定 0.0.42 无库级
+    # 防护，naive 写库静默落库）。时刻本身不变。
     return datetime.now(UTC)
 
 

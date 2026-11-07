@@ -34,6 +34,7 @@ from lantai.models.tables import (
     MemoryProposal,
 )
 from lantai.retrieval.hybrid import index_memory_item
+from lantai.security.injection_guard import check_prompt_injection
 from lantai.storage import db
 from lantai.storage.fts import sync_fts
 
@@ -56,6 +57,11 @@ _LAST_CONSOLIDATION_REPORT: dict = {
 }
 
 _CONSOLIDATION_AUDIT_MODES = ("off", "shadow", "enforce")
+
+# 獬豸阻断审计标记的伪 id（v0.68 票 14）：与直写指纹口径
+# "cluster_consolidation" 刻意区分——consolidation_audit_report 按
+# memory_id 精确匹配统计，本标记不得混入其分子分母。
+XIEZHI_BLOCKED_CKPT_ID = "cluster_consolidation_xiezhi_blocked"
 
 
 def _as_utc(dt: datetime | None) -> datetime | None:
@@ -308,6 +314,39 @@ def consolidate_cluster(
             return None
 
         content = str(res["consolidated_content"]).strip()
+
+        # 獬豸二阶闸（v0.68 票 14）：合并文本即将以新记忆身份回到全部检索/注入面
+        # （off 直写、shadow 直写+留痕、enforce 经提案 apply 分发），且折叠会删碎片
+        # 原行——已过闸的对话碎片里埋的载荷经 LLM 合并可进合并文本。命中即跳过该
+        # 簇：碎片原状保留（禁删行、禁改写合并文本），skip 计入 skipped_lowq；
+        # 审计标记落 distinct 伪 id checkpoint（memory_id 带 _xiezhi_blocked 后缀，
+        # 不污染 consolidation_audit_report 以 "cluster_consolidation" 为口径的
+        # 直写指纹/三方互证）。只检测不改写，与既有十处挂载同源。
+        hit, layer = (False, "")
+        if settings.INJECTION_GUARD_ENABLED:
+            hit, layer = check_prompt_injection(content)
+        if hit:
+            frag_ids = [m.id for m in cluster_items]
+            logger.warning(
+                "沉潜：合并文本命中獬豸闸，跳过该簇（碎片原状保留，宁 miss 不脏写）"
+                "fragments=%s layer=%s",
+                frag_ids,
+                layer,
+            )
+            s.add(
+                MemoryCheckpoint(
+                    id=f"cp_{ULID()}",
+                    memory_id=XIEZHI_BLOCKED_CKPT_ID,
+                    version=1,
+                    before={"source_ids": frag_ids},
+                    after={"xiezhi_blocked": True, "layer": layer, "mode": mode},
+                    trigger="consolidation",
+                    created_at=utcnow(),
+                )
+            )
+            s.commit()
+            return None
+
         if not _verify_trustmem_transition(cluster_items, content):
             logger.warning("沉潜：TrustMem 迁移校验不通过，放弃折叠以防脏写")
             return None

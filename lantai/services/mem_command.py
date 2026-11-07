@@ -25,6 +25,7 @@ from lantai.llm.client import embed  # 外部依赖：允许 mock
 from lantai.models.enums import MemoryTier
 from lantai.models.tables import MemoryItem
 from lantai.retrieval.hybrid import index_memory_item
+from lantai.security.injection_guard import assert_no_prompt_injection
 from lantai.storage import db
 from lantai.storage.fts import sync_fts
 
@@ -137,6 +138,12 @@ def create_skill(
         return {"ok": False, "error": "steps must be a non-empty list"}
     description = (description or "").strip()
     content = f"{name}\n{description}\n" + "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps))
+    # 獬豸（v0.68 票 14）：create-skill 是 MCP 直调 + 自动资产化（crystal 两路）
+    # 的单点汇流，name/description/steps 拼出的正文直落 skill MemoryItem 并
+    # 全量索引——闸放单点（组合文本与落库正文逐字一致，无第四匹配面）。断言式：
+    # ValueError 冒泡 → MCP -32602；自动调用方（crystal_service/crystal_promoter）
+    # 在调用侧捕获转 skip+留痕，不让自动链路被异常打断。
+    assert_no_prompt_injection(content)
     h = hashlib.sha256(content.encode("utf-8")).hexdigest()
     # 归属三元组（票 01b）。**不用 `scratchpad_service._owner_of`**——那个
     # 对 `principal=None` 返回 `(None, "default", None)`，会把本函数「None

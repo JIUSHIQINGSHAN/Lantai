@@ -23,6 +23,7 @@ fail-open：幂等层 DB 异常记 error 后按无幂等放行——去重层故
 import hashlib
 import json
 
+from sqlalchemy import or_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 
@@ -273,8 +274,11 @@ def release(
 ) -> None:
     """删除 claim 使重试可执行（settle(ok=False) 的底层；独立暴露给运维面）。
 
-    带 claimed_at 时只删自己那条 accepted；不删 done 回执（已完成的结果
-    不能被运维面顺手抹掉重放）。
+    带 claimed_at 时只删自己那条 claim；无令牌时清同键全部未完成 claim
+    （运维面强释放）。**done 回执在任何形态下都不删**（已完成的结果不能被
+    运维面顺手抹掉重放）——此前 `state != "done"` 守卫只在带令牌分支内，
+    无令牌调用把 done 回执一并删净、重试从 replay 退化成 re-execution
+    （票 75，探针 `.scratch/_v068_probe_r9_release_nukes_done.py` 实锤）。
     """
     from lantai.storage import db
 
@@ -284,12 +288,10 @@ def release(
                 IdempotencyKey.key == key,
                 IdempotencyKey.user_id == user_id,
                 IdempotencyKey.tenant_id == tenant_id,
+                IdempotencyKey.state != "done",
             )
             if claimed_at is not None:
-                stmt = stmt.where(
-                    IdempotencyKey.created_at == claimed_at,
-                    IdempotencyKey.state != "done",
-                )
+                stmt = stmt.where(IdempotencyKey.created_at == claimed_at)
             for target in s.exec(stmt).all():
                 s.delete(target)
             s.commit()
@@ -302,6 +304,9 @@ def purge_expired(now: float | None = None) -> int:
 
     accepted 超 LEASE 本可留给接管逻辑，但那种行已无任务在跑（重启丢了
     _TASKS），留着只会让同文重试走到接管分支多绕一步——直接清了等价且省行。
+    过滤下推 SQL（票 75）：此前全量加载「超 LEASE」的行（含 TTL 内 done
+    回执）进内存再 Python 过滤，行数随时面线性增长；现 `(state != done OR
+    age >= TTL)` 与超龄条件一并下推，done 未超 TTL 的行不再出库。
     """
     now = utcnow().timestamp() if now is None else now
     from lantai.storage import db
@@ -309,9 +314,14 @@ def purge_expired(now: float | None = None) -> int:
     try:
         with db.get_session() as s:
             stale = s.exec(
-                select(IdempotencyKey).where(IdempotencyKey.created_at < now - LEASE_SECONDS)
+                select(IdempotencyKey).where(
+                    IdempotencyKey.created_at < now - LEASE_SECONDS,
+                    or_(
+                        IdempotencyKey.state != "done",
+                        IdempotencyKey.created_at < now - TTL_SECONDS,
+                    ),
+                )
             ).all()
-            stale = [r for r in stale if now - r.created_at >= TTL_SECONDS or r.state != "done"]
             for row in stale:
                 s.delete(row)
             s.commit()

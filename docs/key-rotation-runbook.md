@@ -23,7 +23,7 @@
 
 ```powershell
 # 本机（Windows，仓库根）
-cd C:\Users\Asus\Desktop\记忆
+cd <仓库根>
 Select-String -Path .env -Pattern 'OPENAI_API_KEY'
 ```
 
@@ -52,7 +52,7 @@ grep -n 'OPENAI_API_KEY' /path/to/lantai/.env
 ## 阶段 2 — 本机 Windows：写入 `.env` 并验证
 
 ```powershell
-cd C:\Users\Asus\Desktop\记忆
+cd <仓库根>
 
 # 1) 只替换 OPENAI_API_KEY 那一行（勿动 API_KEY / LANTAI_HOME）
 # 用编辑器打开 .env，将 OPENAI_API_KEY= 后面换成新 key，保存。

@@ -286,6 +286,17 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # v0.68 票 10（ADR-0084 §2.6）：回执缺失扫描——超龄 pending 置 missed 并抹原话
+    from lantai.workers.digest_worker import run_receipt_miss_scan
+
+    _scheduler.add_job(
+        run_receipt_miss_scan,
+        "interval",
+        minutes=settings.RECEIPT_MISS_CRON_MINUTES,
+        id="receipt_miss",
+        replace_existing=True,
+    )
+
     # Ticket 03: Daily Digest 每日盘点报告（本地早晨；DIGEST_CRON_HOUR 为 UTC 小时）
     if settings.DIGEST_ENABLED:
         from lantai.workers.digest_worker import run_digest_once

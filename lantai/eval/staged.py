@@ -305,7 +305,10 @@ def run_staged_eval(*, extract_fn=None, top_k: int = 5) -> dict:
                     # 计为 store 段缺口而非崩溃——样本本就不该入库。
                     _bucket(stages["store"], "store_target_unresolved")
                     continue
-                applied = apply_proposal(prop.id)
+                # xiezhi_bypass=True（v0.68 票 14）：本段是评测仪器存桩——
+                # 语料里 f1 围栏逃逸探针必须以注入载荷形态入库，下游 inject
+                # 段才有样本可度量 neutralize_fence_escapes；生产语义不受影响。
+                applied = apply_proposal(prop.id, xiezhi_bypass=True)
                 if not isinstance(applied, dict) or not applied.get("ok"):
                     _bucket(stages["store"], "store_apply_error")
                     chains.append(

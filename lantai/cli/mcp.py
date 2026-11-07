@@ -211,7 +211,11 @@ def handle_search(params: dict) -> dict:
     principal = _principal_from_params(params)
     gate = relevance_check(query)
     if not force and not gate["needs_memory"]:
-        event_id = _try_log(query, [], 0, gate, session_id=session_id, principal=principal)
+        # 拦截轮也落事件（zero_result 遥测），但原话写入即脱（v0.68 票 11，
+        # ADR-0084 §2.5 增补）——is_system_noise/estimated_tokens 仍以原查询照算。
+        event_id = _try_log(
+            query, [], 0, gate, session_id=session_id, principal=principal, persist_query=False
+        )
         return {"results": [], "gate": gate, "event_id": event_id}
     domain = params.get("domain")
     # 更漏（ADR-0048/票 11）：时效视图参数透传——全部缺省 = 现行行为不变
@@ -337,6 +341,7 @@ def _try_log(
     gate: dict,
     session_id: str | None = None,
     principal=None,
+    persist_query: bool = True,
 ) -> str | None:
     """检索事件埋点（方向二）：失败零侵入。返回 event_id 供生成侧回填 used_ids。"""
     try:
@@ -349,6 +354,7 @@ def _try_log(
             gate=gate,
             session_id=session_id,
             principal=principal,
+            persist_query=persist_query,
         )
     except Exception:
         return None

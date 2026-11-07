@@ -20,7 +20,7 @@ Single-context repo (most repos):
 ├── docs/adr/
 │   ├── 0001-event-sourced-orders.md
 │   └── 0002-postgres-for-write-model.md
-└── src/
+└── lantai/
 ```
 
 Multi-context repo (presence of `CONTEXT-MAP.md` at the root):
@@ -29,7 +29,7 @@ Multi-context repo (presence of `CONTEXT-MAP.md` at the root):
 /
 ├── CONTEXT-MAP.md
 ├── docs/adr/                          ← system-wide decisions
-└── src/
+└── lantai/
     ├── ordering/
     │   ├── CONTEXT.md
     │   └── docs/adr/                  ← context-specific decisions

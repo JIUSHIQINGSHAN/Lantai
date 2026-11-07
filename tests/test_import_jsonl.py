@@ -55,9 +55,9 @@ def test_parse_ok():
     assert [v["content"] for v in valid] == ["第一条", "第二条"]
     assert valid[0]["lane"] == "fact"
     assert valid[1]["lane"] == "general"  # 缺省取 RAW_MEMORY_DEFAULT_LANE
-    # +08:00 → aware UTC（与摄取链 normalize_timestamp 同语义）。aware 是
-    # sqlmodel ≥0.0.47 的硬要求（UTCDateTime 拒绝 naive 写库）；换算时刻不变
-    # ——2026-01-02 03:04:05 +08:00 仍是 2026-01-01 19:04:05 UTC。
+    # +08:00 → aware UTC（与摄取链 normalize_timestamp 同语义）。恒 aware
+    # UTC 是本仓纪律（锁定 0.0.42 无库级防护，naive 静默落库）；换算时刻
+    # 不变——2026-01-02 03:04:05 +08:00 仍是 2026-01-01 19:04:05 UTC。
     assert valid[0]["created_at"] == datetime(2026, 1, 1, 19, 4, 5, tzinfo=UTC)
     assert valid[0]["created_at"].utcoffset() == timedelta(0)
     assert valid[0]["updated_at"] is None
@@ -138,8 +138,7 @@ def test_import_normalizes_tz_to_aware_utc(imp_env):
     with session_factory() as s:
         row = s.exec(select(MemoryItem)).one()
         # 只锁时刻：+08:00 的 03:04:05 即 UTC 19:04:05（前一日）。tzinfo 形态
-        # 取决于 sqlmodel 版本（≥0.0.47 读回 aware，0.0.42 读回 naive），
-        # 见 assert_same_moment 注记。
+        # 随 sqlmodel 版本而变（锁定 0.0.42 读回 naive），见 assert_same_moment 注记。
         assert_same_moment(row.created_at, datetime(2026, 1, 1, 19, 4, 5, tzinfo=UTC))
         assert_same_moment(row.updated_at, row.created_at)
 
@@ -147,11 +146,10 @@ def test_import_normalizes_tz_to_aware_utc(imp_env):
 def assert_same_moment(actual, expected):
     """断言两个 datetime 是**同一时刻**，不要求 tzinfo 形态一致。
 
-    库内读回值的 tzinfo 取决于 sqlmodel 版本：≥0.0.47 的
-    `UTCDateTime.process_result_value` 会给无偏移落盘文本补 `tzinfo=utc`（读回
-    aware），0.0.42 用原生 `DateTime`（读回 naive）。pyproject 锁的是
-    `sqlmodel>=0.0.22,<0.0.48`，两个版本都要跑，所以断言只锁真正不变的量
-    ——时刻本身，而不是时区标注。
+    库内读回值的 tzinfo 取决于 sqlmodel 版本：0.0.42 用原生 `DateTime`
+    （读回 naive），≥0.0.47 的 `UTCDateTime.process_result_value` 会给
+    无偏移落盘文本补 `tzinfo=utc`（读回 aware）。本仓锁定 0.0.42，但断言
+    只锁真正不变的量——时刻本身，而不是时区标注。
     """
     assert actual is not None
     a = actual if actual.tzinfo else actual.replace(tzinfo=UTC)

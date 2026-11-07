@@ -1,5 +1,7 @@
 # ADR 0043: Dynamic Prompt Management (F14)
 
+**状态**：Accepted  
+
 ## Context
 System prompts (such as `EXTRACT_SYS`, `CONTRADICTION_SYS`, `PROPOSAL_SYS`, etc.) are currently hardcoded as constants in `lantai/llm/prompts.py`. If a user needs to tweak these prompts for better extraction accuracy or different behaviors, they must modify the source code and restart the system.
 

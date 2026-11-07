@@ -61,6 +61,7 @@ def log_retrieval(
     session_id: str | None = None,
     request_id: str | None = None,
     principal=None,
+    persist_query: bool = True,
 ) -> str | None:
     """
     在检索出口记录一次事件。失败仅记日志，绝不抛给主链路。
@@ -74,6 +75,12 @@ def log_retrieval(
     才能按归属收窄；不透传则留 NULL（后台巡检/内部调用）。
     request_id：回执链（ADR-0049）——一次注入调用的整体标识，由注入侧
     （shell_hook context / 中间件）生成透传；不透传留空（pending 状态照记）。
+    persist_query：原话是否落库（票 11，ADR-0084 §2.5 增补）——gate 拦截轮
+    传 False：该轮从未进入检索、无 eval/弱标注价值，原话留存是纯负担，写入
+    时即空 `query_text`/`query_norm_hash`（哈希对低熵原文是可验证口令，与
+    `mark_vetoed` 同源论证）。`is_system_noise`/`estimated_tokens` 等标记
+    **以原查询在抹除前照算**——调用方若图省事直接传空串 query，这两个标记
+    会静默失真（实现陷阱有回归锁）。
     """
     try:
         event_id = new_id("rev")
@@ -93,8 +100,8 @@ def log_retrieval(
                     user_id=getattr(principal, "user_id", None),
                     tenant_id=getattr(principal, "tenant_id", None),
                     trace_id=trace_id or "",
-                    query_text=query,
-                    query_norm_hash=_norm_hash(query),
+                    query_text=query if persist_query else "",
+                    query_norm_hash=_norm_hash(query) if persist_query else "",
                     lane=",".join(lanes) if lanes else "",
                     session_id=(session_id or "").strip() or None,
                     request_id=(request_id or "").strip() or None,
@@ -339,6 +346,13 @@ def mark_missed_receipts(timeout_seconds: int = RECEIPT_MISS_TIMEOUT_SECONDS, no
 
     missed 是事实不是错误（宁 miss 不脏写）：宿主未回执的事件如实置位，
     使「回执缺失」可观测、可统计，而不是永远 pending。幂等：已置位不重算。
+
+    原话同事务抹除（ADR-0084 §2.6，v0.68 票 10）：与 `mark_vetoed` 同源论证——
+    `query_norm_hash` 带索引，对低熵原文就是可验证口令，留着等于没抹；missed 行
+    的宿主是否真用过这轮从未得到确认，原话不该无代价永留。只抹
+    `query_text`/`query_norm_hash`，**不清 `used_ids`**（弱标注源，backfill 只拒
+    vetoed，missed→acked 仍合法）、不回冲保活链（`_touch_keepalive` 只认
+    「首次被回执」的增量，missed 行本就没刷过，无假计数可回冲）。
     """
     from datetime import timedelta
 
@@ -355,6 +369,8 @@ def mark_missed_receipts(timeout_seconds: int = RECEIPT_MISS_TIMEOUT_SECONDS, no
             for ev in rows:
                 ev.receipt_status = "missed"
                 ev.receipt_at = moment
+                ev.query_text = ""
+                ev.query_norm_hash = ""
                 s.add(ev)
             if rows:
                 s.commit()
