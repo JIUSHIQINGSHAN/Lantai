@@ -253,3 +253,35 @@ patch 仅落 settings 开关、向量库接缝（单层）与 conftest 既定外
 
 分支现领先 origin/master 8 提交、落后 0、工作树干净；push/PR 仍留维护者
 闸门。票 02 仍 open / needs-triage（3 项死代码待维护者裁决）。
+
+## 12. 第八次复验（2026-11-07）：合并流 A 票 03 + 门禁复跑
+
+环境事件：origin/master 推进 1 笔（`57cf71a6`，v0.68 票 03 摄取獬豸闸：逐 doc
+`assert_no_prompt_injection` + `detect_secret_shapes` 三态路由入
+`run_ingest_once`，新增 `tests/test_ingest_xiezhi_gate.py` 7 例），按第五次
+复验先例并入本分支（合并提交 `8e677bb8`，零冲突）。按 §1 口径全量重验：
+
+- **审计工具重跑**：与在库 `audit.json` **verdict 逐项全等、零翻转**（inventory
+  1728 / core 1083 / real-smoke 659 / hollow 0 / mocked-only 1=`_digest_dir`
+  接缝豁免 / indirect-only 321 / never-executed 102；pkg_counts 全等）。91 项
+  `indirect_files` 差异全部为**纯新增证据、零删除**：新闸调用的 6 个安全面
+  函数（`assert_no_prompt_injection` / `check_prompt_injection` /
+  `detect_secret_shapes` / `find_secret_shapes` / `route_secret_hits` /
+  `enqueue_rejected`）合并前已 real-smoke（判定未变），新增测试文件直调
+  `run_ingest_once` 后经新调用边为它们追加间接执行证据（新增来源 =
+  `test_ingest_xiezhi_gate.py`，其中 6 项另有既有 `test_ingest_run_smoke.py` /
+  `test_ingest_job_gone.py` 经同一调用边贡献）。**合并零新增诚实性缺口，
+  无需补强。**
+- **流 A 新测试文件诚实性抽查**：`tests/test_ingest_xiezhi_gate.py` 7 例，
+  patch 仅落 `db.get_session`（conftest 既定接缝）/ ADAPTERS 测试装配 /
+  settings 开关 / 相邻 worker 副作用 stub；被测闸逻辑与 `extract_candidate`
+  真实执行（file-backed SQLite），符合 §1 允许口径。
+- **全量门禁**：**3087 passed / 5 skipped / 0 failed**（5m44s，exit 0，
+  venv=主检出 `.venv`，`PYTHONPATH=.`；3087 = §11 的 3080 + 流 A 票 03 新增
+  7 例）。隔离护栏台账零新增：模块级残留仍为既有 8 通道（_guard_instance /
+  kaogong / consolidation / routes_health / llm gate×2 / cehou / param
+  runtime，例证全部来自既有测试文件），绑定残留仅 test_3a 申报哨兵；本票
+  8 个补强测试文件与流 A 新测试文件在两本台账全文零出现。
+- 分支状态：领先 origin/master 10 提交（8 笔收口 + 本合并 + 本节）、落后 0、
+  工作树干净；push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项
+  死代码待维护者裁决）。
