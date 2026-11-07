@@ -78,6 +78,19 @@ def _owner_filter_clause(principal) -> tuple[str, str] | None:
     return " AND (m.user_id = ? OR m.user_id IS NULL)", viewer_of(principal)
 
 
+def _tenant_filter_clause(principal) -> tuple[str, str] | None:
+    """租户过滤子句（票 18）：tenant/session 维此前逐读侧手写严格等值、漏
+    `OR IS NULL` 半边——带头调用把 NULL 租户老行（真实库主体形态）整批滤掉，
+    向量降级时关键词即全部召回通道 → 半召回塌缩。半边口径对齐终闸
+    `_query_items`（`hybrid.py`）；豁免口径（system viewer / admin 全豁免）
+    与 `_owner_filter_clause` 同一——由外层守卫负责，修前 admin 带头在
+    关键词通道比向量通道看得更少。"""
+    tenant_id = getattr(principal, "tenant_id", None)
+    if not tenant_id:
+        return None
+    return " AND (m.tenant_id = ? OR m.tenant_id IS NULL)", tenant_id
+
+
 def init_fts(conn: sqlite3.Connection) -> bool:
     """初始化 FTS5 虚拟表；自动迁移旧 schema。返回词汇召回通道是否真正可用。
 
@@ -228,10 +241,17 @@ def search_fts(
         if domain and domain != "all":
             sql += " AND m.domain = ?"
             params.append(domain)
-        if principal is not None and not _is_system_viewer(principal):
-            if getattr(principal, "tenant_id", None):
-                sql += " AND m.tenant_id = ?"
-                params.append(principal.tenant_id)
+        if (
+            principal is not None
+            and not _is_system_viewer(principal)
+            and not bool(getattr(principal, "is_admin", False))
+        ):
+            # 租户（票 18）：单一真源 `_tenant_filter_clause`（半边 + 豁免口径见其
+            # docstring）——修前两函数各自手写严格等值，正是「改一处漏一处」。
+            tenant = _tenant_filter_clause(principal)
+            if tenant is not None:
+                sql += tenant[0]
+                params.append(tenant[1])
             # 同袍（ADR-0058）：Agent 私有隔离与公共知识殿堂放行
             if getattr(principal, "agent_id", None):
                 sql += (
@@ -245,9 +265,10 @@ def search_fts(
             if owner is not None:
                 sql += owner[0]
                 params.append(owner[1])
-            if getattr(principal, "session_id", None):
-                sql += " AND m.session_id = ?"
-                params.append(principal.session_id)
+            # session 收窄已摘除（票 18 implement 轮裁决）：终闸 `_query_items`
+            # 从不过滤 session、向量通道同样不过——此处 `m.session_id = ?` 的
+            # 收窄是与终闸相反的孤儿语义（跨会话行关键词通道独删），带头调用
+            # 还会连带滤掉全部 NULL session 老行。
 
         sql += " ORDER BY rank LIMIT ?"
         params.append(top_k)
@@ -284,10 +305,18 @@ def search_fts_bm25(
         if domain and domain != "all":
             sql += " AND m.domain = ?"
             params.append(domain)
-        if principal is not None and not _is_system_viewer(principal):
-            if getattr(principal, "tenant_id", None):
-                sql += " AND m.tenant_id = ?"
-                params.append(principal.tenant_id)
+        if (
+            principal is not None
+            and not _is_system_viewer(principal)
+            and not bool(getattr(principal, "is_admin", False))
+        ):
+            # 租户（票 18）：与 `search_fts` 共用 `_tenant_filter_clause` 单一真源
+            # ——两个函数是同一处手写的同一段，改一处漏一处等于没改（票 11 就
+            # 差点只改到一处）。
+            tenant = _tenant_filter_clause(principal)
+            if tenant is not None:
+                sql += tenant[0]
+                params.append(tenant[1])
             # 同袍（ADR-0058）：Agent 私有隔离与公共知识殿堂放行
             if getattr(principal, "agent_id", None):
                 sql += (
@@ -301,9 +330,7 @@ def search_fts_bm25(
             if owner is not None:
                 sql += owner[0]
                 params.append(owner[1])
-            if getattr(principal, "session_id", None):
-                sql += " AND m.session_id = ?"
-                params.append(principal.session_id)
+            # session 收窄摘除：裁决与依据同 `search_fts`（票 18）。
 
         sql += " ORDER BY score LIMIT ?"
         params.append(top_k)

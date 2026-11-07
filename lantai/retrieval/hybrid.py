@@ -1187,15 +1187,13 @@ def _keyword_fallback(
                     .where(or_(*conditions))
                 )
                 if principal:
-                    if getattr(principal, "tenant_id", None):
-                        stmt = stmt.where(MemoryItem.tenant_id == principal.tenant_id)
                     if not bool(getattr(principal, "is_admin", False)) and not _is_system_viewer(
                         principal
                     ):
                         # 归属（票 `.scratch/fts-null-owner/03`）：**必须带
                         # OR IS NULL**。LIKE 是关键词召回的最后一层
                         # （向量挂了走 FTS，FTS 挂了只剩它），且
-                        # `has_short_tokens`（`hybrid.py:877`）让它在
+                        # `has_short_tokens`（`hybrid.py:1176`）让它在
                         # **短词查询时必然参与**——中文单字词、缩写、
                         # 型号（"3080"、"RX"）都 <3 字符。真实库 657 行
                         # memoryitem 里 636 行是 NULL 属主（96.8%），
@@ -1210,8 +1208,21 @@ def _keyword_fallback(
                                 MemoryItem.user_id.is_(None),
                             )
                         )
-                    if getattr(principal, "session_id", None):
-                        stmt = stmt.where(MemoryItem.session_id == principal.session_id)
+                        # 租户（票 18）：原为 `if principal:` 下的独立臂，admin
+                        # 也被过滤（比终闸窄）；现收进本豁免守卫（与终闸
+                        # `_query_items:662-668` 同构）并补 `OR IS NULL` 半边——
+                        # 修前带头调用把 NULL 租户老行在 LIKE 这层单独塌空。
+                        if getattr(principal, "tenant_id", None):
+                            stmt = stmt.where(
+                                or_(
+                                    MemoryItem.tenant_id == principal.tenant_id,
+                                    MemoryItem.tenant_id.is_(None),
+                                )
+                            )
+                    # session 收窄已摘除（票 18 implement 轮裁决）：终闸
+                    # `_query_items` 从不过滤 session、向量通道同样不过——此处
+                    # `session_id == ?` 是与终闸相反的孤儿语义，带头调用还会
+                    # 连带滤掉全部 NULL session 老行。
                 stmt = stmt.limit(max(fetch_n, p.fts_recall_top_k))
                 return s.exec(stmt).all()
 
