@@ -551,12 +551,18 @@ def _on_pre_llm_call(**kwargs) -> dict | None:
     used_ids = [
         e.get("id") for e in (data.get("evidence") or []) if isinstance(e, dict) and e.get("id")
     ]
-    if event_id and used_ids:
+    if event_id:
+        # 挂载只看 event_id（v0.68 票 01）：零命中/空 evidence 轮的检索事件已落库
+        # （query_text 带 DLP 原话），被否决时 _on_session_end 靠条目上的 event_id
+        # 构造 retrieval_veto 帧——挂载若与 used_ids 耦合，否决链够不着 mark_vetoed。
+        # 回执仍看 used_ids（flush 的 `event_id and used_ids` 条件不动）：回执语义
+        # 是「用了哪些」，零 used_ids 无可回执。
         if entry is not None:
             # dict 单键赋值原子（GIL）；消费方在同一 Hermes 线程的 on_session_end。
             entry["event_id"] = str(event_id)
-            entry["used_ids"] = list(used_ids)
-        else:
+            if used_ids:
+                entry["used_ids"] = list(used_ids)
+        elif used_ids:
             _call_backfill(str(event_id), used_ids)
     return {"context": ctx}
 

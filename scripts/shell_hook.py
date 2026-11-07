@@ -4,7 +4,6 @@
 
 import contextlib
 import os
-import re
 import sys
 
 # ── 强制 UTF-8 I/O ──────────────────────────────────────────────
@@ -31,7 +30,7 @@ from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.core.text import apply_recall_budget as _apply_recall_budget
 from lantai.core.text import truncate_codepoints as _truncate_codepoints
-from lantai.core.time import ensure_aware, parse_iso_utc, render_event_time, resolve_display_tz
+from lantai.core.time import render_event_time
 from lantai.gate.prefilter import relevance_check
 from lantai.integrations.host_adapters import adapt_response
 from lantai.integrations.host_protocol import (
@@ -51,6 +50,16 @@ from lantai.retrieval.hierarchical import (
     rerank_by_information_density,
 )
 from lantai.retrieval.hybrid import hybrid_search
+
+# 更正闸已下沉 lantai/retrieval/supersede.py（v0.68 票 02，行为零变化的移动重构）；
+# 四个名字以同名别名保留：既有更正闸测试经 mod._apply_supersede_guard /
+# mod._RETROSPECTIVE_RE / mod.settings 访问（tests/test_inject_supersede_guard.py）。
+from lantai.retrieval.supersede import (
+    _RETROSPECTIVE_RE,
+    _apply_supersede_guard,
+    _superseded_date_str,
+    _superseded_marker,
+)
 from lantai.services.offload_service import build_offload_inject, write_offload_file
 from lantai.storage import db
 from lantai.storage.vector_store import get_vector_store
@@ -263,100 +272,6 @@ def _build_resident_persona() -> str:
     return "\n\n".join(sections)
 
 
-# 更正闸（周报 2026-11-03 P0-2）：问句里有这些回看词时，用户在问「以前怎样」，
-# 已被取代的旧值照常注入（带标记）。误判方向只会是「多留一条带标记的旧值」，
-# 不会把有用的记忆挡掉——宁可词表宽一点。
-_RETROSPECTIVE_RE = re.compile(
-    r"以前|之前|从前|过去|曾经|原来|原先|本来|当时|那时|当初|早先|以往|往年"
-    r"|去年|前年|上次|历史|变化|变过|改过|更正|过时|旧的|旧值|老地址"
-    r"|before|previous|used to|formerly|history",
-    re.IGNORECASE,
-)
-
-
-def _superseded_date_str(mem: dict) -> str:
-    """旧值失效日：优先 valid_to（现实失效点 = 新值现实起点），回落 superseded_at。
-
-    按注入显示时区（SHELL_HOOK_INJECT_TZ）只到天；取不到或解析失败返回空串。
-    """
-    for key in ("valid_to", "superseded_at"):
-        value = mem.get(key)
-        if not value:
-            continue
-        try:
-            if isinstance(value, str):
-                value = parse_iso_utc(value)
-            return (
-                ensure_aware(value)
-                .astimezone(resolve_display_tz(settings.SHELL_HOOK_INJECT_TZ))
-                .strftime("%Y-%m-%d")
-            )
-        except (ValueError, AttributeError, OverflowError, OSError, TypeError):
-            continue
-    return ""
-
-
-def _superseded_marker(mem: dict) -> str:
-    date = _superseded_date_str(mem)
-    if date:
-        return f"[已更正：{date} 起不再成立，仅作历史] "
-    return "[已更正：不再成立，仅作历史] "
-
-
-def _apply_supersede_guard(results: list, query: str) -> list:
-    """注入前的更正闸：已被明确取代的旧值，不再当作当前事实注入。
-
-    来源：记忆研究周报 2026-11-03 P0-2（Obsolete Facts in Agent Memory / CALM）。
-    `late_correction.apply_supersede_correction` 更正后旧记忆仍是 status=active
-    （有意保留历史），只标 lifecycle_status=superseded + superseded_by；检索层
-    `_apply_supersedes_order` 只把它压到新值之下。此前注入帧把新旧两条并列且不加
-    任何标记——模型无从分辨哪条是现在。
-
-    规则（第一版只认显式更正链，不按 valid_to 推测）：
-    - lifecycle_status == superseded 且 superseded_by 非空的条目才动；
-    - 问句不带回看词、且取代它的新记忆也在本次结果里 → 丢掉旧条目；
-    - 否则保留，但正文前加「[已更正：YYYY-MM-DD 起不再成立，仅作历史]」。
-
-    SHELL_HOOK_SUPERSEDED_GUARD=false 时原样返回（逐字旧行为）。不改入参、不碰库。
-    """
-    if not results or not getattr(settings, "SHELL_HOOK_SUPERSEDED_GUARD", True):
-        return results
-    present = set()
-    for r in results:
-        mem = r.get("memory") if isinstance(r, dict) else None
-        rid = (mem.get("id") if isinstance(mem, dict) else None) or (
-            r.get("id") if isinstance(r, dict) else None
-        )
-        if rid:
-            present.add(rid)
-    retrospective = bool(_RETROSPECTIVE_RE.search(query or ""))
-    out = []
-    dropped = 0
-    for r in results:
-        mem = r.get("memory") if isinstance(r, dict) else None
-        if (
-            not isinstance(mem, dict)
-            or str(mem.get("lifecycle_status") or "") != "superseded"
-            or not mem.get("superseded_by")
-        ):
-            out.append(r)
-            continue
-        if not retrospective and mem.get("superseded_by") in present:
-            dropped += 1
-            continue
-        marker = _superseded_marker(mem)
-        new_mem = dict(mem)
-        new_mem["content"] = marker + (mem.get("content") or "")
-        new_r = dict(r)
-        new_r["memory"] = new_mem
-        if isinstance(new_r.get("document"), str) and new_r["document"]:
-            new_r["document"] = marker + new_r["document"]
-        out.append(new_r)
-    if dropped:
-        logger.info("更正闸：%d 条已被取代的旧值未注入（新值已在本次结果里）", dropped)
-    return out
-
-
 def _build_scene_lines(items, per_scene_chars: int) -> list[str]:
     """命中记忆按场景分组 → 导航块（渐进式披露；异常零侵入降级为空）。"""
     from lantai.services.scene_service import build_scene_navigation_lines
@@ -425,8 +340,17 @@ def build_context(query: str, session_id: str | None = None) -> dict:
 
         results = [r for r in (raw_results or []) if isinstance(r, dict) and _score_passes(r)]
         if not results:
-            _try_log(query, [], int((time.perf_counter() - t0) * 1000), session_id=session_id)
-            return _persona_only()
+            # v0.68 票 01：零命中也把已落库事件的 event_id 带出——DLP 否决零命中轮时
+            # 插件才构造得出 retrieval_veto 帧（ADR-0084 否决链只认 event_id）。
+            # 对齐 REST routes_search / MCP handle_search 零命中分支的既有口径；
+            # request_id 此分支本就没生成，如实不带。
+            zero_event_id = _try_log(
+                query, [], int((time.perf_counter() - t0) * 1000), session_id=session_id
+            )
+            out = _persona_only()
+            if zero_event_id:
+                out["event_id"] = zero_event_id
+            return out
 
         # 磨勘（v0.29 · MCMA 建议项 6）：信息密度优先重排与条目硬顶（<= SHELL_HOOK_MAX_INJECT_ITEMS，默认 5）
         max_items = getattr(settings, "SHELL_HOOK_MAX_INJECT_ITEMS", 5)
@@ -671,15 +595,25 @@ def _handle_checkpoint_write(session_id: str, blocks: dict) -> dict:
         return {}
 
 
-def _run_with_timeout(func, timeout, *args, _fallback=None):
+def _run_with_timeout(func, timeout, *args, _fallback=None, _on_abandon=None):
     """超时包装（D-04，票 `.scratch/v0.65-next-window-2026-11/01`）。
 
     超时**与执行异常**都返回 `_fallback()`（降级工厂，零参回调——QUERY 通道传
     常驻画像，免得超时/抛错把画像段一并丢弃）；未传工厂时保持原行为返回 `{}`。
     正常返回路径不碰工厂。daemon 线程不可取消是 Python 线程模型限制，预算控制在
     build_context 内传导（见其 docstring）。
+
+    `_on_abandon(result)`（巡检 2026-11-07 12:00）：主线程超时放弃等待后，worker
+    仍会把 func 跑完——它的返回值没人收，但它的副作用（QUERY 通道里 `_try_log`
+    落的 RetrievalEvent，带原话）已经发生，且宿主手里没有 event_id，回执与
+    retrieval_veto 都够不着。worker 跑完时若发现已被放弃，就在 worker 线程里把
+    迟到的结果交给 `_on_abandon` 收尾。「完成」与「放弃」在同一把锁下二选一：
+    worker 先完成 → 主线程照常拿结果（含 event_id）；主线程先放弃 → worker
+    必定走收尾。没有两边都不管的窗口。回调异常只记日志，不影响 serve 循环。
     """
     import threading
+
+    handoff = threading.Lock()
 
     class TaskThread(threading.Thread):
         def __init__(self):
@@ -687,14 +621,29 @@ def _run_with_timeout(func, timeout, *args, _fallback=None):
             self.result = {}
             self.exc: Exception | None = None
             self.daemon = True
+            self.finished = False  # handoff 锁下置位：结果已可交给主线程
+            self.abandoned = False  # handoff 锁下置位：主线程已放弃等待
 
         def run(self):
+            result = None
             try:
-                self.result = func(*args)
+                result = func(*args)
             except Exception as exc:
                 # 线程内异常不会传播回主线程；此前被 `contextlib.suppress` 直接吞掉，
                 # 结果停在 `{}`——票 04 要求把它记下来，交给主线程降级。
                 self.exc = exc
+            with handoff:
+                if not self.abandoned:
+                    if self.exc is None:
+                        self.result = result
+                    self.finished = True
+                    return
+            # 主线程已放弃：迟到的结果没人收，副作用交给收尾回调
+            if _on_abandon is not None and self.exc is None:
+                try:
+                    _on_abandon(result)
+                except Exception:
+                    logger.exception("shell_hook 超时收尾回调失败")
 
     def _degrade(reason: str) -> dict:
         """降级出口：留痕 + 常驻画像兜底（无工厂/工厂自身失败时才空返回）。
@@ -716,7 +665,10 @@ def _run_with_timeout(func, timeout, *args, _fallback=None):
     t = TaskThread()
     t.start()
     t.join(timeout)
-    if t.is_alive():
+    with handoff:
+        if not t.finished:
+            t.abandoned = True
+    if t.abandoned:
         return _degrade(f"超时（{timeout}s）")
     if t.exc is not None:
         # 票 04（P0-3）：异常路径同样不得丢常驻画像。此前只有「线程还活着（超时）」
@@ -800,12 +752,24 @@ def _dispatch_one(raw: str) -> dict:
             parts = [x for x in [decl, p] if x]
             return {"context": "\n\n".join(parts)}
 
+        # 巡检 2026-11-07 12:00：超时后 worker 仍会跑完并落一条带原话的检索事件，
+        # 而兜底响应不带 event_id——宿主既回执不了、也否决不了。就地抹原话置 missed。
+        def _query_abandoned(late: dict) -> None:
+            event_id = (late or {}).get("event_id") if isinstance(late, dict) else None
+            if not event_id:
+                return
+            from lantai.observability.retrieval_log import mark_abandoned
+
+            if mark_abandoned(event_id):
+                logger.info("shell_hook 超时轮检索事件已收尾（抹原话、置 missed）: %s", event_id)
+
         return _run_with_timeout(
             build_context,
             settings.SHELL_HOOK_TIMEOUT,
             req.query,
             req.session_id,
             _fallback=_query_fallback,
+            _on_abandon=_query_abandoned,
         )
 
     return {}

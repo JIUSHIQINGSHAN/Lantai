@@ -25,7 +25,7 @@ from lantai.core.acl import viewer_of
 from lantai.core.auth import Principal
 from lantai.core.settings import settings
 from lantai.llm.fence import wrap_as_data
-from lantai.models.tables import MemoryItem
+from lantai.models.tables import LifecycleStatus, MemoryItem
 from lantai.storage import db
 
 
@@ -164,7 +164,17 @@ class ShiyiEngine:
         #       （tokens 为空时退回全表，但受 b 熔断约束）；
         #    b) 扫描预算熔断——超 SHIYI_SCAN_BUDGET_MS 即中断，partial 语义
         #       标注 scan_truncated；拾遗 best-effort，宁 miss 不拖延。
-        stmt = select(MemoryItem).where(MemoryItem.status == "active")
+        stmt = select(MemoryItem).where(
+            MemoryItem.status == "active",
+            # lifecycle 过滤（v0.68 票 15）：更正设计里旧说有意保留 status=active，
+            # 仅标 lifecycle_status=superseded（tables.py 注释：superseded「退出检索」）
+            # ——本扫描只认 status 时，superseded 行可经拾遗回灌（hybrid 兜底面由
+            # 更正闸标记臂兜住；/shiyi/remedy 直连面无闸）。口径对齐 context.py
+            # `5ae6caf3`：lifecycle 单条件过滤，superseded_by 为空的异常行一并退出
+            # （拾遗无「已更正」标记机制，过滤是最小正确语义，宁 miss 不脏写）。
+            # DDL 为 NOT NULL DEFAULT 'active'，无需 NULL 防御分支。
+            MemoryItem.lifecycle_status != LifecycleStatus.SUPERSEDED,
+        )
         # verbatim「默认不召回」契约（票 05 续32，评审 N-01/R-02 同族）：主流水线
         # 在 hybrid.py 过滤段排除逐字原文，但拾遗有 `/shiyi/remedy` 直连入口，
         # 守卫挂在水线侧管不到它——契约必须在扫描侧同样成立（VERBATIM_IN_RECALL

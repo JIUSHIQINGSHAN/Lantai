@@ -238,6 +238,16 @@ def handle_search(params: dict) -> dict:
         shared_scope=params.get("shared_scope"),
         **temporal_kwargs,
     )
+    # 更正闸（v0.68 票 02）：MCP search 面此前没有注入面的 supersede 处理，
+    # 被取代旧说与当前值并列裸返回。语义对齐 shell_hook 注入面（闸在 _try_log
+    # 之前——被丢旧值不进检索事件/回执，同 shell_hook :445→:527 的既有顺序）；
+    # 时效视图（as_of/as_of_recorded/time_from/time_to 任一在场）是历史查询面，
+    # 整段跳过、逐字旧行为（周报 P0-2 验收口径）。开关沿用 SHELL_HOOK_SUPERSEDED_GUARD
+    # （名字带 SHELL_HOOK_ 却跨面复用，是本票接受的债）。
+    if all(v is None for v in temporal_kwargs.values()):
+        from lantai.retrieval.supersede import _apply_supersede_guard
+
+        results = _apply_supersede_guard(results, query)
     latency_ms = int((time.perf_counter() - t0) * 1000)
     event_id = _try_log(
         query, results, latency_ms, gate, session_id=session_id, principal=principal
@@ -359,11 +369,12 @@ def handle_add(params: dict) -> dict:
     req = AddMemoryReq(
         title=params.get("title", ""),
         content=params.get("content", ""),
-        # 目识接线（票 .scratch/v068-docs-audit/03）：schema 广告了 media_url
-        # 却在此丢弃——传了要么 -32602 要么静默丢。透传后由 AddMemoryReq
-        # 既有校验（media/content 二选一）兜非法组合，与 REST 口径一致。
-        media_url=params.get("media_url", ""),
         lane=params.get("lane", "general"),
+        # media_url 透传（票 `.scratch/v0.68-next-window-2026-11/07`）：schema
+        # 广告了目识通道，REST `POST /add` 同一 `AddMemoryReq` 真实生效——
+        # 此前 handler 不读它，传了即静默丢弃（广告即假承诺）。二选一校验
+        # 在 AddMemoryReq 模型层，与 REST 面同语义。
+        media_url=params.get("media_url") or "",
     )
     return add_memory(req, user_id=params.get("user_id") or "default", principal=principal)
 

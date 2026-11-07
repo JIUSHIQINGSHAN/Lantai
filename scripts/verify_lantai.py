@@ -36,10 +36,13 @@ def main() -> int:
     # 1) 数据层
     home = os.environ.get("LANTAI_HOME") or os.environ.get("REMEMBRANCE_HOME", "")
     db = Path(home) / "remembrance.db" if home else REPO_ROOT / "remembrance.db"
+    # 信息项（票 05 收口）：未设置时走仓库默认目录是脚本自身支持的回落（下一项
+    # SQLite 检查就是对实际解析路径的存在性/可读性校验），不再按 FAIL 计——
+    # 否则本项在一切未设环境变量的机器上恒 FAIL，自检失去分辨力。
     check(
         "数据目录已设置（LANTAI_HOME/REMEMBRANCE_HOME）",
-        bool(home),
-        f"{home}" if home else "未设置（将用仓库默认目录）",
+        True,
+        f"已设置: {home}" if home else "未设置（用仓库默认目录，实际路径由下一项 SQLite 检查校验）",
     )
     check("SQLite 数据库存在", db.exists(), str(db))
     if db.exists():
@@ -59,9 +62,15 @@ def main() -> int:
 
     # 2) 代码层
     try:
-        import lantai.cli.mcp  # noqa: F401  现行入口（console script lantai-mcp）
+        # 票 05：唯一入口口径 `lantai.cli.mcp:main`（pyproject console script `lantai-mcp`
+        # 同源）；旧平铺入口模块已删除，恒 FAIL 检查项就此收口。
+        import lantai.cli.mcp as mcp_entry
 
-        check("MCP server 可导入", True)
+        check(
+            "MCP server 可导入",
+            callable(getattr(mcp_entry, "main", None)),
+            "lantai.cli.mcp:main（与 pyproject console script 同源）",
+        )
     except Exception as e:
         check("MCP server 可导入", False, str(e)[:120])
     try:
@@ -73,13 +82,19 @@ def main() -> int:
 
     # 3) 协议层：Shell Hook 输入输出契约（不依赖网络）
     try:
+        # encoding 必须显式 UTF-8（票 05 收口）：Windows 下 text=True 缺省按 GBK
+        # 编码 stdin，hook 端按 UTF-8 读——中文问句直接把 hook 打崩在解析层，
+        # 契约检查在中文 Windows 上恒 FAIL（实测复现：'NoneType' object has no
+        # attribute 'strip'）。子进程同步钉 PYTHONIOENCODING，两端口径一致。
         proc = subprocess.run(
             [sys.executable, str(REPO_ROOT / "scripts" / "shell_hook.py")],
             input=json.dumps({"query": "自检查询"}),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
-            env=os.environ.copy(),
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         )
         out = proc.stdout.strip()
         parsed = json.loads(out) if out else {}

@@ -1,24 +1,23 @@
 @echo off
-REM Isolated launcher for 兰台记忆 MCP server
-REM 入口：lantai.cli.mcp（票 .scratch/v068-docs-audit/01）；仓库根与 venv
-REM 从本脚本所在目录解析，不写死盘符。
+REM Isolated launcher for the Lantai MCP server.
+REM Ticket v0.68/05: single entry contract = lantai.cli.mcp:main (python -m lantai.cli.mcp),
+REM located relative to this script (%~dp0) -- no machine-specific absolute paths.
 setlocal
 
 REM Clear Hermes venv pollution
-set PYTHONPATH=
-set PYTHONHOME=
+set "PYTHONPATH="
+set "PYTHONHOME="
 
-REM Resolve repo root from this script's location
-set ROOT=%~dp0
-if "%ROOT:~-1%"=="\" set ROOT=%ROOT:~0,-1%
+REM Repo root = directory of this bat; run from there so -m resolves the package
+cd /d "%~dp0"
 
-REM Pick project venv (.venv first, legacy .venv-audit fallback)
-set VENV=%ROOT%\.venv
-if not exist "%VENV%\Scripts\python.exe" set VENV=%ROOT%\.venv-audit
+REM Prefer the in-repo venv; fall back to python on PATH (installed console script)
+set "PYTHON_EXE=python"
+if exist "%~dp0.venv\Scripts\python.exe" (
+    set "PATH=%~dp0.venv\Scripts;%PATH%"
+    set "VIRTUAL_ENV=%~dp0.venv"
+    set "PYTHON_EXE=%~dp0.venv\Scripts\python.exe"
+)
 
-set PATH=%VENV%\Scripts;%PATH%
-set VIRTUAL_ENV=%VENV%
-
-REM Run MCP server (repo root on sys.path via -m + cwd)
-cd /d "%ROOT%"
-"%VENV%\Scripts\python.exe" -m lantai.cli.mcp
+REM Run the MCP server (stdio JSON-RPC loop; reads stdin, exits on EOF)
+"%PYTHON_EXE%" -m lantai.cli.mcp
