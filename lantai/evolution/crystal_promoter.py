@@ -111,6 +111,8 @@ def promote_crystal(
             shared_scope="swarm_shared",
         )
     except ValueError as exc:
+        if "injection guard" not in str(exc):
+            raise  # 非獬豸拒绝不冒充闸拦、不误标（消息前缀是 guard 既有契约）
         # 獬豸（v0.68 票 14）：结晶文本命中注入闸 → 不落公共殿堂资产（skip+留痕）。
         # 结晶维持 candidate（不标 promoted），不抛异常炸调用方。
         logger.warning("同袍结晶 %s 晋升撞獬豸闸，技能未落库（skip）：%s", crystal_id, exc)

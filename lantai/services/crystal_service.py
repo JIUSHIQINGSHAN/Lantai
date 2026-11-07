@@ -208,6 +208,8 @@ def decide_crystal(
                 name=skill_name, description=trigger_rule, steps=steps, principal=principal
             )
         except ValueError as exc:
+            if "injection guard" not in str(exc):
+                raise  # 非獬豸拒绝（如未来索引层 ValueError）不冒充闸拦、不误标
             # 獬豸（v0.68 票 14）：结晶文本命中注入闸 → 不落技能资产（skip+留痕）。
             # 结晶维持 candidate——裁决者可改 steps 重试；不抛异常打断调用面
             # （MCP/REST 都拿到结构化 ok=False）。

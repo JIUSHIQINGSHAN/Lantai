@@ -58,6 +58,11 @@ _LAST_CONSOLIDATION_REPORT: dict = {
 
 _CONSOLIDATION_AUDIT_MODES = ("off", "shadow", "enforce")
 
+# 獬豸阻断审计标记的伪 id（v0.68 票 14）：与直写指纹口径
+# "cluster_consolidation" 刻意区分——consolidation_audit_report 按
+# memory_id 精确匹配统计，本标记不得混入其分子分母。
+XIEZHI_BLOCKED_CKPT_ID = "cluster_consolidation_xiezhi_blocked"
+
 
 def _as_utc(dt: datetime | None) -> datetime | None:
     """SQLite DATETIME 读回 naive，统一按 UTC 升维（范式同 reflector._as_utc）。"""
@@ -331,7 +336,7 @@ def consolidate_cluster(
             s.add(
                 MemoryCheckpoint(
                     id=f"cp_{ULID()}",
-                    memory_id="cluster_consolidation_xiezhi_blocked",
+                    memory_id=XIEZHI_BLOCKED_CKPT_ID,
                     version=1,
                     before={"source_ids": frag_ids},
                     after={"xiezhi_blocked": True, "layer": layer, "mode": mode},

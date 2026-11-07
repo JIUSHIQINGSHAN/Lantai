@@ -56,7 +56,8 @@ _WORK_FRAGS = [
     "容器编排平台每周三凌晨升级",
     "值班工程师记录容器编排告警",
 ]
-XIEZHI_CKPT_ID = "cluster_consolidation_xiezhi_blocked"
+# 审计标记伪 id 单源自产品侧（v0.68 票 14）：测试跟随导出常量，不另抄字面量
+from lantai.services.consolidation_service import XIEZHI_BLOCKED_CKPT_ID as XIEZHI_CKPT_ID
 
 
 def _seed_two_clusters(s):
@@ -202,12 +203,13 @@ class TestConsolidationMasterGuard:
             ).all()
             assert len(marks) == 1
 
-    def test_redline_merged_table_and_log_passes(self, param_env):
-        """误拒红线：合并文本里真实表格/日志（LLM 提纯保留原格式）必须放行落库。"""
+    def test_redline_merged_all_shapes_pass(self, param_env):
+        """误拒红线：合并文本里全部五形态（表格/日志/INI/裸 XML/全角）必须放行落库。"""
         session_factory, _ = param_env
         merged = (
             f"大哥长期偏好大佛龙井茶，冲泡时查阅以下配置与故障记录：\n"
-            f"{REDLINE_TABLE}\n故障排查记录：\n{REDLINE_LOG}"
+            f"{REDLINE_TABLE}\n故障排查记录：\n{REDLINE_LOG}\n环境配置：\n{REDLINE_INI}"
+            f"\n采集探针输出：\n{REDLINE_XML}\n备注：{REDLINE_FULLWIDTH}"
         )
         with session_factory() as s:
             _seed_two_clusters(s)
@@ -227,8 +229,9 @@ class TestConsolidationMasterGuard:
                 from lantai.services.consolidation_service import consolidate_cluster
 
                 res = consolidate_cluster(cluster, session=s)
-            assert res is not None, "真实表格/日志被误杀——模式有病，禁止提交"
-            assert "| col1 | col2 |" in res.content
+            assert res is not None, "真实正常内容被误杀——模式有病，禁止提交"
+            for marker in ("| col1 | col2 |", "[system]", "<system>", "ＡＢＣ店"):
+                assert marker in res.content
 
 
 # ── 面 2：promoter apply（proposed_patch 是第二手 LLM 文本）───────────────
@@ -367,23 +370,27 @@ class TestPromoterApplyGuard:
             assert good.status == "active"
             assert s.exec(select(MemoryItem).where(MemoryItem.content == PAYLOAD_EN)).all() == []
 
-    def test_patch_redline_table_and_log_applies_fine(self, param_env):
-        """误拒红线：patch 正文是真实表格/日志（错误报告类记忆常态）必须照常落库。"""
+    def test_patch_redline_all_shapes_apply_fine(self, param_env):
+        """误拒红线：patch 正文五形态（表格/日志/INI/裸 XML/全角）必须照常落库。"""
         from lantai.evolution.promoter import apply_proposal
 
         session_factory, _ = param_env
-        content = f"发布检查单：\n{REDLINE_TABLE}\n构建失败记录：\n{REDLINE_LOG}"
+        content = (
+            f"发布检查单：\n{REDLINE_TABLE}\n构建失败记录：\n{REDLINE_LOG}"
+            f"\n环境配置：\n{REDLINE_INI}\n探针输出：\n{REDLINE_XML}\n备注：{REDLINE_FULLWIDTH}"
+        )
         _add_proposal(session_factory, "prop_xz_redline", content=content)
         with patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]):
             res = apply_proposal("prop_xz_redline")
-        assert res["ok"] is True, "真实表格/日志被误杀——禁止提交"
+        assert res["ok"] is True, "真实正常内容被误杀——禁止提交"
         with session_factory() as s:
             mem = s.exec(
                 select(MemoryItem).where(
                     MemoryItem.key == "key_prop_xz_redline", MemoryItem.status == "active"
                 )
             ).one()
-            assert "| col1 | col2 |" in mem.content
+            for marker in ("| col1 | col2 |", "[system]", "<system>", "ＡＢＣ店"):
+                assert marker in mem.content
 
 
 # ── 面 3：POST /cognitive/observe（用户直写面，断言式 → 422）─────────────
@@ -442,8 +449,8 @@ class TestCognitiveObserveGuard:
             assert s.exec(select(Evidence).where(Evidence.content == PAYLOAD_EN)).all() == []
 
     def test_observe_redline_shapes_pass(self, cog_env):
-        """误拒红线：INI / 裸 <system> XML / 表格 / 全角正常文本照常双落。"""
-        for text in (REDLINE_INI, REDLINE_XML, REDLINE_TABLE, REDLINE_FULLWIDTH):
+        """误拒红线：五形态（表格/日志/INI/裸 XML/全角）照常双落。"""
+        for text in (REDLINE_INI, REDLINE_XML, REDLINE_TABLE, REDLINE_LOG, REDLINE_FULLWIDTH):
             with _observe_client() as c:
                 resp = c.post("/cognitive/observe", json={"content": text})
             assert resp.status_code == 200, f"{text[:30]} 被误杀：{resp.text}"
@@ -521,7 +528,7 @@ class TestCreateSkillGuard:
             handle_mem_create_skill({"name": "t", "description": "", "steps": [PAYLOAD_ZH]})
 
     def test_create_skill_redline_shapes_pass(self, skill_env, monkeypatch):
-        """误拒红线：INI / 表格 / 日志 / 全角正常文本照常落 skill 资产。"""
+        """误拒红线：五形态（表格/日志/INI/裸 XML/全角）照常落 skill 资产。"""
         fake_store = type("VS", (), {"add": lambda self, **kw: None})()
         monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: fake_store)
         from lantai.services.mem_command import create_skill
@@ -531,13 +538,14 @@ class TestCreateSkillGuard:
             r_tbl = create_skill(
                 name="表格样例", description="", steps=[REDLINE_TABLE, REDLINE_LOG]
             )
+            r_xml = create_skill(name="探针输出样例", description="", steps=[REDLINE_XML])
             r_fw = create_skill(name="全角样例", description=REDLINE_FULLWIDTH, steps=["第一步"])
-        assert r_ini["ok"] is True and r_tbl["ok"] is True and r_fw["ok"] is True
+        assert all(r["ok"] is True for r in (r_ini, r_tbl, r_xml, r_fw))
         with skill_env() as s:
             rows = s.exec(select(MemoryItem).where(MemoryItem.memory_type == "skill")).all()
-            assert len(rows) == 3
-            assert any("| col1 | col2 |" in r.content for r in rows)
-            assert any("[system]" in r.content for r in rows)
+            assert len(rows) == 4
+            for marker in ("| col1 | col2 |", "[system]", "<system>", "ＡＢＣ店"):
+                assert any(marker in r.content for r in rows)
 
     def test_decide_crystal_blocked_skips_skill(self, skill_env):
         """自动资产化调用侧（crystal_service.decide_crystal）：命中 → skip+留痕，
