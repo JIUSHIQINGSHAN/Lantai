@@ -260,6 +260,12 @@ class Settings(BaseSettings):
     DEDUP_ANCHOR_LOW: float = 0.3  # 锚点重合 < 此值：有新增值 → insert
     # ADR-0023 实质新词扩展信号：旧锚点零丢失 + 新增实质词 ≥ 此值 → update 提案
     DEDUP_EXTRA_ANCHOR_LIMIT: int = 2
+    # 校雠存量冗余扫描候选池硬上界（票 59）：O(n²) 两两比对的计算量随全库 active
+    # 行数平方增长，`limit` 只截输出不截计算量。扫描 SQL 按此 LIMIT 钉住候选池
+    # （cap+1 探测截断），超出部分不比对，结果以 scan_truncated 标注（宁 miss 不
+    # 拖死进程；同族先例 SHIYI_SCAN_BUDGET_MS）。与 REST GET /jiaochou/scan 的
+    # limit le=200 同数量级，默认值即 200。
+    JIAOCHOU_MAX_SCAN_CANDIDATES: int = 200
 
     # 探颐（ADR-0037 · v0.30）：主动探针与自然交互消歧机制开关
     ENABLE_PROACTIVE_PROBING: bool = True

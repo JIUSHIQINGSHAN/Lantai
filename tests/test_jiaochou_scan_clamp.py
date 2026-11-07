@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-import uuid
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select

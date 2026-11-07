@@ -1831,7 +1831,12 @@ def handle_shiyi_pipeline(params: dict) -> dict:
 
 
 def handle_jiaochou_collate(params: dict) -> dict:
-    """校雠：智能语义去重与知识对齐订误（v0.49 ADR-0070）。"""
+    """校雠：智能语义去重与知识对齐订误（v0.49 ADR-0070）。
+
+    scan 模式口径（票 59）：候选池硬上界 JIAOCHOU_MAX_SCAN_CANDIDATES（超出截断
+    并在结果 scan_truncated 标注）；limit ∈ [1, 200]、similarity_threshold ∈
+    [0.1, 1.0] 越界拒绝（本层 ValueError → -32602）。LLM 调用方可据此预期耗时。
+    """
     text_a = params.get("text_a")
     text_b = params.get("text_b")
     scan = bool(params.get("scan", False))
@@ -3336,17 +3341,20 @@ TOOLS = {
                 "memory_id_b": {"type": "string", "description": "第二段记忆 ID（可选）"},
                 "scan": {
                     "type": "boolean",
-                    "description": "是否扫描当前租户全域近义冗余记忆簇",
+                    "description": (
+                        "是否扫描近义冗余记忆簇（候选池上限 "
+                        "JIAOCHOU_MAX_SCAN_CANDIDATES=200，超出截断并标注 scan_truncated）"
+                    ),
                     "default": False,
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "扫描返回最大对数",
+                    "description": "扫描返回最大对数（[1, 200]，越界拒绝）",
                     "default": 50,
                 },
                 "similarity_threshold": {
                     "type": "number",
-                    "description": "冗余聚类相似度阈值 [0.1, 1.0]",
+                    "description": "冗余聚类相似度阈值 [0.1, 1.0]，越界拒绝",
                     "default": 0.7,
                 },
                 "user_id": {"type": "string", "description": "操作租户/用户 ID"},

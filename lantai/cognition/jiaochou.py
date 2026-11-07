@@ -21,9 +21,18 @@ from sqlmodel import Session, select
 
 from lantai.core.acl import viewer_of
 from lantai.core.auth import Principal
+from lantai.core.settings import settings
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
+
+# 扫描入参合法域：与 REST GET /jiaochou/scan 的 Query(ge=1, le=200) /
+# Query(ge=0.1, le=1.0) 同界（routes_jiaochou.py）。引擎是单一真源——
+# MCP 面借 ValueError → -32602 继承同一契约，REST 面的 pydantic 校验与之互为镜像。
+_SCAN_LIMIT_MIN = 1
+_SCAN_LIMIT_MAX = 200
+_SIMILARITY_THRESHOLD_MIN = 0.1
+_SIMILARITY_THRESHOLD_MAX = 1.0
 
 
 @dataclass
@@ -85,7 +94,10 @@ class JiaochouEngine:
     ) -> bool:
         """行级安全隔离校验（宁 miss 不脏写）。"""
         if self.principal is None:
-            return True
+            # 外部/未透传身份默认收敛到 "default" 属主空间（票 59 身份臂；口径同
+            # zhaji._check_access 与 acl.viewer_of——NULL 老行必须可见，否则单人
+            # 部署读侧整体空转），不再继承 worker 的全表权限。
+            return owner_id in (None, "default")
         if getattr(self.principal, "is_admin", False):
             return True
         if shared_scope == "swarm_shared":
@@ -156,7 +168,28 @@ class JiaochouEngine:
         limit: int = 50,
         similarity_threshold: float = 0.7,
     ) -> dict[str, Any]:
-        """扫描当前权限范围内的活跃记忆，查找近义冗余配对。"""
+        """扫描当前权限范围内的活跃记忆，查找近义冗余配对。
+
+        扫描口径（票 59）：
+        - 候选池硬上界 ``settings.JIAOCHOU_MAX_SCAN_CANDIDATES``（SQL LIMIT，超出
+          截断并在结果 ``scan_truncated`` 标注）——两两比对的计算量随候选池平方
+          增长，必须与库大小解耦，否则 MCP 面一次正常调用即可拖死 stdio 单线程；
+        - ``limit`` ∈ [1, 200]、``similarity_threshold`` ∈ [0.1, 1.0]，越界拒绝
+          （ValueError，MCP 分发层转 -32602；NaN 任何比较为 False，同样被拒绝）；
+        - ``limit`` 是「先扫到的 N 对」（插入序），不是「最相似的 N 对」。
+        """
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError(f"limit must be an integer, got {limit!r}")
+        if not (_SCAN_LIMIT_MIN <= limit <= _SCAN_LIMIT_MAX):
+            raise ValueError(
+                f"limit must be in [{_SCAN_LIMIT_MIN}, {_SCAN_LIMIT_MAX}], got {limit!r}"
+            )
+        if not (_SIMILARITY_THRESHOLD_MIN <= similarity_threshold <= _SIMILARITY_THRESHOLD_MAX):
+            raise ValueError(
+                "similarity_threshold must be in "
+                f"[{_SIMILARITY_THRESHOLD_MIN}, {_SIMILARITY_THRESHOLD_MAX}], "
+                f"got {similarity_threshold!r}"
+            )
         if self.session is not None:
             return self._scan_redundancy(self.session, limit, similarity_threshold)
         with db.get_session() as s:
@@ -168,8 +201,12 @@ class JiaochouEngine:
         limit: int,
         similarity_threshold: float,
     ) -> dict[str, Any]:
-        stmt = select(MemoryItem).where(MemoryItem.status == "active")
-        mems = s.exec(stmt).all()
+        cap = max(1, int(settings.JIAOCHOU_MAX_SCAN_CANDIDATES))
+        # cap+1 探测截断：取到 cap+1 行才知道「还有更多」，比「恰好等于 cap」启发式诚实
+        stmt = select(MemoryItem).where(MemoryItem.status == "active").limit(cap + 1)
+        mems = list(s.exec(stmt).all())
+        scan_truncated = len(mems) > cap
+        mems = mems[:cap]
 
         accessible_mems = [
             m
@@ -206,4 +243,6 @@ class JiaochouEngine:
         return {
             "total_pairs": len(pairs),
             "redundant_pairs": pairs,
+            "scanned_items": len(accessible_mems),
+            "scan_truncated": scan_truncated,
         }
