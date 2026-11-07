@@ -673,3 +673,73 @@ patch 仅落 settings 开关、向量库接缝（单层）与 conftest 既定外
   push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项死代码待维护者
   裁决）。
 
+## 21. 第十七次复验（2026-11-07）：审计逐字节复现 + 门禁两轮（首轮 1 例 failed 落三方并发窗，二轮全绿），含外层退出码陷阱再现与机理归因存疑的诚实记录
+
+独立会话逐项复验收口声明。环境：origin/master 零推进（领先 20 / 落后 0），
+无合并事项。**并行会话交叠（诚实记录）**：开工进程表取证发现并行 perf 会话
+（`.wt-v068-perf`）两个 pytest 进程在跑；按 §13/§20 让位先例，前置复核活动
+（审计重跑、8 文件通读、票 02 grep——均非 pytest）安排在其窗内进行，本会话
+全部 pytest 运行推迟到其计数归 0（14:02 前后取证）之后。
+
+按 §1 口径全量重验：
+
+- **审计复现（逐字节一致）**：`audit_honesty.py` 重跑（venv=主检出 `.venv`，
+  输出落仓库外临时目录）与在库 `audit.json` `cmp` 全等：inventory 1729 /
+  core 1083 / real-smoke 659 / hollow 0 / mocked-only 1=`_digest_dir` 接缝
+  豁免 / indirect-only 321 / never-executed 102；mocked-only 明细
+  （digest_worker.py:165，self-patched 仅 `test_digest_ownership.py:75` +
+  5 个间接证据文件）与 §3 口径注记逐项一致；pkg_counts 复核：cognition
+  磁盘 31 文件（含 `__init__`）= 30 个引擎模块，每模块 ≥1 real-smoke、
+  无 hollow / mocked-only / never-executed-only 模块（§2 模块级结论口径）。
+- **诚实性复核（8 文件全部逐行通读）**：全部真输入直调 + 真库断言，patch
+  仅落 settings 开关（SECRET_GUARD_MODE / DIALOGUE_MIN_CHARS）与向量库
+  单层接缝（test_vector_item_wrappers，docstring 注明不叠 param_env 双层
+  撤销栈病根），MCP 帧测试走 exec 副本规避 `_guard_instance` 台账通道，
+  其余文件自身零 patch；8 文件 `--collect-only` 恰 22 例、直跑 22 passed
+  （3.07s，exit 0）。
+- **票 02 复核**：3 项死代码（`scan_and_retire` / `evaluate_and_evolve` /
+  `autodream_cron_days`）两档 grep——受辖面（rg 默认口径）仅定义行与报告
+  文档命中；绕过 gitignore（`rg -uu`）后唯一额外命中为 `build/lib` 陈旧
+  构建副本与本票本地工件（gap_triage.json / audit.json，均非调用方），
+  零调用方，维持 needs-triage。
+- **全量门禁（两轮）**：第一轮 1 failed（余量 3116 passed / 5 skipped /
+  0 error，14:04:50–14:10:19，5m35s，exit 1）——
+  `test_persona_ownership.py::TestPersonaWriteOwnership::
+  test_internal_call_unfiltered`，`persona_service.py:108`
+  `s.refresh(new_p)` 抛 `InvalidRequestError: Could not refresh instance
+  '<PersonaProfile>'`，与 §15 记录的 `s.refresh` 瞬态**同族**（彼例为
+  seam3 的 `s.refresh(mem)`，同一异常类型与语句形态）。**三方并发窗（硬
+  时间戳）**：本会话首轮门禁期间 14:07:49 并行 perf 流第二轮门禁启动、
+  14:08:06 主检出（`记忆` 工作树）另一流门禁启动（`-m pytest tests/ -q`），
+  两个外部进程在本会话首轮日志收尾时刻（14:10:19）仍在跑；fail 例执行于
+  套件末段（进度条 [100%] 前），落在上述并发窗内，逐秒落点无法事后取证。
+  机理双候选、归因存疑（诚实记录）：(a) §13 判定的 CPython sqlite3/SQLAlchemy
+  会话复用瞬态；(b) §11/§20 双门禁并发互踩变体——且本例与 §15 例有一处
+  实质不同：`_RESIDENT_TABLES` **含 `persona_profile`**（conftest.py:669），
+  被 autouse 擦除面直接覆盖，「他进程擦行 → refresh 找不到行」表面比
+  §15 的 `memoryitem` 情形更顺；但测试库为 pytest tmp 工厂按进程独立目录
+  （`mktemp("lantai_test_home")`，conftest.py:532），直接跨进程同库不成立
+  （§20 口径），跨进程影响面只能落在共享 %TEMP% 卷的负载/文件系统层，
+  无法事后逐字节取证择一。甄别证据：persona_service.py /
+  test_persona_ownership.py / conftest.py 相对 origin/master 及 §17–§20
+  历轮绿树零改动（git diff 空）；涉事文件单跑 13 passed（2.65s，exit 0，
+  确认外部门禁归零后执行）。另诚实记录一次**外层退出码陷阱再现**：首轮
+  后台包装命令末尾 `tail` 成功致任务通知面报 exit 0，pytest 真实退出码
+  经落文件显式捕获方见 1——§14/§15「管道/包装层退出码陷阱」教训口径持续
+  有效，第二轮起结果读取一律以落文件退出码 + 日志末行双证。第二轮
+  （启动前取证 pytest 计数 0）干净树全绿：**3117 passed / 5 skipped /
+  0 failed**（5m33s，exit 0，venv=主检出 `.venv`，`PYTHONPATH=.`）与
+  §17–§20 一致（failed 例二轮照常执行转绿，两轮总收集数一致 3122）；
+  隔离护栏台账零新增（两轮日志分别核验：模块级残留恰为既有 8 通道
+  `_guard_instance` / kaogong / consolidation / routes_health / llm
+  gate×2 / cehou / param runtime，绑定残留仅 test_3a 申报哨兵，8 个补强
+  文件名 grep 计数均为 0；seam3 例证 86 工具版）。**二轮窗交叠（诚实
+  记录）**：第二轮启动后 1 分钟（14:15:51）主检出流又一轮门禁启动并在
+  本会话窗末仍在跑（重叠约 4.6 分钟）——启动时计数 0 成立（让位纪律按
+  时刻证据履行），外方晚到无法预见；结果全绿零瞬态，本身构成「并发窗
+  ≠ 必现瞬态」的又一观察面（与 §20 机理归因存疑口径一致）。日志落仓库外
+  临时目录 + 退出码显式捕获（§14/§15 教训口径）。
+- 分支状态：本节落库后领先 origin/master 21 提交、落后 0、工作树干净；
+  push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项死代码待
+  维护者裁决）。
+
