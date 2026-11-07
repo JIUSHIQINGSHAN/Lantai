@@ -83,15 +83,43 @@ class TestTimeoutFallbackKeepsPersona:
     def test_dispatch_query_timeout_returns_persona(self, monkeypatch, tmp_path):
         """embed 慢调用撞外层墙：QUERY 通道降级返回画像段而非 {}。"""
         persona = _write_persona(tmp_path)
-        mod = _load_hook(monkeypatch, embed_delay=1.0, timeout=0.2, persona_file=persona)
+        mod = _load_hook(monkeypatch, timeout=0.2, persona_file=persona)
         monkeypatch.setattr(mod.settings, "SHELL_HOOK_MIN_CHARS", 3)
+        # 闸门强制放行：排除 relevance_check 判 False → _persona_only() 早退的
+        # 歧义——早退同样返回画像段且无 event_id，会让「超时降级」名不副实。
+        monkeypatch.setattr(mod, "relevance_check", lambda q, **kw: {"needs_memory": True})
+        # intent 强制 fact_lookup：conftest 的假 chat_json 让 hybrid_search 在
+        # intent 短路零命中（不调 embed、几十毫秒走完正常路径）——「超时」就只剩
+        # jieba 冷启动的自然耗时来撞墙（热身后墙永不触发）。强制走检索路径后，
+        # 下面的慢替身必被调、外层墙必触发，与机器冷热无关。
+        monkeypatch.setattr(
+            "lantai.retrieval.intent.chat_json",
+            lambda *a, **k: {"intent": "fact_lookup", "reason": "test"},
+        )
+
+        # 慢点必须真的在检索链上：shell_hook 模块内 import 的 embed **没有调用点**
+        # （_load_hook 的 embed_delay 是死参数），build_context 经 hybrid_search
+        # 调的是 lantai.retrieval.hybrid.embed。替身无视 timeout 形参睡满 5s
+        # （真实 SDK 的守约行为由 test_slow_embed_budget_degrades_within_deadline
+        # 单独测），任何机器上都必然撞 0.2s 外层墙——超时不再依赖 build_context
+        # 的自然耗时（原断言窗口 1.5s 下，机器快时墙可能根本不触发，降级与否都绿）。
+        def _slow_hybrid_embed(texts, timeout=None):
+            time.sleep(5.0)
+            return [[0.1] * 8]
+
+        monkeypatch.setattr("lantai.retrieval.hybrid.embed", _slow_hybrid_embed)
         raw = json.dumps({"query": "这是一个超过三字符的慢查询", "type": "query"})
         start = time.perf_counter()
         out = mod._handle_one(raw)
         elapsed = time.perf_counter() - start
 
-        assert elapsed < 1.5, f"超时未生效: {elapsed:.2f}s"
-        # 修复前：{}（画像丢失）；修复后：降级返回画像
+        # 三向钉死超时降级，全部与机器快慢无关：
+        # 1) 降级签名——_query_fallback 只返回画像段不带 event_id；正常路径
+        #    （含零命中分支，v0.68 票 01）必带 event_id。墙失效走正常路径时红。
+        assert "event_id" not in out, f"走了正常路径而非超时降级: {sorted(out)}"
+        # 2) 墙真的等了（≥0.2s——失效成「根本不等」时红），且没等满慢替身（5s）。
+        assert 0.2 <= elapsed < 1.5, f"超时墙未按 0.2s 预算生效: {elapsed:.2f}s"
+        # 3) 修复前：{}（画像丢失）；修复后：降级返回画像
         ctx = out.get("context") or ""
         assert "用户偏好乌龙茶" in ctx, f"超时降级丢失画像: {out!r}"
 
