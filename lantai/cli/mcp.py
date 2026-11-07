@@ -31,6 +31,12 @@ from dataclasses import dataclass, field
 
 from pydantic import ValidationError
 
+from lantai.cognition.jiaochou import (
+    SCAN_LIMIT_MAX,
+    SCAN_LIMIT_MIN,
+    SIMILARITY_THRESHOLD_MAX,
+    SIMILARITY_THRESHOLD_MIN,
+)
 from lantai.core.settings import settings as _settings
 from lantai.gate.prefilter import relevance_check
 from lantai.models.schemas import AddMemoryReq, FeedbackReq
@@ -3343,18 +3349,24 @@ TOOLS = {
                     "type": "boolean",
                     "description": (
                         "是否扫描近义冗余记忆簇（候选池上限 "
-                        "JIAOCHOU_MAX_SCAN_CANDIDATES=200，超出截断并标注 scan_truncated）"
+                        f"JIAOCHOU_MAX_SCAN_CANDIDATES={_settings.JIAOCHOU_MAX_SCAN_CANDIDATES}，"
+                        "超出截断并标注 scan_truncated）"
                     ),
                     "default": False,
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "扫描返回最大对数（[1, 200]，越界拒绝）",
+                    "description": (
+                        f"扫描返回最大对数（[{SCAN_LIMIT_MIN}, {SCAN_LIMIT_MAX}]，越界拒绝）"
+                    ),
                     "default": 50,
                 },
                 "similarity_threshold": {
                     "type": "number",
-                    "description": "冗余聚类相似度阈值 [0.1, 1.0]，越界拒绝",
+                    "description": (
+                        "冗余聚类相似度阈值 "
+                        f"[{SIMILARITY_THRESHOLD_MIN}, {SIMILARITY_THRESHOLD_MAX}]，越界拒绝"
+                    ),
                     "default": 0.7,
                 },
                 "user_id": {"type": "string", "description": "操作租户/用户 ID"},

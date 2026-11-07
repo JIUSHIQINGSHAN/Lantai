@@ -26,13 +26,19 @@ from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
 
-# 扫描入参合法域：与 REST GET /jiaochou/scan 的 Query(ge=1, le=200) /
-# Query(ge=0.1, le=1.0) 同界（routes_jiaochou.py）。引擎是单一真源——
-# MCP 面借 ValueError → -32602 继承同一契约，REST 面的 pydantic 校验与之互为镜像。
-_SCAN_LIMIT_MIN = 1
-_SCAN_LIMIT_MAX = 200
-_SIMILARITY_THRESHOLD_MIN = 0.1
-_SIMILARITY_THRESHOLD_MAX = 1.0
+# 扫描入参合法域：与 REST GET /jiaochou/scan 的 Query(ge/le) 同界——引擎是单一
+# 真源（REST 的 pydantic 校验与 MCP 的 ValueError → -32602 都从这里取值），
+# 改界只改这里，描述面随之。
+SCAN_LIMIT_MIN = 1
+SCAN_LIMIT_MAX = 200
+SIMILARITY_THRESHOLD_MIN = 0.1
+SIMILARITY_THRESHOLD_MAX = 1.0
+# 扫描比对的单侧文本预算（票面修复目标 1「必要的预过滤（长文本）」）：cap 只限
+# 比对对数，不限单对成本——万字节正文 × cap² 对仍是拖死面。扫描对超预算正文按
+# 前缀近似比对（输出 text/proposal 仍是全文，不做脏写）；量级依据：仓内记忆正文
+# 预算面 SHELL_HOOK_MAX_CHARS_PER_MEMORY=200 / CHECKPOINT_MAX_CONTENT=600，
+# 1000 字覆盖绝大多数记忆，19,900 对 × ~0.1ms ≈ 秒级最坏面。
+_SCAN_COMPARE_MAX_CHARS = 1000
 
 
 @dataclass
@@ -117,10 +123,19 @@ class JiaochouEngine:
         text_b: str,
         memory_id_a: str | None = None,
         memory_id_b: str | None = None,
+        *,
+        compare_budget: int | None = None,
     ) -> dict[str, Any]:
-        """对两段文本/记忆执行双向语义校勘对齐。"""
-        words_a = [w.strip().lower() for w in jieba.cut(text_a or "") if len(w.strip()) > 1]
-        words_b = [w.strip().lower() for w in jieba.cut(text_b or "") if len(w.strip()) > 1]
+        """对两段文本/记忆执行双向语义校勘对齐。
+
+        ``compare_budget``：分词面的单侧文本截断预算（仅影响相似度计算，输出
+        text/proposal 仍用原文）；None = 全文比对（collate 工具面默认）。扫描面
+        传 ``_SCAN_COMPARE_MAX_CHARS`` 钉单对成本。
+        """
+        seg_a = (text_a or "")[:compare_budget] if compare_budget else text_a or ""
+        seg_b = (text_b or "")[:compare_budget] if compare_budget else text_b or ""
+        words_a = [w.strip().lower() for w in jieba.cut(seg_a) if len(w.strip()) > 1]
+        words_b = [w.strip().lower() for w in jieba.cut(seg_b) if len(w.strip()) > 1]
 
         set_a = set(words_a)
         set_b = set(words_b)
@@ -174,20 +189,23 @@ class JiaochouEngine:
         - 候选池硬上界 ``settings.JIAOCHOU_MAX_SCAN_CANDIDATES``（SQL LIMIT，超出
           截断并在结果 ``scan_truncated`` 标注）——两两比对的计算量随候选池平方
           增长，必须与库大小解耦，否则 MCP 面一次正常调用即可拖死 stdio 单线程；
+        - 单侧比对预算 ``_SCAN_COMPARE_MAX_CHARS``：超长正文按前缀近似比对
+          （输出仍是原文全文），单对成本与正文长度解耦；
         - ``limit`` ∈ [1, 200]、``similarity_threshold`` ∈ [0.1, 1.0]，越界拒绝
           （ValueError，MCP 分发层转 -32602；NaN 任何比较为 False，同样被拒绝）；
-        - ``limit`` 是「先扫到的 N 对」（插入序），不是「最相似的 N 对」。
+        - ``limit`` 是「先扫到的 N 对」（库返回序；SQLite 实况为 rowid/插入序），
+          不是「最相似的 N 对」。
         """
         if not isinstance(limit, int) or isinstance(limit, bool):
             raise ValueError(f"limit must be an integer, got {limit!r}")
-        if not (_SCAN_LIMIT_MIN <= limit <= _SCAN_LIMIT_MAX):
+        if not (SCAN_LIMIT_MIN <= limit <= SCAN_LIMIT_MAX):
             raise ValueError(
-                f"limit must be in [{_SCAN_LIMIT_MIN}, {_SCAN_LIMIT_MAX}], got {limit!r}"
+                f"limit must be in [{SCAN_LIMIT_MIN}, {SCAN_LIMIT_MAX}], got {limit!r}"
             )
-        if not (_SIMILARITY_THRESHOLD_MIN <= similarity_threshold <= _SIMILARITY_THRESHOLD_MAX):
+        if not (SIMILARITY_THRESHOLD_MIN <= similarity_threshold <= SIMILARITY_THRESHOLD_MAX):
             raise ValueError(
                 "similarity_threshold must be in "
-                f"[{_SIMILARITY_THRESHOLD_MIN}, {_SIMILARITY_THRESHOLD_MAX}], "
+                f"[{SIMILARITY_THRESHOLD_MIN}, {SIMILARITY_THRESHOLD_MAX}], "
                 f"got {similarity_threshold!r}"
             )
         if self.session is not None:
@@ -225,12 +243,13 @@ class JiaochouEngine:
                 m_a = accessible_mems[i]
                 m_b = accessible_mems[j]
 
-                # 快速字符与词条初筛
+                # 快速字符与词条初筛（超预算正文按前缀近似比对，钉单对成本）
                 diff = self.compare_and_collate(
                     text_a=m_a.content,
                     text_b=m_b.content,
                     memory_id_a=m_a.id,
                     memory_id_b=m_b.id,
+                    compare_budget=_SCAN_COMPARE_MAX_CHARS,
                 )
                 if diff["similarity"] >= similarity_threshold:
                     pairs.append(diff)

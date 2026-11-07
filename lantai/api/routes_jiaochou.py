@@ -10,6 +10,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
+from lantai.cognition.jiaochou import (
+    SCAN_LIMIT_MAX,
+    SCAN_LIMIT_MIN,
+    SIMILARITY_THRESHOLD_MAX,
+    SIMILARITY_THRESHOLD_MIN,
+)
 from lantai.core.auth import get_current_user
 from lantai.services.jiaochou_service import (
     collate_memories_service,
@@ -43,8 +49,19 @@ def jiaochou_collate_route(
 
 @router.get("/jiaochou/scan")
 def jiaochou_scan_route(
-    limit: int = Query(50, ge=1, le=200, description="最大扫描冗余对数"),
-    similarity_threshold: float = Query(0.7, ge=0.1, le=1.0, description="相似度聚类阈值"),
+    # 界值取自引擎单一真源（票 59）：引擎校验与 MCP -32602 同源，防镜像漂移
+    limit: int = Query(
+        50,
+        ge=SCAN_LIMIT_MIN,
+        le=SCAN_LIMIT_MAX,
+        description="最大扫描冗余对数",
+    ),
+    similarity_threshold: float = Query(
+        0.7,
+        ge=SIMILARITY_THRESHOLD_MIN,
+        le=SIMILARITY_THRESHOLD_MAX,
+        description="相似度聚类阈值",
+    ),
     ctx=Depends(get_current_user),
 ) -> dict[str, Any]:
     """扫描当前权限范围内的活跃记忆近义冗余簇。"""

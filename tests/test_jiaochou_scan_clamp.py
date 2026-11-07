@@ -195,6 +195,29 @@ def test_scan_semantic_pair_survives_crowded_clamped_store(monkeypatch):
     assert {pair_a.id, pair_b.id} in hits, f"截断窗内（前 2 行）的冗余对被钳制吞掉：{hits}"
 
 
+def test_scan_long_text_compare_budget_bounds_per_pair_cost():
+    """长文本预算臂（票面修复目标 1「必要的预过滤（长文本）」）：超预算按前缀近似比对。
+
+    cap 只限比对**对数**，不限单对**成本**——两万字节的长文本对仍是拖死面。
+    扫描对超预算正文按前缀预算近似比对：前缀完全相同、尾部全异的两条长文，
+    全文比对相似度低（尾部分量淹没公共前缀），前缀近似比对相似度为 1.0——
+    该对必须被报告。这是对截断语义的判别锁（无预算时红：前缀相似度不足阈值）。
+    """
+    t = utcnow()
+    prefix = ("系统公共配置前言内容固定不变。" * 80)[:1200]  # ≥ 预算 1000 字
+    tail_a = "".join(f"苹果香蕉樱桃橙子{i % 7}。" for i in range(120))[:1200]
+    tail_b = "".join(f"北京上海广州深圳{i % 7}号。" for i in range(120))[:1200]
+    with _private_store() as session:
+        session.add(_mem("default", "long-a", prefix + tail_a, t))
+        session.add(_mem("default", "long-b", prefix + tail_b, t))
+        session.commit()
+        res = JiaochouEngine(session=session, principal=None).scan_redundancy(
+            limit=5, similarity_threshold=0.5
+        )
+    hits = [{p["memory_id_a"], p["memory_id_b"]} for p in res["redundant_pairs"]]
+    assert len(hits) == 1, f"前缀近似比对未生效（全文比对相似度不足阈值即红）: {res}"
+
+
 def test_scan_identity_none_principal_sees_default_only():
     """身份臂（票 57 收敛口径）：principal=None 只见 default/NULL 属主行，不见他人私行。"""
     t = utcnow()
