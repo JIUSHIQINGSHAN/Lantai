@@ -207,7 +207,7 @@ def test_binding_residue_policy_tolerates_only_the_declared_sentinel():
     「请修污染源，勿依赖兜底」，却没有任何机制区分「申报的哨兵」和「新出现的泄漏」——
     下一次真有人忘了还原 `hybrid.embed`，横幅会和今天的噪音混在一起，绿灯照拿。
     """
-    import conftest
+    from tests import conftest  # 票 04 正包化后 conftest 以 tests.conftest 装载
 
     sentinel = "tests/test_isolation_shared_state.py::test_3a_overlay_patch_on_param_env_target"
     assert sentinel in conftest.DECLARED_POLLUTION_SENTINELS, (

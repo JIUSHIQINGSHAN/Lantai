@@ -29,6 +29,9 @@ def build_query_set(
         stmt = select(RetrievalEvent)
         if noise_excluded:
             stmt = stmt.where(RetrievalEvent.is_system_noise == False)  # noqa: E712
+        # 票 10（ADR-0084 §2.6）：pending/missed 抹文后 query_text 为空——空行
+        # 不进样本池，sample_count 口径不掺无 query 的壳行
+        stmt = stmt.where(RetrievalEvent.query_text != "")
         stmt = stmt.order_by(RetrievalEvent.created_at.desc())  # 最新优先，去重保留最新
         if limit:
             stmt = stmt.limit(limit)

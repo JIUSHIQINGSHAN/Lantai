@@ -42,7 +42,7 @@ flowchart LR
 1. **确定性复现（Reproduce）**：
    - 用最小输入、单测或脚本稳定复现失败，保留完整报错日志与调用栈。
 2. **单一假设提出（Formulate Single Hypothesis）**：
-   - 基于调用栈提出唯一假设（例如："假设 `hybrid.py` 的第 139 行 `embed()` 在外部 API 401 时抛异常未被捕获，导致中断"）。
+   - 基于调用栈提出唯一假设（例如："假设 `lantai/retrieval/hybrid.py` 的第 139 行 `embed()` 在外部 API 401 时抛异常未被捕获，导致中断"）。
 3. **隔离求证（Isolate & Prove）**：
    - 编写探针脚本或断言求证假设真伪，严禁在未求证前修改业务逻辑。
 4. **最小根因修复（Apply Minimal Root-Cause Fix）**：
@@ -75,7 +75,7 @@ flowchart LR
    - **每个被路由、worker、service 调用的核心函数，必须有至少一个真实构造输入、内部逻辑不 mock 的冒烟测试**。
    - mock 仅允许用于外部不可控依赖（外部网络 LLM / Embedding / Rerank API、硬件与外部文件系统），**严禁 mock 掉被测函数内部的任何分支与计算逻辑**。
 3. **环境与运行纪律**：
-   - 使用受控虚拟环境（如 `.venv-verify`），运行测试必须显式注入 `PYTHONPATH=.`，避免模块加载漂移。
+   - 使用仓库根 `.venv`；pyproject 已配 `pythonpath=["."]`，pytest 直跑即可。宿主 `PYTHONPATH` 有污染（如 Hermes 宿主拉起的 shell）时先清空再跑——口径见 `docs/release-process.md` 第 10 条（命名空间 provenance）。
 
 ---
 
@@ -92,8 +92,8 @@ flowchart LR
 4. **性能（Performance & Efficiency）**：
    - 避免循环内冗余 DB 查询、大内存常驻防护。
 5. **门禁命令（全部通过才允许合并）**：
-   - 全量单测：`$env:PYTHONPATH="."; python -m pytest tests/ -q`（0 failed）
-   - 遗忘质量：`$env:PYTHONPATH="."; python scripts/run_forgetting_quality.py --check`（PASS）
+   - 全量单测：`python -m pytest tests/ -q`（0 failed；pyproject `pythonpath=["."]` 已配，宿主 `PYTHONPATH` 污染时先清空）
+   - 遗忘质量：`python scripts/run_forgetting_quality.py --check`（PASS）
 
 ---
 

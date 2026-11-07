@@ -106,7 +106,7 @@ python scripts/recall_health.py
 ```powershell
 python api_server.py
 ```
-或 Docker 模式（本仓库无 compose 文件，用 README「Docker 部署」的 `docker run` 单容器路径）：
+或 Docker 模式（本仓库无 compose 文件，用 README「方式二：Docker 容器运行」的 `docker run` 单容器路径）：
 ```bash
 docker build -t lantai:X.Y.Z .
 docker run -d -p 8767:8767 -e API_KEY=... -e OPENAI_API_KEY=... -v /your/data:/data lantai:X.Y.Z

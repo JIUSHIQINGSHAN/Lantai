@@ -1,5 +1,7 @@
 # ADR 0046: Echo Suppression Time Window
 
+**状态**：Accepted  
+
 ## Context
 
 v022 吸收上游回声抑制（EchoMind/Memmy 融改，M2）时，语义为「删除检索候选中所有与本会话

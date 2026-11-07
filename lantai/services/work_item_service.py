@@ -135,6 +135,10 @@ def worker_schedule_specs() -> dict[str, dict[str, Any]]:
             "seconds": settings.CANDIDATE_TTL_CRON_HOURS * 3600,
             "enabled": True,
         },
+        "receipt_miss": {
+            "seconds": settings.RECEIPT_MISS_CRON_MINUTES * 60,
+            "enabled": True,
+        },
         "digest": {"seconds": 86400, "enabled": settings.DIGEST_ENABLED},
         "param_advice": {
             "seconds": settings.PARAM_ADVICE_CRON_MINUTES * 60,

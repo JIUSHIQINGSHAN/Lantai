@@ -169,7 +169,7 @@ def recent_retrieval_events(limit: int = 20, principal=None) -> list[dict]:
     return [
         {
             "id": e.id,
-            "query": (e.query_text or "")[:120],
+            "query": (e.query_text or "")[:120] or "(已抹除)",
             "lane": e.lane or "unknown",
             "intent": e.intent_bucket or "unknown",
             "latency_ms": e.latency_ms,

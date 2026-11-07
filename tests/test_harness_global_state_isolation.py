@@ -162,7 +162,10 @@ def audit_source(path: Path) -> list[str]:
                     findings.append(f"{where} SYSPATH_WRITE sys.path.{func.attr}(...)")
 
     if guarded:
-        findings = [f for f in findings if "ENV_WRITE" not in f]
+        # 登记式写入器内 ENV_WRITE / SYSPATH_WRITE 均为已登记形态：ENV 写走
+        # 登记复原，SYSPATH 清除走台账（registry_view()["syspath_removals"]，
+        # 票 04 遮蔽防御搬入唯一写入器）。其余文件两者都仍然一律判红。
+        findings = [f for f in findings if "ENV_WRITE" not in f and "SYSPATH_WRITE" not in f]
     return findings
 
 

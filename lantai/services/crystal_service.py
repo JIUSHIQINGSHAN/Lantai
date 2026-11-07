@@ -9,6 +9,7 @@ Mímir 铁律：LLM/规则只能建议，不能直接 commit——检测只产 c
 from sqlmodel import select
 
 from lantai.core.ids import new_id
+from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.evolution.autodream import _keywords, cluster_memories
@@ -202,9 +203,23 @@ def decide_crystal(
         # principal 形参后，这里要把裁决者的身份递下去——否则 MCP
         # `crystal_decide` 落的技能仍是 user_id=NULL，读侧按 viewer 收窄
         # 时谁都检索不到（沉淀了却看不见）。HTTP 侧原本就带 ctx，顺带受益。
-        result = create_skill(
-            name=skill_name, description=trigger_rule, steps=steps, principal=principal
-        )
+        try:
+            result = create_skill(
+                name=skill_name, description=trigger_rule, steps=steps, principal=principal
+            )
+        except ValueError as exc:
+            if "injection guard" not in str(exc):
+                raise  # 非獬豸拒绝（如未来索引层 ValueError）不冒充闸拦、不误标
+            # 獬豸（v0.68 票 14）：结晶文本命中注入闸 → 不落技能资产（skip+留痕）。
+            # 结晶维持 candidate——裁决者可改 steps 重试；不抛异常打断调用面
+            # （MCP/REST 都拿到结构化 ok=False）。
+            logger.warning("结晶 %s approve 撞獬豸闸，技能未落库（skip）：%s", crystal_id, exc)
+            return {
+                "ok": False,
+                "crystal_id": crystal_id,
+                "error": str(exc),
+                "xiezhi_blocked": True,
+            }
         if not result.get("ok"):
             raise ValueError(result.get("error", "create_skill failed"))
     elif not (reason or "").strip():

@@ -14,6 +14,13 @@
 import sys
 import types
 
+# 票 04：遮蔽防御必须先行——在 harness_state 自身之外任何 lantai./sqlmodel 级
+# import 之前清掉外来 sys.path 条目（晚了就已被遮蔽）。sys.path 写入属装配期
+# 全局写，经唯一登记式写入器 harness_state（G2），删了什么见其 registry_view。
+from tests.support import harness_state
+
+harness_state.scrub_foreign_sys_path()
+
 # 必须在任何 lantai.* import 之前生效（client.py 模块级 OpenAI() 需要非空 key）。
 # v0.66 票 05 续14（G2）：这里不再裸写 os.environ——全部经 tests/support/harness_state.py
 # 这个唯一登记式写入器：写入前登记原值，会话结束由 pytest_unconfigure 复原。
