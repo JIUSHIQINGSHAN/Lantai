@@ -926,3 +926,62 @@ push 部分，按本轮任务书口径执行；tag 上传闸门不涉及）。
   （§23⑤ 沿袭）；⑤ 模块级残留通道的**全清单**因门禁日志被清未能当轮
   留存全文（本轮只直接核验了「新文件零出现 + 绑定残留仅 test_3a」两点），
   通道全等声明沿 §17–§23 台账，下一轮复验可低成本补验。
+
+
+## 25. 第二十一次复验（2026-11-07）：审计快照首次失配的归因与刷新（§24 证据明细落账）+ 门禁一轮全绿 + §24 遗留核对项（残留通道全清单）补验
+
+独立复验会话按 §24 收尾后的 HEAD（`36b50db4`，与 origin 同步，origin/master
+零推进 `8175a745`）冷启动。**环境检查（开工即查，历轮教训前置）**：ambient
+`PYTHONPATH` 污染再次在场（宿主 hermes-agent 两路径，§23/§24 同族陷阱第三次
+遭遇）——全程按既有口径显式置空执行，零用例假绿未遂；git 树干净，无需合并。
+
+- **基线全量门禁（任务书第 1 项，一轮全绿）**：**3119 passed / 5 skipped /
+  0 failed**（719.78s / 11m59s，exit 0 直调捕获，venv=主检出 `.venv`，
+  `PYTHONPATH=` 空值）与 §24 同树同数；耗时比 §24（602.36s）慢约 117s
+  （+19.5%），与机器并发负载同期，如实记录。门禁日志本轮落
+  `.scratch/v0.68-test-honesty/logs/`（仓库内 gitignore 路径）而非
+  `%TEMP%`——吸取 §24「临时目录清理吞证据」教训，物理留存可复查。
+- **审计复现（首次失配 → 归因 → 刷新 → 逐字节全等）**：`audit_honesty.py`
+  重跑（`-I` 隔离）摘要 counts 与在库 `audit.json` 全等（inventory 1729 /
+  core 1083 / real-smoke 659 / hollow 0 / mocked-only 1=`_digest_dir` 接缝
+  豁免 / indirect-only 321 / never-executed 102），但完整 JSON `cmp` **首次
+  失配**（char 25839, line 1003）。逐条归因：全部差异均为重跑侧**多出**
+  `tests/test_mcp_stdio_entry_smoke.py` 的证据明细（2 例 direct 直调 + frame
+  形态证据 + 若干函数 `indirect_files` 追加），结构化复核（剔除该文件证据后
+  逐 verdict 全等）零减损、零翻转——机理：§24 口径是「先复现后补强」，补强
+  （`00359ded`）之后未再重新生成快照；`.scratch` 工具与明细不入库（§6 口径
+  「重跑即可再生」），本地快照自然停在复现时点。**处置**：刷新本地快照后
+  重跑 `cmp` 逐字节全等（`REFRESHED_AND_REPRODUCIBLE`）。教训入账：「逐字节
+  复现」只在快照与树同步时有意义——凡补强提交合并后，下一轮复现若失配，
+  应先按本节方法做「差异 = 新测试证据明细」归因，再决定刷新快照，不能直接
+  当作工具不稳定，也不能直接当绿。
+- **诚实性复核（9 补强文件全量直跑）**：8 文件 22 例（§23 清单）+ stdio
+  2 例（§24）= **24 passed（13.75s，exit 0，直调落文件显式核验）**，
+  与 pytest 收集数完全吻合，零串扰。
+- **§24 遗留核对项补验（残留通道全清单当轮留存）**：本轮门禁日志物理留存，
+  §24⑤ 欠账当轮补上——模块级残留恰为既有 **8 通道**（与 `_GUARDED_MODULE_
+  STATE` 13 通道对照，其余 5 通道零造脏），全文如下（「已由护栏逐例回滚，
+  点名供排期」）：`lantai.cli.mcp._guard_instance`×30、
+  `lantai.cognition.kaogong._LATEST_KAOGONG_REPORT`×19、
+  `lantai.services.consolidation_service._LAST_CONSOLIDATION_REPORT`×18、
+  `lantai.api.routes_health._git_sha_cache`×8、`lantai.llm.client._llm_gate`×8、
+  `lantai.llm.client._gate_init_args`×8、`lantai.cognition.cehou._SHADOW_
+  WINDOWS`×7、`lantai.parameters.runtime._last_applied_revision`×1——与
+  §17–§24 台账通道全等；跨模块绑定残留仅 test_3a 申报哨兵；9 个补强文件名
+  在台账点名 grep 计数全为 0。6 warnings 逐一核对：4×`test_release_check`
+  的 fail-closed 档位 UserWarning（负路径刻意产出）+ 2×`test_promoter_
+  rollback_vector` 的 pydantic 序列化 UserWarning，全部既有、非新增。
+- **本会话零新增缺口（如实声明）**：任务书第 3 项「补强 3~5 条高危项」由
+  首会话（`346c0e55`，7 文件 20 例）与 §24（2 例）累计完成，本轮审计未发现
+  新的 mocked-only / hollow / 假绿同族问题，故零新增测试——不为「有产出」
+  造无意义的用例（那正是本次要查的病的反面镜像）。
+- **本次没能查清/没敢动（如实）**：① 票 02 三项死代码仍留维护者裁决
+  （needs-triage 未动）；② ambient `PYTHONPATH` 病根在宿主环境，只置空
+  缓解、不修（§23③ 沿袭）；③ ambient 值第二段（另一 venv site-packages）
+  的依赖遮蔽面未逐包排查（§23⑤/§24④ 沿袭）；④ 工具对 exec 副本/子进程
+  形态的盲区维持 §6 文档化边界（§24③ 沿袭）；⑤ 任务书报告落点与实际路径
+  的口径差异维持 §23④ 说明；⑥ `audit_honesty.py` 不带 `--out` 运行会把
+  `audit.json` 写进 CWD（本会话试探用法时踩中一次，已删）——行为未改，
+  仅记录；⑦ `.scratch` 快照不入库意味着「逐字节复现」依赖本地工件存活，
+  换机/换树后首次 cmp 必然失配（需一次基线对齐再生）——历轮未点破，
+  本轮点破，属工具口径的已知边界而非新病。
