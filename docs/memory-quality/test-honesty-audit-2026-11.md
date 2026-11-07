@@ -608,3 +608,68 @@ patch 仅落 settings 开关、向量库接缝（单层）与 conftest 既定外
   push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项死代码待维护者
   裁决）。
 
+## 20. 第十六次复验（2026-11-07）：审计逐字节复现 + 门禁两轮（首轮 1 例 error 落双门禁并发窗的诚实记录）
+
+独立会话逐项复验收口声明。环境：origin/master 零推进（领先 19 / 落后 0），
+无合并事项。**并行 perf 会话交叠（诚实记录，§13 让位先例的变体）**：开工
+进程表取证发现并行 perf 会话（`.wt-v068-perf` 工作树，另一流）全量门禁在跑
+（13:34:25 启动）；本会话据此把前置复核活动（审计重跑、8 文件通读、
+`--collect-only`、票 02 grep——均非 pytest 或不执行测试）安排在其窗内进行，
+所有真正执行测试的 pytest 运行全部推迟到其计数归 0（13:38 前后首轮取证）
+之后；首次 `--collect-only` 因漏设 `PYTHONPATH` 在 conftest 导入即失败
+（未执行任何测试、未触库，即便与对方窗交叠亦无观察面）。首轮门禁运行中途
+该会话又启动其第二轮门禁（13:43:23），与本会话首轮门禁窗（13:40:10–
+13:45:39）**重叠约 2 分 16 秒**（§11 双门禁并发形态）；首轮 error 的捕获
+时刻 13:45:03 正落窗内（见下）。第二轮门禁启动前（13:48:35 归 0）与窗末
+（13:56:00）均取证 pytest 计数 0。
+
+按 §1 口径全量重验：
+
+- **审计复现（逐字节一致）**：`audit_honesty.py` 重跑（venv=主检出
+  `.venv`，输出落仓库外临时目录）与在库 `audit.json` `cmp` 全等：inventory
+  1729 / core 1083 / real-smoke 659 / hollow 0 / mocked-only 1=`_digest_dir`
+  接缝豁免 / indirect-only 321 / never-executed 102；mocked-only 明细
+  （digest_worker.py:165，self-patched 仅 `test_digest_ownership.py:75` +
+  5 个间接证据文件）与 §3 口径注记逐项一致；pkg_counts 逐模块复核：
+  cognition 磁盘 31 文件（含 `__init__`）= 30 个引擎模块，每模块 ≥1
+  real-smoke、无 hollow / mocked-only / never-executed-only 模块（§2 的
+  模块级结论口径，与第四次复验改判一致）。
+- **诚实性复核（8 文件全部逐行通读）**：全部真输入直调 + 真库断言（真
+  worker 入口空库执行 + 超龄归档三态断言、真 HTTP 路由打 `/ingest/run`、
+  真 JSON-RPC 帧驱动 crystal_promote 并断言 promoted / swarm_shared /
+  leads_to 落库、真单例缓冲不 patch 取件器与持久化、FactAtomic+FactEntity
+  真库物理删除计数、MemoryScene 真行 heat 降序）；patch 仅落 settings 开关
+  （SECRET_GUARD_MODE / DIALOGUE_MIN_CHARS）与向量库单层接缝
+  （test_vector_item_wrappers，docstring 注明不叠 param_env 双层撤销栈
+  病根），MCP 帧测试走 exec 副本规避 `_guard_instance` 台账通道，其余文件
+  自身零 patch。8 文件 `--collect-only` 恰 22 例，直跑 22 passed（3.39s）。
+- **票 02 复核**：3 项死代码（`scan_and_retire` / `evaluate_and_evolve` /
+  `autodream_cron_days`）两档 grep——受辖面（rg 默认口径）仅定义行与报告
+  文档命中；绕过 gitignore（`rg -uu`）后唯一额外命中为 `build/lib` 陈旧
+  构建副本与本票本地工件（均非调用方），零调用方，维持 needs-triage。
+- **全量门禁（两轮）**：第一轮 1 error（余量 3116 passed / 5 skipped /
+  0 failed，13:40:10–13:45:39，5m22s，exit 1）——
+  `test_shiyi_engine_smoke.py::TestShiyiEngineSmoke::
+  test_seam2_domain_relax_and_confidence_calibration` 的 autouse fixture
+  `_reset_resident_channels` setup 期（conftest.py:721 → :699
+  `conn.commit()`）抛 sqlite3 `SystemError: commit returned NULL without
+  setting an exception`，与 §13 孤立运行记录的瞬态**同 fixture、同行号、
+  同签名**。机理双候选、归因存疑（诚实记录）：(a) §13 判定的 CPython
+  sqlite3 连接复用瞬态（同签名曾在无并发窗内出现）；(b) §11 判定的双门禁
+  并发互踩（error 时刻落在上述 2 分 16 秒重叠窗内）。两机理均为环境侧、
+  零产品代码路径；测试库与向量集均由 pytest tmp 工厂按进程独立目录提供
+  （conftest `mktemp("lantai_test_home")`），直接跨工作树同库不成立，跨
+  进程影响面只能落在共享 %TEMP% 卷的负载/文件系统层，无法事后逐字节取证
+  择一。甄别证据：conftest.py 与 test_shiyi_engine_smoke.py 相对
+  origin/master 及 §17–§19 历轮绿树零改动（本分支 diff 仅 8 个补强文件 +
+  报告 + 白名单行）；涉事文件单跑 4 passed（2.27s）。第二轮（确认并行
+  pytest 归 0 后）干净树全绿：**3117 passed / 5 skipped / 0 failed**
+  （5m23s，exit 0，venv=主检出 `.venv`，`PYTHONPATH=.`）与 §17–§19 一致
+  （error 例二轮照常执行转绿，两轮总收集数一致 3122）。隔离护栏台账零新增
+  （两轮日志分别核验：模块级残留恰为既有 8 通道、绑定残留仅 test_3a 申报
+  哨兵，8 个补强文件名全文 grep 计数均为 0；seam3 例证 86 工具版）；日志
+  落仓库外临时目录 + 退出码显式捕获（§14/§15 教训口径）。
+- 分支状态：本节落库后领先 origin/master 20 提交、落后 0、工作树干净；
+  push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项死代码待维护者
+  裁决）。
+
