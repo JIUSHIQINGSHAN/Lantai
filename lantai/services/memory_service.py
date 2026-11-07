@@ -326,19 +326,26 @@ def _create_candidate_direct(
             out = _create_update_proposal(s, target, req.title, req.content, req.lane, sim, p)
             if out is not None:
                 return out
-        doc = RawDocument(
-            id=new_id("doc"),
-            source_type=req.source_type,
-            source_id=req.url or h[:12],
-            url=req.url,
-            title=req.title,
-            content=req.content,
-            content_hash=h,
-            meta=req.metadata,
-        )
-        s.add(doc)
-        s.commit()
-        s.refresh(doc)
+        # content_hash 在场检查（票 .scratch/v068-perf/02，与提取路径同口径）：
+        # _apply_dedup 只搜 MemoryItem，搜不到还停在候选/文档阶段的相同内容，
+        # 直插会撞 rawdocument.content_hash 唯一约束 → API 500
+        existed = s.exec(select(RawDocument).where(RawDocument.content_hash == h)).first()
+        if existed:
+            doc = existed
+        else:
+            doc = RawDocument(
+                id=new_id("doc"),
+                source_type=req.source_type,
+                source_id=req.url or h[:12],
+                url=req.url,
+                title=req.title,
+                content=req.content,
+                content_hash=h,
+                meta=req.metadata,
+            )
+            s.add(doc)
+            s.commit()
+            s.refresh(doc)
 
         agent_id = getattr(principal, "agent_id", None) if principal else None
         cand = MemoryCandidate(
