@@ -62,6 +62,22 @@ def test_perf_bench_smoke_end_to_end(tmp_path):
     assert "vector_backend_search" in res["scenarios"]
 
 
+def test_perf_bench_profile_dumps_pstats(tmp_path):
+    """--profile 的原始 pstats 落盘可被 pstats 回读（票 01 目标 3 的落点）。"""
+    import pstats
+
+    mod = _load_bench_module()
+    dump = tmp_path / "40-hybrid_search.pstats"
+    with mod.bench_env(40, seed=11, workdir=tmp_path / "env") as ctx:
+        p = mod.profile_scenario(ctx, "hybrid_search", iterations=3, dump_path=dump)
+
+    assert dump.exists() and dump.stat().st_size > 0
+    assert p["pstats_dump"] == dump.name
+    assert p["top_tottime"], "热点表为空——cProfile 没采到数据"
+    st = pstats.Stats(str(dump))
+    assert st.stats, "落盘的 pstats 回读为空——dump 格式坏了"
+
+
 def test_perf_bench_env_restores_singletons(tmp_path):
     """bench_env 离开时必须还原生产单例（db.engine/get_session/settings/绑定），
     否则 harness 在测试进程里复用一次就污染全量套件。"""

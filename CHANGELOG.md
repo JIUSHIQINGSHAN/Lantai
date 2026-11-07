@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **离线性能基线工具 `scripts/perf_bench.py`（v0.68 并行流 D 票 `.scratch/v068-perf/01`）**：进程内直调核心函数（FTS/BM25、hybrid_search、build_context、摄取、apply_proposal、apply_forgetting），自建临时 SQLite（真实建表 + 迁移链 + FTS5 trigram）按规模灌入种子化合成语料（默认 1000/5000 两档），输出 P50/P95 基线（JSON + Markdown 双格式）；LLM/embedding 用确定性替身并单列计量、不与本地管线混账，向量库用生产同款内嵌 ChromaDB 0.6.3（装不上自动降级纯 Python 替身并声明）。`--profile` 附 cProfile 热点表并落原始 `.pstats`（可用 pstats 交互复盘）。内置健全性自检（三通道召回/闸门放行/fastpath 命中），不满足拒绝出报告。基线结论：本地管线 5000 行全链 60-70ms，头号热点是向量通道 ACL `$or` 过滤令 chroma 元数据全表扫（17× 劣化，票 `.scratch/v068-perf/03`）。冒烟锁：`tests/test_perf_bench_smoke.py`（不 mock 直调真实实现）。
+
 ### Fixed
 
 - **fastpath 直写路径缺 `content_hash` 在场检查，重复内容撞唯一约束 500（v0.68 性能基线顺带发现，票 `.scratch/v068-perf/02`）**：提取路径 `_create_candidate_with_extraction` 建 `RawDocument` 前先按 `content_hash` 查在场（在场复用文档、照建候选），直写路径 `_create_candidate_direct` 没有这一步直接 INSERT——同一句自我声明（fastpath 白名单句式）在两次 coalesce 冲刷里各出现一次、且第一次尚未演化成 MemoryItem 时，前置的 `_apply_dedup` 只搜 MemoryItem 搜不到候选/文档阶段的重复，第二次冲刷即 `UNIQUE constraint failed: rawdocument.content_hash` → API 500。现直写路径补齐同口径在场检查（在场复用文档、照建候选，返回结构不变）。回归锁：`tests/test_fastpath_dup_content_hash.py`（真库 + 真实 ChromaDB 不 mock 直调 `add_memory` 两次：复现例 + 提取路径参照组钉住「行为一致」的口径）。

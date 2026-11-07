@@ -17,7 +17,7 @@
 用法：
     python scripts/perf_bench.py                    # 全场景，默认两档规模
     python scripts/perf_bench.py --scale 2000       # 单档规模
-    python scripts/perf_bench.py --profile          # 附带 cProfile 热点
+    python scripts/perf_bench.py --profile          # 附带 cProfile 热点（原始 .pstats 落 --out 目录）
     python scripts/perf_bench.py --only hybrid_search --iterations 30
 
 注意：请用项目虚拟环境（.venv，Python 3.11）运行；宿主若有 PYTHONPATH 指向
@@ -766,7 +766,7 @@ def sanity_check(ctx) -> dict:
 
 
 # ── cProfile 热点 ─────────────────────────────────────────────
-def profile_scenario(ctx, name: str, iterations: int = 10) -> dict:
+def profile_scenario(ctx, name: str, iterations: int = 10, dump_path: Path | None = None) -> dict:
     call = _resolve_call(ctx, name, iterations)
 
     prof = cProfile.Profile()
@@ -776,6 +776,9 @@ def profile_scenario(ctx, name: str, iterations: int = 10) -> dict:
     prof.disable()
 
     st = pstats.Stats(prof)
+    if dump_path is not None:
+        dump_path.parent.mkdir(parents=True, exist_ok=True)
+        st.dump_stats(str(dump_path))
     entries = []
     for (fpath, lineno, func), (cc, nc, tt, ct, callers) in st.stats.items():
         entries.append(
@@ -810,7 +813,7 @@ def profile_scenario(ctx, name: str, iterations: int = 10) -> dict:
         ]
 
     total = sum(e["tottime_s"] for e in entries)
-    return {
+    out = {
         "iterations": iterations,
         "total_tottime_s": round(total, 3),
         "top_tottime": _top(lambda e: e["tottime_s"]),
@@ -819,6 +822,9 @@ def profile_scenario(ctx, name: str, iterations: int = 10) -> dict:
             lambda e: e["cumtime_s"], pred=lambda e: "/lantai/" in e["file"]
         ),
     }
+    if dump_path is not None:
+        out["pstats_dump"] = dump_path.name
+    return out
 
 
 # ── 报告 ──────────────────────────────────────────────────────
@@ -881,6 +887,8 @@ def write_report(scale_results: dict, out_dir: Path) -> tuple[Path, Path]:
         lines.append("")
         for name, p in (res.get("profiles") or {}).items():
             lines.append(f"### 热点：{name}（cProfile，{p['iterations']} 迭代）")
+            if p.get("pstats_dump"):
+                lines.append(f"- 原始 pstats：`{p['pstats_dump']}`（pstats.Stats 可交互复盘）")
             lines.append("")
             lines.append("| 排名 | 位置 | tottime(ms) | cumtime(ms) | ncalls |")
             lines.append("|---|---|---|---|---|")
@@ -909,6 +917,7 @@ def run_scale(
     iterations_scale: float = 1.0,
     only: list[str] | None = None,
     profile: bool = False,
+    profile_dump_dir: Path | None = None,
 ) -> dict:
     """单档规模全场景基线。返回 {env, scenarios, profiles}。"""
     with bench_env(n_rows, seed=seed) as ctx:
@@ -923,7 +932,12 @@ def run_scale(
         if profile:
             for name in ["hybrid_search", "build_context", "ingest_add_memory", "apply_proposal"]:
                 if name in scenario_names:
-                    profiles[name] = profile_scenario(ctx, name)
+                    dump = (
+                        profile_dump_dir / f"{n_rows}-{name}.pstats"
+                        if profile_dump_dir is not None
+                        else None
+                    )
+                    profiles[name] = profile_scenario(ctx, name, dump_path=dump)
         return {"env": collect_env_info(ctx), "scenarios": scenarios, "profiles": profiles}
 
 
@@ -962,6 +976,7 @@ def main(argv=None) -> int:
             iterations_scale=args.iterations,
             only=args.only,
             profile=args.profile,
+            profile_dump_dir=out_dir,
         )
         scale_results[n] = res
         for name, m in res["scenarios"].items():
