@@ -45,6 +45,10 @@ from lantai.eval.longmemeval import (
     session_recall_hit,
 )
 
+# 票 30 A2：报告面 stdout 钉 UTF-8——cp936 宿主 print GBK 外字符（emoji/U+2028/罕用字）直接崩
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs/benchmarks/longmemeval-2026-10"
 DATA = ROOT / "data/longmemeval/longmemeval_s_cleaned.json"

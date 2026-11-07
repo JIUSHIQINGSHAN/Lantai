@@ -15,6 +15,10 @@ from pathlib import Path
 
 sys.path.insert(0, ".")
 
+# 票 30 A2：报告面 stdout 钉 UTF-8——cp936 宿主 print GBK 外字符（emoji/U+2028/罕用字）直接崩
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 from lantai.eval.chinese_memory_cases import build_chinese_dataset  # noqa: E402
 from lantai.eval.forgetting_quality import evaluate_forgetting_quality  # noqa: E402
 
@@ -155,11 +159,13 @@ def main() -> int:
         return 0
 
     report = render_report(result)
-    print(report)
     out_dir = Path(args.out) if args.out else _DEFAULT_OUT
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{datetime.now().astimezone().date().isoformat()}.md"
+    # 先落盘后 print（票 30 A2 最疼一处）：print 在前时，stdout 臂一旦崩（编码/管道）
+    # 报告文件整体不落——报告是评测唯一持久产物，必须先于一切控制台输出落盘。
     path.write_text(report, encoding="utf-8")
+    print(report)
     print(f"\n报告已写入: {path}", file=sys.stderr)
     return 0
 

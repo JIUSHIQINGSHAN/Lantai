@@ -15,6 +15,10 @@ sys.path.insert(0, ".")
 from lantai.eval.query_set import load_query_set  # noqa: E402
 from lantai.eval.runner import run_dry_run  # noqa: E402
 
+# 票 30 A2：报告面 stdout 钉 UTF-8——cp936 宿主 print GBK 外字符（emoji/U+2028/罕用字）直接崩
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 
 def parse_overrides(items: list[str]) -> dict:
     """解析 --override key=value 列表。"""
