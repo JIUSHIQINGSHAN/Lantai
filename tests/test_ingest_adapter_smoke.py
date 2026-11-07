@@ -106,3 +106,121 @@ def test_arxiv_target_rejects_bad_scheme_and_host():
         _assert_public_arxiv_target("ftp://export.arxiv.org/api/query")
     with pytest.raises(ValueError):
         _assert_public_arxiv_target("http://evil.example.com/api/query")
+
+
+# ── 票 17 子项 1：adapter 组装冒烟（此前全链零测试——AGENTS.md 纪律缺口）──
+# 真 feedparser.parse 对真实样本 XML；httpx/fetch_with_safety/getaddrinfo
+# 替身 = 网络边界（纪律允许面）；字段组装、hash 计算、quality_signal 提取、
+# published 缺省臂全部真实执行。hash 口径断言按现状锁定（rss=link+content，
+# arxiv=content）——票 17-3 统一口径拍板后随裁决更新。
+
+import hashlib
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
+import lantai.ingestion.arxiv as arxiv_mod
+import lantai.ingestion.rss as rss_mod
+from lantai.ingestion.arxiv import ArxivAdapter
+from lantai.ingestion.rss import RSSAdapter
+
+_RSS_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<title>样本源</title><link>http://example.invalid/</link>
+<item>
+  <title>检索延迟复盘</title>
+  <link>http://example.invalid/posts/1</link>
+  <description>全文检索 P95 从 120ms 降到 45ms 的完整复盘。</description>
+  <author>ops@example.invalid (值班组)</author>
+  <pubDate>Mon, 02 Feb 2026 03:04:05 +0000</pubDate>
+</item>
+<item>
+  <title>无署名条目</title>
+  <link>http://example.invalid/posts/2</link>
+  <description>没有作者与发布时间的条目，走缺省臂。</description>
+</item>
+</channel></rss>
+"""
+
+
+def test_rss_adapter_assembles_fields_from_real_feedparser(monkeypatch):
+    monkeypatch.setattr(rss_mod, "fetch_with_safety", lambda url, **kw: _RSS_XML.encode("utf-8"))
+    docs = RSSAdapter().fetch({"url": "http://example.invalid/rss.xml", "lang": "zh"})
+
+    assert len(docs) == 2
+    d1, d2 = docs
+    # 完整条目：字段逐项对账 + hash 口径锁（link+content）
+    assert d1.source_type == "article"
+    assert d1.title == "检索延迟复盘"
+    assert d1.url == "http://example.invalid/posts/1"
+    assert d1.lang == "zh"
+    content1 = "全文检索 P95 从 120ms 降到 45ms 的完整复盘。"
+    assert d1.content == content1
+    assert d1.authors == ["ops@example.invalid (值班组)"]
+    assert d1.published_at == datetime(2026, 2, 2, 3, 4, 5, tzinfo=UTC)
+    assert (
+        d1.content_hash
+        == hashlib.sha256(("http://example.invalid/posts/1" + content1).encode()).hexdigest()
+    )
+    # 缺省臂：无 author → []，无 pubDate → None
+    assert d2.authors == []
+    assert d2.published_at is None
+
+
+def test_rss_adapter_swallows_fetch_rejection(monkeypatch):
+    """fetch_with_safety 拒绝（SSRF/限长）→ 空列表不抛（安全边界臂）。"""
+
+    def reject(url, **kw):
+        raise ValueError("blocked address")
+
+    monkeypatch.setattr(rss_mod, "fetch_with_safety", reject)
+    assert RSSAdapter().fetch({"url": "http://127.0.0.1/rss.xml"}) == []
+
+
+_ARXIV_ATOM = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<entry>
+  <id>http://arxiv.org/abs/2503.12345v2</id>
+  <title>Retrieval Latency at Scale</title>
+  <summary> We report a hybrid retrieval pipeline. </summary>
+  <author><name>张三</name></author>
+  <published>2026-03-05T10:11:12Z</published>
+  <link rel="alternate" type="text/html" href="http://arxiv.org/abs/2503.12345v2"/>
+  <link rel="related" type="application/pdf" href="http://arxiv.org/pdf/2503.12345v2"/>
+</entry>
+<entry>
+  <id>http://arxiv.org/abs/2503.99999v1</id>
+  <title>Minimal Entry</title>
+  <summary>Only a summary, no author and no published date.</summary>
+</entry>
+</feed>
+"""
+
+
+def test_arxiv_adapter_assembles_fields_from_real_feedparser(monkeypatch):
+    _stub_dns(monkeypatch, "8.8.8.8")  # export.arxiv.org 解析替身（网络边界）
+    monkeypatch.setattr(arxiv_mod.httpx, "get", lambda url, **kw: SimpleNamespace(text=_ARXIV_ATOM))
+    docs = ArxivAdapter().fetch({"query": "cat:cs.IR", "max_results": 2})
+
+    assert len(docs) == 2
+    d1, d2 = docs
+    content1 = "We report a hybrid retrieval pipeline."
+    assert d1.source_type == "paper"
+    assert d1.source_id == "http://arxiv.org/abs/2503.12345v2"
+    assert d1.title == "Retrieval Latency at Scale"
+    assert d1.url == "http://arxiv.org/abs/2503.12345v2"
+    assert d1.authors == ["张三"]
+    assert d1.published_at == datetime(2026, 3, 5, 10, 11, 12, tzinfo=UTC)
+    assert d1.lang == "en"
+    assert d1.content == content1
+    # hash 口径锁：arxiv = sha256(content)（无 link 前缀，与 RSS 刻意对照）
+    assert d1.content_hash == hashlib.sha256(content1.encode("utf-8")).hexdigest()
+    assert d1.meta["raw"]["arxiv_id"] == "http://arxiv.org/abs/2503.12345v2"
+    # 质量信号草稿真提取（纯解析零 LLM）：借道 meta 传递
+    assert isinstance(d1.meta["quality_signal"], dict)
+    # 缺省臂：无 author/published/链接
+    assert d2.authors == []
+    assert d2.published_at is None
+    assert (
+        d2.content_hash
+        == hashlib.sha256(b"Only a summary, no author and no published date.").hexdigest()
+    )
