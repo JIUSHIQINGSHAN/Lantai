@@ -103,6 +103,10 @@ def build(tag: str) -> Path:
         cwd=str(REPO),
         capture_output=True,
         text=True,
+        # Git-for-Windows 发 UTF-8；裸 text=True 按 cp936 解码，失败路径的
+        # stderr（含 CJK 路径/tag）直接 mojibake（票 30 A4 同族）
+        encoding="utf-8",
+        errors="replace",
     )
     if git_err.returncode != 0:
         shutil.rmtree(parent, ignore_errors=True)
