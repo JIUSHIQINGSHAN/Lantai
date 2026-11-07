@@ -328,7 +328,8 @@ def _repair_canonical_bindings(nodeid):
 # `smain.finish.json`，那一轮 2857 passed 全绿）——结束时下面这些生产模块级状态
 # 仍带着测试造出来的内容，而生产代码会把它们当决策输入读：
 #   * `cehou._SHADOW_WINDOWS` 0→9 条，键名就是 `win-svc-api-test-01` 这类测试自
-#     用 id，而 cezhou 聚合会遍历全表；
+#     用 id，而 cezhou 聚合会遍历全表（**已收敛**：票 60 把影子视窗落库
+#     cehou_window 表，内存注册表已删除，本表相应摘除该监控对）；
 #   * `scheduler.WORKER_LAST_RUN` 0→6 条，`get_last_run()` 拿它当「DB 查不到时
 #     的兜底真值」——前序测试的 stamp 会让后续判定「刚跑过」而静默跳过；
 #   * `prefilter._PATTERN_CACHE` 键没变、**值被原地改掉**（只比对象身份的检查抓
@@ -346,7 +347,8 @@ def _repair_canonical_bindings(nodeid):
 # 不做「看着像护栏、实际在空转」的假隔离。
 
 _GUARDED_MODULE_STATE = (
-    ("lantai.cognition.cehou", "_SHADOW_WINDOWS"),
+    # ("lantai.cognition.cehou", "_SHADOW_WINDOWS") 已随票 60 落库收敛（内存
+    # 注册表不复存在，残留隔离对象清零）——监控对移除，防护栏指向不存在的属性
     ("lantai.core.scheduler", "WORKER_LAST_RUN"),
     ("lantai.gate.prefilter", "_PATTERN_CACHE"),
     ("lantai.gate.prefilter", "_KEYWORD_WARNED"),
