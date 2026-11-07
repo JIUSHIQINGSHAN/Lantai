@@ -46,6 +46,6 @@ def test_ingest_run_route_smoke(monkeypatch):
         s.commit()
 
     with TestClient(app) as client:
-            resp = client.post("/ingest/run", headers={"X-API-Key": admin_key})
+        resp = client.post("/ingest/run", headers={"X-API-Key": admin_key})
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"ok": True}
