@@ -39,5 +39,7 @@ def test_build_scene_navigation_lines_degrades_to_empty(param_env):
 
     # 无 scene_id 与悬空 scene_id（库中无行）都零侵入降级为空列表
     no_scene = build_scene_navigation_lines([SimpleNamespace(scene_id=None, key="a")], 200, "…")
-    ghost_scene = build_scene_navigation_lines([SimpleNamespace(scene_id="sc-ghost", key="b")], 200, "…")
+    ghost_scene = build_scene_navigation_lines(
+        [SimpleNamespace(scene_id="sc-ghost", key="b")], 200, "…"
+    )
     assert no_scene == [] and ghost_scene == []
