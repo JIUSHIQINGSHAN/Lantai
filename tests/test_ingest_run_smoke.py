@@ -21,11 +21,20 @@ def test_run_ingest_no_sources_smoke(param_env):
     assert result == {"ok": True}
 
 
-def test_ingest_run_route_smoke():
-    """HTTP 接缝：POST /ingest/run 真实路由到 run_ingest（控制台「立即摄取」按钮的合同）。"""
+def test_ingest_run_route_smoke(monkeypatch):
+    """HTTP 接缝:POST /ingest/run 真实路由到 run_ingest(控制台「立即摄取」按钮的合同)。
+
+    v0.68 票 19 起该路由挂 `require_admin`(admin 角色仅来自环境 API_KEY),
+    本测试按 admin 面真实调用——不带 X-API-Key 在配了 API_KEY 的部署(含 CI)
+    下恒 403,DEV MODE 才放行,那不是该路由的合同。
+    """
     from lantai.api.app import app
+    from lantai.core.settings import settings
     from lantai.models.tables import IngestJob, Source
     from lantai.storage import db
+
+    admin_key = "ingest-run-smoke-admin"
+    monkeypatch.setattr(settings, "API_KEY", admin_key)
 
     # 会话级共享库上可能有前序 API 测试留下的来源；本测试只验证空转语义，
     # 且绝不能带着别人的真实 URL 出网——先清空摄取面。
@@ -37,6 +46,6 @@ def test_ingest_run_route_smoke():
         s.commit()
 
     with TestClient(app) as client:
-        resp = client.post("/ingest/run")
+            resp = client.post("/ingest/run", headers={"X-API-Key": admin_key})
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"ok": True}
