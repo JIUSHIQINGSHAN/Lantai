@@ -17,6 +17,7 @@
 #      _configure_stdio_utf8 的说明），不该发生在别人 import 的时候。
 # 判据：tests/test_mcp_import_side_effects.py（子进程取证 + lantai/** 模块级写 AST 锁）。
 
+import contextlib
 import hashlib
 import json
 import math
@@ -3880,20 +3881,25 @@ def _configure_stdio_utf8() -> None:
 
     stderr 同钉（票 30 A5）：logger 的 StreamHandler 绑 sys.stderr，异常 repr 嵌
     GBK 外字符时 logger.exception 产 "--- Logging error ---" 噪声丢行。
-    兜底用 warnings.fail-loud（票 30 A5）：旧版此处 os.environ.setdefault(
+    三股流各自独立处理：stdin 失败静默（contextlib.suppress——被嵌入/被捕获语境下
+    sys.stdin 是 DontReadFromInput 类桩，没有 reconfigure——stdio 服务真 stdin 恒为
+    TextIOWrapper，三真实入口已核实）；stdout/stderr 承载协议帧与日志，
+    失败必须 fail-loud（票 30 A5）：旧版此处 os.environ.setdefault(
     "PYTHONIOENCODING") 是死代码——该变量只在解释器启动建流时被读，运行期
     setdefault 对已建流的编码毫无作用，静默带着 GBK 继续跑恰是本函数要防的病。
     """
-    try:
+    for stream, errors in ((sys.stdout, "strict"), (sys.stderr, "replace")):
+        try:
+            stream.reconfigure(encoding="utf-8", errors=errors)
+        except (AttributeError, ValueError):
+            warnings.warn(
+                f"{stream.__class__.__name__} reconfigure failed; stream stays "
+                "locale-encoded (PYTHONIOENCODING set at runtime has no effect "
+                "on already-created streams)",
+                stacklevel=2,
+            )
+    with contextlib.suppress(AttributeError, ValueError):
         sys.stdin.reconfigure(encoding="utf-8")
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, ValueError):
-        warnings.warn(
-            "stdio reconfigure failed; streams stay locale-encoded "
-            "(PYTHONIOENCODING set at runtime has no effect on already-created streams)",
-            stacklevel=2,
-        )
 
 
 def main():

@@ -51,10 +51,15 @@ DECLARED = Counter(
             "pytest.skip",
             "本机无 git 可执行文件：release_check 的 git 用例无法真实执行",
         ): 1,
+        (
+            "tests/test_gate_probe_encoding.py",
+            "pytest.skip",
+            "整机无 git 可执行文件，无法真实执行 _git 链路（宁 skip 不假绿）",
+        ): 1,
         ("tests/test_wheel_ships_ui.py", "pytest.mark.skipif", "需要 uv 构建 wheel"): 1,
     }
 )
-DECLARED_TOTAL = 6
+DECLARED_TOTAL = 7
 
 # 无守卫的运行时弃权（能力探测循环走空后统一 skip）单独按申报集合管——它不是
 # 「凭被测返回值弃权」，但同样必须逐条可查。新增一个这类点同样判红。
