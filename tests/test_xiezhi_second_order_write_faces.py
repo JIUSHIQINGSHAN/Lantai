@@ -384,3 +384,81 @@ class TestPromoterApplyGuard:
                 )
             ).one()
             assert "| col1 | col2 |" in mem.content
+
+
+# ── 面 3：POST /cognitive/observe（用户直写面，断言式 → 422）─────────────
+
+
+@pytest.fixture()
+def cog_env():
+    """内存 SQLite 真实建表 + 路由 session 依赖覆盖（同
+    test_cognitive_write_ownership.cog_env 形状，无预置行）。
+
+    override 的 key 必须是路由自己绑定的函数对象（from-import 别名，
+    dependency_overrides 按对象同一性查表——票 03 同款教训）。"""
+    import lantai.models.tables  # noqa: F401
+    from lantai.api import routes_cognitive as routes_cognitive_mod
+    from lantai.api.app import app
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(engine)
+
+    def session_factory() -> Session:
+        return Session(engine)
+
+    def _override_session():
+        yield session_factory()
+
+    route_dep = routes_cognitive_mod.get_session
+    app.dependency_overrides[route_dep] = _override_session
+    try:
+        yield session_factory
+    finally:
+        app.dependency_overrides.pop(route_dep, None)
+
+
+def _observe_client():
+    from lantai.api.app import app
+    from lantai.core.acl import Principal
+    from lantai.core.auth import get_current_user
+
+    principal = Principal(user_id="user-A", tenant_id=None, allowed_lanes=["general"], role="user")
+    app.dependency_overrides[get_current_user] = lambda: principal
+    return TestClient(app)
+
+
+class TestCognitiveObserveGuard:
+    def test_observe_rejects_injection_422_no_rows(self, cog_env):
+        """直写面断言式：命中 → 422（routes_memory.py 既有形态），
+        MemoryItem 与 Evidence 双落面零行。"""
+        with _observe_client() as c:
+            resp = c.post("/cognitive/observe", json={"content": PAYLOAD_EN})
+        assert resp.status_code == 422, resp.text
+        assert "injection guard" in resp.text
+        with cog_env() as s:
+            assert s.exec(select(MemoryItem).where(MemoryItem.content == PAYLOAD_EN)).all() == []
+            assert s.exec(select(Evidence).where(Evidence.content == PAYLOAD_EN)).all() == []
+
+    def test_observe_redline_shapes_pass(self, cog_env):
+        """误拒红线：INI / 裸 <system> XML / 表格 / 全角正常文本照常双落。"""
+        for text in (REDLINE_INI, REDLINE_XML, REDLINE_TABLE, REDLINE_FULLWIDTH):
+            with _observe_client() as c:
+                resp = c.post("/cognitive/observe", json={"content": text})
+            assert resp.status_code == 200, f"{text[:30]} 被误杀：{resp.text}"
+            body = resp.json()
+            assert body["ok"] is True
+            with cog_env() as s:
+                mem = s.get(MemoryItem, body["memory_id"])
+                assert mem is not None
+                ev = s.get(Evidence, body["evidence_id"])
+                assert ev is not None
+                assert mem.content == text and ev.content == text
+
+    def test_observe_guard_disabled_passes_through(self, cog_env, monkeypatch):
+        """开关直通（关 = 行为退回无检测，guard 既有契约）。"""
+        monkeypatch.setattr(settings, "INJECTION_GUARD_ENABLED", False)
+        with _observe_client() as c:
+            resp = c.post("/cognitive/observe", json={"content": PAYLOAD_EN})
+        assert resp.status_code == 200, resp.text
