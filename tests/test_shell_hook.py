@@ -59,13 +59,25 @@ def test_build_context_short_query_returns_empty(monkeypatch):
 
 def test_main_timeout_returns_empty_json(monkeypatch, capsys):
     """超时降级：返回 {} 且不退出（serve 模式需容错，不能再 os._exit）。"""
-    mod = _load_hook(monkeypatch, embed_delay=1.0, timeout=0.2)
+    mod = _load_hook(monkeypatch, timeout=0.2)
+
+    # 闸门强制放行：排除 relevance_check 判 False → _persona_only() 返回 {} 的
+    # 歧义——墙失效走正常路径时输出同样可能是 {}，`json.loads(out) == {}` 会
+    # 把「降级」与「正常空结果」混为一谈。
+    monkeypatch.setattr(mod, "relevance_check", lambda q, **kw: {"needs_memory": True})
+    # intent 强制 fact_lookup：否则 conftest 假 chat_json 让 hybrid_search 在
+    # intent 短路零命中（不调 embed）——「超时」只剩 jieba 冷启动的自然耗时来
+    # 撞墙（热身后墙永不触发）。强制走检索路径后慢替身必被调、墙必触发。
+    monkeypatch.setattr(
+        "lantai.retrieval.intent.chat_json",
+        lambda *a, **k: {"intent": "fact_lookup", "reason": "test"},
+    )
 
     # 超时前提要真实：conftest autouse 假 embed 是瞬回的，build_context 会在
     # 0.2s 墙内跑完（v0.68 票 01 起完成路径的 event_id 可见，旧断言恰好遮住
     # 这一点）——把 hybrid 实际调用的 embed 换成慢替身，墙才真正触发降级。
     def _slow_hybrid_embed(texts, timeout=None):
-        time.sleep(1.0)
+        time.sleep(5.0)
         return [[0.1] * 8]
 
     monkeypatch.setattr("lantai.retrieval.hybrid.embed", _slow_hybrid_embed)
@@ -74,8 +86,12 @@ def test_main_timeout_returns_empty_json(monkeypatch, capsys):
     mod.main()  # 不再抛 SystemExit——超时静默返回 {}
     elapsed = time.perf_counter() - start
     out = capsys.readouterr().out.strip()
+    # 降级签名：正常路径（含零命中分支）返回必带 event_id，{} 只可能来自
+    # 无画像的 _query_fallback——墙失效走正常路径时这条红。
     assert json.loads(out) == {}
-    assert elapsed < 3.0  # 超时生效（远小于 embed 的 5s；留环境波动余量）
+    # 双向钉死超时墙：下限——墙真的等了（≥0.2s，失效成「根本不等」时红）；
+    # 上限——没等满 5s 慢替身（daemon 线程超时即弃，不拖测试）。
+    assert 0.2 <= elapsed < 3.0, f"超时墙未按 0.2s 预算生效: {elapsed:.2f}s"
 
 
 def test_stdin_forced_utf8_reconfigure(monkeypatch):
