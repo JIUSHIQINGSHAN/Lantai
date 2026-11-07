@@ -370,6 +370,11 @@ def handle_add(params: dict) -> dict:
         title=params.get("title", ""),
         content=params.get("content", ""),
         lane=params.get("lane", "general"),
+        # media_url 透传（票 `.scratch/v0.68-next-window-2026-11/07`）：schema
+        # 广告了目识通道，REST `POST /add` 同一 `AddMemoryReq` 真实生效——
+        # 此前 handler 不读它，传了即静默丢弃（广告即假承诺）。二选一校验
+        # 在 AddMemoryReq 模型层，与 REST 面同语义。
+        media_url=params.get("media_url") or "",
     )
     return add_memory(req, user_id=params.get("user_id") or "default", principal=principal)
 
