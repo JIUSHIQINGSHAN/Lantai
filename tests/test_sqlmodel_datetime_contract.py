@@ -16,7 +16,7 @@
 
 import importlib
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import DateTime as SADateTime
@@ -43,8 +43,8 @@ def test_no_utcdatetime_in_locked_sqlmodel():
     except ImportError:
         sqltypes = None
     assert sqltypes is not None and not hasattr(sqltypes, "UTCDateTime"), (
-        "sqlmodel 已含 UTCDateTime：pyproject 上界 <0.0.43 被突破——"
-        "datetime 契约即将反转（naive 写库拒收 + 读回值变 aware），"
+        "sqlmodel.sql.sqltypes 缺失或已含 UTCDateTime：pyproject 上界 <0.0.43 "
+        "被突破——datetime 契约即将反转（naive 写库拒收 + 读回值变 aware），"
         "须先清 naive 写入面与 naive 读取假设再升级"
     )
     col_type = _DatetimeContractProbe.__table__.columns["created_at"].type
@@ -54,22 +54,31 @@ def test_no_utcdatetime_in_locked_sqlmodel():
 
 
 def test_aware_utc_value_persists_as_naive_utc_text():
-    """臂 2：aware-UTC 值落盘 = 无偏移 UTC 墙上时钟文本（bind 不换算）。"""
-    engine = create_engine("sqlite://", poolclass=StaticPool)
-    SQLModel.metadata.create_all(engine)
-    with Session(engine) as session:
-        session.add(
-            _DatetimeContractProbe(
-                id="probe-1",
-                created_at=datetime(2026, 8, 2, 22, 41, 19, 234999, tzinfo=UTC),
+    """臂 2：aware-UTC 值落盘 = 无偏移 UTC 墙上时钟文本（bind 不换算）。
+
+    两个方向都钉死：①aware-UTC 落盘为 UTC 墙上时钟（正确路径的现状锁）；
+    ②aware 带偏移值**不换算**、按原墙上时钟落盘——写侧不先归一 UTC 的
+    毒值（票 32 F2 形态：aware +08:00）会静默差 8 小时入库，升级后若
+    bind 行为变化此锁先红。
+    """
+    for offset_h, label in ((0, "aware-UTC"), (8, "aware+08:00（bind 不换算毒值形态）")):
+        engine = create_engine("sqlite://", poolclass=StaticPool)
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            session.add(
+                _DatetimeContractProbe(
+                    id="probe-1",
+                    created_at=datetime(
+                        2026, 8, 2, 22, 41, 19, 234999, tzinfo=timezone(timedelta(hours=offset_h))
+                    ),
+                )
             )
+            session.commit()
+        with engine.connect() as conn:
+            raw = conn.execute(text("SELECT created_at FROM dt_contract_probe")).scalar_one()
+        assert raw == "2026-08-02 22:41:19.234999", (
+            f"{label} 落盘文本形态漂移（期望无偏移原墙上时钟）：{raw!r}"
         )
-        session.commit()
-    with engine.connect() as conn:
-        raw = conn.execute(text("SELECT created_at FROM dt_contract_probe")).scalar_one()
-    assert raw == "2026-08-02 22:41:19.234999", (
-        f"落盘文本形态漂移（期望无偏移 UTC 墙上时钟）：{raw!r}"
-    )
 
 
 def test_core_time_docstring_states_real_contract():
