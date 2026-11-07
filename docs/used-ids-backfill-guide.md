@@ -16,10 +16,21 @@ Hermes 每次搜索记忆（MCP `search` / shell_hook 注入 / REST `/search`）
 
 ## 二、调用方式
 
-### 方式 A：MCP（Hermes 主力通道）
+### 方式 A：REST API（主力通道）
+
+```
+POST /retrieval/backfill   （需 API Key 鉴权）
+Body: {"event_id": "rev_xxx", "used_ids": ["mem_1", "mem_2"]}
+```
+
+### 方式 B：MCP `backfill` 工具（需 full 档）
+
+> **档位注意**：`backfill` 不在 MCP 默认档核心 6 工具内（fail-closed 收窄，
+> 票 05 续31）——不设 `LANTAI_MCP_PROFILE=full` 调用即 `-32602`。默认档部署
+> 走方式 A 的 REST 端点。
 
 1. 调用 `search {query, top_k}` → 响应含 `event_id`
-2. 回答完成后，调用新工具：
+2. 回答完成后，调用工具：
 
 ```
 tools/call: backfill {event_id, used_ids}
@@ -35,17 +46,10 @@ tools/call: backfill {event_id, used_ids}
   "name":"backfill","arguments":{"event_id":"rev_xxx","used_ids":["mem_1","mem_2"]}}}
 ```
 
-### 方式 B：REST API
-
-```
-POST /retrieval/backfill   （需 API Key 鉴权）
-Body: {"event_id": "rev_xxx", "used_ids": ["mem_1", "mem_2"]}
-```
-
 ### 方式 C：Shell Hook 注入路径
 
 `pre_llm_call` 注入的响应现在带 `event_id`（与 `context` 并列）。
-回答后若用了注入的记忆，用 MCP `backfill` 回填该 `event_id`。
+回答后若用了注入的记忆，回填该 `event_id`（REST 主力或 MCP full 档）。
 
 ## 三、拿不到 event_id 怎么办
 
@@ -56,11 +60,11 @@ Body: {"event_id": "rev_xxx", "used_ids": ["mem_1", "mem_2"]}
 ## 四、验证回填生效
 
 ```bash
-# 查最近事件是否带 used_ids
-C:/Users/Asus/Desktop/记忆/.venv-audit/Scripts/python.exe -c "
-from remembrance.storage import db
+# 查最近事件是否带 used_ids（在仓库根执行；包名现为 lantai）
+.venv/Scripts/python.exe -c "
+from lantai.storage import db
 from sqlmodel import select
-from remembrance.models.tables import RetrievalEvent
+from lantai.models.tables import RetrievalEvent
 with db.get_session() as s:
     for ev in s.exec(select(RetrievalEvent).order_by(RetrievalEvent.created_at.desc()).limit(5)):
         print(ev.id[:20], ev.query_text[:30], 'used=', ev.used_ids)
@@ -71,7 +75,9 @@ with db.get_session() as s:
 
 ## 五、接入清单（Hermes）
 
-- [ ] MCP 工具列表含 `search / add / feedback / backfill`（4 个）
+- [ ] MCP 工具列表：默认档含核心 6 工具（`search / add / feedback / offload_read /
+      mem_recent / core_memory_get`，**不含 backfill**）；需经 MCP 调 backfill 时显式
+      设 `LANTAI_MCP_PROFILE=full`，否则走 REST 端点
 - [ ] 回答用户问题前走 `search`，记下 `event_id`
 - [ ] 回答用到的记忆 id 收集后调 `backfill`
 - [ ] 自检：能查到 `used_ids` 非空的事件
@@ -81,8 +87,8 @@ with db.get_session() as s:
 通道是否打通，一条命令验证（8 项检查）：
 
 ```bash
-cd C:/Users/Asus/Desktop/记忆
-.venv-audit/Scripts/python.exe scripts/verify_backfill.py
+cd <仓库根>   # 如 D:\Projects\记忆
+.venv/Scripts/python.exe scripts/verify_backfill.py
 ```
 
 覆盖：backfill 工具注册 / search 带 event_id / backfill 处理器 /
