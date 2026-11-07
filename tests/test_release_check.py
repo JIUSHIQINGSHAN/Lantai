@@ -155,6 +155,7 @@ def _stub_gate_producers(
     monkeypatch.setattr(RC, "ci_step_coverage_issues", lambda root: list(verdict))
     monkeypatch.setattr(RC, "gate_suite_flag_issues", lambda root: list(verdict))
     monkeypatch.setattr(RC, "addopts_fidelity_issues", lambda root: list(verdict))
+    monkeypatch.setattr(RC, "docs_reference_issues", lambda root: list(verdict))
     monkeypatch.setattr(
         RC, "collect_version_refs", lambda root: [("pyproject.toml", "pyproject.toml", "0.66.0")]
     )
@@ -202,8 +203,8 @@ def test_gate_ledger_is_not_inherited_across_runs(monkeypatch, capsys):
     assert codes == [0, 0], codes
     assert summaries[0] == summaries[1], f"两次运行汇总不同 = 账本跨运行累积：{summaries}"
     # 票 04 起 11 项（新增「命名空间 provenance」）；新增检查项时同步这里的分母。
-    assert "11/11 通过" in summaries[0], summaries[0]
-    assert len(RC.results) == 11, f"账本残留上一轮判定：{RC.results}"
+    assert "12/12 通过" in summaries[0], summaries[0]
+    assert len(RC.results) == 12, f"账本残留上一轮判定：{RC.results}"
 
 
 def test_lint_gate_missing_ruff_registers_skip(monkeypatch, tmp_path):
@@ -1031,3 +1032,40 @@ def test_namespace_provenance_catches_first_party_shadow_pre_fix_world(tmp_path)
     issues = RC.namespace_provenance_issues(fake_repo, env=env)
     assert issues, "修复前世界（一方命名空间 + 外来正包）未被门禁判红——tripwire 失守"
     assert any("`tests`" in i for i in issues), issues
+
+
+# ── 文档引用对账哨兵（v0.68 票 09：P0-3 同根因的结构性拦截）────────────────
+
+
+def test_docs_reference_gate_blocks_missing_script(tmp_path):
+    """红样：现役文档引用不存在的 scripts/*.py 必须被判红，且点名具体死链。"""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "x.md").write_text("先跑 `scripts/foo.py` 初始化。\n", encoding="utf-8")
+    issues = RC.docs_reference_issues(tmp_path)
+    assert issues, "引用不存在脚本未被哨兵判红——防复发哨兵失守"
+    assert any("scripts/foo.py" in i for i in issues), f"未点名具体死链：{issues}"
+
+
+def test_docs_reference_gate_passes_on_real_repo():
+    """绿样：真仓现役文档的脚本引用全部可解析。"""
+    issues = RC.docs_reference_issues(RC.REPO_ROOT)
+    assert issues == [], "现役文档存在死链引用：\n" + "\n".join(issues)
+
+
+def test_docs_reference_gate_whitelists_deleted_entry_annotations(tmp_path):
+    """白名单样：「已删除」历史注记（P0-3 修复的合法反指形态）不误放行错、也不误报。"""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "h.md").write_text(
+        "旧入口 `scripts/mcp_server.py` 已删除，勿再引用。\n", encoding="utf-8"
+    )
+    assert RC.docs_reference_issues(tmp_path) == []
+
+
+def test_docs_reference_gate_ignores_placeholders(tmp_path):
+    """占位符样：<name>.py / probe_*.py / 外链不在扫描面（否则上线首日即误报）。"""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "p.md").write_text(
+        "示例：`<name>.py`、`probe_*.py`，外链 https://example.com/a.py。\n",
+        encoding="utf-8",
+    )
+    assert RC.docs_reference_issues(tmp_path) == []

@@ -44,7 +44,7 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 
 | 动作 | 触发 | 用途 |
 |---|---|---|
-| `query`（缺省） | 无 `type`，或 `type` 未匹配，且带查询字段 | 检索并注入上下文（读路径） |
+| `query`（缺省） | 无 `type`，或 `type` 未匹配（查询字段缺省按空查询处理） | 检索并注入上下文（读路径） |
 | `dialogue` | `"type": "dialogue"` | 写入一轮对话（写路径） |
 | `backfill` | `"type": "backfill"` | 注入回执：哪些召回记忆真被用上 |
 | `retrieval_veto` | `"type": "retrieval_veto"` | 否决作废：这一轮被宿主否决，作废其检索事件（ADR-0084） |

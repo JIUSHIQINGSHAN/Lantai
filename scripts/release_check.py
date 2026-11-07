@@ -65,6 +65,7 @@ DIAGNOSIS_CATEGORIES = (
     "约束漂移",
     "依赖缺失",
     "逻辑缺陷",
+    "文档断线",
     "契约/策略违反",
     "发布元数据漂移",
     "仓库状态",
@@ -94,13 +95,17 @@ FAILURE_DIAGNOSIS: dict[str, tuple[str, str]] = {
     "Git 状态": ("仓库状态", "git status --porcelain && git tag --list 'v*'"),
     "命名空间 provenance": (
         "环境/工具缺失",
-        "echo %PYTHONPATH% 清空后复跑（宿主 PYTHONPATH 渗入）；细项见 docs/release-process.md 第 9 条",
+        "echo %PYTHONPATH% 清空后复跑（宿主 PYTHONPATH 渗入）；细项见 docs/release-process.md 第 10 条",
     ),
     "MCP 默认暴露": (
         "契约/策略违反",
         'python -c "from lantai.cli import mcp; print(len(mcp._get_active_tools()), len(mcp.TOOLS))"',
     ),
     "迁移与列约束漂移": ("约束漂移", "python -m pytest tests/test_legacy_schema_parity.py -q"),
+    "文档引用对账": (
+        "文档断线",
+        "python -m pytest tests/test_release_check.py -q -k=docs_reference（红灯明细含 file:lineno 死链清单）",
+    ),
     "老库升级回放与列对齐": ("约束漂移", "python scripts/legacy_parity_probe.py"),
     "全量测试 + 宿主目录绊线": ("测试污染", 'python -m pytest tests/ -q -o addopts=""'),
     "遗忘质量离线门禁": ("逻辑缺陷", "python scripts/run_forgetting_quality.py --check"),
@@ -1148,6 +1153,59 @@ def addopts_fidelity_issues(repo_root: Path) -> list[str]:
     return []
 
 
+# 现役文档扫描面（顶层非递归）：docs/*.md + README.md + CONTRIBUTING.md。
+# docs/adr/、docs/research/、docs/plans/ 等子目录天然出界——ADR 是不可变决策记录、
+# dated 报告按归档口径不核对（工单 09 口径）。
+DOCS_REFERENCE_WHITELIST: frozenset[str] = frozenset(
+    {
+        # P0-3 修复的合法历史注记（矩阵/手册/交接文档的「旧入口已删除」反指），
+        # 票据 .scratch/v068-docs-audit 与 v0.68 票 06 评审确认的必要之恶
+        "scripts/mcp_server.py",
+    }
+)
+
+_DOCS_REF_RE = re.compile(r"scripts/[\w][\w-]*\.py")
+
+
+def docs_reference_issues(repo_root: Path) -> list[str]:
+    """现役文档引用的 scripts/*.py 必须真实存在（工单 09 防复发哨兵）。
+
+    流 C 审计 P0-3/6/7 三组同根因：入口文件被删/改名后，文档引用静默断线。
+    本探针结构性拦截该类断线进 release：引用对象不存在即判红，点名 file:lineno。
+    只读扫描（不联网、不改文件）；v1 只认 `scripts/` 前缀引用——裸名/伪码/
+    占位符（`<name>.py`、`probe_*.py`）误报面不可控，不入扫描面（Standards 轴
+    评审裁定）；新历史文档的豁免走显式白名单登记（fail-closed），不做横幅解析。
+    """
+    root = Path(repo_root)
+    targets = [root / "README.md", root / "CONTRIBUTING.md"]
+    docs_dir = root / "docs"
+    if docs_dir.is_dir():
+        targets.extend(sorted(p for p in docs_dir.glob("*.md") if p.is_file()))
+    issues: list[str] = []
+    for path in targets:
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            issues.append(f"{path.name} 读取失败（{exc}）——引用对账无法取证，不放行")
+            continue
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for token in _DOCS_REF_RE.findall(line):
+                if any(ch in token for ch in "<>*"):
+                    continue  # 占位符/通配示例
+                rel = token.replace("\\", "/")
+                if rel in DOCS_REFERENCE_WHITELIST:
+                    continue
+                if (root / rel).is_file():
+                    continue
+                issues.append(
+                    f"{path.name}:{lineno} 引用的 `{rel}` 不存在——"
+                    "引用已删/改名入口（P0-3 同族断线）；修文档或经白名单登记历史注记"
+                )
+    return issues
+
+
 def forgetting_gate_issues(returncode: int, output: str) -> list[str]:
     """纯判据：退出码 0 且必须回报结论标记，才算取到证。"""
     if returncode != 0:
@@ -1345,6 +1403,17 @@ def main(argv: list[str] | None = None) -> int:
             True,
             f"{len(CI_STEP_OWNERS)} 条 CI 检查步骤都有门禁项认领、无失配死账，"
             "且门禁 pytest 口径包含 CI 口径、addopts 钉子仍惰性",
+        )
+
+    doc_ref_issues = docs_reference_issues(REPO_ROOT)
+    for issue in doc_ref_issues:
+        check("文档引用对账", False, issue)
+    if not doc_ref_issues:
+        check(
+            "文档引用对账",
+            True,
+            "现役文档（docs/*.md 顶层 + README + CONTRIBUTING）引用的 scripts/*.py 全部存在"
+            "（工单 09 防复发哨兵；白名单收编历史注记）",
         )
 
     refs = collect_version_refs(REPO_ROOT)

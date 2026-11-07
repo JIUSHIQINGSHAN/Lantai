@@ -93,13 +93,13 @@ def test_release_gate_list_matches_real_check_sequence():
     """门禁清单与 release_check.py 实际 check 序列逐项对表（唯一事实源）。"""
     rc_src = _read("scripts/release_check.py")
     real_names = sorted(set(re.findall(r'check\("([^"]+)"', rc_src)))
-    assert len(real_names) >= 12, f"门禁检查项变了（现 {len(real_names)}）——先更新本锁与文档清单"
+    assert len(real_names) >= 13, f"门禁检查项变了（现 {len(real_names)}）——先更新本锁与文档清单"
 
     doc = _read("docs/release-process.md")
     section = doc.split("## 上传前门禁", 1)[1].split("## ", 1)[0]
     for name in real_names:
         assert name in section, f"门禁清单缺真实检查项「{name}」——照单全收，不凭记忆"
-    assert "12 项" in section or "十二项" in section, "清单应如实标注项数"
+    assert "13 项" in section or "十三项" in section, "清单应如实标注项数"
 
 
 def test_release_pytest_command_matches_gate():

@@ -1,7 +1,7 @@
 # 兰台记忆 记忆主动调用手册
 
 > 场景：不依赖 pre_llm_call 自动注入，**手动**触发记忆检索/写入/反馈。
-> 工具名（Hermes 内）：`mcp__remembrance__search` / `mcp__remembrance__add` / `mcp__remembrance__feedback`
+> 工具名（Hermes 内）：`mcp__remembrance__search` / `mcp__remembrance__add` / `mcp__remembrance__feedback`——前缀源自 Hermes 配置里 `mcp_servers:` 的 **server key**（交接文档示例用的 key 是 `remembrance`），与 serverInfo.name=`lantai` 是两层命名；新部署建议 server key 直接用 `lantai`，前缀随之变为 `mcp__lantai__*`
 
 ---
 

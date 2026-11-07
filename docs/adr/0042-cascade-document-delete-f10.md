@@ -1,5 +1,7 @@
 # ADR 0042: Cascade Document Delete (F10)
 
+**状态**：Accepted  
+
 ## Context
 Documents imported into Lantai (e.g. via `POST /import/jsonl` or `POST /documents`) currently generate `MemoryItem` records. However, if a user wants to un-ingest a document, there is no straightforward way to delete the document and synchronously clean up all derived memory chunks, their FTS indices, and any related semantic graph edges.
 

@@ -165,7 +165,7 @@ pytest tests/ --cov=lantai --cov-report=html
 
 - 新增功能必须包含对应测试
 - Bug 修复必须包含回归测试
-- 所有测试必须通过（700+ 用例全绿，README 徽章为准）
+- 所有测试必须通过（全量用例全绿，README 徽章为准）
 - 测试命名清晰：`test_<feature>_<scenario>`
 
 ## PR 检查清单
