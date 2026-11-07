@@ -1,8 +1,9 @@
 """记忆关系 API——薄 handler，逻辑下沉 edge_service"""
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from lantai.cognition.causal import COUNTERFACTUAL_MAX_DEPTH_LIMIT
 from lantai.core.auth import get_current_user
 from lantai.services.edge_service import (
     add_edge,
@@ -31,7 +32,9 @@ class EdgeReq(BaseModel):
 class CounterfactualReq(BaseModel):
     target_memory_id: str
     intervened_node_id: str
-    max_depth: int = 10
+    # 票 39：深度上界单一真源在引擎（COUNTERFACTUAL_MAX_DEPTH_LIMIT），
+    # 与 MCP -32602 继承同一契约；无界深度是指数路径枚举的一半入口面。
+    max_depth: int = Field(default=10, ge=1, le=COUNTERFACTUAL_MAX_DEPTH_LIMIT)
 
 
 class ProjectImpactReq(BaseModel):

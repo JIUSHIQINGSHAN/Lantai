@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 
 from pydantic import ValidationError
 
+from lantai.cognition.causal import COUNTERFACTUAL_MAX_DEPTH_LIMIT
 from lantai.cognition.jiaochou import (
     SCAN_LIMIT_MAX,
     SCAN_LIMIT_MIN,
@@ -730,6 +731,11 @@ def handle_causal_counterfactual(params: dict) -> dict:
     target_id = params.get("target_memory_id", "")
     intervened_id = params.get("intervened_node_id", "")
     max_depth = int(params.get("max_depth", 10))
+    if not 1 <= max_depth <= COUNTERFACTUAL_MAX_DEPTH_LIMIT:
+        # 票 39：深度上界单一真源在引擎；无界深度是指数路径枚举的另一半入口面。
+        raise ValueError(
+            f"max_depth must be an int in [1, {COUNTERFACTUAL_MAX_DEPTH_LIMIT}]"
+        )
     if not isinstance(target_id, str) or not target_id.strip():
         raise ValueError("target_memory_id must be a non-empty string")
     if not isinstance(intervened_id, str) or not intervened_id.strip():
@@ -3103,7 +3109,13 @@ TOOLS = {
                     "type": "string",
                     "description": "拟介入阻断的前置诱因记忆 ID",
                 },
-                "max_depth": {"type": "integer", "default": 10, "description": "最大探索深度"},
+                "max_depth": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": (
+                        f"最大探索深度（1..{COUNTERFACTUAL_MAX_DEPTH_LIMIT}，越界 -32602）"
+                    ),
+                },
                 "user_id": {"type": "string", "description": "操作租户/用户 ID"},
             },
             "required": ["target_memory_id", "intervened_node_id"],
