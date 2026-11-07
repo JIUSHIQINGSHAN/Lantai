@@ -325,6 +325,49 @@ def test_add_dialogue_validation():
     m.assert_not_called()
 
 
+def test_add_media_url_wired_to_vision(mcp_env):
+    """票 .scratch/v068-docs-audit/03（审计 P0-8）不 mock 冒烟：add 工具广告的
+    media_url 必须真实透传——直调 handle_add（不 mock 其内部），目识 caption
+    （conftest 的外部视觉替身）落为 RawDocument 正文，provenance 带 media_url。
+    接线断裂时本例在 schema 层即抛 ValidationError（content/media 双空拒绝）。"""
+    mod = _load_mcp()
+    result = mod.handle_add({"title": "截图", "media_url": "data:image/png;base64,AAAA"})
+    assert result["document_id"] and result["candidate_id"]
+
+    session_factory, _ = mcp_env
+    from lantai.models.tables import MemoryCandidate, RawDocument
+
+    with session_factory() as s:
+        doc = s.get(RawDocument, result["document_id"])
+        assert doc is not None
+        assert doc.content == "vision stub"  # conftest 外部视觉替身
+        cand = s.get(MemoryCandidate, result["candidate_id"])
+        assert cand is not None
+        assert cand.provenance.get("media_url") == "data:image/png;base64,AAAA"
+
+
+def test_add_media_url_and_content_mutually_exclusive(mcp_env):
+    """票 03 反向：media_url + 非空 content → AddMemoryReq 二选一校验拒绝，
+    JSON-RPC 面映射 -32602（与 REST 同参同口径，不静默丢弃）。"""
+    mod = _load_mcp()
+    resp = mod.handle(
+        {
+            "jsonrpc": "2.0",
+            "id": 15,
+            "method": "tools/call",
+            "params": {
+                "name": "add",
+                "arguments": {
+                    "title": "截图",
+                    "content": "这段正文长度超过十个字。",
+                    "media_url": "data:image/png;base64,AAAA",
+                },
+            },
+        }
+    )
+    assert resp["error"]["code"] == -32602
+
+
 def test_search_response_has_evidence():
     """search 响应含来源说明（evidence），event_id 透出不受影响。"""
     mod = _load_mcp()

@@ -1,5 +1,10 @@
 # 交接文档：Hermes 自举安装 Remembrance 记忆系统
 
+> **历史文档（2026-08-03 交接件）**：更名（remembrance→lantai）与 MCP 入口迁移前的
+> 口径，机器路径/品牌名/工具面按当时原貌保留，仅个别与现行代码直接矛盾的陈述已
+> 就地更正。现役接入入口见 [README](../README.md) 与
+> [MCP 客户端矩阵](mcp-client-matrix.md)。
+
 > **给 Hermes（爱马仕）的任务**：请按本文档逐步完成兰台记忆（Lantai）记忆系统的接入安装。
 > 文档由小弟（DeepSeek-V4-Flash）编写，代码/脚本层面已全部就绪，你只负责**执行配置 + 验证 + 回传结果**。
 >
@@ -52,7 +57,7 @@ C:/Users/Asus/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe scripts/
 ```
 
 **预期输出**：5 步全部 `[OK]`，结尾提示"旧目录未删除，请确认后手动清理"。
-**硬性要求**：迁移脚本会自动 ①SQLite online backup（一致性快照 + integrity_check）②复制 .chromadb ③写用户级环境变量 `REMEMBRANCE_HOME` ④写项目根 .env。**你不得手动移动任何文件**。
+**硬性要求**：迁移脚本会自动 ①SQLite online backup（一致性快照 + integrity_check）②复制 .chromadb ③写用户级环境变量 `LANTAI_HOME`（脚本现行行为）④写项目根 .env。**你不得手动移动任何文件**。
 **验收**：脚本输出含 `[OK] DB 备份完成` 与 `[5/5]`。
 
 ---
@@ -66,14 +71,15 @@ C:/Users/Asus/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe scripts/
 ```yaml
 mcp_servers:
   remembrance:
-    command: C:/Users/Asus/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe
+    command: <仓库根>/.venv/Scripts/python.exe
     args:
-      - C:/Users/Asus/Desktop/记忆/scripts/mcp_server.py
+      - -m
+      - lantai.cli.mcp
     connect_timeout: 30.0
     enabled: true
 ```
 
-**注意**：mcp_server.py 已内置 sys.path 处理，子进程无论 cwd 都能 import remembrance；REMEMBRANCE_HOME 已设用户级环境变量，子进程继承后自动生效。
+**注意**：MCP 入口为现行 `python -m lantai.cli.mcp`（项目 venv 内 lantai 为 editable 安装，故子进程无论 cwd 都能 import lantai）；`LANTAI_HOME` 已设用户级环境变量，子进程继承后自动生效。
 
 ---
 
@@ -129,7 +135,7 @@ C:/Users/Asus/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe scripts/
 
 | 文件 | 用途 |
 |---|---|
-| `scripts/mcp_server.py` | MCP 服务（已补 sys.path） |
+| `lantai/cli/mcp.py`（console script `lantai-mcp`） | MCP 服务（现行入口；原 `scripts/mcp_server.py` 已删除） |
 | `scripts/shell_hook.py` | Shell Hook 注入（协议兼容） |
 | `scripts/migrate_home.py` | 数据迁移（备份优先、不删旧） |
 | `scripts/verify_lantai.py` | 接入自检（8 项） |

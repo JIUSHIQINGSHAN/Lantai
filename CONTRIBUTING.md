@@ -154,8 +154,8 @@ def add_memory(title: str, content: str, lane: str) -> Memory:
 # 运行全部测试
 pytest tests/ -q
 
-# 运行特定模块
-pytest tests/test_gate.py -q
+# 运行特定模块（相关性闸门测试在 test_features / test_prefilter）
+pytest tests/test_features.py tests/test_prefilter.py -q
 
 # 带覆盖率
 pytest tests/ --cov=lantai --cov-report=html
