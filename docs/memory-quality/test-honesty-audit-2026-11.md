@@ -349,3 +349,58 @@ patch 仅落 settings 开关、向量库接缝（单层）与 conftest 既定外
 - 分支状态：领先 origin/master 12 提交（11 笔收口/合并 + 本节）、落后 0、
   工作树干净；push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项
   死代码待维护者裁决）。
+
+## 15. 第十一次复验（2026-11-07）：审计逐字节复现 + 门禁复跑（含一次双门禁并发重叠期的 refresh 瞬态 failed 与一次管道退出码陷阱的诚实记录）
+
+环境检查：origin/master 零推进（`57cf71a6`；本会话开工时领先 11，期间并行
+复验会话提交 §14 后为领先 12），无合并事项。按 §1 口径全量重验：
+
+- **审计工具重跑**：与在库 `audit.json` **逐字节一致**（`cmp` 全等；先在
+  §14 前的树上跑一次，又在含 §14 的最终 HEAD `4b7d1cd8` 上复跑一次，两次
+  均全等——期间零产品/测试代码改动，仅报告文档入库）：inventory 1728 /
+  core 1083 / real-smoke 659 / hollow 0 / mocked-only 1=`_digest_dir` 接缝
+  豁免 / indirect-only 321 / never-executed 102。另核 `audit.json` 明细：
+  mocked-only 唯一条目 `lantai.workers.digest_worker._digest_dir`（私有
+  函数，5 个测试文件经调用栈间接真实执行，与 §3 口径注记一致）。
+- **诚实性复核（8 文件全部逐行通读）**：全部真输入直调 + 真库断言；patch
+  仅落 settings 开关（SECRET_GUARD_MODE / DIALOGUE_MIN_CHARS）、向量库单层
+  接缝（test_vector_item_wrappers，docstring 注明不叠 param_env 双层撤销栈
+  病根）与 conftest 既定外部替身（embed）；MCP 帧测试走 exec 副本规避
+  `_guard_instance` 台账通道。8 文件 `--collect-only` 恰 22 例，直跑
+  22 passed（3.74s）。
+- **票 02 复核**：3 项死代码（`scan_and_retire` / `evaluate_and_evolve` /
+  `autodream_cron_days`）全仓 grep（lantai/ + api_server.py + scripts/ +
+  hermes-plugin + 根目录脚本）除定义行外零命中，维持 needs-triage。
+- **过程插曲（诚实记录，一次门禁瞬态 + 一次流程教训 + 一次会话并发事件）**：
+  - **会话并发**：本会话执行期间，另一复验会话在同一分支完成其第十次复验
+    并提交 §14（11:30:43）；其第二轮门禁（按其 §14 记录 5m09s、止于该提交）
+    与本会话第一轮门禁（11:29 起跑，时长 5m24s）**并发重叠约 100 秒**——
+    两个 3000+ 例套件在同一工作树上共用 file-backed SQLite 测试库与向量
+    替身目录，属复验流程未预期的异常负载形态。
+  - **门禁瞬态**：第一轮全量 1 failed（余量 3086 passed / 5 skipped /
+    0 failed）——`test_shiyi_api_smoke.py::test_seam3_mcp_82_tools_parity`
+    在 `_seed_test_memory` 的 `s.commit()` → `s.refresh(mem)` 处抛
+    `InvalidRequestError: Could not refresh instance`（commit 后 refresh
+    的 SELECT 找不到刚提交的行），setup 期另有向量库维度不匹配 WARNING
+    （8 维 embedding vs 1024 维 collection，跨进程共享态污染信号）。甄别：
+    与 §14 绿轮同 HEAD、零产品/测试代码差异（其提交仅报告文档）；该文件
+    单独复跑 4 passed（2.12s）；`_RESIDENT_TABLES` 不含 `memoryitem`，
+    「并发 wipe 清行」不成立，机理归属 SQLite 多进程层面的日志恢复/锁
+    互踩，无法事后逐字节取证，诚实存疑记录。与 §13（conftest sqlite3
+    瞬态 error）、§14（同测试 autouse fixture 瞬态 error）记录的瞬态同族，
+    判为并发双门禁背景下的环境瞬态，非产品回归。
+  - **流程教训**：第一轮把输出经管道截尾，`tail` 的 exit 0 掩盖了 pytest
+    实际 exit 1（管道退出码陷阱）——第二轮起完整日志落仓库外临时目录并
+    显式捕获 pytest 退出码。与 §14 的「日志只留尾部」教训同属复验流程
+    自身的过程纪律。
+- **全量门禁（第二轮，确认无并发 pytest 进程后）**：**3087 passed /
+  5 skipped / 0 failed**（5m06s，exit 0，venv=主检出 `.venv`，
+  `PYTHONPATH=.`），与 §12/§13/§14 数字一致。隔离护栏台账零新增：模块级
+  残留恰为既有 8 通道（_guard_instance / kaogong / consolidation /
+  routes_health / llm gate×2 / cehou / param runtime，例证全部来自既有
+  测试文件），绑定残留仅 test_3a 申报哨兵；第一轮（尾部完整台账段）与
+  第二轮（全量日志 grep 计数 0）双重核验，8 个补强测试文件在两本台账
+  全文零出现。
+- 分支状态：领先 origin/master 13 提交（12 笔收口/合并 + 本节）、落后 0、
+  工作树干净；push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项
+  死代码待维护者裁决）。
