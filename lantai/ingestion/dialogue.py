@@ -213,7 +213,10 @@ def _create_candidate(
         else:
             origin_extra["event_time_extract_failed"] = True
     except Exception:
-        pass
+        # 票 17-5：提取器异常不再静默吞——异常同属「尝试失败」，按上方设计
+        # 意图如实留痕（日志）+ 落失败标记（U3 标注面），宁 miss 不脏写不变
+        origin_extra["event_time_extract_failed"] = True
+        logger.warning("event_time 提取异常（dialogue），已标记 failed", exc_info=True)
     if (session_id or "").strip():
         origin_extra["origin_session_id"] = session_id.strip()
     if turn is not None:

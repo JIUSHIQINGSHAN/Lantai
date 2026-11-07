@@ -130,4 +130,34 @@ def test_fastpath_path_consults_router(monkeypatch, param_env):
     assert result["status"] == "fastpath"
 
 
-# 子项 5（裸 except 留痕）的回归锁在本文件收口子项 4 后单独追加（红→绿分笔提交）。
+def test_event_time_extract_failure_not_silent(monkeypatch, param_env, caplog):
+    """红测：事件时间提取异常不得静默——caplog 有留痕 + provenance 带
+    event_time_extract_failed 标记（对齐 dialogue.py:200-201 设计意图
+    「失败如实记录」；异常臂曾 except Exception: pass 双无）。"""
+    _assert_extract_path(_SECRET_TEXT)
+    session_factory, _ = param_env
+
+    import lantai.core.time_precision as time_precision_mod
+
+    def boom(text):
+        raise RuntimeError("event_time extractor exploded")
+
+    monkeypatch.setattr(time_precision_mod, "extract_explicit_event_time", boom)
+    monkeypatch.setattr(settings, "SECRET_GUARD_MODE", "off")  # 本测只看 event_time 臂
+
+    from lantai.ingestion.dialogue import ingest_dialogue
+
+    with caplog.at_level(logging.WARNING, logger="lantai.ingestion"):
+        with patch("lantai.parsing.extractor.chat_json", return_value=dict(_EXTRACT_STUB)):
+            result = ingest_dialogue(_SECRET_TEXT)
+
+    assert any("event_time" in r.message for r in caplog.records), (
+        "事件时间提取异常零日志留痕（裸 except 静默吞）"
+    )
+    with session_factory() as s:
+        from lantai.models.tables import MemoryCandidate
+
+        cand = s.get(MemoryCandidate, result["candidate_id"])
+        assert cand.provenance.get("event_time_extract_failed") is True, (
+            "异常臂未落 event_time_extract_failed 标记——U3 标注面缺口"
+        )
