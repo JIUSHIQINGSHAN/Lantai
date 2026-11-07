@@ -21,7 +21,7 @@ from pathlib import Path
 
 from sqlalchemy import DateTime as SADateTime
 from sqlalchemy import text
-from sqlmodel import Field, SQLModel, Session, create_engine
+from sqlmodel import Field, Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,9 +66,7 @@ def test_aware_utc_value_persists_as_naive_utc_text():
         )
         session.commit()
     with engine.connect() as conn:
-        raw = conn.execute(
-            text("SELECT created_at FROM dt_contract_probe")
-        ).scalar_one()
+        raw = conn.execute(text("SELECT created_at FROM dt_contract_probe")).scalar_one()
     assert raw == "2026-08-02 22:41:19.234999", (
         f"落盘文本形态漂移（期望无偏移 UTC 墙上时钟）：{raw!r}"
     )
@@ -84,6 +82,6 @@ def test_core_time_docstring_states_real_contract():
     src = (ROOT / "lantai" / "core" / "time.py").read_text(encoding="utf-8")
     assert "0.0.42" in src, "core/time.py 未写明版本基线 0.0.42"
     assert "无库级" in src, "core/time.py 未如实声明「无库级防护」"
-    assert not re.search(
-        r"的\s*`?UTCDateTime`?\s*(对\s*naive|拒绝|拒写|硬要求)", src
-    ), "core/time.py 仍有以现在时表述指向不存在的 UTCDateTime 防护"
+    assert not re.search(r"的\s*`?UTCDateTime`?\s*(对\s*naive|拒绝|拒写|硬要求)", src), (
+        "core/time.py 仍有以现在时表述指向不存在的 UTCDateTime 防护"
+    )

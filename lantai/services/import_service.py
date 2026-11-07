@@ -24,10 +24,9 @@ def _parse_dt(value, field: str) -> datetime:
 
     与摄取链 normalize_timestamp 同语义：Z/±HH:MM 时区输入换算为 UTC 并保留
     tzinfo，保证 SQLite 落库与区间比较一致（ADR-0018「时间线不再被压平」；
-    票据 07 验收 2 含时区）。保留 tzinfo 是因为 sqlmodel ≥0.0.47 的 UTCDateTime
-    对 naive datetime 写库直接 raise（`process_bind_param` 强制 utcoffset()
-    is not None），而解析结果要落到 created_at/updated_at；落盘仍是 UTC 文本，
-    时刻数值不变。
+    票据 07 验收 2 含时区）。保留 tzinfo 是因为恒 aware UTC 是本仓纪律
+    （锁定的 sqlmodel 0.0.42 无库级防护，naive 也静默落库），解析结果要
+    落到 created_at/updated_at；落盘仍是 UTC 文本，时刻数值不变。
     """
     if isinstance(value, datetime):
         dt = value

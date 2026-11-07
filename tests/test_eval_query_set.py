@@ -53,9 +53,9 @@ def _add_event(s, eid, query, norm_hash, noise=False, lane="", created_at=None):
             latency_ms=5,
             zero_result=False,
             is_system_noise=noise,
-            # aware UTC：sqlmodel ≥0.0.47 的 UTCDateTime 拒绝 naive datetime 写库
-            # （`process_bind_param` 强制 utcoffset() is not None）。默认日期
-            # 数值不变——仍是 2026-08-01，只补时区。
+            # aware UTC：恒 aware 是本仓纪律（锁定 sqlmodel 0.0.42 无库级
+            # 防护，naive 也静默落库）。默认日期数值不变——仍是 2026-08-01，
+            # 只补时区。
             created_at=created_at or datetime(2026, 8, 1, tzinfo=UTC),
         )
     )
@@ -93,8 +93,8 @@ class TestBuildQuerySet:
         """同 norm_hash 去重，保留最新。"""
         sf = db_session
         with sf() as s:
-            # aware UTC（sqlmodel ≥0.0.47 拒绝 naive 写库）；相对次序不变
-            # ——8/1 仍早于 8/5，去重后保留「new query」。
+            # aware UTC（恒 aware 纪律：0.0.42 无库级防护，naive 静默落库）；
+            # 相对次序不变——8/1 仍早于 8/5，去重后保留「new query」。
             _add_event(
                 s, "e1", "old query", "dup_hash", created_at=datetime(2026, 8, 1, tzinfo=UTC)
             )
