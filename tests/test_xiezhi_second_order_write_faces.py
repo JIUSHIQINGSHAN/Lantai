@@ -325,6 +325,22 @@ class TestPromoterApplyGuard:
             assert s.get(MemoryProposal, "prop_xz_add").status == "rejected"
             assert s.exec(select(MemoryItem).where(MemoryItem.content == PAYLOAD_ZH)).all() == []
 
+    def test_xiezhi_bypass_instrumentation_stores_probe(self, param_env):
+        """仪器存桩臂（staged_eval fence 探针）：xiezhi_bypass=True 显式旁路
+        —— 评测台要故意存对抗样本度量下游围栏，guard 不拦；
+        默认 False 的生产语义由 test_add_apply_blocked_no_memory 锁住。"""
+        from lantai.evolution.promoter import apply_proposal
+
+        session_factory, _ = param_env
+        _add_proposal(session_factory, "prop_xz_bypass", content=PAYLOAD_ZH)
+        with patch("lantai.evolution.promoter.embed", return_value=[[0.1] * 8]):
+            res = apply_proposal("prop_xz_bypass", xiezhi_bypass=True)
+        assert res["ok"] is True
+        with session_factory() as s:
+            assert s.get(MemoryProposal, "prop_xz_bypass").status == "applied"
+            rows = s.exec(select(MemoryItem).where(MemoryItem.content == PAYLOAD_ZH)).all()
+            assert len(rows) == 1 and rows[0].status == "active"
+
     def test_update_apply_blocked_existing_content_untouched(self, param_env):
         """update 提案 apply：patch 新文命中 → REJECTED，既有记忆正文一字不动。"""
         from lantai.evolution.promoter import apply_proposal

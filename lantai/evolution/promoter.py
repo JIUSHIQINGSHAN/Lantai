@@ -210,7 +210,7 @@ def _is_datetime_column(name: str) -> bool:
     return ann is datetime or datetime in getattr(ann, "__args__", ())
 
 
-def apply_proposal(proposal_id: str, principal=None) -> dict:
+def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = False) -> dict:
     """应用提案。
 
     `principal`（票 `.scratch/proposal-apply-gaps/issues/16-*.md`）：apply 是
@@ -220,6 +220,11 @@ def apply_proposal(proposal_id: str, principal=None) -> dict:
     除名、consolidation 折叠），且都没有 undo 入口。故在动手之前一次性校验
     全部目标归属，任一条不属于即整体拒绝。口径同前 14 票：admin /
     `principal=None`（worker/CLI/scheduler）不过滤。
+
+    `xiezhi_bypass`（v0.68 票 14）：跳过注入二阶闸。**仅供评测仪器存桩**
+    ——staged_eval 的围栏逃逸探针必须以注入载荷形态入库才能度量下游
+    `neutralize_fence_escapes` 的正确行为；生产调用方一律缺省 False，
+    传 True 需在调用点留注释说明仪器语义。
     """
     with db.get_session() as s:
         prop = s.get(MemoryProposal, proposal_id)
@@ -318,7 +323,9 @@ def apply_proposal(proposal_id: str, principal=None) -> dict:
         # 四个写内容分支（update/merge/consolidation/add）的正文都取自
         # proposed_patch——LLM 二手文本。闸位在 embed 之前、任何写库之前：
         # 命中即 REJECTED 终态（不抛出，批循环不炸），同批其它提案照常。
-        out = _xiezhi_reject_if_injection(prop, content)
+        # xiezhi_bypass 仅供评测仪器（lantai/eval/staged.py 存桩对抗样本、
+        # 度量下游围栏中性化）显式传 True——生产调用方禁用。
+        out = None if xiezhi_bypass else _xiezhi_reject_if_injection(prop, content)
         if out is not None:
             s.add(prop)
             s.commit()
