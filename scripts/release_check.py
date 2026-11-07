@@ -202,7 +202,16 @@ def check_version_consistency(
 
 
 def _git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], cwd=repo_root, capture_output=True, text=True)
+    # Git-for-Windows 输出 UTF-8；裸 text=True 会按 locale（cp936 宿主）解码，
+    # CJK 分支名/文件名直接 UnicodeDecodeError 或 mojibake（票 30 A4）。
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
 
 
 def _find_ruff(repo_root: Path) -> str:
@@ -415,6 +424,10 @@ def isolated_probe_env(probe_home: str) -> dict[str, str]:
     """
     os.makedirs(probe_home, exist_ok=True)
     env = os.environ.copy()
+    # 子进程 stdio 钉 UTF-8（票 30 A1，对齐 verify_lantai.py 姊妹口径）：cp936 宿主下
+    # 子 Python 对管道按 locale 编码——嵌 GBK 外字符的失败信息让探针 UnicodeEncodeError
+    # 假 FAIL 挡发布，中文 gate 消息以 GBK 落管则父侧 UTF-8 解码全 U+FFFD。
+    env["PYTHONIOENCODING"] = "utf-8"
     env["LANTAI_HOME"] = probe_home
     env["REMEMBRANCE_HOME"] = probe_home  # 旧变量名兼容（settings 仍会读它）
     env["DATABASE_URL"] = ""  # 空值 => 由 LANTAI_HOME 推导
