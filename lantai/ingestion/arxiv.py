@@ -28,7 +28,16 @@ def _assert_public_arxiv_target(url: str) -> None:
         parsed.hostname, parsed.port or 80, proto=socket.IPPROTO_TCP
     ):
         ip = ipaddress.ip_address(sockaddr[0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+        # 对齐 safety.validate_fetch_url 的 is_global 参考判据（票 17-2：CGNAT
+        # 100.64.0.0/10 曾漏拦——内层松于外层），并叠加原四标志保守面：
+        # is_reserved 段（如 NAT64 64:ff9b::/32）不因对齐放开——宁严勿松
+        if (
+            not ip.is_global
+            or ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+        ):
             raise ValueError(f"arXiv 目标解析到受限地址 {ip}")
 
 
