@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from lantai.core.auth import get_current_user
+from lantai.core.auth import get_current_user, require_admin
 
 router = APIRouter(prefix="/kaogong", tags=["kaogong"])
 
@@ -36,8 +36,14 @@ def kaogong_eval_endpoint(req: KaogongEvalRequest, ctx=Depends(get_current_user)
 
 
 @router.get("/report")
-def kaogong_report_endpoint(ctx=Depends(get_current_user)) -> dict[str, Any]:
-    """考功：获取最新考功评定审计报告快照。"""
+def kaogong_report_endpoint(ctx=Depends(require_admin)) -> dict[str, Any]:
+    """考功：获取最新考功评定审计报告快照。
+
+    票 19：require_admin——报告是全局快照，`details[].fenced_content` 携带
+    记忆明文全文、`get_report` 不按调用方收窄；此前的身份透传只进 run_cycle
+    的空态臂（user 身份空态 GET 会触发**用户视角全表写周期**并把全局快照
+    覆写成 user 视角），故收 admin 闸。ctx 透传保持既有形态（admin 空态
+    GET 触发 admin 周期是该路由既有契约）。"""
     from lantai.services.kaogong_service import get_kaogong_report
 
     return get_kaogong_report(principal=ctx)
