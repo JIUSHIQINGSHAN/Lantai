@@ -559,8 +559,10 @@ def scen_build_context(ctx, i):
 
 def _unique_call(fn):
     """写场景用真实调用计数生成唯一内容：warmup 与正式轮共用一条序号流，
-    不重放相同内容（重复内容会踩 rawdocument.content_hash 唯一约束——
-    这本身是 bench 发现的产品缺陷候选，见报告）。"""
+    不重放相同内容。基线要测的是「全新写入」的全成本路径（文档 INSERT +
+    候选 INSERT 各一次）；重复内容自票 .scratch/v068-perf/02 修复后在产品
+    代码里合法（在场复用文档、照建候选），但那是更便宜的另一条路径，混在
+    一起会把 P50 拉低失真。"""
     state = {"n": 0}
 
     def call(_i):
