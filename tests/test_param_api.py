@@ -16,6 +16,16 @@ from lantai.models.tables import ParamSuggestion
 from lantai.parameters.registry import default_snapshot
 from lantai.parameters.validation import snapshot_hash
 
+# 票 19 子项 5 拍板：参数裁决面三路由收 admin——决策/回滚类用例走真鉴权链
+# （monkeypatch settings.API_KEY + 真 X-API-Key 头，auth.py A 路 role="admin"）；
+# 只读用例维持 DEV user 链不变。
+ADMIN_KEY = "k19-param-admin-key"
+ADMIN = {"X-API-Key": ADMIN_KEY}
+
+
+def _as_admin(monkeypatch):
+    monkeypatch.setattr(settings, "API_KEY", ADMIN_KEY, raising=False)
+
 
 @pytest.fixture(scope="function")
 def client():
@@ -111,11 +121,14 @@ class TestParamAdviceApi:
         assert body["changes"][0]["after"] == 0.55
         assert body["before_snapshot"]["RETRIEVAL_W_VECTOR"] == 0.6
 
-    def test_approve_flow(self, client):
+    def test_approve_flow(self, client, monkeypatch):
         c, sf = client
+        _as_admin(monkeypatch)
         sug = _seed_suggestion(sf)
         r = c.post(
-            f"/param-suggestions/{sug}/decision", json={"decision": "accepted", "note": "ok"}
+            f"/param-suggestions/{sug}/decision",
+            json={"decision": "accepted", "note": "ok"},
+            headers=ADMIN,
         )
         assert r.status_code == 200
         body = r.json()
@@ -124,46 +137,58 @@ class TestParamAdviceApi:
         # settings 生效
         assert settings.RETRIEVAL_W_VECTOR == 0.55
         # runtime-params 可见
-        rp = c.get("/runtime-params")
+        rp = c.get("/runtime-params", headers=ADMIN)
         assert rp.status_code == 200
         assert rp.json()["revision"] == 1
         assert rp.json()["snapshot"]["RETRIEVAL_W_BM25"] == 0.30
 
-    def test_reject_flow(self, client):
+    def test_reject_flow(self, client, monkeypatch):
         c, sf = client
+        _as_admin(monkeypatch)
         sug = _seed_suggestion(sf)
         r = c.post(
-            f"/param-suggestions/{sug}/decision", json={"decision": "rejected", "note": "语料差异"}
+            f"/param-suggestions/{sug}/decision",
+            json={"decision": "rejected", "note": "语料差异"},
+            headers=ADMIN,
         )
         assert r.status_code == 200
         assert r.json()["status"] == "rejected"
 
-    def test_approve_twice_conflict(self, client):
+    def test_approve_twice_conflict(self, client, monkeypatch):
         c, sf = client
+        _as_admin(monkeypatch)
         sug = _seed_suggestion(sf)
-        c.post(f"/param-suggestions/{sug}/decision", json={"decision": "accepted"})
-        r = c.post(f"/param-suggestions/{sug}/decision", json={"decision": "accepted"})
+        c.post(f"/param-suggestions/{sug}/decision", json={"decision": "accepted"}, headers=ADMIN)
+        r = c.post(
+            f"/param-suggestions/{sug}/decision", json={"decision": "accepted"}, headers=ADMIN
+        )
         assert r.status_code == 409
 
-    def test_rollback_flow(self, client):
+    def test_rollback_flow(self, client, monkeypatch):
         c, sf = client
+        _as_admin(monkeypatch)
         sug = _seed_suggestion(sf)
-        applied = c.post(f"/param-suggestions/{sug}/decision", json={"decision": "accepted"}).json()
+        applied = c.post(
+            f"/param-suggestions/{sug}/decision", json={"decision": "accepted"}, headers=ADMIN
+        ).json()
         oid = applied["override"]["id"]
-        rb = c.post(f"/param-overrides/{oid}/rollback", json={"note": "效果差"})
+        rb = c.post(f"/param-overrides/{oid}/rollback", json={"note": "效果差"}, headers=ADMIN)
         assert rb.status_code == 200
         body = rb.json()
         assert body["rollback_override"]["operation"] == "rollback"
         assert body["effective_snapshot"]["RETRIEVAL_W_VECTOR"] == 0.6
         assert settings.RETRIEVAL_W_VECTOR == 0.6
 
-    def test_rollback_conflict(self, client):
+    def test_rollback_conflict(self, client, monkeypatch):
         c, sf = client
+        _as_admin(monkeypatch)
         sug = _seed_suggestion(sf)
-        applied = c.post(f"/param-suggestions/{sug}/decision", json={"decision": "accepted"}).json()
+        applied = c.post(
+            f"/param-suggestions/{sug}/decision", json={"decision": "accepted"}, headers=ADMIN
+        ).json()
         oid = applied["override"]["id"]
-        c.post(f"/param-overrides/{oid}/rollback", json={})
-        r = c.post(f"/param-overrides/{oid}/rollback", json={})
+        c.post(f"/param-overrides/{oid}/rollback", json={}, headers=ADMIN)
+        r = c.post(f"/param-overrides/{oid}/rollback", json={}, headers=ADMIN)
         assert r.status_code == 409
 
     def test_runtime_params_no_leak(self, client):

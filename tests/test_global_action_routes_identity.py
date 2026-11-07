@@ -29,9 +29,9 @@ from lantai.core.auth import Principal, get_current_user
 from lantai.core.settings import settings
 from lantai.storage.fts import init_fts
 
-# 六条全局动作路由（票 19 病灶 4 条 + 立案外同族姊妹 /kaogong/report + 复查
+# 九条全局动作路由（票 19 病灶 4 条 + 立案外同族姊妹 /kaogong/report + 复查
 # 补刀 /ingest/run——与 /workers/ingest/run 触发同一 run_ingest_once，平行
-# URL 不挂闸即整体架空守卫）
+# URL 不挂闸即整体架空守卫 + 复查轮子项 5 拍板：参数裁决面三路由收 admin）
 GUARDED = [
     ("/evolve/run", "POST"),
     ("/workers/{worker_name}/run", "POST"),
@@ -39,6 +39,9 @@ GUARDED = [
     ("/ingest/run", "POST"),
     ("/evolution/kaogong/report", "GET"),
     ("/kaogong/report", "GET"),
+    ("/param-suggestions/{suggestion_id}/decision", "POST"),
+    ("/param-overrides/{override_id}/rollback", "POST"),
+    ("/param-suggestions/{suggestion_id}/regenerate", "POST"),
 ]
 
 ADMIN_KEY = "k19-admin-test-key"
@@ -95,7 +98,7 @@ def _as_override(principal, fn):
 
 # ── 注册层结构锁：路由注册不能绕过身份守卫 ────────────────────────
 
-# 五条路由的 endpoint 函数名（路由器懒挂载形态下以 endpoint 名为锚；
+# 九条路由的 endpoint 函数名（路由器懒挂载形态下以 endpoint 名为锚；
 # methods 断言防方法漂移）。阴性对照 = list_proposals_route（普通路由）。
 TARGET_ENDPOINTS = {
     "evolve_run_route": "POST",
@@ -104,6 +107,9 @@ TARGET_ENDPOINTS = {
     "ingest_run_route": "POST",
     "kaogong_report_route": "GET",
     "kaogong_report_endpoint": "GET",
+    "decide_suggestion": "POST",
+    "rollback_override": "POST",
+    "regenerate_suggestion": "POST",
 }
 NEGATIVE_CONTROL = "list_proposals_route"
 
@@ -331,6 +337,128 @@ class TestKaogongReportRoutesAdminOnly:
                     f"非 admin 读全表考功审计报告（含他人记忆正文）应 403：{path}，"
                     f"实际 {r_user.status_code}"
                 )
+
+
+class TestParamDecisionRoutesAdminOnly:
+    """子项 5 拍板（复查轮）：参数裁决面三路由收 admin。
+
+    裁据：accept/rollback 是**全局运行参数**变更（ParamOverride revision 链 +
+    settings 原位热换，DB 为事实源），多 key 部署下任何 per-user key 可改全局
+    检索行为＝跨属主配置投毒；MCP 零对应工具（REST 收紧无跨入口漂移）；
+    「有意开放」无任何注释/测试声明。备选方案「声明性现状锁」会把未声明的
+    意外固化为契约，弃。
+    """
+
+    def test_decision_route_admin_404_user_403(self, engine, monkeypatch):
+        """判别对：admin + 不存在建议 id → 404（过守卫抵达 service）；受限
+        user → 403（守卫先于分发——service 本会答 404）。"""
+        monkeypatch.setattr(settings, "API_KEY", ADMIN_KEY, raising=False)
+        raw = _seed_bearer_user(engine, monkeypatch)
+
+        from lantai.api.app import app
+
+        with TestClient(app) as c:
+            r_admin = c.post(
+                "/param-suggestions/psg_not_there/decision",
+                json={"decision": "accepted", "note": "ok"},
+                headers={"X-API-Key": ADMIN_KEY},
+            )
+            assert r_admin.status_code == 404, (
+                f"admin 过守卫应抵达 service（不存在→404），实际 {r_admin.status_code}：{r_admin.text}"
+            )
+            r_user = c.post(
+                "/param-suggestions/psg_not_there/decision",
+                json={"decision": "accepted", "note": "ok"},
+                headers={"Authorization": f"Bearer {raw}"},
+            )
+            assert r_user.status_code == 403, (
+                f"受限 Bearer user 变更全局运行参数应 403，实际 {r_user.status_code}"
+            )
+
+    def test_rollback_route_admin_409_user_403(self, engine, monkeypatch):
+        """rollback 同守卫：admin + 不存在 override → 409 rollback_conflict
+        （service 判 head 不符——过守卫抵达）；user → 403。"""
+        monkeypatch.setattr(settings, "API_KEY", ADMIN_KEY, raising=False)
+        raw = _seed_bearer_user(engine, monkeypatch)
+
+        from lantai.api.app import app
+
+        with TestClient(app) as c:
+            r_admin = c.post(
+                "/param-overrides/pov_not_there/rollback",
+                json={"note": "x"},
+                headers={"X-API-Key": ADMIN_KEY},
+            )
+            assert r_admin.status_code == 409, (
+                f"admin 过守卫应抵达 service（head 不符→409），实际 {r_admin.status_code}：{r_admin.text}"
+            )
+            r_user = c.post(
+                "/param-overrides/pov_not_there/rollback",
+                json={"note": "x"},
+                headers={"Authorization": f"Bearer {raw}"},
+            )
+            assert r_user.status_code == 403, (
+                f"受限 user 回滚全局参数应 403，实际 {r_user.status_code}"
+            )
+
+    def test_regenerate_route_admin_404_user_403(self, engine, monkeypatch):
+        """regenerate 同守卫（service 仅拒旧建议重新入队，LLM 由 worker 异步
+        调——票面「触发 LLM 外呼」表述已在分诊矩阵修正）。admin + 不存在 →
+        404；user → 403。"""
+        monkeypatch.setattr(settings, "API_KEY", ADMIN_KEY, raising=False)
+        raw = _seed_bearer_user(engine, monkeypatch)
+
+        from lantai.api.app import app
+
+        with TestClient(app) as c:
+            r_admin = c.post(
+                "/param-suggestions/psg_not_there/regenerate",
+                headers={"X-API-Key": ADMIN_KEY},
+            )
+            assert r_admin.status_code == 404, (
+                f"admin 过守卫应抵达 service（不存在→404），实际 {r_admin.status_code}"
+            )
+            r_user = c.post(
+                "/param-suggestions/psg_not_there/regenerate",
+                headers={"Authorization": f"Bearer {raw}"},
+            )
+            assert r_user.status_code == 403, (
+                f"受限 user 重新入队参数建议应 403，实际 {r_user.status_code}"
+            )
+
+
+class TestKaogongReportPrincipalNotConsumed:
+    def test_service_direct_call_report_identical_across_principals(self):
+        """子项 4 修法翻案的**直调实锤**（票面推荐「透传」为何是假修）：
+        `KaogongEngine.get_report`（cognition/kaogong.py:336-340）读模块级
+        全局 `_LATEST_KAOGONG_REPORT`，函数体不触 `self.principal`——service
+        层 `get_kaogong_report(principal=…)` 的「签名收窄」只到构造器为止。
+        真库直调（零 mock）：两不同 principal 取到**同一**全局快照对象，
+        `details[]` 他人记忆明文照见。全局快照手工备份还原。"""
+        from lantai.cognition import kaogong as kaogong_mod
+        from lantai.services.kaogong_service import get_kaogong_report
+
+        seeded = {
+            "evaluated": 7,
+            "promoted_longterm": 1,
+            "demoted": 2,
+            "kept": 4,
+            "details": [{"memory_id": "mem-other-user", "fenced_content": "他人记忆明文"}],
+            "evaluated_at": "2026-11-08T00:00:00",
+        }
+        old = kaogong_mod._LATEST_KAOGONG_REPORT
+        kaogong_mod._LATEST_KAOGONG_REPORT = seeded
+        try:
+            ra = get_kaogong_report(principal=Principal(user_id="k19-viewer-a", role="user"))
+            rb = get_kaogong_report(principal=Principal(user_id="k19-viewer-b", role="user"))
+            assert ra is rb, (
+                "不同 principal 取到不同报告——get_report 竟消费了身份（翻案前提不成立）"
+            )
+            assert ra["details"][0]["memory_id"] == "mem-other-user", (
+                "user-b 视角仍见他人记忆条目——收窄不存在，透传即假修的实锤"
+            )
+        finally:
+            kaogong_mod._LATEST_KAOGONG_REPORT = old
 
 
 class TestIdentityShapes:
