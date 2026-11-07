@@ -10,12 +10,13 @@ r"""票 44（v0.68-next-window-2026-11）：探颐回执分类器正则二次回
 窗口，窗口外的改动词不再豁免「留旧」（票面已接受的语义收窄）；入口面 `user_reply`
 加 2000 上界（REST 422 / MCP ValueError），**不静默截断**（宁 miss 不脏写口径）。
 
-四臂：
+五臂：
 1. 复杂度锁（哨兵）：5 万字符病理输入直调 `_matches_any`，坏态 ~25s，修后毫秒级；
 2. 语义回归：「还是改成 X」仍不判留旧、「还是原来的」仍判留旧（防去二次化改坏票 02
    边界守卫语义——采纳新说法绝不能被读成留旧）；
 3. 窗口边界：间距 2 的改动词仍豁免（语义保持），间距 40 不再豁免（新语义钉死）；
-4. 入口臂：REST 422 / MCP ValueError，2000 恰好不误伤（钳制面不漂移的双端同步锁）。
+4. 入口臂：REST 422 / MCP ValueError，恰好上界不误伤（钳制面不漂移的双端同步锁）；
+5. 分发臂：真 JSON-RPC `handle()` 全链路，超长回执收 -32602 错误帧（票 59 先例同款）。
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from fastapi.testclient import TestClient
 
 from lantai.api.app import app
 from lantai.services.probing_service import (
+    PROBE_REPLY_MAX_LENGTH,
     _NEGATIVE_PATTERNS,
     _UNCHANGED_PATTERNS,
     _classify_claim_reply,
@@ -36,8 +38,6 @@ from lantai.services.probing_service import (
 # 病理输入：「还是」×25000 + 改动词压尾。5 万字符，本机坏态 ~25s；修后线性 ~毫秒级。
 # 阈值 1.0s：绿态余量 >100×，坏态即使快 25 倍的机器也仍 >1s——两端都不落机器速度灰区。
 _PATHOLOGICAL = "还是" * 25000 + "改成"
-# 票 44 立案建议上界：对话语义合理上限 2000（REST Field 与 MCP 钳制共用此数）。
-_REPLY_MAX = 2000
 
 
 # ── 臂 1：复杂度锁（哨兵）──────────────────────────────────────────
@@ -89,18 +89,28 @@ def test_change_verb_beyond_window_no_longer_exempt():
     assert _matches_any(_NEGATIVE_PATTERNS, "还是" + "茶" * 40 + "改成") is True
 
 
-# ── 臂 4：入口臂（REST 422 / MCP ValueError，双端 2000 同步锁）──────
+# ── 臂 4：入口臂（REST 422 / MCP ValueError，双端同一常量同步锁）──────
+def test_reply_max_length_is_spec_value():
+    """钳制常量必须钉在票面建议值 2000：单一真源可改，spec 值改动必须过人眼。"""
+    assert PROBE_REPLY_MAX_LENGTH == 2000
+
+
 def test_rest_probe_resolve_rejects_oversize_reply(param_env):
     """REST user_reply 超上界 → 422（坏态：无 max_length，长答复直通服务层）。"""
     client = TestClient(app)
-    resp = client.post("/probing/resolve", json={"conflict_id": "c1", "user_reply": "茶" * (_REPLY_MAX + 1)})
+    resp = client.post(
+        "/probing/resolve",
+        json={"conflict_id": "c1", "user_reply": "茶" * (PROBE_REPLY_MAX_LENGTH + 1)},
+    )
     assert resp.status_code == 422
 
 
 def test_rest_probe_resolve_allows_reply_at_bound(param_env):
-    """恰好 2000 的合法长度不得误伤（坏态亦 200——此臂锁「不因修复收窄而拒合法输入」）。"""
+    """恰好上界的合法长度不得误伤（坏态亦 200——此臂锁「不因修复收窄而拒合法输入」）。"""
     client = TestClient(app)
-    resp = client.post("/probing/resolve", json={"conflict_id": "c1", "user_reply": "茶" * _REPLY_MAX})
+    resp = client.post(
+        "/probing/resolve", json={"conflict_id": "c1", "user_reply": "茶" * PROBE_REPLY_MAX_LENGTH}
+    )
     assert resp.status_code == 200
 
 
@@ -109,12 +119,36 @@ def test_mcp_probe_resolve_rejects_oversize_reply(param_env):
     from lantai.cli.mcp import handle_probe_resolve
 
     with pytest.raises(ValueError):
-        handle_probe_resolve({"conflict_id": "c1", "user_reply": "茶" * (_REPLY_MAX + 1)})
+        handle_probe_resolve(
+            {"conflict_id": "c1", "user_reply": "茶" * (PROBE_REPLY_MAX_LENGTH + 1)}
+        )
 
 
 def test_mcp_probe_resolve_allows_reply_at_bound(param_env):
-    """MCP 恰好 2000 → 越过钳制面，到达 conflict_id 校验（返回参数缺失错误字典）。"""
+    """MCP 恰好上界 → 越过钳制面，到达 conflict_id 校验（返回参数缺失错误字典）。"""
     from lantai.cli.mcp import handle_probe_resolve
 
-    res = handle_probe_resolve({"conflict_id": "", "user_reply": "茶" * _REPLY_MAX})
+    res = handle_probe_resolve({"conflict_id": "", "user_reply": "茶" * PROBE_REPLY_MAX_LENGTH})
     assert res["status"] == "error"
+
+
+# ── 臂 5：分发臂（真 JSON-RPC 全链路，锁 ValueError→-32602 映射）─────
+def test_mcp_dispatch_oversize_reply_maps_to_invalid_params(param_env):
+    """票 59 先例同款：超长回执必须收 -32602 错误帧，而非 -32603 internal error 或成功帧。"""
+    from lantai.cli.mcp import handle
+
+    resp = handle(
+        {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": {
+                "name": "probe_resolve",
+                "arguments": {
+                    "conflict_id": "c1",
+                    "user_reply": "茶" * (PROBE_REPLY_MAX_LENGTH + 1),
+                },
+            },
+        }
+    )
+    assert resp["error"]["code"] == -32602
