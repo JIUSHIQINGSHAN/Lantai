@@ -33,7 +33,7 @@ from lantai.models.tables import (
     MemoryItem,
     MemoryProposal,
 )
-from lantai.retrieval.hybrid import index_memory_item
+from lantai.retrieval.hybrid import delete_memory_item, index_memory_item
 from lantai.security.injection_guard import check_prompt_injection
 from lantai.storage import db
 from lantai.storage.fts import sync_fts
@@ -477,6 +477,24 @@ def consolidate_cluster(
 
         s.commit()
         s.refresh(master)
+
+        # 票 21：碎片向量清理——SQL 先 commit、向量后删（routes_terminal.py:381-385、
+        # promoter.delete_memory promoter.py:842-843「向量库在 SQL 提交成功后再删」
+        # 统一次序；promoter consolidation apply 分支对碎片连做删 FTS + 删向量
+        # promoter.py:523-524，此处此前只删 FTS 漏了向量——碎片幽灵与主记忆竞争
+        # fetch_n 名额，极端时刚沉潜的主记忆在向量通道欠召回）。折叠已提交不可
+        # 回滚，单条删除失败不中断、不回滚（与上方 :468-472 失败可见口径同源，
+        # 仅级别降为 warning：残条由检索终闸 status 过滤兜底、复职路径重同步可
+        # 重建），宁留可见残条不留静默。
+        for fid in source_ids:
+            try:
+                delete_memory_item(fid)
+            except Exception as exc:
+                logger.warning(
+                    "沉潜：碎片 %s 向量清理失败（折叠已提交，残条由检索终闸过滤兜底）: %s",
+                    fid,
+                    exc,
+                )
 
         logger.info(
             "沉潜：成功将 %d 条碎片折叠为主记忆 %s: %s",
