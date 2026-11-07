@@ -147,3 +147,26 @@ patch `digest_worker._digest_dir` 是**文件系统接缝**（纪律允许的文
   通道、向量包装测试不叠 param_env 的 `get_vector_store` 双层 patch——
   都是 conftest 注释里记载过的病根，见各测试文件 docstring）。
 - 非目标遵守：未改任何产品代码；未追溯改名；未引入覆盖率数字指标。
+
+## 9. 合并流 A 后的复核（2026-11-07）
+
+流 A 的 6 笔更正闸半步（`22099ac9…3b1e8d23`，触及 hook/plugin/retrieval/
+cognition/mcp）并入本分支（合并提交 `0fef5cc5`，零冲突，两侧改动文件无重叠）
+后，按 §1 口径全量重验：
+
+- **审计工具重跑**（`audit_honesty.py`）：核心集 1080 → 1083，新增 3 项全部为
+  `lantai/retrieval/supersede.py` 私有 helper（`_apply_supersede_guard` /
+  `_superseded_marker` / `_superseded_date_str`），判定均 `indirect-only`，
+  证据为流 A 自己的真库真链路守闸测试（`tests/test_mcp_search_supersede_guard.py`
+  等 6 文件，唯一 patch 是 `SHELL_HOOK_SUPERSEDED_GUARD` settings 开关，属
+  §1 允许口径）；私有 helper 本不进 §2 判定表。`mocked-only` / `hollow-smoke`
+  与合并前逐项一致（工具原始口径唯一残留仍是 §3 注明的 `_digest_dir` 文件
+  系统接缝豁免）。**合并零新增诚实性缺口，无需补强。**
+- **全量门禁**：**3078 passed / 5 skipped / 0 failed**（5m24s，exit 0，
+  venv=主检出 `.venv`，`PYTHONPATH=.`；3078 = 合并前 3064 + 流 A 侧新增 14 例）。
+  隔离护栏台账零新增：模块级残留仍为既有 8 通道（_guard_instance / kaogong /
+  consolidation / routes_health / llm gate×2 / cehou / param runtime），绑定
+  残留仅 test_3a 申报哨兵；本票 7 个新测试文件与流 A 新测试文件在两本台账
+  全文零出现。
+- 分支状态：审计报告 + 7 个补强测试文件 + 流 A 6 笔同分支交付，push/PR 留
+  维护者闸门。
