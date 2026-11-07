@@ -182,3 +182,40 @@ cognition/mcp）并入本分支（合并提交 `0fef5cc5`，零冲突，两侧�
   全文零出现。
 - 分支状态：审计报告 + 7 个补强测试文件 + 流 A 6 笔同分支交付，push/PR 留
   维护者闸门。
+
+## 10. 第六次复验（2026-11-07）：票 02 误报改正 + 补测
+
+独立复验会话逐项复核 §9 收口声明：`audit_honesty.py` 重跑与在库 `audit.json`
+**逐项全等**（inventory 1728 / core 1083 / real-smoke 658 / hollow 0 /
+mocked-only 1=`_digest_dir` 接缝豁免 / indirect-only 321 / never-executed 103；
+verdict 集合与 pkg_counts 亦全等，可复现）。对 §7 四项死代码做真正全仓 grep
+（含 `scripts/`、根目录脚本、hermes-plugin 与非 .py 文件）复核：
+
+- **撤回一项误报**：`build_scene_navigation_lines` 并非死代码——
+  `scripts/shell_hook.py:433 → _build_scene_lines → 本函数`（import 在 277 行）
+  自 v0.6（`2b41b47b`，2026-08-11）就是宿主 hook 检索响应的活链路。误报根因
+  是 triage 的 prod_calls grep 只扫 `lantai/` + `api_server.py`（§6 已补边界
+  声明并修工具）。已补真冒烟 `tests/test_scene_navigation_smoke.py`（2 例：
+  真 MemoryScene 行直调，heat 降序组装 + 零侵入降级，不 mock 内部逻辑）。
+- **其余 3 项坐实**（`scan_and_retire` / `evaluate_and_evolve` /
+  `autodream_cron_days` 全仓零调用方），维持票 02 needs-triage 待维护者裁决。
+- 顺手核验 103 项 never-executed 对 `scripts/`+根目录脚本的交叉引用：除上述
+  误报与 `lantai.cli.mcp.main`/LoopGuard（§5 已登记的工具盲区）外无其他漏检。
+
+过程诚实记录：本轮全量门禁共跑三次——第一次 1 例红
+（`test_forgetting_gate_really_runs_and_pollutes_nothing`），根因是复验会话
+在门禁运行期间创建了未跟踪测试文件，被该测试的 `_porcelain()` 前后比对当场
+抓获（护栏有效性的现场证据，非产品回归）；第二次 1 例红
+（`test_lint_gate_passes_on_real_repo`），新测试文件超长行未过 `ruff format`，
+回归哨兵当场点名（补 `89b00fb9` 格式提交）；第三次在干净树上全绿：
+
+- **全量 pytest：3080 passed / 5 skipped / 0 failed**（4m59s，exit 0，
+  venv=主检出 `.venv`，`PYTHONPATH=.`；3080 = §9 的 3078 + 本轮 2 例）。
+- 隔离护栏台账零新增：模块级残留仍为既有 8 通道（_guard_instance / kaogong /
+  consolidation / routes_health / llm gate×2 / cehou / param runtime，例证
+  全部来自既有测试文件），绑定残留仅 test_3a 申报哨兵；本票 7 个补强测试
+  文件 + 本轮 scene 导航冒烟共 8 个新文件在两本台账全文零出现。
+
+分支现领先 origin/master 7 提交（票 01 补强、报告入库、流 A 合并、§9 增补、
+本轮误报改正 `13f4bb7c` 与格式 `89b00fb9`、本节），落后 0，工作树干净；
+push/PR 仍留维护者闸门。
