@@ -223,7 +223,11 @@ def _call_hook(query: str, session_id: str = "") -> dict | None:
         if not out:
             return None
         data = json.loads(out)
-        if isinstance(data, dict) and data.get("context"):
+        # 放行条件 = context 或 event_id（v0.68 票 74）：零命中 + 无常驻画像的
+        # 轮次，serve 响应是 {"event_id": ...}（无 context）——票 01 起服务端
+        # 零命中分支带出 event_id 供否决链用，这里丢了它 veto 帧就构造不出来。
+        # 空帧/无元数据帧维持 None（不注入、不挂载）。
+        if isinstance(data, dict) and (data.get("context") or data.get("event_id")):
             return data
         return None
     except (json.JSONDecodeError, OSError, ValueError, AssertionError) as exc:
@@ -540,7 +544,8 @@ def _on_pre_llm_call(**kwargs) -> dict | None:
         return {"context": ck} if ck else None
     ctx = str(data.get("context") or "")
     if ck:
-        ctx = ck + "\n\n" + ctx
+        # 票 74：零命中帧可能无 context——ck 在场时不能拼出 "\\n\\n" 开头的空段
+        ctx = ck + "\n\n" + ctx if ctx else ck
     # 注入回执（P0 票02）延后（v0.67 票 01）：此刻 Hermes 尚未裁决是否否决这一轮，
     # 先发回执会给从未发给模型的轮次刷出假 injection_count。把 event_id/used_ids
     # 挂到缓冲条目上，_on_session_end 知道本轮未被否决才经 _flush_session 发；
@@ -564,7 +569,9 @@ def _on_pre_llm_call(**kwargs) -> dict | None:
                 entry["used_ids"] = list(used_ids)
         elif used_ids:
             _call_backfill(str(event_id), used_ids)
-    return {"context": ctx}
+    # 票 74：零命中帧无 context（且无底本）时不产出空注入——空 context 会在
+    # 宿主侧留下无意义的空上下文条目；event_id 已挂载，否决链不受影响。
+    return {"context": ctx} if ctx else None
 
 
 def _mark_checkpoint_injected(session_id: str) -> None:
