@@ -285,3 +285,34 @@ patch 仅落 settings 开关、向量库接缝（单层）与 conftest 既定外
 - 分支状态：领先 origin/master 10 提交（8 笔收口 + 本合并 + 本节）、落后 0、
   工作树干净；push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项
   死代码待维护者裁决）。
+
+## 13. 第九次复验（2026-11-07）：审计逐字节复现 + 门禁复跑（含一次瞬态 error 的诚实记录）
+
+环境检查：origin/master 零推进（领先 10 / 落后 0），无合并事项。按 §1 口径全量重验：
+
+- **审计工具重跑**：与在库 `audit.json` **逐字节一致**（`cmp` 全等，强于 §12
+  的 verdict 逐项全等口径）：inventory 1728 / core 1083 / real-smoke 659 /
+  hollow 0 / mocked-only 1=`_digest_dir` 接缝豁免 / indirect-only 321 /
+  never-executed 102。
+- **补强面**：8 个补强测试文件 `--collect-only` 恰 22 例，直跑 22 passed
+  （3.25s）。
+- **过程插曲（诚实记录，两轮未成运行）**：全量门禁跑三轮。第一轮 1 例
+  ERROR——`SystemError: <built-in method commit of sqlite3.Connection …>
+  returned NULL without setting an exception`，位置在 conftest
+  `_wipe_resident_channels`（`tests/conftest.py:699`）的 **fixture setup**
+  阶段（autouse 复位对会话级共享测试库 DELETE 后 commit），非产品代码路径；
+  该轮余量 3086 passed / 5 skipped / 0 failed。甄别：涉事测试文件单独复跑
+  4 passed；conftest 与被测文件自 §12 全绿以来零改动（同一 HEAD）；本机
+  Python 3.11.15 / SQLite 3.53.1。判为 CPython sqlite3 连接复用的**瞬态
+  异常**，非产品回归。第二轮被复验会话自身的后台任务时限在 ~95% 处终止
+  （复验工具侧设置所致，非测试失败，未产出证据）。第三轮干净树全绿。
+- **全量门禁（第三轮，干净树）**：**3087 passed / 5 skipped / 0 failed**
+  （18m49s，exit 0，venv=主检出 `.venv`，`PYTHONPATH=.`），与 §12 数字一致
+  （本轮机器负载高致时长显著偏长，与判定无关）。隔离护栏台账零新增：模块级
+  残留恰为既有 8 通道（_guard_instance / kaogong / consolidation /
+  routes_health / llm gate×2 / cehou / param runtime，例证全部来自既有测试
+  文件），绑定残留仅 test_3a 申报哨兵；本票 8 个补强测试文件在两本台账全文
+  零出现。
+- 分支状态：领先 origin/master 11 提交（10 笔收口/合并 + 本节）、落后 0、
+  工作树干净；push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项
+  死代码待维护者裁决）。
