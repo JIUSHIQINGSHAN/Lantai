@@ -1,6 +1,5 @@
 """Glass-box Terminal：透明化对话与记忆透视 SSE 端点"""
 
-import contextlib
 import json
 import time
 
@@ -582,31 +581,92 @@ def merge_memories(req: MergeReq, principal=Depends(get_current_user)):
         tgt.content = merged_content
         tgt.importance = new_importance
         tgt.version = (tgt.version or 1) + 1
+        src_id, tgt_id = src.id, tgt.id
+
+        # FTS 同事务强一致（ADR-0008，票 20）：合并改文 + 删源各同步一份索引。
+        # 改文若索引失同步会留下「SQL 新文、FTS 旧文」的幽灵正文——全仓改文路径
+        # （correct_memory/tanyi/probing/promoter/rollback）全部双层同步，merge
+        # 是唯一例外，本票收口；失败直接抛出随事务回滚，不静默降级。
+        from lantai.storage.fts import sync_fts
+
+        sync_fts(session, tgt_id, merged_content)
+        sync_fts(session, src_id, None)
 
         # 完璧血统（X-01）：source 的事实改挂到 target，避免 source 删除后留下孤儿事实
         from lantai.services import record_ops_service
 
-        record_ops_service.repoint_facts(session, src.id, tgt.id)
-        session.delete(src)
+        record_ops_service.repoint_facts(session, src_id, tgt_id)
 
-        # 创建 supersedes 边记录
-        from lantai.services.edge_service import add_edge
+        # src 双向边清理 + supersedes 边收编（票 20，口径＝票面修复目标 2/3）：
+        # supersedes(tgt→src) 是合并血缘，保留；其余 src 双向边是端点已物理删除
+        # 的死拓扑，随合并删除。supersedes 边自 create_edge 独立 session 收编进
+        # 合并同事务（promoter.py:401-408 同款 in-session 构造 + dup 查重）——
+        # 原实现独立 commit 先于合并 commit 且被 contextlib.suppress 包裹：
+        # 合并 commit 失败回滚会留幽灵 supersedes 边（两行 active 血缘在场，
+        # _apply_supersedes_order 据此降权），反向则血缘缺失无痕。
+        from sqlmodel import or_, select
 
-        with contextlib.suppress(Exception):
-            add_edge(
-                req.target_id,
-                req.source_id,
-                "supersedes",
-                1.0,
-                # 归属随 principal 落列（票 .scratch/ownership-gaps/03）：
-                # 合并边不带属主，DELETE 的 ACL 与审计都无从下手
-                user_id=principal.user_id,
-                tenant_id=principal.tenant_id,
-                agent_id=principal.agent_id,
-                session_id=principal.session_id,
+        from lantai.core.ids import new_id
+        from lantai.models.tables import MemoryEdge
+
+        stale_edges = session.exec(
+            select(MemoryEdge).where(
+                or_(MemoryEdge.source_memory_id == src_id, MemoryEdge.target_memory_id == src_id)
+            )
+        ).all()
+        for e in stale_edges:
+            if (
+                e.relation == "supersedes"
+                and e.source_memory_id == tgt_id
+                and e.target_memory_id == src_id
+            ):
+                continue  # 合并血缘（含历史既有边），保留
+            session.delete(e)
+
+        dup = session.exec(
+            select(MemoryEdge).where(
+                MemoryEdge.relation == "supersedes",
+                MemoryEdge.source_memory_id == tgt_id,
+                MemoryEdge.target_memory_id == src_id,
+            )
+        ).first()
+        if dup is None:
+            session.add(
+                MemoryEdge(
+                    id=new_id("edge"),
+                    source_memory_id=tgt_id,
+                    target_memory_id=src_id,
+                    relation="supersedes",
+                    confidence=1.0,
+                    # 归属随 principal 落列（票 .scratch/ownership-gaps/03）：
+                    # 合并边不带属主，DELETE 的 ACL 与审计都无从下手
+                    user_id=principal.user_id,
+                    tenant_id=principal.tenant_id,
+                    agent_id=principal.agent_id,
+                    session_id=principal.session_id,
+                )
             )
 
+        session.delete(src)
         session.commit()
-        return {"ok": True, "merged_into": req.target_id, "content": merged_content}
+
+        # 向量同步（票 20）：commit 后执行（promoter 序——embed/向量调用不占数据
+        # 库事务），失败如实回报 warnings 不静默（correct_memory :452-454 形态）。
+        warnings: list[str] = []
+        try:
+            from lantai.retrieval.hybrid import delete_memory_item
+
+            delete_memory_item(src_id)
+        except Exception:
+            logger.exception("vector delete of merged source failed (reported, not silent)")
+            warnings.append("vector delete of source failed; source removed in SQL/FTS only")
+        if not record_ops_service.sync_vector_upsert(tgt_id, tgt):
+            warnings.append("vector resync of target failed; content updated in SQL/FTS only")
+        return {
+            "ok": True,
+            "merged_into": req.target_id,
+            "content": merged_content,
+            "warnings": warnings,
+        }
     finally:
         session.close()
