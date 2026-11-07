@@ -19,10 +19,15 @@
 - 会话缓冲条目携带 `turn`（会话内 1-based 序号）；flush 时每条
   `{"type":"dialogue","text","session_id","turn"}` 透传 → 候选 `session_id`
   列 + `provenance.origin_turn`（缺会话留空、缺轮次 None，不补 0 不猜）
-- 检索注入成功后按响应 `event_id` + `evidence[].id` 发
-  `{"type":"backfill"}` → `RetrievalEvent.used_ids` 落库（弱标注「已注入」）；
+- 注入回执**延后到 `on_session_end`**（v0.67 票 01，ADR-0084 §2.1）：pre_llm_call
+  把响应 `event_id` + `evidence[].id` 挂到会话缓冲条目上，flush 时该轮**未被否决**
+  才发 `{"type":"backfill"}` → `RetrievalEvent.used_ids` 落库（弱标注「已注入」）。
+  轮中途崩溃 → 回执保持 pending → 服务端 `mark_missed_receipts` 如实置 missed
+  （宁 miss 不脏写）；被宿主否决的轮次改发 `{"type":"retrieval_veto"}` 作废检索
+  事件，不刷假注入计数；无会话缓冲的轮次（无 session）保持立即回执旧行为。
   回执失败静默，不影响注入
-- serve 协议新增 `{"type":"backfill","event_id","used_ids"}` 动作
+- serve 协议动作：`{"type":"backfill","event_id","used_ids"}` 与
+  `{"type":"retrieval_veto","event_id"}`（否决作废，ADR-0084）
 
 安全边界（插件绝不阻塞/搞崩 Hermes）：
 - 子进程启动失败/失活 → 静默降级
