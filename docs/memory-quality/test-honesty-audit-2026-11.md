@@ -792,3 +792,76 @@ HEAD 未动双证）。
   push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项死代码待
   维护者裁决）。
 
+## 23. 第十九次复验（2026-11-07）：审计逐字节复现 + 门禁单轮全绿，含「运行级假绿」新形态（环境 PYTHONPATH 污染 × 管道退出码陷阱叠加）的取证与收尾（分支推送 + PR）
+
+**会话性质（如实说明）**：本会话是并行流 B 任务的重入会话——开工时发现任务
+主体（审计、点名、补强、报告入库）已由先前会话完成并入库（`346c0e55` /
+`852e2612`，历轮复验 §10–§22），本节只记录本会话的**新增证据与收尾动作**：
+审计复现、门禁复跑、一项此前历轮都未捕获的「整个运行被吞」级假绿的取证，
+以及任务书遗留的最后一项交付（push + PR，历轮各节所记「维护者闸门」的
+push 部分，按本轮任务书口径执行；tag 上传闸门不涉及）。
+
+环境检查：origin/master 零推进（`8175a745`，本分支已含其内容，领先 22、
+落后 0）。**并行会话交叠（诚实记录）**：本会话全量门禁（15:01:48 启动，
+记忆 venv）全程与另一 uv-cpython 3.11 门禁（并行流，同机）**并发重叠**，
+且对方收笔后 15:13:40 又起下一轮；本会话未让位（与 §13/§20/§21 先例不同，
+如实记录），仅把不依赖共享测试库的小型运行（审计重跑、22 例直跑）与全量
+门禁错开，22 例直跑按 §22「库为按进程独立 tmp 目录」口径落入对方窗内执行。
+
+**新形态取证（运行级假绿，历轮未捕获过，本会话首捕）**：
+
+- 本会话第一次全量启动时未清理 shell 环境：ambient `PYTHONPATH` 指向
+  `…\hermes\hermes-agent` 与另一 venv 的 `site-packages`。`hermes-agent/tests`
+  是带 `__init__.py` 的**常规包**（PEP 420 语义下常规包压过本仓 `tests`
+  命名空间包，且与 sys.path 顺序无关）→ conftest 首行
+  `from tests.support import harness_state` 即 `ModuleNotFoundError` →
+  pytest **零用例执行**。该次又经 `| tee | tail` 包装（复验流程第一轮
+  常见形态），外层观察面 exit 0——**「0 例全绿」假绿**：不是 §15/§21 的
+  「单例失败被管道掩蔽」，而是整个运行被吞。
+- 机理三证：① 同污染环境复跑 `pytest tests -q` 稳定复现同一 ImportError，
+  落文件显式捕获 **pytest 真实退出码 = 4**（usage error）；② `python -I`
+  （忽略 PYTHONPATH）下 `import tests` 只解析到本仓；③
+  `hermes-agent/tests/__init__.py` 存在（常规包，遮蔽成立）。
+- 历轮跑法免疫的原因：`PYTHONPATH=.`（历轮）与 `PYTHONPATH=` 空值（本轮）
+  都是**整体覆盖** ambient 值，hermes 路径不进 sys.path；且 pytest ini
+  `pythonpath=["."]` 已提供仓根，该环境变量对本套件既不必需也不该污染。
+  ambient 值的第二段（另一 venv 的 site-packages）理论上还有依赖遮蔽面，
+  未逐包验证，如实存疑。
+- 结论与口径：属**执行环境卫生**问题（agent 宿主机的 ambient env），非本仓
+  测试缺陷，不立票、只记录在案——凡 `-q` 输出只有 ImportError、无
+  `passed` 计数者，一律按假绿处理；这是 §14/§15/§21 退出码陷阱教训的
+  最烈形态，也是「全绿」两个字必须绑定用例计数才有效力的现场证据。
+
+按 §1 口径全量重验：
+
+- **审计复现（逐字节一致）**：`audit_honesty.py` 重跑（venv=主检出 `.venv`、
+  `-I` 隔离模式、输出落仓库外临时目录）与在库 `audit.json` `cmp` 全等：
+  inventory 1729 / core 1083 / real-smoke 659 / hollow 0 / mocked-only
+  1=`_digest_dir` 接缝豁免 / indirect-only 321 / never-executed 102。
+- **诚实性复核（8 文件中 3 个全文重读 + 全量直跑）**：重读
+  `test_worker_entry_smoke.py` / `test_coalesce_idle_real_flush_smoke.py` /
+  `test_mcp_frame_gaps_smoke.py`，确认真输入直调 + 真库断言、零内部逻辑
+  mock（worker 入口空库真执行 + 超龄三态断言；真单例缓冲不 patch 取件器；
+  MCP 真帧驱动并断言 promoted/swarm_shared/leads_to 落库）；8 文件直跑
+  **22 passed（7.54s，exit 0，`PIPESTATUS` 显式核验）**。
+- **全量门禁（单轮全绿，全程与并行门禁并发窗）**：**3117 passed /
+  5 skipped / 0 failed**（671.92s / 11m11s，exit 0 直调捕获，venv=主检出
+  `.venv`，`PYTHONPATH=` 空值）与 §17–§22 一致；时长约为历轮（~5m）两倍，
+  与并发门禁负载同期，如实记录。隔离护栏台账零新增：模块级残留恰为既有
+  8 通道（_guard_instance / kaogong / consolidation / routes_health /
+  llm gate×2 / cehou / param runtime），绑定残留仅 test_3a 申报哨兵；
+  全量日志对 8 个补强文件名 grep 计数为 0。并发窗全绿零瞬态，构成
+  「并发 ≠ 必现瞬态」的又一面（§21 同口径）。
+- **收尾（任务书遗留交付）**：本节落库后推送分支（历轮从未 push——此前
+  一次「已推送」的误判系复验命令 `2>/dev/null` 吞掉 unknown revision 报错
+  所致，特此如实记录）并创建 PR（标题 `test(诚实性): …`）；票 02 三项
+  死代码与 tag 上传仍留维护者闸门。
+- **本次没能查清/没敢动（如实）**：① 票 02 三项死代码裁决权在维护者，
+  不代决；② `lantai.cli.mcp.main`（§5 登记的低价值薄壳入口）仍未补测；
+  ③ ambient `PYTHONPATH` 污染只记录不修——病根在 agent 宿主环境，不在
+  本仓控制面；④ 报告落点与任务书原文不同（任务书写作
+  `docs/research/兰台测试诚实性审计-2026-11-07.md`，实际按
+  `.scratch/v0.68-test-honesty/spec.md` 登记口径落本文件，历轮提交与
+  票据均引用本路径，不迁移以免断链，特此注明）；⑤ ambient 值第二段
+  （另一 venv site-packages）的依赖遮蔽面未逐包排查。
+
