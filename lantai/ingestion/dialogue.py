@@ -140,8 +140,12 @@ def ingest_dialogue(
         session_id=session_id,
         turn=turn,
     )
-    if secret_hits and settings.SECRET_GUARD_MODE == "enforce":
-        return _secret_guard_route(result, secret_hits)
+    # 密钥三态路由单一真源（X-06，票 17-4）：调用方不复制 mode 判据——
+    # off 由 detect_secret_shapes 内部处理（恒空），shadow/enforce 由
+    # route_secret_hits 内部处理；此处无条件委托（与 fastpath 臂同口径）。
+    result = _secret_guard_route(result, secret_hits)
+    if result["status"] == "pending_review":
+        return result
     if data["extractor_confidence"] < settings.DIALOGUE_MIN_EXTRACTOR_CONF:
         if data["extractor_confidence"] < settings.CANDIDATE_MIN_CONFIDENCE:
             # 沙汰：低于地板信噪门 → 直接 rejected（ADR-0026）
