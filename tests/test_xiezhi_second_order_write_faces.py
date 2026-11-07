@@ -462,3 +462,144 @@ class TestCognitiveObserveGuard:
         with _observe_client() as c:
             resp = c.post("/cognitive/observe", json={"content": PAYLOAD_EN})
         assert resp.status_code == 200, resp.text
+
+
+# ── 面 4：mem:create-skill 单点闸 + crystal 两处自动资产化调用侧 ─────────
+
+
+@pytest.fixture()
+def skill_env(monkeypatch):
+    """内存 SQLite 真实建表 + patch db.get_session（同 test_mem_command.mem_db）。"""
+    import lantai.models.tables  # noqa: F401
+    from lantai.storage.fts import init_fts
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(engine)
+    init_fts(engine.raw_connection())
+
+    def session_factory() -> Session:
+        return Session(engine)
+
+    import lantai.storage.db as dbm
+
+    monkeypatch.setattr(dbm, "get_session", session_factory)
+    return session_factory
+
+
+def _seed_crystal(session_factory, crystal_id, *, procedure=""):
+    with session_factory() as s:
+        s.add(
+            SkillCrystal(
+                id=crystal_id,
+                skill_name=f"技巧-{crystal_id}",
+                trigger_rule="数据库发布前置检查",
+                procedure=procedure,
+                success_count=1,
+                status="candidate",
+            )
+        )
+        s.commit()
+
+
+class TestCreateSkillGuard:
+    def test_create_skill_rejects_injection(self, skill_env):
+        """单点闸：steps 带载荷 → ValueError（MCP 直调冒泡 → -32602），零 skill 行。"""
+        from lantai.services.mem_command import create_skill
+
+        with pytest.raises(ValueError, match="injection guard"):
+            create_skill(name="运维技巧", description="", steps=[PAYLOAD_EN])
+        with skill_env() as s:
+            assert s.exec(select(MemoryItem).where(MemoryItem.memory_type == "skill")).all() == []
+
+    def test_mcp_handler_valueerror_bubbles(self, skill_env):
+        """MCP 直调入口让 ValueError 冒泡（dispatcher 统一翻 -32602）。"""
+        from lantai.cli.mcp import handle_mem_create_skill
+
+        with pytest.raises(ValueError, match="injection guard"):
+            handle_mem_create_skill({"name": "t", "description": "", "steps": [PAYLOAD_ZH]})
+
+    def test_create_skill_redline_shapes_pass(self, skill_env, monkeypatch):
+        """误拒红线：INI / 表格 / 日志 / 全角正常文本照常落 skill 资产。"""
+        fake_store = type("VS", (), {"add": lambda self, **kw: None})()
+        monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: fake_store)
+        from lantai.services.mem_command import create_skill
+
+        with patch("lantai.services.mem_command.embed", return_value=[[0.1] * 8]):
+            r_ini = create_skill(name="INI 配置样例", description="", steps=[REDLINE_INI])
+            r_tbl = create_skill(
+                name="表格样例", description="", steps=[REDLINE_TABLE, REDLINE_LOG]
+            )
+            r_fw = create_skill(name="全角样例", description=REDLINE_FULLWIDTH, steps=["第一步"])
+        assert r_ini["ok"] is True and r_tbl["ok"] is True and r_fw["ok"] is True
+        with skill_env() as s:
+            rows = s.exec(select(MemoryItem).where(MemoryItem.memory_type == "skill")).all()
+            assert len(rows) == 3
+            assert any("| col1 | col2 |" in r.content for r in rows)
+            assert any("[system]" in r.content for r in rows)
+
+    def test_decide_crystal_blocked_skips_skill(self, skill_env):
+        """自动资产化调用侧（crystal_service.decide_crystal）：命中 → skip+留痕，
+        结晶维持 candidate 可重试，不落 skill 行、不抛异常打断调用面。"""
+        from lantai.services.crystal_service import decide_crystal
+
+        session_factory = skill_env
+        _seed_crystal(session_factory, "cry_xz_1")
+        res = decide_crystal("cry_xz_1", approve=True, steps=[PAYLOAD_ZH])
+        assert res["ok"] is False
+        assert "injection guard" in (res.get("error") or "")
+        assert res.get("xiezhi_blocked") is True
+        with session_factory() as s:
+            assert s.get(SkillCrystal, "cry_xz_1").status == "candidate"
+            assert s.exec(select(MemoryItem).where(MemoryItem.memory_type == "skill")).all() == []
+
+    def test_decide_crystal_normal_still_approves(self, skill_env, monkeypatch):
+        """对照臂：正常 steps 照常 approve 落库（调用侧捕获不得吞正常路径）。"""
+        fake_store = type("VS", (), {"add": lambda self, **kw: None})()
+        monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: fake_store)
+        from lantai.services.crystal_service import decide_crystal
+
+        session_factory = skill_env
+        _seed_crystal(session_factory, "cry_ok_1")
+        with patch("lantai.services.mem_command.embed", return_value=[[0.1] * 8]):
+            res = decide_crystal("cry_ok_1", approve=True, steps=["备份数据库", "执行迁移"])
+        assert res["ok"] is True
+        with session_factory() as s:
+            assert s.get(SkillCrystal, "cry_ok_1").status == "approved"
+            assert (
+                len(s.exec(select(MemoryItem).where(MemoryItem.memory_type == "skill")).all()) == 1
+            )
+
+    def test_promote_crystal_blocked_skips(self, skill_env):
+        """自动资产化调用侧（crystal_promoter.promote_crystal）：命中 → skip+留痕，
+        结晶维持 candidate 不标 promoted，不落 skill 行。"""
+        from lantai.evolution.crystal_promoter import promote_crystal
+
+        session_factory = skill_env
+        _seed_crystal(session_factory, "cry_xz_2", procedure=f"1. {PAYLOAD_EN}\n2. 验证结果")
+        res = promote_crystal("cry_xz_2")
+        assert res["ok"] is False
+        assert "injection guard" in (res.get("reason") or "")
+        assert res.get("xiezhi_blocked") is True
+        with session_factory() as s:
+            assert s.get(SkillCrystal, "cry_xz_2").status == "candidate"
+            assert s.exec(select(MemoryItem).where(MemoryItem.memory_type == "skill")).all() == []
+
+    def test_promote_crystal_redline_passes(self, skill_env, monkeypatch):
+        """对照臂：procedure 是真实表格/日志 → 照常晋升落库。"""
+        fake_store = type("VS", (), {"add": lambda self, **kw: None})()
+        monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: fake_store)
+        from lantai.evolution.crystal_promoter import promote_crystal
+
+        session_factory = skill_env
+        _seed_crystal(
+            session_factory,
+            "cry_ok_2",
+            procedure=f"1. 检查清单如下\n{REDLINE_TABLE}\n3. 完成后记录日志",
+        )
+        with patch("lantai.services.mem_command.embed", return_value=[[0.1] * 8]):
+            res = promote_crystal("cry_ok_2")
+        assert res["ok"] is True, "真实表格被误杀——禁止提交"
+        with session_factory() as s:
+            assert s.get(SkillCrystal, "cry_ok_2").status == "promoted"

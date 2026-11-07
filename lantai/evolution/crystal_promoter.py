@@ -101,14 +101,25 @@ def promote_crystal(
         agent_id=source_agent,
     )
 
-    skill_res = create_skill(
-        name=skill_name,
-        description=trigger_rule,
-        steps=resolved_steps,
-        tags=["crystal_promoted", "tongpao_shared"],
-        principal=effective_principal,
-        shared_scope="swarm_shared",
-    )
+    try:
+        skill_res = create_skill(
+            name=skill_name,
+            description=trigger_rule,
+            steps=resolved_steps,
+            tags=["crystal_promoted", "tongpao_shared"],
+            principal=effective_principal,
+            shared_scope="swarm_shared",
+        )
+    except ValueError as exc:
+        # 獬豸（v0.68 票 14）：结晶文本命中注入闸 → 不落公共殿堂资产（skip+留痕）。
+        # 结晶维持 candidate（不标 promoted），不抛异常炸调用方。
+        logger.warning("同袍结晶 %s 晋升撞獬豸闸，技能未落库（skip）：%s", crystal_id, exc)
+        return {
+            "ok": False,
+            "crystal_id": crystal_id,
+            "reason": str(exc),
+            "xiezhi_blocked": True,
+        }
     if not skill_res.get("ok"):
         raise ValueError(f"技能落库失败: {skill_res.get('error')}")
 
