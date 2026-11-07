@@ -11,10 +11,11 @@
 """
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from lantai.core.auth import get_current_user
 from lantai.services.probing_service import (
+    PROBE_REPLY_MAX_LENGTH,
     detect_memory_probes,
     format_probing_context,
     resolve_probe_response,
@@ -31,7 +32,9 @@ class ProbeDetectReq(BaseModel):
 class ProbeResolveReq(BaseModel):
     conflict_id: str | None = None
     probe_id: str | None = None
-    user_reply: str
+    # 票 44：上界单一真源（见 probing_service.PROBE_REPLY_MAX_LENGTH）；超长 422，
+    # 不静默截断。病理长流此前可驱动正则二次回溯占死线程池一线程。
+    user_reply: str = Field(max_length=PROBE_REPLY_MAX_LENGTH)
 
 
 @router.post("/probing/detect")

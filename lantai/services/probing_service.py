@@ -49,11 +49,31 @@ _CLAUSE_SPLIT_RE = re.compile(_EDGE_CLASS)
 _AFFIRM_BOUNDARY_CLASS = "[" + _PUNCT_FW + r"\s,.!?~" + "的啊呀吧呢]"
 # 改变动词：「还是」后面跟着它们就不是「留旧」。
 _CHANGE_VERB = "改成|改为|换成|改用|变成|换用|改动|改"
-_HAISHI_KEEP_OLD = "还是(?![^" + _PUNCT_FW + r"\s]*?(?:" + _CHANGE_VERB + "))"
+# 票 44：负向前瞻必须**窗口化**——无界惰性 `[^标点\s]*?` 扫到改动词为止，会让
+# 「还是」长流 + 改动词压尾的输入在每个「还是」起点都扫完整段剩余文本再重扫，
+# O(n²)（ReDoS；本机实测 5 万字符 ~27s，500KB 体量 ≈ 分钟级）。窗口 16：回执是
+# 对话短句，「还是」与改动词的现实间距远小于此；间距超出窗口的改动词不再豁免
+# 「留旧」——票 44 已接受的语义收窄，由 test_probe_reply_regex_backtracking 钉死。
+_HAISHI_KEEP_OLD_WINDOW = 16
+_HAISHI_KEEP_OLD = (
+    "还是(?![^"
+    + _PUNCT_FW
+    + r"\s]{0,"
+    + str(_HAISHI_KEEP_OLD_WINDOW)
+    + "}?(?:"
+    + _CHANGE_VERB
+    + "))"
+)
 
 # 正反问 / 是非问：用户把问题丢回来，这不是答复，任何分支都不得据此写库。
 _INTERROGATIVE_PATTERNS = ["是不是", "有没有", "要不要", "能不能", "是否", "难道"]
 _MOOD_QUESTION_RE = re.compile("吗" + _EDGE_CLASS + "*$")  # 句末「吗」
+
+# 票 44：回执长度上界**单一真源**——REST `ProbeResolveReq.user_reply` 的 Field
+# 与 MCP `handle_probe_resolve` 的钳制共用此数，不得各自为政漂移。回执是对话
+# 短句，2000 远超现实形态；超长按 422 / ValueError 拒绝，**不静默截断**
+# （宁 miss 不脏写口径）。
+PROBE_REPLY_MAX_LENGTH = 2000
 
 
 def _clauses(reply: str) -> list[str]:

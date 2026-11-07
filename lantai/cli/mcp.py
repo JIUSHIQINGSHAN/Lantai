@@ -43,6 +43,7 @@ from lantai.models.schemas import AddMemoryReq, FeedbackReq
 from lantai.retrieval.hybrid import hybrid_search
 from lantai.services.evolution_service import record_feedback_entry
 from lantai.services.memory_service import add_memory
+from lantai.services.probing_service import PROBE_REPLY_MAX_LENGTH
 
 PROTOCOL_VERSION = "2024-11-05"
 
@@ -683,6 +684,10 @@ def handle_probe_resolve(params: dict) -> dict:
 
     cid = params.get("conflict_id") or params.get("probe_id") or ""
     reply = params.get("user_reply", "")
+    # 票 44：回执长度上界（单一真源 PROBE_REPLY_MAX_LENGTH）。超长 ValueError，
+    # 分发器映射 -32602 invalid params；不静默截断（宁 miss 不脏写）。
+    if len(reply) > PROBE_REPLY_MAX_LENGTH:
+        raise ValueError(f"user_reply 超长：{len(reply)} > {PROBE_REPLY_MAX_LENGTH}")
     # 归属（票 01a）：肯定分支会把 `incoming_ref` 写进别人的记忆正文——
     # 全轮最严重的一条
     return resolve_probe_response(
@@ -2512,7 +2517,11 @@ TOOLS = {
             "properties": {
                 "conflict_id": {"type": "string", "description": "冲突事件 ID 或探针 probe_id"},
                 "probe_id": {"type": "string", "description": "探针 ID（可选，兼容 conflict_id）"},
-                "user_reply": {"type": "string", "description": "用户自然语言答复"},
+                "user_reply": {
+                    "type": "string",
+                    "description": "用户自然语言答复",
+                    "maxLength": PROBE_REPLY_MAX_LENGTH,
+                },
             },
             "required": ["user_reply"],
         },
