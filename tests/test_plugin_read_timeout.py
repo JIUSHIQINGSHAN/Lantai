@@ -11,6 +11,7 @@ wedge（无需恶意输入）即冻结 Hermes 对话，无异常、无日志、�
 死整个测试会话。
 """
 
+import contextlib
 import importlib.util
 import subprocess
 import sys
@@ -88,10 +89,8 @@ def mod():
     proc = m._proc
     if proc is not None and proc.poll() is None:
         proc.kill()
-        try:
+        with contextlib.suppress(subprocess.TimeoutExpired):
             proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
 
 
 class TestReadTimeoutWalls:
@@ -154,9 +153,7 @@ class TestReadTimeoutWalls:
             patch.object(mod, "_SHELL_HOOK", str(fake)),
             patch.object(mod, "_REQUEST_TIMEOUT", 5.0),
         ):
-            done, data = _run_with_wall(
-                lambda: mod._call_hook("恢复探针", session_id="s73b"), 15.0
-            )
+            done, data = _run_with_wall(lambda: mod._call_hook("恢复探针", session_id="s73b"), 15.0)
         assert done, "重启后的请求仍阻塞——子进程未按预期恢复服务"
         assert isinstance(data, dict) and data.get("event_id") == "ev_t73", (
             f"重启恢复后应拿到迷你 serve 的合法帧，实际 {data!r}"
