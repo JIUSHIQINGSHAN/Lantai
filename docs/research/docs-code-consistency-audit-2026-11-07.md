@@ -182,3 +182,15 @@
 - **环境备注（复核可复现性）**：本机 venv 的 `PYTHONPATH` 混入 hermes-agent 路径，其自带正则包 `tests`（有 `__init__.py`）会遮蔽本仓库命名空间包 `tests`（无 `__init__.py`），conftest 加载即 ModuleNotFoundError——与 `launcher_mcp.py` 头注释所述 Hermes venv 污染同源；复测需先清 `PYTHONPATH`。
 
 *复核执行：主审计员（P0 逐条亲核 + 新发现亲核 + 扫描/回归实测）+ 子审计 1 路（P1×11 取证）。仍为只读取证，未改动仓库文件。*
+
+## 八、第三轮收口（2026-11-07：§七 复核新发现 R-1/R-2/R-3 修复，票 12）
+
+| # | 修复 | 双侧证据 |
+|---|------|---------|
+| R-1 | `docs/lantai-manual-call.md` no_signal 反例换成「物业费在哪交」，类别措辞改「孤立短查询」 | 真实 `relevance_check` 不 mock 冒烟（worktree 代码实测）：旧例「大哥的电脑配置」→ `self_reference/identity` 放行（证实原句写反）；新例 → `no_signal`，与文档新表述一致 |
+| R-2 | `docs/release-process.md` 第 7 项标题对齐门禁输出名「MCP 默认暴露」；第 3 项注明仅失败路径记账（绿灯汇总为 10 项 PASS） | 门禁输出名 `release_check.py:95,1306,1308`（`tests/test_release_check.py:843` 以输出名断言，故改文档侧）；失败路径记账 `:1268-1271` 成功不输出。随行同步 `:623` 指路串（引用文档标题的失败文案；非判定逻辑、无测试断言，避免原样复刻 R-2） |
+| R-3 | `docs/lantai-manual-call.md` 改「短追问沿用上一轮**命中**判定（15s 热缓存；上一轮 no_signal 不沿用）」 | 真实调用实测：上一轮 no_signal + 12 字内短追问 → `no_signal`；上一轮命中 + 同句 → `session_followup_hot`（`prefilter.py:193-195` 单向短路） |
+
+- 回归：`tests/test_release_check.py + test_prefilter.py + test_mcp_default_minimal_exposure.py` **91 passed**（PYTHONPATH 隔离实测）。
+- 存量疑点（钩玄引文「拔萃便适，钩玄提要」非《进学解》原文）开票 13 转 `ready-for-human`：取证与三选一裁决项已备，agent 不代决。
+- 票 10（P2 批量 + 两项维护者决策）、票 11（文档引用路径对账门禁）维持 needs-triage 不动；本流 agent 侧工作至此收口。
