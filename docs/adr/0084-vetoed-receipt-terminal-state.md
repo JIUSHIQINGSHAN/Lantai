@@ -57,7 +57,7 @@ ADR-0049 的状态机从 `pending → {acked, missed}` 扩展为 `pending → {a
 - **响应契约对齐**：`query` 零命中分支把已落库事件的 `event_id` 带出（REST `routes_search` 与 MCP `handle_search` 的同名零命中分支本就如此，三条入口口径归一）；`request_id` 该分支本就没生成，如实不带。
 - **挂载与 `used_ids` 解耦**：插件挂载只看 `event_id` 非空（`used_ids` 有则一并挂）；**回执条件不变**（`event_id and used_ids`）——回执语义是「用了哪些」，零 `used_ids` 无可回执；否决分支不变（条目有 `event_id` 即发 veto）。
 - **`mark_vetoed` 零改动**：对零命中事件（`result_ids`/`used_ids` 本为空）同样正确——抹原文痕迹、置 `vetoed` 终态即可，无反冲问题（延后回执下该轮从未回执）。
-- 边界不变：查询过短（≤ `SHELL_HOOK_MIN_CHARS`）不落事件、无 veto 可言；gate 判 `needs_memory=False` 同样不落事件。
+- 边界（v0.68 票 11 增补校准，按三条通道实际行为陈述——本句初版把 shell_hook 的行为误写成普适边界）：查询过短（≤ `SHELL_HOOK_MIN_CHARS`）与 gate 判 `needs_memory=False` 的轮次在 **shell_hook 注入面不落事件**（`build_context` 在任何 `_try_log` 之前返回，无 veto 可言）；**REST/MCP 检索面则保留落事件**（拦截也是一次 `zero_result` 观测，供 digest/recall 遥测），但**写入时即空 `query_text`/`query_norm_hash`**（`log_retrieval(persist_query=False)`；`is_system_noise`/`estimated_tokens` 等标记以原查询在抹除前照算）——拦截轮原话在三通道一律不留。
 
 ### 2.6 missed/pending 同样抹原文（v0.68 票 10 增补，2026-11-07）
 

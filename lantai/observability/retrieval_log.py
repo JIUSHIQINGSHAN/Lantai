@@ -61,6 +61,7 @@ def log_retrieval(
     session_id: str | None = None,
     request_id: str | None = None,
     principal=None,
+    persist_query: bool = True,
 ) -> str | None:
     """
     在检索出口记录一次事件。失败仅记日志，绝不抛给主链路。
@@ -74,6 +75,12 @@ def log_retrieval(
     才能按归属收窄；不透传则留 NULL（后台巡检/内部调用）。
     request_id：回执链（ADR-0049）——一次注入调用的整体标识，由注入侧
     （shell_hook context / 中间件）生成透传；不透传留空（pending 状态照记）。
+    persist_query：原话是否落库（票 11，ADR-0084 §2.5 增补）——gate 拦截轮
+    传 False：该轮从未进入检索、无 eval/弱标注价值，原话留存是纯负担，写入
+    时即空 `query_text`/`query_norm_hash`（哈希对低熵原文是可验证口令，与
+    `mark_vetoed` 同源论证）。`is_system_noise`/`estimated_tokens` 等标记
+    **以原查询在抹除前照算**——调用方若图省事直接传空串 query，这两个标记
+    会静默失真（实现陷阱有回归锁）。
     """
     try:
         event_id = new_id("rev")
@@ -93,8 +100,8 @@ def log_retrieval(
                     user_id=getattr(principal, "user_id", None),
                     tenant_id=getattr(principal, "tenant_id", None),
                     trace_id=trace_id or "",
-                    query_text=query,
-                    query_norm_hash=_norm_hash(query),
+                    query_text=query if persist_query else "",
+                    query_norm_hash=_norm_hash(query) if persist_query else "",
                     lane=",".join(lanes) if lanes else "",
                     session_id=(session_id or "").strip() or None,
                     request_id=(request_id or "").strip() or None,
