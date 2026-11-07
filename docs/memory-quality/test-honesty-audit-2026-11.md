@@ -555,3 +555,56 @@ patch 仅落 settings 开关、向量库接缝（单层）与 conftest 既定外
   push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项死代码待维护者
   裁决）。
 
+## 19. 第十五次复验（2026-11-07）：审计逐字节复现（两树）+ 门禁一轮全绿零瞬态（含与并行复验会话二次撞号改号、门禁窗与前置活动交叠的诚实记录）
+
+独立会话逐项复验收口声明。环境：origin/master 零推进（全程落后 0），无合并
+事项。**撞号改号（第二次，诚实记录）**：本会话复验进行中，并行复验会话于
+13:22:12 先行落库其 §18（自称第十四次复验，与 §16/§17 记录的撞号先例同型）；
+其内容与本会话共有项逐项一致（审计逐字节全等、3117 绿、台账零新增、票 02
+三项维持），零矛盾；本段按 §16 先例改号为 §19 / 第十五次复验，编号保持单调。
+
+时间线交叠（诚实记录，reflog / 日志 mtime / 进程表取证）：并行会话全量门禁窗
+13:15:21–13:20:44（其 §18 记载）落在本会话前置复核活动（8 文件通读、
+`--collect-only`、22 例直跑、票 02 grep）期间——本会话的小型 pytest 运行
+（单次 ≤4s）是否落入其门禁窗无法事后逐字节取证，诚实存疑；观察面后果为零
+（对方一轮全绿零瞬态，无任何互踩症候）。方向相反的并发已排除：本会话全量
+门禁启动前进程表取证 pytest 计数为 0（0 结果本身证明取证时点在对方 pytest
+窗 13:20:44 收笔之后），本会话门禁窗 13:23:10–13:28:46 与对方 pytest 窗零
+重叠、与对方 §18 提交（13:22:12，docs-only）先后不交叠，全程干净树零并行
+提交。
+
+按 §1 口径全量重验：
+
+- **审计复现（两树，均逐字节一致）**：第一轮在 `e375ab16`（§17 收口树），
+  第二轮在 `a11c6fe5`（并行 §18 落库后，docs-only 差异）——两轮
+  `audit_honesty.py` 重跑与在库 `audit.json` `cmp` 全等：inventory 1729 /
+  core 1083 / real-smoke 659 / hollow 0 / mocked-only 1=`_digest_dir` 接缝
+  豁免 / indirect-only 321 / never-executed 102。另核明细：mocked-only 唯一
+  条目 `lantai.workers.digest_worker._digest_dir`（digest_worker.py:165，
+  私有函数），self-patched 仅 `test_digest_ownership.py::digest_owned_env:75`，
+  5 个测试文件经调用栈间接真实执行，与 §3 口径注记逐项一致。
+- **诚实性复核（8 文件全部逐行通读）**：全部真输入直调 + 真库断言（真
+  worker 入口空库执行 + 超龄归档三态断言、真 HTTP 路由打 `/ingest/run`、
+  真 JSON-RPC 帧驱动 crystal_promote 并断言 promoted / swarm_shared /
+  leads_to 落库、真单例缓冲不 patch 取件器与持久化、FactAtomic+FactEntity
+  真库物理删除计数、MemoryScene 真行 heat 降序）；patch 仅落 settings 开关
+  （SECRET_GUARD_MODE / DIALOGUE_MIN_CHARS）与向量库单层接缝
+  （test_vector_item_wrappers，docstring 注明不叠 param_env 双层撤销栈
+  病根），MCP 帧测试走 exec 副本规避 `_guard_instance` 台账通道，其余文件
+  自身零 patch。8 文件 `--collect-only` 恰 22 例，直跑 22 passed（3.60s）。
+- **票 02 复核**：3 项死代码（`scan_and_retire` / `evaluate_and_evolve` /
+  `autodream_cron_days`）全仓 grep（含 scripts/、hermes-plugin、根目录与
+  非 .py 文件）仅定义行与报告文档命中（`build/lib` 下另有随构建产物复制的
+  陈旧同名副本，非调用方），零调用方，维持 needs-triage。
+- **全量门禁（一轮全绿，零瞬态）**：**3117 passed / 5 skipped / 0 failed**
+  （5m32s，exit 0，venv=主检出 `.venv`，`PYTHONPATH=.`，干净树 `a11c6fe5`），
+  与 §17/§18 数字一致（树自 §17 仅增报告文档，测试面零变化）；日志落仓库外
+  临时目录、退出码显式捕获（§14/§15 教训口径）。隔离护栏台账零新增：模块级
+  残留恰为既有 8 通道（_guard_instance / kaogong / consolidation /
+  routes_health / llm gate×2 / cehou / param runtime，例证全部来自既有测试
+  文件；seam3 例证为 86 工具版），绑定残留仅 test_3a 申报哨兵；全量日志
+  （`-q` 口径）对 8 个补强文件名全文 grep 计数均为 0。
+- 分支状态：本节落库后领先 origin/master 19 提交、落后 0、工作树干净；
+  push/PR 仍留维护者闸门。票 02 仍 open / needs-triage（3 项死代码待维护者
+  裁决）。
+
