@@ -6,7 +6,7 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from lantai.core.auth import get_current_user
 from lantai.core.logger import logger
@@ -33,7 +33,11 @@ class ChatReq(BaseModel):
 
 class MemoryUpdateReq(BaseModel):
     content: str | None = None
-    importance: float | None = None
+    # 票 35：importance 裸 float 曾直落毒行——chat 泳道 importance≤-0.6 使遗忘
+    # 强度≤0，math.exp 正指数/除零让 apply_forgetting 确定性崩溃、全库衰减停摆
+    # （ge/le 同时拒 NaN/±inf：非有限值过不了比较约束）。超界拒绝 422，宁 miss
+    # 不脏写；存量毒行由 _lane_strength 下限兜底（forgetting.py）。
+    importance: float | None = Field(default=None, ge=0.0, le=1.0)
     confidence: float | None = None
     memory_type: str | None = None
 

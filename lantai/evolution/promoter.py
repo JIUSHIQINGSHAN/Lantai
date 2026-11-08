@@ -464,7 +464,10 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                 lane=patch_full.get("lane", settings.DEFAULT_LANE),
                 source_ids=list(patch_full.get("source_ids") or evidence_ids),
                 confidence=float(patch_full.get("confidence", prop.confidence)),
-                importance=float(patch_full.get("importance", 0.5)),
+                # 票 35：patch 是 DB 里的 JSON，异源/存量提案可携带越界值——负值
+                # 落库后遗忘强度≤0 停摆引擎。apply 面与生成面（consolidation
+                # 钳制）双钳，防「只修生成面」的假绿。
+                importance=min(1.0, max(0.0, float(patch_full.get("importance", 0.5)))),
                 decay_score=1.0,
                 decay_class=patch_full.get("decay_class", "semantic"),
                 status="active",

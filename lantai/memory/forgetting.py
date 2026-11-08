@@ -7,13 +7,21 @@ from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
 
+# 票 35（v0.68 P1）：保持强度下限兜底。importance 写入面曾有历史毒行（REST 裸
+# float、LLM 提取无钳制），chat 泳道 base_s=3/boost=5 下 importance≤-0.6 使
+# strength≤0 —— exp(-days/strength) 抛 ZeroDivisionError/OverflowError，
+# keyset 循环确定性崩溃、毒行及其后全库衰减/归档停摆。写面钳制（票 35 同轮三处）
+# 只保新写入，存量毒行由本下限兜底：floored 到 1.0 天尺度半衰期，毒行快速衰减
+# 归档，引擎不再停摆。只封已知算术死形，不做逐行吞异常（fail-loud，票 30 口径）。
+_MIN_LANE_STRENGTH = 1.0
+
 
 def _lane_strength(importance: float, use_count: int, lane: str) -> float:
-    """按 lane profile 计算记忆保持强度 S"""
+    """按 lane profile 计算记忆保持强度 S（下限兜底见 _MIN_LANE_STRENGTH）"""
     profile = settings.LANE_DECAY_PROFILES.get(lane, settings.LANE_DECAY_PROFILES["general"])
     base_s = profile["base_s"]
     boost = profile["importance_boost"]
-    return base_s + boost * importance + 2 * math.log1p(use_count)
+    return max(base_s + boost * importance + 2 * math.log1p(use_count), _MIN_LANE_STRENGTH)
 
 
 # ---- 票 03（v0.66 P0-4）：豁免分两档，两条归档路各自明确认哪些标记 ----

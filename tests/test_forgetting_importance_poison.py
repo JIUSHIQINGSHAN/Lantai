@@ -301,7 +301,11 @@ def test_consolidation_clamps_llm_extracted_importance(param_env, raw, expected)
         _seed_fragments(s)
         with patch(
             "lantai.services.consolidation_service.chat_json",
-            return_value={"consolidated_content": _PURIFIED_CONTENT, "importance": raw, "confidence": 0.95},
+            return_value={
+                "consolidated_content": _PURIFIED_CONTENT,
+                "importance": raw,
+                "confidence": 0.95,
+            },
         ):
             rep = run_consolidation_cycle(session=s)
     assert rep["status"] == "success", rep

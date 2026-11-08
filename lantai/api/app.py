@@ -1,6 +1,10 @@
+import math
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from lantai.api import (
     routes_admin_router,
@@ -104,6 +108,22 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="兰台记忆（Lantai）", version="0.66.0", lifespan=lifespan)
+
+
+# 票 35：毒值 422 应答不能被毒值本身毒死。FastAPI 默认 422 处理器把
+# exc.errors() 原样 JSON 序列化，而 NaN/±inf 的 input 会让
+# json.dumps(allow_nan=False) 在处理器内部再炸——毒请求本该 422 却得到 500。
+# 只对非有限 float 做占位转写（null），错误结构与其余 422 逐键一致。
+@app.exception_handler(RequestValidationError)
+async def _finite_safe_validation_handler(request, exc: RequestValidationError):
+    errors = [
+        {**err, "input": None}
+        if isinstance(err.get("input"), float) and not math.isfinite(err["input"])
+        else err
+        for err in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
 
 # 润物（ADR-0060）：自适应认知中间件（检测 X-Task 请求头并自适应注入 Base64 认知摘要）
 from lantai.runtime.middleware import CognitiveMiddleware

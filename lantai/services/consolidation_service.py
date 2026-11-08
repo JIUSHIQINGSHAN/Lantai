@@ -351,7 +351,17 @@ def consolidate_cluster(
             logger.warning("沉潜：TrustMem 迁移校验不通过，放弃折叠以防脏写")
             return None
 
+        # 票 35：LLM JSON 输出无钳制——负值毒行落库后遗忘强度≤0，apply_forgetting
+        # 确定性崩溃全库停摆（提示注入诱导提取器输出负值即可达）。钳入 [0,1] 并
+        # 留痕（票面「钳入界内」口径：折叠内容已过獬豸闸/TrustMem 两道验证，
+        # 为一个标量丢弃整簇折叠得不偿失；留痕走 warning 不静默）。
         importance = float(res.get("importance", 0.8))
+        clamped = min(1.0, max(0.0, importance))
+        if clamped != importance:
+            logger.warning(
+                "沉潜：LLM 提取 importance 越界已钳入 [0,1]：%r → %r", importance, clamped
+            )
+        importance = clamped
         confidence = float(res.get("confidence", 0.9))
 
         dom = getattr(cluster_items[0], "domain", "user")
