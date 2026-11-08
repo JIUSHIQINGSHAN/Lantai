@@ -666,7 +666,11 @@ def test_diben_no_session_uses_acl_pushdown_not_full_table_scan():
 
     assert statements, "未捕获到 session_checkpoint 查询"
     first = statements[0]
-    where_part = first.lower().split(" where ", 1)
+    # SQLAlchemy 渲染的 SQL 带换行缩进（FROM …\nWHERE …），按单空格切会漏判——
+    # 先折叠全部空白再找 WHERE（不弱化断言：仍要求真执行语句原文里有
+    # 带 user_id 判据的 WHERE 子句）。
+    normalized = " ".join(first.lower().split())
+    where_part = normalized.split(" where ", 1)
     assert len(where_part) == 2, f"首条查询无 WHERE(仍全表加载): {first}"
     assert "user_id" in where_part[1], f"属主判据未下推进 WHERE: {first}"
 

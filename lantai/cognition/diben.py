@@ -204,10 +204,33 @@ class DibenEngine:
         with db.get_session() as s:
             return self._get_active_anchor(s, session_id)
 
+    def _read_scope(self):
+        """读面行级 ACL 的 SQL 谓词（票 68 位点 9）。
+
+        语义与 _check_access 逐条一致（admin / principal=None 不收窄）：
+        属主面「ownerless 或本人」、租户面「ownerless 或同租户（仅当当前
+        身份带租户时收窄）」。推到 WHERE 里避免全表捞回后 Python 过滤——
+        无会话锚点查询在多租户大表上是全表扫描。
+        """
+        if self.principal is None or getattr(self.principal, "is_admin", False):
+            return None
+        viewer = viewer_of(self.principal)
+        current_tenant = getattr(self.principal, "tenant_id", None)
+        scope = (SessionCheckpoint.user_id.is_(None)) | (SessionCheckpoint.user_id == viewer)
+        if current_tenant:
+            scope = scope & (
+                (SessionCheckpoint.tenant_id.is_(None))
+                | (SessionCheckpoint.tenant_id == current_tenant)
+            )
+        return scope
+
     def _get_active_anchor(self, s: Session, session_id: str | None) -> dict[str, Any] | None:
         stmt = select(SessionCheckpoint)
         if session_id:
             stmt = stmt.where(SessionCheckpoint.session_id == session_id)
+        scope = self._read_scope()
+        if scope is not None:
+            stmt = stmt.where(scope)
         stmt = stmt.order_by(SessionCheckpoint.created_at.desc())
 
         rows = s.exec(stmt).all()

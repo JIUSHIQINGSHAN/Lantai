@@ -308,7 +308,11 @@ class ZhajiEngine:
                 if row:
                     if not self._check_access(owner_id=row.user_id, tenant_id=row.tenant_id):
                         raise PermissionError(f"无权修改此会话札记便签（行级隔离）: {sid}")
-                    row.content = raw_text[:DEFAULT_MAX_CHARS]
+                    # 落库内容按入参 max_chars 截断（票 68 位点 9）：原先硬编码
+                    # DEFAULT_MAX_CHARS，调用方收窄到更小限额时持久层仍存全量
+                    # 1000 字，读回再截的行为与摘要面不一致——持久面与摘要面
+                    # 同一口径。
+                    row.content = raw_text[:max_chars]
                     row.updated_at = utcnow()
                     if u_id:
                         row.user_id = u_id
@@ -318,7 +322,7 @@ class ZhajiEngine:
                 else:
                     new_row = SessionScratchpad(
                         session_id=sid,
-                        content=raw_text[:DEFAULT_MAX_CHARS],
+                        content=raw_text[:max_chars],
                         user_id=u_id or "default",
                         tenant_id=t_id,
                         created_at=utcnow(),
