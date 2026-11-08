@@ -701,6 +701,10 @@ def handle_probe_resolve(params: dict) -> dict:
 
     cid = params.get("conflict_id") or params.get("probe_id") or ""
     reply = params.get("user_reply", "")
+    # 票 44：与 REST max_length=2000 同钳——超长回执进分类器前即拒
+    # （ValueError → -32602），不静默截断（宁 miss 不脏写）。
+    if isinstance(reply, str) and len(reply) > 2000:
+        raise ValueError("user_reply must be <= 2000 chars")
     # 归属（票 01a）：肯定分支会把 `incoming_ref` 写进别人的记忆正文——
     # 全轮最严重的一条
     return resolve_probe_response(

@@ -49,7 +49,16 @@ _CLAUSE_SPLIT_RE = re.compile(_EDGE_CLASS)
 _AFFIRM_BOUNDARY_CLASS = "[" + _PUNCT_FW + r"\s,.!?~" + "的啊呀吧呢]"
 # 改变动词：「还是」后面跟着它们就不是「留旧」。
 _CHANGE_VERB = "改成|改为|换成|改用|变成|换用|改动|改"
-_HAISHI_KEEP_OLD = "还是(?![^" + _PUNCT_FW + r"\s]*?(?:" + _CHANGE_VERB + "))"
+# 票 44：前瞻内惰性扫必须**有界**——无界 `[^标点\s]*?` 在「还是」长流 +
+# 改动词压末尾的病理输入下每起点扫全段（O(n²)，40K 实测 7.4s、翻倍 ×4.0），
+# 探颐每次回执消解必经 + 入口零上界 = 单请求卡死 threadpool 一线程。
+# {0,16} 窗：「还是」与改动词的 realistic 间距远小于 16 字（CJK 小句以标点
+# 收束）；窗外语主的改动词按「留旧」处理（宁 miss 不脏写口径，误判方向是
+# 留旧不写库，不是误写）。每起点 O(16) → 全局线性。
+_HAISHI_VERB_WINDOW = 16
+_HAISHI_KEEP_OLD = (
+    "还是(?![^" + _PUNCT_FW + r"\s]{0," + str(_HAISHI_VERB_WINDOW) + "}?(?:" + _CHANGE_VERB + "))"
+)
 
 # 正反问 / 是非问：用户把问题丢回来，这不是答复，任何分支都不得据此写库。
 _INTERROGATIVE_PATTERNS = ["是不是", "有没有", "要不要", "能不能", "是否", "难道"]
