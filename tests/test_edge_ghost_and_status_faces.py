@@ -148,7 +148,11 @@ def test_ghost_source_edge_not_created_and_no_r1_mislabel(genv):
 
 def test_retracted_endpoint_edge_hidden_from_non_admin(genv):
     """状态臂 1（红）：撤回契约「全检索面禁用」——retracted 端点的边对
-    非 admin（端点属主本人）必须拒返；现状照常返回。"""
+    非 admin（端点属主本人）必须拒返；现状照常返回。
+
+    覆盖四个读面：list_edges / list_edges_batch / get_chain（supersedes 链）
+    / get_causal_chain（因果链）——后两者各有内联可见性过滤（收口轮自审
+    发现的覆盖缺口，只查存在+属主不查 status）。"""
     e = genv
     with Session(e) as s:
         s.add(_mem("mem_A", user_id="user-alice"))
@@ -159,6 +163,22 @@ def test_retracted_endpoint_edge_hidden_from_non_admin(genv):
                 source_memory_id="mem_A",
                 target_memory_id="mem_B",
                 relation="supports",
+            )
+        )
+        s.add(
+            MemoryEdge(
+                id=new_id("edge"),
+                source_memory_id="mem_A",
+                target_memory_id="mem_B",
+                relation="supersedes",
+            )
+        )
+        s.add(
+            MemoryEdge(
+                id=new_id("edge"),
+                source_memory_id="mem_A",
+                target_memory_id="mem_B",
+                relation="causes",
             )
         )
         s.commit()
@@ -172,6 +192,15 @@ def test_retracted_endpoint_edge_hidden_from_non_admin(genv):
     )
     batch = edge_service.list_edges_batch(["mem_A"], principal=owner)
     assert batch["mem_A"] == [], "批量读面同病（_filter_visible_batch 未查 status）"
+
+    chain = edge_service.get_chain("mem_A", principal=owner)
+    assert chain["chain"] == [], (
+        f"supersedes 链读面对软态端点放行（内联过滤未查 status）；chain={chain['chain']}"
+    )
+    causal = edge_service.get_causal_chain("mem_A", principal=owner)
+    assert causal["chain"] == [], (
+        f"因果链读面对软态端点放行（内联过滤未查 status）；chain={causal['chain']}"
+    )
 
 
 def test_archived_endpoint_edge_hidden_from_non_admin(genv):
