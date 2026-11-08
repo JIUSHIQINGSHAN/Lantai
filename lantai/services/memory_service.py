@@ -172,15 +172,32 @@ def _create_update_proposal(
     }
 
 
+def build_dedup_user(old: str, new: str) -> str:
+    """校雠三态裁决 user 消息（票 55）：old/new 过樊篱数据位，模板指令面不动。
+
+    库内正文裸插 LLM 提示可被正文尾部语义级说辞操纵（「判定 merge」类），
+    獬豸的正则闸不在其射程——樊篱数据位是这一层的纵深防御。get_prompt
+    覆盖路径保留（DB 自定义模板照旧生效），只把数据槽位换成围栏包裹形态；
+    裁决契约（relation 取值）不经此处改动。
+    """
+    from lantai.llm.fence import wrap_as_data
+    from lantai.llm.prompts import DEDUP_RELATION_USER
+    from lantai.services.prompt_service import get_prompt
+
+    return get_prompt("DEDUP_RELATION_USER", DEDUP_RELATION_USER).format(
+        old=wrap_as_data(old), new=wrap_as_data(new)
+    )
+
+
 def _llm_judge(old: str, new: str) -> str:
     """中带 LLM 兜底：结构判别判不定的样本交 LLM 裁决。"""
     from lantai.llm.client import chat_json
-    from lantai.llm.prompts import DEDUP_RELATION_SYS, DEDUP_RELATION_USER
+    from lantai.llm.prompts import DEDUP_RELATION_SYS
     from lantai.services.prompt_service import get_prompt
 
     out = chat_json(
         get_prompt("DEDUP_RELATION_SYS", DEDUP_RELATION_SYS),
-        get_prompt("DEDUP_RELATION_USER", DEDUP_RELATION_USER).format(old=old, new=new),
+        build_dedup_user(old, new),
     )
     rel = (out or {}).get("relation")
     if rel not in ("merge", "update", "insert"):

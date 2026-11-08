@@ -107,11 +107,14 @@ def _name_scenes(clusters: list[list]) -> list[tuple[str, str]]:
         return fallback
     try:
         from lantai.llm.client import chat_json
+        from lantai.llm.fence import wrap_as_data
         from lantai.llm.prompts import SCENE_NAMING_SYS
         from lantai.services.prompt_service import get_prompt
 
+        # 票 55（P3 顺带）：代表名源自成员记忆 key——同属库内派生数据，
+        # 裸插可操纵场景命名裁决，走樊篱数据位。
         reps = [(_fallback_name(c) or "无") for c in clusters]
-        user = "\n".join(f"{i + 1}. {k}" for i, k in enumerate(reps))
+        user = "\n".join(f"{i + 1}. {wrap_as_data(k)}" for i, k in enumerate(reps))
         data = chat_json(SCENE_NAMING_SYS, user)
         items_out = data.get("scenes") or []
         if not isinstance(items_out, list) or len(items_out) != len(clusters):

@@ -4,6 +4,7 @@ from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.evolution.promoter import VALID_PROPOSAL_TYPES
 from lantai.llm.client import chat_json
+from lantai.llm.fence import wrap_as_data
 from lantai.llm.prompts import PROPOSAL_SYS
 from lantai.models.enums import ProposalStatus
 from lantai.models.tables import MemoryCandidate, MemoryItem, MemoryProposal
@@ -68,10 +69,16 @@ def propose_from_candidate(
                 (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
             )
         related = s.exec(related_q).all()
-        existing_snippets = "\n".join(f"- ({m.memory_type}) {m.key}: {m.content}" for m in related)
+        # 票 55：候选三段与 EXISTING 行都是不可信文本直入 LLM 提示——
+        # proposal_type 裁决可被正文语义级说辞操纵，全部走樊篱数据位
+        # （snippet 行整行包裹：type/key/content 同属记忆派生数据）；
+        # GATE 段是本服务结构化输出，不在包裹面（Answer 登记二次注入残余）。
+        existing_snippets = "\n".join(
+            f"- {wrap_as_data(f'({m.memory_type}) {m.key}: {m.content}')}" for m in related
+        )
         user = (
-            f"CANDIDATE SUMMARY:\n{cand.summary}\n"
-            f"CLAIMS:\n{cand.claims}\nACTIONS:\n{cand.actions}\n\n"
+            f"CANDIDATE SUMMARY:\n{wrap_as_data(cand.summary)}\n"
+            f"CLAIMS:\n{wrap_as_data(cand.claims)}\nACTIONS:\n{wrap_as_data(cand.actions)}\n\n"
             f"EXISTING:\n{existing_snippets or '(none)'}\n\n"
             f"GATE:\n{gate_result}"
         )
