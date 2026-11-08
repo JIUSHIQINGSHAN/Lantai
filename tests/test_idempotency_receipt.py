@@ -126,7 +126,7 @@ def _advancing_clock(monkeypatch):
     同值，接管回写的 created_at 与 claim1 返回的 claimed_at **浮点相等**，
     带令牌 release/settle 的条件删除就命中新主行——测试间歇性翻红（v0.68
     票 69 终跑二轮实测炸出）。令牌相等性本身是生产令牌设计的缺陷，另立票
-    （74-epoch-token-clock-granularity）；本文件要锁的是令牌失效后的删 0
+    （80-epoch-token-clock-granularity）；本文件要锁的是令牌失效后的删 0
     语义，不是宿主时钟粒度——事件模拟严格递增，不 mock 被测判定逻辑。
     """
     import datetime as _dt
