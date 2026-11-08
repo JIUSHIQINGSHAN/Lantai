@@ -317,11 +317,7 @@ def _require_int_in(raw, key: str, lo: int, hi: int) -> int:
 def _require_finite_number(raw, key: str, lo: float | None = None) -> float:
     """数值参数须为有限数(int/float 皆收;拒 bool/str/NaN/±inf——NaN 落库会让
     JSON 响应产出非法字面量并静默毒化累加指标,票 66);lo 以下拒绝(如耗时不得为负)。"""
-    if (
-        isinstance(raw, bool)
-        or not isinstance(raw, (int, float))
-        or not math.isfinite(raw)
-    ):
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(raw):
         raise ValueError(f"{key} must be a finite number")
     if lo is not None and raw < lo:
         raise ValueError(f"{key} must be >= {lo}")

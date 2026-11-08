@@ -91,9 +91,9 @@ def _err_code(mod, name, args):
 
 
 def _seed_memory(s, mid, content, lane="fact", status="active", user_id="default"):
-    from lantai.models.tables import MemoryItem
-
     from datetime import UTC, datetime, timedelta
+
+    from lantai.models.tables import MemoryItem
 
     now = datetime.now(UTC)
     s.add(
@@ -157,7 +157,9 @@ def test_cehou_mock_days_upper_bound_rejected_valid_value_regression(mcp_env):
     """mock 上界 365(REST required_days 界 90 的 4 倍余量)外拒绝;界内语义零变化。"""
     mod = _load_mcp()
     _cehou_create(mod, "w-big")
-    assert _err_code(mod, "cehou_observe", {"window_id": "w-big", "mock_days_observed": 366}) == -32602
+    assert (
+        _err_code(mod, "cehou_observe", {"window_id": "w-big", "mock_days_observed": 366}) == -32602
+    )
     out = _call_tool(mod, "cehou_observe", {"window_id": "w-big", "mock_days_observed": 365})
     assert out["days_observed"] == 365
 
@@ -221,18 +223,21 @@ def test_cehou_score_delta_negative_finite_accepted(mcp_env):
 def test_cehou_required_days_zero_and_over_bound_rejected(mcp_env):
     """required_days=0 绕按天观察闸、91 超 REST 孪生面 [1,90]:均须 -32602。"""
     mod = _load_mcp()
-    assert _err_code(
-        mod, "cehou_observe", dict(_cehou_create_args("w-zero"), required_days=0)
-    ) == -32602
-    assert _err_code(
-        mod, "cehou_observe", dict(_cehou_create_args("w-over"), required_days=91)
-    ) == -32602
-    assert _err_code(
-        mod, "cehou_observe", dict(_cehou_create_args("w-negs"), min_samples=0)
-    ) == -32602
-    assert _err_code(
-        mod, "cehou_observe", dict(_cehou_create_args("w-overs"), min_samples=1001)
-    ) == -32602
+    assert (
+        _err_code(mod, "cehou_observe", dict(_cehou_create_args("w-zero"), required_days=0))
+        == -32602
+    )
+    assert (
+        _err_code(mod, "cehou_observe", dict(_cehou_create_args("w-over"), required_days=91))
+        == -32602
+    )
+    assert (
+        _err_code(mod, "cehou_observe", dict(_cehou_create_args("w-negs"), min_samples=0)) == -32602
+    )
+    assert (
+        _err_code(mod, "cehou_observe", dict(_cehou_create_args("w-overs"), min_samples=1001))
+        == -32602
+    )
     # 边界回归臂:界内极值(90 天 / 1000 样本)照常建窗
     out = _cehou_create(mod, "w-bound", required_days=90, min_samples=1000)
     assert out["required_days"] == 90
