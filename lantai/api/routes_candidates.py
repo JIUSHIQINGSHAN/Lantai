@@ -10,7 +10,7 @@ GET  /candidates/pending       待审候选列表
 POST /candidates/{id}/review   审核（approve→提案链 / reject→归档）
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from lantai.core.auth import get_current_user
 from lantai.models.schemas import CandidateDeferReq, CandidateDeferUndoReq, CandidateReviewReq
@@ -85,7 +85,10 @@ def candidates_refine(candidate_id: str, ctx=Depends(get_current_user)):
 
 @router.post("/candidates/batch_refine")
 def candidates_batch_refine(
-    min_conf: float = 0.15, max_conf: float = 0.6, limit: int = 20, ctx=Depends(get_current_user)
+    min_conf: float = 0.15,
+    max_conf: float = 0.6,
+    limit: int = Query(20, ge=1, le=100, description="最大处理候选条目数（票 58 双界）"),
+    ctx=Depends(get_current_user),
 ):
     """披沙（ADR-0030）：批量对模糊区间的候选执行提纯。
 

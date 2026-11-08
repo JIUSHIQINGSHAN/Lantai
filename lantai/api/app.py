@@ -1,6 +1,10 @@
+import math
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from lantai.api import (
     routes_admin_router,
@@ -104,6 +108,31 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="兰台记忆（Lantai）", version="0.66.0", lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def sanitized_validation_exception_handler(request, exc: RequestValidationError):
+    """422 渲染消毒（票 58）：FastAPI 的 422 响应体以 allow_nan=False 渲染（票 35 红测
+    实测），RequestValidationError 的 error input 携带 NaN/inf（宽松 JSON 解析器产出
+    的非标准字面量）时 422 自身渲染炸 500——验证错误被吞成服务器错误。此处把
+    error 载荷里的非有限 float 替换为 repr 字符串后照常 422，仅影响坏输入的报错
+    形态，正常 422 逐字节不变。
+    """
+
+    def _replace_non_finite(obj):
+        if isinstance(obj, float):
+            return repr(obj) if not math.isfinite(obj) else obj
+        if isinstance(obj, dict):
+            return {k: _replace_non_finite(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_replace_non_finite(v) for v in obj]
+        return obj
+
+    return JSONResponse(
+        status_code=422,
+        content={"detail": _replace_non_finite(jsonable_encoder(exc.errors()))},
+    )
+
 
 # 润物（ADR-0060）：自适应认知中间件（检测 X-Task 请求头并自适应注入 Base64 认知摘要）
 from lantai.runtime.middleware import CognitiveMiddleware

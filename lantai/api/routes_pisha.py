@@ -27,7 +27,12 @@ class PishaRefineRequest(BaseModel):
 class PishaBatchRequest(BaseModel):
     min_conf: float = Field(default=0.15, description="模糊带最小置信度")
     max_conf: float = Field(default=0.6, description="模糊带最大置信度")
-    limit: int = Field(default=20, description="最大处理候选条目数")
+    limit: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="最大处理候选条目数（1..100，逐条 LLM 的批量面上界对齐 param_advice 口径，票 58）",
+    )
 
 
 @router.post("/refine")
