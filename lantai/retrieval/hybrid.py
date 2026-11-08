@@ -1169,10 +1169,16 @@ def _keyword_fallback(
     clean_q = query.strip()
     import re
 
+    from lantai.core.text import LIKE_ESCAPE_CHAR, like_escape
+
     clean_q_no_punct = re.sub(r"[^\w\u4e00-\u9fa5]+", " ", clean_q).strip()
     tokens = [w for w in clean_q_no_punct.split() if w.strip()]
     if not tokens:
         tokens = [w for w in list(clean_q.replace(" ", "")) if w.strip()]
+        # 票 28 病灶 2：裸字回退路径守门——逐字符碎片剥除 LIKE 通配与
+        # 转义元字符（% _ \），剥完为空则本臂空手（宁空不全库）。主路径
+        # token 含义保留，仅经 like_escape 转义后进 LIKE。
+        tokens = [w2 for w2 in (re.sub(r"[%_\\]+", "", w) for w in tokens) if w2]
 
     has_short_tokens = any(len(t) < 3 for t in tokens)
 
@@ -1181,7 +1187,10 @@ def _keyword_fallback(
             from sqlalchemy import or_
 
             def _like_cb(s):
-                conditions = [MemoryItem.content.like(f"%{t}%") for t in tokens]
+                conditions = [
+                    MemoryItem.content.like(f"%{like_escape(t)}%", escape=LIKE_ESCAPE_CHAR)
+                    for t in tokens
+                ]
                 stmt = (
                     select(MemoryItem.id)
                     .where(MemoryItem.status == "active")

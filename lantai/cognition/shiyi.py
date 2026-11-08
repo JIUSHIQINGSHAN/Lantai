@@ -24,6 +24,7 @@ from sqlmodel import Session, select
 from lantai.core.acl import viewer_of
 from lantai.core.auth import Principal
 from lantai.core.settings import settings
+from lantai.core.text import LIKE_ESCAPE_CHAR, like_escape
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import LifecycleStatus, MemoryItem
 from lantai.storage import db
@@ -184,7 +185,16 @@ class ShiyiEngine:
         if domain != "all" and not allow_domain_relax:
             stmt = stmt.where(MemoryItem.domain == domain)
         if tokens:
-            stmt = stmt.where(or_(*[MemoryItem.content.like(f"%{t}%") for t in sorted(tokens)]))
+            stmt = stmt.where(
+                or_(
+                    *[
+                        # 票 28 病灶 3：token 经 like_escape 字面化（\w 字符类
+                        # 保留 `_`，裸 `_` 查询曾全表扫描）。
+                        MemoryItem.content.like(f"%{like_escape(t)}%", escape=LIKE_ESCAPE_CHAR)
+                        for t in sorted(tokens)
+                    ]
+                )
+            )
         all_memories = s.exec(stmt).all()
         scanned_count = len(all_memories)
 

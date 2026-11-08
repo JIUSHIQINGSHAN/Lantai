@@ -3,6 +3,14 @@
 SESSION_ID_MAX_CHARS = 128
 
 
+# 票 28：LIKE 模式串字面化的单一转义真源（hybrid 降级臂 / shiyi 拾遗预筛共用）。
+# 用户文本里的 % _ \ 是 SQL LIKE 的通配与转义元字符，不转义即过匹配：
+# 裸 `_` 查询等于 `%_%`（全库命中）、`foo_bar` 会把 `fooXbar` 当通配捞进。
+# 必须与 `.like(..., escape=LIKE_ESCAPE_CHAR)` 成对使用（escape 字符本身
+# 也要转义，故反斜杠最先替换）。
+LIKE_ESCAPE_CHAR = "\\"
+
+
 def normalize_session_id(value, *, default=None):
     """来源链 session_id 规范化（shell_hook / MCP / 插件协议共用，单一真源）。
 
@@ -14,6 +22,16 @@ def normalize_session_id(value, *, default=None):
     if not value or len(value) > SESSION_ID_MAX_CHARS:
         return default
     return value
+
+
+def like_escape(token: str) -> str:
+    """把用户 token 转成 LIKE 模式串里的字面文本：\ % _ 三字符前缀反斜杠。
+
+    配套用法：col.like(f"%{like_escape(t)}%", escape=LIKE_ESCAPE_CHAR)。
+    剥离通配符会把「查询 foo_bar 应命中字面 foo_bar」的验收废掉，故票 28
+    拍板转义而非剥离。
+    """
+    return token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def truncate_codepoints(text: str, max_chars: int, suffix: str) -> str:

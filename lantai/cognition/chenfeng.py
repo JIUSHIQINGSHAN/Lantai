@@ -227,7 +227,11 @@ class ChenfengEngine:
                 for term in query.split():
                     term_clean = term.strip()
                     if term_clean:
-                        stmt = stmt.where(col(MemoryItem.content).contains(term_clean))
+                        # 票 28 病灶 4：contains 底层 LIKE，autoescape 把 % _ 等通配当字面
+                        # （查询 foo_bar 不得通配捞进 fooXbar）。
+                        stmt = stmt.where(
+                            col(MemoryItem.content).contains(term_clean, autoescape=True)
+                        )
 
             # 统计符合条件的条目总数
             count_stmt = select(func.count()).select_from(stmt.subquery())
