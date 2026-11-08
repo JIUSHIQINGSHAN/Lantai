@@ -3992,7 +3992,16 @@ def _get_active_tools() -> dict:
     return {k: v for k, v in TOOLS.items() if k in HERMES_CORE_TOOLS}
 
 
-def handle(msg: dict) -> dict | None:
+def handle(msg: object) -> dict | None:
+    if not isinstance(msg, dict):
+        # 票 52：非对象 JSON 帧（[1]/"str"/null）此前在 msg.get("id") 即
+        # AttributeError——serve 循环里一个畸形帧即打死进程。回 -32600
+        # （id 不可判定置 null，JSON-RPC 允许），服务必须活下去。
+        return {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32600, "message": "invalid request: frame must be an object"},
+        }
     mid = msg.get("id")
     method = msg.get("method", "")
     active_tools = _get_active_tools()
@@ -4077,14 +4086,29 @@ def handle(msg: dict) -> dict | None:
                 "id": mid,
                 "error": {"code": -32603, "message": f"internal error: {type(e).__name__}"},
             }
+        try:
+            # 票 52：响应组装必须同在守卫内——handler 成功但结果含裸 datetime
+            # （checkpoint_latest）时 dumps 的 TypeError 此前冲出 handle() 杀死
+            # 进程。allow_nan=False 把 NaN 静默非法 JSON（审计登记项）转成显式错。
+            # 计入 guard 失败：恒返不可序列化输出的工具也要能被熔断。
+            text = json.dumps(result, ensure_ascii=False, allow_nan=False)
+        except Exception as e:
+            if token is not None:
+                guard.finish(token, failed=True)
+            return {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {
+                    "code": -32603,
+                    "message": f"response serialization failed: {type(e).__name__}",
+                },
+            }
         if token is not None:
             guard.finish(token, failed=False)
         return {
             "jsonrpc": "2.0",
             "id": mid,
-            "result": {
-                "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]
-            },
+            "result": {"content": [{"type": "text", "text": text}]},
         }
     return {
         "jsonrpc": "2.0",
@@ -4109,6 +4133,18 @@ def _configure_stdio_utf8() -> None:
         os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 
+def _emit_error_frame(mid, type_name: str) -> None:
+    """兜底错误帧（票 52）：主循环存活契约的最后防线——单帧只值一条 -32603，
+    服务进程不得因任何一帧的异常退出。"""
+    frame = {
+        "jsonrpc": "2.0",
+        "id": mid,
+        "error": {"code": -32603, "message": f"internal error: {type_name}"},
+    }
+    sys.stdout.write(json.dumps(frame, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
 def main():
     _configure_stdio_utf8()
     for line in sys.stdin:
@@ -4121,9 +4157,22 @@ def main():
             msg = json.loads(line)
         except json.JSONDecodeError:
             continue
-        resp = handle(msg)
+        # 票 52：单帧只值一条错误响应——handle 或响应组装的任何异常都不得冲出
+        # 主循环（此前 checkpoint_latest 的裸 datetime 一帧即杀死整个 stdio
+        # 服务，全部工具失联）。mid 先取，兜底帧保住请求关联。
+        mid = msg.get("id") if isinstance(msg, dict) else None
+        try:
+            resp = handle(msg)
+        except Exception as e:
+            _emit_error_frame(mid, type(e).__name__)
+            continue
         if resp is not None:
-            sys.stdout.write(json.dumps(resp, ensure_ascii=False) + "\n")
+            try:
+                out = json.dumps(resp, ensure_ascii=False, allow_nan=False)
+            except Exception as e:
+                _emit_error_frame(mid, type(e).__name__)
+                continue
+            sys.stdout.write(out + "\n")
             sys.stdout.flush()
 
 

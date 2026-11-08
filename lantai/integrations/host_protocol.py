@@ -134,5 +134,10 @@ def parse_host_request(raw: str) -> HostRequest | None:
 
 
 def render_host_response(result: dict) -> str:
-    """把标准结果渲染为宿主输出帧（UTF-8 JSON，中文不转义）。"""
-    return json.dumps(result, ensure_ascii=False)
+    """把标准结果渲染为宿主输出帧（UTF-8 JSON，中文不转义）。
+
+    票 52 登记项：allow_nan=False 把「统计代码未来引入 NaN → 静默产出非法
+    JSON 帧」转成显式 ValueError（调用方 serve 循环有守卫接住，不杀进程）。
+    NaN 不可达有序列化面审计背书（RRF/余弦/BM25/除法全有守卫）。
+    """
+    return json.dumps(result, ensure_ascii=False, allow_nan=False)
