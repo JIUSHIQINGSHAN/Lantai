@@ -116,31 +116,6 @@ def _set_created(key: str, user_id: str, tenant_id: str, seconds_ago: float):
         s.commit()
 
 
-def _clock_past(token: float, timeout: float = 5.0):
-    """等真实时钟严格越过旧令牌——消灭同刻度令牌碰撞的假红通道。
-
-    watch 台账 idempotency-order-dependency 标本(pidscan-fullsuite-20261108,
-    本文件 :298 红 'released'):stale-token 用例用 `_set_created` 把 claim 行
-    人为老化 605s,接管随即发生在首次 claim 之后 ~10ms。当两次 utcnow() 落在
-    同一时钟刻度(本机实测粒度 ~1ms;粗刻度 VM 可达 15.6ms)时,接管把新主行
-    created_at 改写回与旧令牌**相等**的值,settle 按 created_at== 命中新主行并
-    删除——探针 `.scratch/_v068_probe_idem_same_tick_red.py` 钉钟确定性实锤。
-    生产不可达:接管要求行龄 ≥600s,令牌必然严格不同;同刻度只在本组用例的
-    人造老化配置下出现。故在接管 claim 前等时钟严格越过旧令牌——恢复「新主
-    晚于旧令牌」这一用例本要建模的前提,不是放宽断言,是让断言真正落在它的
-    语义上。时钟停走(如虚拟机挂起)则超时响亮报错,不静默放行。
-    """
-    from lantai.core.time import utcnow
-
-    deadline = time.monotonic() + timeout
-    while utcnow().timestamp() <= token:
-        if time.monotonic() > deadline:
-            raise AssertionError(
-                f"系统时钟 {timeout}s 未越过旧令牌 {token}(时钟停走?同刻度碰撞无法排除)"
-            )
-        time.sleep(0.001)
-
-
 # ------------------------------------------------------------------ claim 语义
 
 
@@ -192,6 +167,7 @@ class TestClaim:
                 "user_id": "default",
                 "tenant_id": "",
                 "claimed_at": v["claimed_at"],
+                "token": v.get("token"),
                 "explicit": True,
             },
             ok=True,
@@ -227,6 +203,7 @@ class TestClaim:
                 "user_id": "default",
                 "tenant_id": "",
                 "claimed_at": v["claimed_at"],
+                "token": v.get("token"),
                 "explicit": True,
             },
             ok=True,
@@ -245,6 +222,7 @@ class TestClaim:
                 "user_id": "default",
                 "tenant_id": "",
                 "claimed_at": v["claimed_at"],
+                "token": v.get("token"),
                 "explicit": False,
             },
             ok=True,
@@ -292,6 +270,7 @@ class TestSettleRelease:
                 "user_id": "default",
                 "tenant_id": "",
                 "claimed_at": v["claimed_at"],
+                "token": v.get("token"),
                 "explicit": explicit,
             },
             fp,
@@ -305,11 +284,15 @@ class TestSettleRelease:
         assert claim("k1", "default", "", fp, task_id="task_retry")["action"] == "new"
 
     def test_settle_stale_token_does_not_clobber_new_owner(self, mem_env):
-        """行过期被接管后，迟到的 settle 只认自己的 created_at 令牌。"""
+        """行过期被接管后，迟到的 settle 只认自己的 token 令牌。
+
+        票 74 修复后本例对时钟不再敏感：接管即换发新 token，旧 binding 按
+        旧 token 寻行必落空——粗刻度时钟下两次取时同值也不再构成碰撞
+        （c241f771 的 _clock_past 绕行随令牌解耦一并撤除）。
+        """
         binding, fp = self._binding()
         _set_created("k1", "default", "", LEASE_SECONDS + 5)
-        _clock_past(binding["claimed_at"])
-        # 新主接管（takeover 改写了 created_at）
+        # 新主接管（takeover 换发了 token）
         assert claim("k1", "default", "", fp, task_id="task_owner2")["action"] == "new"
         # 老 worker 迟到结算：找不到自己那条 claim，不得覆盖新主回执
         assert settle(binding, ok=True, task_id="task_old_stale") == "gone"
@@ -320,7 +303,6 @@ class TestSettleRelease:
     def test_settle_failure_after_takeover_cannot_delete_new_owner(self, mem_env):
         binding, fp = self._binding()
         _set_created("k1", "default", "", LEASE_SECONDS + 5)
-        _clock_past(binding["claimed_at"])
         assert claim("k1", "default", "", fp, task_id="task_owner2")["action"] == "new"
         assert settle(binding, ok=False) == "gone"
         assert _row("k1") is not None  # 新主的行还在
@@ -427,6 +409,128 @@ class TestSameTickTokenCollision:
         assert json.loads(row.response_json)["task_id"] == "task_owner2"
 
 
+# ------------------------------------------------- 升级窗兼容（票 74）
+
+
+class TestLegacyTokenCompat:
+    """升级窗语义锁：存量老行 token=NULL、旧 binding 只有 claimed_at。
+
+    v39 给表补 token 列后，升级瞬间 DB 里可能还有迁移前出生的行（token
+    NULL）与旧进程发出的 binding（无 token 键）。兼容判据
+    「created_at 相等且 token IS NULL」必须：老行照常接管/结算/释放（不卡
+    死），且**绝不命中新世界出生的行**（新行必有 token——这是旧判据在同
+    刻度下不误删新主的全部依据，票 74）。
+    """
+
+    @staticmethod
+    def _clear_token(key: str, user_id: str = "default", tenant_id: str = ""):
+        """把行的 token 置 NULL——模拟迁移前出生的存量老行。"""
+        import lantai.storage.db as db_module
+        from lantai.models.tables import IdempotencyKey
+
+        with db_module.get_session() as s:
+            row = s.exec(
+                select(IdempotencyKey).where(
+                    IdempotencyKey.key == key,
+                    IdempotencyKey.user_id == user_id,
+                    IdempotencyKey.tenant_id == tenant_id,
+                )
+            ).first()
+            assert row is not None
+            row.token = None
+            s.add(row)
+            s.commit()
+
+    def test_legacy_row_takeover_still_wins(self, mem_env):
+        """老行（token NULL）过期后照常可接管——升级不把租约过期的任务锁死。"""
+        fp = fingerprint_payload("文本", "default", "dialogue", "", None)
+        v = claim("k1", "default", "", fp, task_id="task_old")
+        assert v["token"]
+        self._clear_token("k1")
+        _set_created("k1", "default", "", LEASE_SECONDS + 5)
+        v2 = claim("k1", "default", "", fp, task_id="task_new")
+        assert v2["action"] == "new"
+        row = _row("k1")
+        assert row.token  # 接管成功即换发新令牌
+        assert json.loads(row.response_json)["task_id"] == "task_new"
+
+    def test_legacy_binding_settle_finalizes_legacy_row(self, mem_env):
+        """旧 binding（无 token 键）仍能结算 token NULL 的老行——升级窗在途
+        任务不因补列而丢失回执。"""
+        fp = fingerprint_payload("文本", "default", "dialogue", "", None)
+        v = claim("k1", "default", "", fp, task_id="task_a")
+        self._clear_token("k1")
+        outcome = settle(
+            {
+                "key": "k1",
+                "user_id": "default",
+                "tenant_id": "",
+                "claimed_at": v["claimed_at"],
+                "explicit": True,
+            },
+            ok=True,
+            result={"ingested": True},
+            task_id="task_a",
+        )
+        assert outcome == "finalized"
+        assert _row("k1").state == "done"
+
+    def test_legacy_binding_settle_failure_releases_legacy_row(self, mem_env):
+        """旧 binding 失败结算照常释放老行——重试可重新执行（S-2/S-8 不变量
+        在升级窗同样成立）。"""
+        fp = fingerprint_payload("文本", "default", "dialogue", "", None)
+        v = claim("k1", "default", "", fp, task_id="task_a")
+        self._clear_token("k1")
+        outcome = settle(
+            {
+                "key": "k1",
+                "user_id": "default",
+                "tenant_id": "",
+                "claimed_at": v["claimed_at"],
+                "explicit": True,
+            },
+            ok=False,
+        )
+        assert outcome == "released"
+        assert _row("k1") is None
+        assert claim("k1", "default", "", fp, task_id="task_retry")["action"] == "new"
+
+    def test_legacy_release_claimed_at_still_hits_legacy_row(self, mem_env):
+        """运维面 release(claimed_at=…) 对 token NULL 老行保持旧判据语义。"""
+        fp = fingerprint_payload("文本", "default", "dialogue", "", None)
+        v = claim("k1", "default", "", fp, task_id="task_a")
+        self._clear_token("k1")
+        release("k1", "default", "", claimed_at=v["claimed_at"])
+        assert _row("k1") is None
+
+    def test_legacy_binding_cannot_hit_token_row_even_same_created_at(self, mem_env, monkeypatch):
+        """旧判据的疾病面：旧 binding 与新世界行同 created_at 也不得命中。
+
+        冻结钟使接管把新主行 created_at 写成与旧 binding 的 claimed_at 同值
+        ——裸浮点相等会命中并误删（红基线 446d43b 的 release 臂实锤）；
+        「token IS NULL」限定是旧判据不被旧时间戳误命中的唯一屏障。
+        """
+        import lantai.core.idempotency as idem
+
+        frozen = idem.utcnow()
+        monkeypatch.setattr(idem, "utcnow", lambda: frozen)
+        fp = fingerprint_payload("文本", "default", "dialogue", "", None)
+        v1 = claim("k1", "default", "", fp, task_id="task_owner1")
+        _set_created("k1", "default", "", LEASE_SECONDS + 5)
+        assert claim("k1", "default", "", fp, task_id="task_owner2")["action"] == "new"
+        binding = {
+            "key": "k1",
+            "user_id": "default",
+            "tenant_id": "",
+            "claimed_at": v1["claimed_at"],  # 与新主行 created_at 同值（冻结钟）
+            "explicit": True,
+        }
+        assert settle(binding, ok=False) == "gone"
+        row = _row("k1")
+        assert row is not None
+        assert json.loads(row.response_json)["task_id"] == "task_owner2"
+
+
 # ------------------------------------------------------------------ purge
 
 
@@ -442,6 +546,7 @@ class TestPurge:
                 "user_id": "default",
                 "tenant_id": "",
                 "claimed_at": v_done["claimed_at"],
+                "token": v_done.get("token"),
                 "explicit": True,
             },
             ok=True,
@@ -471,6 +576,7 @@ class TestPurge:
                 "user_id": "default",
                 "tenant_id": "",
                 "claimed_at": v["claimed_at"],
+                "token": v.get("token"),
                 "explicit": True,
             },
             ok=True,

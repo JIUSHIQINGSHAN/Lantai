@@ -112,6 +112,7 @@ def submit_async_dialogue(
             "user_id": user_id,
             "tenant_id": tenant_id or "",
             "claimed_at": verdict.get("claimed_at"),
+            "token": verdict.get("token"),
             "explicit": explicit,
         }
 

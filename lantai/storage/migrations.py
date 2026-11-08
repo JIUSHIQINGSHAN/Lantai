@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 38
+TARGET_SCHEMA_VERSION = 39
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -817,6 +817,22 @@ def _migrate_v38(conn) -> None:
     logger.info("Migrated v38: cehou_window 影子视窗落库（票 60）")
 
 
+def _migrate_v39(conn) -> None:
+    """v38 -> v39: idempotency_keys 补 token 列——勘合所有权令牌与时间解耦（票 74）。
+
+    令牌此前即 `created_at` 裸 epoch 浮点，粗刻度时钟下相邻两次取时可同值
+    （Windows/CPython 3.11 实测 `time.time()` 10 万次紧循环仅 5 个唯一值），
+    接管把新主行 created_at 改写回与旧令牌相等时，旧主带令牌 release/settle
+    的条件删除命中新主行——重试即双执行。新增随机令牌列作判别子：claim/
+    接管写 uuid4，条件语句按 token 判据；存量老行 token 为 NULL，走
+    「created_at 相等且 token IS NULL」旧判据（升级窗老行语义不变）。列可空
+    无默认，与模型 create_all 输出形状一致（parity 口径：缺列/NULL 约束/索引）。
+    """
+    if not _has_column(conn, "idempotency_keys", "token"):
+        conn.execute("ALTER TABLE idempotency_keys ADD COLUMN token VARCHAR")
+    logger.info("Migrated v39: idempotency_keys.token 所有权令牌列（票 74）")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -855,6 +871,7 @@ MIGRATIONS = [
     (36, _migrate_v36),
     (37, _migrate_v37),
     (38, _migrate_v38),
+    (39, _migrate_v39),
 ]
 
 
