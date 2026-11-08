@@ -116,6 +116,31 @@ def _set_created(key: str, user_id: str, tenant_id: str, seconds_ago: float):
         s.commit()
 
 
+def _clock_past(token: float, timeout: float = 5.0):
+    """等真实时钟严格越过旧令牌——消灭同刻度令牌碰撞的假红通道。
+
+    watch 台账 idempotency-order-dependency 标本(pidscan-fullsuite-20261108,
+    本文件 :298 红 'released'):stale-token 用例用 `_set_created` 把 claim 行
+    人为老化 605s,接管随即发生在首次 claim 之后 ~10ms。当两次 utcnow() 落在
+    同一时钟刻度(本机实测粒度 ~1ms;粗刻度 VM 可达 15.6ms)时,接管把新主行
+    created_at 改写回与旧令牌**相等**的值,settle 按 created_at== 命中新主行并
+    删除——探针 `.scratch/_v068_probe_idem_same_tick_red.py` 钉钟确定性实锤。
+    生产不可达:接管要求行龄 ≥600s,令牌必然严格不同;同刻度只在本组用例的
+    人造老化配置下出现。故在接管 claim 前等时钟严格越过旧令牌——恢复「新主
+    晚于旧令牌」这一用例本要建模的前提,不是放宽断言,是让断言真正落在它的
+    语义上。时钟停走(如虚拟机挂起)则超时响亮报错,不静默放行。
+    """
+    from lantai.core.time import utcnow
+
+    deadline = time.monotonic() + timeout
+    while utcnow().timestamp() <= token:
+        if time.monotonic() > deadline:
+            raise AssertionError(
+                f"系统时钟 {timeout}s 未越过旧令牌 {token}(时钟停走?同刻度碰撞无法排除)"
+            )
+        time.sleep(0.001)
+
+
 # ------------------------------------------------------------------ claim 语义
 
 
@@ -283,6 +308,7 @@ class TestSettleRelease:
         """行过期被接管后，迟到的 settle 只认自己的 created_at 令牌。"""
         binding, fp = self._binding()
         _set_created("k1", "default", "", LEASE_SECONDS + 5)
+        _clock_past(binding["claimed_at"])
         # 新主接管（takeover 改写了 created_at）
         assert claim("k1", "default", "", fp, task_id="task_owner2")["action"] == "new"
         # 老 worker 迟到结算：找不到自己那条 claim，不得覆盖新主回执
@@ -294,6 +320,7 @@ class TestSettleRelease:
     def test_settle_failure_after_takeover_cannot_delete_new_owner(self, mem_env):
         binding, fp = self._binding()
         _set_created("k1", "default", "", LEASE_SECONDS + 5)
+        _clock_past(binding["claimed_at"])
         assert claim("k1", "default", "", fp, task_id="task_owner2")["action"] == "new"
         assert settle(binding, ok=False) == "gone"
         assert _row("k1") is not None  # 新主的行还在
