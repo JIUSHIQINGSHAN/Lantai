@@ -1,9 +1,16 @@
 from dataclasses import dataclass, field
 
+import jieba
 from sqlmodel import Session, select
 
 from lantai.core.settings import settings
 from lantai.models.tables import CognitiveRole, FailureRecord, LifecycleStatus, MemoryItem
+
+
+def _relevant_tokens(text: str) -> set[str]:
+    """票 65：任务相关度分词——jieba cut + strip/lower + len>1（校雠同源口径）。"""
+    return {w.strip().lower() for w in jieba.cut(text or "") if len(w.strip()) > 1}
+
 
 _ROLE_TO_SECTION = {
     CognitiveRole.OBSERVATION: "facts",
@@ -654,10 +661,16 @@ class CognitiveContextBuilder:
 
     @staticmethod
     def _task_relevance(content: str, task: str) -> float:
-        """计算内容与任务的词汇重叠相关度（Jaccard 系数）。"""
-        task_words = set(task.lower().split())
-        content_words = set(content.lower().split())
-        if not task_words and not content_words:
+        """计算内容与任务的词汇重叠相关度（Jaccard 系数）。
+
+        票 65：jieba 分词（校雠 jiaochou.py 同源口径：cut + strip/lower +
+        len>1 过滤单字与标点）——原空白分词下中文整句成单 token，交集恒空、
+        Jaccard 恒 0，/cognitive/context 与 /context/prompt 两面排序退化
+        纯置信度；英语标点粘着 token（"deploy!"）同病，一并收口。
+        """
+        task_words = _relevant_tokens(task)
+        content_words = _relevant_tokens(content)
+        if not task_words or not content_words:
             return 0.0
         return len(task_words & content_words) / len(task_words | content_words)
 

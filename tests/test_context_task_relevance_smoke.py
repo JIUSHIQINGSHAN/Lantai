@@ -69,9 +69,7 @@ class TestTaskRelevanceJaccard:
     def test_cjk_relevance_recovers(self):
         """TDD 1：中文同题异述 → 修复前恒 0（红），修复后 J=1/3 > 0.3（票面阈值）。"""
         score = _relevance(_RELEVANT, _TASK)
-        assert score > 0.3, (
-            f"中文任务相关度恒 0（空白分词病）：score={score}，两面排序退化纯置信度"
-        )
+        assert score > 0.3, f"中文任务相关度恒 0（空白分词病）：score={score}，两面排序退化纯置信度"
 
     def test_unrelated_content_stays_zero(self):
         """区分度臂（两态皆绿）：无关内容 J=0，修复不得把噪声抬成正相关。"""
