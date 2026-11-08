@@ -690,7 +690,7 @@ _SESSION_DB_ENGINE = None
 # 并发症 SystemError（returned NULL without setting an exception；CI 单次实抓
 # 两例、重跑即绿）。DELETE 无条件幂等，整块重试安全；重试耗尽仍炸则放行原
 # 异常——常驻注入面清不掉必须红，不许静默跳过（v0.66 票 01 的病不许回来）。
-# 重试语义由 tests/test_wipe_resident_channels.py 锁定，改上限须同步改其臂 2。
+# 重试语义由 tests/test_wipe_resident_channels.py 锁定（其臂 2 引用本常量断言耗尽次数）。
 _WIPE_RETRY_ATTEMPTS = 3
 _WIPE_RETRY_SLEEP_S = 0.05
 
