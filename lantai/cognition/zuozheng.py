@@ -197,12 +197,15 @@ class ZuozhengEngine:
                         continue
 
                     direction = edge.relation
+                    # 源置信度显式 None 判定(票 68 位点 4):`or 0.8` 会把合法零值
+                    # 0.0 抬成 0.8——零置信证据以近满权进入证据链。
+                    src_conf = 0.8 if src_mem.confidence is None else src_mem.confidence
                     evidence_nodes.append(
                         EvidenceNode(
                             id=src_mem.id,
                             content=src_mem.content,
                             node_type="memory",
-                            confidence=min(edge.confidence, src_mem.confidence or 0.8),
+                            confidence=min(edge.confidence, src_conf),
                             support_direction=direction,
                             relation_reason=edge.reason or f"关联关系: {direction}",
                             user_id=src_mem.user_id,
