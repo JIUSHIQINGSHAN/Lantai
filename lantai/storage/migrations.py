@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 41
+TARGET_SCHEMA_VERSION = 42
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -839,6 +839,51 @@ def _migrate_v41(conn) -> None:
     logger.info("Migrated v41: idempotency_keys.token 所有权令牌列（票 80，原 74）")
 
 
+def _migrate_v42(conn) -> None:
+    """v41 -> v42: cognitive_patterns.dedup_key 唯一索引——并发竞态最后兜底（票 68 位点 7）。
+
+    detect_patterns 的 check-then-act（先 SELECT 再 INSERT）在并发下有竞态窗，
+    同一 dedup_key 可落两行；模型层此番补上 UniqueConstraint 后，老库存量
+    可能已有重复行，直接建唯一索引会失败。先按「先落者胜」（与引擎
+    『同键已存在则不再插行』的先到先得语义一致，取最小 rowid）去重非 NULL
+    重复键，再建唯一索引。NULL 键（v29 之前的存量）不去重、不参与唯一——
+    SQLite 事实唯一索引本就对多行 NULL 放行，语义与模型一致（宁 miss 不脏写）。
+    去重删除只动 dedup_key 相同的冗余行，不动任何正文数据。
+    """
+    # 表不存在（极老库/部分建表的形态）时无事可做：create_all 之后会按模型
+    # 建表（内联 UNIQUE 约束），此处不得报 warning（无失败不留痕的噪音纪律）。
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cognitive_patterns'"
+    ).fetchone()
+    if not exists:
+        return
+    try:
+        dupes = conn.execute(
+            "SELECT dedup_key FROM cognitive_patterns "
+            "WHERE dedup_key IS NOT NULL "
+            "GROUP BY dedup_key HAVING COUNT(*) > 1"
+        ).fetchall()
+        for (key,) in dupes:
+            # 先落者胜：保留最小 rowid（最早插入）行，删掉其余重复行
+            conn.execute(
+                "DELETE FROM cognitive_patterns WHERE dedup_key = ? AND rowid > "
+                "(SELECT MIN(rowid) FROM cognitive_patterns WHERE dedup_key = ?)",
+                (key, key),
+            )
+            logger.warning("迁移 v42 去重 dedup_key=%s 的存量重复行（先落者胜）", key)
+    except Exception as exc:
+        # 去重失败不阻断启动（同 v25/v26 口径），但唯一索引也会因重复行建不上
+        logger.warning("迁移 v42 dedup_key 去重跳过: %s", exc)
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_cognitive_patterns_dedup_key "
+            "ON cognitive_patterns (dedup_key)"
+        )
+    except Exception as exc:
+        logger.warning("迁移 v42 唯一索引创建跳过: %s", exc)
+    logger.info("Migrated v42: cognitive_patterns.dedup_key 唯一索引（票 68 位点 7）")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -878,6 +923,7 @@ MIGRATIONS = [
     (37, _migrate_v37),
     (38, _migrate_v38),
     (41, _migrate_v41),
+    (42, _migrate_v42),
 ]
 
 

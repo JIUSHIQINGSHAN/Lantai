@@ -1,5 +1,6 @@
 from collections import Counter
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from lantai.core.ids import new_id
@@ -140,7 +141,21 @@ class EvolutionEngine:
             )
             if self.db is not None:
                 self.db.add(pat)
-                self.db.commit()
+                try:
+                    self.db.commit()
+                except IntegrityError:
+                    # 竞态兜底（票 68 位点 7）：check-then-act 与 DB 唯一索引
+                    # 之间仍有窗口，唯一索引拒绝时回滚并转为 touch 先落行——
+                    # 与同键命中分支同语义（宁 miss 不脏写）。
+                    self.db.rollback()
+                    existing = self.db.exec(
+                        select(CognitivePattern).where(CognitivePattern.dedup_key == dedup_key)
+                    ).first()
+                    if existing is not None:
+                        existing.updated_at = now
+                        self.db.add(existing)
+                        self.db.commit()
+                    continue
             patterns.append(pat)
         return patterns
 

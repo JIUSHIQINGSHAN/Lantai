@@ -32,7 +32,7 @@ class LifecycleStatus(StrEnum):
 
 from datetime import datetime
 
-from sqlalchemy import ForeignKey
+from sqlalchemy import ForeignKey, UniqueConstraint
 from sqlmodel import JSON, Column, Field, SQLModel
 
 from lantai.core.time import utcnow
@@ -248,7 +248,13 @@ class CognitivePattern(SQLModel, table=True):
     # 幂等去重自然键（票 .scratch/review-fixes-2026-10/02）：聚类核心实词签名的
     # sha256 前 16 位；同键已存在则不再插行（每晚反思对同一输入零新增）。
     # 迁移链 v29 之前的存量行为 NULL，NULL 不参与匹配（宁 miss 不脏写）。
+    # 唯一约束（票 68 位点 7）：detect_patterns 的 check-then-act 在并发下有
+    # SELECT/INSERT 竞态窗，DB 唯一索引是最后兜底；SQLite 事实唯一索引对
+    # 多行 NULL 不去重，存量 NULL 行语义不变。迁移 v42 对老库先按「先落者胜」
+    # 去重再建同名唯一索引。
     dedup_key: str | None = Field(default=None, index=True)
+
+    __table_args__ = (UniqueConstraint("dedup_key", name="uq_cognitive_patterns_dedup_key"),)
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
