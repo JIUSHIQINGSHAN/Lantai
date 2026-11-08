@@ -16,6 +16,7 @@ from lantai.core.provenance import (
     make_provenance,
 )
 from lantai.core.settings import settings
+from lantai.core.text import normalize_for_index
 from lantai.core.time import utcnow
 from lantai.evolution.promoter import _make_checkpoint
 from lantai.gate.dedup import find_similar
@@ -691,6 +692,12 @@ def build_verbatim_item(
 ) -> MemoryItem:
     """verbatim 直存项构造（纯函数）：sha256 幂等 key + 固定语义字段。
 
+    身份键过归一缝（票 46 / ADR-0085）：key = sha256(normalize_for_index(content))，
+    全角/NFD/零宽变体同归一键，不再分裂双份记忆；正文仍逐字节原样（归一派生键
+    ≠ 内容改写）。存量旧口径行（key=原文 sha）由 add_raw_memory /
+    _store_imported_memory 双键并查兜底；脏存量行 × 字节不同改写的残余缺口宁
+    miss 不脏写（收口需键列迁移，未立项）。
+
     add_raw_memory 与冷启动导入（services/import_service.py）共用，消除重复
     构造；created_at/updated_at 缺省取 utcnow，updated_at 缺省取 created_at
     （导入路径原样保留原始时间戳语义）。
@@ -699,7 +706,7 @@ def build_verbatim_item(
     不脏写，不猜归属；但调用方（尤其 HTTP 路由）必须把 principal 传下来，
     否则这条记忆在按属主过滤的检索里永久不可见。
     """
-    h = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    h = hashlib.sha256(normalize_for_index(content).encode("utf-8")).hexdigest()
     created = created_at or utcnow()
     return MemoryItem(
         id=new_id("mem"),
@@ -732,7 +739,8 @@ def add_raw_memory(
 ) -> dict:
     """原文直存（verbatim 记忆）：零 LLM、不走提取/闸门/演化，直接写 MemoryItem。
 
-    幂等：内容 sha256 作 key，重复内容返回已有记忆（不重复索引）。
+    幂等：内容 sha256 作 key（票 46：身份键过归一缝 + 存量原文 sha 双键并查），
+    重复内容返回已有记忆（不重复索引）。
 
     归属四元组（票 .scratch/ownership-gaps/03）：此前签名里没有这些参数，
     verbatim 是条数最多的一类（本机真实库 391/635 条），属主恒 NULL 让
@@ -752,7 +760,10 @@ def add_raw_memory(
     标注、不是身份判据。判「新建」会让每一条既有无主 verbatim 都无法去重，
     同一内容每 sync 一次就多存一份——把内容寻址退化成多份存储。
     """
-    h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
+    # 票 46：身份键过归一缝——新行 key = sha256(归一后文本)；存量旧口径行
+    # （key=原文 sha）与脏内容字节级重写经原文 sha 双键并查兜底（ADR-0085）。
+    h_norm = hashlib.sha256(normalize_for_index(req.content).encode("utf-8")).hexdigest()
+    h_raw = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
     lane = req.lane or settings.RAW_MEMORY_DEFAULT_LANE
     # 獬豸（票据 .scratch/xiezhi-injection-guard/01）：verbatim 原样进 FTS+向量，
     # 是注入文本直达检索面的最短路径——sha256/去重之前先过写入侧注入检测
@@ -762,7 +773,7 @@ def add_raw_memory(
     with db.get_session() as s:
         q = select(MemoryItem).where(
             MemoryItem.memory_type == "verbatim",
-            MemoryItem.key == h,
+            MemoryItem.key.in_([h_norm, h_raw]),
             MemoryItem.status == "active",
         )
         # 去重归属（票 20）：admin / principal=None → 不过滤（worker/MCP 不能空转）；

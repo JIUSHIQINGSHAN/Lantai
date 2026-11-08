@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from sqlmodel import select
 
 from lantai.core.settings import settings
+from lantai.core.text import normalize_for_index
 from lantai.models.tables import MemoryItem
 from lantai.security.injection_guard import assert_no_prompt_injection
 from lantai.security.secret_guard import detect_secret_shapes
@@ -105,14 +106,18 @@ def parse_import_lines(text: str) -> tuple[list[dict], list[dict]]:
 def _store_imported_memory(s, content, created_at, updated_at, lane, tags) -> str:
     """verbatim 直存单行：返回 'imported' | 'duplicate'。
 
-    内容 sha256 幂等去重（与 add_raw_memory 同语义）；created_at/updated_at
+    内容 sha256 幂等去重（与 add_raw_memory 同语义：身份键过归一缝 + 存量
+    原文 sha 双键并查，票 46 / ADR-0085）；created_at/updated_at
     保留原始时间戳（updated_at 缺省取 created_at）。embedding/向量索引失败
     不阻断落库（FTS 仍可检索）。
     """
-    h = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    h_norm = hashlib.sha256(normalize_for_index(content).encode("utf-8")).hexdigest()
+    h_raw = hashlib.sha256(content.encode("utf-8")).hexdigest()
     existing = s.exec(
         select(MemoryItem).where(
-            MemoryItem.memory_type == "verbatim", MemoryItem.key == h, MemoryItem.status == "active"
+            MemoryItem.memory_type == "verbatim",
+            MemoryItem.key.in_([h_norm, h_raw]),
+            MemoryItem.status == "active",
         )
     ).first()
     if existing:

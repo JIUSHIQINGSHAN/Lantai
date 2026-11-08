@@ -26,14 +26,19 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from lantai.core.ids import new_id
+from lantai.core.text import normalize_for_index
 from lantai.core.time import utcnow
 from lantai.models.schemas import RawMemoryReq
 from lantai.models.tables import MemoryItem
 
 _CLEAN = "decision: 使用 PostgreSQL"
-_FULLWIDTH = "ｄｅｃｉｓｉｏｎ：使用 PostgreSQL"
+# 宽度变体：与 _CLEAN 仅宽度形态不同（全角冒号后保留半角空格）——归一后必须逐字节同文
+_FULLWIDTH = "ｄｅｃｉｓｉｏｎ： 使用 PostgreSQL"
 _NFD = "café: 使用 PostgreSQL"  # 分解形态（U+0301 组合尖音符），转义立法防字面量走形
 _NFC = unicodedata.normalize("NFC", _NFD)  # 组合形态（U+00E9）——由分解形态派生
+
+assert normalize_for_index(_CLEAN) == normalize_for_index(_FULLWIDTH) == _CLEAN
+assert normalize_for_index(_NFD) == normalize_for_index(_NFC) and _NFD != _NFC
 
 
 def _raw_sha(content: str) -> str:
@@ -136,14 +141,15 @@ class TestVerbatimIdentityKey:
 
     def test_new_row_key_is_normalized_sha_and_content_untouched(self, engine):
         """新行 key = sha256(归一后文本)（纯函数直调）；正文逐字节不动（哨兵）。"""
-        from lantai.core.text import normalize_for_index
         from lantai.services.memory_service import build_verbatim_item
 
         item = build_verbatim_item(_FULLWIDTH, "general")
         assert item.key == _raw_sha(normalize_for_index(_FULLWIDTH)), (
             "新行 key 未对归一后文本取 sha"
         )
-        assert build_verbatim_item(_CLEAN, "general").key == item.key, "归一同文异键（身份缝未收敛）"
+        assert build_verbatim_item(_CLEAN, "general").key == item.key, (
+            "归一同文异键（身份缝未收敛）"
+        )
         assert item.content == _FULLWIDTH, "用户正文不得被改写（ADR-0085 同一边界）"
 
 

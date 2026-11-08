@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import lantai.storage.db as db_module
+from lantai.core.text import normalize_for_index
 from lantai.models.schemas import RawMemoryReq
 from lantai.models.tables import MemoryItem
 from lantai.storage.fts import init_fts
@@ -172,7 +173,10 @@ class TestRawAddConcurrentDuplicate:
         from lantai.services.memory_service import add_raw_memory
 
         session_factory, engine, vector_store_mock = raw_env
+        # 票 46：身份键过归一缝（本 CONTENT 含全角冒号，归一 sha ≠ 原文 sha）——
+        # 单行语义按新旧双键口径查，key 形态本身不是本锁的对象。
         h = hashlib.sha256(self.CONTENT.encode("utf-8")).hexdigest()
+        h_norm = hashlib.sha256(normalize_for_index(self.CONTENT).encode("utf-8")).hexdigest()
 
         racing = {"done": False}
         real_embed = ms_mod.embed  # fixture 替身（假 8 维向量）
@@ -193,7 +197,9 @@ class TestRawAddConcurrentDuplicate:
         assert b_result, "交错未发生：B 侧未执行（缝位失配，测试失效）"
         with session_factory() as s:
             rows = s.exec(
-                select(MemoryItem).where(MemoryItem.memory_type == "verbatim", MemoryItem.key == h)
+                select(MemoryItem).where(
+                    MemoryItem.memory_type == "verbatim", MemoryItem.key.in_([h, h_norm])
+                )
             ).all()
         assert len(rows) == 1, (
             f"并发同文 {len(rows)} 行 verbatim（票 24 子项 2）：SELECT 判重后含网络往返、"
