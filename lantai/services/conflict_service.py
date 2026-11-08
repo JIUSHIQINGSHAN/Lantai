@@ -56,14 +56,14 @@ def list_conflict_events(limit: int = 50, status: str = "open", principal=None) 
         q = select(ConflictEvent).order_by(ConflictEvent.created_at.desc())
         if status != "all":
             q = q.where(ConflictEvent.status == status)
-        if principal is not None and bool(getattr(principal, "is_admin", False)):
-            pass  # admin/system 全权：不加 join，孤儿与无主行照见（运维/裁决需要）
-        else:
+        if not (principal is not None and bool(getattr(principal, "is_admin", False))):
+            # 非 admin:归属判定下推 join(inner join 天然排除孤儿冲突与 NULL 属主)
             from lantai.services.work_item_service import _viewer_of
 
             q = q.join(MemoryItem, ConflictEvent.memory_id == MemoryItem.id).where(
                 MemoryItem.user_id == _viewer_of(principal)
             )
+        # admin/system 全权:不加 join,孤儿与无主行照见(运维/裁决需要)
         rows = s.exec(q.limit(limit)).all()
         return {"events": [r.model_dump(mode="json") for r in rows]}
 

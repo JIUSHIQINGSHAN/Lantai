@@ -43,6 +43,7 @@ def rest_env(monkeypatch):
     from lantai.api.routes_kaogong import router as kaogong_router
     from lantai.api.routes_mokan import router as mokan_router
     from lantai.api.routes_pisha import router as pisha_router
+    from lantai.api.routes_search import router as search_router
     from lantai.api.routes_sources import router as sources_router
     from lantai.api.routes_zhiming import router as zhiming_router
     from lantai.storage.db import get_session
@@ -78,6 +79,7 @@ def rest_env(monkeypatch):
         conflicts_router,
         cehou_router,
         edges_router,
+        search_router,
     ):
         app.include_router(router)
     app.dependency_overrides[get_session] = _override_session
@@ -475,6 +477,28 @@ def test_edges_confidence_and_project_impact_bounds(rest_env):
     assert client.post("/edges/project-impact", json={"memory_id": "e1"}).status_code == 200
 
 
+def test_graph_expand_min_edge_conf_bounds(rest_env):
+    """票 42 修复目标 2 点名浮点:min_edge_conf 越界修复前 200 直传检索层
+    (负阈值把全部边捞进联想面),修复后 422。
+
+    界内接受臂走真 pydantic 模型构造——HTTP 界内臂会真跑 graph_augmented_search
+    → embed 外部边界,不在本票面内(双轴自审采纳项:点名项只登记不修即 spec 缺口)。
+    """
+    from lantai.api.routes_search import GraphExpandReq
+
+    client, _ = rest_env
+    assert (
+        client.post("/search/graph_expand", json={"query": "q", "min_edge_conf": 1.5}).status_code
+        == 422
+    )
+    assert (
+        client.post("/search/graph_expand", json={"query": "q", "min_edge_conf": -0.1}).status_code
+        == 422
+    )
+    GraphExpandReq(query="q", min_edge_conf=0.5)
+    GraphExpandReq(query="q")
+
+
 # ── 一致性哨兵:routes_*.py 数值参数签名全量扫描 ──
 
 
@@ -528,9 +552,10 @@ def _collect_bare_numeric_params() -> set[tuple[str, str, str]]:
     return bare
 
 
-# 白名单分两类,逐条人工核证(2026-11-09,票 42 实现轮):
+# 白名单分三类,逐条人工核证(2026-11-09,票 42 实现轮):
 # ① 他层已校验——service/ops 层有同语义界,签名裸但有真源(注明 file:line);
-# ② 残余待立案——真实裸奔但非本票病族/需另行立案,如实登记不粉饰。
+# ② 同层部分约束——签名已有 ge 单界,语义上无上界(序号/分页偏移),非残余;
+# ③ 残余待立案——真实裸奔但非本票病族/需另行立案,如实登记不粉饰。
 WHITELIST: dict[tuple[str, str, str], str] = {
     # ── ① 他层已校验(逐一实证)──
     ("routes_graph.py", "graph_route", "limit"): "ops/graph.py:26 validate_graph_limit [1,500]",
@@ -553,7 +578,12 @@ WHITELIST: dict[tuple[str, str, str], str] = {
         "observability/recall_report.py:161 [1,100]"
     ),
     ("routes_scenes.py", "list_scenes", "limit"): "scene_service.py:375 [1,500]",
-    # ── ② 残余待立案(真实裸奔,非本票病族或需专项)──
+    # ── ② 同层已有部分约束(ge 单界,语义无上界;非残余)──
+    ("routes_dialogue.py", "DialogueIngestReq", "turn"): "序号参数已有 ge=0 下界,无上界语义",
+    ("routes_param_advice.py", "list_suggestions", "offset"): "分页偏移已有 ge=0 下界",
+    ("routes_param_advice.py", "list_overrides", "offset"): "分页偏移已有 ge=0 下界",
+    ("routes_work_items.py", "list_work_items_route", "offset"): "分页偏移已有 ge=0 下界",
+    # ── ③ 残余待立案(真实裸奔,非本票病族或需专项)──
     ("routes_cehou.py", "SampleRequest", "latency_ms"): (
         "残余:票 66 MCP 臂拒非有限值,REST 孪生待收口(负有限值合法,ge/le 表达不了,"
         "需 allow_inf_nan 语义)"
@@ -565,7 +595,6 @@ WHITELIST: dict[tuple[str, str, str], str] = {
     ("routes_cognitive.py", "cognitive_summary", "max_failures"): "残余:渲染帽",
     ("routes_cognitive.py", "cognitive_summary", "max_probes"): "残余:渲染帽",
     ("routes_cognitive.py", "cognitive_summary", "char_budget"): "残余:渲染帽(提示预算)",
-    ("routes_dialogue.py", "DialogueIngestReq", "turn"): "残余:序号参数已有 ge=0 下界,无上界语义",
     ("routes_edges.py", "decision_provenance_route", "max_depth"): (
         "残余:格物读路径遍历深度,票 39 家族孪生待收口"
     ),
@@ -582,8 +611,6 @@ WHITELIST: dict[tuple[str, str, str], str] = {
     ("routes_obsidian.py", "verbatim_search_route", "top_k"): (
         "残余:MCP 孪生已钳 [1,100](mcp.py:1369),REST 待收口"
     ),
-    ("routes_param_advice.py", "list_suggestions", "offset"): "残余:分页偏移已有 ge=0",
-    ("routes_param_advice.py", "list_overrides", "offset"): "残余:分页偏移已有 ge=0",
     ("routes_scenes.py", "rebuild_scenes", "threshold"): "残余:聚类阈值(None=配置默认),批处理面",
     ("routes_scenes.py", "assign_unassigned", "limit"): (
         "残余:消化期批处理面,MCP scenes_list 已钳 [1,500] 而此面未钳"
@@ -596,10 +623,8 @@ WHITELIST: dict[tuple[str, str, str], str] = {
         "残余:双面皆裸,结构性帽 max_expanded=10(graph_retriever.py:49)兜底"
     ),
     ("routes_search.py", "GraphExpandReq", "max_hops"): "残余:同上(结构性帽兜底)",
-    ("routes_search.py", "GraphExpandReq", "min_edge_conf"): "残余:双面皆裸",
     ("routes_terminal.py", "ChatReq", "top_k"): "残余:终局面 top_k",
     ("routes_terminal.py", "terminal_graph", "limit"): "残余:终局面 limit",
-    ("routes_work_items.py", "list_work_items_route", "offset"): "残余:分页偏移已有 ge=0",
 }
 
 

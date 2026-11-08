@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from lantai.core.acl import filter_results_by_lanes
 from lantai.core.auth import Principal, get_current_user
@@ -92,7 +92,10 @@ class GraphExpandReq(BaseModel):
     query: str
     top_k: int = 5
     max_hops: int = 2
-    min_edge_conf: float = 0.5
+    # 票 42 修复目标 2 点名浮点:min_edge_conf 越界修复前直传检索层(负阈值把
+    # 全部边捞进联想面);[0,1] 与 EdgeReq.confidence 同族。top_k/max_hops 有
+    # 结构性帽 max_expanded=10 兜底,残余登记见 tests/test_rest_param_bounds.py
+    min_edge_conf: float = Field(default=0.5, ge=0.0, le=1.0)
     domain: str | None = None
 
 
