@@ -32,7 +32,7 @@ class LifecycleStatus(StrEnum):
 
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, UniqueConstraint, text
 from sqlmodel import JSON, Column, Field, SQLModel
 
 from lantai.core.time import utcnow
@@ -186,6 +186,23 @@ class MemoryItem(SQLModel, table=True):
     weakened_at: datetime | None = None  # 首次跌破 confidence 阈值的时间
     superseded_at: datetime | None = None  # 被取代的时间
     retired_at: datetime | None = None  # 正式退役的时间
+
+    # 票 24 子项 2：内容键部分唯一索引——add_raw_memory / create_skill 的
+    # 去重是「SELECT(key=sha256) → embed（网络往返）→ INSERT」，并发同文两路
+    # 都判重落空即双行 + 双份向量/FTS。索引口径与去重 SELECT 逐字对齐：
+    # (memory_type, key, user_id) 且仅约束 key 非空的 active 行——default=""
+    # 的无键行与 NULL 属主老行（真实库 391 条 verbatim 全 NULL）不受约束
+    # （SQLite 复合键含 NULL 互异），归档/撤回行不挡同文重存。
+    __table_args__ = (
+        Index(
+            "uq_memoryitem_type_key_user_active",
+            "memory_type",
+            "key",
+            "user_id",
+            unique=True,
+            sqlite_where=text("key != '' AND status = 'active'"),
+        ),
+    )
 
 
 class MemoryScene(SQLModel, table=True):

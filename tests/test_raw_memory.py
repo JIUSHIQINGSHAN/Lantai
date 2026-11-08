@@ -146,3 +146,63 @@ def test_add_raw_searchable_via_fts_fallback(raw_env):
     )
     texts = [r.get("memory", {}).get("content", "") for r in results]
     assert any(content in t for t in texts)
+
+
+# ------------------------------------------------------------------ 票 24 子项 2：并发同文双行
+
+
+class TestRawAddConcurrentDuplicate:
+    """票 24 子项 2：/memory/add/raw 的去重是「SELECT(key=sha256) 判重 → embed
+    （网络往返）→ INSERT」——MemoryItem.key 无唯一约束兜底，并发同文两路都
+    判重落空 → 两行 verbatim + 双份向量/FTS。
+
+    交错缝：embed（外部 LLM 边界，A 首条 DML 之前——SELECT 判重不含任何写）。
+    垫片先调真（替身）实现拿到向量，再在返回前让 B 走完整真实 add_raw_memory
+    （同 StaticPool 连接、真实提交）。单线程顺序执行，确定性复现，无 sleep。
+    修复语义：(memory_type, key, user_id) 部分唯一索引（WHERE key != '' AND
+    status='active'，与去重 SELECT 的口径逐字对齐）+ 败方撞约束重读收敛。
+    """
+
+    CONTENT = "票 24 并发同文直存：完全相同的一段原文"
+
+    def test_concurrent_same_content_single_row(self, raw_env):
+        import hashlib
+
+        import lantai.services.memory_service as ms_mod
+        from lantai.services.memory_service import add_raw_memory
+
+        session_factory, engine, vector_store_mock = raw_env
+        h = hashlib.sha256(self.CONTENT.encode("utf-8")).hexdigest()
+
+        racing = {"done": False}
+        real_embed = ms_mod.embed  # fixture 替身（假 8 维向量）
+        b_result: dict = {}
+
+        def _embed_with_interleave(texts):
+            out = real_embed(texts)
+            if racing["done"]:
+                return out
+            racing["done"] = True
+            b_result.update(add_raw_memory(RawMemoryReq(content=self.CONTENT), user_id="default"))
+            assert b_result.get("memory_id"), f"B 侧直存失败：{b_result}"
+            return out
+
+        with patch("lantai.services.memory_service.embed", side_effect=_embed_with_interleave):
+            out_a = add_raw_memory(RawMemoryReq(content=self.CONTENT), user_id="default")
+
+        assert b_result, "交错未发生：B 侧未执行（缝位失配，测试失效）"
+        with session_factory() as s:
+            rows = s.exec(
+                select(MemoryItem).where(MemoryItem.memory_type == "verbatim", MemoryItem.key == h)
+            ).all()
+        assert len(rows) == 1, (
+            f"并发同文 {len(rows)} 行 verbatim（票 24 子项 2）：SELECT 判重后含网络往返、"
+            "无唯一约束兜底，双行 + 双份向量/FTS"
+        )
+        assert vector_store_mock.add.call_count == 1, (
+            f"向量写 {vector_store_mock.add.call_count} 次（票 24 子项 2）：并发双行伴生双份向量"
+        )
+        # 败方收敛到胜者那行（幂等回执形状与串行去重命中一致）
+        assert out_a.get("memory_id") == b_result["memory_id"] or out_a.get("dedup") is True, (
+            f"A 侧未收敛：a={out_a} b={b_result}"
+        )

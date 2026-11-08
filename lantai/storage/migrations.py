@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 38
+TARGET_SCHEMA_VERSION = 39
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -814,6 +814,76 @@ def _migrate_v38(conn) -> None:
         logger.warning("迁移 v38 corememoryblock 唯一索引创建跳过: %s", exc)
 
 
+def _migrate_v39(conn) -> None:
+    """v38 -> v39: memoryitem (memory_type, key, user_id) 部分唯一索引（票 24）。
+
+    /memory/add/raw 与 mem create_skill 的去重是「SELECT(key=sha256) → embed
+    （网络往返）→ INSERT」，MemoryItem.key 无唯一约束兜底——并发同文两路都
+    判重落空即双行 verbatim + 双份向量/FTS。索引口径与去重 SELECT 逐字对齐
+    （`WHERE key != '' AND status = 'active'`）：default="" 的无键行、NULL 属主
+    老行（真实库 391 条 verbatim 全 NULL，SQLite 复合键含 NULL 互异）、归档/
+    撤回行都不受约束。
+
+    存量对账（票 23 v38 范式）：建索引前先去重——同 (memory_type, key,
+    user_id) 的 active 非空键组**留最早一行**（ORDER BY created_at ASC,
+    id ASC）：同键行内容逐字节相同（key 即正文 sha256），最早行是持有最长
+    引用史的原件，竞态败行是后来者、依赖最少——与 v38「留新」相反是有意
+    的（那边 .first() 寻址不稳、留新保最新内容；这边留旧保引用完整）。
+    NULL 属主同键组不参与去重（宁 miss 不脏写：无法判定属主归属，删错
+    即丢数据），只清点留痕，由写入路径的 SELECT 去重继续兜底。
+    老库缺列时静默早退（同 v37/v38 守卫：列由模型 create_all 建出，届时
+    __table_args__ 的部分唯一索引随表自带）。
+    """
+    if not _table_exists(conn, "memoryitem"):
+        return
+    if not _has_column(conn, "memoryitem", "key") or not _has_column(conn, "memoryitem", "status"):
+        return
+    guard = "key IS NOT NULL AND key != '' AND status = 'active' AND user_id IS NOT NULL"
+    cur = conn.execute(
+        f"""
+        DELETE FROM memoryitem
+        WHERE {guard}
+          AND id NOT IN (
+            SELECT id FROM (
+              SELECT id, ROW_NUMBER() OVER (
+                PARTITION BY memory_type, key, user_id
+                ORDER BY created_at ASC, id ASC
+              ) AS rn
+              FROM memoryitem
+              WHERE {guard}
+            )
+            WHERE rn = 1
+          )
+        """
+    )
+    removed = cur.rowcount if cur.rowcount is not None else -1
+    null_groups = conn.execute(
+        """
+        SELECT COUNT(*) FROM (
+          SELECT memory_type, key FROM memoryitem
+          WHERE key IS NOT NULL AND key != '' AND status = 'active' AND user_id IS NULL
+          GROUP BY memory_type, key HAVING COUNT(*) > 1
+        )
+        """
+    ).fetchone()[0]
+    try:
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_memoryitem_type_key_user_active
+            ON memoryitem (memory_type, key, user_id)
+            WHERE key != '' AND status = 'active'
+            """
+        )
+        logger.info(
+            "Migrated v39: memoryitem 内容键部分唯一索引（票 24），去重 %s 行；"
+            "NULL 属主同键组 %s 组保留（不脏写，SELECT 去重兜底）",
+            removed,
+            null_groups,
+        )
+    except Exception as exc:
+        logger.warning("迁移 v39 memoryitem 唯一索引创建跳过: %s", exc)
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -852,6 +922,7 @@ MIGRATIONS = [
     (36, _migrate_v36),
     (37, _migrate_v37),
     (38, _migrate_v38),
+    (39, _migrate_v39),
 ]
 
 

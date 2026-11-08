@@ -770,7 +770,19 @@ def add_raw_memory(
         if (getattr(req, "session_id", "") or "").strip():
             mem.session_id = req.session_id.strip()
         s.add(mem)
-        s.flush()
+        try:
+            s.flush()
+        except IntegrityError:
+            # 票 24 子项 2：并发同文撞 (memory_type, key, user_id) 部分唯一索引
+            # ——败方回滚重读收敛到胜者那行（幂等回执形状与串行去重命中一致），
+            # 不再两行 verbatim + 双份向量/FTS，也不再 500。重读按原口径
+            # （owner 收窄 + status='active'）：胜者行必 active，恒可寻址；
+            # 寻址不到说明出现了超出索引口径的真异常，如实上抛不吞。
+            s.rollback()
+            existing = s.exec(q).first()
+            if existing is None:
+                raise
+            return {"memory_id": existing.id, "dedup": True, "verbatim": True}
         index_memory_item(
             mem.id,
             emb,

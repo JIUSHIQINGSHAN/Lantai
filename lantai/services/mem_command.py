@@ -15,6 +15,7 @@
 import hashlib
 import time
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from lantai.core.ids import new_id
@@ -186,7 +187,24 @@ def create_skill(
             valid_from=utcnow(),  # 主张自落库起生效（票 08：模型层默认 None，写入点显式声明）
         )
         s.add(mem)
-        s.flush()
+        try:
+            s.flush()
+        except IntegrityError:
+            # 票 24 子项 2：并发同技能撞 (memory_type, key, user_id) 部分唯一
+            # 索引——败方回滚重读收敛到胜者那行（与 add_raw_memory 同款，
+            # 不再 500）。寻址不到即真异常，如实上抛。
+            s.rollback()
+            existing = s.exec(
+                select(MemoryItem).where(
+                    MemoryItem.memory_type == "skill",
+                    MemoryItem.key == h,
+                    MemoryItem.status == "active",
+                    *dedup_scope,
+                )
+            ).first()
+            if existing is None:
+                raise
+            return {"ok": True, "memory_id": existing.id, "dedup": True}
         index_memory_item(
             mem.id,
             emb,
