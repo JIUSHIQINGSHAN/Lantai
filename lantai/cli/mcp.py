@@ -306,6 +306,28 @@ def handle_search(params: dict) -> dict:
     return ret
 
 
+def _require_int_in(raw, key: str, lo: int, hi: int) -> int:
+    """int 参数钳 [lo, hi]:类型严格(拒 bool/str——宁 miss 不脏写,不静默修正),
+    越界拒绝(ValueError → -32602),与 REST 孪生面 Query/Field 界限对齐(票 66)。"""
+    if isinstance(raw, bool) or not isinstance(raw, int) or not lo <= raw <= hi:
+        raise ValueError(f"{key} must be an int in [{lo}, {hi}]")
+    return raw
+
+
+def _require_finite_float(raw, key: str, lo: float | None = None) -> float:
+    """float 参数须为有限数(拒 bool/str/NaN/±inf——NaN 落库会让 JSON 响应产出
+    非法字面量并静默毒化累加指标,票 66);lo 以下拒绝(如耗时不得为负)。"""
+    if (
+        isinstance(raw, bool)
+        or not isinstance(raw, (int, float))
+        or not math.isfinite(raw)
+    ):
+        raise ValueError(f"{key} must be a finite number")
+    if lo is not None and raw < lo:
+        raise ValueError(f"{key} must be >= {lo}")
+    return float(raw)
+
+
 def _principal_from_params(params: dict):
     """从 MCP params 取归属身份（票 .scratch/readside-gaps/10）。
 
@@ -1704,7 +1726,9 @@ def handle_dossier_focus(params: dict) -> dict:
     query = params.get("query")
     if query is not None and not isinstance(query, str):
         raise ValueError("query must be a string or null")
-    limit = int(params.get("limit", 20))
+    # 票 66:界取 REST 孪生面 DossierFocusReq Field(ge=1, le=100);负值修复前
+    # 直落 focused_memories[:-1] 静默丢尾
+    limit = _require_int_in(params.get("limit", 20), "limit", 1, 100)
 
     from lantai.services.dossier_service import focus_dossier_service
 
@@ -1732,7 +1756,9 @@ def handle_muci_catalog(params: dict) -> dict:
     domain = params.get("domain")
     lane = params.get("lane")
     detail_level = params.get("detail_level", "compact")
-    max_entries = int(params.get("max_entries", 3))
+    # 票 66:界取 REST 孪生面 routes_catalog Query(ge=1, le=20);负值修复前
+    # 直落 sec_items[:-1] 切片反转
+    max_entries = _require_int_in(params.get("max_entries", 3), "max_entries", 1, 20)
 
     from lantai.services.muci_service import get_catalog_service
 
@@ -1746,11 +1772,19 @@ def handle_muci_catalog(params: dict) -> dict:
 
 
 def handle_qijuzhu_chronicle(params: dict) -> dict:
-    """起居注：时序记忆脉络与每日全息纪事查询（v0.45 ADR-0066）。"""
+    """起居注：时序记忆脉络与每日全息纪事查询（v0.45 ADR-0066）。
+
+    参数界限（票 66）：days ∈ [1, 30]、limit ∈ [1, 200] 与 REST 孪生面
+    routes_qijuzhu Query(ge/le) 对齐；days 负值修复前静默换轨成单日纪事。
+    日期格式解析单一真源仍在引擎 strptime（坏格式 ValueError → -32602），
+    本层只拒非 str 类型（修复前撞 strptime TypeError → -32603 脏面）。
+    """
     date_str = params.get("date")
-    days = int(params.get("days", 1))
+    if date_str is not None and not isinstance(date_str, str):
+        raise ValueError("date must be a string in YYYY-MM-DD or null")
+    days = _require_int_in(params.get("days", 1), "days", 1, 30)
     detail_level = params.get("detail_level", "summary")
-    limit = int(params.get("limit", 50))
+    limit = _require_int_in(params.get("limit", 50), "limit", 1, 200)
 
     from lantai.services.qijuzhu_service import (
         get_daily_chronicle_service,
@@ -1771,10 +1805,14 @@ def handle_qijuzhu_chronicle(params: dict) -> dict:
 
 
 def handle_famen_skill(params: dict) -> dict:
-    """法门：程序性技能匹配与标准 SOP 获取（v0.46 ADR-0067）。"""
+    """法门：程序性技能匹配与标准 SOP 获取（v0.46 ADR-0067）。
+
+    limit ∈ [1, 200]（票 66）：REST 孪生面 match [1,20] / list [1,200] 的并集;
+    负值修复前直落 assets[:-1] / scored[:-1] 切片反转。
+    """
     skill_id = params.get("skill_id")
     task = params.get("task")
-    limit = int(params.get("limit", 5))
+    limit = _require_int_in(params.get("limit", 5), "limit", 1, 200)
 
     from lantai.services.famen_service import (
         get_skill_detail_service,
@@ -1796,11 +1834,15 @@ def handle_famen_skill(params: dict) -> dict:
 
 
 def handle_zuozheng_evidence(params: dict) -> dict:
-    """佐证：证据链反查与断言可解释性验证（v0.47 ADR-0068）。"""
+    """佐证：证据链反查与断言可解释性验证（v0.47 ADR-0068）。
+
+    max_depth ∈ [1, 5]（票 66，与 REST 孪生面 routes_zuozheng Query 对齐）：
+    裸上界修复前大值直接放大证据链 BFS 扩散面；limit ∈ [1, 20] 同面收口。
+    """
     memory_id = params.get("memory_id")
     claim = params.get("claim")
-    max_depth = int(params.get("max_depth", 2))
-    limit = int(params.get("limit", 5))
+    max_depth = _require_int_in(params.get("max_depth", 2), "max_depth", 1, 5)
+    limit = _require_int_in(params.get("limit", 5), "limit", 1, 20)
 
     from lantai.services.zuozheng_service import (
         inspect_evidence_service,
@@ -1959,8 +2001,10 @@ def handle_cehou_observe(params: dict) -> dict:
 
     if record_sample and window_id:
         success = bool(params.get("success", True))
-        latency = float(params.get("latency_ms", 0.0))
-        score_delta = float(params.get("score_delta", 0.0))
+        # 票 66:非有限值(NaN/±inf)修复前直落累加器写库(avg_score_delta 会把
+        # JSON 响应毒成非法字面量);latency 非负,score_delta 允许负有限观测
+        latency = _require_finite_float(params.get("latency_ms", 0.0), "latency_ms", lo=0.0)
+        score_delta = _require_finite_float(params.get("score_delta", 0.0), "score_delta")
         return record_cehou_sample_service(
             window_id=window_id,
             success=success,
@@ -1971,19 +2015,29 @@ def handle_cehou_observe(params: dict) -> dict:
 
     create = bool(params.get("create", False))
     if create and window_id and target_type and params.get("target_id"):
+        # 票 66:界取 REST 孪生面 routes_cehou Field(ge=1, le=90 / le=1000);
+        # 0 天会绕过按天观察闸(先验后写,拒绝而非静默修正)
+        required_days = _require_int_in(params.get("required_days", 7), "required_days", 1, 90)
+        min_samples = _require_int_in(params.get("min_samples", 10), "min_samples", 1, 1000)
         return create_cehou_window_service(
             window_id=window_id,
             target_type=target_type,
             target_id=str(params.get("target_id")),
-            required_days=int(params.get("required_days", 7)),
-            min_samples=int(params.get("min_samples", 10)),
+            required_days=required_days,
+            min_samples=min_samples,
             principal=p,
         )
 
     if window_id:
+        # 票 66:str 传参修复前撞 days >= req_days TypeError(落 -32603 脏面);
+        # 负值修复前带毒提交 days_observed;上界 365 = REST required_days 界 90
+        # 的 4 倍余量(mock 本为提速观察,超过任何合法窗长的取值无意义)
+        mock_days = params.get("mock_days_observed")
+        if mock_days is not None:
+            mock_days = _require_int_in(mock_days, "mock_days_observed", 0, 365)
         res = inspect_cehou_window_service(
             window_id=window_id,
-            mock_days_observed=params.get("mock_days_observed"),
+            mock_days_observed=mock_days,
             principal=p,
         )
         if res:
@@ -2034,7 +2088,9 @@ def handle_qingniao_messenger(params: dict) -> dict:
     content = params.get("content")
     priority = str(params.get("priority", "normal") or "normal")
     status = params.get("status")
-    limit = int(params.get("limit", 20))
+    # 票 66:界取 REST 孪生面 routes_qingniao Query(ge=1, le=100);负值修复前
+    # 直落 matched[:-1] 静默丢最后一封信
+    limit = _require_int_in(params.get("limit", 20), "limit", 1, 100)
     namespace = str(params.get("namespace", "default") or "default")
 
     from lantai.services.qingniao_service import (

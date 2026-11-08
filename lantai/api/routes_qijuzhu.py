@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from lantai.core.auth import get_current_user
 from lantai.services.qijuzhu_service import (
@@ -56,8 +56,13 @@ def qijuzhu_date_route(
     ctx=Depends(get_current_user),
 ) -> dict[str, Any]:
     """获取指定历史日期的起居注全息纪事 (YYYY-MM-DD)。"""
-    return get_daily_chronicle_service(
-        date_str=date_str,
-        detail_level=detail_level,
-        principal=ctx,
-    )
+    # 票 66:坏格式日期修复前 strptime ValueError 冒泡成 500;包成 422 错误回执
+    # (拒绝而非静默修正),格式解析单一真源仍在引擎 strptime
+    try:
+        return get_daily_chronicle_service(
+            date_str=date_str,
+            detail_level=detail_level,
+            principal=ctx,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))

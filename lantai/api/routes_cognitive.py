@@ -10,7 +10,7 @@ GET  /cognitive/context/prompt - 返回供 Agent 使用的 Markdown 认知上下
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
@@ -143,7 +143,9 @@ def cognitive_reflect(
 @router.get("/context")
 def cognitive_context(
     task: str = "",
-    top_k: int = 12,
+    # 票 66:界对齐 MCP search 面 [1, 100];修复前 top_k<=0 静默返回全空切面
+    # (builder 里 len(target) >= top_k 对非正值恒真)
+    top_k: int = Query(12, ge=1, le=100),
     db: Session = Depends(get_session),
     ctx=Depends(get_current_user),
 ) -> dict:
@@ -170,7 +172,7 @@ def cognitive_context(
 @router.get("/context/prompt")
 def cognitive_context_prompt(
     task: str = "",
-    top_k: int = 12,
+    top_k: int = Query(12, ge=1, le=100),  # 票 66:与 /context 同界
     db: Session = Depends(get_session),
     ctx=Depends(get_current_user),
 ) -> dict:
