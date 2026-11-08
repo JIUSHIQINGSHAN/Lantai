@@ -423,6 +423,13 @@ class Settings(BaseSettings):
     CONSOLIDATION_MIN_CLUSTER_SIZE: int = (
         3  # 聚类下限：同关键词命中记忆数 ≥ 此值才成簇（ADR-0002 零硬编码，原硬编码 3）
     )
+    # 沉潜调度（票 34）：与 digest/reflect 同形——cron 时刻 + ENABLED 开关。
+    # 原 hour=19/minute=30 硬编码（注释自证「北京时间凌晨 03:30」——只对
+    # 东八区宿主成立）破例 ADR-0002 零硬编码口径，此处收口；默认值即原
+    # 硬编码，默认行为零变化。
+    CONSOLIDATION_ENABLED: bool = True
+    CONSOLIDATION_CRON_HOUR: int = 19  # UTC 小时（UTC 19:30 = 北京 03:30，夜梦沉淀窗口）
+    CONSOLIDATION_CRON_MINUTE: int = 30
     CONSOLIDATION_PRUNE_THRESHOLD: float = (
         0.05  # 突触修剪阈值：decay_score < 此值即剪（ADR-0002 零硬编码，原硬编码 0.05）
     )
@@ -488,6 +495,11 @@ class Settings(BaseSettings):
     REFLECT_CRON_HOUR: int = 22  # UTC；与 digest 同小时错 1 分钟
     REFLECT_MAX_BATCH: int = 20  # 单次蒸馏候选上限（LLM 成本防护）
     # 察窗：观察期滑动窗口口径（ADR-0027）。从连续改为窗口内计数。
+    # 消费面（票 34 现状核对）：①scripts/reflect_observation_status.py
+    # --check（发布准备工具，standalone sqlite3 直读）；②reflect_worker
+    # 每次 scheduled 运行前真评察窗并在回执/日志透出（未毕业不跳过——
+    # 合格运行日由运行本身产生，自闸即死锁）。ADR-0027 影响段曾承诺
+    # release_check 接线，从未落地（实施现状见该 ADR 增补段）。
     REFLECT_OBSERVATION_WINDOW_DAYS: int = 14  # 滑动窗口大小（天）
     REFLECT_OBSERVATION_REQUIRED_RUNS: int = 7  # 窗口内合格运行天数门槛
     REFLECT_IMPORTANCE_POOL: float = (
