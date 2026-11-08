@@ -346,7 +346,8 @@ def _repair_canonical_bindings(nodeid):
 # 不做「看着像护栏、实际在空转」的假隔离。
 
 _GUARDED_MODULE_STATE = (
-    ("lantai.cognition.cehou", "_SHADOW_WINDOWS"),
+    # ("lantai.cognition.cehou", "_SHADOW_WINDOWS") 票 60 退役：影子窗状态落库
+    # CehouWindow 表，进程内注册表已删除——无状态可守即无通道可登记。
     ("lantai.core.scheduler", "WORKER_LAST_RUN"),
     ("lantai.gate.prefilter", "_PATTERN_CACHE"),
     ("lantai.gate.prefilter", "_KEYWORD_WARNED"),

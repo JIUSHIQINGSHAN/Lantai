@@ -28,6 +28,7 @@ import warnings
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from lantai.core.settings import settings as _settings
@@ -1956,7 +1957,11 @@ def handle_diben_anchor(params: dict) -> dict:
 
 
 def handle_cehou_observe(params: dict) -> dict:
-    """测候：影子观察期视窗巡检、视窗扫描与样本实测上报（v0.52 ADR-0073）。"""
+    """测候：影子观察期视窗巡检、视窗扫描与样本实测上报（v0.52 ADR-0073）。
+
+    票 60：视窗落库 CehouWindow 表，create 撞他人 window_id → 409 结构化回执
+    （HTTPException 回执化，同 chenfeng unarchive 先例），不落 -32603 兜底。
+    """
     scan = bool(params.get("scan", False))
     window_id = params.get("window_id")
     target_type = params.get("target_type")
@@ -1970,43 +1975,46 @@ def handle_cehou_observe(params: dict) -> dict:
     )
 
     p = _principal_from_params(params)
-    if scan:
-        return scan_cehou_windows_service(target_type=target_type, principal=p)
+    try:
+        if scan:
+            return scan_cehou_windows_service(target_type=target_type, principal=p)
 
-    if record_sample and window_id:
-        success = bool(params.get("success", True))
-        latency = float(params.get("latency_ms", 0.0))
-        score_delta = float(params.get("score_delta", 0.0))
-        return record_cehou_sample_service(
-            window_id=window_id,
-            success=success,
-            latency_ms=latency,
-            score_delta=score_delta,
-            principal=p,
-        )
+        if record_sample and window_id:
+            success = bool(params.get("success", True))
+            latency = float(params.get("latency_ms", 0.0))
+            score_delta = float(params.get("score_delta", 0.0))
+            return record_cehou_sample_service(
+                window_id=window_id,
+                success=success,
+                latency_ms=latency,
+                score_delta=score_delta,
+                principal=p,
+            )
 
-    create = bool(params.get("create", False))
-    if create and window_id and target_type and params.get("target_id"):
-        return create_cehou_window_service(
-            window_id=window_id,
-            target_type=target_type,
-            target_id=str(params.get("target_id")),
-            required_days=int(params.get("required_days", 7)),
-            min_samples=int(params.get("min_samples", 10)),
-            principal=p,
-        )
+        create = bool(params.get("create", False))
+        if create and window_id and target_type and params.get("target_id"):
+            return create_cehou_window_service(
+                window_id=window_id,
+                target_type=target_type,
+                target_id=str(params.get("target_id")),
+                required_days=int(params.get("required_days", 7)),
+                min_samples=int(params.get("min_samples", 10)),
+                principal=p,
+            )
 
-    if window_id:
-        res = inspect_cehou_window_service(
-            window_id=window_id,
-            mock_days_observed=params.get("mock_days_observed"),
-            principal=p,
-        )
-        if res:
-            return res
-        return {"error": f"Observation window {window_id} not found"}
+        if window_id:
+            res = inspect_cehou_window_service(
+                window_id=window_id,
+                mock_days_observed=params.get("mock_days_observed"),
+                principal=p,
+            )
+            if res:
+                return res
+            return {"error": f"Observation window {window_id} not found"}
 
-    return scan_cehou_windows_service(principal=p)
+        return scan_cehou_windows_service(principal=p)
+    except HTTPException as e:
+        return {"ok": False, "error": e.detail, "status_code": e.status_code}
 
 
 def handle_shishi_vault(params: dict) -> dict:

@@ -970,3 +970,32 @@ class Dossier(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class CehouWindow(SQLModel, table=True):
+    """测候影子观察视窗（ADR-0073）持久层（票 60）。
+
+    影子实验视窗的唯一真源——此前是 `cehou.py` 的进程内模块级 dict
+    `_SHADOW_WINDOWS`：无属主校验可被任意覆盖夺权、多 worker 各一份、重启清零。
+    window_id 即主键（调用方自由字符串，同 ID 重开 = 同属主 upsert / 他人 409 拒绝）。
+    """
+
+    __tablename__ = "cehou_window"
+
+    window_id: str = Field(primary_key=True)
+    target_type: str = Field(index=True)  # param | rule | proposal
+    target_id: str = Field(index=True)
+    state: str = Field(default="observing", index=True)  # observing | graduated | rolled_back
+    days_observed: int = 0
+    required_days: int = 7
+    min_samples: int = 10
+    sample_count: int = 0
+    success_count: int = 0
+    failure_count: int = 0
+    total_latency_ms: float = 0.0
+    total_score_delta: float = 0.0
+    alerts: list = Field(default_factory=list, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)

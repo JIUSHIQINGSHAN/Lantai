@@ -46,7 +46,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # 本文件与 conftest 各自声明一遍同一张表：漂移即红（护栏被人删项、改名、
 # 加了不存在的属性，都在这里被抓住，而不是悄悄变成空转）。
 EXPECTED_CHANNELS = (
-    ("lantai.cognition.cehou", "_SHADOW_WINDOWS"),
+    # ("lantai.cognition.cehou", "_SHADOW_WINDOWS") 票 60 退役：影子窗落库
+    # CehouWindow 表，进程内注册表删除——通道随实体一起消失，见 conftest 同注。
     ("lantai.core.scheduler", "WORKER_LAST_RUN"),
     ("lantai.gate.prefilter", "_PATTERN_CACHE"),
     ("lantai.gate.prefilter", "_KEYWORD_WARNED"),
@@ -144,14 +145,14 @@ CHILD_DIRTY = """
 import os
 from pathlib import Path
 
+import lantai.cognition.kaogong as kaogong
 import lantai.cli.mcp as mcp_mod
-import lantai.cognition.cehou as cehou
 import lantai.gate.prefilter as pf
 import lantai.observability.metrics as metrics
 
 
 def test_a_plant_pollution():
-    cehou._SHADOW_WINDOWS["child-planted-window"] = {"window_id": "child-planted-window"}
+    kaogong._LATEST_KAOGONG_REPORT = {"child": "planted-report"}
     pf._PATTERN_CACHE.update(key="child-planted-key", pattern="child-planted-pattern")
     mcp_mod._guard_instance = mcp_mod.LoopGuard()
     mcp_mod._guard_instance.begin("child-planted-key")
@@ -167,16 +168,16 @@ import json
 import os
 from pathlib import Path
 
+import lantai.cognition.kaogong as kaogong
 import lantai.cli.mcp as mcp_mod
-import lantai.cognition.cehou as cehou
 import lantai.gate.prefilter as pf
 import lantai.observability.metrics as metrics
 
 
 def test_b_look_for_leakage():
     leaked = []
-    if "child-planted-window" in cehou._SHADOW_WINDOWS:
-        leaked.append("cehou._SHADOW_WINDOWS")
+    if kaogong._LATEST_KAOGONG_REPORT.get("child") == "planted-report":
+        leaked.append("kaogong._LATEST_KAOGONG_REPORT")
     if pf._PATTERN_CACHE.get("key") == "child-planted-key":
         leaked.append("prefilter._PATTERN_CACHE")
     if getattr(mcp_mod._guard_instance, "_states", None):
