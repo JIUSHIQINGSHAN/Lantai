@@ -55,10 +55,11 @@ def test_usage_returns_seven_days_with_zero_fill(engine):
 def test_usage_counts_today(engine):
     from lantai.core.time import utcnow
 
-    _add(engine)  # 今天（usage 按 UTC 日期聚合，断言必须与实现一致防时区 flaky）
+    _add(engine)  # 今天（usage 按本地墙钟日聚合——usage.py:33 local_day_window_utc，
+    # 票 32 裁决；断言必须用本地日期，UTC 日期在本地 00:00–07:59 与实现错位）
     with patch.object(db_module, "get_session", lambda: Session(engine)):
         res = usage(ctx=Principal(user_id="alice"))
-    today = str(utcnow().date())
+    today = utcnow().astimezone().strftime("%Y-%m-%d")
     assert today in res["daily_new"]
     # NULL 属主的老行对任何 viewer 可见（票 .scratch/mcp-identity-gaps/01b：
     # `== viewer OR IS NULL`，判不可见会让单人部署的报表归零）

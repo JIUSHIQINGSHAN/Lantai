@@ -154,7 +154,10 @@ class TestQijuzhuEngineSmoke:
 
             principal = Principal(user_id="user-alice", role="user")
             engine = QijuzhuEngine(session=session, principal=principal)
-            today_str = now.strftime("%Y-%m-%d")
+            # 票 32：引擎按本地墙钟日聚合（qijuzhu.py:226 local_day_window_utc），
+            # 期望日期须取本地日——UTC 日期在本地 00:00–07:59 与实现错位（v0.68
+            # 巡检终跑跨本地午夜实测炸出，五例同根因）
+            today_str = now.astimezone().strftime("%Y-%m-%d")
 
             chronicle = engine.get_daily_chronicle(date=today_str, detail_level="summary")
 
@@ -235,7 +238,7 @@ class TestQijuzhuEngineSmoke:
             engine = QijuzhuEngine(session=session, principal=principal)
 
             chronicle = engine.get_daily_chronicle(
-                date=now.strftime("%Y-%m-%d"), detail_level="full"
+                date=now.astimezone().strftime("%Y-%m-%d"), detail_level="full"
             )
             events = chronicle["chronicle_events"]
             target = next(e for e in events if e.get("ref_id") == "mem-qjz-inject-1")
@@ -277,7 +280,9 @@ class TestQijuzhuEngineSmoke:
             # 1. 以 Bob 身份查询，绝对不能看到 Alice 的记忆
             bob_principal = Principal(user_id="user-bob", role="user")
             bob_engine = QijuzhuEngine(session=session, principal=bob_principal)
-            bob_chronicle = bob_engine.get_daily_chronicle(date=now.strftime("%Y-%m-%d"))
+            bob_chronicle = bob_engine.get_daily_chronicle(
+                date=now.astimezone().strftime("%Y-%m-%d")
+            )
             bob_event_ids = {e.get("ref_id") for e in bob_chronicle["chronicle_events"]}
             assert "mem-qjz-alice-only" not in bob_event_ids
             assert "mem-qjz-bob-only" in bob_event_ids
@@ -289,7 +294,9 @@ class TestQijuzhuEngineSmoke:
                 allowed_lanes=["preference", "fact"],
             )
             alice_engine = QijuzhuEngine(session=session, principal=alice_restricted)
-            alice_chronicle = alice_engine.get_daily_chronicle(date=now.strftime("%Y-%m-%d"))
+            alice_chronicle = alice_engine.get_daily_chronicle(
+                date=now.astimezone().strftime("%Y-%m-%d")
+            )
             alice_event_ids = {e.get("ref_id") for e in alice_chronicle["chronicle_events"]}
             assert "mem-qjz-restricted-lane" not in alice_event_ids
             assert "mem-qjz-alice-only" in alice_event_ids
