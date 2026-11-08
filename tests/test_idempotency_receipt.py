@@ -118,6 +118,31 @@ def _set_created(key: str, user_id: str, tenant_id: str, seconds_ago: float):
         s.commit()
 
 
+def _advancing_clock(monkeypatch):
+    """严格递增时钟（每调用 +1ms）——钉住「接管 + 带令牌删除」组合测试。
+
+    Windows / CPython 3.11 的 time.time() 粒度约 15.6ms（实测 10 万次紧循环
+    仅 5 个唯一值）：真时钟下 claim1 与接管 claim2 两次取时可落同一 tick
+    同值，接管回写的 created_at 与 claim1 返回的 claimed_at **浮点相等**，
+    带令牌 release/settle 的条件删除就命中新主行——测试间歇性翻红（v0.68
+    票 69 终跑二轮实测炸出）。令牌相等性本身是生产令牌设计的缺陷，另立票
+    （74-epoch-token-clock-granularity）；本文件要锁的是令牌失效后的删 0
+    语义，不是宿主时钟粒度——事件模拟严格递增，不 mock 被测判定逻辑。
+    """
+    import datetime as _dt
+
+    import lantai.core.idempotency as idem
+
+    real = idem.utcnow
+    seq = {"n": 0}
+
+    def _clock():
+        seq["n"] += 1
+        return real() + _dt.timedelta(milliseconds=seq["n"])
+
+    monkeypatch.setattr(idem, "utcnow", _clock)
+
+
 # ------------------------------------------------------------------ claim 语义
 
 
@@ -281,8 +306,9 @@ class TestSettleRelease:
         assert _row("k1") is None  # 行已删
         assert claim("k1", "default", "", fp, task_id="task_retry")["action"] == "new"
 
-    def test_settle_stale_token_does_not_clobber_new_owner(self, mem_env):
+    def test_settle_stale_token_does_not_clobber_new_owner(self, mem_env, monkeypatch):
         """行过期被接管后，迟到的 settle 只认自己的 created_at 令牌。"""
+        _advancing_clock(monkeypatch)
         binding, fp = self._binding()
         _set_created("k1", "default", "", LEASE_SECONDS + 5)
         # 新主接管（takeover 改写了 created_at）
@@ -293,7 +319,8 @@ class TestSettleRelease:
         assert json.loads(row.response_json)["task_id"] == "task_owner2"
         assert row.state == "accepted"
 
-    def test_settle_failure_after_takeover_cannot_delete_new_owner(self, mem_env):
+    def test_settle_failure_after_takeover_cannot_delete_new_owner(self, mem_env, monkeypatch):
+        _advancing_clock(monkeypatch)
         binding, fp = self._binding()
         _set_created("k1", "default", "", LEASE_SECONDS + 5)
         assert claim("k1", "default", "", fp, task_id="task_owner2")["action"] == "new"
@@ -762,7 +789,7 @@ class TestTakeOverStateGuard:
         assert json.loads(row.response_json)["task_id"] == "task_a"
         assert again["action"] == "pending", f"接管判 {again.get('action')}：state 已前移应判负"
 
-    def test_release_with_stale_token_spares_new_owner(self, mem_env):
+    def test_release_with_stale_token_spares_new_owner(self, mem_env, monkeypatch):
         """顺序回归锁（票 24）：接管换令牌后，旧主的带令牌 release 删 0 行。
 
         release 的交错窗口无模块级函数缝可钉（SELECT→DELETE 之间无调用边界），
@@ -771,6 +798,7 @@ class TestTakeOverStateGuard:
         顺序形态本就安全——交错窗靠条件语句按构造关死，如实申报非红转绿）。
         """
         fp = fingerprint_payload("文本", "default", "dialogue", "", None)
+        _advancing_clock(monkeypatch)
         v = claim("k-rl", "default", "", fp, task_id="task_old")
         _set_created("k-rl", "default", "", LEASE_SECONDS + 5)
         assert claim("k-rl", "default", "", fp, task_id="task_new")["action"] == "new"
