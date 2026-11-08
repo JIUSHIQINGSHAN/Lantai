@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -13,7 +14,9 @@ _scheduler: BackgroundScheduler | None = None
 WORKER_LAST_RUN: dict[str, str] = {}
 
 # 每日 cron 任务分钟位（启动补跑与 cron 注册共用一处，改调度点不用同步改两处）
-_DIGEST_CRON_MINUTE = 0
+# 票 31：digest 触发点 UTC 15:55 = 本地(Asia/Shanghai) 23:55——贴近它所报告
+# 本地日的日界（早晨触发只覆盖当天前几小时，触发后到达的数据永远缺席当日报告）。
+_DIGEST_CRON_MINUTE = 55
 _REFLECT_CRON_MINUTE = 1
 
 
@@ -196,6 +199,12 @@ def _parse_utc_iso(value: str) -> datetime | None:
         return None
 
 
+def _most_recent_daily_fire(now: datetime, cron_hour: int, cron_minute: int) -> datetime:
+    """最近一次已到点的每日调度时刻（UTC）：now 未到今日触发点则取昨日。"""
+    today_fire = now.replace(hour=cron_hour, minute=cron_minute, second=0, microsecond=0)
+    return today_fire if now >= today_fire else today_fire - timedelta(days=1)
+
+
 def should_catch_up(
     name: str,
     cron_hour: int,
@@ -208,8 +217,7 @@ def should_catch_up(
     if last_run is None:
         last_run = get_last_run(name)
     now = now or datetime.now(UTC)
-    today_fire = now.replace(hour=cron_hour, minute=cron_minute, second=0, microsecond=0)
-    most_recent_fire = today_fire if now >= today_fire else today_fire - timedelta(days=1)
+    most_recent_fire = _most_recent_daily_fire(now, cron_hour, cron_minute)
     if last_run is None:
         return True
     last_dt = _parse_utc_iso(last_run)
@@ -218,23 +226,38 @@ def should_catch_up(
     return last_dt < most_recent_fire
 
 
-def _catch_up_daily_jobs() -> None:
+def _catch_up_daily_jobs(now: datetime | None = None) -> None:
     """启动补跑：每日 cron 任务错过调度点（进程当时未运行）时补跑一次，
-    观察期样本不因重启/关机断档。"""
+    观察期样本不因重启/关机断档。
+
+    now 参数供测试注入冻结时钟（生产调用缺省 = 实时）。
+    """
     if _scheduler is None:
         return
+    now = now or datetime.now(UTC)
     jobs = []
     if settings.DIGEST_ENABLED:
         from lantai.workers.digest_worker import run_digest_once
 
-        jobs.append(("digest", run_digest_once, settings.DIGEST_CRON_HOUR, _DIGEST_CRON_MINUTE))
+        # 票 31：补跑锚定错过触发点所报告的本地日（触发点 UTC 换系统本地日，
+        # 与 _local_day_window_utc 同一口径），不锚启动时刻——否则错过的那日
+        # 数据会被写成启动日残报。
+        fire_utc = _most_recent_daily_fire(now, settings.DIGEST_CRON_HOUR, _DIGEST_CRON_MINUTE)
+        jobs.append(
+            (
+                "digest",
+                partial(run_digest_once, day=fire_utc.astimezone().date()),
+                settings.DIGEST_CRON_HOUR,
+                _DIGEST_CRON_MINUTE,
+            )
+        )
     if settings.REFLECT_ENABLED:
         from lantai.workers.reflect_worker import run_reflect_once
 
         jobs.append(("reflect", run_reflect_once, settings.REFLECT_CRON_HOUR, _REFLECT_CRON_MINUTE))
     for name, fn, hour, minute in jobs:
-        if should_catch_up(name, hour, minute):
-            run_at = datetime.now(UTC) + timedelta(seconds=2)
+        if should_catch_up(name, hour, minute, now=now):
+            run_at = now + timedelta(seconds=2)
             _scheduler.add_job(
                 fn, "date", run_date=run_at, id=f"{name}_catchup", replace_existing=True
             )
@@ -297,7 +320,9 @@ def start_scheduler():
         replace_existing=True,
     )
 
-    # Ticket 03: Daily Digest 每日盘点报告（本地早晨；DIGEST_CRON_HOUR 为 UTC 小时）
+    # Ticket 03: Daily Digest 每日盘点报告（票 31：本地日末——UTC 15:55 =
+    # 上海 23:55，贴近所报告本地日的日界；DIGEST_CRON_HOUR 为 UTC 小时，
+    # 分钟位单一真源 _DIGEST_CRON_MINUTE，注册必须显式带上）
     if settings.DIGEST_ENABLED:
         from lantai.workers.digest_worker import run_digest_once
 
@@ -305,6 +330,7 @@ def start_scheduler():
             run_digest_once,
             "cron",
             hour=settings.DIGEST_CRON_HOUR,
+            minute=_DIGEST_CRON_MINUTE,
             id="digest",
             replace_existing=True,
         )

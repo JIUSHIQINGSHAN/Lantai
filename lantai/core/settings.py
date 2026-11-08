@@ -84,7 +84,7 @@ class Settings(BaseSettings):
 
     # Daily Digest（Ticket 03）：每日盘点报告 docs/memory-digest/YYYY-MM-DD.md
     DIGEST_ENABLED: bool = True
-    DIGEST_CRON_HOUR: int = 22  # UTC 22:00 = 本地(Asia/Shanghai) 06:00 早晨
+    DIGEST_CRON_HOUR: int = 15  # UTC 15:55 = 本地(Asia/Shanghai) 23:55 日末（票 31：触发点须贴近所报告本地日的日界，早晨触发只覆盖当天前几小时）
     DIGEST_OUTPUT_DIR: str = ""  # 为空时 = 仓库根 docs/memory-digest
 
     # Lane 分轨衰减：每类记忆的基础保留强度与重要性放大系数

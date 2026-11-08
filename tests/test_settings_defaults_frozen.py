@@ -41,7 +41,7 @@ FROZEN_DEFAULTS = {
     "CANDIDATE_TTL_CRON_HOURS": 24,
     "RECEIPT_MISS_CRON_MINUTES": 10,
     "DIGEST_ENABLED": True,
-    "DIGEST_CRON_HOUR": 22,
+    "DIGEST_CRON_HOUR": 15,
     "DIGEST_OUTPUT_DIR": "",
     "LANE_DECAY_PROFILES": {
         "fact": {"base_s": 30, "importance_boost": 40},
