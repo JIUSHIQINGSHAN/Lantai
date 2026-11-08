@@ -120,6 +120,10 @@ def validate_api_url(url: str) -> str:
     return url
 
 
+# 票 48：流式限长的读取块大小——峰值内存 ≈ max_bytes + 块缓冲
+_FETCH_CHUNK_BYTES = 64 * 1024
+
+
 def fetch_with_safety(
     url: str,
     max_bytes: int | None = None,
@@ -147,15 +151,25 @@ def fetch_with_safety(
     current = validate_fetch_url(url)
     for _ in range(max_redirects + 1):
         with httpx.Client(follow_redirects=False, timeout=timeout) as client:
-            r = client.get(current, headers={"User-Agent": f"lantai/{app_version}"})
-        if r.status_code in (301, 302, 303, 307, 308):
-            loc = r.headers.get("location")
-            if not loc:
-                break
-            current = validate_fetch_url(str(httpx.URL(current).join(loc)))
-            continue
-        r.raise_for_status()
-        if len(r.content) > max_bytes:
-            raise ValueError(f"response too large: {len(r.content)} bytes > {max_bytes}")
-        return r.content
+            # 票 48：限长从事后检查改流式断连——非流式 get 先把响应体完整读入
+            # 内存再判 len，恶意源（无限流/缓慢灌注）在超时窗内可灌数十 GB，
+            # 同进程（REST+scheduler+MCP 单进程模型）OOM 陪葬。逐块累计、
+            # 超限即断：峰值 ≈ max_bytes + 块缓冲。重定向跳同样流式（响应体
+            # 不落内存，只取 location 头）。
+            with client.stream(
+                "GET", current, headers={"User-Agent": f"lantai/{app_version}"}
+            ) as r:
+                if r.status_code in (301, 302, 303, 307, 308):
+                    loc = r.headers.get("location")
+                    if not loc:
+                        break
+                    current = validate_fetch_url(str(httpx.URL(current).join(loc)))
+                    continue
+                r.raise_for_status()
+                buf = bytearray()
+                for chunk in r.iter_bytes(chunk_size=_FETCH_CHUNK_BYTES):
+                    buf.extend(chunk)
+                    if len(buf) > max_bytes:
+                        raise ValueError(f"response too large: >{max_bytes} bytes (stream aborted)")
+                return bytes(buf)
     raise ValueError("too many redirects")

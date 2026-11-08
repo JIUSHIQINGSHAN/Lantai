@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     LLM_MAX_CONCURRENCY: int = 4
     LLM_ACQUIRE_TIMEOUT: float = 30.0
 
+    # LLM 出站时长预算（票 48）：SDK 默认 timeout=600s + max_retries=2 叠加
+    # tenacity 3 连击 → 单次 chat_json 最坏 ≈90 分钟，挂起的上游占死 ingest
+    # job 与许可并发闸。显式立法：单请求墙 LLM_TIMEOUT，SDK 层重试关闭
+    # （应用层 tenacity 已有界——双层重试是乘法放大）；ingest 提取链另给
+    # 单发预算 LLM_INGEST_TIMEOUT（预算模式一次机会即止，embed D-04 同范式）
+    LLM_TIMEOUT: float = 120.0
+    LLM_MAX_RETRIES: int = 0
+    LLM_INGEST_TIMEOUT: float = 60.0
+
     # MCP 工具循环守卫（票据 .scratch/mcp-loop-guard/01，上游 f0.3++ LoopGuard 同款）：
     # 同一工具+参数指纹在 window_s 秒内失败 threshold 次 → 熔断 cooldown_s 秒，
     # 冷却结束放单个探针请求恢复。宿主 LLM 陷「调工具→失败→再调」死循环时的止损。

@@ -109,14 +109,13 @@ def test_arxiv_target_rejects_bad_scheme_and_host():
 
 
 # ── 票 17 子项 1：adapter 组装冒烟（此前全链零测试——AGENTS.md 纪律缺口）──
-# 真 feedparser.parse 对真实样本 XML；httpx/fetch_with_safety/getaddrinfo
-# 替身 = 网络边界（纪律允许面）；字段组装、hash 计算、quality_signal 提取、
+# 真 feedparser.parse 对真实样本 XML；fetch_with_safety/getaddrinfo
+# 替身 = 网络边界（纪律允许面；票 48 起 arxiv 也走 fetch_with_safety 缝）；字段组装、hash 计算、quality_signal 提取、
 # published 缺省臂全部真实执行。hash 口径断言按现状锁定（rss=link+content，
 # arxiv=content）——票 17-3 统一口径拍板后随裁决更新。
 
 import hashlib
 from datetime import UTC, datetime
-from types import SimpleNamespace
 
 import lantai.ingestion.arxiv as arxiv_mod
 import lantai.ingestion.rss as rss_mod
@@ -198,7 +197,11 @@ _ARXIV_ATOM = """<?xml version="1.0" encoding="UTF-8"?>
 
 def test_arxiv_adapter_assembles_fields_from_real_feedparser(monkeypatch):
     _stub_dns(monkeypatch, "8.8.8.8")  # export.arxiv.org 解析替身（网络边界）
-    monkeypatch.setattr(arxiv_mod.httpx, "get", lambda url, **kw: SimpleNamespace(text=_ARXIV_ATOM))
+    # 票 48 缝迁移：fetch 改走 fetch_with_safety 统一防线（bytes 直喂
+    # feedparser）——替身随之挪到该缝（外部网络豁免口径，同 RSS 臂）
+    monkeypatch.setattr(
+        arxiv_mod, "fetch_with_safety", lambda url, **kw: _ARXIV_ATOM.encode("utf-8")
+    )
     docs = ArxivAdapter().fetch({"query": "cat:cs.IR", "max_results": 2})
 
     assert len(docs) == 2

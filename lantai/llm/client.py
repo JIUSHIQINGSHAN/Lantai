@@ -127,27 +127,55 @@ def get_client() -> OpenAI:
     if _client_instance is None:
         # Check URL safety right before init (lazy)
         validate_api_url(settings.OPENAI_BASE_URL)
+        # 票 48：SDK 默认 600s×2 次重试与 tenacity 3 连击相乘（单次 chat_json
+        # 最坏 ≈90 分钟）——显式立法单请求墙，SDK 层零重试（应用层 tenacity
+        # 已有界，双层重试是乘法放大）
         _client_instance = OpenAI(
-            api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL
+            api_key=settings.OPENAI_API_KEY,
+            base_url=settings.OPENAI_BASE_URL,
+            timeout=settings.LLM_TIMEOUT,
+            max_retries=settings.LLM_MAX_RETRIES,
         )
     return _client_instance
 
 
-@_timed("chat")
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(min=1, max=10),
-    retry=retry_if_not_exception_type(LLMConcurrencyTimeout),
-)
-def chat_json(system: str, user: str) -> dict:
+def _chat_once(system: str, user: str, timeout: float | None = None) -> dict:
     with _gate_acquire():
-        resp = get_client().chat.completions.create(
+        client = get_client()
+        if timeout is not None:
+            # with_options 返回同配置新客户端实例（embed 预算模式 D-04 同范式）。
+            # max_retries=0：预算模式下一次机会即止——超预算必撞外层墙。
+            client = client.with_options(timeout=timeout, max_retries=0)
+        resp = client.chat.completions.create(
             model=settings.LLM_MODEL,
             temperature=0.2,
             response_format={"type": "json_object"},
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
         )
     return json.loads(resp.choices[0].message.content)
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(min=1, max=10),
+    retry=retry_if_not_exception_type(LLMConcurrencyTimeout),
+)
+def _chat_with_retry(system: str, user: str) -> dict:
+    return _chat_once(system, user)
+
+
+@_timed("chat")
+def chat_json(system: str, user: str, timeout: float | None = None) -> dict:
+    """LLM 结构化输出。
+
+    timeout（秒）：预算传导（票 48）——ingest 提取链等有外层预算的调用方
+    传剩余预算。**预算模式下不做多次重试**：tenacity 3 连击会把 60s 预算
+    变成 3×60s+等待——超预算必撞外层墙。预算内一次机会即止，失败抛给调用方
+    走降级路径。None 保持原行为（tenacity 3 次重试，非预算路径无外层墙）。
+    """
+    if timeout is not None:
+        return _chat_once(system, user, timeout)
+    return _chat_with_retry(system, user)
 
 
 @_timed("vision")

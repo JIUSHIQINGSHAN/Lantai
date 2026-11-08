@@ -27,7 +27,6 @@ import threading
 import time
 import tracemalloc
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from types import SimpleNamespace
 
 import feedparser
 import pytest
@@ -96,22 +95,11 @@ class TestArxivFeedparserPrimitive:
 
         _stub_dns(monkeypatch)
 
-        # 双缝观测（修复前后生产代码走不同出口，两缝都挂捕获）：
-        # 修复前 = arxiv.httpx.get；修复后 = arxiv.fetch_with_safety
-        httpx_urls: list[str] = []
+        # 观测缝 = arxiv.fetch_with_safety（票 48 修复后的统一抓取出口；
+        # 红态证据在 af5c9a15：修复前走 arxiv.httpx.get 且喂 str）
         fws_urls: list[str] = []
-
-        def fake_httpx_get(url, **kw):
-            httpx_urls.append(url)
-            return SimpleNamespace(text=_ATOM.decode("utf-8"), content=_ATOM)
-
-        monkeypatch.setattr(arxiv_mod.httpx, "get", fake_httpx_get)
-        # raising=False：修复前生产代码尚未 import fetch_with_safety（红态无此名）
         monkeypatch.setattr(
-            arxiv_mod,
-            "fetch_with_safety",
-            lambda url, **kw: (fws_urls.append(url), _ATOM)[1],
-            raising=False,
+            arxiv_mod, "fetch_with_safety", lambda url, **kw: (fws_urls.append(url), _ATOM)[1]
         )
 
         real_parse = arxiv_mod.feedparser.parse
@@ -128,17 +116,17 @@ class TestArxivFeedparserPrimitive:
         # 病灶 1 断根：bytes 直喂，feedparser 永不进 URL 分支
         assert fed_types == [bytes], f"feedparser 收到非 bytes 实参：{fed_types}"
         # 病灶 1 顺带：明文 http → https
-        all_urls = httpx_urls + fws_urls
-        assert all_urls, "生产代码未走到任一抓取缝"
-        assert all(u.startswith("https://export.arxiv.org") for u in all_urls), all_urls
+        assert fws_urls and all(u.startswith("https://export.arxiv.org") for u in fws_urls), (
+            fws_urls
+        )
         # 病灶 4：max_results 任意大整数钳制 ≤100
-        assert all("max_results=100" in u for u in all_urls), all_urls
+        assert all("max_results=100" in u for u in fws_urls), fws_urls
 
+        fws_urls.clear()
         docs_lo = arxiv_mod.ArxivAdapter().fetch({"query": "cat:cs.AI", "max_results": 0})
         assert len(docs_lo) == 1
-        # 下界同样钳（0/负数 → 1）：只看第二次 fetch 产生的 url（前面已清点）
-        lo_urls = httpx_urls[1:] + fws_urls[1:]
-        assert lo_urls and all("max_results=1" in u for u in lo_urls), (httpx_urls, fws_urls)
+        # 下界同样钳（0/负数 → 1）
+        assert fws_urls and all("max_results=1" in u for u in fws_urls), fws_urls
 
 
 class TestLlmBudget:
@@ -183,6 +171,9 @@ class TestLlmBudget:
 
         class _FakeClient:
             chat = _FakeChat()
+
+            def with_options(self, **kw):
+                return self
 
         monkeypatch.setattr(client_mod, "get_client", lambda: _FakeClient())
         with pytest.raises(RuntimeError):
