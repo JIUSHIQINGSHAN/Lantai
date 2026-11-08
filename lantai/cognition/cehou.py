@@ -31,6 +31,20 @@ from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import CehouWindow
 from lantai.storage import db
 
+# 单视窗报警条数上限（票 68 位点 8）：alerts 是无上限 JSON 列，错误率持续
+# 超标时逐条样本的失败率各有差异、告警文案各不相同，一直 append 会被撑爆。
+# 上限取 20（够覆盖最小样本要求的完整观察期），先到先得保留，超限不再追加
+# （宁 miss 不脏写）——视窗异常本身已由状态跃迁表达，报警只是留痕。
+MAX_WINDOW_ALERTS = 20
+
+
+def _append_alert(row: CehouWindow, alert: str) -> None:
+    """向视窗 alerts 追加一条告警（去重 + 上限封顶；JSON 列整列重赋值）。"""
+    current = row.alerts or []
+    if alert in current or len(current) >= MAX_WINDOW_ALERTS:
+        return
+    row.alerts = [*current, alert]
+
 
 @dataclass
 class ShadowObservation:
@@ -248,6 +262,16 @@ class CehouEngine:
             if not self._check_access(owner_id=row.user_id, tenant_id=row.tenant_id):
                 return {"success": False, "message": "无权访问此影子观察视窗"}
 
+            if row.state != "observing":
+                # 终态闸（票 68 位点 8）：graduated/rolled_back 的视窗裁决已定，
+                # 迟到样本不得再改写 sample_count/成败/漂移累计——宁 miss 不脏写。
+                return {
+                    "success": False,
+                    "message": f"视窗 {window_id} 已终态（{row.state}），不再接收样本",
+                    "window_id": window_id,
+                    "sample_count": row.sample_count,
+                }
+
             row.sample_count += 1
             if success:
                 row.success_count += 1
@@ -262,9 +286,9 @@ class CehouEngine:
             s_count = row.sample_count
             fail_rate = row.failure_count / max(s_count, 1)
             if s_count >= 5 and fail_rate >= 0.4:
-                alert = f"视窗 {window_id} 错误率激增至 {round(fail_rate * 100, 1)}%"
-                if alert not in row.alerts:
-                    row.alerts = [*row.alerts, alert]
+                _append_alert(
+                    row, f"视窗 {window_id} 错误率激增至 {round(fail_rate * 100, 1)}%"
+                )
 
             session.add(row)
             session.commit()
@@ -362,7 +386,7 @@ class CehouEngine:
             # 1. 熔断回滚：样本不少于 5 且失败率高于 60%
             if s_count >= min(min_samp, 5) and (1.0 - succ_rate) >= 0.6:
                 row.state = "rolled_back"
-                row.alerts = [*row.alerts, "观察期实测指标严重劣化，触发自动熔断回滚"]
+                _append_alert(row, "观察期实测指标严重劣化，触发自动熔断回滚")
             # 2. 应验转正：天数与样本均满足且胜率 ≥ 80%
             elif days >= req_days and s_count >= min_samp and succ_rate >= 0.8:
                 row.state = "graduated"
