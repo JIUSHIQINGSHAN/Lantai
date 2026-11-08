@@ -28,6 +28,9 @@ _DEFAULT_DIGEST_DIR = _REPO_ROOT / "docs" / "memory-digest"
 
 # 反思提案置信桶（ADR-0002 零硬编码：边界走 settings，见校准报告）
 _CONF_BUCKETS = tuple(settings.DIGEST_CONF_BUCKETS)
+# 「其他」兜底桶标签——settings 桶定义之外才出现的置信值归此（票 86：单点声明，
+# 分桶与渲染两处共用；桶定义改名/拆分不得牵动兜底语义）
+_CONF_BUCKET_OTHER = "其他"
 _TYPE_ORDER = ("add", "update", "merge", "deprecate")
 _STATUS_COLS = ("applied", "pending", "rejected", "other")
 
@@ -136,11 +139,13 @@ def _aggregate_reflection(s, start: datetime, end: datetime, *, principal=None) 
     conf_buckets = {label: 0 for label, _, _ in _CONF_BUCKETS}
     for conf in conf_values:
         for label, lo, hi in _CONF_BUCKETS:
-            if lo <= conf < hi or (label == "0.9-1.0" and conf == 1.0):
+            # 终桶右端闭区间凭数值语义（hi >= 1.0 收 conf == 1.0），不挂 label
+            # 字面量（票 86：桶定义改名/拆分后语义不得漂移）
+            if lo <= conf < hi or (hi >= 1.0 and conf == 1.0):
                 conf_buckets[label] += 1
                 break
         else:
-            conf_buckets["其他"] = conf_buckets.get("其他", 0) + 1
+            conf_buckets[_CONF_BUCKET_OTHER] = conf_buckets.get(_CONF_BUCKET_OTHER, 0) + 1
     return {
         "created": int(created),
         "applied": int(applied),

@@ -24,6 +24,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.models.tables  # noqa: F401  注册全部表
+import lantai.storage.db as db_module
 import lantai.workers.digest_worker as digest_worker
 from lantai.models.tables import MemoryProposal
 
@@ -39,8 +40,8 @@ _RENAMED_TERMINAL_BUCKETS = (
 
 
 @pytest.fixture()
-def bucket_env():
-    """内存 SQLite 真实建表——直调 _aggregate_reflection，无任何 mock。"""
+def bucket_env(monkeypatch):
+    """内存 SQLite 真实建表 + patch db.get_session——直调与 collect 全真路径。"""
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -51,6 +52,7 @@ def bucket_env():
     def session_factory() -> Session:
         return Session(engine)
 
+    monkeypatch.setattr(db_module, "get_session", session_factory)
     return session_factory
 
 
@@ -102,10 +104,15 @@ class TestConfBucketTerminalSemantics:
             f"conf=1.0 不得静默落「其他」兜底桶（标签耦合漂移病灶），实际 {rf['conf_buckets']}"
         )
 
-        md = digest_worker.render_digest_markdown(
-            {"reflection": rf, "retrieval": {}, "pending": {"total": 0}}
+        # 端到端臂：真 collect_digest_stats（patch 过的 get_session → 同一内存库）
+        # + 真渲染，日报面经同一 _CONF_BUCKETS 源自动跟随改名后的标签
+        e2e = digest_worker.collect_digest_stats()["reflection"]
+        assert e2e["conf_buckets"].get("0.9+") == 1, (
+            f"collect 端到端分桶该与直调一致，实际 {e2e['conf_buckets']}"
         )
+        md = digest_worker.render_digest_markdown(digest_worker.collect_digest_stats())
         assert "[0.9+]×1" in md, f"日报渲染该跟随改名后的终桶标签，实际：{md!r}"
+        assert "[其他]" not in md, f"conf=1.0 不得在日报渲染面落「其他」，实际：{md!r}"
 
     def test_conf_one_default_buckets_status_quo(self, bucket_env):
         """现状锁（票 86 验收 2）：默认桶定义下 conf=1.0 落 "0.9-1.0" 不变。
