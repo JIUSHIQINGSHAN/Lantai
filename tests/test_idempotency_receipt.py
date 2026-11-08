@@ -362,6 +362,71 @@ class TestSettleRelease:
         assert _row("k2") is None
 
 
+# ------------------------------------------------- 同刻度令牌碰撞（票 74）
+
+
+class TestSameTickTokenCollision:
+    """冻结钟真红臂：粗刻度时钟下相邻两次取时可同值（票 74）。
+
+    令牌即 `created_at` 裸 epoch 浮点，接管条件语句以浮点相等为判据。冻结钟
+    使 claim1 与接管 claim2 两次取时同值 → 接管把新主行 created_at 改写回与
+    旧令牌**相等** → 旧主带令牌 release / settle(ok=False) 的条件删除命中
+    新主行——重试即双执行（票 24 病复现，watch 台账
+    idempotency-order-dependency 标本机理的生产侧孪生票）。
+
+    c241f771 的 `_clock_past` 是测试侧稳定化（等真实时钟越过旧令牌），生产
+    缺陷不动；本组用例钉钟注入把「同刻度」从偶发变成必然，锁的是生产语义：
+    同刻度碰撞下新主行必须存活。修复前红（条件删除命中新主），修复后绿。
+    """
+
+    @pytest.fixture()
+    def frozen_clock(self, monkeypatch):
+        """把 idempotency 模块的 utcnow 钉成冻结钟——每次取时同值。
+
+        patch 必须落在 `lantai.core.idempotency` 命名空间：`from ... import
+        utcnow` 是顶层绑定，patch `lantai.core.time.utcnow` 无效（探针
+        `.scratch/_v068_probe_idem_same_tick_red.py` 教训）。
+        """
+        import lantai.core.idempotency as idem
+
+        frozen = idem.utcnow()
+        monkeypatch.setattr(idem, "utcnow", lambda: frozen)
+        return frozen.timestamp()
+
+    def test_same_tick_takeover_release_spares_new_owner(self, mem_env, frozen_clock):
+        fp = fingerprint_payload("文本", "default", "dialogue", "", None)
+        v1 = claim("k1", "default", "", fp, task_id="task_owner1")
+        assert v1["claimed_at"] == frozen_clock
+        _set_created("k1", "default", "", LEASE_SECONDS + 5)
+        v2 = claim("k1", "default", "", fp, task_id="task_owner2")
+        assert v2["action"] == "new"
+        # 同刻度碰撞前提实锤：接管令牌与旧令牌同值（冻结钟下必然）
+        assert v2["claimed_at"] == v1["claimed_at"]
+        # 旧主带旧令牌 release（运维面口径）：不得命中新主行
+        release("k1", "default", "", claimed_at=v1["claimed_at"])
+        row = _row("k1")
+        assert row is not None, "同刻度接管后旧主 release 删掉了新主行：令牌判据失效"
+        assert json.loads(row.response_json)["task_id"] == "task_owner2"
+
+    def test_same_tick_takeover_settle_failure_spares_new_owner(self, mem_env, frozen_clock):
+        fp = fingerprint_payload("文本", "default", "dialogue", "", None)
+        v1 = claim("k1", "default", "", fp, task_id="task_owner1")
+        binding = {
+            "key": "k1",
+            "user_id": "default",
+            "tenant_id": "",
+            "claimed_at": v1["claimed_at"],
+            "token": v1.get("token"),
+            "explicit": True,
+        }
+        _set_created("k1", "default", "", LEASE_SECONDS + 5)
+        assert claim("k1", "default", "", fp, task_id="task_owner2")["action"] == "new"
+        assert settle(binding, ok=False) == "gone"
+        row = _row("k1")
+        assert row is not None, "同刻度接管后旧主失败结算删掉了新主行：重试即双执行"
+        assert json.loads(row.response_json)["task_id"] == "task_owner2"
+
+
 # ------------------------------------------------------------------ purge
 
 
