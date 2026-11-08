@@ -1875,7 +1875,11 @@ def handle_shiyi_pipeline(params: dict) -> dict:
 
 
 def handle_jiaochou_collate(params: dict) -> dict:
-    """校雠：智能语义去重与知识对齐订误（v0.49 ADR-0070）。"""
+    """校雠：智能语义去重与知识对齐订误（v0.49 ADR-0070）。
+
+    scan 口径（票 59）：候选池 = 最近创建的 min(limit, 100) 行，池内两两取最相似
+    limit 对；threshold 合法区间 (0, 1]，越界由引擎拒绝（-32602 错误载荷，不炸宿主）。
+    """
     text_a = params.get("text_a")
     text_b = params.get("text_b")
     scan = bool(params.get("scan", False))
@@ -3545,12 +3549,12 @@ TOOLS = {
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "扫描返回最大对数",
+                    "description": "扫描候选池行数上界兼返回对数上界（1..100，池=最近创建优先）",
                     "default": 50,
                 },
                 "similarity_threshold": {
                     "type": "number",
-                    "description": "冗余聚类相似度阈值 [0.1, 1.0]",
+                    "description": "冗余聚类相似度阈值 (0, 1]，越界拒绝",
                     "default": 0.7,
                 },
                 "user_id": {"type": "string", "description": "操作租户/用户 ID"},
