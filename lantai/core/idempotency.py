@@ -87,6 +87,18 @@ def _receipt_json(result: dict | None) -> str | None:
     return json.dumps(receipt, ensure_ascii=False, default=str) if receipt else None
 
 
+def _legacy_created_at_cond(created_at: float | None):
+    """升级窗旧判据：created_at 相等且 token IS NULL（票 74）。
+
+    「token IS NULL」限定是这个判据不被旧时间戳误命中新世界行的唯一屏障
+    ——粗刻度时钟下接管可把新主行 created_at 写成与旧令牌同值，裸浮点
+    相等会误删新主（冻结钟双臂红基线实锤）。take_over（存量老行接管）、
+    settle（旧 binding 结算）、release（运维面带 claimed_at 释放）三处共用
+    本形状，收敛单一真源防三处漂移。
+    """
+    return and_(IdempotencyKey.token.is_(None), IdempotencyKey.created_at == created_at)
+
+
 def claim(key: str, user_id: str, tenant_id: str, fingerprint: str, task_id: str = "") -> dict:
     """抢占写入键。
 
@@ -201,10 +213,7 @@ def _take_over(row: IdempotencyKey, fingerprint: str, now: float, task_id: str =
             cond = (
                 IdempotencyKey.token == row.token
                 if row.token
-                else and_(
-                    IdempotencyKey.token.is_(None),
-                    IdempotencyKey.created_at == row.created_at,
-                )
+                else _legacy_created_at_cond(row.created_at)
             )
             target = s.exec(
                 select(IdempotencyKey).where(
@@ -263,15 +272,8 @@ def settle(binding: dict | None, *, ok: bool, result: dict | None = None, task_i
 
     try:
         with db.get_session() as s:
-            if token:
-                cond = IdempotencyKey.token == token
-            else:
-                # 旧 binding 无 token（升级窗/手工构造）：旧判据并限定 token
-                # IS NULL——新世界出生的行必有 token，不会被旧时间戳误命中
-                cond = and_(
-                    IdempotencyKey.token.is_(None),
-                    IdempotencyKey.created_at == claimed_at,
-                )
+            # 旧 binding 无 token（升级窗/手工构造）走旧判据
+            cond = IdempotencyKey.token == token if token else _legacy_created_at_cond(claimed_at)
             target = s.exec(
                 select(IdempotencyKey).where(
                     IdempotencyKey.key == key,
@@ -330,12 +332,7 @@ def release(
                 IdempotencyKey.state != "done",
             )
             if claimed_at is not None:
-                stmt = stmt.where(
-                    and_(
-                        IdempotencyKey.token.is_(None),
-                        IdempotencyKey.created_at == claimed_at,
-                    )
-                )
+                stmt = stmt.where(_legacy_created_at_cond(claimed_at))
             for target in s.exec(stmt).all():
                 s.delete(target)
             s.commit()

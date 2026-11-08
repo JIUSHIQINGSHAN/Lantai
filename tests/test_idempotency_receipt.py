@@ -347,6 +347,21 @@ class TestSettleRelease:
 # ------------------------------------------------- 同刻度令牌碰撞（票 74）
 
 
+@pytest.fixture()
+def frozen_clock(monkeypatch):
+    """把 idempotency 模块的 utcnow 钉成冻结钟——每次取时同值。
+
+    patch 必须落在 `lantai.core.idempotency` 命名空间：`from ... import
+    utcnow` 是顶层绑定，patch `lantai.core.time.utcnow` 无效（探针
+    `.scratch/_v068_probe_idem_same_tick_red.py` 教训）。
+    """
+    import lantai.core.idempotency as idem
+
+    frozen = idem.utcnow()
+    monkeypatch.setattr(idem, "utcnow", lambda: frozen)
+    return frozen.timestamp()
+
+
 class TestSameTickTokenCollision:
     """冻结钟真红臂：粗刻度时钟下相邻两次取时可同值（票 74）。
 
@@ -360,20 +375,6 @@ class TestSameTickTokenCollision:
     缺陷不动；本组用例钉钟注入把「同刻度」从偶发变成必然，锁的是生产语义：
     同刻度碰撞下新主行必须存活。修复前红（条件删除命中新主），修复后绿。
     """
-
-    @pytest.fixture()
-    def frozen_clock(self, monkeypatch):
-        """把 idempotency 模块的 utcnow 钉成冻结钟——每次取时同值。
-
-        patch 必须落在 `lantai.core.idempotency` 命名空间：`from ... import
-        utcnow` 是顶层绑定，patch `lantai.core.time.utcnow` 无效（探针
-        `.scratch/_v068_probe_idem_same_tick_red.py` 教训）。
-        """
-        import lantai.core.idempotency as idem
-
-        frozen = idem.utcnow()
-        monkeypatch.setattr(idem, "utcnow", lambda: frozen)
-        return frozen.timestamp()
 
     def test_same_tick_takeover_release_spares_new_owner(self, mem_env, frozen_clock):
         fp = fingerprint_payload("文本", "default", "dialogue", "", None)
@@ -503,17 +504,13 @@ class TestLegacyTokenCompat:
         release("k1", "default", "", claimed_at=v["claimed_at"])
         assert _row("k1") is None
 
-    def test_legacy_binding_cannot_hit_token_row_even_same_created_at(self, mem_env, monkeypatch):
+    def test_legacy_binding_cannot_hit_token_row_even_same_created_at(self, mem_env, frozen_clock):
         """旧判据的疾病面：旧 binding 与新世界行同 created_at 也不得命中。
 
         冻结钟使接管把新主行 created_at 写成与旧 binding 的 claimed_at 同值
         ——裸浮点相等会命中并误删（红基线 446d43b 的 release 臂实锤）；
         「token IS NULL」限定是旧判据不被旧时间戳误命中的唯一屏障。
         """
-        import lantai.core.idempotency as idem
-
-        frozen = idem.utcnow()
-        monkeypatch.setattr(idem, "utcnow", lambda: frozen)
         fp = fingerprint_payload("文本", "default", "dialogue", "", None)
         v1 = claim("k1", "default", "", fp, task_id="task_owner1")
         _set_created("k1", "default", "", LEASE_SECONDS + 5)
