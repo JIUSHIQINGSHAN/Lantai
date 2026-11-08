@@ -1,7 +1,7 @@
 """盘点 worker——TTL 归档 + Daily Digest 每日盘点报告（Ticket 02/03）。
 
 - run_candidate_ttl：每日清理超龄 pending_review 候选 → rejected（Ticket 02）
-- run_digest_once：生成当日盘点报告 docs/memory-digest/YYYY-MM-DD.md（Ticket 03）
+- run_digest_once：生成当日盘点报告 <数据目录>/docs/memory-digest/YYYY-MM-DD.md（Ticket 03；数据目录 = LANTAI_HOME，未设时仓库根，票 85）
   五项统计：新增记忆 / 修改记忆 / 待审数 / 归档数 / 检索统计
 """
 

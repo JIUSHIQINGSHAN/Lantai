@@ -1,6 +1,6 @@
 """记忆 Wiki 服务（借鉴 TencentDB Agent Memory LLM-Wiki ingest-v2 窄版落点）。
 
-场景/技能 → 持续维护的知识库 docs/memory-wiki/：
+场景/技能 → 持续维护的知识库 <数据目录>/docs/memory-wiki/（数据目录 = LANTAI_HOME，未设时仓库根，票 85）：
   - pages/{slug}.md  每场景/技能一页（frontmatter: type/title/description/timestamp）
   - index.md         全页索引（按类型分组，稳定输出，先看目录再钻取）
   - overview.md      全局综述（LLM 优先，失败/关闭 → 确定性综述）+ [[wikilink]] 下钻

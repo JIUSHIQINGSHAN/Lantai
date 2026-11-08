@@ -158,3 +158,5 @@ class TestDocsTruthLock:
     def test_daily_digest_doc_states_data_home_semantics(self):
         text = (REPO_ROOT / "docs" / "daily-digest.md").read_text(encoding="utf-8")
         assert "LANTAI_HOME" in text, "daily-digest.md 输出口径未写数据目录语义（wheel 形态失真）"
+        assert "数据目录" in text, "daily-digest.md 输出口径未写「数据目录」一词（两形态语义回退）"
+        assert "DIGEST_OUTPUT_DIR" in text, "daily-digest.md 丢失显式覆盖开关说明（优先级契约回退）"

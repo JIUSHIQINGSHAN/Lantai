@@ -1,6 +1,7 @@
 """上下文卸载服务（借鉴 TencentDB Agent Memory offload_server/compact 窄版落点）。
 
-长记忆全文落文件 docs/memory-offload/{memory_id}.md，上下文只注入摘要 + 路径，
+长记忆全文落文件 <数据目录>/docs/memory-offload/{memory_id}.md（数据目录 =
+LANTAI_HOME，未设时仓库根，票 85），上下文只注入摘要 + 路径，
 需要时经 MCP offload_read 取完整原文。纯函数与文件副作用分离（冒烟可测不 mock）。
 """
 
