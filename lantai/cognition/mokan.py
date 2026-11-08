@@ -82,6 +82,17 @@ class MokanAuditResult:
         }
 
 
+def _render_audit_marker(query: str, total: int, verified: int, disputed: int, items) -> str:
+    """磨勘审计包裹标记（票 51/54：query 属性位此前零转义——先纯提取出可测缝，
+    转义在绿轮同一 helper 收口）。"""
+    return (
+        f'<mokan_audit query="{query}" total="{total}" '
+        f'verified="{verified}" disputed="{disputed}">\n'
+        + "\n".join(it.fenced_content for it in items)
+        + "\n</mokan_audit>"
+    )
+
+
 class MokanEngine:
     """磨勘·多源认知证据交叉勘验与可信度自证引擎。"""
 
@@ -311,11 +322,8 @@ class MokanEngine:
             f"交叉证实 {verified_count} 条，存在争议矛盾 {disputed_count} 条。"
         )
 
-        fenced_summary = (
-            f'<mokan_audit query="{query}" total="{len(verified_items)}" '
-            f'verified="{verified_count}" disputed="{disputed_count}">\n'
-            + "\n".join(it.fenced_content for it in verified_items)
-            + "\n</mokan_audit>"
+        fenced_summary = _render_audit_marker(
+            query, len(verified_items), verified_count, disputed_count, verified_items
         )
 
         logger.info(
