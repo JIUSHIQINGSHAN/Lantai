@@ -62,6 +62,33 @@ def test_perf_bench_smoke_end_to_end(tmp_path):
     assert "vector_backend_search" in res["scenarios"]
 
 
+def test_perf_bench_mcp_serve_smoke():
+    """MCP serve 通道场景冒烟：真实 stdio JSON-RPC 子进程端到端（不 mock）。
+
+    子进程经环境变量指向同一临时库、补同源确定性嵌入替身后跑 `lantai.cli.mcp`
+    标准主循环——断言稳态 search 往返统计完整、冷启动/首查/ping 通道元数据齐。
+    子进程收口由 run_scenario 的 close 钩子负责（stdio 断开 → 子进程自然退出）。
+    """
+    mod = _load_bench_module()
+    res = mod.run_scale(
+        60,
+        seed=7,
+        iterations_scale=0.1,
+        only=["mcp_serve_search"],
+        profile=False,
+    )
+
+    m = res["scenarios"]["mcp_serve_search"]
+    assert m["iterations"] >= 1
+    assert m["p50_ms"] > 0 and m["p95_ms"] >= m["p50_ms"]
+
+    ch = res["mcp_channel"]
+    assert ch is not None, "MCP 通道元数据缺失——工厂场景没装配子进程"
+    assert ch["spawn_to_ready_ms"] > 0, "冷启动（spawn→initialize）未计时"
+    assert ch["first_search_ms"] > 0, "首查（含子进程 chromadb 装载）未计时"
+    assert ch["ping_ms_median"] > 0, "ping 通道底价未采样"
+
+
 def test_perf_bench_profile_dumps_pstats(tmp_path):
     """--profile 的原始 pstats 落盘可被 pstats 回读（票 01 目标 3 的落点）。"""
     import pstats
