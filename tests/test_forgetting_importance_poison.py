@@ -250,6 +250,51 @@ def test_rest_put_accepts_valid_importance(rest_env, monkeypatch):
     assert _rest_memory(engine, "pz-rest") == 0.9
 
 
+def test_rest_put_rejects_container_nan_with_422(rest_env, monkeypatch):
+    """容器形毒值（review 采纳臂）：{"importance": [NaN]} 的错误 input 是列表嵌
+    NaN，422 处理器必须递归清洗——标量臂盖不住的形态，漏洗即毒请求仍 500。"""
+    engine, client = rest_env
+    _add_rest_memory(engine)
+    _override(client, _principal(), monkeypatch)
+    resp = client.put(
+        "/terminal/memory/pz-rest",
+        content='{"importance": [NaN]}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert _rest_memory(engine, "pz-rest") == 0.5
+
+
+@pytest.mark.parametrize(
+    "raw_body",
+    ['{"confidence": -0.6}', '{"confidence": NaN}', '{"confidence": Infinity}'],
+    ids=["negative", "nan", "inf"],
+)
+def test_rest_put_rejects_poison_confidence_with_422(rest_env, monkeypatch, raw_body):
+    """confidence 与 importance 同模型同型毒面（review 采纳）：NaN 原走 pydantic
+    放行 → SQLite 绑 NULL 撞 NOT NULL → 500；负值则 200 毒写。收紧到 422。"""
+    engine, client = rest_env
+    _add_rest_memory(engine)
+    _override(client, _principal(), monkeypatch)
+    resp = client.put(
+        "/terminal/memory/pz-rest", content=raw_body, headers={"Content-Type": "application/json"}
+    )
+    assert resp.status_code == 422, resp.text
+    with Session(engine) as s:
+        assert s.get(MemoryItem, "pz-rest").confidence == 0.5, "422 拒绝后不得有半写"
+
+
+def test_lane_strength_floor_covers_nonfinite():
+    """下限兜底对非有限值不失明（review 采纳）：max(nan, 1.0) 得 nan，
+    NaN 强度行会 exp(-days/nan)=nan 静默永生（fail-silent）——非有限强度
+    必须显式回退下限，毒行照常衰减归档。"""
+    from lantai.memory.forgetting import _MIN_LANE_STRENGTH, _lane_strength
+
+    assert _lane_strength(float("nan"), 0, "chat") == _MIN_LANE_STRENGTH
+    assert _lane_strength(float("inf"), 0, "chat") == _MIN_LANE_STRENGTH
+    assert _lane_strength(-0.7, 0, "chat") == _MIN_LANE_STRENGTH
+
+
 # ── LLM 提取臂 + apply 臂 harness（param_env：内存库 + 真 FTS + 外部面替身）──
 
 
@@ -287,12 +332,16 @@ def _seed_fragments(s):
 
 
 @pytest.mark.parametrize(
-    ("raw", "expected"), [(-0.6, 0.0), (1.7, 1.0)], ids=["negative-to-0", "over-to-1"]
+    ("raw", "expected"),
+    [(-0.6, 0.0), (1.7, 1.0), ("high", 0.8), (float("nan"), 0.8)],
+    ids=["negative-to-0", "over-to-1", "type-garbage-to-default", "nan-to-default"],
 )
 def test_consolidation_clamps_llm_extracted_importance(param_env, raw, expected):
     """LLM 提取无钳制（提示注入可诱导负值）：落库值必须钳入 [0,1]。
 
-    替身仅 chat_json（外部 LLM 边界）；沉潜主链（聚类/獬豸闸/TrustMem/落库）全真。
+    类型臂（review 采纳）：非数值/非有限回退缺省 0.8（视同缺省，与
+    patch.get("importance", 0.8) 的 missing 语义一致），不得让 float() 抛穿
+    沉潜周期。替身仅 chat_json（外部 LLM 边界）；沉潜主链全真。
     """
     from lantai.services.consolidation_service import run_consolidation_cycle
 
@@ -319,13 +368,17 @@ def test_consolidation_clamps_llm_extracted_importance(param_env, raw, expected)
 
 
 @pytest.mark.parametrize(
-    ("raw", "expected"), [(-0.6, 0.0), (1.7, 1.0)], ids=["negative-to-0", "over-to-1"]
+    ("raw", "expected"),
+    [(-0.6, 0.0), (1.7, 1.0), ("high", 0.5), (None, 0.5)],
+    ids=["negative-to-0", "over-to-1", "type-garbage-to-default", "none-to-default"],
 )
 def test_apply_clamps_poison_patch_importance(param_env, raw, expected):
     """手工构造毒值 proposed_patch（绕过生成面）：apply 落库值必须钳入 [0,1]。
 
-    防「只修生成面（consolidation 钳制）不修 apply 面（promoter 平移）」的假绿：
-    patch 是 DB 里的 JSON，异源/存量提案可携带任意值。
+    类型臂（review 采纳）：非数值 patch 值让 float() 抛穿 apply_proposal，
+    run_pending_proposals 无兜底——毒提案保持 APPROVED 每轮重试即 livelock，
+    其后提案全部饿死；回退缺省 0.5（与 missing 键语义一致）。
+    防「只修生成面（consolidation 钳制）不修 apply 面（promoter 平移）」的假绿。
     """
     from lantai.evolution.promoter import apply_proposal
 

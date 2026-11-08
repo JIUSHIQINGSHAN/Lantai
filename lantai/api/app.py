@@ -113,15 +113,21 @@ app = FastAPI(title="兰台记忆（Lantai）", version="0.66.0", lifespan=lifes
 # 票 35：毒值 422 应答不能被毒值本身毒死。FastAPI 默认 422 处理器把
 # exc.errors() 原样 JSON 序列化，而 NaN/±inf 的 input 会让
 # json.dumps(allow_nan=False) 在处理器内部再炸——毒请求本该 422 却得到 500。
-# 只对非有限 float 做占位转写（null），错误结构与其余 422 逐键一致。
+# 非有限 float 做占位转写（null），错误结构与其余 422 逐键一致；input 可以是
+# 容器（{"importance": [NaN]} 的 input=[nan]），必须递归清洗——双轴自审采纳项。
+def _sanitize_non_finite(obj):
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, list):
+        return [_sanitize_non_finite(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _sanitize_non_finite(v) for k, v in obj.items()}
+    return obj
+
+
 @app.exception_handler(RequestValidationError)
 async def _finite_safe_validation_handler(request, exc: RequestValidationError):
-    errors = [
-        {**err, "input": None}
-        if isinstance(err.get("input"), float) and not math.isfinite(err["input"])
-        else err
-        for err in exc.errors()
-    ]
+    errors = [_sanitize_non_finite(err) for err in exc.errors()]
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
 

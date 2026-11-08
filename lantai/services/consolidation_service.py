@@ -23,6 +23,7 @@ from ulid import ULID
 
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
+from lantai.core.numeric import clamp_unit_interval
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.llm.client import chat_json
@@ -354,15 +355,10 @@ def consolidate_cluster(
         # 票 35：LLM JSON 输出无钳制——负值毒行落库后遗忘强度≤0，apply_forgetting
         # 确定性崩溃全库停摆（提示注入诱导提取器输出负值即可达）。钳入 [0,1] 并
         # 留痕（票面「钳入界内」口径：折叠内容已过獬豸闸/TrustMem 两道验证，
-        # 为一个标量丢弃整簇折叠得不偿失；留痕走 warning 不静默）。
-        importance = float(res.get("importance", 0.8))
-        clamped = min(1.0, max(0.0, importance))
-        if clamped != importance:
-            logger.warning(
-                "沉潜：LLM 提取 importance 越界已钳入 [0,1]：%r → %r", importance, clamped
-            )
-        importance = clamped
-        confidence = float(res.get("confidence", 0.9))
+        # 为一个标量丢弃整簇折叠得不偿失）；类型/非有限臂视同缺省不抛穿沉潜周期。
+        # confidence 与 importance 同源同险（双轴自审采纳项），同一真源收敛。
+        importance = clamp_unit_interval(res.get("importance", 0.8), default=0.8)
+        confidence = clamp_unit_interval(res.get("confidence", 0.9), default=0.9)
 
         dom = getattr(cluster_items[0], "domain", "user")
         lane = cluster_items[0].lane

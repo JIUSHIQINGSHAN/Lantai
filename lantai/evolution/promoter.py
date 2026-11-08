@@ -5,6 +5,7 @@ from sqlmodel import select
 
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
+from lantai.core.numeric import clamp_unit_interval
 from lantai.core.provenance import PROVENANCE_PROMPT_DIALOGUE_IMPORT
 from lantai.core.settings import settings
 from lantai.core.time import parse_iso_utc, utcnow
@@ -463,11 +464,15 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                 domain=patch_full.get("domain", "user"),
                 lane=patch_full.get("lane", settings.DEFAULT_LANE),
                 source_ids=list(patch_full.get("source_ids") or evidence_ids),
-                confidence=float(patch_full.get("confidence", prop.confidence)),
-                # 票 35：patch 是 DB 里的 JSON，异源/存量提案可携带越界值——负值
-                # 落库后遗忘强度≤0 停摆引擎。apply 面与生成面（consolidation
-                # 钳制）双钳，防「只修生成面」的假绿。
-                importance=min(1.0, max(0.0, float(patch_full.get("importance", 0.5)))),
+                confidence=clamp_unit_interval(
+                    patch_full.get("confidence", prop.confidence), default=prop.confidence
+                ),
+                # 票 35：patch 是 DB 里的 JSON，异源/存量提案可携带越界/非数值值——
+                # 越界落库后遗忘强度≤0 停摆引擎；非数值让 float() 抛穿 apply，
+                # run_pending_proposals 每轮重试同批毒提案即 livelock。apply 面与
+                # 生成面（consolidation 钳制）双钳防假绿；域规则单一真源在
+                # lantai.core.numeric（双轴自审采纳项）。
+                importance=clamp_unit_interval(patch_full.get("importance", 0.5), default=0.5),
                 decay_score=1.0,
                 decay_class=patch_full.get("decay_class", "semantic"),
                 status="active",

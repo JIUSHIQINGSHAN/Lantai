@@ -21,7 +21,13 @@ def _lane_strength(importance: float, use_count: int, lane: str) -> float:
     profile = settings.LANE_DECAY_PROFILES.get(lane, settings.LANE_DECAY_PROFILES["general"])
     base_s = profile["base_s"]
     boost = profile["importance_boost"]
-    return max(base_s + boost * importance + 2 * math.log1p(use_count), _MIN_LANE_STRENGTH)
+    strength = base_s + boost * importance + 2 * math.log1p(use_count)
+    # 票 35 双轴自审采纳项：max(nan, 1.0) 得 nan（NaN 失明）——非 SQLite 后端
+    # （DATABASE_URL 通用，Postgres 可存 float NaN）的 NaN/inf 毒行会
+    # exp(-days/nan)=nan 静默永生（fail-silent）。非有限强度显式回退下限。
+    if not math.isfinite(strength):
+        return _MIN_LANE_STRENGTH
+    return max(strength, _MIN_LANE_STRENGTH)
 
 
 # ---- 票 03（v0.66 P0-4）：豁免分两档，两条归档路各自明确认哪些标记 ----
