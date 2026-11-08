@@ -78,7 +78,9 @@ def _mem(mid: str, *, key: str | None = None) -> MemoryItem:
 
 
 def _edge(eid: str, src: str, dst: str, relation: str = "supports") -> MemoryEdge:
-    return MemoryEdge(id=new_id("edge"), source_memory_id=src, target_memory_id=dst, relation=relation)
+    return MemoryEdge(
+        id=new_id("edge"), source_memory_id=src, target_memory_id=dst, relation=relation
+    )
 
 
 def _seed_triangle(e):
@@ -116,9 +118,7 @@ def test_terminal_delete_cleans_both_endpoint_edges(edge_env):
     terminal_delete("mem_B", principal=_ADMIN)
 
     assert "mem_B" not in {m.id for m in Session(e).exec(select(MemoryItem)).all()}
-    assert _edge_pairs(e) == {
-        ("mem_C", "links", "mem_A")
-    }, (
+    assert _edge_pairs(e) == {("mem_C", "links", "mem_A")}, (
         f"B 两端的边未清理（悬空残留）或误删第三方边：{_edge_pairs(e)}"
     )
 
@@ -136,9 +136,9 @@ def test_promoter_delete_memory_cleans_both_endpoint_edges(edge_env):
     res = promoter_delete("mem_B")
     assert res["ok"] is True, res
 
-    assert _edge_pairs(e) == {
-        ("mem_C", "links", "mem_A")
-    }, f"B 两端的边未清理（悬空残留）或误删第三方边：{_edge_pairs(e)}"
+    assert _edge_pairs(e) == {("mem_C", "links", "mem_A")}, (
+        f"B 两端的边未清理（悬空残留）或误删第三方边：{_edge_pairs(e)}"
+    )
 
 
 # ── 主臂 3：documents 级联（source_service 全链）──

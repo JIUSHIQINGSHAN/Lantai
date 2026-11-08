@@ -343,7 +343,7 @@ def delete_memory(memory_id: str, principal=Depends(get_current_user)):
     session, conn = get_db_conn()
     try:
         from lantai.core.acl import ensure_can_delete
-        from lantai.models.tables import MemoryItem
+        from lantai.models.tables import MemoryEdge, MemoryItem
         from lantai.services import record_ops_service
         from lantai.storage.fts import sync_fts
 
@@ -378,6 +378,17 @@ def delete_memory(memory_id: str, principal=Depends(get_current_user)):
         # 完璧级联（X-01）：事实与记忆同一事务；级联失败整体回滚并报 500，记忆不删
         try:
             record_ops_service.purge_facts_for_memory(session, memory_id)
+            # 票 38：该记忆为任一端的全部 MemoryEdge 同事务清理——边表无外键
+            # 约束，清理靠应用层；悬空边对 admin/内部读面永久可见。双端范式
+            # 照抄 eval/forgetting_quality.py（边+行+FTS 同事务删）。
+            from sqlalchemy import or_
+
+            session.query(MemoryEdge).filter(
+                or_(
+                    MemoryEdge.source_memory_id == memory_id,
+                    MemoryEdge.target_memory_id == memory_id,
+                )
+            ).delete(synchronize_session=False)
             session.delete(m)
             session.commit()
         except Exception as exc:

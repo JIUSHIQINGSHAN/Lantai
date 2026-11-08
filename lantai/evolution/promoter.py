@@ -2,7 +2,8 @@ import math
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlmodel import select
+from sqlalchemy import or_
+from sqlmodel import delete, select
 
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
@@ -948,6 +949,18 @@ def delete_memory(memory_id: str, principal=None) -> dict:
 
         try:
             purge_facts_for_memory(s, memory_id)
+            # 票 38：该记忆为任一端的全部 MemoryEdge 同事务清理——边表无外键
+            # 约束（tables.py:311-325），清理靠应用层；悬空边对 admin/内部读面
+            # （MCP list_edges/CLI/worker）永久可见且是边数统计噪声。双端范式
+            # 照抄 eval/forgetting_quality.py（边+行+FTS 同事务删）。
+            s.exec(
+                delete(MemoryEdge).where(
+                    or_(
+                        MemoryEdge.source_memory_id == memory_id,
+                        MemoryEdge.target_memory_id == memory_id,
+                    )
+                )
+            )
             s.delete(mem)
             sync_fts(s, memory_id, None)
             s.commit()
