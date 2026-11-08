@@ -16,6 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
+from sqlalchemy.orm.exc import ObjectDeletedError
 from sqlmodel import Session, select
 
 from lantai.core.acl import viewer_of
@@ -25,6 +26,15 @@ from lantai.models.tables import ConflictEvent, MemoryItem
 from lantai.storage import db
 
 STATUS_ACTIVE = "active"
+
+
+def _norm_valid_to_iso(valid_to: datetime | None) -> str | None:
+    """与提名侧同口径的 valid_to 归一(naive 视作 UTC 后 isoformat),供快照串比对。"""
+    if valid_to is None:
+        return None
+    if valid_to.tzinfo is None:
+        valid_to = valid_to.replace(tzinfo=UTC)
+    return valid_to.isoformat()
 
 
 class SanxingHealthSnapshot(BaseModel):
@@ -303,6 +313,38 @@ class SanxingEngine:
             snapshot=snapshot,
         )
 
+    def _reverified_remedy_row(
+        self, s: Session, defect_type: str, item: dict[str, Any]
+    ) -> MemoryItem | None:
+        """落库前重取证并重验提名条件(票 67 TOCTOU,宁 miss 不脏写)。
+
+        快照(提名)与落库之间可能隔着另一个写方:行已撤回/归档、superseded_by
+        已换人、valid_to 已展期、use/helpful 计数已翻转——任一发生即跳过该候选,
+        不报错。refresh 强制真 SELECT,调用方会话身份映射的滞留读也拦不住重验。
+        """
+        mem = s.get(MemoryItem, item["id"])
+        if mem is None:
+            return None
+        try:
+            s.refresh(mem)
+        except ObjectDeletedError:
+            return None
+        if mem.status != STATUS_ACTIVE:
+            return None
+        if defect_type == "superseded_stale":
+            if (mem.structure or {}).get("superseded_by") != item.get("superseded_by"):
+                return None
+        elif defect_type == "expired":
+            if _norm_valid_to_iso(mem.valid_to) != item.get("valid_to"):
+                return None
+        elif defect_type == "unhelpful":
+            if (mem.use_count, mem.helpful_count) != (
+                item.get("use_count"),
+                item.get("helpful_count"),
+            ):
+                return None
+        return mem
+
     def generate_remedies(
         self, auto_apply: bool = False, now: datetime | None = None
     ) -> SanxingRemedyResult:
@@ -311,6 +353,7 @@ class SanxingEngine:
 
         def _run_remediation(s: Session) -> SanxingRemedyResult:
             remedy_items: list[SanxingRemedyItem] = []
+            apply_plan: list[tuple[SanxingRemedyItem, dict[str, Any]]] = []
             applied_count = 0
 
             # 1. 处置陈旧被取代记忆 -> supersede_retract (置为 superseded 或撤回)
@@ -328,13 +371,7 @@ class SanxingEngine:
                     fenced_content=fenced,
                 )
                 if auto_apply:
-                    mem = s.get(MemoryItem, tid)
-                    if mem and self._check_access(owner_id=mem.user_id, tenant_id=mem.tenant_id):
-                        mem.status = "archived"
-                        mem.lifecycle_status = "superseded"
-                        s.add(mem)
-                        r_item.executed = True
-                        applied_count += 1
+                    apply_plan.append((r_item, item))
                 remedy_items.append(r_item)
 
             # 2. 处置过期记忆 -> archive_expire (置为 archived)
@@ -352,12 +389,7 @@ class SanxingEngine:
                     fenced_content=fenced,
                 )
                 if auto_apply:
-                    mem = s.get(MemoryItem, tid)
-                    if mem and self._check_access(owner_id=mem.user_id, tenant_id=mem.tenant_id):
-                        mem.status = "archived"
-                        s.add(mem)
-                        r_item.executed = True
-                        applied_count += 1
+                    apply_plan.append((r_item, item))
                 remedy_items.append(r_item)
 
             # 3. 处置未决冲突 -> arbitrate_dispatch (标记审计待办)
@@ -392,16 +424,32 @@ class SanxingEngine:
                     fenced_content=fenced,
                 )
                 if auto_apply:
-                    mem = s.get(MemoryItem, tid)
-                    if mem and self._check_access(owner_id=mem.user_id, tenant_id=mem.tenant_id):
-                        mem.importance = 0.1
+                    apply_plan.append((r_item, item))
+                remedy_items.append(r_item)
+
+            if auto_apply and apply_plan:
+                # 保存点(票 67):仅本操作提交/回滚,不动调用方外层事务——
+                # 调用方会话上的未完成中间写入不再被整体提交;内部失败只回滚本操作。
+                with s.begin_nested():
+                    for r_item, item in apply_plan:
+                        # 落库前重取证重验(票 67 TOCTOU):提名与落库之间行可能
+                        # 已被撤回/归档、superseded_by 换人、valid_to 展期、计数
+                        # 翻转——条件不再成立即跳过,宁 miss 不脏写。
+                        mem = self._reverified_remedy_row(s, r_item.defect_type, item)
+                        if mem is None:
+                            continue
+                        if not self._check_access(owner_id=mem.user_id, tenant_id=mem.tenant_id):
+                            continue
+                        if r_item.defect_type == "superseded_stale":
+                            mem.status = "archived"
+                            mem.lifecycle_status = "superseded"
+                        elif r_item.defect_type == "expired":
+                            mem.status = "archived"
+                        else:  # unhelpful
+                            mem.importance = 0.1
                         s.add(mem)
                         r_item.executed = True
                         applied_count += 1
-                remedy_items.append(r_item)
-
-            if auto_apply:
-                s.commit()
 
             score_before = snapshot.health_score
             # 重新评估自愈后健康分
@@ -424,9 +472,13 @@ class SanxingEngine:
             )
 
         if self.session is not None:
+            # 调用方会话(票 67):保存点只落本操作,外层事务的提交权归调用方
             return _run_remediation(self.session)
         with db.get_session() as s:
-            return _run_remediation(s)
+            result = _run_remediation(s)
+            if auto_apply:
+                s.commit()  # 自有会话:保存点已释放,外层提交真实落库
+            return result
 
 
 def inspect_memory_health(

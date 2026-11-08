@@ -103,56 +103,68 @@ class JuanzongEngine:
     ) -> Dossier:
         """创建长程任务情境卷宗。"""
         s = self._get_session()
-        dos_id = new_id("dos")
+        try:
+            dos_id = new_id("dos")
 
-        # 规整里程碑列表
-        normalized_milestones: list[dict[str, Any]] = []
-        if milestones:
-            for idx, m in enumerate(milestones):
-                m_id = m.get("id") or f"ms-{idx + 1}"
-                normalized_milestones.append(
-                    {
-                        "id": str(m_id),
-                        "title": str(m.get("title", "")),
-                        "status": str(m.get("status", "pending")),
-                        "notes": str(m.get("notes", "")),
-                    }
-                )
+            # 规整里程碑列表
+            normalized_milestones: list[dict[str, Any]] = []
+            if milestones:
+                for idx, m in enumerate(milestones):
+                    m_id = m.get("id") or f"ms-{idx + 1}"
+                    normalized_milestones.append(
+                        {
+                            "id": str(m_id),
+                            "title": str(m.get("title", "")),
+                            "status": str(m.get("status", "pending")),
+                            "notes": str(m.get("notes", "")),
+                        }
+                    )
 
-        # 规整绑定的记忆项 ID
-        valid_memory_ids: list[str] = []
-        if memory_ids:
-            for mid in memory_ids:
-                if isinstance(mid, str) and mid.strip() and mid.strip() not in valid_memory_ids:
-                    valid_memory_ids.append(mid.strip())
+            # 规整绑定的记忆项 ID
+            valid_memory_ids: list[str] = []
+            if memory_ids:
+                for mid in memory_ids:
+                    if isinstance(mid, str) and mid.strip() and mid.strip() not in valid_memory_ids:
+                        valid_memory_ids.append(mid.strip())
 
-        meta = dict(metadata or {})
-        user_id = self.principal.user_id if self.principal else None
-        tenant_id = getattr(self.principal, "tenant_id", None) if self.principal else None
+            meta = dict(metadata or {})
+            user_id = self.principal.user_id if self.principal else None
+            tenant_id = getattr(self.principal, "tenant_id", None) if self.principal else None
 
-        dossier = Dossier(
-            id=dos_id,
-            tenant_id=tenant_id,
-            user_id=user_id,
-            title=title,
-            goal=goal,
-            status="active",
-            milestones=normalized_milestones,
-            memory_ids=valid_memory_ids,
-            metadata_json=meta,
-        )
-        s.add(dossier)
-        s.commit()
-        s.refresh(dossier)
-        return dossier
+            dossier = Dossier(
+                id=dos_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                title=title,
+                goal=goal,
+                status="active",
+                milestones=normalized_milestones,
+                memory_ids=valid_memory_ids,
+                metadata_json=meta,
+            )
+            s.add(dossier)
+            s.commit()
+            s.refresh(dossier)
+            return dossier
+        finally:
+            # 会话所有权(票 67):自建会话用毕即还——裸 Session 因循环引用
+            # 等 gc 兜底,真 QueuePool 上滞留到 5+10 耗尽(TimeoutError);
+            # 注入会话(构造)不关不碰。
+            if self.session is None:
+                s.close()
 
     def get_dossier(self, dossier_id: str, session: Session | None = None) -> Dossier | None:
         """获取卷宗详情（受租户行级安全保护）。"""
         s = session or self._get_session()
-        dossier = s.get(Dossier, dossier_id)
-        if not dossier or not self._check_access(dossier):
-            return None
-        return dossier
+        try:
+            dossier = s.get(Dossier, dossier_id)
+            if not dossier or not self._check_access(dossier):
+                return None
+            return dossier
+        finally:
+            # 会话所有权(票 67):仅自建会话关闭,注入的构造/方法参数会话不碰
+            if session is None and self.session is None:
+                s.close()
 
     def list_dossiers(
         self,
@@ -162,22 +174,30 @@ class JuanzongEngine:
     ) -> list[Dossier]:
         """查询符合权限的卷宗清单。"""
         s = session or self._get_session()
-        stmt = select(Dossier)
-        if status:
-            stmt = stmt.where(Dossier.status == status)
+        try:
+            stmt = select(Dossier)
+            if status:
+                stmt = stmt.where(Dossier.status == status)
 
-        tenant_id = getattr(self.principal, "tenant_id", None) if self.principal else None
-        if tenant_id and not (self.principal and self.principal.is_admin):
-            stmt = stmt.where((Dossier.tenant_id == tenant_id) | (Dossier.tenant_id.is_(None)))
+            tenant_id = getattr(self.principal, "tenant_id", None) if self.principal else None
+            if tenant_id and not (self.principal and self.principal.is_admin):
+                stmt = stmt.where((Dossier.tenant_id == tenant_id) | (Dossier.tenant_id.is_(None)))
 
-        if self.principal is not None and not self.principal.is_admin and self.principal.user_id:
-            stmt = stmt.where(
-                (Dossier.user_id == self.principal.user_id) | (Dossier.user_id.is_(None))
-            )
+            if (
+                self.principal is not None
+                and not self.principal.is_admin
+                and self.principal.user_id
+            ):
+                stmt = stmt.where(
+                    (Dossier.user_id == self.principal.user_id) | (Dossier.user_id.is_(None))
+                )
 
-        stmt = stmt.order_by(Dossier.updated_at.desc()).limit(limit)
-        items = s.exec(stmt).all()
-        return [it for it in items if self._check_access(it)]
+            stmt = stmt.order_by(Dossier.updated_at.desc()).limit(limit)
+            items = s.exec(stmt).all()
+            return [it for it in items if self._check_access(it)]
+        finally:
+            if session is None and self.session is None:
+                s.close()
 
     def update_milestone(
         self,
@@ -189,37 +209,41 @@ class JuanzongEngine:
     ) -> Dossier | None:
         """流转更新卷宗内的任务里程碑。"""
         s = session or self._get_session()
-        dossier = self.get_dossier(dossier_id, session=s)
-        if not dossier:
-            return None
+        try:
+            dossier = self.get_dossier(dossier_id, session=s)
+            if not dossier:
+                return None
 
-        milestones = list(dossier.milestones or [])
-        found = False
-        for m in milestones:
-            if m.get("id") == milestone_id:
-                m["status"] = status
-                if notes is not None:
-                    m["notes"] = notes
-                found = True
-                break
+            milestones = list(dossier.milestones or [])
+            found = False
+            for m in milestones:
+                if m.get("id") == milestone_id:
+                    m["status"] = status
+                    if notes is not None:
+                        m["notes"] = notes
+                    found = True
+                    break
 
-        if not found:
-            milestones.append(
-                {
-                    "id": milestone_id,
-                    "title": milestone_id,
-                    "status": status,
-                    "notes": notes or "",
-                }
-            )
+            if not found:
+                milestones.append(
+                    {
+                        "id": milestone_id,
+                        "title": milestone_id,
+                        "status": status,
+                        "notes": notes or "",
+                    }
+                )
 
-        dossier.milestones = [dict(m) for m in milestones]
-        flag_modified(dossier, "milestones")
-        dossier.updated_at = utcnow()
-        s.add(dossier)
-        s.commit()
-        s.refresh(dossier)
-        return dossier
+            dossier.milestones = [dict(m) for m in milestones]
+            flag_modified(dossier, "milestones")
+            dossier.updated_at = utcnow()
+            s.add(dossier)
+            s.commit()
+            s.refresh(dossier)
+            return dossier
+        finally:
+            if session is None and self.session is None:
+                s.close()
 
     def bind_memories(
         self,
@@ -229,27 +253,31 @@ class JuanzongEngine:
     ) -> bool:
         """向卷宗幂等且保序地绑定记忆项。"""
         s = session or self._get_session()
-        dossier = self.get_dossier(dossier_id, session=s)
-        if not dossier:
-            return False
+        try:
+            dossier = self.get_dossier(dossier_id, session=s)
+            if not dossier:
+                return False
 
-        current = list(dossier.memory_ids or [])
-        existing = set(current)
-        new_added = False
-        for mid in memory_ids:
-            if isinstance(mid, str) and mid.strip() and mid.strip() not in existing:
-                existing.add(mid.strip())
-                current.append(mid.strip())
-                new_added = True
+            current = list(dossier.memory_ids or [])
+            existing = set(current)
+            new_added = False
+            for mid in memory_ids:
+                if isinstance(mid, str) and mid.strip() and mid.strip() not in existing:
+                    existing.add(mid.strip())
+                    current.append(mid.strip())
+                    new_added = True
 
-        if new_added:
-            dossier.memory_ids = current
-            flag_modified(dossier, "memory_ids")
-            dossier.updated_at = utcnow()
-            s.add(dossier)
-            s.commit()
-            s.refresh(dossier)
-        return True
+            if new_added:
+                dossier.memory_ids = current
+                flag_modified(dossier, "memory_ids")
+                dossier.updated_at = utcnow()
+                s.add(dossier)
+                s.commit()
+                s.refresh(dossier)
+            return True
+        finally:
+            if session is None and self.session is None:
+                s.close()
 
     def unbind_memories(
         self,
@@ -259,22 +287,26 @@ class JuanzongEngine:
     ) -> bool:
         """从卷宗解绑记忆项。"""
         s = session or self._get_session()
-        dossier = self.get_dossier(dossier_id, session=s)
-        if not dossier:
-            return False
+        try:
+            dossier = self.get_dossier(dossier_id, session=s)
+            if not dossier:
+                return False
 
-        to_remove = set(memory_ids)
-        current = list(dossier.memory_ids or [])
-        filtered = [mid for mid in current if mid not in to_remove]
+            to_remove = set(memory_ids)
+            current = list(dossier.memory_ids or [])
+            filtered = [mid for mid in current if mid not in to_remove]
 
-        if len(filtered) != len(current):
-            dossier.memory_ids = filtered
-            flag_modified(dossier, "memory_ids")
-            dossier.updated_at = utcnow()
-            s.add(dossier)
-            s.commit()
-            s.refresh(dossier)
-        return True
+            if len(filtered) != len(current):
+                dossier.memory_ids = filtered
+                flag_modified(dossier, "memory_ids")
+                dossier.updated_at = utcnow()
+                s.add(dossier)
+                s.commit()
+                s.refresh(dossier)
+            return True
+        finally:
+            if session is None and self.session is None:
+                s.close()
 
     def close_dossier(
         self,
@@ -285,22 +317,26 @@ class JuanzongEngine:
     ) -> Dossier | None:
         """办结或归档卷宗。"""
         s = session or self._get_session()
-        dossier = self.get_dossier(dossier_id, session=s)
-        if not dossier:
-            return None
+        try:
+            dossier = self.get_dossier(dossier_id, session=s)
+            if not dossier:
+                return None
 
-        dossier.status = "archived" if archived else "completed"
-        if summary:
-            meta = dict(dossier.metadata_json or {})
-            meta["closing_summary"] = summary
-            dossier.metadata_json = meta
-            flag_modified(dossier, "metadata_json")
+            dossier.status = "archived" if archived else "completed"
+            if summary:
+                meta = dict(dossier.metadata_json or {})
+                meta["closing_summary"] = summary
+                dossier.metadata_json = meta
+                flag_modified(dossier, "metadata_json")
 
-        dossier.updated_at = utcnow()
-        s.add(dossier)
-        s.commit()
-        s.refresh(dossier)
-        return dossier
+            dossier.updated_at = utcnow()
+            s.add(dossier)
+            s.commit()
+            s.refresh(dossier)
+            return dossier
+        finally:
+            if session is None and self.session is None:
+                s.close()
 
     def focus_dossier_context(
         self,
@@ -311,67 +347,71 @@ class JuanzongEngine:
     ) -> DossierFocusResult:
         """针对指定卷宗执行情境记忆聚焦检索（Dossier Context Focusing）。"""
         s = session or self._get_session()
-        dossier = self.get_dossier(dossier_id, session=s)
-        if not dossier:
+        try:
+            dossier = self.get_dossier(dossier_id, session=s)
+            if not dossier:
+                return DossierFocusResult(
+                    dossier_id=dossier_id,
+                    dossier_title="[未知或无权访问]",
+                    dossier_goal="",
+                    focused_memories=[],
+                    milestones=[],
+                    total_bound_memories=0,
+                )
+
+            bound_ids = list(dossier.memory_ids or [])
+            focused_memories: list[dict[str, Any]] = []
+
+            if bound_ids:
+                # 批量获取绑定的记忆并做权限检查（避免 N+1 查询）
+                items = s.exec(select(MemoryItem).where(MemoryItem.id.in_(bound_ids))).all()
+                item_map = {item.id: item for item in items}
+
+                for mid in bound_ids:
+                    item = item_map.get(mid)
+                    if item and item.status == "active" and self._check_memory_access(item):
+                        focused_memories.append(
+                            {
+                                "id": item.id,
+                                "content": item.content,
+                                "role": item.role,
+                                "confidence": item.confidence,
+                                "event_time": str(item.event_time) if item.event_time else None,
+                            }
+                        )
+
+            # 若提供了 query，结合中文分词或子串打分
+            if query and focused_memories:
+                import re
+
+                q_clean = query.strip().lower()
+                # 提取单词、单字（对中文，提取 2-gram 和整词以保证子串匹配敏感度）
+                q_terms = [t for t in re.split(r"[\s,，。；;]+", q_clean) if t]
+                bigrams = []
+                for term in q_terms:
+                    if len(term) >= 2:
+                        for i in range(len(term) - 1):
+                            bigrams.append(term[i : i + 2])
+
+                def _rank(m: dict[str, Any]) -> float:
+                    content = str(m.get("content", "")).lower()
+                    # 1. 整词匹配
+                    overlap = sum(2.0 for t in q_terms if t in content) if q_terms else 0.0
+                    # 2. 2-gram 中文子串命中
+                    ngram_match = sum(1.0 for bg in bigrams if bg in content) if bigrams else 0.0
+                    conf = float(m.get("confidence") or 0.5)
+                    return overlap + ngram_match + conf
+
+                focused_memories.sort(key=_rank, reverse=True)
+
             return DossierFocusResult(
-                dossier_id=dossier_id,
-                dossier_title="[未知或无权访问]",
-                dossier_goal="",
-                focused_memories=[],
-                milestones=[],
-                total_bound_memories=0,
+                dossier_id=dossier.id,
+                dossier_title=dossier.title,
+                dossier_goal=dossier.goal,
+                focused_memories=focused_memories[:limit],
+                milestones=list(dossier.milestones or []),
+                total_bound_memories=len(bound_ids),
             )
-
-        bound_ids = list(dossier.memory_ids or [])
-        focused_memories: list[dict[str, Any]] = []
-
-        if bound_ids:
-            # 批量获取绑定的记忆并做权限检查（避免 N+1 查询）
-            items = s.exec(select(MemoryItem).where(MemoryItem.id.in_(bound_ids))).all()
-            item_map = {item.id: item for item in items}
-
-            for mid in bound_ids:
-                item = item_map.get(mid)
-                if item and item.status == "active" and self._check_memory_access(item):
-                    focused_memories.append(
-                        {
-                            "id": item.id,
-                            "content": item.content,
-                            "role": item.role,
-                            "confidence": item.confidence,
-                            "event_time": str(item.event_time) if item.event_time else None,
-                        }
-                    )
-
-        # 若提供了 query，结合中文分词或子串打分
-        if query and focused_memories:
-            import re
-
-            q_clean = query.strip().lower()
-            # 提取单词、单字（对中文，提取 2-gram 和整词以保证子串匹配敏感度）
-            q_terms = [t for t in re.split(r"[\s,，。；;]+", q_clean) if t]
-            bigrams = []
-            for term in q_terms:
-                if len(term) >= 2:
-                    for i in range(len(term) - 1):
-                        bigrams.append(term[i : i + 2])
-
-            def _rank(m: dict[str, Any]) -> float:
-                content = str(m.get("content", "")).lower()
-                # 1. 整词匹配
-                overlap = sum(2.0 for t in q_terms if t in content) if q_terms else 0.0
-                # 2. 2-gram 中文子串命中
-                ngram_match = sum(1.0 for bg in bigrams if bg in content) if bigrams else 0.0
-                conf = float(m.get("confidence") or 0.5)
-                return overlap + ngram_match + conf
-
-            focused_memories.sort(key=_rank, reverse=True)
-
-        return DossierFocusResult(
-            dossier_id=dossier.id,
-            dossier_title=dossier.title,
-            dossier_goal=dossier.goal,
-            focused_memories=focused_memories[:limit],
-            milestones=list(dossier.milestones or []),
-            total_bound_memories=len(bound_ids),
-        )
+        finally:
+            if session is None and self.session is None:
+                s.close()

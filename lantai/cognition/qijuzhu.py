@@ -219,55 +219,61 @@ class QijuzhuEngine:
             detail_level: "summary" 或 "full"。
         """
         session = self._get_session()
-        target_date: date
-        if date is None:
-            target_date = utcnow().date()
-        elif isinstance(date, str):
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
-        else:
-            target_date = date
+        try:
+            target_date: date
+            if date is None:
+                target_date = utcnow().date()
+            elif isinstance(date, str):
+                target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            else:
+                target_date = date
 
-        start_time = datetime.combine(target_date, time.min, tzinfo=UTC)
-        end_time = datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=UTC)
+            start_time = datetime.combine(target_date, time.min, tzinfo=UTC)
+            end_time = datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=UTC)
 
-        events = self._fetch_events_between(session, start_time, end_time)
-        # 按时间正序
-        events.sort(key=lambda x: x.timestamp)
+            events = self._fetch_events_between(session, start_time, end_time)
+            # 按时间正序
+            events.sort(key=lambda x: x.timestamp)
 
-        # 统计度量指标
-        total_events = len(events)
-        new_memories = sum(
-            1 for e in events if e.event_type in ("memory_ingested", "rule_established")
-        )
-        rules_established = sum(1 for e in events if e.event_type == "rule_established")
-        dossier_events = sum(1 for e in events if e.event_type == "dossier_milestone")
-        proposals_applied = sum(1 for e in events if e.event_type == "proposal_applied")
+            # 统计度量指标
+            total_events = len(events)
+            new_memories = sum(
+                1 for e in events if e.event_type in ("memory_ingested", "rule_established")
+            )
+            rules_established = sum(1 for e in events if e.event_type == "rule_established")
+            dossier_events = sum(1 for e in events if e.event_type == "dossier_milestone")
+            proposals_applied = sum(1 for e in events if e.event_type == "proposal_applied")
 
-        summary_parts = [
-            f"{target_date.isoformat()} 全息纪事共记录 {total_events} 项变迁",
-            f"新摄入记忆 {new_memories} 条",
-        ]
-        if rules_established > 0:
-            summary_parts.append(f"确立操作铁律 {rules_established} 条")
-        if dossier_events > 0:
-            summary_parts.append(f"卷宗情境流转 {dossier_events} 起")
-        if proposals_applied > 0:
-            summary_parts.append(f"演化生效提案 {proposals_applied} 项")
+            summary_parts = [
+                f"{target_date.isoformat()} 全息纪事共记录 {total_events} 项变迁",
+                f"新摄入记忆 {new_memories} 条",
+            ]
+            if rules_established > 0:
+                summary_parts.append(f"确立操作铁律 {rules_established} 条")
+            if dossier_events > 0:
+                summary_parts.append(f"卷宗情境流转 {dossier_events} 起")
+            if proposals_applied > 0:
+                summary_parts.append(f"演化生效提案 {proposals_applied} 项")
 
-        return {
-            "date": target_date.isoformat(),
-            "summary": " · ".join(summary_parts),
-            "metrics": {
-                "total_events": total_events,
-                "new_memories": new_memories,
-                "rules_established": rules_established,
-                "dossier_events": dossier_events,
-                "proposals_applied": proposals_applied,
-            },
-            "chronicle_events": [e.to_dict() for e in events],
-            "detail_level": detail_level,
-            "generated_at": utcnow().isoformat(),
-        }
+            return {
+                "date": target_date.isoformat(),
+                "summary": " · ".join(summary_parts),
+                "metrics": {
+                    "total_events": total_events,
+                    "new_memories": new_memories,
+                    "rules_established": rules_established,
+                    "dossier_events": dossier_events,
+                    "proposals_applied": proposals_applied,
+                },
+                "chronicle_events": [e.to_dict() for e in events],
+                "detail_level": detail_level,
+                "generated_at": utcnow().isoformat(),
+            }
+        finally:
+            # 会话所有权(票 67):自建会话用毕即还——裸 Session 因循环引用等 gc
+            # 兜底,真 QueuePool 上滞留到 5+10 耗尽;注入会话(构造)不关不碰。
+            if self.session is None:
+                session.close()
 
     def get_timeline(
         self,
@@ -281,18 +287,22 @@ class QijuzhuEngine:
             limit: 最大返回事件数。
         """
         session = self._get_session()
-        now = utcnow()
-        start_time = now - timedelta(days=days)
+        try:
+            now = utcnow()
+            start_time = now - timedelta(days=days)
 
-        events = self._fetch_events_between(session, start_time, now + timedelta(seconds=1))
-        # 时间倒序排布（最近事件置顶）
-        events.sort(key=lambda x: x.timestamp, reverse=True)
-        truncated_events = events[:limit]
+            events = self._fetch_events_between(session, start_time, now + timedelta(seconds=1))
+            # 时间倒序排布（最近事件置顶）
+            events.sort(key=lambda x: x.timestamp, reverse=True)
+            truncated_events = events[:limit]
 
-        return {
-            "days": days,
-            "total_matched": len(events),
-            "events": [e.to_dict() for e in truncated_events],
-            "window_start": start_time.isoformat(),
-            "window_end": now.isoformat(),
-        }
+            return {
+                "days": days,
+                "total_matched": len(events),
+                "events": [e.to_dict() for e in truncated_events],
+                "window_start": start_time.isoformat(),
+                "window_end": now.isoformat(),
+            }
+        finally:
+            if self.session is None:
+                session.close()
