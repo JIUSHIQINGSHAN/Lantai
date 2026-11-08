@@ -198,20 +198,25 @@ def _override(client, principal, monkeypatch):
 
 class TestWriteFaceRest:
     @pytest.mark.parametrize(
-        "payload,label",
+        "raw_body,label",
         [
-            ({"importance": -0.6}, "负值（strength=0.0 病灶形状）"),
-            ({"importance": float("nan")}, "NaN（SQLite 绑 NULL 炸 NOT NULL 形态）"),
-            ({"importance": float("inf")}, "inf（永不衰减轻症形态）"),
+            (b'{"importance": -0.6}', "负值（strength=0.0 病灶形状）"),
+            (b'{"importance": NaN}', "NaN（SQLite 绑 NULL 炸 NOT NULL 形态）"),
+            (b'{"importance": Infinity}', "inf（永不衰减轻症形态）"),
         ],
     )
-    def test_put_out_of_range_importance_rejected_422(self, rest_env, monkeypatch, payload, label):
+    def test_put_out_of_range_importance_rejected_422(self, rest_env, monkeypatch, raw_body, label):
         """票面修复目标 1：REST 更新面拒绝越界（422 而非 500/落库），越界请求
-        不改库（宁 miss 不脏写）。"""
+        不改库（宁 miss 不脏写）。NaN/inf 走 raw body——它们是非标准 JSON 字面量
+        （httpx 的 json= 用 allow_nan=False 发不出去），宽松解析器才产出的形状。"""
         engine, client = rest_env
         _add_owned(engine)
         _override(client, _principal(), monkeypatch)
-        resp = client.put("/terminal/memory/mem_t35", json=payload)
+        resp = client.put(
+            "/terminal/memory/mem_t35",
+            content=raw_body,
+            headers={"Content-Type": "application/json"},
+        )
         assert resp.status_code == 422, f"{label}: 期望 422，得到 {resp.status_code}"
         with Session(engine) as s:
             assert s.get(MemoryItem, "mem_t35").importance == 0.5, "422 请求不得改库"

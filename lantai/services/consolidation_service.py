@@ -14,6 +14,7 @@ fail-loud：拒绝执行本周期巩固并 ERROR 留痕——宁巩固停摆，�
 """
 
 import contextlib
+import math
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from threading import Lock
@@ -352,7 +353,16 @@ def consolidate_cluster(
             logger.warning("沉潜：TrustMem 迁移校验不通过，放弃折叠以防脏写")
             return None
 
-        importance = float(res.get("importance", 0.8))
+        raw_importance = float(res.get("importance", 0.8))
+        if not math.isfinite(raw_importance):
+            logger.warning(
+                "沉潜：LLM 提取 importance=%r 非有限值，跳过该簇（宁 miss 不脏写，票 35）",
+                raw_importance,
+            )
+            return None
+        importance = max(0.0, min(1.0, raw_importance))
+        if importance != raw_importance:
+            logger.warning("沉潜：LLM 提取 importance=%s 越界，钳入 [0,1]（票 35）", raw_importance)
         confidence = float(res.get("confidence", 0.9))
 
         dom = getattr(cluster_items[0], "domain", "user")

@@ -1,3 +1,4 @@
+import math
 from datetime import datetime
 
 from fastapi import HTTPException
@@ -494,6 +495,28 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     "detail": {"consolidated_evidence_ids": stale_hits},
                 }
             patch_full = prop.proposed_patch
+            raw_importance = float(patch_full.get("importance", 0.5))
+            if not math.isfinite(raw_importance):
+                # 票 35：生成面立法前的存量 patch 可能携带 NaN/inf——NaN 经 max/min
+                # 习语会洗成 1.0（脏写），直落 SQLite 又被绑成 NULL 炸 NOT NULL。
+                # 落 REJECTED 终态（同 stale 硬门口径：仅早退会把 APPROVED 永留，
+                # evolve_worker 每轮重试＝livelock）。
+                logger.warning(
+                    "提案 %s apply 拒绝：patch importance=%r 非有限值（票 35）",
+                    prop.id,
+                    raw_importance,
+                )
+                out = _reject_proposal(
+                    prop, "importance_not_finite", {"importance": raw_importance}
+                )
+                s.add(prop)
+                s.commit()
+                return out
+            importance = max(0.0, min(1.0, raw_importance))
+            if importance != raw_importance:
+                logger.warning(
+                    "提案 %s patch importance=%s 越界，钳入 [0,1]（票 35）", prop.id, raw_importance
+                )
             # 主记忆构造取 proposed_patch 不重推断（生成侧 _master_patch 平移现状构造：
             # decay_class 恒 semantic、decay_score=1.0、不设四元组——行为零漂移）
             master = MemoryItem(
@@ -503,7 +526,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                 lane=patch_full.get("lane", settings.DEFAULT_LANE),
                 source_ids=list(patch_full.get("source_ids") or evidence_ids),
                 confidence=float(patch_full.get("confidence", prop.confidence)),
-                importance=float(patch_full.get("importance", 0.5)),
+                importance=importance,
                 decay_score=1.0,
                 decay_class=patch_full.get("decay_class", "semantic"),
                 status="active",

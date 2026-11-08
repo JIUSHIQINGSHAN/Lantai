@@ -1,6 +1,7 @@
 """Glass-box Terminal：透明化对话与记忆透视 SSE 端点"""
 
 import json
+import math
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -295,6 +296,13 @@ def update_memory(memory_id: str, req: MemoryUpdateReq, principal=Depends(get_cu
             m.content = req.content
             updates += 1
         if req.importance is not None:
+            # 票 35：importance 与保持强度公式直连（forgetting._lane_strength），无界
+            # 负值让遗忘引擎确定性崩溃——更新面拒绝越界（422，宁 miss 不脏写）。
+            # 不走 pydantic Field(ge/le)：FastAPI 422 响应体以 allow_nan=False 渲染，
+            # 验证错误的 input 携带 NaN/inf 时 422 自身会渲染炸 500，故在 handler
+            # 显式拒（与本文件 assert_no_prompt_injection 的 422 同一惯语）。
+            if not math.isfinite(req.importance) or not (0.0 <= req.importance <= 1.0):
+                raise HTTPException(422, "importance 必须是 [0.0, 1.0] 内的有限数值（票 35）")
             m.importance = req.importance
             updates += 1
         if req.confidence is not None:
