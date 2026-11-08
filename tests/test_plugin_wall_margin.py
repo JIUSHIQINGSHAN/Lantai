@@ -225,6 +225,9 @@ class TestSlowExtractionSurvivesServerWall:
         assert proc is not None and mod._wait_ready(timeout=60)
         with patch.object(mod, "_DIALOGUE_TIMEOUT", self.SERVER_WALL - 0.2):
             mod._call_dialogue("对照组", session_id="s_eq", turn=1)
+        # watchdog 只发 kill 信号不等回收，慢机器上立刻 poll 可能还是 None；等它真正退出
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=10)
         assert proc.poll() is not None, "对照组：插件墙短于服务端墙时子进程应被 kill"
         time.sleep(self.LATENCY + 1.0)
         assert not (mark.exists() and mark.read_text(encoding="utf-8").strip()), (
