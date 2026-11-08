@@ -811,9 +811,7 @@ def _migrate_v38(conn) -> None:
         ("ix_cehou_window_user_id", "user_id"),
     ):
         try:
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS {ix_name} ON cehou_window ({ix_col})"
-            )
+            conn.execute(f"CREATE INDEX IF NOT EXISTS {ix_name} ON cehou_window ({ix_col})")
         except Exception as exc:  # 索引失败不阻断启动，但必须留痕（同 v25/v26 口径）
             logger.warning("迁移 v38 索引创建跳过 %s: %s", ix_name, exc)
     logger.info("Migrated v38: cehou_window 影子视窗落库（票 60）")

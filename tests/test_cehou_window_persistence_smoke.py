@@ -57,17 +57,13 @@ class TestCehouWindowPersistenceSmoke:
         assert created["window_id"] == wid
         # A 先积累观察数据：这些样本属于 A 的对照实验，不允许被 B 抹掉
         for _ in range(3):
-            assert engine_a.record_sample(window_id=wid, success=True, latency_ms=10.0)[
-                "success"
-            ]
+            assert engine_a.record_sample(window_id=wid, success=True, latency_ms=10.0)["success"]
 
         # B 用同一个 window_id 再开：修复前静默覆盖（计数清零、属主易主）
         res_b = engine_b.create_observation_window(
             window_id=wid, target_type="param", target_id=f"sug-{tag}"
         )
-        assert res_b.get("success") is False, (
-            f"B 用户同名 window_id 再开未被拒绝：{res_b}"
-        )
+        assert res_b.get("success") is False, f"B 用户同名 window_id 再开未被拒绝：{res_b}"
         assert res_b.get("state") == "access_denied"
 
         # A 的视窗数据原样：属主未易主、样本数未被清零
@@ -176,9 +172,7 @@ class TestCehouWindowPersistenceSmoke:
         p = Principal(user_id=f"user-s-{tag}", tenant_id=f"tenant-{tag}")
         engine = CehouEngine(principal=p)
         wid = f"win-scan-{tag}"
-        engine.create_observation_window(
-            window_id=wid, target_type="param", target_id=f"sug-{tag}"
-        )
+        engine.create_observation_window(window_id=wid, target_type="param", target_id=f"sug-{tag}")
         report = engine.scan_active_windows()
         ids = [w["window_id"] for w in report["windows"]]
         assert wid in ids
