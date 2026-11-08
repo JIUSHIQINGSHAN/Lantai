@@ -199,9 +199,7 @@ class TestScanIdentity:
             test_db.add(m)
         test_db.commit()
 
-        res = JiaochouEngine(principal=None).scan_redundancy(
-            limit=10, similarity_threshold=0.5
-        )
+        res = JiaochouEngine(principal=None).scan_redundancy(limit=10, similarity_threshold=0.5)
         hits = [{p["memory_id_a"], p["memory_id_b"]} for p in res["redundant_pairs"]]
         assert {default_pair[0].id, default_pair[1].id} in hits
         assert {alice_pair[0].id, alice_pair[1].id} not in hits, (
