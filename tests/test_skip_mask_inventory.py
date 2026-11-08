@@ -40,7 +40,8 @@ MARK_CALLS = {
     "unittest.skipIf": "unittest.skipIf",
 }
 
-# 唯一合法的不执行申报面（续16 全仓实测 6 处 + 票 31 一处）。BL-03 已改成断言，不在清单内。
+# 唯一合法的不执行申报面（续16 全仓实测 6 处 + 票 31 一处 + 票 32 三处）。
+# BL-03 已改成断言，不在清单内。
 DECLARED = Counter(
     {
         ("tests/test_longmemeval_core.py", "pytestmark.skipif", "数据集未下载（本地跑测专用）"): 1,
@@ -62,9 +63,18 @@ DECLARED = Counter(
                 "（如 CI 验证 skip 逻辑），设 LANTAI_DIGEST_TZ_ARM_FORCE=1"
             ),
         ): 1,
+        (
+            "tests/test_readside_time_semantics.py",
+            "pytest.mark.skipif",
+            (
+                "readside 本地日语义红测需宿主时区 ≠ UTC 才能复现 UTC 日错位：UTC 宿主上"
+                "本地日与 UTC 日重合、aware 偏移为零，现状即正确（语义重合非假绿）——"
+                "宁 skip 带由不脏写；强制实跑设 LANTAI_READSIDE_TZ_ARM_FORCE=1"
+            ),
+        ): 3,
     }
 )
-DECLARED_TOTAL = 7
+DECLARED_TOTAL = 10
 
 # 无守卫的运行时弃权（能力探测循环走空后统一 skip）单独按申报集合管——它不是
 # 「凭被测返回值弃权」，但同样必须逐条可查。新增一个这类点同样判红。
