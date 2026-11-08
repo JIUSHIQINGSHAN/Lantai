@@ -54,6 +54,7 @@ def assert_dialogue_enabled() -> None:
     logger.warning("对话摄取被 DIALOGUE_ENABLED=false 阻断（通道整体关闭，票 43）")
     raise DialogueDisabledError("dialogue channel disabled (DIALOGUE_ENABLED=false)")
 
+
 # 对话入口的 lane 预判（宽松 search；fastpath 整段 match 语义保持不变）
 _PREFERENCE_RE = re.compile(r"我.{0,8}?(?:喜欢|不喜欢|讨厌|偏爱|偏好)")
 _FACT_RE = re.compile(r"^我是|^我叫|我的(?:名字|生日|年龄|地址|电话|邮箱)|我住在|我来自")
