@@ -2999,7 +2999,7 @@ TOOLS = {
         },
     },
     "mem_usage": {
-        "description": "用量统计（只读）：最近 N 天每日新增记忆数（缺日补零）",
+        "description": "用量统计（只读）：最近 N 天每日新增记忆数（缺日补零；每日桶按本地日切，票 32）",
         "inputSchema": {
             "type": "object",
             "properties": {

@@ -16,7 +16,7 @@ from ulid import ULID
 
 from lantai.core.acl import ensure_can_delete, viewer_of
 from lantai.core.logger import logger
-from lantai.core.time import utcnow
+from lantai.core.time import ensure_aware, utcnow
 from lantai.models.tables import LifecycleStatus, MemoryCheckpoint, MemoryItem
 from lantai.services.record_ops_service import (
     STATUS_ACTIVE,
@@ -57,9 +57,7 @@ class ChenfengEngine:
         - 铁律（procedural）天然豁免封藏。
         - 仅对 active 状态条目执行检测。
         """
-        eval_now = now or utcnow()
-        if eval_now.tzinfo is None:
-            eval_now = eval_now.replace(tzinfo=UTC)
+        eval_now = ensure_aware(now or utcnow())
 
         def _scan(s: Session) -> list[dict[str, Any]]:
             stmt = select(MemoryItem).where(MemoryItem.status == STATUS_ACTIVE)
@@ -82,10 +80,8 @@ class ChenfengEngine:
                     reasons.append(f"decay_score({item.decay_score:.3f}) < {decay_threshold}")
 
                 # 规则 2: 长期未访问且 0 使用
-                last_time = item.last_used_at or item.created_at
+                last_time = ensure_aware(item.last_used_at or item.created_at)
                 if last_time:
-                    if last_time.tzinfo is None:
-                        last_time = last_time.replace(tzinfo=UTC)
                     idle_days = (eval_now - last_time).total_seconds() / 86400.0
                     if idle_days > inactive_days and (item.use_count or 0) == 0:
                         reasons.append(
@@ -219,9 +215,12 @@ class ChenfengEngine:
             if scene:
                 stmt = stmt.where(MemoryItem.scene_id == scene)
             if time_from:
-                stmt = stmt.where(MemoryItem.created_at >= time_from)
+                # 票 32：绑定前必归一——+08:00 aware 裸绑定不做偏移换算，
+                # 墙上时钟被当 UTC 文本与库内 UTC 值比较，窗口静默漂移 +8h
+                # （凌晨漏掉/次日混入双向）。
+                stmt = stmt.where(MemoryItem.created_at >= ensure_aware(time_from))
             if time_to:
-                stmt = stmt.where(MemoryItem.created_at <= time_to)
+                stmt = stmt.where(MemoryItem.created_at <= ensure_aware(time_to))
             if query:
                 # 兼容多关键词模糊查询与空格分词
                 for term in query.split():

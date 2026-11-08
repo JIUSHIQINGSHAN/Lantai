@@ -17,7 +17,7 @@ from typing import Any
 from sqlmodel import Session, select
 
 from lantai.core.auth import Principal
-from lantai.core.time import utcnow
+from lantai.core.time import ensure_aware, local_day_window_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import Dossier, MemoryItem, MemoryProposal
 from lantai.storage import db
@@ -211,24 +211,30 @@ class QijuzhuEngine:
         self,
         date: str | date | None = None,
         detail_level: str = "summary",
+        now: datetime | None = None,
     ) -> dict[str, Any]:
         """获取指定日期的全息起居注纪事。
 
         Args:
             date: 日期字符串 (YYYY-MM-DD) 或 date 对象，默认今日。
             detail_level: "summary" 或 "full"。
+            now: 冻结时钟注入缝（测试用；生产缺省 = 实时）。
         """
         session = self._get_session()
         target_date: date
         if date is None:
-            target_date = utcnow().date()
+            # 票 32：「今日」按本地墙钟日——库存 UTC、报表按使用者日界
+            # （core/time.local_day_window_utc 同一裁决）；UTC 日历日会把
+            # 北京 00:00–08:00 的活动落进昨天的纪事。
+            reference = ensure_aware(now or utcnow())
+            target_date = reference.astimezone().date()
         elif isinstance(date, str):
             target_date = datetime.strptime(date, "%Y-%m-%d").date()
         else:
             target_date = date
 
-        start_time = datetime.combine(target_date, time.min, tzinfo=UTC)
-        end_time = datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=UTC)
+        # 票 32：显式日期同样按本地日→UTC 窗口（与每日盘点同一日界）
+        start_time, end_time = local_day_window_utc(target_date)
 
         events = self._fetch_events_between(session, start_time, end_time)
         # 按时间正序

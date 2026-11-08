@@ -164,6 +164,38 @@ def test_chenfeng_naive_input_treated_as_utc(readside_env):
     assert "mem_utc十点" in ids, f"naive 输入按 UTC 解释的契约被破坏；ids={ids}"
 
 
+def test_chenfeng_offset_and_utc_representations_equivalent(readside_env):
+    """对照臂（等价锁，票 32 TDD 要求 2）：同一窗口的 +08:00 表示与 UTC
+    表示必须给出同一结果——归一后两表示等价。
+
+    修复前该等价性被病灶破坏（+08:00 形态漂移，漏掉/混入两臂已分别实证
+    红）；本锁钉死修复后两种表示永不分叉。"""
+    session_factory = readside_env
+    _seed_memory(
+        session_factory,
+        _mem("窗内", datetime(2026, 10, 31, 20, 0, tzinfo=UTC), status="archived"),
+    )
+    _seed_memory(
+        session_factory,
+        _mem("窗外", datetime(2026, 11, 1, 18, 0, tzinfo=UTC), status="archived"),
+    )
+
+    offset_form = ChenfengEngine().search_archived(
+        time_from=datetime(2026, 11, 1, 0, 0, tzinfo=_BEIJING),
+        time_to=datetime(2026, 11, 2, 0, 0, tzinfo=_BEIJING),
+    )
+    utc_form = ChenfengEngine().search_archived(
+        time_from=datetime(2026, 10, 31, 16, 0, tzinfo=UTC),
+        time_to=datetime(2026, 11, 1, 16, 0, tzinfo=UTC),
+    )
+    ids_offset = [item["id"] for item in offset_form["items"]]
+    ids_utc = [item["id"] for item in utc_form["items"]]
+    assert ids_offset == ids_utc == ["mem_窗内"], (
+        f"同一窗口的 +08:00 表示与 UTC 表示结果分叉——归一失败回退："
+        f"offset={ids_offset} utc={ids_utc}"
+    )
+
+
 # ── qijuzhu：本地日窗口（UTC 宿主语义重合，skip 带由）──
 
 

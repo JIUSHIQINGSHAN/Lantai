@@ -1,4 +1,4 @@
-"""/usage 端点测试：最近 7 天 GROUP BY 聚合 + 缺日补零"""
+"""/usage 端点测试：最近 7 天每日新增聚合（票 32 起按本地日归桶）+ 缺日补零"""
 
 from unittest.mock import patch
 

@@ -1,6 +1,6 @@
 import logging
 import re
-from datetime import UTC, datetime, timedelta, timezone, tzinfo
+from datetime import UTC, date, datetime, time, timedelta, timezone, tzinfo
 from functools import lru_cache
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,27 @@ def parse_iso_utc(value: str) -> datetime:
     if not text:
         raise ValueError("empty ISO timestamp")
     return ensure_aware(datetime.fromisoformat(text.replace("Z", "+00:00")))
+
+
+def local_day_window_utc(day: date | None = None) -> tuple[datetime, datetime]:
+    """本地日历日 → (start_utc, end_utc)，aware UTC。
+
+    先把本地日界换算成 UTC，再与库值比较（避免 Chronos 时区类 bug）。
+    aware：锁定的 sqlmodel 0.0.42 无库级防护（datetime 字段映射裸
+    DateTime，naive 查询绑定参数也静默落库）——绑定参数恒 aware UTC
+    靠约定与读侧 _ensure_utc 归一，非库强制；落盘文本形态与 naive 版
+    逐条一致（SQLite 按分量格式化、无偏移后缀）。
+
+    票 32 起为读侧本地日语味的共享真源（qijuzhu 起居注/usage 每日桶
+    直调本函数）；digest_worker._local_day_window_utc 是同语义的首版
+    私有实现（票 31），后续收敛待其锁定面稳定后委托本函数。
+    """
+    local_now = datetime.now().astimezone()
+    if day is None:
+        day = local_now.date()
+    local_start = datetime.combine(day, time.min, tzinfo=local_now.tzinfo)
+    local_end = local_start + timedelta(days=1)
+    return (local_start.astimezone(UTC), local_end.astimezone(UTC))
 
 
 # 注入帧时间渲染的粒度集（票据 .scratch/inject-frame-time/01，上游 f0.1+ 5cee73e 同款）。
