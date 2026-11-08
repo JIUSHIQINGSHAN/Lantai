@@ -4013,7 +4013,9 @@ _MAX_LINE_CHARS = 1_000_000
 # 票 76：超长行不解析全帧（防内存耗尽是长度守卫的存在理由），id 用受限正则
 # 尽力提取——值形态限 JSON 标量、字符串定长上界；提取不到按无 id 处理。
 # 误配最坏只是拒绝帧的 id 装饰错，不回帧才是协议伤害（客户端只能等到超时）。
-_OVERSIZE_ID_RE = re.compile(r'"id"\s*:\s*("(?:[^"\\]|\\.){0,128}"|-?\d{1,12}\b|true|false|null)')
+# 整数臂 19 位：int64 生态事实空间（毫秒时间戳 13 位、雪花 id 在其内）；上界
+# 同时挡住 json.loads 对 >4300 位整数的 ValueError 炸点，不可放宽为无界 \d+。
+_OVERSIZE_ID_RE = re.compile(r'"id"\s*:\s*("(?:[^"\\]|\\.){0,128}"|-?\d{1,19}\b|true|false|null)')
 
 
 def _oversize_reject(line: str) -> dict | None:

@@ -136,6 +136,34 @@ def test_oversize_line_with_id_rejected_with_frame_and_stays_alive(monkeypatch):
     assert "oversize" in fake_err.getvalue()
 
 
+def test_oversize_reject_id_extraction_edges():
+    """票 76 双轴自审采纳项：_oversize_reject 的 id 提取边界，直调真构造输入。
+
+    13 位整数 id（毫秒时间戳形态）必须拿到拒绝帧——提取上限若低于生态事实
+    空间（int64，19 位），带 id 请求又落回「静默吞」，恰好复现本票要治的病；
+    超界（5000 位数字串）按无 id 静默（json.loads 对 >4300 位整数会 ValueError，
+    上界是防炸点不是装饰）；非法转义字符串 token 与 null 形态走各自防御分支。
+    """
+    mod = _load_mcp()
+    pad = '"pad":"' + "x" * 1_000_001 + '"'
+
+    frame = mod._oversize_reject(
+        '{"jsonrpc":"2.0","id":1730000000000,"method":"ping","params":{' + pad + "}}"
+    )
+    assert frame is not None and frame["id"] == 1730000000000, frame
+    assert frame["error"]["code"] == -32600
+
+    assert mod._oversize_reject('{"jsonrpc":"2.0","id":' + "9" * 5000 + "}") is None
+    assert (
+        mod._oversize_reject('{"jsonrpc":"2.0","id":"\\x","method":"ping","params":{' + pad + "}}")
+        is None
+    )
+    assert (
+        mod._oversize_reject('{"jsonrpc":"2.0","id":null,"method":"ping","params":{' + pad + "}}")
+        is None
+    )
+
+
 def test_oversize_line_without_id_stays_silent(monkeypatch):
     """票 76 验收 2 后半：无 id 的超长通知形态仍静默丢（协议面零响应）。"""
     mod = _load_mcp()
