@@ -141,7 +141,8 @@ def test_niyi_non_numeric_confidence_returns_error_receipt(bounds_env):
     out = engine.deliberate_proposal("update", {"confidence": "high"}, "nm-target")
     assert isinstance(out, dict), f"非数值 confidence 未按回执形态处理: {out!r}"
     assert out["confidence_delta"] == 0.0
-    assert "置信度" in out["deliberation_reason"]
+    assert "非数值" in out["deliberation_reason"]
+    assert "high" in out["deliberation_reason"], "回执应回显毒值原文以便上游排查"
     assert "推演终止" in out["deliberation_reason"]
 
 
