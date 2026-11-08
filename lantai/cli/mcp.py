@@ -482,7 +482,6 @@ def handle_triage_auto_pilot(params: dict) -> dict:
             raise ValueError(f"{name} must be a number in [0.0, 1.0]")
     min_approve = float(min_approve)
     max_reject = float(max_reject)
-    limit = int(limit)
     dry_run = bool(params.get("dry_run", False))
     from lantai.services.auto_triage_service import run_triage_auto_pilot
 
@@ -2146,7 +2145,10 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "title": {"type": "string"},
-                "content": {"type": "string"},
+                "content": {
+                    "type": "string",
+                    "description": "记忆正文；与 media_url 二选一，提供时至少 10 字符",
+                },
                 "media_url": {
                     "type": "string",
                     "description": "目识（vision）：图片地址（http/https）或 data URI；提供时 content 必须为空",
@@ -2226,7 +2228,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "limit": {"type": "integer", "default": 50},
+                "limit": {"type": "integer", "default": 50, "description": "返回条数 [1, 500]"},
             },
         },
     },
@@ -2609,7 +2611,11 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "days": {"type": "integer", "default": 7},
+                "days": {
+                    "type": "integer",
+                    "default": 7,
+                    "description": "聚合窗口天数 [1, 365]；不传不校验",
+                },
             },
         },
     },
@@ -2631,7 +2637,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "limit": {"type": "integer", "default": 50},
+                "limit": {"type": "integer", "default": 50, "description": "返回条数 [1, 500]"},
             },
         },
     },
@@ -2712,7 +2718,10 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "limit": {"type": "integer", "description": "参与聚类的记忆上限（可选）"},
+                "limit": {
+                    "type": "integer",
+                    "description": "参与聚类的记忆上限 [1, 5000]；可选，不传不校验",
+                },
             },
         },
     },

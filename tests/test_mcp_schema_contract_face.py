@@ -244,3 +244,47 @@ def test_qijuzhu_chronicle_multi_day_ignores_single_day_params_current_lock():
     )
     # 同库同窗下两次多日查询的键形态一致（date/detail_level 均不参与多日分支）
     assert set(base) == set(noisy), (sorted(base), sorted(noisy))
+
+
+@pytest.mark.parametrize(
+    ("tool", "param", "bound"),
+    [
+        ("scenes_list", "limit", "[1, 500]"),
+        ("candidates_pending", "limit", "[1, 500]"),
+    ],
+)
+def test_list_tools_limit_bound_declared(tool, param, bound):
+    """搭车声明（票 27 病灶 4）：handler 校验 [1,500] 的列表工具 schema 必须声明。"""
+    mod = _load_mcp()
+    prop = mod.TOOLS[tool]["inputSchema"]["properties"][param]
+    assert bound in prop.get("description", ""), (tool, prop)
+
+
+@pytest.mark.parametrize(
+    ("tool", "param", "bound"),
+    [
+        ("recall_report", "days", "[1, 365]"),
+        ("autodream_report", "limit", "[1, 5000]"),
+    ],
+)
+def test_optional_param_bound_declared(tool, param, bound):
+    """搭车声明（票 27 病灶 4）：可选参数 handler 校验 [1,N]，schema 必须声明边界。"""
+    mod = _load_mcp()
+    prop = mod.TOOLS[tool]["inputSchema"]["properties"][param]
+    assert bound in prop.get("description", ""), (tool, prop)
+
+
+def test_add_content_min_length_declared():
+    """搭车声明（票 27 病灶 4）：content ≥10 字符（schemas.py AddMemoryReq 校验）必须声明。"""
+    mod = _load_mcp()
+    content = mod.TOOLS["add"]["inputSchema"]["properties"]["content"]
+    assert "10" in content.get("description", ""), content
+
+
+def test_triage_auto_pilot_no_op_cast_removed():
+    """守卫：limit 校验后不得残留 int() 强转（isinstance 已保证，no-op 误导读者）。"""
+    import inspect
+
+    mod = _load_mcp()
+    src = inspect.getsource(mod.handle_triage_auto_pilot)
+    assert "int(limit)" not in src, "校验后的 int(limit) 是 no-op，应删除"
