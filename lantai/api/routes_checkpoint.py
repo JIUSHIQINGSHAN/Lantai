@@ -13,8 +13,9 @@
 """
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from lantai.core.acl import SESSION_ID_PATTERN
 from lantai.core.auth import get_current_user
 from lantai.services.checkpoint_service import (
     cleanup_old_checkpoints,
@@ -28,7 +29,9 @@ router = APIRouter()
 
 
 class CheckpointWriteReq(BaseModel):
-    session_id: str
+    # 票 54：字符集收窄（纵深第二层）——session_id 进底本围栏 item_id
+    # 属性，pydantic pattern 非法即 422，不静默截断；与 MCP 面同钳。
+    session_id: str = Field(pattern=SESSION_ID_PATTERN)
     blocks: dict
 
 

@@ -20,7 +20,7 @@ from sqlmodel import Session, col, or_, select
 from lantai.core.acl import SYSTEM_VIEWER, Principal, is_system_viewer, viewer_of
 from lantai.core.logger import logger
 from lantai.core.time import utcnow
-from lantai.llm.fence import wrap_as_data
+from lantai.llm.fence import escape_attr, wrap_as_data
 from lantai.models.tables import MemoryEdge, MemoryItem
 from lantai.storage import db
 
@@ -83,10 +83,10 @@ class MokanAuditResult:
 
 
 def _render_audit_marker(query: str, total: int, verified: int, disputed: int, items) -> str:
-    """磨勘审计包裹标记（票 51/54：query 属性位此前零转义——先纯提取出可测缝，
-    转义在绿轮同一 helper 收口）。"""
+    """磨勘审计包裹标记（票 51：query 属性位用户全可控——同票 54 走
+    fence.escape_attr 单一真源转义，防提前闭合审计标记）。"""
     return (
-        f'<mokan_audit query="{query}" total="{total}" '
+        f'<mokan_audit query="{escape_attr(query)}" total="{total}" '
         f'verified="{verified}" disputed="{disputed}">\n'
         + "\n".join(it.fenced_content for it in items)
         + "\n</mokan_audit>"

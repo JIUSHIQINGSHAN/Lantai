@@ -11,9 +11,12 @@ POST /scratchpad/{session_id}  更新札记
 所以这里必须一路传到底。
 """
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+import re
 
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+
+from lantai.core.acl import SESSION_ID_PATTERN
 from lantai.core.auth import get_current_user
 from lantai.services.scratchpad_service import get_scratchpad, write_scratchpad
 
@@ -21,12 +24,15 @@ router = APIRouter(tags=["scratchpad"])
 
 
 class WriteScratchpadReq(BaseModel):
-    session_id: str = "default"
+    # 票 54：字符集收窄（纵深第二层）——session_id 进提炼链围栏 item_id
+    # 属性（zhaji-{sid}），pydantic pattern 非法即 422，不静默截断；
+    # 路径形态（POST /scratchpad/{session_id}）无 body 模型闸，路由内再钳。
+    session_id: str = Field(default="default", pattern=SESSION_ID_PATTERN)
     content: str = ""
 
 
 class DistillScratchpadReq(BaseModel):
-    session_id: str = "default"
+    session_id: str = Field(default="default", pattern=SESSION_ID_PATTERN)
     content: str = ""
     write: bool = False
     max_chars: int = 1000
@@ -73,6 +79,10 @@ def scratchpad_write_route(
 ):
     """更新/覆盖指定会话的札记便签（归属随 principal 落列，票 ownership-gaps/04）。"""
     sid = session_id or req.session_id or "default"
+    # 票 54：路径形态的 session_id 不经 body 模型——解析后统一过字符集
+    # （非法 422，不静默截断；body 形态另有 Field pattern 双保险）。
+    if not re.fullmatch(SESSION_ID_PATTERN, sid):
+        raise HTTPException(422, "session_id must match ^[A-Za-z0-9_\\-.]{3,128}$")
     try:
         return write_scratchpad(sid, req.content, principal=ctx)
     except HTTPException:

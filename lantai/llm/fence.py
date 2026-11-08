@@ -40,16 +40,34 @@ def fence_declaration() -> str:
     return FENCE_DECLARATION if settings.DATA_FENCE_ENABLED else ""
 
 
+def escape_attr(value) -> str:
+    """属性位转义（票 54）：元数据写入围栏开标记属性前的唯一真源。
+
+    病：item_id 此前原样插值——值含 ``">`` 时开标记被整体提前闭合，注入
+    文本落在数据位之外、正文之前（票 51 mokan 标记 query 位同病同轮收口）。
+    ``&`` 先行转义防双转义；正文位不经过本函数（正文的边界由
+    ``neutralize_fence_escapes`` 守，改写用户字的纪律不破）。
+    """
+    return (
+        str(value)
+        .replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
 def wrap_as_data(content: str, *, item_id: str | None = None, score=None) -> str:
     """把记忆正文包进数据围栏；围栏关闭或内容为空时原样返回。
 
-    item_id / score 作为围栏元数据属性写入开标记，便于下游溯源与调试。
+    item_id / score 作为围栏元数据属性写入开标记，便于下游溯源与调试
+    （票 54：属性值过 ``escape_attr``——item_id 可携带用户可控 session_id）。
     """
     if not content or not settings.DATA_FENCE_ENABLED:
         return content or ""
     attrs = ""
     if item_id:
-        attrs += f' id="{item_id}"'
+        attrs += f' id="{escape_attr(item_id)}"'
     if score is not None:
-        attrs += f' score="{score}"'
+        attrs += f' score="{escape_attr(score)}"'
     return f"{DATA_FENCE_OPEN}{attrs}>{neutralize_fence_escapes(str(content))}{DATA_FENCE_CLOSE}"

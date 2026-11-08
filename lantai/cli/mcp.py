@@ -21,6 +21,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -1412,6 +1413,13 @@ def handle_checkpoint_write(params: dict) -> dict:
     blocks = params.get("blocks")
     if not isinstance(session_id, str) or len(session_id.strip()) < 3:
         raise ValueError("session_id must be a string of >= 3 chars")
+    # 票 54：字符集收窄（纵深第二层）——session_id 进底本围栏 item_id
+    # 属性（anchor-{sid}），非法形态写入口即拒（ValueError → -32602），
+    # 不静默截断；与 REST 面 pydantic pattern 同钳（SESSION_ID_PATTERN 单一真源）。
+    from lantai.core.acl import SESSION_ID_PATTERN
+
+    if not re.fullmatch(SESSION_ID_PATTERN, session_id):
+        raise ValueError("session_id must match ^[A-Za-z0-9_\\-.]{3,128}$")
     if not isinstance(blocks, dict):
         raise ValueError("blocks must be an object")
     # 归属（票 .scratch/mcp-identity-gaps/01a）：快照含会话全文，落 principal 归属
@@ -1488,6 +1496,12 @@ def handle_scratchpad_get(params: dict) -> dict:
 def handle_scratchpad_write(params: dict) -> dict:
     """札记：更新/覆盖指定会话的工作区便签（ADR-0032）。"""
     session_id = str(params.get("session_id", "default") or "default")
+    # 票 54：字符集收窄（同 handle_checkpoint_write）——札记 session_id
+    # 进提炼链围栏 item_id 属性（zhaji-{sid}），写入口即拒非法形态。
+    from lantai.core.acl import SESSION_ID_PATTERN
+
+    if not re.fullmatch(SESSION_ID_PATTERN, session_id):
+        raise ValueError("session_id must match ^[A-Za-z0-9_\\-.]{3,128}$")
     content = str(params.get("content", "") or "")
     from lantai.services.scratchpad_service import write_scratchpad
 
