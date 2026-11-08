@@ -357,9 +357,9 @@ def test_rollback_tie_breaks_deterministic_full_order(rb_env):
                 .order_by(MemoryCheckpoint.created_at.asc())
             ).all()
         ]
-        assert rb_versions == sorted(rb_versions) and len(rb_versions) == len(
-            set(rb_versions)
-        ), f"rollback checkpoint version 非严格递增：{rb_versions}"
+        assert rb_versions == sorted(rb_versions) and len(rb_versions) == len(set(rb_versions)), (
+            f"rollback checkpoint version 非严格递增：{rb_versions}"
+        )
 
 
 def test_rollback_version_chain_strictly_increasing_no_idle(rb_env):
@@ -380,9 +380,7 @@ def test_rollback_version_chain_strictly_increasing_no_idle(rb_env):
         c2 = mem.content
         versions = [
             c.version
-            for c in s.exec(
-                select(MemoryCheckpoint).where(MemoryCheckpoint.memory_id == mid)
-            ).all()
+            for c in s.exec(select(MemoryCheckpoint).where(MemoryCheckpoint.memory_id == mid)).all()
         ]
     assert c2 != c1, (
         f"第二次回滚 content 未变化（{c2!r}）——还原到当前态空转 +version（票 37 病灶形态）"

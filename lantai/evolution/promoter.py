@@ -768,7 +768,11 @@ def rollback(memory_id: str, principal=None) -> dict:
         ckpts = s.exec(
             select(MemoryCheckpoint)
             .where(MemoryCheckpoint.memory_id == memory_id)
-            .order_by(MemoryCheckpoint.version.desc())
+            .order_by(
+                MemoryCheckpoint.version.desc(),
+                MemoryCheckpoint.created_at.desc(),
+                MemoryCheckpoint.id.desc(),
+            )
         ).all()
         if len(ckpts) < 2:
             return {"ok": False, "reason": "no previous version"}
