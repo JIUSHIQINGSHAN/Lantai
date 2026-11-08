@@ -854,7 +854,17 @@ def rollback(memory_id: str, principal=None) -> dict:
         # 重同步收口（unarchive 既有 sync_fts/sync_vector_upsert）。
         index_skipped_reason = None
         vector_synced = False
-        if mem.status == "active":
+        from lantai.services.record_ops_service import STATUS_RETRACTED as _RETRACTED
+
+        if mem.status == _RETRACTED:
+            # 防御臂 b 层：撤回行即便走到此处（守卫放开后）也绝不重建索引——
+            # 「撤回即清索引」是写侧语义（search_fts 无 status 过滤兜底，禁用
+            # 在终闸）。收口轮自审修正：跳过只限撤回行——archived 行的 archive
+            # 语义是「FTS/Chroma 保留（复原零成本）」，必须随回滚内容重同步
+            # （unarchive 出闸只补缺失层、不校验陈旧，跳过会让 SQL/索引错位
+            # 永久残留）。
+            index_skipped_reason = "retracted"
+        else:
             sync_fts(s, mem.id, mem.content)
             # 向量重建（票 .scratch/review-fixes-2026-10/issues/04）：此前回滚只还原
             # SQL 与 FTS，Chroma 里仍是回滚前正文的 embedding——同文件 add/update/
@@ -867,8 +877,6 @@ def rollback(memory_id: str, principal=None) -> dict:
             from lantai.services.record_ops_service import sync_vector_upsert
 
             vector_synced = sync_vector_upsert(mem.id, mem)
-        else:
-            index_skipped_reason = "not_active"
         s.commit()
         if not vector_synced and index_skipped_reason is None:
             logger.warning(

@@ -242,6 +242,18 @@ def test_rollback_keeps_archived_status(rb_env):
     )
     with Session(rb_env) as s:
         assert s.get(MemoryItem, mid).content == V1, "archived 行的内容回滚语义不变"
+    # 自审修正（spec 轴发现）：archive 语义是「FTS/Chroma 保留（复原零成本）」，
+    # archived 行回滚必须**重同步**索引而非跳过——unarchive 出闸只补缺失层
+    # （record_ops_service:335/:341 的 if not fts_present / if not vector_present），
+    # 不校验陈旧：跳过会让「SQL=V1 而 FTS=V2」的错位永久残留到复原之后。
+    assert _fts_ids(rb_env, V1_ONLY) == [mid], (
+        "archived 行回滚后 FTS 未随回滚内容刷新——archive「索引保留」语义下"
+        "陈旧索引将永久残留（unarchive 只补缺失不校验陈旧）"
+    )
+    assert _fts_ids(rb_env, V2_ONLY) == []
+    assert get_vector_store().has(mid) is True and res["vector_synced"] is True, (
+        "archived 行回滚后向量库也应随回滚内容重建"
+    )
 
 
 # ── 票 36 知命臂：lifecycle_status / superseded_by 不回拨 ──
@@ -391,3 +403,13 @@ def test_rollback_version_chain_strictly_increasing_no_idle(rb_env):
     assert sorted(versions) == [1, 2, 3, 4], (
         f"两笔 apply + 两笔 rollback 应为严格递增链 1-4；实得 {sorted(versions)}"
     )
+
+
+def test_lifecycle_fields_exist_on_model():
+    """治理字段集↔模型自洽锁（绿，自审轮补）：_LIFECYCLE_FIELDS 每个键都
+    必须是 MemoryItem 真实字段——模型字段改名而集合未跟改时静默漏排的
+    防线（排除集失效即撤回复活病灶复发）。"""
+    from lantai.evolution.promoter import _LIFECYCLE_FIELDS
+
+    missing = sorted(f for f in _LIFECYCLE_FIELDS if not hasattr(MemoryItem, f))
+    assert not missing, f"_LIFECYCLE_FIELDS 含模型不存在的字段：{missing}——模型字段改名须同步排除集"
