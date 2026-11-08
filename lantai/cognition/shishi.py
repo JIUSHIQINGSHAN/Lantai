@@ -138,9 +138,15 @@ class ShishiEngine:
                 CoreMemoryBlock.namespace == namespace,
             )
             if not is_admin:
-                stmt = stmt.where(
-                    (CoreMemoryBlock.user_id == user_id) | (CoreMemoryBlock.user_id.is_(None))
-                )
+                # 写面只认自己的行(票 68 位点 5):读面「本人或 ownerless」的可见
+                # 范围若用于写查找,任意用户可改写 ownerless 行——宁 miss 不脏写,
+                # ownerless 行不进写范围,封存落自己名下新行。
+                stmt = stmt.where(CoreMemoryBlock.user_id == user_id)
+            else:
+                # admin 定靶确定性(票 68 位点 5):同 (block, namespace) 多用户行
+                # 并存时裸 .first() 命中哪行全凭存储序(SQLite 实况 rowid),按
+                # user_id 升序确定性取最小属主行。
+                stmt = stmt.order_by(CoreMemoryBlock.user_id)
 
             row = s.exec(stmt).first()
             digest = compute_content_digest(block, content, namespace)
