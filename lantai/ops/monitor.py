@@ -59,6 +59,7 @@ from lantai.models.tables import (
 from lantai.observability import metrics as metrics_module
 from lantai.observability.metrics import PROCESS_STARTED_AT, process_stats
 from lantai.observability.recall_report import recall_report
+from lantai.observability.retention import retention_stats
 from lantai.observability.telemetry import get_writer
 from lantai.ops.overview import build_overview
 from lantai.services.work_item_service import worker_schedule_specs
@@ -536,6 +537,9 @@ def collect_security_view(session, *, principal=None) -> dict:
             else None
         ),
         "telemetry": get_writer().stats(),
+        # 观测面保留状态（票 29）：两表行数 + 最近清理时间——局部清理没有
+        # 全局可见度 = 整体不可证（operation_logs 侧在 telemetry 块内）
+        "retention": retention_stats(),
     }
 
 

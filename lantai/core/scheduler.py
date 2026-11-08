@@ -380,6 +380,14 @@ def start_scheduler():
 
     _scheduler.add_job(purge_expired, "interval", hours=1, id="kanhe_purge", replace_existing=True)
 
+    # 观测面保留清扫（票 29）：retrieval_event / llm_call_event TTL，每小时一次，
+    # 镜像 kanhe_purge 形态（清扫自身吞错返回 0，不反噬调度链）
+    from lantai.observability.retention import prune_all
+
+    _scheduler.add_job(
+        prune_all, "interval", hours=1, id="observability_purge", replace_existing=True
+    )
+
     _scheduler.start()
     logger.info("Scheduler started with ingest/evolve/forget jobs")
     _catch_up_daily_jobs()

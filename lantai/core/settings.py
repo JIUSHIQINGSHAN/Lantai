@@ -357,6 +357,14 @@ class Settings(BaseSettings):
     SHELL_HOOK_MAX_CHARS_PER_SCENE: int = 400  # 单个场景导航块预算
     SCENE_MAX_MEMBERS_SHOWN: int = 8  # 导航块最多列出的成员 key 数
     RECALL_MONITOR_WINDOW_DAYS: int = 7  # 零召回率监控默认窗口（天）
+    # 观测面保留期（票 29，ADR-0002 零硬编码）：三条观测链此前只有 operation_logs
+    # 有 MONITOR_RETENTION_DAYS prune，retrieval_event / llm_call_event 无界增长。
+    # 不复用 MONITOR_RETENTION_DAYS（取证窗与观察窗语义不同源）；清扫运行时钳制
+    # max(config, RECALL_MONITOR_WINDOW_DAYS)——TTL 短于观察窗会让 recall_report
+    # 窗口计数静默失真（ADR-0027）。llm_call_event 的司天降级率窗 24h 低于任何
+    # 天粒度 TTL，结构性满足，无需单独下限旋钮。
+    RETRIEVAL_EVENT_RETENTION_DAYS: int = 30  # 检索事件保留天数（弱标注/评估数据面）
+    LLM_CALL_EVENT_RETENTION_DAYS: int = 30  # LLM 外呼结局保留天数（司天降级率数据源）
 
     # SSRF 防护
     SSRF_ALLOWED_SCHEMES: tuple = ("http", "https")
