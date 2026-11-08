@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from lantai.core.acl import viewer_of
@@ -174,49 +175,62 @@ class CehouEngine:
         同名 window_id 已存在时先做属主校验：非本人/可信访问者 → 拒绝并如实返回
         access_denied（修复前是无条件覆盖，B 用户可静默篡改 A 的对照实验数据）；
         本人/可信访问者重复开窗 → 幂等返回现有行——窗内样本与状态是实验证据，
-        不许被重置。
+        不许被重置。多 worker 并发首建同名窗时 INSERT 撞主键（SELECT/INSERT 间
+        有竞态窗口）：转译为 rollback 后按同一属主复检入口裁决，不裸抛 IntegrityError。
         """
         viewer = viewer_of(self.principal) if self.principal else None
         current_tenant = getattr(self.principal, "tenant_id", None) if self.principal else None
 
         with self._own_session() as session:
             existing = self._get_window(session, window_id)
-            if existing is not None:
-                if not self._check_access(owner_id=existing.user_id, tenant_id=existing.tenant_id):
-                    return {
-                        "success": False,
-                        "state": "access_denied",
-                        "message": (
-                            f"影子观察视窗 {window_id} 已存在且属主校验未通过，"
-                            "拒绝覆盖（宁 miss 不脏写）"
-                        ),
-                    }
-                return self._format_row(existing).to_dict(fenced=True)
+            if existing is None:
+                t = utcnow()
+                row = CehouWindow(
+                    window_id=window_id,
+                    target_type=target_type,
+                    target_id=target_id,
+                    state="observing",
+                    required_days=required_days,
+                    min_samples=min_samples,
+                    days_observed=0,
+                    sample_count=0,
+                    success_count=0,
+                    failure_count=0,
+                    total_latency_ms=0.0,
+                    total_score_delta=0.0,
+                    alerts=[],
+                    tenant_id=current_tenant,
+                    user_id=viewer,
+                    created_at=t,
+                    updated_at=t,
+                )
+                session.add(row)
+                try:
+                    session.commit()
+                except IntegrityError:
+                    # 竞态窗口内另一 worker 先落了同名窗：回滚后按同一属主复检入口裁决
+                    session.rollback()
+                    existing = self._get_window(session, window_id)
+                    if existing is None:
+                        raise
+                else:
+                    session.refresh(row)
+                    return self._format_row(row).to_dict(fenced=True)
+            return self._resolve_existing(session, existing, window_id)
 
-            t = utcnow()
-            row = CehouWindow(
-                window_id=window_id,
-                target_type=target_type,
-                target_id=target_id,
-                state="observing",
-                required_days=required_days,
-                min_samples=min_samples,
-                days_observed=0,
-                sample_count=0,
-                success_count=0,
-                failure_count=0,
-                total_latency_ms=0.0,
-                total_score_delta=0.0,
-                alerts=[],
-                tenant_id=current_tenant,
-                user_id=viewer,
-                created_at=t,
-                updated_at=t,
-            )
-            session.add(row)
-            session.commit()
-            session.refresh(row)
-            return self._format_row(row).to_dict(fenced=True)
+    def _resolve_existing(
+        self, session: Session, existing: CehouWindow, window_id: str
+    ) -> dict[str, Any]:
+        """同名窗已存在时的统一裁决入口：属主校验不过 → 拒绝；通过 → 幂等返回现有行。"""
+        if not self._check_access(owner_id=existing.user_id, tenant_id=existing.tenant_id):
+            return {
+                "success": False,
+                "state": "access_denied",
+                "message": (
+                    f"影子观察视窗 {window_id} 已存在且属主校验未通过，拒绝覆盖（宁 miss 不脏写）"
+                ),
+            }
+        return self._format_row(existing).to_dict(fenced=True)
 
     def record_sample(
         self,
