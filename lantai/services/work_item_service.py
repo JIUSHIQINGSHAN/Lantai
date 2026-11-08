@@ -12,6 +12,7 @@ from sqlmodel import select
 
 from lantai.core.scheduler import worker_staleness
 from lantai.core.settings import settings
+from lantai.core.text import normalize_for_index
 from lantai.core.time import utcnow
 from lantai.models.tables import (
     ConflictEvent,
@@ -78,7 +79,9 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 
 def _normalize_duplicate_text(value: str) -> str:
-    return re.sub(r"\s+", "", (value or "").strip().casefold())
+    # 票 45：casefold 只把 Ａ(U+FF21) 折成 ａ(U+FF41) 而非 a——先过归一缝
+    # 折宽度/剥零宽，再去空白，全角变体才能归并同组
+    return re.sub(r"\s+", "", normalize_for_index(value or "").casefold())
 
 
 def candidate_group_ids(rows: list[dict[str, Any]]) -> dict[str, str]:
@@ -618,7 +621,8 @@ def list_work_items(
     principal 由路由 `Depends(get_current_user)` 传下；None 表示内部调用。
     """
     items = project_work_items(load_work_item_snapshot(principal))
-    query_norm = (query or "").strip().casefold()
+    # 票 45：查询与匹配面同过归一缝（同 _normalize_duplicate_text 口径）
+    query_norm = normalize_for_index(query or "").strip().casefold()
     filtered = [
         item
         for item in items
@@ -628,7 +632,9 @@ def list_work_items(
             and (
                 not query_norm
                 or query_norm
-                in (f"{item.title} {item.summary} {item.reason} {' '.join(item.badges)}".casefold())
+                in normalize_for_index(
+                    f"{item.title} {item.summary} {item.reason} {' '.join(item.badges)}"
+                ).casefold()
             )
         )
     ]

@@ -157,15 +157,21 @@ def sync_fts(session, memory_id: str, content: str | None) -> None:
 
     content 非 None：先删后插（UPSERT 语义）；
     content 为 None：删除该记忆的 FTS 行。
+
+    票 45：入索引的 content 副本过归一缝 `normalize_for_index`——trigram
+    按精确码位切 gram，未归一副本让全角/ZWSP/NFD 正文与归一查询确定性
+    失配。只归一索引副本，MemoryItem.content 原文零触碰（ADR-0085）。
     """
     from sqlalchemy import text
+
+    from lantai.core.text import normalize_for_index
 
     conn = session.connection()
     conn.execute(text("DELETE FROM memory_fts WHERE memory_id = :id"), {"id": memory_id})
     if content:
         conn.execute(
             text("INSERT INTO memory_fts(memory_id, content) VALUES (:id, :content)"),
-            {"id": memory_id, "content": content},
+            {"id": memory_id, "content": normalize_for_index(content)},
         )
 
 
@@ -182,13 +188,40 @@ def fts_has_row(session, memory_id: str) -> bool:
 
 def index_fts(conn: sqlite3.Connection, memory_id: str, content: str):
     """索引单条（独立连接场景；生产路径用 sync_fts，此函数仅供测试/脚本）。"""
+    from lantai.core.text import normalize_for_index
+
     try:
         conn.execute(
-            "INSERT INTO memory_fts(memory_id, content) VALUES (?, ?)", (memory_id, content)
+            "INSERT INTO memory_fts(memory_id, content) VALUES (?, ?)",
+            (memory_id, normalize_for_index(content)),
         )
         conn.commit()
     except Exception as e:
         logger.warning("FTS5 index failed for %s: %s", memory_id, e)
+
+
+def rebuild_fts(session) -> int:
+    """全量重建 FTS 索引（票 45 存量落点）：truncate 后从 memoryitem 逐行重灌。
+
+    索引是派生数据——归一缝上线前的存量行是未归一原文，查询侧归一后反向
+    失配（索引侧「ＡＩ」vs 查询侧「AI」）。只重灌索引副本，正文零触碰；
+    不 commit（同 sync_fts 口径，事务归调用方）。运维入口 scripts/rebuild_fts.py。
+    """
+    from sqlalchemy import text
+
+    from lantai.core.text import normalize_for_index
+
+    conn = session.connection()
+    conn.execute(text("DELETE FROM memory_fts"))
+    rows = conn.execute(
+        text("SELECT id, content FROM memoryitem WHERE content IS NOT NULL AND content != ''")
+    ).fetchall()
+    for memory_id, content in rows:
+        conn.execute(
+            text("INSERT INTO memory_fts(memory_id, content) VALUES (:id, :content)"),
+            {"id": memory_id, "content": normalize_for_index(content)},
+        )
+    return len(rows)
 
 
 _GRAM_TERMS_MAX = 24
@@ -204,8 +237,11 @@ def _bm25_keywords(query: str) -> list:
     路径 search_fts——超 24 gram 的长查询尾部被静默截断，存在假阳性面）。
     """
     from lantai.core.settings import settings
+    from lantai.core.text import normalize_for_index
 
-    cleaned = re.sub(r"[^\w\u4e00-\u9fa5]+", " ", query or "")
+    # \u7968 45\uff1a\u67e5\u8be2\u5148\u8fc7\u5f52\u4e00\u7f1d\u2014\u2014\u4e0e\u7d22\u5f15\u526f\u672c\u540c\u53e3\u5f84\uff0c\u5426\u5219\u5168\u89d2\u67e5\u8be2\u8bcd\u5bf9\u534a\u89d2\u7d22\u5f15
+    # \uff08\u53ca\u53cd\u5411\uff09\u3001NFD \u5bf9 NFC \u786e\u5b9a\u6027\u5931\u914d\u3002
+    cleaned = re.sub(r"[^\w\u4e00-\u9fa5]+", " ", normalize_for_index(query))
     if not settings.FTS_BM25_GRAM_TOKENIZE:
         return [w.strip() for w in cleaned.split() if len(w.strip()) >= 3]
     terms: list = []

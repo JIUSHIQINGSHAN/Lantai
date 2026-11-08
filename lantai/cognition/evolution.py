@@ -3,6 +3,7 @@ from collections import Counter
 from sqlmodel import Session, select
 
 from lantai.core.ids import new_id
+from lantai.core.text import normalize_for_index
 from lantai.core.time import utcnow
 from lantai.models.tables import CognitivePattern, CognitiveRole, MemoryItem
 
@@ -83,7 +84,9 @@ class EvolutionEngine:
         }
 
         def _get_signature(text: str) -> tuple[str, str]:
-            clean = re.sub(r"[^\w\s\u4e00-\u9fff]", " ", text.lower())
+            # \u7968 45\uff1a\u7b7e\u540d\u8fc7\u5f52\u4e00\u7f1d\u2014\u2014.lower() \u53ea\u6298\u5927\u5c0f\u5199\u4e0d\u6298\u5bbd\u5ea6\uff0c\u5168\u89d2\u53d8\u4f53
+            # \u6587\u672c\u4f1a\u5206\u8fdb\u4e0d\u540c\u6876\u751f\u6210\u91cd\u590d pattern\uff08\u767b\u8bb0\u9879\uff0c\u540c\u4fee\u6cd5\u987a\u5e26\uff09
+            clean = re.sub(r"[^\w\s\u4e00-\u9fff]", " ", normalize_for_index(text).lower())
             tokens = [w for w in clean.split() if w not in _STOPWORDS and len(w) > 1]
             # 取最显著的核心实词集合（排序保证语序扰动不变）
             core_tokens = sorted(set(tokens))

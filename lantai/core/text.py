@@ -1,5 +1,8 @@
 """共享文本工具：码点安全截断 + 总字符预算 + 来源链字段规范化（单一真源）。"""
 
+import re
+import unicodedata
+
 SESSION_ID_MAX_CHARS = 128
 
 
@@ -58,3 +61,28 @@ def apply_recall_budget(lines: list[str], max_total_chars: int) -> tuple[list[st
         budgeted.append(line)
         used += sep + len(line)
     return budgeted, len(lines) - len(budgeted)
+
+
+# 票 45：剥除集——Cf 类零宽（ZWSP/ZWNJ/ZWJ/词连接符/BOM/LRM/RLM）与 bidi
+# 控制符（LRE/RLE/PDF/LRO/RLO/LRI/RLI/FSI/PDI）。这些字符在正文里不可见，
+# 却把 trigram 邻接撕开（「机器\u200b学习」的索引 gram ≠ 查询「机器学习」），
+# RTL override 还能把视觉顺序伪装透传宿主终端。NFKC 不剥它们（宽度折叠
+# 与兼容分解对 Cf 无操作），必须在缝里显式剥除。
+_INVISIBLE_CHARS_RE = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
+
+
+def normalize_for_index(text: str | None) -> str:
+    """索引/查询/去重键共用的归一缝（票 45，单一真源；ADR-0085）。
+
+    NFKC（全角↔半角折宽度）→ 剥零宽/bidi 控制符 → NFC（NFD 形态收敛）。
+    三个消费点同口径：FTS 索引副本与查询关键字抽取、案牍去重键与列表匹配、
+    反思聚类签名/检索指纹（登记项）。
+
+    **只许用于派生数据**（索引副本、哈希键、匹配串），不许改写
+    MemoryItem.content 等用户资产——归一索引副本 ≠ 内容改写（獬豸
+    「不改写用户字」同一边界，ADR-0085 留痕）。
+    """
+    if not text:
+        return ""
+    stripped = _INVISIBLE_CHARS_RE.sub("", text)
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFKC", stripped))

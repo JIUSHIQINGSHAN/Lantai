@@ -179,6 +179,7 @@ class TestFtsNormalizationRecall:
 
         with Session(engine) as s:
             n = rebuild_fts(s)
+            s.commit()  # rebuild_fts 不 commit（事务归调用方，同 sync_fts 口径）
         assert n == 1
         with engine.connect() as conn:
             c = conn.connection.driver_connection

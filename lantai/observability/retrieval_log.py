@@ -12,6 +12,7 @@ from sqlmodel import select
 
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
+from lantai.core.text import normalize_for_index
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem, RetrievalEvent
 from lantai.parameters.registry import default_snapshot
@@ -21,7 +22,8 @@ from lantai.storage.cas import atomic_update
 
 
 def _norm_hash(query: str) -> str:
-    digest = hashlib.sha256(" ".join(query.split()).lower().encode("utf-8"))
+    # 票 45：指纹过归一缝（观测口径不参与召回）——全角/半角同文同指纹
+    digest = hashlib.sha256(" ".join(normalize_for_index(query).split()).lower().encode("utf-8"))
     return digest.hexdigest()
 
 
