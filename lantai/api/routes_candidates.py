@@ -33,12 +33,19 @@ def candidates_pending(limit: int = 50, ctx=Depends(get_current_user)):
 @router.post("/candidates/{candidate_id}/review")
 def candidates_review(candidate_id: str, req: CandidateReviewReq, ctx=Depends(get_current_user)):
     try:
-        return review_candidate(candidate_id, approve=req.approve, reason=req.reason, principal=ctx)
+        res = review_candidate(candidate_id, approve=req.approve, reason=req.reason, principal=ctx)
     except CandidateStateConflict as e:
         raise HTTPException(409, str(e)) from e
     except ValueError as e:
         status = 404 if "not found" in str(e) else 422
         raise HTTPException(status, str(e)) from e
+    # 票 41：approve 路径 propose 返回 None（LLM 不可用 / target 不可寻址）
+    # 时 service 以 ok:False 结构化回报——REST 面译 409 Conflict，不再
+    # 200 + ok:False（票 .scratch/api-error-status/01 同病残留；MCP/auto_
+    # triage 消费方走 dict 契约不受影响）
+    if not res.get("ok", True):
+        raise HTTPException(409, str(res.get("error", "review failed")))
+    return res
 
 
 @router.post("/candidates/{candidate_id}/defer")

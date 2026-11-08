@@ -201,7 +201,16 @@ def test_obsidian_schema_and_service_thresholds_agree():
     from lantai.models.schemas import ObsidianSyncReq
     from lantai.services.obsidian_service import _VERBATIM_MAX_CHARS
 
-    schema_cap = ObsidianSyncReq.model_fields["content"].metadata[0].max_length
+    fi = ObsidianSyncReq.model_fields["content"]
+    # pydantic ≥2.11 把约束放进 metadata（annotated_types.MaxLen），旧版在
+    # FieldInfo.max_length——版本容忍读取
+    schema_cap = getattr(fi, "max_length", None)
+    if schema_cap is None:
+        import annotated_types
+
+        schema_cap = next(
+            m.max_length for m in fi.metadata if isinstance(m, annotated_types.MaxLen)
+        )
     assert schema_cap == _VERBATIM_MAX_CHARS, (
         f"schema 上限 {schema_cap} ≠ service 上限 {_VERBATIM_MAX_CHARS}——两层阈值矛盾"
     )
@@ -210,7 +219,7 @@ def test_obsidian_schema_and_service_thresholds_agree():
 # ── 病灶 3：candidates review 200 + ok:False ──
 
 
-def test_candidates_review_discarded_returns_4xx(api_env):
+def test_candidates_review_discarded_returns_4xx(api_env, monkeypatch):
     """红：approve 路径 propose 返回 None（真链：候选 pending_review +
     LLM 缺席 → chat_json 失败 → propose 返回 None）→ service 返回 ok:False
     → 现状路由原样 200。修复后 4xx（409 Conflict）。"""
@@ -226,6 +235,17 @@ def test_candidates_review_discarded_returns_4xx(api_env):
             )
         )
         s.commit()
+
+    # chat_json 替身（外部 LLM 服务边界，纪律允许面——同 embed 替身口径）：
+    # 确定性返回 update 提案、target_key 指向不存在记忆 → _resolve_target_id
+    # 解析不到唯一 active 目标 → propose 整条丢弃 → review ok:False。
+    # （不替身则本机 .env 的真实 LLM 端点使链路不确定。）
+    import lantai.evolution.proposer as proposer_mod
+
+    def _fake_chat_json(*a, **kw):
+        return {"proposal_type": "update", "target_key": "ghost-key-404", "confidence": 0.9}
+
+    monkeypatch.setattr(proposer_mod, "chat_json", _fake_chat_json)
 
     owner = _principal("user-A")
     with _client(owner) as c:

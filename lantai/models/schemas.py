@@ -144,7 +144,10 @@ class ObsidianSyncReq(BaseModel):
     """Obsidian 笔记同步请求（Ticket 02）：原文直存 + [[双链]] 实体/边沉淀。"""
 
     title: str = ""
-    content: str = Field(min_length=1, max_length=500_000)
+    # 票 41：与 verbatim 通道下游 RawMemoryReq.content（max_length=200_000）
+    # 及 obsidian_service._VERBATIM_MAX_CHARS 同值——此前 50 万放行而 service
+    # 20 万拒绝，两层阈值矛盾（可校验输入炸 500 的根）
+    content: str = Field(min_length=1, max_length=200_000)
     lane: str = Field(default="general")
     tags: list[str] = []
     metadata: dict = {}

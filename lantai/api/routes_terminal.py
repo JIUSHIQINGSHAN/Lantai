@@ -4,7 +4,7 @@ import json
 import math
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -168,7 +168,12 @@ async def terminal_chat_stream(req: ChatReq, principal=Depends(get_current_user)
 
 
 @router.get("/terminal/graph")
-def terminal_graph(domain: str = "", limit: int = 100, principal=Depends(get_current_user)):
+def terminal_graph(
+    # 票 41：limit 在边界拦（service 的 [1,100] ValueError 不再裸奔成 500）
+    domain: str = "",
+    limit: int = Query(default=100, ge=1, le=100),
+    principal=Depends(get_current_user),
+):
     """获取记忆图谱数据（节点 + 边）用于 D3 力导向图"""
     memories = list_memories(
         lane="",

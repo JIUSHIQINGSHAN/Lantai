@@ -48,9 +48,11 @@ def lifecycle_inspect_endpoint(
     except PermissionError as pe:
         raise HTTPException(403, str(pe)) from pe
     except ValueError as ve:
-        raise HTTPException(404, str(ve)) from ve
-    except Exception as e:
-        raise HTTPException(422, str(e)) from e
+        # 票 41：模板统一到 kaogong 版——not found 语义 404、其余可校验
+        # 输入 422，其余异常放给 500 全局 handler（服务器故障不得计入
+        # 调用方滥用，str(e) 不得泄内部文本进响应体）
+        status = 404 if "not found" in str(ve) or "未找到" in str(ve) else 422
+        raise HTTPException(status, str(ve)) from ve
 
 
 @router.post("/transition")
@@ -73,9 +75,10 @@ def lifecycle_transition_endpoint(
     except PermissionError as pe:
         raise HTTPException(403, str(pe)) from pe
     except ValueError as ve:
+        # 票 41：模板统一到 kaogong 版——可校验输入 422，其余异常放给
+        # 500 全局 handler（服务器故障不得计入调用方滥用，str(e) 不得
+        # 泄内部文本进响应体）
         raise HTTPException(422, str(ve)) from ve
-    except Exception as e:
-        raise HTTPException(422, str(e)) from e
 
 
 @router.post("/audit")
@@ -92,5 +95,8 @@ def lifecycle_audit_endpoint(
             limit=req.limit,
             principal=ctx,
         )
-    except Exception as e:
-        raise HTTPException(422, str(e)) from e
+    except ValueError as ve:
+        # 票 41：模板统一到 kaogong 版——ValueError（可校验输入）→422，
+        # 其余异常放给 500 全局 handler（服务器故障不得计入调用方滥用，
+        # str(e) 不得泄内部文本进响应体）
+        raise HTTPException(422, str(ve)) from ve
