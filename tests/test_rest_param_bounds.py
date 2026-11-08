@@ -286,17 +286,21 @@ def test_checkpoint_cleanup_max_sessions_bounds(rest_env):
 def test_conflicts_limit_sql_pushdown_and_bounds(rest_env):
     """limit=-5 修复前 200 且 rows[:-5] 切片反转(「去掉末尾5条」语义);修复后 422。
 
-    下推后 limit=2 的时间降序语义逐条不变(created_at desc 取前 2)。
+    下推后语义锁定:DEV viewer(default)只认自己记忆上的冲突;无主记忆上的
+    事件(r4,时间最新)对 viewer 不可见——若下推把 limit 放在可见性过滤之前,
+    r4 会顶替进结果,这条断言就红。limit=2 仍是时间降序取前 2。
     """
     from lantai.models.tables import ConflictEvent, MemoryItem
 
     client, session_factory = rest_env
     base = datetime.now(UTC)
     with session_factory() as s:
-        _seed_memory(s, "cm-a", "甲的记忆", user_id="a")
-        _seed_memory(s, "cm-b", "乙的记忆", user_id="b")
+        _seed_memory(s, "cm-a", "甲的记忆", user_id="default")
+        _seed_memory(s, "cm-b", "乙的记忆", user_id="default")
         _seed_memory(s, "cm-n", "无主记忆", user_id=None)
-        for i, (mid, ref) in enumerate([("cm-a", "r1"), ("cm-b", "r2"), ("cm-b", "r3")]):
+        for i, (mid, ref) in enumerate(
+            [("cm-a", "r1"), ("cm-b", "r2"), ("cm-b", "r3"), ("cm-n", "r4")]
+        ):
             s.add(
                 ConflictEvent(
                     id=f"ce-{i}",
@@ -314,9 +318,11 @@ def test_conflicts_limit_sql_pushdown_and_bounds(rest_env):
     two = client.get("/conflicts", params={"limit": 2})
     assert two.status_code == 200
     events = two.json()["events"]
+    # r4 挂在无主记忆上、时间最新——可见性过滤必须先于 limit 生效
     assert [e["incoming_ref"] for e in events] == ["r3", "r2"]
+    full = client.get("/conflicts", params={"limit": 500})
+    assert [e["incoming_ref"] for e in full.json()["events"]] == ["r3", "r2", "r1"]
     assert client.get("/conflicts", params={"limit": 501}).status_code == 422
-    assert client.get("/conflicts", params={"limit": 500}).status_code == 200
 
 
 def test_conflicts_pushdown_keeps_owner_scope(rest_env):

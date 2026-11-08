@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from lantai.core.auth import get_current_user
@@ -43,7 +43,13 @@ def _ok_or_raise(result: dict) -> dict:
 
 
 @router.get("/proposals")
-def list_proposals_route(status: str = "pending", limit: int = 50, ctx=Depends(get_current_user)):
+def list_proposals_route(
+    status: str = "pending",
+    # 票 42:limit=-1 修复前直落 SQL 全量吐提案(reason 常含记忆正文);
+    # 界 [1,500] 与 MCP 孪生 handle_proposals_list(mcp.py:1192)同源
+    limit: int = Query(50, ge=1, le=500),
+    ctx=Depends(get_current_user),
+):
     """提案列表。
 
     归属（票 .scratch/readside-gaps/02）：此前不带身份全表捞，`reason`

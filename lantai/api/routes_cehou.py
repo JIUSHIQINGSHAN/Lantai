@@ -31,7 +31,11 @@ class CreateWindowRequest(BaseModel):
 
 class InspectRequest(BaseModel):
     window_id: str = Field(..., description="目标视窗 ID")
-    mock_days_observed: int | None = Field(None, description="模拟观察天数（测试/巡检指定）")
+    # 票 42:负值修复前直写 row.days_observed(cehou.py:348 整列赋值)毒化视窗;
+    # 界 [0,365] 与票 66 MCP 臂(mock_days 上界 365)同一孪生契约
+    mock_days_observed: int | None = Field(
+        None, ge=0, le=365, description="模拟观察天数（测试/巡检指定）"
+    )
 
 
 class SampleRequest(BaseModel):

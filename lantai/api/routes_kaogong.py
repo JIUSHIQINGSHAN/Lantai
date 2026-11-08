@@ -19,7 +19,9 @@ router = APIRouter(prefix="/kaogong", tags=["kaogong"])
 
 
 class KaogongEvalRequest(BaseModel):
-    limit: int = Field(default=100, description="最大考评条目数")
+    # 票 42:limit=-1 修复前直落 SQL(LIMIT -1=无上限)驱动全库考功写;
+    # 上界 1000 对齐考功/知命批量族,负值/0 一律 422(拒绝而非静默修正)
+    limit: int = Field(default=100, ge=1, le=1000, description="最大考评条目数")
 
 
 class KaogongInspectRequest(BaseModel):

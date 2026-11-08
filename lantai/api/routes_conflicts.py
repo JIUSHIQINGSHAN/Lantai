@@ -9,7 +9,7 @@ POST /conflicts/{id}/resolve  人工裁决：resolved / dismissed
 校验在 service 层（worker/MCP 也走那条路），这里只负责把 principal 传下去。
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from lantai.core.auth import get_current_user
 from lantai.models.schemas import (
@@ -23,7 +23,14 @@ router = APIRouter(tags=["conflicts"])
 
 
 @router.get("/conflicts")
-def list_conflicts(limit: int = 50, status: str = "open", ctx=Depends(get_current_user)):
+def list_conflicts(
+    # 票 42:limit=-5 修复前在 service 走 rows[:-5] Python 切片(「去掉末尾5条」
+    # 语义倒挂);下推 SQL 后由 422 拒绝。界 [1,500] 与 MCP 孪生
+    # handle_conflicts_list(mcp.py:929)同源
+    limit: int = Query(50, ge=1, le=500),
+    status: str = "open",
+    ctx=Depends(get_current_user),
+):
     try:
         return conflict_service.list_conflict_events(limit, status, principal=ctx)
     except ValueError as e:

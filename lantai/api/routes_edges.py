@@ -26,7 +26,9 @@ class EdgeReq(BaseModel):
     source_memory_id: str
     target_memory_id: str
     relation: str
-    confidence: float = 0.5
+    # 票 42:越界置信度修复前直接落库(写面毒值,下游读面按 0~1 语义消费);
+    # [0,1] 与 routes_terminal.MemoryUpdateReq.confidence 孪生同界
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 class CounterfactualReq(BaseModel):
@@ -39,8 +41,10 @@ class CounterfactualReq(BaseModel):
 
 class ProjectImpactReq(BaseModel):
     memory_id: str
-    max_depth: int = 5
-    min_confidence: float = 0.05
+    # 票 42:深度上界对齐票 39 反事实面的单一真源(同一引擎族,孪生同契约);
+    # min_confidence [0,1] 与 EdgeReq.confidence 同族
+    max_depth: int = Field(default=5, ge=1, le=COUNTERFACTUAL_MAX_DEPTH_LIMIT)
+    min_confidence: float = Field(default=0.05, ge=0.0, le=1.0)
 
 
 @router.post("/edges/counterfactual")

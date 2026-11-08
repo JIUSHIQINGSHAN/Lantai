@@ -10,7 +10,7 @@ GET  /candidates/pending       待审候选列表
 POST /candidates/{id}/review   审核（approve→提案链 / reject→归档）
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from lantai.core.auth import get_current_user
 from lantai.models.schemas import CandidateDeferReq, CandidateDeferUndoReq, CandidateReviewReq
@@ -26,7 +26,12 @@ router = APIRouter(tags=["candidates"])
 
 
 @router.get("/candidates/pending")
-def candidates_pending(limit: int = 50, ctx=Depends(get_current_user)):
+def candidates_pending(
+    # 票 42:limit=-1 修复前直落 SQL 全量吐待审正文(这正是「宁 miss 不脏写」
+    # 的裁决入口);界 [1,500] 与 MCP 孪生 handle_candidates_pending(mcp.py:437)同源
+    limit: int = Query(50, ge=1, le=500),
+    ctx=Depends(get_current_user),
+):
     return list_pending_candidates(limit, principal=ctx)
 
 
@@ -85,7 +90,12 @@ def candidates_refine(candidate_id: str, ctx=Depends(get_current_user)):
 
 @router.post("/candidates/batch_refine")
 def candidates_batch_refine(
-    min_conf: float = 0.15, max_conf: float = 0.6, limit: int = 20, ctx=Depends(get_current_user)
+    # 票 42:min_conf/max_conf 补 [0,1] 浮点界、limit 补 [1,200](候选批量族;
+    # 三者修复前裸传,负 min_conf 会把全库候选捞进模糊带)
+    min_conf: float = Query(0.15, ge=0.0, le=1.0),
+    max_conf: float = Query(0.6, ge=0.0, le=1.0),
+    limit: int = Query(20, ge=1, le=200),
+    ctx=Depends(get_current_user),
 ):
     """披沙（ADR-0030）：批量对模糊区间的候选执行提纯。
 
@@ -98,7 +108,12 @@ def candidates_batch_refine(
 
 
 @router.post("/candidates/ai_triage")
-def candidates_ai_triage(limit: int = 50, ctx=Depends(get_current_user)):
+def candidates_ai_triage(
+    # 票 42:limit 是「候选正文整批送 LLM」的成本放大面,界 [1,500] 与 MCP
+    # 孪生 triage_analyze(mcp.py:478)同源
+    limit: int = Query(50, ge=1, le=500),
+    ctx=Depends(get_current_user),
+):
     """AI 智能预审：扫描待审候选并返回智能研判与决策建议。
 
     归属（票 readside-gaps/02）：把候选 `text` 送进 LLM，全表捞就是

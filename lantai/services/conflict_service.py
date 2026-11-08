@@ -32,54 +32,40 @@ def _conflict_owner_user_id(s, event_id: str) -> str | None:
     return item.user_id if item else None
 
 
-def _visible_conflict_ids(s, principal) -> set[str] | None:
-    """当前 principal 可见的冲突 id 集合；None 表示 admin 全权（不过滤）。
-
-    口径同 `work_item_service._owner_scope`：admin/system 全权；
-    否则只认 `user_id == viewer`，**NULL 属主不可见**
-    （宁可漏列，不可错放——`incoming_ref` 是正文级字段）。
-
-    **孤儿冲突（`memory_id` 指向已删除的记忆）对非 admin 不可见**：
-    账本没有归属列，归属只能从挂载记忆过渡推导；记忆没了就推导不出属主，
-    于是无法证明它"不是别人的"。这正是 `_owner_scope` 的 NULL 口径——
-    NULL 不等于 default，宁可漏列。代价是孤儿账本从列表里消失；
-    但 admin 仍看得见、仍可裁决，不会永久卡死。
-
-    **`principal=None` 不是"不过滤"，是收敛到 `"default"`**——
-    同 `_viewer_of` 的既有约定（`work_item_service.py:503-517`）。
-    所以这里只对 admin 提前返回 None。
-    """
-    if principal is not None and bool(getattr(principal, "is_admin", False)):
-        return None
-    from lantai.services.work_item_service import _viewer_of
-
-    viewer = _viewer_of(principal)
-    rows = s.exec(
-        select(ConflictEvent.id, MemoryItem.user_id).join(
-            MemoryItem, ConflictEvent.memory_id == MemoryItem.id, isouter=True
-        )
-    ).all()
-    return {cid for cid, uid in rows if uid is not None and uid == viewer}
-
-
 def list_conflict_events(limit: int = 50, status: str = "open", principal=None) -> dict:
     """冲突账本列表（默认 open），按创建时间倒序。
 
     归属收窄（票 .scratch/readside-gaps/07 修法口径 3）：见模块 docstring。
     `principal=None`（内部 CLI/MCP/worker）**收敛到 `"default"`**
     ——同 `_viewer_of` 的既有约定，不是完全不过滤。
+
+    票 42 两处收口：
+    1. **limit 下推 SQL**——修复前全表 `.all()` 取回后 `rows[:limit]` Python
+       切片，负 limit 是「去掉末尾 N 条」的语义倒挂（与 SQL 负 limit 完全不同），
+       且全表捞本身是性能债；现在 join/where/order/limit 全在 SQL 里。
+    2. **可见性判定一并下推**——非 admin 改走 inner join 挂载记忆 +
+       `user_id == viewer`：孤儿冲突（join 不上）与 NULL 属主（NULL != viewer）
+       天然不可见，与原 Python 预过滤（本函数旧实现取全表后按可见 id 集合
+       筛选再切片）的「宁可漏列」口径逐条一致；admin 不 join 全权，
+       `principal=None` 经 `_viewer_of` 收敛 `"default"`。
+       行为锁定见 `tests/test_rest_param_bounds.py` 对照臂。
     """
     if status not in _ALLOWED_STATUSES:
         raise ValueError(f"status must be one of {_ALLOWED_STATUSES}")
     with db.get_session() as s:
-        visible = _visible_conflict_ids(s, principal)
         q = select(ConflictEvent).order_by(ConflictEvent.created_at.desc())
         if status != "all":
             q = q.where(ConflictEvent.status == status)
-        rows = s.exec(q).all()
-        if visible is not None:
-            rows = [r for r in rows if r.id in visible]
-        return {"events": [r.model_dump(mode="json") for r in rows[:limit]]}
+        if principal is not None and bool(getattr(principal, "is_admin", False)):
+            pass  # admin/system 全权：不加 join，孤儿与无主行照见（运维/裁决需要）
+        else:
+            from lantai.services.work_item_service import _viewer_of
+
+            q = q.join(MemoryItem, ConflictEvent.memory_id == MemoryItem.id).where(
+                MemoryItem.user_id == _viewer_of(principal)
+            )
+        rows = s.exec(q.limit(limit)).all()
+        return {"events": [r.model_dump(mode="json") for r in rows]}
 
 
 def resolve_conflict_event(event_id: str, decision: str, note: str = "", principal=None) -> dict:

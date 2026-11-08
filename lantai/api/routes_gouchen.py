@@ -20,10 +20,12 @@ router = APIRouter(prefix="/gouchen", tags=["gouchen"])
 
 class GouchenDredgeRequest(BaseModel):
     query: str = Field(default="", description="关键字过滤（空字符串表示全库打捞）")
+    # 票 42:min_sunken_score 无界修复前 1.5=永真沉没、-0.1=永不沉没(阈值语义
+    # 倒挂);limit 负值在引擎里是 [:limit] 切片反转。双界收口。
     min_sunken_score: float = Field(
-        default=0.4, description="沉没度最低阈值（0.0~1.0，越高越沉埋）"
+        default=0.4, ge=0.0, le=1.0, description="沉没度最低阈值（0.0~1.0，越高越沉埋）"
     )
-    limit: int = Field(default=50, description="最大打捞条数")
+    limit: int = Field(default=50, ge=1, le=500, description="最大打捞条数")
 
 
 @router.post("/dredge")
@@ -50,7 +52,7 @@ def gouchen_dredge_endpoint(
 @router.get("/snapshot")
 def gouchen_snapshot_endpoint(
     anchor_time: datetime = Query(..., description="历史时间锚点（ISO 8601，UTC）"),  # noqa: B008
-    limit: int = Query(default=50, description="最大条数"),  # noqa: B008
+    limit: int = Query(default=50, ge=1, le=500, description="最大条数"),  # noqa: B008
     ctx=Depends(get_current_user),
 ) -> dict[str, Any]:
     """钩沉：基于时间锚点重建历史语境快照，杜绝未来信息污染（ADR-0082）。"""

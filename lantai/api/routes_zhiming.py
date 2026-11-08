@@ -32,7 +32,9 @@ class LifecycleTransitionRequest(BaseModel):
 
 class LifecycleAuditRequest(BaseModel):
     auto_apply: bool = Field(default=False, description="是否自动将转移建议落库执行")
-    limit: int = Field(default=100, description="最大巡检条数上限")
+    # 票 42:limit=-1 修复前直落 SQL 驱动全库巡检(auto_apply 时批量状态机写);
+    # 上界 1000 对齐考功孪生面
+    limit: int = Field(default=100, ge=1, le=1000, description="最大巡检条数上限")
 
 
 @router.get("/inspect")

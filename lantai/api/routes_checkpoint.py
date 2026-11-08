@@ -12,7 +12,7 @@
 （在做/下一步/工作区/决策/待办）——那是把当前工作现场整个吐出去。
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from lantai.core.auth import get_current_user
@@ -35,7 +35,9 @@ class CheckpointWriteReq(BaseModel):
 @router.get("/checkpoint")
 def list_checkpoints_route(
     memory_id: str = "",
-    limit: int = 20,
+    # 票 42:limit=-1 修复前直落 SQL——checkpoint 的 before/after 是完整行快照,
+    # 负 limit 等于把编年史整个吐出去;上界 100 对齐票面「checkpoint 族」
+    limit: int = Query(20, ge=1, le=100),
     session_id: str = "",
     ctx=Depends(get_current_user),
 ):
@@ -59,5 +61,10 @@ def latest_checkpoint_route(ctx=Depends(get_current_user)):
 
 
 @router.post("/checkpoint/cleanup")
-def cleanup_checkpoint_route(max_sessions: int | None = None, ctx=Depends(get_current_user)):
+def cleanup_checkpoint_route(
+    # 票 42:负值修复前是 service ValueError 未译的 500(票 41 语义病同族);
+    # 路由层先拒成 422,service 层 >=1 校验保持为内部调用方的后盾
+    max_sessions: int | None = Query(None, ge=1, le=500),
+    ctx=Depends(get_current_user),
+):
     return cleanup_old_checkpoints(max_sessions, principal=ctx)
