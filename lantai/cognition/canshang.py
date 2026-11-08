@@ -12,10 +12,12 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+import jieba
 from sqlmodel import Session, select
 
 from lantai.cognition.conflicts import ConflictEngine, _temporal_recency
@@ -80,6 +82,49 @@ OPPOSITE_PAIRS = [
     ("yes", "no"),
 ]
 
+# 否定语素(票 68 位点 6):紧邻其前的互斥词不作断言——「不启用」「未关闭」
+# 表达的是相反状态,不能按子串当作肯定主张参与矛盾配对。
+_CJK_NEGATORS = ("不", "没", "没有", "未", "无", "非", "别", "勿", "莫")
+
+
+def _asserted_value(value: str, word: str) -> bool:
+    """结构化取值面(短机器串)的词断言判定(票 68 位点 6)。
+
+    取值是 snake_case 之类的机器串,词界/分词都不可靠,保持子串命中;但紧邻
+    否定语素的命中不算——value 同为「不支持」的两条记忆不再经 (支持,不支持)
+    互判矛盾。
+    """
+    start = 0
+    while True:
+        idx = value.find(word, start)
+        if idx < 0:
+            return False
+        if not (idx > 0 and value[idx - 1] in _CJK_NEGATORS):
+            return True
+        start = idx + 1
+
+
+def _asserted_text(text: str, word: str) -> bool:
+    """正文面的词断言判定(票 68 位点 6)。
+
+    - 纯 ASCII 词按 \\b 词界:on/configuration、off/offline 这类跨词子串
+      不再命中;
+    - CJK 词按 jieba 分词命中 token,且紧邻前置 token 不是否定语素——
+      「不启用」不再断言「启用」;
+    - 否定形词对成员(如「不支持」,分词会拆成 不/支持)按整串子串兜底命中。
+    """
+    if word.isascii():
+        return re.search(rf"\b{re.escape(word)}\b", text) is not None
+    if any(word.startswith(n) for n in _CJK_NEGATORS):
+        return word in text
+    tokens = [t for t in jieba.lcut(text) if t.strip()]
+    for i, tok in enumerate(tokens):
+        if tok == word:
+            if i > 0 and tokens[i - 1] in _CJK_NEGATORS:
+                continue
+            return True
+    return False
+
 
 class CanshangEngine:
     """参商·深度冲突检测与信念一致性仲裁引擎。"""
@@ -142,7 +187,9 @@ class CanshangEngine:
                     continue
 
                 for w1, w2 in OPPOSITE_PAIRS:
-                    if (w1 in val_a and w2 in val_b) or (w2 in val_a and w1 in val_b):
+                    if (_asserted_value(val_a, w1) and _asserted_value(val_b, w2)) or (
+                        _asserted_value(val_a, w2) and _asserted_value(val_b, w1)
+                    ):
                         field_desc = (
                             f"{key} ({st_a.get('feature', '')})" if st_a.get("feature") else key
                         )
@@ -167,9 +214,14 @@ class CanshangEngine:
         content_a = item_a.content or ""
         content_b = item_b.content or ""
 
-        # 文本中是否涉及共同关键词但结论相斥
+        # 文本中是否涉及共同关键词但结论相斥(词断言按分词/词界/否定语素收紧,
+        # 票 68 位点 6;主题交叉闸保留原字符集交叠口径——multihop 真矛盾用例
+        # 两段文本分词后零交集,内容相似度闸在杀假阳性的同时必漏报该真矛盾,
+        # 已知取舍见测试与 PR 行为变化节)
         for w1, w2 in OPPOSITE_PAIRS:
-            if (w1 in content_a and w2 in content_b) or (w2 in content_a and w1 in content_b):
+            if (_asserted_text(content_a, w1) and _asserted_text(content_b, w2)) or (
+                _asserted_text(content_a, w2) and _asserted_text(content_b, w1)
+            ):
                 # 检查是否存在主题交叉
                 words_a = set(content_a)
                 words_b = set(content_b)

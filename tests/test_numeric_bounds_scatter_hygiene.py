@@ -361,9 +361,15 @@ def _canshang_items(structure_a=None, content_a="", structure_b=None, content_b=
 
 
 def test_canshang_unrelated_topics_no_false_contradiction():
-    """交叉主题假矛盾:两段毫不相干的配置文本,仅因共享 5 个汉字(配/置/模/式/启)
-    且各含互斥词一字面(启用/关闭),修复前全文字符集交叠 ≥3 → direct_contradiction;
-    修复后主题交叉按分词 token 交叠判定(此处 0 交叠),不再误报。"""
+    """交叉主题假矛盾:两段毫不相干的配置文本,修复前子串「启用」命中 + 全文字符
+    集交叠 5 字 → direct_contradiction;修复后「不启用」的「启用」被否定语素
+    拦下不作断言,互斥配对无从谈起。
+
+    如实登记取舍:主题交叉闸保留原字符集口径——仓库唯一 multihop 真矛盾用例
+    (test_audit_consistency_multihop_causal)两段文本分词后零交集,任何内容
+    相似度闸在杀假阳性的同时必漏报该真矛盾;非否定形的跨题互斥词(如「已启用
+    缓存」vs「关闭了缓存功能」)仍会按字符集交叠判矛盾,属保留宽容度的已知
+    限制,不是本臂断言的语义。"""
     from lantai.cognition.canshang import CanshangEngine
 
     item_a, item_b = _canshang_items(
@@ -378,7 +384,7 @@ def test_canshang_unrelated_topics_no_false_contradiction():
 def test_canshang_negated_word_not_asserted_no_false_contradiction():
     """否定形假矛盾(票面「不升」含「升」家族):「不启用自动重试」与「已关闭自动
     重试」语义一致(都是关),修复前子串「启用」命中 + 字符集交叠 → 误判矛盾;
-    修复后否定语素紧邻的词不作断言。"""
+    修复后 jieba 分词 token 命中且紧邻前置否定语素的不作断言。"""
     from lantai.cognition.canshang import CanshangEngine
 
     item_a, item_b = _canshang_items(
