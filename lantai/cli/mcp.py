@@ -314,9 +314,9 @@ def _require_int_in(raw, key: str, lo: int, hi: int) -> int:
     return raw
 
 
-def _require_finite_float(raw, key: str, lo: float | None = None) -> float:
-    """float 参数须为有限数(拒 bool/str/NaN/±inf——NaN 落库会让 JSON 响应产出
-    非法字面量并静默毒化累加指标,票 66);lo 以下拒绝(如耗时不得为负)。"""
+def _require_finite_number(raw, key: str, lo: float | None = None) -> float:
+    """数值参数须为有限数(int/float 皆收;拒 bool/str/NaN/±inf——NaN 落库会让
+    JSON 响应产出非法字面量并静默毒化累加指标,票 66);lo 以下拒绝(如耗时不得为负)。"""
     if (
         isinstance(raw, bool)
         or not isinstance(raw, (int, float))
@@ -1807,12 +1807,12 @@ def handle_qijuzhu_chronicle(params: dict) -> dict:
 def handle_famen_skill(params: dict) -> dict:
     """法门：程序性技能匹配与标准 SOP 获取（v0.46 ADR-0067）。
 
-    limit ∈ [1, 200]（票 66）：REST 孪生面 match [1,20] / list [1,200] 的并集;
-    负值修复前直落 assets[:-1] / scored[:-1] 切片反转。
+    limit 按 face 对齐 REST 孪生面（票 66）：match 面 [1, 20]、list 面
+    [1, 200]（routes_famen 两条 Query 各自的 ge/le）；负值修复前直落
+    assets[:-1] / scored[:-1] 切片反转。
     """
     skill_id = params.get("skill_id")
     task = params.get("task")
-    limit = _require_int_in(params.get("limit", 5), "limit", 1, 200)
 
     from lantai.services.famen_service import (
         get_skill_detail_service,
@@ -1827,8 +1827,10 @@ def handle_famen_skill(params: dict) -> dict:
             return {"error": "Skill not found or access denied", "skill_id": skill_id}
         return detail
     if task:
+        limit = _require_int_in(params.get("limit", 5), "limit", 1, 20)
         matched = match_skills_service(task=task, limit=limit, principal=p)
         return {"task": task, "count": len(matched), "skills": matched}
+    limit = _require_int_in(params.get("limit", 5), "limit", 1, 200)
     skills = list_skills_service(limit=limit, principal=p)
     return {"count": len(skills), "items": skills}
 
@@ -2003,8 +2005,8 @@ def handle_cehou_observe(params: dict) -> dict:
         success = bool(params.get("success", True))
         # 票 66:非有限值(NaN/±inf)修复前直落累加器写库(avg_score_delta 会把
         # JSON 响应毒成非法字面量);latency 非负,score_delta 允许负有限观测
-        latency = _require_finite_float(params.get("latency_ms", 0.0), "latency_ms", lo=0.0)
-        score_delta = _require_finite_float(params.get("score_delta", 0.0), "score_delta")
+        latency = _require_finite_number(params.get("latency_ms", 0.0), "latency_ms", lo=0.0)
+        score_delta = _require_finite_number(params.get("score_delta", 0.0), "score_delta")
         return record_cehou_sample_service(
             window_id=window_id,
             success=success,

@@ -44,7 +44,8 @@ def create_dossier_route(
 @router.get("/dossiers")
 def list_dossiers_route(
     status: str | None = None,
-    # 票 66:修复前无界直通(负值=无限拉取);界限对齐仓内列表页惯例 [1, 200]
+    # 票 66:修复前无界直通(负值=无限拉取);[1, 200] 与 qijuzhu/niyi 列表页
+    # Query(ge=1, le=200) 同款界限
     limit: int = Query(50, ge=1, le=200),
     principal: Principal = Depends(get_current_user),
 ) -> list[dict[str, Any]]:

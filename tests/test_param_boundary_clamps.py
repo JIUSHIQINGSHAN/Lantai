@@ -119,25 +119,21 @@ def _seed_memory(s, mid, content, lane="fact", status="active", user_id="default
 
 
 def _cehou_create(mod, window_id, **overrides):
-    args = {
-        "create": True,
-        "window_id": window_id,
-        "target_type": "param",
-        "target_id": "t1",
-        "required_days": 7,
-        "min_samples": 10,
-    }
-    args.update(overrides)
-    return _call_tool(mod, "cehou_observe", args)
+    return _call_tool(mod, "cehou_observe", dict(_cehou_create_args(window_id), **overrides))
 
 
 def test_cehou_mock_days_str_rejected_as_invalid_params(mcp_env):
-    """str "5" 不得撞 TypeError 落 -32603:类型拒绝必须落 -32602 invalid params。"""
+    """str "5" 不得撞 TypeError 落 -32603:类型拒绝必须落 -32602 invalid params。
+
+    毒化臂(票 66 TDD 要求 3):被拒后同一视窗后续正常调用不炸、状态零染。
+    """
     session_factory, _ = mcp_env
     mod = _load_mcp()
     _cehou_create(mod, "w-str")
     code = _err_code(mod, "cehou_observe", {"window_id": "w-str", "mock_days_observed": "5"})
     assert code == -32602
+    out = _call_tool(mod, "cehou_observe", {"window_id": "w-str"})
+    assert out["days_observed"] == 0
 
 
 def test_cehou_mock_days_negative_rejected_and_no_state_write(mcp_env):
@@ -370,12 +366,20 @@ def test_muci_max_entries_bounds(mcp_env):
 
 
 def test_famen_limit_bounds(mcp_env):
-    """limit=-1/201 修复前直落 assets[:-1]:须 -32602,界 [1,200](REST 双面并集)。"""
+    """limit 按 face 对齐 REST 孪生面:match 面 [1,20]、list 面 [1,200]。
+
+    负值修复前直落 assets[:-1] / scored[:-1] 切片反转:均须 -32602。
+    """
     mod = _load_mcp()
+    # list 面(无 task/skill_id):界 [1,200]
     assert _err_code(mod, "famen_skill", {"limit": -1}) == -32602
     assert _err_code(mod, "famen_skill", {"limit": 201}) == -32602
     assert _err_code(mod, "famen_skill", {"limit": "5"}) == -32602
     _call_tool(mod, "famen_skill", {"limit": 200})
+    # match 面(task 路径):界对齐 routes_famen Query(ge=1, le=20)
+    assert _err_code(mod, "famen_skill", {"task": "部署前检查", "limit": 21}) == -32602
+    out = _call_tool(mod, "famen_skill", {"task": "部署前检查", "limit": 20})
+    assert out["count"] == 0
 
 
 # ── 位点 8(REST):context top_k 无界 + qijuzhu 日期 500 面 + dossier list 无界 ──
@@ -422,8 +426,18 @@ def rest_env(monkeypatch):
 def test_rest_context_top_k_out_of_bounds_rejected(rest_env):
     """top_k=-1 修复前静默返回全空切面(len>=-1 恒真):须 422,界 [1,100]。"""
     client, session_factory = rest_env
+    from lantai.models.tables import CognitiveRole, MemoryItem
+
     with session_factory() as s:
-        _seed_memory(s, "rule_t66", "顶空规则记忆", lane="rule")
+        # context builder 按 mem.role 分流切面(非 lane),种子须带 role
+        s.add(
+            MemoryItem(
+                id="rule_t66",
+                content="顶空规则记忆",
+                role=CognitiveRole.RULE,
+                confidence=0.9,
+            )
+        )
         s.commit()
     resp = client.get("/cognitive/context", params={"task": "部署", "top_k": -1})
     assert resp.status_code == 422
