@@ -469,9 +469,26 @@ def handle_triage_apply(params: dict) -> dict:
 
 def handle_triage_auto_pilot(params: dict) -> dict:
     """持节：智能体一键全流程自主巡检与记忆审批（扫描→提纯→淘汰噪音→批准优质事实）。"""
-    min_approve = float(params.get("min_approve_conf", 0.85))
-    max_reject = float(params.get("max_reject_conf", 0.25))
-    limit = int(params.get("limit", 50))
+    # 票 27 病灶 1：schema 承诺 limit [1,500]、conf [0.0,1.0]，handler 此前裸
+    # int()/float() 强转零检查（limit=0/99999、conf=9 全部接受，直通 DB 查询
+    # .limit(limit)）——补齐范围校验，对齐 schema 承诺与 triage_analyze 同族口径。
+    min_approve = params.get("min_approve_conf", 0.85)
+    if (
+        not isinstance(min_approve, (int, float))
+        or isinstance(min_approve, bool)
+        or not (0.0 <= min_approve <= 1.0)
+    ):
+        raise ValueError("min_approve_conf must be a number in [0.0, 1.0]")
+    max_reject = params.get("max_reject_conf", 0.25)
+    if (
+        not isinstance(max_reject, (int, float))
+        or isinstance(max_reject, bool)
+        or not (0.0 <= max_reject <= 1.0)
+    ):
+        raise ValueError("max_reject_conf must be a number in [0.0, 1.0]")
+    limit = params.get("limit", 50)
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
+        raise ValueError("limit must be an int in [1, 500]")
     dry_run = bool(params.get("dry_run", False))
     from lantai.services.auto_triage_service import run_triage_auto_pilot
 
@@ -1738,11 +1755,31 @@ def handle_qijuzhu_chronicle(params: dict) -> dict:
     )
 
     if days > 1:
-        return get_timeline_service(
+        res = get_timeline_service(
             days=days,
             limit=limit,
             principal=_principal_from_params(params),
         )
+        # 票 27 病灶 3：date/detail_level 仅单日分支消费，多日时间线分支此前
+        # 静默丢弃（票 07「假承诺」轻量版）——宁 visible 不静默：调用方显式
+        # 传了未消费参数时回执体如实标记。
+        unused = [
+            nm
+            for nm, given in (
+                ("date", "date" in params),
+                ("detail_level", "detail_level" in params),
+            )
+            if given
+        ]
+        if unused and isinstance(res, dict):
+            warnings = res.setdefault("warnings", [])
+            if isinstance(warnings, list):
+                warnings.append(
+                    "参数未适用："
+                    + "/".join(unused)
+                    + " 仅单日查询（days=1）生效，多日时间线分支不消费"
+                )
+        return res
     return get_daily_chronicle_service(
         date_str=date_str,
         detail_level=detail_level,
@@ -2104,7 +2141,7 @@ TOOLS = {
             "properties": {
                 "user_id": _USER_ID_PARAM,
                 "query": {"type": "string", "description": "搜索查询"},
-                "top_k": {"type": "integer", "default": 5},
+                "top_k": {"type": "integer", "default": 5, "minimum": 1, "maximum": 100},
                 "domain": {
                     "type": "string",
                     "description": "辨域过滤：user/session/agent/all",
@@ -2162,7 +2199,11 @@ TOOLS = {
             "properties": {
                 "user_id": _USER_ID_PARAM,
                 "title": {"type": "string"},
-                "content": {"type": "string"},
+                "content": {
+                    "type": "string",
+                    "minLength": 10,
+                    "description": "记忆正文（≥10 字；media_url 提供时与视觉描述二选一）",
+                },
                 "media_url": {
                     "type": "string",
                     "description": "目识（vision）：图片地址（http/https）或 data URI；提供时 content 必须为空",
@@ -2246,7 +2287,7 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "user_id": _USER_ID_PARAM,
-                "limit": {"type": "integer", "default": 50},
+                "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
             },
         },
     },
@@ -2258,7 +2299,11 @@ TOOLS = {
                 "user_id": _USER_ID_PARAM,
                 "candidate_id": {"type": "string"},
                 "approve": {"type": "boolean"},
-                "reason": {"type": "string", "default": ""},
+                "reason": {
+                    "type": "string",
+                    "default": "",
+                    "description": "approve=false（reject）时必填：写明裁决理由；approve 时可空",
+                },
             },
             "required": ["candidate_id", "approve"],
         },
@@ -2319,14 +2364,24 @@ TOOLS = {
                 "min_approve_conf": {
                     "type": "number",
                     "default": 0.85,
+                    "minimum": 0.0,
+                    "maximum": 1.0,
                     "description": "自动批准的置信度门槛 [0.0, 1.0]",
                 },
                 "max_reject_conf": {
                     "type": "number",
                     "default": 0.25,
+                    "minimum": 0.0,
+                    "maximum": 1.0,
                     "description": "自动淘汰的置信度天花板 [0.0, 1.0]",
                 },
-                "limit": {"type": "integer", "default": 50, "description": "巡检候选条数 [1,500]"},
+                "limit": {
+                    "type": "integer",
+                    "default": 50,
+                    "minimum": 1,
+                    "maximum": 500,
+                    "description": "巡检候选条数 [1,500]",
+                },
                 "dry_run": {
                     "type": "boolean",
                     "default": False,
@@ -2614,8 +2669,12 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "user_id": _USER_ID_PARAM,
-                "limit": {"type": "integer", "default": 50},
-                "status": {"type": "string", "default": "open"},
+                "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
+                "status": {
+                    "type": "string",
+                    "default": "open",
+                    "enum": ["open", "resolved", "dismissed", "all"],
+                },
             },
         },
     },
@@ -2638,7 +2697,7 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "user_id": _USER_ID_PARAM,
-                "days": {"type": "integer", "default": 7},
+                "days": {"type": "integer", "default": 7, "minimum": 1, "maximum": 365},
             },
         },
     },
@@ -2662,7 +2721,7 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "user_id": _USER_ID_PARAM,
-                "limit": {"type": "integer", "default": 50},
+                "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
             },
         },
     },
@@ -2763,7 +2822,12 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "user_id": _USER_ID_PARAM,
-                "limit": {"type": "integer", "description": "参与聚类的记忆上限（可选）"},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5000,
+                    "description": "报告覆盖的记忆条数上限（可选，1..5000）",
+                },
             },
         },
     },
@@ -2785,9 +2849,10 @@ TOOLS = {
                 "status": {
                     "type": "string",
                     "default": "pending",
+                    "enum": ["pending", "approved", "rejected", "applied", "rolled_back"],
                     "description": "pending|approved|rejected|applied|rolled_back",
                 },
-                "limit": {"type": "integer", "default": 50},
+                "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
             },
         },
     },
@@ -2861,9 +2926,10 @@ TOOLS = {
                 "status": {
                     "type": "string",
                     "default": "candidate",
+                    "enum": ["candidate", "approved", "archived"],
                     "description": "candidate|approved|archived",
                 },
-                "limit": {"type": "integer", "default": 50},
+                "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
             },
         },
     },
@@ -2893,7 +2959,11 @@ TOOLS = {
                     "items": {"type": "string"},
                     "description": "批准时必填：Skill 执行步骤",
                 },
-                "reason": {"type": "string", "default": ""},
+                "reason": {
+                    "type": "string",
+                    "default": "",
+                    "description": "approve=false（reject）时必填：写明裁决理由；approve 时可空",
+                },
             },
             "required": ["crystal_id", "approve"],
         },
@@ -2934,7 +3004,13 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "user_id": _USER_ID_PARAM,
-                "days": {"type": "integer", "default": 7, "description": "统计天数 [1,365]"},
+                "days": {
+                    "type": "integer",
+                    "default": 7,
+                    "minimum": 1,
+                    "maximum": 365,
+                    "description": "统计天数 [1,365]",
+                },
             },
         },
     },
@@ -2955,7 +3031,7 @@ TOOLS = {
             "properties": {
                 "user_id": _USER_ID_PARAM,
                 "query": {"type": "string", "description": "搜索查询"},
-                "top_k": {"type": "integer", "default": 5},
+                "top_k": {"type": "integer", "default": 5, "minimum": 1, "maximum": 100},
             },
             "required": ["query"],
         },
@@ -3347,7 +3423,7 @@ TOOLS = {
             "properties": {
                 "date": {
                     "type": "string",
-                    "description": "指定查询日期 (YYYY-MM-DD)，默认今日",
+                    "description": "指定查询日期 (YYYY-MM-DD)，默认今日；仅单日查询（days=1）生效，多日时间线分支不消费",
                 },
                 "days": {
                     "type": "integer",
@@ -3356,7 +3432,7 @@ TOOLS = {
                 },
                 "detail_level": {
                     "type": "string",
-                    "description": "纪事详细程度：summary 或 full",
+                    "description": "纪事详细程度：summary 或 full；仅单日查询（days=1）生效，多日时间线分支不消费",
                     "enum": ["summary", "full"],
                     "default": "summary",
                 },
