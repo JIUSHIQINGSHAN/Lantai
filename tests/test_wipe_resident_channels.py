@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 import tests.conftest as conftest_mod
 
@@ -120,14 +120,11 @@ def test_exhausted_retries_reraise_systemerror(tmp_path, monkeypatch):
 
 def test_wipe_real_engine_clears_resident_and_spares_others():
     """臂 3：真会话 engine 冒烟——真删常驻注入面，别表不动（不 mock 直调）。"""
+    import lantai.storage.db as db_module
     from lantai.models.tables import CoreMemoryBlock, MemoryProposal
 
-    import lantai.storage.db as db_module
-
     with Session(db_module.engine) as session:
-        session.add(
-            CoreMemoryBlock(id="wipe-smoke-1", block="identity", content="x")
-        )
+        session.add(CoreMemoryBlock(id="wipe-smoke-1", block="identity", content="x"))
         session.add(MemoryProposal(id="wipe-smoke-p1", proposal_type="update"))
         session.commit()
 

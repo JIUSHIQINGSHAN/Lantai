@@ -12,6 +12,7 @@
 """
 
 import sys
+import time
 import types
 
 # 票 04：遮蔽防御必须先行——在 harness_state 自身之外任何 lantai./sqlmodel 级
@@ -684,6 +685,15 @@ _RESIDENT_TABLES = (
 
 _SESSION_DB_ENGINE = None
 
+# teardown 抖动重试上界（watch 台账 ci-db-thread-flakes-20261107）：会话级
+# StaticPool 单连接 + 前例后台线程收尾交叉时，wipe 的 commit 可能踩 CPython
+# 并发症 SystemError（returned NULL without setting an exception；CI 单次实抓
+# 两例、重跑即绿）。DELETE 无条件幂等，整块重试安全；重试耗尽仍炸则放行原
+# 异常——常驻注入面清不掉必须红，不许静默跳过（v0.66 票 01 的病不许回来）。
+# 重试语义由 tests/test_wipe_resident_channels.py 锁定，改上限须同步改其臂 2。
+_WIPE_RETRY_ATTEMPTS = 3
+_WIPE_RETRY_SLEEP_S = 0.05
+
 
 def _wipe_resident_channels():
     """清空**会话级共享测试库**上的常驻注入面（真 DELETE，不用替身糊断言）。
@@ -692,6 +702,9 @@ def _wipe_resident_channels():
     自己的最小/早期 schema 引擎（test_document_cascade_ownership、test_offload、
     test_hybrid_none_principal 等迁移形态冒烟），对它们乱 DELETE 会炸出
     `no such table`——隔离护栏没有资格去动别人的实验台。
+
+    SystemError 整块重试：台账 ci-db-thread-flakes 的 teardown 抖动面（见
+    `_WIPE_RETRY_ATTEMPTS` 注），瞬时失败退避后重来，持续失败放行原异常。
     """
     from sqlalchemy import text
     from sqlmodel import SQLModel
@@ -700,12 +713,19 @@ def _wipe_resident_channels():
     if engine is None:
         return
     available = set(SQLModel.metadata.tables)
-    with engine.connect() as conn:
-        for table in _RESIDENT_TABLES:
-            if table not in available:
-                continue
-            conn.execute(text(f"DELETE FROM {table}"))
-        conn.commit()
+    for attempt in range(1, _WIPE_RETRY_ATTEMPTS + 1):
+        try:
+            with engine.connect() as conn:
+                for table in _RESIDENT_TABLES:
+                    if table not in available:
+                        continue
+                    conn.execute(text(f"DELETE FROM {table}"))
+                conn.commit()
+            return
+        except SystemError:
+            if attempt == _WIPE_RETRY_ATTEMPTS:
+                raise
+            time.sleep(_WIPE_RETRY_SLEEP_S * attempt)
 
 
 @pytest.fixture(autouse=True)
