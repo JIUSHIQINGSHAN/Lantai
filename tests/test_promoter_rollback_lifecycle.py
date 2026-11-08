@@ -21,6 +21,7 @@ rollback 全走产品入口，不 mock 任何被测函数。
 """
 
 import hashlib
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.pool import StaticPool
@@ -269,3 +270,126 @@ def test_rollback_keeps_lifecycle_fields(rb_env):
             f"superseded_by 被快照回拨为 {mem.superseded_by!r}——继任关系丢失"
         )
         assert mem.content == V1
+
+
+# ── 票 37：checkpoint 选取全序 + 票 23 回归锁 ──
+
+
+def test_rollback_tie_breaks_deterministic_full_order(rb_env):
+    """票 37 定序臂（红）：version tie 存量行的「上一版」选取必须按全序
+    （version.desc + created_at.desc + id.desc）确定——现状单键排序对等值
+    键无契约（SQLite 扫描序≠语义承诺）。
+
+    构造（存量撞号的现实形态）：mem 当前态 V2（version=2），链上两笔
+    version=2 tie 检查点——**插入序与 created_at 序相反**（created_at 较晚
+    的笔 rowid 较大）：现状按扫描序稳定排序取 ckpts[1]=(2,早期,after=V2)
+    还原当前态（空转）；全序按 created_at 降序取 ckpts[1]=(2,早期) 应还原
+    V1——两选取面确定性分歧即红样。"""
+    mid = "mem_tie_seed"
+    now = datetime.now(UTC)
+    with Session(rb_env) as s:
+        s.add(
+            MemoryItem(
+                id=mid,
+                content=V2,
+                key="tie_city",
+                memory_type="semantic",
+                status="active",
+                version=2,
+                created_at=now - timedelta(hours=2),
+                updated_at=now,
+            )
+        )
+        # 插入序与 created_at 序相反：先插 created_at 较早的 tie、再插较晚的
+        # 当前态检查点、最后插基线——rowid 序 (2early, 2late, 1)
+        s.add(
+            MemoryCheckpoint(
+                id=new_id("ckpt"),
+                memory_id=mid,
+                version=2,
+                after={"content": V1},
+                created_at=now - timedelta(minutes=10),
+            )
+        )
+        s.add(
+            MemoryCheckpoint(
+                id=new_id("ckpt"),
+                memory_id=mid,
+                version=2,
+                after={"content": V2},
+                created_at=now - timedelta(minutes=5),
+            )
+        )
+        s.add(
+            MemoryCheckpoint(
+                id=new_id("ckpt"),
+                memory_id=mid,
+                version=1,
+                after={"content": V1},
+                created_at=now - timedelta(hours=1),
+            )
+        )
+        s.commit()
+
+    res1 = rollback(mid)
+    assert res1["ok"] is True, res1
+    with Session(rb_env) as s:
+        assert s.get(MemoryItem, mid).content == V1, (
+            "tie 选取须按 created_at 降序：ckpts[1]=(2,早期,after=V1) 应还原 V1——"
+            "现状按扫描序取 ckpts[1]=(2,较晚,after=V2) 还原当前态空转（票 37 病灶）"
+        )
+
+    res2 = rollback(mid)
+    assert res2["ok"] is True, res2
+    with Session(rb_env) as s:
+        assert s.get(MemoryItem, mid).content == V2, (
+            "第二次回滚按全序应还原 (2,较晚,after=V2)——undo/redo 交替序列确定"
+        )
+        # 票 23 回归锁：新追加的 rollback checkpoint version 严格递增
+        rb_versions = [
+            c.version
+            for c in s.exec(
+                select(MemoryCheckpoint)
+                .where(
+                    MemoryCheckpoint.memory_id == mid,
+                    MemoryCheckpoint.trigger == "rollback",
+                )
+                .order_by(MemoryCheckpoint.created_at.asc())
+            ).all()
+        ]
+        assert rb_versions == sorted(rb_versions) and len(rb_versions) == len(
+            set(rb_versions)
+        ), f"rollback checkpoint version 非严格递增：{rb_versions}"
+
+
+def test_rollback_version_chain_strictly_increasing_no_idle(rb_env):
+    """票 37 幂等臂（票 23 回归锁，绿——修复目标 2 已由票 23 关闭，本臂
+    只补锁防回归）：正常链连滚两次——checkpoint 链 version 无重复、
+    新增 rollback 检查点严格递增、无「还原到当前态空转 +version」
+    （第二次回滚 content 必须变化）。"""
+    mid = _apply_update_pair(rb_env)
+
+    assert rollback(mid)["ok"] is True
+    with Session(rb_env) as s:
+        c1 = s.get(MemoryItem, mid).content
+    assert c1 == V1
+
+    assert rollback(mid)["ok"] is True
+    with Session(rb_env) as s:
+        mem = s.get(MemoryItem, mid)
+        c2 = mem.content
+        versions = [
+            c.version
+            for c in s.exec(
+                select(MemoryCheckpoint).where(MemoryCheckpoint.memory_id == mid)
+            ).all()
+        ]
+    assert c2 != c1, (
+        f"第二次回滚 content 未变化（{c2!r}）——还原到当前态空转 +version（票 37 病灶形态）"
+    )
+    assert len(versions) == len(set(versions)), (
+        f"checkpoint 链 version 撞号：{sorted(versions)}（票 23 回归锁）"
+    )
+    assert sorted(versions) == [1, 2, 3, 4], (
+        f"两笔 apply + 两笔 rollback 应为严格递增链 1-4；实得 {sorted(versions)}"
+    )
