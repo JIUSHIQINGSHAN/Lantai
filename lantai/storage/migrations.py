@@ -970,13 +970,17 @@ def _migrate_v41(conn) -> None:
     因列未存在而跳过本列索引（v40 先于 v41），此处显式补建。幂等。
     """
     if not _has_column(conn, "retrieval_event", "fts_terms_truncated"):
+        conn.execute("ALTER TABLE retrieval_event ADD COLUMN fts_terms_truncated BOOLEAN DEFAULT 0")
+    # 建表归 create_all（_has_column 同款口径）——表不存在的库（迁移链夹具等）
+    # 跳过索引补建，否则本块炸链、版本停在 v40
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'retrieval_event'"
+    ).fetchone()
+    if has_table:
         conn.execute(
-            "ALTER TABLE retrieval_event ADD COLUMN fts_terms_truncated BOOLEAN DEFAULT 0"
+            "CREATE INDEX IF NOT EXISTS ix_retrieval_event_fts_terms_truncated"
+            " ON retrieval_event (fts_terms_truncated)"
         )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS ix_retrieval_event_fts_terms_truncated"
-        " ON retrieval_event (fts_terms_truncated)"
-    )
     logger.info("数据库增量迁移 v41 完成（FTS 截断观测列）")
 
 
