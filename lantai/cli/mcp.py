@@ -22,6 +22,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -3889,8 +3890,8 @@ def handle(msg: dict) -> dict | None:
                 "serverInfo": {"name": "lantai", "version": "0.66.0"},
             },
         }
-    if method == "notifications/initialized":
-        return None  # 通知无响应
+    if mid is None and method.startswith("notifications/"):
+        return None  # 票 76：JSON-RPC 2.0 通知不得回帧；按前缀判别，不枚举通知名
     if method == "ping":
         return {"jsonrpc": "2.0", "id": mid, "result": {}}
     if method == "tools/list":
@@ -4007,14 +4008,65 @@ def _configure_stdio_utf8() -> None:
         sys.stdin.reconfigure(encoding="utf-8")
 
 
+_MAX_LINE_CHARS = 1_000_000
+
+# 票 76：超长行不解析全帧（防内存耗尽是长度守卫的存在理由），id 用受限正则
+# 尽力提取——值形态限 JSON 标量、字符串定长上界；提取不到按无 id 处理。
+# 误配最坏只是拒绝帧的 id 装饰错，不回帧才是协议伤害（客户端只能等到超时）。
+_OVERSIZE_ID_RE = re.compile(
+    r'"id"\s*:\s*("(?:[^"\\]|\\.){0,128}"|-?\d{1,12}\b|true|false|null)'
+)
+
+
+def _oversize_reject(line: str) -> dict | None:
+    """超长行拒绝帧（票 76）：拒绝要有响应，静默吞让带 id 的客户端只能等超时。
+
+    带 id 回 -32600；无 id（通知形态）按规范静默。stderr 留痕由调用方做
+    （诊断通道，非协议面，两种形态都留一行）。
+    """
+    m = _OVERSIZE_ID_RE.search(line)
+    if m is None:
+        return None
+    try:
+        rid = json.loads(m.group(1))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(rid, (int, str)):
+        return None  # null/true/false 等非请求 id 形态按通知对待
+    return {
+        "jsonrpc": "2.0",
+        "id": rid,
+        "error": {
+            "code": -32600,
+            "message": (
+                f"request line exceeds {_MAX_LINE_CHARS} chars "
+                f"(got {len(line)}); rejected without parsing"
+            ),
+        },
+    }
+
+
 def main():
     _configure_stdio_utf8()
     for line in sys.stdin:
         line = line.strip()
         if not line:
             continue
-        if len(line) > 1_000_000:
-            continue  # 超长行丢弃，防内存耗尽
+        if len(line) > _MAX_LINE_CHARS:
+            # 票 76：拒绝要有响应——带 id 回 -32600 错误帧；无 id 按通知静默。
+            # stderr 各留一行（诊断通道，非协议面），方向不变：超长帧不进解析。
+            reject = _oversize_reject(line)
+            sys.stderr.write(
+                f"lantai-mcp: dropped oversize line ({len(line)} chars > "
+                f"{_MAX_LINE_CHARS}); replied="
+                + ("error frame" if reject is not None else "none (no id)")
+                + "\n"
+            )
+            sys.stderr.flush()
+            if reject is not None:
+                sys.stdout.write(json.dumps(reject, ensure_ascii=False) + "\n")
+                sys.stdout.flush()
+            continue
         try:
             msg = json.loads(line)
         except json.JSONDecodeError:
