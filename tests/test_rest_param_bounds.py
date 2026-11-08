@@ -253,30 +253,82 @@ _BUILDER_NAMES = {"Field", "Query", "Path", "Body"}
 # 跨票归属（别票在案，此处只登记不修）。
 _WHITELIST: dict[tuple[str, str, str], str] = {
     # service 层双层校验（票面对照组：模范真源）
-    ("routes_memory.py", "list_memories_route", "limit"): "memory_service.build_memories_page 1<=limit<=100 双层校验",
-    ("routes_memory.py", "list_memories_route", "offset"): "SQLite 负 OFFSET 语义=0，分页偏移非放大面",
-    ("routes_memory.py", "search_archived_memories_route", "limit"): "同 list_memories_route（build_memories_page）",
+    (
+        "routes_memory.py",
+        "list_memories_route",
+        "limit",
+    ): "memory_service.build_memories_page 1<=limit<=100 双层校验",
+    (
+        "routes_memory.py",
+        "list_memories_route",
+        "offset",
+    ): "SQLite 负 OFFSET 语义=0，分页偏移非放大面",
+    (
+        "routes_memory.py",
+        "search_archived_memories_route",
+        "limit",
+    ): "同 list_memories_route（build_memories_page）",
     ("routes_memory.py", "search_archived_memories_route", "offset"): "同 offset（SQLite 负值=0）",
-    ("routes_graph.py", "graph_route", "limit"): "路由体 validate_graph_limit [1,500]（ops/graph.py 单一真源）",
-    ("routes_retrieval.py", "get_recent_events", "limit"): "service recent_retrieval_events [1,100] 校验 + ValueError→400",
-    ("routes_recall_chain.py", "recall_chain_route", "max_depth"): "ops.validate_chain_params [1,5]",
+    (
+        "routes_graph.py",
+        "graph_route",
+        "limit",
+    ): "路由体 validate_graph_limit [1,500]（ops/graph.py 单一真源）",
+    (
+        "routes_retrieval.py",
+        "get_recent_events",
+        "limit",
+    ): "service recent_retrieval_events [1,100] 校验 + ValueError→400",
+    (
+        "routes_recall_chain.py",
+        "recall_chain_route",
+        "max_depth",
+    ): "ops.validate_chain_params [1,5]",
     ("routes_recall_chain.py", "recall_chain_route", "branch"): "ops.validate_chain_params [1,10]",
-    ("routes_recall_chain.py", "recall_chain_route", "min_score"): "ops.validate_chain_params [0.0,1.0]",
-    ("routes_recall_chain.py", "recall_chain_route", "total_max"): "ops.validate_chain_params [1,50]",
-    ("routes_scenes.py", "list_scenes", "limit"): "scene_service.list_scenes [1,500] 校验（service 层单一真源）",
+    (
+        "routes_recall_chain.py",
+        "recall_chain_route",
+        "min_score",
+    ): "ops.validate_chain_params [0.0,1.0]",
+    (
+        "routes_recall_chain.py",
+        "recall_chain_route",
+        "total_max",
+    ): "ops.validate_chain_params [1,50]",
+    (
+        "routes_scenes.py",
+        "list_scenes",
+        "limit",
+    ): "scene_service.list_scenes [1,500] 校验（service 层单一真源）",
     # 图遍历有 visited 判活兜底（立案轮 6 判净），max_depth 无 payload 放大；
     # 链读面同源钳制归票 39 族跟进
-    ("routes_edges.py", "decision_provenance_route", "max_depth"): "图遍历 visited 兜底；链读面同源钳归票 39 族跟进",
+    (
+        "routes_edges.py",
+        "decision_provenance_route",
+        "max_depth",
+    ): "图遍历 visited 兜底；链读面同源钳归票 39 族跟进",
     ("routes_edges.py", "event_timeline_route", "max_depth"): "同上",
     ("routes_edges.py", "causal_chain_route", "max_depth"): "同上",
     ("routes_edges.py", "EdgeReq", "confidence"): "边置信度语义参数 [0,1]；数值边界家族归票 68",
     # 跨票归属登记（已知裸，别票在案）
-    ("routes_cehou.py", "SampleRequest", "latency_ms"): "测候样本数值语义参数（非分页/预算面）；数值钳制族归票 66/68",
+    (
+        "routes_cehou.py",
+        "SampleRequest",
+        "latency_ms",
+    ): "测候样本数值语义参数（非分页/预算面）；数值钳制族归票 66/68",
     ("routes_cehou.py", "SampleRequest", "score_delta"): "同上（score_delta 语义可负）",
-    ("routes_search.py", "GraphExpandReq", "top_k"): "票 40 子项 6 已实锤登记（GraphExpandReq 无界）",
+    (
+        "routes_search.py",
+        "GraphExpandReq",
+        "top_k",
+    ): "票 40 子项 6 已实锤登记（GraphExpandReq 无界）",
     ("routes_search.py", "GraphExpandReq", "max_hops"): "同上",
     ("routes_search.py", "GraphExpandReq", "min_edge_conf"): "同上（概率浮点）",
-    ("routes_evolution.py", "EpisodeFeedbackReq", "lam"): "episode 只登记不接权重（察窗纪律）；数值钳制归票 68",
+    (
+        "routes_evolution.py",
+        "EpisodeFeedbackReq",
+        "lam",
+    ): "episode 只登记不接权重（察窗纪律）；数值钳制归票 68",
     ("routes_evolution.py", "EpisodeFeedbackReq", "gamma"): "同上",
 }
 
@@ -320,7 +372,11 @@ def _router_decorated(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
             and d.func.value.id == "router"
         ):
             return True
-        if isinstance(d, ast.Attribute) and isinstance(d.value, ast.Name) and d.value.id == "router":
+        if (
+            isinstance(d, ast.Attribute)
+            and isinstance(d.value, ast.Name)
+            and d.value.id == "router"
+        ):
             return True
     return False
 
@@ -334,7 +390,9 @@ def _scan_param_bound_violations() -> list[str]:
                 for stmt in node.body:
                     if not isinstance(stmt, ast.AnnAssign):
                         continue
-                    if not _annot_is_plain_num(stmt.annotation) or _annotated_bound(stmt.annotation):
+                    if not _annot_is_plain_num(stmt.annotation) or _annotated_bound(
+                        stmt.annotation
+                    ):
                         continue
                     key = (path.name, node.name, stmt.target.id)
                     if key in _WHITELIST:
@@ -372,8 +430,8 @@ def _scan_param_bound_violations() -> list[str]:
 def test_param_bound_sentinel_zero_violations_and_whitelist_valid():
     """裸数值参数即红；白名单键必须被扫描面上的实体消费（fail-closed 防漂移）。"""
     violations = _scan_param_bound_violations()
-    assert violations == [], (
-        "裸 int/float 参数必须带数值约束或登记白名单:\n" + "\n".join(violations)
+    assert violations == [], "裸 int/float 参数必须带数值约束或登记白名单:\n" + "\n".join(
+        violations
     )
     consumed: set[tuple[str, str, str]] = set()
     for path in sorted(ROUTES_DIR.glob("routes_*.py")):
