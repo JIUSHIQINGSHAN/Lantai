@@ -286,9 +286,7 @@ class CehouEngine:
             s_count = row.sample_count
             fail_rate = row.failure_count / max(s_count, 1)
             if s_count >= 5 and fail_rate >= 0.4:
-                _append_alert(
-                    row, f"视窗 {window_id} 错误率激增至 {round(fail_rate * 100, 1)}%"
-                )
+                _append_alert(row, f"视窗 {window_id} 错误率激增至 {round(fail_rate * 100, 1)}%")
 
             session.add(row)
             session.commit()

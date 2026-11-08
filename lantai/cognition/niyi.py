@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -19,6 +20,7 @@ from sqlmodel import Session, select
 
 from lantai.core.acl import viewer_of
 from lantai.core.auth import Principal
+from lantai.core.numeric import clamp_unit_interval
 from lantai.core.time import utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryEdge, MemoryItem, MemoryProposal
@@ -102,19 +104,26 @@ class AuditReport:
 def _coerce_unit_interval(raw) -> float | None:
     """patch.confidence 入参判别(票 68 位点 2)。
 
-    int/float → 钳 [0,1];数值字符串(float() 可解析)→ 同样钳制;其余
-    (含 bool——True/False 不是置信度,宁拒不猜)→ None,由调用方按错误回执
-    拒绝。返回值保证落在 [0,1],调用方无需再防越界。
+    int/float → 钳 [0,1](经 core.numeric.clamp_unit_interval 单一真源,
+    票 35:NaN/±inf 等非有限值不得靠 min/max 实参顺序碰运气);数值字符串
+    (float() 可解析)→ 同样钳制;其余(含 bool——True/False 不是置信度,
+    宁拒不猜)与非有限值 → None,由调用方按错误回执拒绝——NaN 是「非数值」
+    而非 0.0,拒绝不 fabricated。返回值保证落在 [0,1],调用方无需再防越界。
     """
     if isinstance(raw, bool):
         return None
     if isinstance(raw, (int, float)):
-        return min(1.0, max(0.0, float(raw)))
+        if not math.isfinite(float(raw)):
+            return None
+        return clamp_unit_interval(raw, default=0.0)
     if isinstance(raw, str):
         try:
-            return min(1.0, max(0.0, float(raw.strip())))
+            v = float(raw.strip())
         except ValueError:
             return None
+        if not math.isfinite(v):
+            return None
+        return clamp_unit_interval(v, default=0.0)
     return None
 
 
@@ -254,9 +263,7 @@ class NiyiEngine:
                 impacted_edges_count=impacted_count,
                 impacted_edge_details=[],
                 risk_level="low",
-                deliberation_reason=(
-                    f"patch.confidence 非数值({raw_conf!r}),拒绝推演,推演终止"
-                ),
+                deliberation_reason=(f"patch.confidence 非数值({raw_conf!r}),拒绝推演,推演终止"),
                 confidence_delta=0.0,
                 user_id=mem.user_id,
                 tenant_id=mem.tenant_id,

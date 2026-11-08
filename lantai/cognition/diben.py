@@ -231,17 +231,24 @@ class DibenEngine:
         scope = self._read_scope()
         if scope is not None:
             stmt = stmt.where(scope)
-        stmt = stmt.order_by(SessionCheckpoint.created_at.desc())
+        ordered = stmt.order_by(SessionCheckpoint.created_at.desc())
 
-        rows = s.exec(stmt).all()
-        accessible_rows = [
-            r for r in rows if self._check_access(owner_id=r.user_id, tenant_id=r.tenant_id)
-        ]
-        if not accessible_rows:
+        # 定靶只取最新可达一行（票 68 位点 9 的 limit 缺失半边）：无 session_id
+        # 时原实现全量 .all() 后 Python 过滤，是 O(全库) 加载；ACL 已下推，
+        # 最新可达行一条即定靶，再按 target_sid 精确取该会话全部块。
+        head = s.exec(ordered.limit(1)).first()
+        if head is None:
             return None
 
-        target_sid = accessible_rows[0].session_id
-        session_rows = [r for r in accessible_rows if r.session_id == target_sid]
+        target_sid = head.session_id
+        fetch = select(SessionCheckpoint).where(SessionCheckpoint.session_id == target_sid)
+        if scope is not None:
+            fetch = fetch.where(scope)
+        session_rows = [
+            r
+            for r in s.exec(fetch.order_by(SessionCheckpoint.created_at.desc())).all()
+            if self._check_access(owner_id=r.user_id, tenant_id=r.tenant_id)
+        ]
 
         blocks: dict[str, str] = {}
         for r in session_rows:

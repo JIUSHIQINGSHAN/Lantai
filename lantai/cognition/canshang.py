@@ -92,14 +92,16 @@ def _asserted_value(value: str, word: str) -> bool:
 
     取值是 snake_case 之类的机器串,词界/分词都不可靠,保持子串命中;但紧邻
     否定语素的命中不算——value 同为「不支持」的两条记忆不再经 (支持,不支持)
-    互判矛盾。
+    互判矛盾。否定语素按串前缀匹配(「没有启用」的命中前一字是「有」,
+    单字判定会漏),命中的前缀是任一否定语素即不作断言。
     """
     start = 0
     while True:
         idx = value.find(word, start)
         if idx < 0:
             return False
-        if not (idx > 0 and value[idx - 1] in _CJK_NEGATORS):
+        negated = any(idx >= len(n) and value[idx - len(n) : idx] == n for n in _CJK_NEGATORS)
+        if not negated:
             return True
         start = idx + 1
 

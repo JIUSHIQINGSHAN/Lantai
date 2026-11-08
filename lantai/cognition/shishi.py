@@ -142,11 +142,20 @@ class ShishiEngine:
                 # 范围若用于写查找,任意用户可改写 ownerless 行——宁 miss 不脏写,
                 # ownerless 行不进写范围,封存落自己名下新行。
                 stmt = stmt.where(CoreMemoryBlock.user_id == user_id)
+                if tenant_id:
+                    # 写面租户判据(票 68 位点 5 的 tenant 缺席半边,审查补):
+                    # 同 user_id 异租户的行不进写范围(宁 miss 不脏写,落本租户
+                    # 新行);本租户未知(ownerless-tenant 行)不拦,与 _check_access
+                    # 「双方都有 tenant 才比对」的口径一致。
+                    stmt = stmt.where(
+                        (CoreMemoryBlock.tenant_id.is_(None))
+                        | (CoreMemoryBlock.tenant_id == tenant_id)
+                    )
             else:
                 # admin 定靶确定性(票 68 位点 5):同 (block, namespace) 多用户行
                 # 并存时裸 .first() 命中哪行全凭存储序(SQLite 实况 rowid),按
-                # user_id 升序确定性取最小属主行。
-                stmt = stmt.order_by(CoreMemoryBlock.user_id)
+                # (user_id, tenant_id) 升序确定性取最小属主行。
+                stmt = stmt.order_by(CoreMemoryBlock.user_id, CoreMemoryBlock.tenant_id)
 
             row = s.exec(stmt).first()
             digest = compute_content_digest(block, content, namespace)

@@ -146,6 +146,27 @@ def test_niyi_non_numeric_confidence_returns_error_receipt(bounds_env):
     assert "推演终止" in out["deliberation_reason"]
 
 
+def test_niyi_non_finite_confidence_rejected_not_coerced(bounds_env):
+    """审查补臂(票 35 单一真源纪律):NaN/±inf 是「非数值」不是 0.0——修复实现
+    曾手写 min(1.0, max(0.0, x)),对 NaN 得 0.0(max(0.0,nan)=0.0 实参顺序巧合),
+    把毒值捏造成合法零置信;拒绝路径必须接管(代码审查轴确认的红:committed
+    版本对 NaN 返回 0.0 且无回执)。"""
+    from lantai.cognition.niyi import NiyiEngine
+
+    _seed_memory(bounds_env, "nm-nan", "目标记忆", confidence=0.5)
+    bounds_env.commit()
+    engine = NiyiEngine(session=bounds_env)
+
+    for poison in (float("nan"), float("inf"), "nan", "-inf"):
+        out = engine.deliberate_proposal("update", {"confidence": poison}, "nm-nan")
+        assert isinstance(out, dict), f"非有限值 {poison!r} 未按回执形态处理: {out!r}"
+        assert out["confidence_delta"] == 0.0
+        assert "非数值" in out["deliberation_reason"], (
+            f"非有限值 {poison!r} 未走拒绝回执: {out['deliberation_reason']}"
+        )
+        assert "推演终止" in out["deliberation_reason"]
+
+
 def test_niyi_confidence_clamped_into_unit_interval(bounds_env):
     """越界数值修复前直接进 conf_delta(1.5-0.5=1.0 的幽灵增量);修复后钳 [0,1]
     再算 delta——1.5→1.0、-0.2→0.0。"""
@@ -267,7 +288,9 @@ def test_zuozheng_zero_confidence_source_not_silently_lifted(bounds_env):
 # ── 位点 5:shishi 写面 admin 任意行 + ownerless 改写 ─────────────────────────
 
 
-def _seed_cmb(s, cid, *, user_id, content, version=1, block="identity", namespace="default"):
+def _seed_cmb(
+    s, cid, *, user_id, content, version=1, block="identity", namespace="default", tenant_id=None
+):
     from lantai.models.tables import CoreMemoryBlock
 
     s.add(
@@ -276,6 +299,7 @@ def _seed_cmb(s, cid, *, user_id, content, version=1, block="identity", namespac
             block=block,
             namespace=namespace,
             user_id=user_id,
+            tenant_id=tenant_id,
             content=content,
             version=version,
             agent_id="sha256=stub:sealed",
@@ -288,8 +312,8 @@ def test_shishi_nonadmin_seal_does_not_rewrite_ownerless_row(bounds_env):
     """ownerless 行(user_id IS NULL)修复前落在非 admin 写范围
     (`user_id == 我 | IS NULL`)内被直接改写——任意用户可篡改无主核心记忆;
     修复后写面只认自己的行,ownerless 行原样,另落自己名下新行(宁 miss 不脏写)。"""
-    from lantai.core.auth import Principal
     from lantai.cognition.shishi import ShishiEngine
+    from lantai.core.auth import Principal
     from lantai.models.tables import CoreMemoryBlock
 
     _seed_cmb(bounds_env, "cmb-ownerless", user_id=None, content="ownerless-v1", version=2)
@@ -311,8 +335,8 @@ def test_shishi_admin_seal_targets_deterministic_row(bounds_env):
     """同 (block, namespace) 多用户行并存时,admin 封存 `.first()` 无 order_by
     → SQLite 实况 rowid 序 = 先插者(user-z)被任意命中;修复后按 user_id 确定性
     定靶:字典序最小的 user-a 行被更新,user-z 行原样。"""
-    from lantai.core.auth import Principal
     from lantai.cognition.shishi import ShishiEngine
+    from lantai.core.auth import Principal
     from lantai.models.tables import CoreMemoryBlock
 
     _seed_cmb(bounds_env, "cmb-z", user_id="user-z", content="z-v1")
@@ -330,6 +354,35 @@ def test_shishi_admin_seal_targets_deterministic_row(bounds_env):
     assert row_a.version == 2
     assert row_z.content == "z-v1", f"user-z 行被无序 .first() 误命中改写: {row_z.content}"
     assert row_z.version == 1
+
+
+def test_shishi_nonadmin_seal_does_not_cross_tenant(bounds_env):
+    """写面 tenant 缺席半边(票 68 位点 5):同 user_id 在另一租户的行,修复前
+    写查找只按 user_id 命中被直接改写(跨租户脏写);修复后非 admin 写面按
+    _check_access 同款租户判据收窄(异租户行不进写范围,宁 miss 不脏写,
+    落自己租户名下新行)。"""
+    from lantai.cognition.shishi import ShishiEngine
+    from lantai.core.auth import Principal
+    from lantai.models.tables import CoreMemoryBlock
+
+    _seed_cmb(bounds_env, "cmb-cross", user_id="u1", tenant_id="t2", content="t2-v1")
+    bounds_env.commit()
+
+    principal = Principal(user_id="u1", tenant_id="t1")
+    engine = ShishiEngine(session=bounds_env, principal=principal)
+    engine.seal_core_memory("identity", "u1-t1-content")
+
+    bounds_env.expire_all()
+    cross = bounds_env.get(CoreMemoryBlock, "cmb-cross")
+    assert cross.tenant_id == "t2"
+    assert cross.content == "t2-v1", f"异租户行被跨租户改写: {cross.content}"
+    assert cross.version == 1, f"异租户行版本被推进: {cross.version}"
+    own = bounds_env.exec(
+        select(CoreMemoryBlock).where(
+            CoreMemoryBlock.user_id == "u1", CoreMemoryBlock.tenant_id == "t1"
+        )
+    ).all()
+    assert len(own) == 1 and own[0].content == "u1-t1-content", "未落本租户名下新行"
 
 
 # ── 位点 6:canshang OPPOSITE_PAIRS 裸子串 + 全文字符集假矛盾 ──────────────────
@@ -411,6 +464,22 @@ def test_canshang_identical_negated_values_no_false_contradiction():
     assert violation is None, f"完全相同的取值被误判矛盾: {violation}"
 
 
+def test_canshang_multi_char_negator_value_not_asserted():
+    """审查补臂:取值面否定语素按串前缀匹配——「没有启用」的命中前一字是
+    「有」,单字判定漏拦,与「关闭」仍误判矛盾;修复后多字否定语素(没有)
+    结尾于命中处即不作断言。正文面 jieba 分词本就切出「没有」token,此臂只
+    收取值面。"""
+    from lantai.cognition.canshang import CanshangEngine
+
+    item_a, item_b = _canshang_items(
+        structure_a={"entity": "缓存", "value": "没有启用"},
+        structure_b={"entity": "缓存", "value": "已关闭"},
+    )
+    engine = CanshangEngine()
+    violation = engine.detect_pairwise_contradiction(item_a, item_b)
+    assert violation is None, f"多字否定语素未拦下:「没有启用」被当作肯定「启用」: {violation}"
+
+
 def test_canshang_genuine_contradiction_still_detected():
     """回归锁(修复前即绿):真矛盾——正文互斥(启用/关闭 + 同题 token 交叠 ≥3)、
     结构化取值互斥(on/off)两条路径都还报得出。"""
@@ -468,7 +537,9 @@ def test_evolution_dedup_key_unique_enforced_at_db_level(bounds_env):
     # NULL 键不参与唯一性
     for pid in ("p-null-1", "p-null-2"):
         bounds_env.add(
-            CognitivePattern(id=pid, pattern_type="recurrence", description="老库形态", dedup_key=None)
+            CognitivePattern(
+                id=pid, pattern_type="recurrence", description="老库形态", dedup_key=None
+            )
         )
     bounds_env.commit()
     from sqlmodel import select
@@ -522,9 +593,7 @@ def test_migration_dedupes_legacy_dup_rows_and_enforces_unique():
 
     apply_migrations(con)
 
-    dup_rows = con.execute(
-        "SELECT id FROM cognitive_patterns WHERE dedup_key = 'dupk'"
-    ).fetchall()
+    dup_rows = con.execute("SELECT id FROM cognitive_patterns WHERE dedup_key = 'dupk'").fetchall()
     assert [r[0] for r in dup_rows] == ["p1"], f"重复 dedup_key 未按先落者胜去重: {dup_rows}"
 
     with pytest.raises(sqlite3.IntegrityError):
@@ -533,9 +602,7 @@ def test_migration_dedupes_legacy_dup_rows_and_enforces_unique():
             " VALUES ('p5', 'recurrence', 'post-migration', 'dupk')"
         )
 
-    null_rows = con.execute(
-        "SELECT id FROM cognitive_patterns WHERE dedup_key IS NULL"
-    ).fetchall()
+    null_rows = con.execute("SELECT id FROM cognitive_patterns WHERE dedup_key IS NULL").fetchall()
     assert len(null_rows) == 2, "NULL dedup_key 旧行被误去重"
 
 
@@ -543,7 +610,7 @@ def test_migration_dedupes_legacy_dup_rows_and_enforces_unique():
 
 
 def test_cehou_terminal_window_rejects_new_samples():
-    """ rolled_back(终态)窗口修复前仍接受样本(实验已裁决还继续改计数——
+    """rolled_back(终态)窗口修复前仍接受样本(实验已裁决还继续改计数——
     证据被污染);修复后终态拒收,样本数冻结在终态时刻。"""
     from lantai.cognition.cehou import CehouEngine
     from lantai.core.auth import Principal
@@ -673,6 +740,7 @@ def test_diben_no_session_uses_acl_pushdown_not_full_table_scan():
     where_part = normalized.split(" where ", 1)
     assert len(where_part) == 2, f"首条查询无 WHERE(仍全表加载): {first}"
     assert "user_id" in where_part[1], f"属主判据未下推进 WHERE: {first}"
+    assert "limit" in normalized, f"定靶查询未加 limit(票 68 位点 9 limit 缺失半边): {first}"
 
 
 def test_diben_pushdown_keeps_visibility_semantics():
