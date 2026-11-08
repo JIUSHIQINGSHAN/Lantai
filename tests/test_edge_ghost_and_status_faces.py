@@ -107,7 +107,11 @@ def test_ghost_source_edge_not_created_and_no_r1_mislabel(genv):
     health_scan R1 把 active 的目标误标 superseded 候选（superseded_by=
     幽灵 id）。
     修复后：不建边（对齐 consolidation 口径「边指向幽灵即脏写」，提案照常
-    留痕）→ R1 无从误标。"""
+    留痕）→ unarchive 复原后 R1 无从误标——两段断言都走产品路径。
+
+    存量残留如实登记：已落库的存量幽灵边仍会被 R1 误标——reflector 读侧
+    不在本票落点清单（工单明示只攻 promoter 写侧 + edge_service 读侧），
+    存量对账属运维面。"""
     e = genv
     with Session(e) as s:
         s.add(_mem("mem_B"))
@@ -120,28 +124,23 @@ def test_ghost_source_edge_not_created_and_no_r1_mislabel(genv):
         "（consolidation 分支同款口径未对齐，票 40 子项 1）"
     )
 
-    # 现状对照（修复前可达态）：幽灵边在场时，复原后的 active 目标被 R1 误标。
-    # 直接种幽灵边模拟存量（修复走写侧，不删存量读面判定），锁 R1 的判定面。
+    # R1 后果段走产品路径：admin 合法复原（unarchive）后目标回到 active，
+    # 写侧不建边 ⇒ R1 的 superseded_by 映射里没有它 ⇒ 不误标
+    assert unarchive_memory("mem_B", actor="admin", reason="票40:复原")["ok"] is True
     with Session(e) as s:
-        s.add(
-            MemoryEdge(
-                id=new_id("edge"),
-                source_memory_id="mem_ghost",
-                target_memory_id="mem_B",
-                relation="supersedes",
-                confidence=0.9,
-            )
-        )
-        s.commit()
-    with Session(e) as s:
+        assert s.get(MemoryItem, "mem_B").status == "active"
         snap = health_scan(s)
-    labels = {c["memory_id"]: c["rule"] for c in snap["candidates"]} if isinstance(
-        snap.get("candidates", [{}])[0], dict
-    ) else {}
-    assert labels.get("mem_B") != "superseded", (
+    mislabeled = [
+        c
+        for c in snap.get("candidates", [])
+        if isinstance(c, dict) and c.get("memory_id") == "mem_B" and c.get("signal") == "superseded"
+    ]
+    assert not mislabeled, (
         f"幽灵源边把 active 目标误标 superseded 候选（票 40 子项 1 的反思层后果）；"
-        f"candidates={snap['candidates'][:3]}"
+        f"candidates={mislabeled}"
     )
+    # 注：mem_B 可能以 signal="expired" 入候选（deprecate 自身设置的 valid_to
+    # 已过——R2 合法行为，与 R1 幽灵误标无关），断言只锁 R1 的 superseded 形态。
 
 
 # ── 臂 2/3：撤回 / 归档端点的边对非 admin 拒返 ──
@@ -154,7 +153,14 @@ def test_retracted_endpoint_edge_hidden_from_non_admin(genv):
     with Session(e) as s:
         s.add(_mem("mem_A", user_id="user-alice"))
         s.add(_mem("mem_B", user_id="user-alice"))
-        s.add(MemoryEdge(id=new_id("edge"), source_memory_id="mem_A", target_memory_id="mem_B", relation="supports"))
+        s.add(
+            MemoryEdge(
+                id=new_id("edge"),
+                source_memory_id="mem_A",
+                target_memory_id="mem_B",
+                relation="supports",
+            )
+        )
         s.commit()
     assert retract_memory("mem_B", reason="票40:状态臂", actor="admin")["ok"] is True
 
@@ -174,7 +180,14 @@ def test_archived_endpoint_edge_hidden_from_non_admin(genv):
     with Session(e) as s:
         s.add(_mem("mem_A", user_id="user-alice"))
         s.add(_mem("mem_B", user_id="user-alice"))
-        s.add(MemoryEdge(id=new_id("edge"), source_memory_id="mem_A", target_memory_id="mem_B", relation="supports"))
+        s.add(
+            MemoryEdge(
+                id=new_id("edge"),
+                source_memory_id="mem_A",
+                target_memory_id="mem_B",
+                relation="supports",
+            )
+        )
         s.commit()
     assert archive_memory("mem_B", actor="admin", reason="票40:状态臂")["ok"] is True
 
@@ -195,7 +208,14 @@ def test_active_endpoint_edge_still_visible(genv):
     with Session(e) as s:
         s.add(_mem("mem_A", user_id="user-alice"))
         s.add(_mem("mem_B", user_id="user-alice"))
-        s.add(MemoryEdge(id=new_id("edge"), source_memory_id="mem_A", target_memory_id="mem_B", relation="supports"))
+        s.add(
+            MemoryEdge(
+                id=new_id("edge"),
+                source_memory_id="mem_A",
+                target_memory_id="mem_B",
+                relation="supports",
+            )
+        )
         s.commit()
 
     owner = Principal(user_id="user-alice", role="user")

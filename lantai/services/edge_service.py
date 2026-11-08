@@ -68,6 +68,12 @@ def _edge_visible(e, principal, viewer: str) -> bool:
             mem = s.get(MemoryItem, mid)
             if mem is None:
                 return False
+            # 票 40：端点判活——撤回契约「全检索面禁用」覆盖边读面（软态
+            # 端点的边对非 admin 不再返回；admin/principal=None 面不受此滤）
+            from lantai.services.record_ops_service import STATUS_ACTIVE
+
+            if mem.status != STATUS_ACTIVE:
+                return False
             if (mem.user_id or None) not in (None, viewer):
                 return False
     return True
@@ -97,20 +103,28 @@ def _filter_visible_batch(edges, viewer: str) -> list:
     if not edges:
         return []
     endpoint_ids = list({mid for e in edges for mid in (e.source_memory_id, e.target_memory_id)})
-    owners: dict[str, str | None] = {}
+    owners: dict[str, tuple[str | None, str]] = {}
     with get_session() as s:
         for i in range(0, len(endpoint_ids), 400):
             chunk = endpoint_ids[i : i + 400]
             rows = s.exec(
-                select(MemoryItem.id, MemoryItem.user_id).where(MemoryItem.id.in_(chunk))
+                select(MemoryItem.id, MemoryItem.user_id, MemoryItem.status).where(
+                    MemoryItem.id.in_(chunk)
+                )
             ).all()
-            for mid, uid in rows:
-                owners[mid] = uid
+            for mid, uid, st in rows:
+                owners[mid] = (uid, st)
 
     def _ok(mid: str) -> bool:
         if mid not in owners:
             return False
-        return (owners[mid] or None) in (None, viewer)
+        uid, st = owners[mid]
+        # 票 40：端点判活（同 _edge_visible——软态端点的边对非 admin 隐藏）
+        from lantai.services.record_ops_service import STATUS_ACTIVE
+
+        if st != STATUS_ACTIVE:
+            return False
+        return (uid or None) in (None, viewer)
 
     return [e for e in edges if _ok(e.source_memory_id) and _ok(e.target_memory_id)]
 

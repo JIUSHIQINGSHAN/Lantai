@@ -389,23 +389,37 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
             s.flush()
             _make_checkpoint(s, existing, before, prop.id, trigger="reflect")
             if prop.evidence_ids:
-                dup = s.exec(
-                    select(MemoryEdge).where(
-                        MemoryEdge.relation == "supersedes",
-                        MemoryEdge.source_memory_id == prop.evidence_ids[0],
-                        MemoryEdge.target_memory_id == existing.id,
+                # 票 40：successor 存在性校验——evidence_ids[0] 是 LLM curator
+                # 输出，幽灵 id 直接落边即脏写（同文件 consolidation 分支对照
+                # 口径：「src is None → 不建边」）；幽灵边会进 reflector R1 的
+                # superseded_by 映射，目标被 unarchive 复原后即被误标。
+                # 提案照常留痕（deprecate 主语义不受影响），缺口留日志。
+                successor = s.get(MemoryItem, prop.evidence_ids[0])
+                if successor is None:
+                    logger.info(
+                        "deprecate %s：evidence_ids[0]=%r 不存在，跳过 supersedes 边"
+                        "（宁 miss 不脏写，票 40 对齐 consolidation 口径）",
+                        existing.id,
+                        prop.evidence_ids[0],
                     )
-                ).first()
-                if dup is None:
-                    s.add(
-                        MemoryEdge(
-                            id=new_id("edge"),
-                            source_memory_id=prop.evidence_ids[0],
-                            target_memory_id=existing.id,
-                            relation="supersedes",
-                            confidence=prop.confidence,
+                else:
+                    dup = s.exec(
+                        select(MemoryEdge).where(
+                            MemoryEdge.relation == "supersedes",
+                            MemoryEdge.source_memory_id == prop.evidence_ids[0],
+                            MemoryEdge.target_memory_id == existing.id,
                         )
-                    )
+                    ).first()
+                    if dup is None:
+                        s.add(
+                            MemoryEdge(
+                                id=new_id("edge"),
+                                source_memory_id=prop.evidence_ids[0],
+                                target_memory_id=existing.id,
+                                relation="supersedes",
+                                confidence=prop.confidence,
+                            )
+                        )
             sync_fts(s, existing.id, None)
             delete_memory_item(existing.id)
         elif prop.proposal_type == "merge" and existing:
