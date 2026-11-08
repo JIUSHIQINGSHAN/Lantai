@@ -57,6 +57,7 @@ def test_stdio_loop_subprocess_end_to_end(tmp_path):
     frames = [
         '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"冒烟宿主"}}}',
         '{"jsonrpc":"2.0","method":"notifications/initialized"}',  # 通知：无响应
+        '{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}',  # 票 76：标准通知同样不得回帧
         "",  # 空行：静默
         "   ",  # 纯空白：静默
         "{not-json",  # 坏帧：静默
@@ -66,7 +67,8 @@ def test_stdio_loop_subprocess_end_to_end(tmp_path):
         '{"jsonrpc":"2.0","id":5,"method":"不存在的方法"}',  # 中文方法名：读侧 UTF-8 回路
         '{"jsonrpc":"2.0","id":6,"method":"ping","params":{"pad":"'
         + "x" * 1_000_001
-        + '"}}',  # 超长行：长度守卫必须丢弃
+        + '"}}',  # 超长行：拒绝要有响应（票 76）——-32600 错误帧，不再静默吞
+        '{"jsonrpc":"2.0","id":7,"method":"ping"}',  # 票 76：超长行拒绝后服务存活
     ]
     stdin_bytes = ("\n".join(frames) + "\n").encode("utf-8")
 
@@ -81,14 +83,15 @@ def test_stdio_loop_subprocess_end_to_end(tmp_path):
     assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")[-2000:]
 
     out_lines = proc.stdout.decode("utf-8").splitlines()
-    # 10 帧进、恰 5 响应出：id 1/2/3/4/5；通知、空行×2、坏帧、超长行一律静默
-    assert len(out_lines) == 5, f"响应行数应为 5（静默契约被破坏）: {out_lines[:3]}..."
+    # 12 帧进、恰 7 响应出：id 1-7；两条通知、空行×2、坏帧静默（票 76：
+    # 超长带 id 不再静默，得 -32600 拒绝帧）；stderr 恰一条超长行留痕
+    assert len(out_lines) == 7, f"响应行数应为 7（静默契约被破坏）: {out_lines[:3]}..."
     by_id = {}
     for raw in out_lines:
         resp = json.loads(raw)  # 每行都是独立合法 JSON（一帧一行的写侧契约）
         by_id[resp["id"]] = resp
 
-    assert set(by_id) == {1, 2, 3, 4, 5}, sorted(by_id)
+    assert set(by_id) == {1, 2, 3, 4, 5, 6, 7}, sorted(by_id)
     assert by_id[1]["result"]["serverInfo"]["name"] == "lantai"
     assert by_id[1]["result"]["protocolVersion"]
     assert by_id[2]["result"] == {}
@@ -99,6 +102,61 @@ def test_stdio_loop_subprocess_end_to_end(tmp_path):
     assert by_id[4]["error"]["code"] == -32602
     # 写侧回路：响应里的中文原样出管（ensure_ascii=False + UTF-8），GBK 管道即乱码
     assert by_id[5]["error"]["message"] == "method not found: 不存在的方法"
+    # 票 76：超长带 id 请求得 -32600 拒绝帧而非沉默，服务随即存活
+    assert by_id[6]["error"]["code"] == -32600, by_id[6]
+    assert by_id[7] == {"jsonrpc": "2.0", "id": 7, "result": {}}
+    stderr_text = proc.stderr.decode("utf-8", "replace")
+    assert "oversize" in stderr_text, stderr_text[-500:]
+
+
+def test_oversize_line_with_id_rejected_with_frame_and_stays_alive(monkeypatch):
+    """票 76：超长行拒绝要有响应——带 id 请求回 -32600 错误帧，不再静默吞。
+
+    静默吞的旧契约下，带 id 的合法请求被丢后客户端拿不到任何响应只能等到
+    超时（无错误帧、无留痕）。新契约：错误帧 + stderr 留痕一行（诊断通道，
+    非协议面）+ 服务存活（下一帧 ping 正常应答）。
+    """
+    mod = _load_mcp()
+    oversize = (
+        '{"jsonrpc":"2.0","id":9,"method":"ping","params":{"pad":"' + "x" * 1_000_001 + '"}}'
+    )
+    frames = [oversize, '{"jsonrpc":"2.0","id":10,"method":"ping"}']
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(frames) + "\n"))
+    fake_out, fake_err = io.StringIO(), io.StringIO()
+    monkeypatch.setattr("sys.stdout", fake_out)
+    monkeypatch.setattr("sys.stderr", fake_err)
+
+    mod.main()
+
+    out_lines = fake_out.getvalue().splitlines()
+    assert len(out_lines) == 2, f"应恰两帧响应（拒绝帧 + 存活证明）: {fake_out.getvalue()[:200]}"
+    reject, alive = (json.loads(raw) for raw in out_lines)
+    assert reject["id"] == 9 and "error" in reject, reject
+    assert reject["error"]["code"] == -32600
+    assert alive == {"jsonrpc": "2.0", "id": 10, "result": {}}
+    assert fake_err.getvalue().count("\n") == 1, fake_err.getvalue()
+    assert "oversize" in fake_err.getvalue()
+
+
+def test_oversize_line_without_id_stays_silent(monkeypatch):
+    """票 76 验收 2 后半：无 id 的超长通知形态仍静默丢（协议面零响应）。"""
+    mod = _load_mcp()
+    oversize = (
+        '{"jsonrpc":"2.0","method":"notifications/progress","params":{"pad":"'
+        + "x" * 1_000_001
+        + '"}}'
+    )
+    frames = [oversize, '{"jsonrpc":"2.0","id":11,"method":"ping"}']
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(frames) + "\n"))
+    fake_out = io.StringIO()
+    monkeypatch.setattr("sys.stdout", fake_out)
+    monkeypatch.setattr("sys.stderr", io.StringIO())
+
+    mod.main()
+
+    out_lines = fake_out.getvalue().splitlines()
+    assert len(out_lines) == 1, fake_out.getvalue()[:200]
+    assert json.loads(out_lines[0]) == {"jsonrpc": "2.0", "id": 11, "result": {}}
 
 
 def test_main_loop_drives_core_tool_against_real_db(param_env, monkeypatch):
