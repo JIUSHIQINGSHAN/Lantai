@@ -6,7 +6,7 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from lantai.core.auth import get_current_user
 from lantai.core.logger import logger
@@ -28,7 +28,8 @@ def get_db_conn():
 class ChatReq(BaseModel):
     query: str
     domain: str = "user"
-    top_k: int = 8
+    # 票 42：1..100——对齐 SearchReq.top_k 既有上界（同走检索内核）
+    top_k: int = Field(default=8, ge=1, le=100)
     force: bool = True
 
 

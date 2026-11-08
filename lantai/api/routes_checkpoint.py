@@ -38,7 +38,8 @@ class CheckpointWriteReq(BaseModel):
 @router.get("/checkpoint")
 def list_checkpoints_route(
     memory_id: str = "",
-    limit: int = 20,
+    # 票 42：1..100——checkpoint 是完整行快照，放大尤甚（回滚历史逐版本返回）
+    limit: int = Query(20, ge=1, le=100),
     session_id: str = "",
     ctx=Depends(get_current_user),
 ):

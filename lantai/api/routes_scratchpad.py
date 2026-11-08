@@ -35,7 +35,9 @@ class DistillScratchpadReq(BaseModel):
     session_id: str = Field(default="default", pattern=SESSION_ID_PATTERN)
     content: str = ""
     write: bool = False
-    max_chars: int = 1000
+    # 票 42：提纯输出长度是 LLM 提示面（进 checkpoint → shell hook → 插件），
+    # 上限对齐 MAX_SCRATCHPAD_CHARS 的 10 倍封顶；100 以下无提纯意义
+    max_chars: int = Field(default=1000, ge=100, le=10000)
 
 
 @router.post("/scratchpad/distill")

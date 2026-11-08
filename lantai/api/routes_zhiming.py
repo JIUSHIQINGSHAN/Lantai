@@ -32,7 +32,8 @@ class LifecycleTransitionRequest(BaseModel):
 
 class LifecycleAuditRequest(BaseModel):
     auto_apply: bool = Field(default=False, description="是否自动将转移建议落库执行")
-    limit: int = Field(default=100, description="最大巡检条数上限")
+    # 票 42：1..1000——auto_apply=true 时批量状态机写，负值 SQLite LIMIT -1 = 无上限
+    limit: int = Field(default=100, ge=1, le=1000, description="最大巡检条数上限")
 
 
 @router.get("/inspect")

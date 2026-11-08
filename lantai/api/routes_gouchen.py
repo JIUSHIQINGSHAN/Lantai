@@ -20,10 +20,12 @@ router = APIRouter(prefix="/gouchen", tags=["gouchen"])
 
 class GouchenDredgeRequest(BaseModel):
     query: str = Field(default="", description="关键字过滤（空字符串表示全库打捞）")
+    # 票 42：0..1 阈值越界即过滤语义失真（>1 永远空、<0 等于全表）
     min_sunken_score: float = Field(
-        default=0.4, description="沉没度最低阈值（0.0~1.0，越高越沉埋）"
+        default=0.4, ge=0.0, le=1.0, description="沉没度最低阈值（0.0~1.0，越高越沉埋）"
     )
-    limit: int = Field(default=50, description="最大打捞条数")
+    # 票 42：1..500——只读 payload 面；负值在 SQLite LIMIT -1 = 无上限
+    limit: int = Field(default=50, ge=1, le=500, description="最大打捞条数")
 
 
 @router.post("/dredge")
@@ -53,7 +55,8 @@ def gouchen_dredge_endpoint(
 @router.get("/snapshot")
 def gouchen_snapshot_endpoint(
     anchor_time: datetime = Query(..., description="历史时间锚点（ISO 8601，UTC）"),  # noqa: B008
-    limit: int = Query(default=50, description="最大条数"),  # noqa: B008
+    # 票 42：1..500（只读 payload 面，负值 LIMIT -1 = 无上限）
+    limit: int = Query(default=50, ge=1, le=500, description="最大条数"),  # noqa: B008
     ctx=Depends(get_current_user),
 ) -> dict[str, Any]:
     """钩沉：基于时间锚点重建历史语境快照，杜绝未来信息污染（ADR-0082）。"""

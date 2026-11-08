@@ -26,7 +26,11 @@ router = APIRouter(tags=["candidates"])
 
 
 @router.get("/candidates/pending")
-def candidates_pending(limit: int = 50, ctx=Depends(get_current_user)):
+def candidates_pending(
+    # 票 42：1..200（候选类上界，裁决入口读面）
+    limit: int = Query(50, ge=1, le=200),
+    ctx=Depends(get_current_user),
+):
     return list_pending_candidates(limit, principal=ctx)
 
 
@@ -92,8 +96,9 @@ def candidates_refine(candidate_id: str, ctx=Depends(get_current_user)):
 
 @router.post("/candidates/batch_refine")
 def candidates_batch_refine(
-    min_conf: float = 0.15,
-    max_conf: float = 0.6,
+    # 票 42：置信度带 [0,1]——越界值静默空批（扫描不到任何候选），边界拒绝
+    min_conf: float = Query(0.15, ge=0.0, le=1.0),
+    max_conf: float = Query(0.6, ge=0.0, le=1.0),
     limit: int = Query(20, ge=1, le=100, description="最大处理候选条目数（票 58 双界）"),
     ctx=Depends(get_current_user),
 ):
@@ -108,7 +113,11 @@ def candidates_batch_refine(
 
 
 @router.post("/candidates/ai_triage")
-def candidates_ai_triage(limit: int = 50, ctx=Depends(get_current_user)):
+def candidates_ai_triage(
+    # 票 42：1..200——逐条送 LLM 的成本放大面（票 58 同款批量上界口径）
+    limit: int = Query(50, ge=1, le=200),
+    ctx=Depends(get_current_user),
+):
     """AI 智能预审：扫描待审候选并返回智能研判与决策建议。
 
     归属（票 readside-gaps/02）：把候选 `text` 送进 LLM，全表捞就是

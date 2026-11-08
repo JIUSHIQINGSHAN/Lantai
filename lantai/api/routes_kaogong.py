@@ -19,7 +19,8 @@ router = APIRouter(prefix="/kaogong", tags=["kaogong"])
 
 
 class KaogongEvalRequest(BaseModel):
-    limit: int = Field(default=100, description="最大考评条目数")
+    # 票 42：1..1000——写副作用面（升降级落库），负值在 SQLite LIMIT -1 = 无上限
+    limit: int = Field(default=100, ge=1, le=1000, description="最大考评条目数")
 
 
 class KaogongInspectRequest(BaseModel):

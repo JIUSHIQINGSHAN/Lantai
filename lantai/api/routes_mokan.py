@@ -46,7 +46,8 @@ def mokan_verify_endpoint(
 @router.get("/audit")
 def mokan_audit_endpoint(
     query: str = Query(default="", description="检索过滤关键字（可选）"),  # noqa: B008
-    limit: int = Query(default=50, description="最大审计条数"),  # noqa: B008
+    # 票 42：1..500（只读 payload 面，负值 LIMIT -1 = 无上限）
+    limit: int = Query(default=50, ge=1, le=500, description="最大审计条数"),  # noqa: B008
     ctx=Depends(get_current_user),
 ) -> dict[str, Any]:
     """磨勘：存量事实矛盾冲突与证据链审计（ADR-0083）。"""

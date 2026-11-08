@@ -77,10 +77,14 @@ def list_conflict_events(limit: int = 50, status: str = "open", principal=None) 
         q = select(ConflictEvent).order_by(ConflictEvent.created_at.desc())
         if status != "all":
             q = q.where(ConflictEvent.status == status)
-        rows = s.exec(q).all()
+        # 票 42：可见性过滤与 limit 全部下推 SQL——原实现 .all() 全表捞回
+        # 内存过滤再 rows[:limit] 切片（limit 负值在 Python 切片语义是
+        # 「去掉末尾 N 条」，不是无上限；全表捞本身是性能债）。
+        # 空集 in_([]) 编译为恒假，无可见冲突时仍返回空列表。
         if visible is not None:
-            rows = [r for r in rows if r.id in visible]
-        return {"events": [r.model_dump(mode="json") for r in rows[:limit]]}
+            q = q.where(ConflictEvent.id.in_(visible))
+        rows = s.exec(q.limit(limit)).all()
+        return {"events": [r.model_dump(mode="json") for r in rows]}
 
 
 def resolve_conflict_event(event_id: str, decision: str, note: str = "", principal=None) -> dict:

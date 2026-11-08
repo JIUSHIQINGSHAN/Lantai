@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from lantai.core.auth import Principal, get_current_user, require_admin
 from lantai.models.schemas import SourceReq
@@ -37,7 +37,12 @@ def ingest_run_route(principal: Principal = Depends(require_admin)):
 
 
 @router.get("/candidates")
-def list_candidates_route(status: str = "new", limit: int = 20, ctx=Depends(get_current_user)):
+def list_candidates_route(
+    # 票 42：1..200（候选类上界）
+    status: str = "new",
+    limit: int = Query(20, ge=1, le=200),
+    ctx=Depends(get_current_user),
+):
     """候选列表（`status` 过滤 + 归属收窄）。
 
     归属（票 .scratch/readside-gaps/07 修法口径 2）：此前一个身份都不取，

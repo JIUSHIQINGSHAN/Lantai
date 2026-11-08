@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from lantai.core.auth import Principal, get_current_user, require_admin
@@ -43,7 +43,12 @@ def _ok_or_raise(result: dict) -> dict:
 
 
 @router.get("/proposals")
-def list_proposals_route(status: str = "pending", limit: int = 50, ctx=Depends(get_current_user)):
+def list_proposals_route(
+    # 票 42：1..500（只读 payload 面，service 侧 .limit() 直推 SQL）
+    status: str = "pending",
+    limit: int = Query(50, ge=1, le=500),
+    ctx=Depends(get_current_user),
+):
     """提案列表。
 
     归属（票 .scratch/readside-gaps/02）：此前不带身份全表捞，`reason`

@@ -10,7 +10,7 @@ GET  /cognitive/context/prompt - 返回供 Agent 使用的 Markdown 认知上下
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
@@ -143,7 +143,8 @@ def cognitive_reflect(
 @router.get("/context")
 def cognitive_context(
     task: str = "",
-    top_k: int = 12,
+    # 票 42：1..100——对齐 SearchReq.top_k 既有上界；0 会让 per-role 检索空转
+    top_k: int = Query(12, ge=1, le=100),
     db: Session = Depends(get_session),
     ctx=Depends(get_current_user),
 ) -> dict:
@@ -170,7 +171,8 @@ def cognitive_context(
 @router.get("/context/prompt")
 def cognitive_context_prompt(
     task: str = "",
-    top_k: int = 12,
+    # 票 42：1..100——对齐 SearchReq.top_k 既有上界
+    top_k: int = Query(12, ge=1, le=100),
     db: Session = Depends(get_session),
     ctx=Depends(get_current_user),
 ) -> dict:
@@ -185,10 +187,11 @@ def cognitive_context_prompt(
 @router.get("/summary")
 def cognitive_summary(
     task: str = "",
-    max_rules: int = 2,
-    max_failures: int = 1,
-    max_probes: int = 1,
-    char_budget: int = 350,
+    # 票 42：max_* 0 合法（engine 有 >0 短路），只封大数与 char_budget 面积
+    max_rules: int = Query(2, ge=0, le=50),
+    max_failures: int = Query(1, ge=0, le=50),
+    max_probes: int = Query(1, ge=0, le=50),
+    char_budget: int = Query(350, ge=100, le=100000),
     db: Session = Depends(get_session),
     ctx=Depends(get_current_user),
 ) -> dict:

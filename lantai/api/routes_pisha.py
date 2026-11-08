@@ -25,8 +25,9 @@ class PishaRefineRequest(BaseModel):
 
 
 class PishaBatchRequest(BaseModel):
-    min_conf: float = Field(default=0.15, description="模糊带最小置信度")
-    max_conf: float = Field(default=0.6, description="模糊带最大置信度")
+    # 票 42：置信度带 [0,1]——越界值静默空批（扫描不到任何候选），边界拒绝
+    min_conf: float = Field(default=0.15, ge=0.0, le=1.0, description="模糊带最小置信度")
+    max_conf: float = Field(default=0.6, ge=0.0, le=1.0, description="模糊带最大置信度")
     limit: int = Field(
         default=20,
         ge=1,
