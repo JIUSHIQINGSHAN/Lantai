@@ -121,6 +121,7 @@ _UI_HTML = """<!DOCTYPE html>
       <input id="q" type="text" placeholder="输入查询，例如：上线部署怎么做">
       <input id="topk" type="number" value="5" min="1" max="50" title="top_k">
       <input id="apikey" type="password" placeholder="API Key（可选）" title="非回环部署时填写 X-API-Key">
+      <label class="chk"><input id="remember" type="checkbox"> 记住此设备</label>
       <label class="chk"><input id="rerank" type="checkbox" checked> 重排</label>
       <button onclick="runRecall()">追忆</button>
     </div>
@@ -147,7 +148,12 @@ async function runRecall() {
   const topK = parseInt(document.getElementById('topk').value, 10) || 5;
   const useRerank = document.getElementById('rerank').checked;
   const key = document.getElementById('apikey').value.trim();
-  if (key) localStorage.setItem('lantai_api_key', key);
+  // 票 70：与主控制台 api.js 同语义——默认 sessionStorage（关页即清），
+  // 显式勾选「记住此设备」才落 localStorage（对同源任意脚本可读且不过期）
+  if (key) {
+    if (document.getElementById('remember').checked) localStorage.setItem('lantai_api_key', key);
+    else sessionStorage.setItem('lantai-api-key-session', key);
+  }
   const headers = {'Content-Type': 'application/json'};
   if (key) headers['X-API-Key'] = key;
   try {
@@ -207,7 +213,9 @@ function render(data) {
     results.appendChild(item);
   });
 }
-document.getElementById('apikey').value = localStorage.getItem('lantai_api_key') || '';
+// 票 70：回显先看会话存储再看设备存储（与 api.js getApiKey 同顺序）
+document.getElementById('apikey').value =
+  sessionStorage.getItem('lantai-api-key-session') || localStorage.getItem('lantai_api_key') || '';
 document.getElementById('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') runRecall(); });
 // 支持 ?q= 预填（星图点击节点跳转检索）
 var preQ = new URLSearchParams(window.location.search).get('q');

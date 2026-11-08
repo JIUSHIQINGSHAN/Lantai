@@ -39,7 +39,9 @@ class TestNoUnverifiedRemoteScript:
     def test_index_html_has_no_bare_remote_script(self):
         html = (_UI_ASSET_DIR / "index.html").read_text(encoding="utf-8")
         matches = list(_SCRIPT_SRC_RE.finditer(html))
-        remote = [m.group(1) for m in matches if m.group(1).startswith(("http://", "https://", "//"))]
+        remote = [
+            m.group(1) for m in matches if m.group(1).startswith(("http://", "https://", "//"))
+        ]
         assert remote == [], f"index.html 引用了远端脚本（无本地化）：{remote}"
         # 本地化后 d3 与 app.js 必须以本地路径加载
         local_srcs = [m.group(1) for m in matches]

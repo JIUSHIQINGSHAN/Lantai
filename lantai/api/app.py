@@ -142,6 +142,35 @@ app.add_middleware(CognitiveMiddleware)
 # 司天（ADR-0044）：请求级遥测（内存指标 + 采样落库）；关闭时中间件零开销直通
 app.add_middleware(TelemetryMiddleware)
 
+# 票 70（UI 出口防护）：统一安全头——nosniff 防嗅探改读、DENY 防点击劫持
+# （控制台有裁决/删除/回滚按钮，可被第三方页 iframe 叠加诱导层）、CSP 防外
+# 注脚本执行。CSP 宽严按实测内联用量白名单化：routes_ui 内联页 11 个
+# script、index.html 40 处内联样式，script/style 需 'unsafe-inline'——仍拦
+# 外部脚本注入这一真实威胁（远端 script 会被 default-src 'self' 拒载）；
+# 不开 'unsafe-eval'。
+_UI_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "connect-src 'self'; "
+    "font-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'; "
+    "object-src 'none'"
+)
+
+
+@app.middleware("http")
+async def _security_headers_middleware(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Content-Security-Policy", _UI_CSP)
+    return response
+
+
 # 公共端点（不需要鉴权）
 app.include_router(routes_health_router)
 app.include_router(routes_ui_router)
