@@ -114,11 +114,12 @@ def test_no_except_exception_422_template_in_generated_routes():
     """模板 AST 哨兵（红）：4 个生成系路由文件（gouchen/mokan/scratchpad/
     zhiming）不得存在 `except Exception` 兜底翻译成 422 的形态——其余异常
     必须放给 500 全局 handler（kaogong 版模板口径，票 41 修复目标 1）。"""
-    banned = {"routes_gouchen.py", "routes_mokan.py", "routes_scratchpad.py", "routes_zhiming.py"}
     api_dir = Path("lantai/api")
     offenders: list[str] = []
-    for name in sorted(banned):
-        path = api_dir / name
+    # 全 routes_*.py 面（工单点名 4 文件之外的 API 路由一并锁——现状零误报，
+    # 自审 P3-2：其余 except Exception 均为 SSE 降级/健康面形态，非 422 译码）
+    for path in sorted(api_dir.glob("routes_*.py")):
+        name = path.name
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
@@ -257,6 +258,7 @@ def test_candidates_review_discarded_returns_4xx(api_env, monkeypatch):
         f"approve 失败路径返回 200 + ok:False（票 01 同病残留）；"
         f"status={resp.status_code} body={resp.text[:160]}"
     )
-    assert 400 <= resp.status_code < 500, (
-        f"ok:False 应译 4xx；实得 {resp.status_code} body={resp.text[:160]}"
+    assert resp.status_code == 409, (
+        f"ok:False 应译 409 Conflict（target 不可寻址=状态冲突，Answer 自选实现）；"
+        f"实得 {resp.status_code} body={resp.text[:160]}"
     )

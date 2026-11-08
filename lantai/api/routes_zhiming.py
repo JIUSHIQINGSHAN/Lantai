@@ -95,6 +95,8 @@ def lifecycle_audit_endpoint(
             limit=req.limit,
             principal=ctx,
         )
+    except PermissionError as pe:
+        raise HTTPException(403, str(pe)) from pe
     except ValueError as ve:
         # 票 41：模板统一到 kaogong 版——ValueError（可校验输入）→422，
         # 其余异常放给 500 全局 handler（服务器故障不得计入调用方滥用，
