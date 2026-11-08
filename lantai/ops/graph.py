@@ -17,6 +17,7 @@ from datetime import UTC
 
 from sqlmodel import Session, or_, select
 
+from lantai.ingestion.safety import sanitize_source_url
 from lantai.models.tables import MemoryEdge, MemoryItem, MemoryScene, RawDocument
 from lantai.storage import db
 
@@ -167,7 +168,9 @@ def build_graph(session: Session, limit: int = 150, principal=None) -> dict:
                 "lane": None,
                 "decay_class": None,
                 "scene_id": None,
-                "url": d.url or None,
+                # 票 69：出口与入口同闸——直写库/历史存量脏行在这里被拦，
+                # 不依赖入库面（rss/add）修后是否干净
+                "url": sanitize_source_url(d.url) or None,
             }
         )
 

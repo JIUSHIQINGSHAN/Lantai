@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from lantai.core.logger import logger
 from lantai.core.settings import settings
 
 
@@ -51,6 +52,25 @@ def validate_media_url(url: str) -> str:
     if parsed.scheme == "data":
         _validate_data_uri(url)
     return url
+
+
+def sanitize_source_url(url: str) -> str:
+    """来源链接白名单（票 69）：scheme ∈ SSRF_ALLOWED_SCHEMES 且必须有 hostname。
+
+    与 validate_fetch_url / validate_media_url 的 raise 语义刻意不同：来源
+    url 是条目附属字段，不合格式**置空**并记 warning（宁 miss 不脏写），
+    条目本身照常入库——拒收整条会把攻击变成拒绝服务。伪协议串一旦入库，
+    会经星图 /graph 出口（ops/graph.py 节点 url）抵达 /ui/map 来源节点点击
+    处理器 window.open，在继承 opener 源的新文档里同源执行 JS。
+    """
+    if not isinstance(url, str) or not url.strip():
+        return ""
+    stripped = url.strip()
+    parsed = urlparse(stripped)
+    if parsed.scheme not in settings.SSRF_ALLOWED_SCHEMES or not parsed.hostname:
+        logger.warning("source url rejected by scheme whitelist: %r", stripped[:200])
+        return ""
+    return stripped
 
 
 _DATA_URI_IMAGE_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")

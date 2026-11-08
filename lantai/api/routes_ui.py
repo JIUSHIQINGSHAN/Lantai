@@ -1501,7 +1501,7 @@ function draw() {
       });
       g.addEventListener('mouseleave', function () { info.textContent = ''; g.classList.remove('hot'); });
       g.addEventListener('click', function () {
-        if (n.url) window.open(n.url, '_blank'); else window.location.href = '/ui/vault';
+        if (n.url && /^https?:/i.test(n.url)) window.open(n.url, '_blank'); else window.location.href = '/ui/vault';
       });
     } else {
       g.addEventListener('mouseenter', function () {

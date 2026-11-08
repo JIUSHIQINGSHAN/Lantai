@@ -20,6 +20,7 @@ from lantai.core.time import utcnow
 from lantai.evolution.promoter import _make_checkpoint
 from lantai.gate.dedup import find_similar
 from lantai.ingestion.coalesce import get_coalesce_buffer
+from lantai.ingestion.safety import sanitize_source_url
 from lantai.llm.client import embed
 from lantai.memory.decay_class import DECAY_CLASS_HALFLIFE
 from lantai.models.enums import MemoryTier
@@ -350,11 +351,13 @@ def _create_candidate_direct(
         if existed:
             doc = existed
         else:
+            # 票 69：url 过 scheme 白名单（伪协议置空），source_id 同步回退 h[:12]
+            src_url = sanitize_source_url(req.url)
             doc = RawDocument(
                 id=new_id("doc"),
                 source_type=req.source_type,
-                source_id=req.url or h[:12],
-                url=req.url,
+                source_id=src_url or h[:12],
+                url=src_url,
                 title=req.title,
                 content=req.content,
                 content_hash=h,
@@ -429,11 +432,13 @@ def _create_candidate_with_extraction(
         if existed:
             doc = existed
         else:
+            # 票 69：提取路径写点同过 scheme 白名单（与 fastpath 直写点同口径）
+            src_url = sanitize_source_url(req.url)
             doc = RawDocument(
                 id=new_id("doc"),
                 source_type=req.source_type,
-                source_id=req.url or h[:12],
-                url=req.url,
+                source_id=src_url or h[:12],
+                url=src_url,
                 title=req.title,
                 content=req.content,
                 content_hash=h,
