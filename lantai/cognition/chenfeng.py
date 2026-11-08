@@ -11,10 +11,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from fastapi import HTTPException
 from sqlmodel import Session, col, func, select
 from ulid import ULID
 
-from lantai.core.acl import ensure_can_delete, viewer_of
+from lantai.core.acl import ensure_can_delete, is_system_viewer, viewer_of
 from lantai.core.logger import logger
 from lantai.core.time import ensure_aware, utcnow
 from lantai.models.tables import LifecycleStatus, MemoryCheckpoint, MemoryItem
@@ -267,13 +268,22 @@ class ChenfengEngine:
             if item is None:
                 return {"ok": False, "error": "memory not found"}
 
-            # 行级 ACL 租户防越权校验
-            ensure_can_delete(
-                self.principal,
-                resource_user_id=item.user_id,
-                resource_tenant_id=item.tenant_id,
-                lane=item.lane,
-            )
+            # 行级 ACL（票 57）：ensure_can_delete 对 None principal 三段 getattr
+            # 全落空 → 不抛直接放行，MCP 无身份可解封任意他人记忆。收敛：None
+            # 只能动 default 属主/NULL 老行；显式系统身份全表（acl.py 立法语义，
+            # 刻意）；具名照旧走 ensure_can_delete 单一真源。
+            if is_system_viewer(self.principal):
+                pass
+            elif self.principal is None:
+                if item.user_id not in (None, "default"):
+                    raise HTTPException(status_code=403, detail="resource belongs to another user")
+            else:
+                ensure_can_delete(
+                    self.principal,
+                    resource_user_id=item.user_id,
+                    resource_tenant_id=item.tenant_id,
+                    lane=item.lane,
+                )
 
             actor = viewer_of(self.principal)
             return unarchive_memory(memory_id=memory_id, actor=actor, reason=reason, session=s)

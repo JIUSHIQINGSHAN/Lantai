@@ -18,7 +18,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem, SkillCrystal
@@ -114,14 +114,16 @@ class FamenEngine:
         - shared_scope == 'swarm_shared' 全局公共共享放行；
         - 租户匹配且属主匹配放行。
         """
-        if self.principal is None:
-            return True
-        if getattr(self.principal, "is_admin", False):
+        if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
             return True
 
         # 公共结晶开放给集群伙伴
         if shared_scope == "swarm_shared":
             return True
+
+        # 票 57：无身份收敛 "default"（同 zhaji 口径），不再全放
+        if self.principal is None:
+            return owner_id in (None, "default")
 
         viewer = viewer_of(self.principal)
         current_tenant = getattr(self.principal, "tenant_id", None)

@@ -17,6 +17,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
+from lantai.core.acl import is_system_viewer
 from lantai.core.auth import Principal
 from lantai.core.time import utcnow
 from lantai.llm.fence import wrap_as_data
@@ -55,10 +56,11 @@ class MuciEngine:
 
     def _check_access(self, item: MemoryItem) -> bool:
         """行级租户与属主 ACL 隔离校验（严格宁 miss 不脏写）。"""
+        if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
+            return True
         if self.principal is None:
-            return True
-        if getattr(self.principal, "is_admin", False):
-            return True
+            # 票 57：无身份收敛 "default" 属主空间（同 zhaji 口径），不再全放
+            return item.user_id in (None, "default")
 
         # 1. 租户隔离
         if self.principal.tenant_id:

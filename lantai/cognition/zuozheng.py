@@ -20,7 +20,7 @@ import jieba
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import Evidence, MemoryEdge, MemoryItem
@@ -100,12 +100,14 @@ class ZuozhengEngine:
         shared_scope: str = "private",
     ) -> bool:
         """行级安全隔离校验（宁 miss 不脏写）。"""
-        if self.principal is None:
-            return True
-        if getattr(self.principal, "is_admin", False):
+        if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
             return True
         if shared_scope == "swarm_shared":
             return True
+
+        # 票 57：无身份收敛 "default"（同 zhaji 口径），不再全放
+        if self.principal is None:
+            return owner_id in (None, "default")
 
         viewer = viewer_of(self.principal)
         current_tenant = getattr(self.principal, "tenant_id", None)

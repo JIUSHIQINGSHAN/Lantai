@@ -17,6 +17,7 @@ from typing import Any
 from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session, select
 
+from lantai.core.acl import is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
@@ -64,31 +65,27 @@ class JuanzongEngine:
         return db.get_session()
 
     def _check_access(self, dossier: Dossier) -> bool:
-        """行级租户与属主 ACL 隔离校验。"""
-        if self.principal is None:
+        """行级租户与属主 ACL 隔离校验（票 57：None 收敛 "default" 不再全放）。"""
+        if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
             return True
-        if self.principal.is_admin:
-            return True
+        viewer = viewer_of(self.principal)
         tenant_id = getattr(self.principal, "tenant_id", None)
         if tenant_id and dossier.tenant_id and dossier.tenant_id != tenant_id:
             return False
-        return not (
-            dossier.user_id and self.principal.user_id and dossier.user_id != self.principal.user_id
-        )
+        return dossier.user_id is None or dossier.user_id == viewer
 
     def _check_memory_access(self, item: MemoryItem) -> bool:
-        """校验记忆项的行级权限。"""
-        if self.principal is None:
+        """校验记忆项的行级权限（票 57：None 收敛 "default"，他人原文不外泄）。"""
+        if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
             return True
-        if self.principal.is_admin:
-            return True
+        viewer = viewer_of(self.principal)
         tenant_id = getattr(self.principal, "tenant_id", None)
         if tenant_id and item.tenant_id and item.tenant_id != tenant_id:
             return False
-        if item.user_id and self.principal.user_id and item.user_id != self.principal.user_id:
+        if item.user_id is not None and item.user_id != viewer:
             return False
         return not (
-            self.principal.allowed_lanes
+            getattr(self.principal, "allowed_lanes", None)
             and item.lane
             and item.lane not in self.principal.allowed_lanes
         )
@@ -127,7 +124,8 @@ class JuanzongEngine:
                     valid_memory_ids.append(mid.strip())
 
         meta = dict(metadata or {})
-        user_id = self.principal.user_id if self.principal else None
+        # 票 57：owner 一律 viewer_of 收敛（None→"default"），卷宗不落 NULL 属主行
+        user_id = viewer_of(self.principal)
         tenant_id = getattr(self.principal, "tenant_id", None) if self.principal else None
 
         dossier = Dossier(
@@ -170,10 +168,10 @@ class JuanzongEngine:
         if tenant_id and not (self.principal and self.principal.is_admin):
             stmt = stmt.where((Dossier.tenant_id == tenant_id) | (Dossier.tenant_id.is_(None)))
 
-        if self.principal is not None and not self.principal.is_admin and self.principal.user_id:
-            stmt = stmt.where(
-                (Dossier.user_id == self.principal.user_id) | (Dossier.user_id.is_(None))
-            )
+        # 票 57：None 收敛 viewer_of="default"——此前无身份跳过本过滤，全库可见
+        if not (getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal)):
+            viewer = viewer_of(self.principal)
+            stmt = stmt.where((Dossier.user_id == viewer) | (Dossier.user_id.is_(None)))
 
         stmt = stmt.order_by(Dossier.updated_at.desc()).limit(limit)
         items = s.exec(stmt).all()

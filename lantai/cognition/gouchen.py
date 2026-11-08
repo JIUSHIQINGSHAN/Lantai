@@ -17,7 +17,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import is_system_viewer, viewer_of
 from lantai.core.time import ensure_aware, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem
@@ -105,20 +105,9 @@ class GouchenEngine:
         self.session = session
         self.principal = principal
 
-    def _check_access(self, *, owner_id: str | None, tenant_id: str | None) -> bool:
-        """行级租户与属主安全校验（宁漏不越权）。"""
-        if self.principal is None:
-            return owner_id in (None, "default")
-        if (
-            getattr(self.principal, "is_admin", False)
-            or getattr(self.principal, "role", None) == "admin"
-        ):
-            return True
-        viewer = viewer_of(self.principal)
-        current_tenant = getattr(self.principal, "tenant_id", None)
-        if tenant_id and current_tenant and tenant_id != current_tenant:
-            return False
-        return not (owner_id is not None and owner_id != viewer)
+    # 票 57 死代码处置：`_check_access` 无人消费（全仓 grep 仅此定义），且两个
+    # 读方法各自内联 SQL where——行级 ACL 单一真源即那两处过滤（本轮已修
+    # None 收敛），引擎内不再保留第二套判据。
 
     def compute_sunken_score(self, decay_score: float, age_days: float) -> float:
         """纯函数：计算记忆沉没度打分（Sunken Score）。
@@ -147,8 +136,9 @@ class GouchenEngine:
 
         def _run(s: Session) -> GouchenResult:
             stmt = select(MemoryItem).where(MemoryItem.status != "deleted")
-            # 行级 ACL 过滤
-            if self.principal is not None and not getattr(self.principal, "is_admin", False):
+            # 行级 ACL 过滤（票 57：None 收敛 viewer_of="default"，不再裸奔全库；
+            # 显式系统身份/admin 全表——acl.py 立法语义，同 kaogong 已写对范式）
+            if not (getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal)):
                 viewer = viewer_of(self.principal)
                 current_tenant = getattr(self.principal, "tenant_id", None)
                 if current_tenant:
@@ -239,8 +229,9 @@ class GouchenEngine:
 
         def _run(s: Session) -> HistoricalContext:
             stmt = select(MemoryItem).where(MemoryItem.status != "deleted")
-            # 行级 ACL 过滤
-            if self.principal is not None and not getattr(self.principal, "is_admin", False):
+            # 行级 ACL 过滤（票 57：None 收敛 viewer_of="default"，不再裸奔全库；
+            # 显式系统身份/admin 全表——acl.py 立法语义，同 kaogong 已写对范式）
+            if not (getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal)):
                 viewer = viewer_of(self.principal)
                 current_tenant = getattr(self.principal, "tenant_id", None)
                 if current_tenant:

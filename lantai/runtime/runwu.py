@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlmodel import Session, select
 
+from lantai.core.acl import SYSTEM_VIEWER
 from lantai.core.logger import logger
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import CognitiveRole, FailureRecord, LifecycleStatus, MemoryItem
@@ -112,8 +113,11 @@ class RunwuEngine:
             )
             if tenant_id is not None:
                 stmt = stmt.where(MemoryItem.tenant_id == tenant_id)
-            if user_id is not None:
-                stmt = stmt.where((MemoryItem.user_id == user_id) | (MemoryItem.user_id.is_(None)))
+            # 票 57：user_id 缺省（MCP 无身份）收敛 "default"——规则不再跨用户
+            # 全表拉取；显式系统身份全表（acl.py 立法语义，worker 刻意）。
+            viewer = user_id if (isinstance(user_id, str) and user_id.strip()) else "default"
+            if viewer != SYSTEM_VIEWER:
+                stmt = stmt.where((MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None)))
 
             items = session.exec(stmt).all()
             scored_items = []
