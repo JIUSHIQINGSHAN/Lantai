@@ -165,3 +165,5 @@ class TestConfBucketTerminalSemantics:
         assert rf["conf_buckets"].get("其他") == 1, (
             f"桶外置信 0.3 该落「其他」兜底桶（不静默丢失），实际 {rf['conf_buckets']}"
         )
+        md = digest_worker.render_digest_markdown(digest_worker.collect_digest_stats())
+        assert "[其他]×1" in md, f"改名后的桶定义下渲染面仍该显示兜底桶收纳，实际：{md!r}"

@@ -507,6 +507,9 @@ class Settings(BaseSettings):
     REFLECT_STALE_SCAN_ENABLED: bool = False  # R4/R5 默认关（误报风险，保守起步）
 
     # digest 反思置信桶（回填校准报告区间；ADR-0002 零硬编码，见 docs/memory-quality/reflect-calibration-2026-08-11.md）
+    # 消费契约（digest_worker._aggregate_reflection，票 86）：hi >= 1.0 的桶按
+    # 数值语义收纳 conf == 1.0（右端闭区间），与标签名无关——调整桶定义时
+    # 须保持有一个 hi >= 1.0 的桶，否则 1.0 落「其他」兜底桶。
     DIGEST_CONF_BUCKETS: list[tuple] = [
         ("0.5-0.6", 0.5, 0.6),
         ("0.6-0.7", 0.6, 0.7),

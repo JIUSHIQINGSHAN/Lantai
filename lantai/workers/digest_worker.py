@@ -28,8 +28,9 @@ _DEFAULT_DIGEST_DIR = _REPO_ROOT / "docs" / "memory-digest"
 
 # 反思提案置信桶（ADR-0002 零硬编码：边界走 settings，见校准报告）
 _CONF_BUCKETS = tuple(settings.DIGEST_CONF_BUCKETS)
-# 「其他」兜底桶标签——settings 桶定义之外才出现的置信值归此（票 86：单点声明，
-# 分桶与渲染两处共用；桶定义改名/拆分不得牵动兜底语义）
+# 「其他」兜底桶标签——settings 桶定义之外才出现的置信值归此（票 86：分桶
+# 单点消费；渲染面经 labels 合并对 dict 键透传自动跟随，桶定义改名/拆分
+# 不得牵动兜底语义）
 _CONF_BUCKET_OTHER = "其他"
 _TYPE_ORDER = ("add", "update", "merge", "deprecate")
 _STATUS_COLS = ("applied", "pending", "rejected", "other")
