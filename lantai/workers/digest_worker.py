@@ -22,10 +22,6 @@ from lantai.models.tables import (
 from lantai.services.candidate_service import run_candidate_ttl_once
 from lantai.storage import db
 
-# 仓库根 = lantai/workers/ → lantai/ → 仓库根
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_DEFAULT_DIGEST_DIR = _REPO_ROOT / "docs" / "memory-digest"
-
 # 反思提案置信桶（ADR-0002 零硬编码：边界走 settings，见校准报告）
 _CONF_BUCKETS = tuple(settings.DIGEST_CONF_BUCKETS)
 _TYPE_ORDER = ("add", "update", "merge", "deprecate")
@@ -176,8 +172,15 @@ def run_receipt_miss_scan() -> int:
 
 
 def _digest_dir() -> Path:
-    """报告输出目录：settings.DIGEST_OUTPUT_DIR 为空时默认仓库 docs/memory-digest。"""
-    return Path(settings.DIGEST_OUTPUT_DIR) if settings.DIGEST_OUTPUT_DIR else _DEFAULT_DIGEST_DIR
+    """报告输出目录：DIGEST_OUTPUT_DIR 显式优先；默认落数据目录（LANTAI_HOME，票 85）。
+
+    不按安装前缀（``Path(__file__)``）推导——wheel/容器形态前缀只读，每日 job 必炸。
+    """
+    return (
+        Path(settings.DIGEST_OUTPUT_DIR)
+        if settings.DIGEST_OUTPUT_DIR
+        else settings.data_home / "docs" / "memory-digest"
+    )
 
 
 def _local_day_window_utc(day: date | None = None) -> tuple[datetime, datetime]:

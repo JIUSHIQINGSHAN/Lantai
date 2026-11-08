@@ -85,7 +85,9 @@ class Settings(BaseSettings):
     # Daily Digest（Ticket 03）：每日盘点报告 docs/memory-digest/YYYY-MM-DD.md
     DIGEST_ENABLED: bool = True
     DIGEST_CRON_HOUR: int = 22  # UTC 22:00 = 本地(Asia/Shanghai) 06:00 早晨
-    DIGEST_OUTPUT_DIR: str = ""  # 为空时 = 仓库根 docs/memory-digest
+    DIGEST_OUTPUT_DIR: str = (
+        ""  # 为空时 = 数据目录(LANTAI_HOME,未设时仓库根) docs/memory-digest（票 85）
+    )
 
     # Lane 分轨衰减：每类记忆的基础保留强度与重要性放大系数
     # base_s = 记忆半衰期（天），importance_boost = 重要性加权分数
@@ -307,7 +309,9 @@ class Settings(BaseSettings):
     # 上下文卸载（借鉴 TencentDB Agent Memory offload_server/compact 窄版）：
     # 超长记忆全文落文件，上下文只注入摘要 + 路径；需要时经 MCP offload_read 取全文
     SHELL_HOOK_OFFLOAD_CHARS: int = 2000  # 记忆内容超过此长度 → 落文件 + 摘要注入
-    OFFLOAD_OUTPUT_DIR: str = ""  # 为空时 = 仓库根 docs/memory-offload
+    OFFLOAD_OUTPUT_DIR: str = (
+        ""  # 为空时 = 数据目录(LANTAI_HOME,未设时仓库根) docs/memory-offload（票 85）
+    )
 
     # 票06：BM25 关键词 CJK 3-gram 滑窗分词，OR 召回与 AND 确定性两路共用
     # （trigram 索引下 2 字词无法匹配，整句短语匹配不覆盖词中错字/词面重叠改写；
@@ -338,7 +342,9 @@ class Settings(BaseSettings):
     # 记忆 Wiki（借鉴 TencentDB Agent Memory LLM-Wiki）：场景/技能 → 持续维护的页面
     # docs/memory-wiki/{index.md, overview.md, pages/}；overview 综述 + [[wikilink]] 下钻
     WIKI_ENABLED: bool = True
-    WIKI_OUTPUT_DIR: str = ""  # 为空时 = 仓库根 docs/memory-wiki
+    WIKI_OUTPUT_DIR: str = (
+        ""  # 为空时 = 数据目录(LANTAI_HOME,未设时仓库根) docs/memory-wiki（票 85）
+    )
     WIKI_OVERVIEW_LLM: bool = True  # overview 优先 LLM 综述；失败/关闭 → 确定性综述
     WIKI_PAGE_MAX_MEMBERS: int = 50  # 场景页最多列出的成员数
     WIKI_MEMBER_CHARS: int = 120  # 成员摘要截断字符数
@@ -509,6 +515,15 @@ class Settings(BaseSettings):
         ("0.9-1.0", 0.9, 1.0),
     ]
 
+    @property
+    def data_home(self) -> Path:
+        """数据目录单一真源：LANTAI_HOME（未设时仓库根）——db/chroma 与文档写面共用（票 85）。
+
+        wheel/容器形态下安装前缀只读，文档写面（digest/offload/wiki）若按安装前缀
+        推导必炸或静默降级；一律挂这里，与 DATABASE_URL/CHROMADB_PATH 同源。
+        """
+        return Path(self.LANTAI_HOME) if self.LANTAI_HOME else _REPO_ROOT
+
     def model_post_init(self, __context):
         """DATABASE_URL / CHROMADB_PATH 未显式设置时从 LANTAI_HOME 推导（兼容旧 REMEMBRANCE_HOME）。"""
         if not self.LANTAI_HOME and self.REMEMBRANCE_HOME:
@@ -525,7 +540,7 @@ class Settings(BaseSettings):
             if user_data.is_dir() and (user_data / "remembrance.db").is_file():
                 self.LANTAI_HOME = str(user_data)
 
-        home = Path(self.LANTAI_HOME) if self.LANTAI_HOME else _REPO_ROOT
+        home = self.data_home
         if not self.DATABASE_URL:
             self.DATABASE_URL = f"sqlite:///{home / 'remembrance.db'}"
         if not self.CHROMADB_PATH:

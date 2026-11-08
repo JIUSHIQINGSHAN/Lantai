@@ -9,15 +9,13 @@ from pathlib import Path
 from lantai.core.settings import settings
 from lantai.core.text import truncate_codepoints
 
-# 仓库根 = lantai/services/ → lantai/ → 仓库根
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_DEFAULT_OFFLOAD_DIR = _REPO_ROOT / "docs" / "memory-offload"
-
 
 def offload_dir() -> Path:
-    """卸载全文目录：settings.OFFLOAD_OUTPUT_DIR 为空时默认仓库 docs/memory-offload。"""
+    """卸载全文目录：OFFLOAD_OUTPUT_DIR 显式优先；默认落数据目录（LANTAI_HOME，票 85）。"""
     return (
-        Path(settings.OFFLOAD_OUTPUT_DIR) if settings.OFFLOAD_OUTPUT_DIR else _DEFAULT_OFFLOAD_DIR
+        Path(settings.OFFLOAD_OUTPUT_DIR)
+        if settings.OFFLOAD_OUTPUT_DIR
+        else settings.data_home / "docs" / "memory-offload"
     )
 
 
