@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 39
+TARGET_SCHEMA_VERSION = 40
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -884,6 +884,84 @@ def _migrate_v39(conn) -> None:
         logger.warning("迁移 v39 memoryitem 唯一索引创建跳过: %s", exc)
 
 
+def _migrate_v40(conn) -> None:
+    """v39 -> v40: 模型索引全量同步（幂等，单一真源 = SQLModel.metadata，票 25）。
+
+    病灶：索引只有两条出生路径——表首次创建时 create_all 随表落索引（SQLAlchemy
+    对已存在的表整体跳过，索引不补）、迁移链手写 CREATE INDEX。升级库
+    （remembrance.db 形态：身份时代之前的存量库）经迁移链 ALTER 补列后，身份列
+    以无索引形态进入每条检索的 WHERE 过滤，且无任何机制日后补上——模型声明
+    156 个索引、迁移链手写仅覆盖 27 组（立案探针 `.scratch/_v068_probe_r5_index_gap.py`
+    实跑 147/27/122，票 23/24 又各补一枚部分唯一索引）。
+
+    同步循环：遍历模型声明的全部索引，表存在才 CREATE INDEX；缺失补建
+    （logger.info 留痕——大表首次建索引持写锁，运维须可见首启变慢原因）、
+    已有跳过；单索引失败 warning 留痕不阻断链（同 v36 块内隔离口径，失败
+    索引下次启动重试）。此后迁移链不再手写新索引，索引增减只改模型。
+    边界如实声明：迁移链手写的 8 个链外索引名（含票 23 v38 的
+    uq_corememoryblock_block_ns_user 唯一索引——模型侧是 UniqueConstraint，
+    落 sqlite_autoindex，与本显式索引并存）保持原样不清退，除重属后续票。
+    """
+    # 惰性导入：本模块头注释明示模块级只依赖 logger（单向依赖铁律）；
+    # tables.py / trust_models 只依赖 sqlmodel 与枚举，运行期成环风险为零。
+    from sqlalchemy.dialects import sqlite as sa_sqlite
+    from sqlalchemy.schema import CreateIndex
+    from sqlmodel import SQLModel
+
+    import lantai.models.tables  # noqa: F401  注册全部表
+    import lantai.parameters.trust_models  # noqa: F401  参数信任面表同批注册
+
+    dialect = sa_sqlite.dialect()
+    existing = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+    }
+    total = created = failed = skipped_cols = 0
+    for table in sorted(SQLModel.metadata.tables.values(), key=lambda t: t.name):
+        if not _table_exists(conn, table.name):
+            continue
+        table_cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table.name})").fetchall()}
+        for ix in sorted(table.indexes, key=lambda i: i.name):
+            total += 1
+            if ix.name in existing:
+                continue
+            missing_cols = [c.name for c in ix.columns if c.name not in table_cols]
+            if missing_cols:
+                # 列维度的既有缺口（部分被索引列链上无对应 ADD COLUMN，如
+                # skillcrystal 身份列）——不是本同步步能修的，越权补列违反
+                # 「列迁移归 legacy_parity 对账」的分工。INFO 留痕不告警：
+                # 老库前向迁移必须安静（TestIndexCreationFailureIsLogged 契约），
+                # 真失败（同名冲突等）才走下方 warning 隔离路径。
+                skipped_cols += 1
+                logger.info(
+                    "迁移 v40 索引 %s 跳过（列缺失，列维度归 legacy_parity 对账）表 %s 缺 %s",
+                    ix.name,
+                    table.name,
+                    ",".join(missing_cols),
+                )
+                continue
+            try:
+                conn.execute(str(CreateIndex(ix).compile(dialect=dialect)))
+                existing.add(ix.name)
+                created += 1
+                logger.info(
+                    "迁移 v40 补建索引 %s（表 %s）",
+                    ix.name,
+                    table.name,
+                )
+            except Exception as exc:
+                failed += 1
+                logger.warning("迁移 v40 索引 %s 建立跳过: %s", ix.name, exc)
+    logger.info(
+        "Migrated v40: 模型索引同步（票 25）：声明 %s 个，补建 %s，"
+        "列缺失跳过 %s（列维度归 legacy_parity），失败隔离 %s",
+        total,
+        created,
+        skipped_cols,
+        failed,
+    )
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -923,6 +1001,7 @@ MIGRATIONS = [
     (37, _migrate_v37),
     (38, _migrate_v38),
     (39, _migrate_v39),
+    (40, _migrate_v40),
 ]
 
 

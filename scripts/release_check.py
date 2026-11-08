@@ -374,6 +374,70 @@ payload = {
     "home_isolated": os.path.normcase(str(settings.LANTAI_HOME))
     != os.path.normcase(os.environ.get("LANTAI_GATE_HOST_HOME", "__none__")),
 }
+# 票 25：升级库形态模拟——全新库 create_all 天然带全部模型索引（探针恒绿），
+# 升级库漂移（remembrance.db 形态：表在、索引缺、身份列缺）只有在这个形态下
+# 才可见。造一个姊妹文件：create_all → 剥离全部非 autoindex 索引 → memoryitem
+# 身份四列删除（由迁移链 ALTER 补回）→ 真 apply_migrations 全链 → 索引对账
+# （模型声明集 ⊆ 库集）+ user_version 对 TARGET 核对（迁移未应用拦截）+
+# 二次 apply 幂等核对（重复应用拦截）。
+from sqlalchemy.engine import make_url as _make_url
+
+_up_url = str(_make_url(settings.DATABASE_URL).set(database=_make_url(settings.DATABASE_URL).database + ".upgrade_sim.db"))
+_up_engine = create_engine(_up_url)
+SQLModel.metadata.create_all(_up_engine)
+_up_conn = _up_engine.raw_connection()
+try:
+    for (_nm,) in _up_conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex%'"
+    ).fetchall():
+        _up_conn.execute('DROP INDEX "' + _nm + '"')
+    for _col in ("user_id", "tenant_id", "agent_id", "session_id"):
+        try:
+            _up_conn.execute("ALTER TABLE memoryitem DROP COLUMN " + _col)
+        except Exception as _col_exc:
+            payload["upgrade_sim_notes"] = payload.get("upgrade_sim_notes") or []
+            payload["upgrade_sim_notes"].append(f"memoryitem.{_col} 模拟缺列失败: {_col_exc}")
+    _up_conn.commit()
+    from lantai.storage.migrations import (
+        TARGET_SCHEMA_VERSION as _UP_TARGET,
+        apply_migrations as _apply_migrations,
+    )
+
+    _apply_migrations(_up_conn)
+    upgrade_user_version = _up_conn.execute("PRAGMA user_version").fetchone()[0]
+
+    def _up_ix_names():
+        _c = _up_engine.raw_connection()
+        try:
+            return {
+                r[0]
+                for r in _c.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex%'"
+                ).fetchall()
+            }
+        finally:
+            _c.close()
+
+    _before_second = _up_ix_names()
+    _apply_migrations(_up_conn)
+    idempotent = _before_second == _up_ix_names()
+    index_drift = []
+    _insp_up = inspect(_up_engine)  # 必须 inspect upgrade 库本体——复用全新库的
+    # insp 会把索引对账看回全新库，漂移将再次不可见（票 25）
+    up_tables = set(_insp_up.get_table_names())
+    for _tname, _table in meta.items():
+        if _tname not in up_tables:
+            continue
+        _got = {r["name"] for r in _insp_up.get_indexes(_tname)}
+        for _nm in sorted({ix.name for ix in _table.indexes} - _got):
+            index_drift.append(f"{_tname}: 缺 {_nm}")
+finally:
+    _up_conn.close()
+    _up_engine.dispose()
+payload["index_drift"] = index_drift
+payload["idempotent"] = idempotent
+payload["upgrade_user_version"] = upgrade_user_version
+payload["upgrade_target"] = _UP_TARGET
 print("SCHEMAPAYLOAD" + json.dumps(payload, ensure_ascii=False))
 """
 
@@ -771,6 +835,16 @@ def schema_drift_issues_from_payload(payload: dict) -> list[str]:
     ]
     issues += [f"建库缺表：{name}" for name in payload.get("missing_tables") or []]
     issues += [f"列/约束漂移：{item}" for item in payload.get("drift") or []]
+    # 票 25：升级库索引漂移 / 版本未推到 TARGET（迁移未应用）/ 重复应用不幂等。
+    # 三个维度全部来自「存量库形态模拟」——全新库探针恒绿，升级库漂移只有
+    # 在模拟形态下才可见。
+    issues += [f"索引漂移（升级库）：{item}" for item in payload.get("index_drift") or []]
+    _target = payload.get("upgrade_target")
+    _uv = payload.get("upgrade_user_version")
+    if _uv is not None and _target is not None and _uv != _target:
+        issues.append(f"迁移版本不一致：upgrade 模拟库 user_version={_uv} != TARGET {_target}")
+    if payload.get("idempotent") is False:
+        issues.append("迁移重复应用不幂等：二次 apply_migrations 后状态发生变化（票 25）")
     return issues
 
 
@@ -781,6 +855,10 @@ def schema_drift_probe(repo_root: Path, *, python: str | None = None, timeout: i
         "migration_failures": [],
         "missing_tables": [],
         "drift": [],
+        "index_drift": [],
+        "idempotent": True,
+        "upgrade_user_version": None,
+        "upgrade_target": None,
         "tables_checked": 0,
         "tables_built": 0,
         "home_isolated": False,
