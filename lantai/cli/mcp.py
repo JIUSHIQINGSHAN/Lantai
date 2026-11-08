@@ -772,7 +772,9 @@ def handle_memory_archived_search(params: dict) -> dict:
 
     query = params.get("query", "")
     lane = params.get("lane", "")
-    scene = params.get("scene", "") or params.get("scene_id", "")
+    # 票 26：未广告别名 scene_id 删除消费点——两名一参只文档一个（schema
+    # 只广告 scene），别名从未进广告面，不留暗门。
+    scene = params.get("scene", "")
     limit = int(params.get("limit", 50))
     offset = int(params.get("offset", 0))
     return search_archived_memories(
@@ -2087,12 +2089,20 @@ def handle_pisha_refine(params: dict) -> dict:
     )
 
 
+# 票 26：归属主体参数的单一声明源——66 个消费 user_id 的工具 schema 统一引用
+# 此常量（_principal_from_params 中心消费，宿主透传归属；不传留空）。
+_USER_ID_PARAM = {
+    "type": "string",
+    "description": "宿主透传的归属主体；不传留空（宁 miss 不脏写）",
+}
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "query": {"type": "string", "description": "搜索查询"},
                 "top_k": {"type": "integer", "default": 5},
                 "domain": {
@@ -2107,6 +2117,25 @@ TOOLS = {
                 "as_of_recorded": {"type": "string", "description": "事务轴近似 as-of（ISO 8601）"},
                 "time_from": {"type": "string", "description": "事件轴窗口起点（ISO 8601）"},
                 "time_to": {"type": "string", "description": "事件轴窗口终点（ISO 8601）"},
+                # 票 26：以下四参此前有行为、无广告（消费面私藏）——治理杠杆
+                # 与身份链必须在 tools/list 可见，宿主按 schema 开发不再漏配。
+                "force": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "评测/放行豁免：true 跳过相关性闸（relevance_check），常规调用禁止",
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "会话透传：落检索事件供写线活性判据与 backfill 归属（票 02）",
+                },
+                "shared_scope": {
+                    "type": "string",
+                    "description": "共享面过滤：swarm_shared 公共知识殿堂（ADR-0058）",
+                },
+                "task": {
+                    "type": "string",
+                    "description": "认知摘要注入选题（缺省用 query）",
+                },
             },
             "required": ["query"],
         },
@@ -2116,6 +2145,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "query": {"type": "string", "description": "检索查询文本"},
                 "top_k": {"type": "integer", "default": 5, "description": "初筛数量"},
                 "max_hops": {"type": "integer", "default": 2, "description": "图扩散跳数 [1, 3]"},
@@ -2130,6 +2160,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "title": {"type": "string"},
                 "content": {"type": "string"},
                 "media_url": {
@@ -2145,6 +2176,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string"},
                 "query": {"type": "string"},
                 "helped": {"type": "boolean"},
@@ -2158,6 +2190,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "event_id": {"type": "string", "description": "search 返回的检索事件 id"},
                 "used_ids": {
                     "type": "array",
@@ -2201,6 +2234,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "task_id": {"type": "string", "description": "任务 ID"},
             },
             "required": ["task_id"],
@@ -2211,6 +2245,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 50},
             },
         },
@@ -2220,6 +2255,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "candidate_id": {"type": "string"},
                 "approve": {"type": "boolean"},
                 "reason": {"type": "string", "default": ""},
@@ -2232,6 +2268,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "candidate_id": {"type": "string", "description": "候选记忆 ID"},
             },
             "required": ["candidate_id"],
@@ -2242,6 +2279,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 50, "description": "扫描候选条数 [1,500]"},
             },
         },
@@ -2251,6 +2289,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "actions": {
                     "type": "array",
                     "items": {
@@ -2276,6 +2315,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "min_approve_conf": {
                     "type": "number",
                     "default": 0.85,
@@ -2300,6 +2340,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 100, "description": "最大考评条目上限"},
             },
         },
@@ -2309,6 +2350,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string", "description": "目标记忆 ID"},
                 "write": {
                     "type": "boolean",
@@ -2478,7 +2520,9 @@ TOOLS = {
         "description": "沉潜（折叠压缩）：扫描高密度碎片记忆聚类提纯为主记忆，并修剪极度衰减的边缘噪音（ADR-0036）",
         "inputSchema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
         },
     },
     "consolidation_report": {
@@ -2493,6 +2537,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "query": {"type": "string", "description": "用户当前查询或对话文本"},
                 "session_id": {"type": "string", "description": "会话 ID（可选）"},
             },
@@ -2504,6 +2549,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "conflict_id": {"type": "string", "description": "冲突事件 ID 或探针 probe_id"},
                 "probe_id": {"type": "string", "description": "探针 ID（可选，兼容 conflict_id）"},
                 "user_reply": {"type": "string", "description": "用户自然语言答复"},
@@ -2516,6 +2562,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "content": {"type": "string", "description": "原文内容（代码/日志/配置等）"},
                 "title": {"type": "string", "default": ""},
                 "lane": {"type": "string", "default": "general"},
@@ -2529,6 +2576,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "title": {"type": "string", "default": ""},
                 "content": {"type": "string", "description": "笔记正文"},
                 "lane": {"type": "string", "default": "general"},
@@ -2542,6 +2590,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string"},
             },
             "required": ["memory_id"],
@@ -2552,6 +2601,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string"},
                 "reason": {"type": "string"},
             },
@@ -2563,6 +2613,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 50},
                 "status": {"type": "string", "default": "open"},
             },
@@ -2573,6 +2624,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "event_id": {"type": "string"},
                 "decision": {"type": "string", "description": "resolved | dismissed"},
                 "note": {"type": "string", "default": ""},
@@ -2585,6 +2637,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "days": {"type": "integer", "default": 7},
             },
         },
@@ -2594,6 +2647,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "scene_id": {
                     "type": "string",
                     "description": "场景 id（导航块或 scenes_list 中可见）",
@@ -2607,13 +2661,19 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 50},
             },
         },
     },
     "get_digest": {
         "description": "获取今日记忆盘点报告（摘要 + 五项统计）",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "mem_help": {
         "description": "mem:help——返回支持的 mem: 命令表与示例（命令式维护入口）",
@@ -2621,13 +2681,19 @@ TOOLS = {
     },
     "mem_sync": {
         "description": "mem:sync——刷新注入资产：场景增量聚类补跑 + 今日 digest 重算",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "mem_create_skill": {
         "description": "mem:create-skill——沉淀 Skill 资产（名称 + 描述 + 步骤，procedural 永不衰减）",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "name": {"type": "string", "description": "Skill 名称（必填）"},
                 "description": {"type": "string", "default": ""},
                 "steps": {
@@ -2645,6 +2711,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {
                     "type": "string",
                     "description": "记忆 id（卸载注入行或 evidence 中可见）",
@@ -2658,6 +2725,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "slug": {
                     "type": "string",
                     "description": "页面 slug（index.md 链接或 overview [[wikilink]] 中可见）",
@@ -2671,13 +2739,19 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 20, "description": "返回条数 [1,200]"},
             },
         },
     },
     "mem_stats": {
         "description": "记忆概览（只读聚合）：总数/按 lane/decay_class/待审候选积压/检查点/待审提案",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "mem_health": {
         "description": "深度健康检查：SQLite 可读 + 向量存储可用（不触发外部 LLM 调用）",
@@ -2688,19 +2762,26 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "description": "参与聚类的记忆上限（可选）"},
             },
         },
     },
     "autodream_trigger": {
         "description": "执行一轮蒸馏：聚类 → 规划 → 落 pending 提案（低置信度进 skipped，人工裁决后才应用）",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "proposals_list": {
         "description": "待审提案列表（蒸馏/反射产出，等人工裁决）",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "status": {
                     "type": "string",
                     "default": "pending",
@@ -2715,6 +2796,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "proposal_id": {
                     "type": "string",
                     "description": "提案 id（proposals_list 中可见）",
@@ -2731,13 +2813,19 @@ TOOLS = {
     },
     "tree_view": {
         "description": "分类树视图（只读）：节点 + 每节点挂载计数",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "tree_add": {
         "description": "新增分类树节点（父缺失/重名/非法名 -> 校验失败，宁 miss 不脏写）",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "name": {"type": "string", "description": "节点名（不含路径分隔符）"},
                 "parent_path": {
                     "type": "string",
@@ -2754,6 +2842,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string", "description": "记忆 id"},
                 "node_path": {
                     "type": "string",
@@ -2768,6 +2857,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "status": {
                     "type": "string",
                     "default": "candidate",
@@ -2782,6 +2872,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "dry_run": {"type": "boolean", "default": False, "description": "true=预演不写库"},
             },
         },
@@ -2791,6 +2882,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "crystal_id": {"type": "string", "description": "候选 id（crystals_list 中可见）"},
                 "approve": {
                     "type": "boolean",
@@ -2811,6 +2903,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "crystal_id": {"type": "string", "description": "技能结晶 ID"},
                 "steps": {
                     "type": "array",
@@ -2828,13 +2921,19 @@ TOOLS = {
     },
     "reflect_run": {
         "description": "执行一轮反思：健康扫描 -> 提案 -> 裁决（高置信 auto-apply，中风险落 pending，宁 miss 不脏写）",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "mem_usage": {
         "description": "用量统计（只读）：最近 N 天每日新增记忆数（缺日补零）",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "days": {"type": "integer", "default": 7, "description": "统计天数 [1,365]"},
             },
         },
@@ -2844,6 +2943,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "namespace": {"type": "string", "default": "default"},
             },
         },
@@ -2853,6 +2953,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "query": {"type": "string", "description": "搜索查询"},
                 "top_k": {"type": "integer", "default": 5},
             },
@@ -2864,6 +2965,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 150, "description": "节点上限 [1,500]"},
             },
         },
@@ -2873,6 +2975,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string", "description": "目标决策记忆 ID"},
                 "query": {"type": "string", "description": "自然语言描述/查询"},
                 "max_depth": {"type": "integer", "default": 10, "description": "最大溯源深度"},
@@ -2884,6 +2987,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string", "description": "起始事件或决策记忆 ID"},
                 "max_depth": {"type": "integer", "default": 10, "description": "最大遍历深度"},
             },
@@ -2895,6 +2999,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "q": {"type": "string", "description": "起点记忆/查询文本"},
                 "max_depth": {"type": "integer", "default": 3, "description": "链深度 [1,5]"},
                 "branch": {"type": "integer", "default": 3, "description": "每层分支数 [1,10]"},
@@ -2917,6 +3022,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 250, "description": "最大节点数 [1, 1000]"},
                 "scene_id": {"type": "string", "description": "限定场景 ID（可选）"},
                 "lane": {"type": "string", "description": "限定泳道（可选）"},
@@ -2933,6 +3039,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "query": {"type": "string", "description": "关键词查询"},
                 "lane": {"type": "string", "description": "限定泳道（可选）"},
                 "scene": {"type": "string", "description": "限定场景 ID（可选）"},
@@ -2946,6 +3053,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string", "description": "待解封恢复的记忆 ID"},
                 "reason": {"type": "string", "description": "解封原由/说明"},
             },
@@ -2957,6 +3065,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "session_id": {"type": "string", "description": "会话标识（≥3 字符）"},
                 "blocks": {
                     "type": "object",
@@ -2968,17 +3077,28 @@ TOOLS = {
     },
     "checkpoint_latest": {
         "description": "底本：读取最近一次会话快照（只读）",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "persona_get": {
         "description": "器识：获取当前激活人格基座（L/G/E 三层与提示块，只读）",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "persona_set": {
         "description": "器识：设置/更新人格基座（L/G/E 三层认知模型）",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "name": {"type": "string", "description": "人格名称"},
                 "linguistic_style": {"type": "string", "description": "L: 言语与表达风格"},
                 "guidelines": {"type": "string", "description": "G: 行为准则与戒律"},
@@ -2993,6 +3113,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "session_id": {"type": "string", "default": "default", "description": "会话标识"},
             },
         },
@@ -3002,6 +3123,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "session_id": {"type": "string", "default": "default", "description": "会话标识"},
                 "content": {"type": "string", "description": "要记下的即时便签文本"},
             },
@@ -3013,6 +3135,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "task": {"type": "string", "default": "", "description": "当前任务描述或目标"},
                 "top_k": {
                     "type": "integer",
@@ -3451,6 +3574,12 @@ TOOLS = {
                 "target_id": {"type": "string", "description": "观察目标实体 ID"},
                 "required_days": {"type": "integer", "default": 7, "description": "达标观察天数"},
                 "min_samples": {"type": "integer", "default": 10, "description": "达标最小样本数"},
+                # 票 26：与 REST 面同参同语义（routes_cehou.py「模拟观察天数
+                # （测试/巡检指定）」）——治理杠杆必须 tools/list 可见，不得暗门。
+                "mock_days_observed": {
+                    "type": "integer",
+                    "description": "模拟观察天数（测试/巡检指定，覆盖实测观察窗天数）",
+                },
                 "user_id": {"type": "string", "description": "操作租户/用户 ID"},
             },
         },
