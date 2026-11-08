@@ -286,7 +286,7 @@ class TestSettleRelease:
     def test_settle_stale_token_does_not_clobber_new_owner(self, mem_env):
         """行过期被接管后，迟到的 settle 只认自己的 token 令牌。
 
-        票 74 修复后本例对时钟不再敏感：接管即换发新 token，旧 binding 按
+        票 80 修复后本例对时钟不再敏感：接管即换发新 token，旧 binding 按
         旧 token 寻行必落空——粗刻度时钟下两次取时同值也不再构成碰撞
         （c241f771 的 _clock_past 绕行随令牌解耦一并撤除）。
         """
@@ -344,7 +344,7 @@ class TestSettleRelease:
         assert _row("k2") is None
 
 
-# ------------------------------------------------- 同刻度令牌碰撞（票 74）
+# ------------------------------------------------- 同刻度令牌碰撞（票 80）
 
 
 @pytest.fixture()
@@ -363,7 +363,7 @@ def frozen_clock(monkeypatch):
 
 
 class TestSameTickTokenCollision:
-    """冻结钟真红臂：粗刻度时钟下相邻两次取时可同值（票 74）。
+    """冻结钟真红臂：粗刻度时钟下相邻两次取时可同值（票 80）。
 
     令牌即 `created_at` 裸 epoch 浮点，接管条件语句以浮点相等为判据。冻结钟
     使 claim1 与接管 claim2 两次取时同值 → 接管把新主行 created_at 改写回与
@@ -410,17 +410,17 @@ class TestSameTickTokenCollision:
         assert json.loads(row.response_json)["task_id"] == "task_owner2"
 
 
-# ------------------------------------------------- 升级窗兼容（票 74）
+# ------------------------------------------------- 升级窗兼容（票 80）
 
 
 class TestLegacyTokenCompat:
     """升级窗语义锁：存量老行 token=NULL、旧 binding 只有 claimed_at。
 
-    v39 给表补 token 列后，升级瞬间 DB 里可能还有迁移前出生的行（token
+    v41 给表补 token 列后，升级瞬间 DB 里可能还有迁移前出生的行（token
     NULL）与旧进程发出的 binding（无 token 键）。兼容判据
     「created_at 相等且 token IS NULL」必须：老行照常接管/结算/释放（不卡
     死），且**绝不命中新世界出生的行**（新行必有 token——这是旧判据在同
-    刻度下不误删新主的全部依据，票 74）。
+    刻度下不误删新主的全部依据，票 80）。
     """
 
     @staticmethod

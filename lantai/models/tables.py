@@ -894,7 +894,7 @@ class IdempotencyKey(SQLModel, table=True):
     回执零正文：response_json 只存白名单标量——本表寿命长于记忆删除动作，
     正文进回执等于删除后仍可捞（宁 miss 不脏写）。时间一律 epoch 浮点秒
     （避 sqlmodel aware/naive 跨版本漂移）。
-    token（v39，票 74）：所有权令牌，claim/接管时生成 uuid4——此前令牌即
+    token（v41，票 80）：所有权令牌，claim/接管时生成 uuid4——此前令牌即
     created_at 裸浮点，粗刻度时钟下相邻两次取时可同值，接管把新主行
     created_at 改写回与旧令牌相等，旧主带令牌的条件删除就命中新主行（重试
     即双执行）。令牌与时间解耦后 created_at 只承担租约/TTL 运算；升级窗
