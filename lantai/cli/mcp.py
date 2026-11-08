@@ -469,9 +469,20 @@ def handle_triage_apply(params: dict) -> dict:
 
 def handle_triage_auto_pilot(params: dict) -> dict:
     """持节：智能体一键全流程自主巡检与记忆审批（扫描→提纯→淘汰噪音→批准优质事实）。"""
-    min_approve = float(params.get("min_approve_conf", 0.85))
-    max_reject = float(params.get("max_reject_conf", 0.25))
-    limit = int(params.get("limit", 50))
+    # 票 27：schema 承诺 limit [1,500]、conf [0.0,1.0]（同族 triage_analyze
+    # 对 limit 已校验），此前 float()/int() 强转零校验——limit=0/99999 直通
+    # DB 查询、conf=9 全收，忠实按 schema 调用反而撞不到承诺的边界。
+    min_approve = params.get("min_approve_conf", 0.85)
+    max_reject = params.get("max_reject_conf", 0.25)
+    limit = params.get("limit", 50)
+    if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
+        raise ValueError("limit must be an int in [1, 500]")
+    for name, val in (("min_approve_conf", min_approve), ("max_reject_conf", max_reject)):
+        if not isinstance(val, (int, float)) or isinstance(val, bool) or not (0.0 <= val <= 1.0):
+            raise ValueError(f"{name} must be a number in [0.0, 1.0]")
+    min_approve = float(min_approve)
+    max_reject = float(max_reject)
+    limit = int(limit)
     dry_run = bool(params.get("dry_run", False))
     from lantai.services.auto_triage_service import run_triage_auto_pilot
 
@@ -2094,7 +2105,7 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "搜索查询"},
-                "top_k": {"type": "integer", "default": 5},
+                "top_k": {"type": "integer", "default": 5, "description": "返回条数 [1, 100]"},
                 "domain": {
                     "type": "string",
                     "description": "辨域过滤：user/session/agent/all",
@@ -2120,7 +2131,11 @@ TOOLS = {
                 "top_k": {"type": "integer", "default": 5, "description": "初筛数量"},
                 "max_hops": {"type": "integer", "default": 2, "description": "图扩散跳数 [1, 3]"},
                 "min_edge_conf": {"type": "number", "default": 0.5, "description": "边最低置信度"},
-                "domain": {"type": "string", "description": "辨域过滤"},
+                "domain": {
+                    "type": "string",
+                    "description": "辨域过滤：user/session/agent/all",
+                    "enum": ["user", "session", "agent", "all"],
+                },
             },
             "required": ["query"],
         },
@@ -2222,7 +2237,11 @@ TOOLS = {
             "properties": {
                 "candidate_id": {"type": "string"},
                 "approve": {"type": "boolean"},
-                "reason": {"type": "string", "default": ""},
+                "reason": {
+                    "type": "string",
+                    "default": "",
+                    "description": "审批理由；approve=false（reject）时必填",
+                },
             },
             "required": ["candidate_id", "approve"],
         },
@@ -2563,8 +2582,13 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "limit": {"type": "integer", "default": 50},
-                "status": {"type": "string", "default": "open"},
+                "limit": {"type": "integer", "default": 50, "description": "返回条数 [1, 500]"},
+                "status": {
+                    "type": "string",
+                    "default": "open",
+                    "description": "事件状态过滤",
+                    "enum": ["open", "resolved", "dismissed", "all"],
+                },
             },
         },
     },
@@ -2801,7 +2825,11 @@ TOOLS = {
                     "items": {"type": "string"},
                     "description": "批准时必填：Skill 执行步骤",
                 },
-                "reason": {"type": "string", "default": ""},
+                "reason": {
+                    "type": "string",
+                    "default": "",
+                    "description": "裁决理由；approve=false（reject）时必填",
+                },
             },
             "required": ["crystal_id", "approve"],
         },
@@ -2854,7 +2882,7 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "搜索查询"},
-                "top_k": {"type": "integer", "default": 5},
+                "top_k": {"type": "integer", "default": 5, "description": "返回条数 [1, 100]"},
             },
             "required": ["query"],
         },
@@ -3224,7 +3252,7 @@ TOOLS = {
             "properties": {
                 "date": {
                     "type": "string",
-                    "description": "指定查询日期 (YYYY-MM-DD)，默认今日",
+                    "description": "指定查询日期 (YYYY-MM-DD)，默认今日；仅 days=1 单日分支生效，days>1 返回连续脉络时忽略",
                 },
                 "days": {
                     "type": "integer",
@@ -3233,7 +3261,7 @@ TOOLS = {
                 },
                 "detail_level": {
                     "type": "string",
-                    "description": "纪事详细程度：summary 或 full",
+                    "description": "纪事详细程度：summary 或 full；仅 days=1 单日分支生效，days>1 时忽略",
                     "enum": ["summary", "full"],
                     "default": "summary",
                 },
@@ -3308,6 +3336,7 @@ TOOLS = {
                     "type": "string",
                     "description": "限定辨域：user/session/agent/all",
                     "default": "all",
+                    "enum": ["user", "session", "agent", "all"],
                 },
                 "allow_domain_relax": {
                     "type": "boolean",
@@ -3557,7 +3586,8 @@ TOOLS = {
                 },
                 "domain": {
                     "type": "string",
-                    "description": "限定辨域：user/session/agent",
+                    "description": "限定辨域：user/session/agent/all",
+                    "enum": ["user", "session", "agent", "all"],
                 },
                 "allow_shiyi": {
                     "type": "boolean",
