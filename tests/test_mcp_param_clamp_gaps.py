@@ -117,13 +117,9 @@ class TestCehouParamGaps:
         """负耗时与 inf 耗时都是无意义样本，修复前照单全收。"""
         _create_window("w-lat")
         with pytest.raises(ValueError):
-            handle_cehou_observe(
-                {"record_sample": True, "window_id": "w-lat", "latency_ms": -1.0}
-            )
+            handle_cehou_observe({"record_sample": True, "window_id": "w-lat", "latency_ms": -1.0})
         with pytest.raises(ValueError):
-            handle_cehou_observe(
-                {"record_sample": True, "window_id": "w-lat", "latency_ms": 1e400}
-            )
+            handle_cehou_observe({"record_sample": True, "window_id": "w-lat", "latency_ms": 1e400})
 
     def test_required_days_zero_rejected(self, mem_db):
         """0/负 required_days 修复前建窗成功——days>=0 恒真，观察窗闸门形同虚设。"""
@@ -250,8 +246,10 @@ class TestDossierQingniaoParamGaps:
         dossier = create_dossier_service(
             title="票66红测卷宗", goal="验证 limit 边界", principal=None
         )
-        did = dossier["id"] if isinstance(dossier, dict) and "id" in dossier else dossier.get(
-            "dossier_id"
+        did = (
+            dossier["id"]
+            if isinstance(dossier, dict) and "id" in dossier
+            else dossier.get("dossier_id")
         )
         for bad in (-1, 0):
             with pytest.raises(ValueError):
@@ -261,9 +259,7 @@ class TestDossierQingniaoParamGaps:
         """inbox limit=-1 修复前无限拉取（SQLite LIMIT -1 语义），修复后
         ValueError（对齐 REST [1,100]）。"""
         with pytest.raises(ValueError):
-            handle_qingniao_messenger(
-                {"receiver_agent_id": "agent-b", "limit": -1}
-            )
+            handle_qingniao_messenger({"receiver_agent_id": "agent-b", "limit": -1})
         with pytest.raises(ValueError):
             handle_qingniao_messenger({"receiver_agent_id": "agent-b", "limit": 0})
 
@@ -335,8 +331,7 @@ def rest_client(mem_db):
     身份 override（FastAPI Depends(get_session) 是 import 期绑定，模块补丁
     够不着它——票 42 同款双层缝）。"""
     from lantai.api.app import app
-    from lantai.core.auth import get_current_user
-    from lantai.core.auth import Principal
+    from lantai.core.auth import Principal, get_current_user
     from lantai.storage.db import get_session
 
     def _factory() -> Session:

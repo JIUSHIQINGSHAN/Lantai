@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -162,6 +163,22 @@ class CehouEngine:
         current_tenant = getattr(self.principal, "tenant_id", None)
         t = utcnow()
 
+        # 票 66：先验后写——required_days<=0 时 days>=req_days 恒真，按天观察
+        # 闸门形同虚设。界对齐 REST CreateWindowRequest Field [1,90]/[1,1000]
+        # （双面同钳，REST 为真源）；拒绝而非静默钳制（宁 miss 不脏写）。
+        if (
+            isinstance(required_days, bool)
+            or not isinstance(required_days, int)
+            or not 1 <= required_days <= 90
+        ):
+            raise ValueError(f"required_days 须为 [1, 90] 内整数，收到 {required_days!r}")
+        if (
+            isinstance(min_samples, bool)
+            or not isinstance(min_samples, int)
+            or not 1 <= min_samples <= 1000
+        ):
+            raise ValueError(f"min_samples 须为 [1, 1000] 内整数，收到 {min_samples!r}")
+
         def _create(s: Session) -> dict[str, Any]:
             row = s.get(CehouWindow, window_id)
             privileged = getattr(self.principal, "is_admin", False) or is_system_viewer(
@@ -209,6 +226,19 @@ class CehouEngine:
     ) -> dict[str, Any]:
         """向指定视窗上报一条实测运行样本。"""
 
+        # 票 66：先验后写——非有限值落 REAL 累计列是永久毒化（NaN 绑定 NULL、
+        # 比较恒假；inf 累计后任何后续裁决都失真），负耗时是无意义样本。
+        # 引擎单咽喉点同守 MCP 裸传面与 REST 面；拒绝而非静默钳制。
+        for _nm, _val in (("latency_ms", latency_ms), ("score_delta", score_delta)):
+            if (
+                isinstance(_val, bool)
+                or not isinstance(_val, (int, float))
+                or not math.isfinite(_val)
+            ):
+                raise ValueError(f"{_nm} 须为有限数值，收到 {_val!r}")
+        if latency_ms < 0:
+            raise ValueError(f"latency_ms 不得为负，收到 {latency_ms!r}")
+
         def _record(s: Session) -> dict[str, Any]:
             row = s.get(CehouWindow, window_id)
             if row is None:
@@ -250,6 +280,19 @@ class CehouEngine:
         mock_days_observed: int | None = None,
     ) -> dict[str, Any] | None:
         """巡检指定观察期视窗，核算累计指标并裁决状态跃迁。"""
+
+        # 票 66：先验后写——str mock_days 落库后 days>=req_days TypeError 毒化
+        # 该窗所有后续巡检（票 60 只救了事务，类型脏值仍可入库）；10**9 一检
+        # 即伪造毕业。界 [0, 36500]（百年）对齐 REST InspectRequest。
+        if mock_days_observed is not None:
+            if (
+                isinstance(mock_days_observed, bool)
+                or not isinstance(mock_days_observed, int)
+                or not 0 <= mock_days_observed <= 36500
+            ):
+                raise ValueError(
+                    f"mock_days_observed 须为 [0, 36500] 内整数，收到 {mock_days_observed!r}"
+                )
 
         def _inspect(s: Session) -> dict[str, Any] | None:
             row = s.get(CehouWindow, window_id)

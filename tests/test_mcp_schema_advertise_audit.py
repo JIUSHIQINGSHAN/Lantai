@@ -11,7 +11,8 @@
 哨兵设计：AST **结构化提取**（TOOLS dict → inputSchema → properties 逐层
 导航，绝不 ast.walk 提取——嵌套 items.properties 会覆写顶层键集，实证曾把
 triage_apply 误判成隐藏 actions）；消费键集 = handler 体内 params.get("字面量")
-调用；双向 ⊆ 断言 + 全局豁免表硬编码（防悄悄扩权）。
+与 _int_param(params, "字面量", …)（票 66 钳制 helper）调用；双向 ⊆ 断言 +
+全局豁免表硬编码（防悄悄扩权）。
 """
 
 import ast
@@ -80,18 +81,33 @@ def _load_audit():
 
 
 def _consumed_keys(fn):
-    """handler 体内 params.get("字面量") 的键集（直接消费）。"""
-    return {
-        node.args[0].value
-        for node in ast.walk(fn)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "get"
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "params"
-        and node.args
-        and isinstance(node.args[0], ast.Constant)
-    }
+    """handler 体内的直接消费键集：params.get("字面量") 与
+    _int_param(params, "字面量", …)（票 66 钳制 helper——键字面量仍在调用点，
+    AST 可逐 handler 精确归因，故收编进扫描器而非豁免表；其余未知消费形态
+    一律视为不消费，哨兵保持 fail-closed）。"""
+    keys = set()
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        f = node.func
+        if (
+            isinstance(f, ast.Attribute)
+            and f.attr == "get"
+            and isinstance(f.value, ast.Name)
+            and f.value.id == "params"
+            and isinstance(node.args[0], ast.Constant)
+        ):
+            keys.add(node.args[0].value)
+        elif (
+            isinstance(f, ast.Name)
+            and f.id == "_int_param"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == "params"
+            and isinstance(node.args[1], ast.Constant)
+        ):
+            keys.add(node.args[1].value)
+    return keys
 
 
 def _references(fn, name: str) -> bool:

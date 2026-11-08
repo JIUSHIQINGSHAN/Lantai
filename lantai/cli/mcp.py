@@ -299,6 +299,21 @@ def handle_search(params: dict) -> dict:
     return ret
 
 
+def _int_param(params: dict, key: str, default: int, lo: int, hi: int) -> int:
+    """票 66：int 参数先验后用——类型错/越界 ValueError（dispatch → -32602）。
+
+    双面同钳：界对齐 REST 既有 Query/Field（REST 为真源）；拒绝而非静默钳制
+    （宁 miss 不脏写）——负 limit 的 Python 切片语义（去尾部 N 条）与 SQLite
+    LIMIT -1（无上限）都是静默错形。bool 是 int 子类，显式排除防 true→1 混入。
+    """
+    v = params.get(key, default)
+    if isinstance(v, bool) or not isinstance(v, int):
+        raise ValueError(f"参数 {key} 须为整数，收到 {type(v).__name__}")
+    if not lo <= v <= hi:
+        raise ValueError(f"参数 {key} 越界：须在 [{lo}, {hi}]，收到 {v}")
+    return v
+
+
 def _principal_from_params(params: dict):
     """从 MCP params 取归属身份（票 .scratch/readside-gaps/10）。
 
@@ -1732,7 +1747,7 @@ def handle_dossier_focus(params: dict) -> dict:
     query = params.get("query")
     if query is not None and not isinstance(query, str):
         raise ValueError("query must be a string or null")
-    limit = int(params.get("limit", 20))
+    limit = _int_param(params, "limit", 20, 1, 100)  # 票 66：对齐 DossierFocusReq [1,100]
 
     from lantai.services.dossier_service import focus_dossier_service
 
@@ -1760,7 +1775,7 @@ def handle_muci_catalog(params: dict) -> dict:
     domain = params.get("domain")
     lane = params.get("lane")
     detail_level = params.get("detail_level", "compact")
-    max_entries = int(params.get("max_entries", 3))
+    max_entries = _int_param(params, "max_entries", 3, 1, 20)  # 票 66：对齐 REST [1,20]
 
     from lantai.services.muci_service import get_catalog_service
 
@@ -1776,9 +1791,17 @@ def handle_muci_catalog(params: dict) -> dict:
 def handle_qijuzhu_chronicle(params: dict) -> dict:
     """起居注：时序记忆脉络与每日全息纪事查询（v0.45 ADR-0066）。"""
     date_str = params.get("date")
-    days = int(params.get("days", 1))
+    # 票 66：对齐 REST Query [1,30]/[1,200]（MCP 面默认天数 1 与 REST 3 各承其面，界同钳）
+    days = _int_param(params, "days", 1, 1, 30)
     detail_level = params.get("detail_level", "summary")
-    limit = int(params.get("limit", 50))
+    limit = _int_param(params, "limit", 50, 1, 200)
+    if date_str is not None:
+        # 票 66：裸 strptime 的「time data does not match」调用方无从自查，
+        # 格式错带格式指引拒绝（宁 miss 不脏写）。
+        try:
+            time.strptime(str(date_str), "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"date 格式须为 YYYY-MM-DD，收到 {date_str!r}") from None
 
     from lantai.services.qijuzhu_service import (
         get_daily_chronicle_service,
@@ -1822,7 +1845,9 @@ def handle_famen_skill(params: dict) -> dict:
     """法门：程序性技能匹配与标准 SOP 获取（v0.46 ADR-0067）。"""
     skill_id = params.get("skill_id")
     task = params.get("task")
-    limit = int(params.get("limit", 5))
+    # 票 66：单 limit 参数同伺 match/list 两面，钳到两 REST 面的并集 [1,200]
+    # （match 面自带上界 20 由 REST 路由自守；负值在引擎是切片语义反转）
+    limit = _int_param(params, "limit", 5, 1, 200)
 
     from lantai.services.famen_service import (
         get_skill_detail_service,
@@ -1847,8 +1872,8 @@ def handle_zuozheng_evidence(params: dict) -> dict:
     """佐证：证据链反查与断言可解释性验证（v0.47 ADR-0068）。"""
     memory_id = params.get("memory_id")
     claim = params.get("claim")
-    max_depth = int(params.get("max_depth", 2))
-    limit = int(params.get("limit", 5))
+    max_depth = _int_param(params, "max_depth", 2, 1, 5)  # 票 66：对齐 REST [1,5]，封 BFS 扩散面
+    limit = _int_param(params, "limit", 5, 1, 20)  # 票 66：对齐 REST [1,20]
 
     from lantai.services.zuozheng_service import (
         inspect_evidence_service,
@@ -2088,7 +2113,7 @@ def handle_qingniao_messenger(params: dict) -> dict:
     content = params.get("content")
     priority = str(params.get("priority", "normal") or "normal")
     status = params.get("status")
-    limit = int(params.get("limit", 20))
+    limit = _int_param(params, "limit", 20, 1, 100)  # 票 66：对齐 REST [1,100]，负值=无限拉取
     namespace = str(params.get("namespace", "default") or "default")
 
     from lantai.services.qingniao_service import (
