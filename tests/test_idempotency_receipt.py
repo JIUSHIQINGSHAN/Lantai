@@ -599,9 +599,10 @@ class TestSettleTakeOverRace:
     SELECT 之后、落账之前）。
     """
 
-    def test_late_settle_cannot_clobber_takeover_in_flight(self, mem_env):
+    def test_late_settle_cannot_clobber_takeover_in_flight(self, mem_env, monkeypatch):
         import lantai.core.idempotency as idem
 
+        _advancing_clock(monkeypatch)
         fp = fingerprint_payload("文本", "default", "dialogue", "", None)
         v = claim("k-st", "default", "", fp, task_id="task_a")
         binding = {
