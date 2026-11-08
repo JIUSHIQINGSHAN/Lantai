@@ -26,6 +26,7 @@ from lantai.core.provenance import (
 )
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
+from lantai.core.text import truncate_codepoints
 from lantai.gate.prefilter import NO_MEMORY_PATTERNS
 from lantai.models.tables import MemoryCandidate, RawDocument
 from lantai.parsing.extractor import extract_candidate
@@ -271,7 +272,8 @@ def _create_candidate(
             session_id=(session_id or "").strip() or None,
             document_id=doc.id,
             topic=fp_data.get("topic") if fp_data else [],
-            summary=(fp_data.get("summary") if fp_data else None) or text[:400],
+            summary=(fp_data.get("summary") if fp_data else None)
+            or truncate_codepoints(text, 400, "..."),  # 票 49：被截可见
             claims=fp_data.get("claims", []) if fp_data else [],
             methods=fp_data.get("methods", []) if fp_data else [],
             constraints=fp_data.get("constraints", []) if fp_data else [],

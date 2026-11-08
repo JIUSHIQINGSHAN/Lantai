@@ -22,6 +22,7 @@ from sqlmodel import select
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.core.time import utcnow
+from lantai.core.text import truncate_codepoints
 from lantai.evolution.promoter import _make_checkpoint
 from lantai.models.tables import ConflictEvent, LifecycleStatus, MemoryEdge, MemoryItem
 from lantai.retrieval.temporal import _ensure_utc
@@ -138,7 +139,9 @@ def apply_supersede_correction(
             ConflictEvent(
                 id=new_id("cfev"),
                 memory_id=old_item.id,
-                incoming_ref=new_item.content[:200],
+                # 票 49：incoming_ref 是冲突判别的「对方主张」引用位——存全长
+                # （语义完整性优先，工单口径；content 有摄取上界，账本不受无界输入威胁）
+                incoming_ref=new_item.content,
                 kind="override",
                 detail={
                     "correction_type": correction_type,
@@ -213,7 +216,8 @@ def apply_expire_correction(
             ConflictEvent(
                 id=new_id("cfev"),
                 memory_id=old_item.id,
-                incoming_ref=reason[:200],
+                # 票 49：reason 是调用方无界输入——保留钳制但被截必须可见
+                incoming_ref=truncate_codepoints(reason, 200, "..."),
                 kind="override",
                 detail={
                     "correction_type": "expire",

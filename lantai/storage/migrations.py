@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 40
+TARGET_SCHEMA_VERSION = 41
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -962,6 +962,24 @@ def _migrate_v40(conn) -> None:
     )
 
 
+def _migrate_v41(conn) -> None:
+    """v40 -> v41（票 49 观测面）：retrieval_event 补 fts_terms_truncated。
+
+    FTS 关键词超 _GRAM_TERMS_MAX 的截断事实落列（is_system_noise 同款
+    BOOLEAN DEFAULT 0 先例）；索引同步：v40 的模型索引全量同步在旧库上会
+    因列未存在而跳过本列索引（v40 先于 v41），此处显式补建。幂等。
+    """
+    if not _has_column(conn, "retrieval_event", "fts_terms_truncated"):
+        conn.execute(
+            "ALTER TABLE retrieval_event ADD COLUMN fts_terms_truncated BOOLEAN DEFAULT 0"
+        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_retrieval_event_fts_terms_truncated"
+        " ON retrieval_event (fts_terms_truncated)"
+    )
+    logger.info("数据库增量迁移 v41 完成（FTS 截断观测列）")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -1002,6 +1020,7 @@ MIGRATIONS = [
     (38, _migrate_v38),
     (39, _migrate_v39),
     (40, _migrate_v40),
+    (41, _migrate_v41),
 ]
 
 

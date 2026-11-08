@@ -15,6 +15,7 @@ from lantai.core.logger import logger
 from lantai.core.text import normalize_for_index
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem, RetrievalEvent
+from lantai.storage.fts import bm25_terms_truncated
 from lantai.parameters.registry import default_snapshot
 from lantai.parameters.validation import snapshot_hash
 from lantai.storage import db
@@ -118,6 +119,10 @@ def log_retrieval(
                     latency_ms=int(latency_ms),
                     zero_result=not result_ids,
                     is_system_noise=is_system_noise(query),
+                    # 票 49：截断事实是查询的确定函数——原查询在抹除前照算
+                    # （同 is_system_noise/estimated_tokens 既有范式），长查询
+                    # 尾部 gram 静默丢失自此在事件面可见
+                    fts_terms_truncated=bm25_terms_truncated(query),
                     scene_ids=_scenes_from_results(results),
                     estimated_tokens=(estimate_tokens(query) + _tokens_from_results(results)),
                 )

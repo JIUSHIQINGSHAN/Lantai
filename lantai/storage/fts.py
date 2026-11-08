@@ -227,20 +227,14 @@ def rebuild_fts(session) -> int:
 _GRAM_TERMS_MAX = 24
 
 
-def _bm25_keywords(query: str) -> list:
-    """BM25 关键词（票06）：CJK 3-gram 滑窗 + ASCII 整词，单一真源，OR/AND 两路共用。
-
-    trigram 索引的最小匹配单元是 3 字符——中文 2 字词（偏好/机房间）天然不可
-    匹配，整句短语匹配（旧行为）则不覆盖词中错字与词面重叠改写。3-gram 滑窗
-    让错字只污染个别 gram、共享词根即可部分命中；OR + bm25 排序负责降噪。
-    上限 _GRAM_TERMS_MAX 防 OR 链过长（现状整改票04 如实声明：同样作用于 AND
-    路径 search_fts——超 24 gram 的长查询尾部被静默截断，存在假阳性面）。
-    """
+def _bm25_terms(query: str) -> list:
+    """BM25 关键词全量（票 49 自 _bm25_keywords 拆出）：CJK 3-gram 滑窗 +
+    ASCII 整词，未截断——截断单一真源在 _bm25_keywords 的收尾切片。"""
     from lantai.core.settings import settings
     from lantai.core.text import normalize_for_index
 
-    # \u7968 45\uff1a\u67e5\u8be2\u5148\u8fc7\u5f52\u4e00\u7f1d\u2014\u2014\u4e0e\u7d22\u5f15\u526f\u672c\u540c\u53e3\u5f84\uff0c\u5426\u5219\u5168\u89d2\u67e5\u8be2\u8bcd\u5bf9\u534a\u89d2\u7d22\u5f15
-    # \uff08\u53ca\u53cd\u5411\uff09\u3001NFD \u5bf9 NFC \u786e\u5b9a\u6027\u5931\u914d\u3002
+    # 票 45：查询先过归一缝——与索引副本同口径，否则全角查询词对半角索引
+    # （及反向）、NFD 对 NFC 确定性失配。
     cleaned = re.sub(r"[^\w\u4e00-\u9fa5]+", " ", normalize_for_index(query))
     if not settings.FTS_BM25_GRAM_TOKENIZE:
         return [w.strip() for w in cleaned.split() if len(w.strip()) >= 3]
@@ -257,7 +251,39 @@ def _bm25_keywords(query: str) -> list:
             if gram not in seen:
                 seen.add(gram)
                 terms.append(gram)
+    return terms
+
+
+def _bm25_keywords(query: str) -> list:
+    """BM25 关键词（票06）：CJK 3-gram 滑窗 + ASCII 整词，单一真源，OR/AND 两路共用。
+
+    trigram 索引的最小匹配单元是 3 字符——中文 2 字词（偏好/机房间）天然不可
+    匹配，整句短语匹配（旧行为）则不覆盖词中错字与词面重叠改写。3-gram 滑窗
+    让错字只污染个别 gram、共享词根即可部分命中；OR + bm25 排序负责降噪。
+    上限 _GRAM_TERMS_MAX 防 OR 链过长（现状整改票04 如实声明：同样作用于 AND
+    路径 search_fts——超 24 gram 的长查询尾部被静默截断，存在假阳性面；
+    票 49：截断事实经 `bm25_terms_truncated` 落 retrieval_event，不再静默）。
+    """
+    from lantai.core.settings import settings
+
+    terms = _bm25_terms(query)
+    if not settings.FTS_BM25_GRAM_TOKENIZE:
+        return terms
     return terms[:_GRAM_TERMS_MAX]
+
+
+def bm25_terms_truncated(query: str) -> bool:
+    """票 49：该查询的关键词是否被 _GRAM_TERMS_MAX 截断（纯函数，同查询恒同判）。
+
+    截断只发生在 gram 档（off 档整词列表不设限）；观测面经 log_retrieval 落
+    retrieval_event.fts_terms_truncated——超长查询尾部 gram 静默丢失自此可见
+    （AND/OR 两路共用 _bm25_keywords，任一路截断在本谓词下等价可见）。
+    """
+    from lantai.core.settings import settings
+
+    if not settings.FTS_BM25_GRAM_TOKENIZE:
+        return False
+    return len(_bm25_terms(query)) > _GRAM_TERMS_MAX
 
 
 def search_fts(

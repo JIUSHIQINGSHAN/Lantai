@@ -1,4 +1,5 @@
 from lantai.core.settings import settings
+from lantai.core.text import truncate_codepoints
 from lantai.llm.client import chat_json
 from lantai.llm.prompts import EXTRACT_SYS, EXTRACT_USER_TEMPLATE
 from lantai.services.prompt_service import get_prompt
@@ -19,7 +20,7 @@ def extract_candidate(title: str, content: str) -> dict:
         )
     except Exception:
         return {
-            "summary": content[:400],
+            "summary": truncate_codepoints(content, 400, "..."),  # 票 49：被截可见
             "claims": [],
             "methods": [],
             "constraints": [],

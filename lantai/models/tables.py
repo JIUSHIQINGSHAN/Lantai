@@ -664,6 +664,9 @@ class RetrievalEvent(SQLModel, table=True):
     is_system_noise: bool = Field(
         default=False, index=True
     )  # 系统注入噪音（技能库维护等），评估统计时排除
+    fts_terms_truncated: bool = Field(
+        default=False, index=True
+    )  # 票 49：FTS 关键词超 _GRAM_TERMS_MAX 被截——长查询尾部 gram 静默丢失自此可见
     # 回执链（ADR-0049，票 04）：检索事件 → 注入 evidence → 宿主回执 → 可追溯出口
     request_id: str | None = Field(
         default=None, index=True

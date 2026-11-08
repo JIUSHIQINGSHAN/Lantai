@@ -5,6 +5,7 @@ from lantai.core.acl import viewer_of
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.core.settings import settings
+from lantai.core.text import truncate_codepoints
 from lantai.evolution.promoter import _make_checkpoint
 from lantai.gate.conflict_rules import check_antonyms, check_negation_pairs, check_rules
 from lantai.gate.contradiction import check_contradiction
@@ -153,7 +154,9 @@ def decide(candidate_id: str, principal=None) -> dict:
                         ConflictEvent(
                             id=new_id("cfev"),
                             memory_id=m.id,
-                            incoming_ref=summary_text[:200],
+                            # 票 49：incoming_ref 存全长（上游 summary 本有界，
+                            # 冲突判别语义完整性优先）
+                            incoming_ref=summary_text,
                             rule_name=hit["rule_name"],
                             kind="salience_demote",
                             detail={
@@ -183,7 +186,9 @@ def decide(candidate_id: str, principal=None) -> dict:
                         ConflictEvent(
                             id=new_id("cfev"),
                             memory_id=m.id,
-                            incoming_ref=summary_text[:200],
+                            # 票 49：incoming_ref 存全长（上游 summary 本有界，
+                            # 冲突判别语义完整性优先）
+                            incoming_ref=summary_text,
                             rule_name=hit["rule_name"],
                             kind=hit.get("kind", "mutex"),
                             detail={
