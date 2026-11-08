@@ -83,11 +83,15 @@ def sched_env(tmp_path, monkeypatch):
             self.next_run_time = None  # 挂载态断言只看清单成员，不看触发时刻
 
     class _FakeScheduler:
+        running = False  # scheduler_status() 读真 APScheduler 的 .running 属性
+
         def __init__(self, **kwargs):
             self.jobs = added
 
         def add_job(self, fn, trigger=None, **kwargs):
-            self.jobs.append({"id": kwargs.get("id"), "trigger": trigger, "kwargs": kwargs, "fn": fn})
+            self.jobs.append(
+                {"id": kwargs.get("id"), "trigger": trigger, "kwargs": kwargs, "fn": fn}
+            )
 
         def get_jobs(self):
             return [_JobStub(j) for j in added]
@@ -105,7 +109,9 @@ def _mount(scheduler_mod):
     return scheduler_mod.scheduler_status()
 
 
-def _seed_reflect_run(session_factory, *, id: str, run_at: datetime, source: str = "scheduled") -> None:
+def _seed_reflect_run(
+    session_factory, *, id: str, run_at: datetime, source: str = "scheduled"
+) -> None:
     with session_factory() as s:
         s.add(
             ReflectRun(
@@ -183,9 +189,7 @@ def _seed_window(session_factory, qualified_days: int, *, base: datetime | None 
         )
 
 
-def test_reflect_worker_surfaces_observation_when_below_threshold(
-    sched_env, caplog
-):
+def test_reflect_worker_surfaces_observation_when_below_threshold(sched_env, caplog):
     """评估透出臂（红）：窗口内合格运行日（3）< 门槛（7）时，真跑 worker
     的回执必须含察窗评估（graduated=False）且 logger 留痕——现状回执无
     observation 键、门槛从不评估。
@@ -277,7 +281,13 @@ def test_observation_criteria_parity_script_vs_worker(sched_env):
         "rejecter_failed INT, error TEXT)"
     )
     script_rows = [
-        (datetime.combine(day, datetime.min.time(), tzinfo=UTC).isoformat(), "scheduled", 0, 0, None)
+        (
+            datetime.combine(day, datetime.min.time(), tzinfo=UTC).isoformat(),
+            "scheduled",
+            0,
+            0,
+            None,
+        )
         for day in qualified_dates
     ]
     script_rows.append(
