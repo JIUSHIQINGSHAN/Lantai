@@ -122,7 +122,11 @@ def _fts_row_count(engine, memory_id: str) -> int:
     """memory_fts 中该 memory_id 的索引行数（撤回即清索引的验收口径）。"""
     with engine.connect() as conn:
         raw = conn.connection.driver_connection
-        return int(raw.execute("SELECT count(*) FROM memory_fts WHERE memory_id = ?", (memory_id,)).fetchone()[0])
+        return int(
+            raw.execute(
+                "SELECT count(*) FROM memory_fts WHERE memory_id = ?", (memory_id,)
+            ).fetchone()[0]
+        )
 
 
 def _status_of(engine, memory_id: str) -> str:
@@ -191,7 +195,9 @@ def test_rollback_active_memory_normal_semantics_unchanged(rb_env):
                 MemoryCheckpoint.trigger == "rollback",
             )
         ).all()
-        assert len(rb_ckpts) == 1, f"回滚应追加一笔 trigger=rollback 的 checkpoint；实得 {len(rb_ckpts)}"
+        assert len(rb_ckpts) == 1, (
+            f"回滚应追加一笔 trigger=rollback 的 checkpoint；实得 {len(rb_ckpts)}"
+        )
 
 
 # ── 票 36 身份臂：非 admin 属主同样不可复活 ──

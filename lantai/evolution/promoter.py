@@ -211,6 +211,24 @@ def _is_datetime_column(name: str) -> bool:
     return ann is datetime or datetime in getattr(ann, "__args__", ())
 
 
+# 票 36：rollback 还原循环排除的生命周期/治理字段——状态迁移只能走各自的门
+# （retract/unretract admin-only/archive/知命状态机 ADR-0081），回滚是「内容
+# 版本回滚」不是「生命周期倒带」（checkpoint 词汇表语义同此口径）。retract
+# 不打 checkpoint、不 bump version，撤回后最新 checkpoint 的 after.status 恒
+# 为撤回前的 "active"——不排除则撤回可被 rollback 复活，绕过 admin-only
+# unretract 门（ADR-0047 笔削四分法：主张错误即全检索面禁用、不可自动复活）。
+_LIFECYCLE_FIELDS = frozenset(
+    {
+        "status",
+        "lifecycle_status",
+        "superseded_by",
+        "weakened_at",
+        "superseded_at",
+        "retired_at",
+    }
+)
+
+
 def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = False) -> dict:
     """应用提案。
 
@@ -772,6 +790,14 @@ def rollback(memory_id: str, principal=None) -> dict:
                 # service 契约是 dict（被 worker/eval/MCP 多处消费，形状不能动），
                 # 403 语义在路由边界由 _ok_or_raise 翻译；这里只报「不允许」。
                 return {"ok": False, "reason": f"forbidden: {exc.detail}"}
+        # 票 36：撤回态守卫（同 correct_memory「retracted memory cannot be
+        # corrected」同款护栏）——撤回的复活唯一合法入口是 admin-only 的
+        # unretract（ADR-0047 笔削四分法）。守卫先于 CAS 认领：被拒时不写
+        # 任何一行、不追加 checkpoint（不留半写）。
+        from lantai.services.record_ops_service import STATUS_RETRACTED
+
+        if mem.status == STATUS_RETRACTED:
+            return {"ok": False, "reason": "retracted"}
         # 票 23：整行写回前先做入口版本 CAS（写阶段第一条 DML，对最新已提交
         # 状态求值）——checkpoint 选取与写回之间该行被并发纠错/合并推进时，
         # 陈旧快照会把对方正文整行抹掉、版本倒退重号（红测 rollback）。败方
@@ -810,31 +836,46 @@ def rollback(memory_id: str, principal=None) -> dict:
         for k, v in restored.items():
             # version 不随快照回写：版本号由上面的入口 CAS 认领（entry+1），
             # ORM 属性须显式对齐，否则旧值搭 commit 顺车把认领号覆掉（票 23）
-            if hasattr(mem, k) and k != "id" and k != "version":
+            if hasattr(mem, k) and k != "id" and k != "version" and k not in _LIFECYCLE_FIELDS:
+                # 票 36：生命周期/治理字段同样不随快照回写（见 _LIFECYCLE_FIELDS）
                 setattr(mem, k, v)
         mem.version = entry_version + 1
         mem.updated_at = utcnow()
         s.add(mem)
         _make_checkpoint(s, mem, before, proposal_id="", trigger="rollback")
-        sync_fts(s, mem.id, mem.content)
-        # 向量重建（票 .scratch/review-fixes-2026-10/issues/04）：此前回滚只还原
-        # SQL 与 FTS，Chroma 里仍是回滚前正文的 embedding——同文件 add/update/
-        # merge/consolidation 分支均有 index_memory_item，唯 rollback 没有，回滚
-        # 后语义召回错位。复用 `record_ops_service.sync_vector_upsert`（既有等价
-        # 惯例：同款 index_memory_item + 8 键 metadata 契约）；失败降级留痕不静默
-        # （exception 日志 + vector_synced=False 如实回报，不阻断回滚主语义，
-        # 口径同笔削四分法 record_ops_service 的降级面）。延迟 import：record_ops_
-        # service 亦延迟引用本模块，避免顶层循环。
-        from lantai.services.record_ops_service import sync_vector_upsert
+        # 票 36：仅 active 行重建索引——retract「撤回即清索引」的既有语义下，
+        # 复活半程不得为非 active 行重写 FTS/向量（工单修正：search_fts 无
+        # status 过滤兜底，禁用在终闸——索引必须写侧守住）。archived 行索引
+        # 本就保留（archive「复原零成本」），内容陈旧由 unarchive 出闸时的
+        # 重同步收口（unarchive 既有 sync_fts/sync_vector_upsert）。
+        index_skipped_reason = None
+        vector_synced = False
+        if mem.status == "active":
+            sync_fts(s, mem.id, mem.content)
+            # 向量重建（票 .scratch/review-fixes-2026-10/issues/04）：此前回滚只还原
+            # SQL 与 FTS，Chroma 里仍是回滚前正文的 embedding——同文件 add/update/
+            # merge/consolidation 分支均有 index_memory_item，唯 rollback 没有，回滚
+            # 后语义召回错位。复用 `record_ops_service.sync_vector_upsert`（既有等价
+            # 惯例：同款 index_memory_item + 8 键 metadata 契约）；失败降级留痕不静默
+            # （exception 日志 + vector_synced=False 如实回报，不阻断回滚主语义，
+            # 口径同笔削四分法 record_ops_service 的降级面）。延迟 import：record_ops_
+            # service 亦延迟引用本模块，避免顶层循环。
+            from lantai.services.record_ops_service import sync_vector_upsert
 
-        vector_synced = sync_vector_upsert(mem.id, mem)
+            vector_synced = sync_vector_upsert(mem.id, mem)
+        else:
+            index_skipped_reason = "not_active"
         s.commit()
-        if not vector_synced:
+        if not vector_synced and index_skipped_reason is None:
             logger.warning(
                 "回滚 %s：向量重建失败，向量库仍为回滚前正文（SQL/FTS 已回滚，留痕不静默）",
                 mem.id,
             )
-        return {"ok": True, "vector_synced": vector_synced}
+        receipt = {"ok": True, "vector_synced": vector_synced}
+        if index_skipped_reason is not None:
+            # 契约 dict 只增键、不改形状（票 36 D 口径）
+            receipt["index_skipped"] = index_skipped_reason
+        return receipt
 
 
 def delete_memory(memory_id: str, principal=None) -> dict:
