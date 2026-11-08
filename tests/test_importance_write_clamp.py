@@ -8,9 +8,10 @@ OverflowError），而三条写入路径全部不钳制——`apply_forgetting` 
 零容错，毒行让全库衰减与自动归档永久停摆，同页对照行已算好的衰减随异常一起回滚。
 
 修复四件（票面修复目标 1/2/3）：
-1. REST 更新面 pydantic `ge/le` 拒绝（422，宁 miss 不脏写；NaN/inf 一并拒——
-   pydantic 实证带 ge/le 约束时三者全 ValidationError），惯例先例
-   routes_cognitive.py:37-38 / routes_jiaochou.py:47；
+1. REST 更新面 importance 拒绝越界与非有限值（422，宁 miss 不脏写）。不在
+   pydantic `Field(ge/le)` 上做：红测实测 **FastAPI 422 响应体以 allow_nan=False
+   渲染，验证错误 input 携带 NaN/inf 时 422 自身渲染炸 500**——故 handler 显式
+   拒（routes_terminal `assert_no_prompt_injection` 同惯语）；
 2. 沉潜生成面 / promoter apply 面钳入 [0,1]（mokan.py:121
    `max(0.0, min(1.0, float(x)))` 既有习语）；非有限值 NaN/inf：生成面跳过该簇
    （宁 miss 不脏写），apply 面落 REJECTED 终态（拒绝必须终态，防
