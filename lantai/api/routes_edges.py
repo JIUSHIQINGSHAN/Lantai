@@ -1,8 +1,9 @@
 """记忆关系 API——薄 handler，逻辑下沉 edge_service"""
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from lantai.cognition.causal import CAUSAL_DEPTH_MAX, CAUSAL_DEPTH_MIN
 from lantai.core.auth import get_current_user
 from lantai.services.edge_service import (
     add_edge,
@@ -31,13 +32,16 @@ class EdgeReq(BaseModel):
 class CounterfactualReq(BaseModel):
     target_memory_id: str
     intervened_node_id: str
-    max_depth: int = 10
+    # 票 39：max_depth 双端无界（10**9 合法）入口即钳；引擎侧另有路径帽/
+    # 扩展预算双界兜底，此处是纵深入口闸
+    max_depth: int = Field(default=10, ge=CAUSAL_DEPTH_MIN, le=CAUSAL_DEPTH_MAX)
 
 
 class ProjectImpactReq(BaseModel):
     memory_id: str
-    max_depth: int = 5
-    min_confidence: float = 0.05
+    # 票 39：同面同钳
+    max_depth: int = Field(default=5, ge=CAUSAL_DEPTH_MIN, le=CAUSAL_DEPTH_MAX)
+    min_confidence: float = Field(default=0.05, ge=0.0, le=1.0)
 
 
 @router.post("/edges/counterfactual")

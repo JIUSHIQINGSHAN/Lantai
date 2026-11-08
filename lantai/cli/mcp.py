@@ -751,6 +751,11 @@ def handle_causal_counterfactual(params: dict) -> dict:
         raise ValueError("target_memory_id must be a non-empty string")
     if not isinstance(intervened_id, str) or not intervened_id.strip():
         raise ValueError("intervened_node_id must be a non-empty string")
+    # 票 39：与 REST max_depth ge/le 同钳——深度无界入口即拒（宁 miss 不脏写）
+    from lantai.cognition.causal import CAUSAL_DEPTH_MAX, CAUSAL_DEPTH_MIN
+
+    if not CAUSAL_DEPTH_MIN <= max_depth <= CAUSAL_DEPTH_MAX:
+        raise ValueError(f"max_depth must be between {CAUSAL_DEPTH_MIN} and {CAUSAL_DEPTH_MAX}")
 
     return evaluate_counterfactual_service(
         target_id=target_id,
@@ -769,6 +774,13 @@ def handle_causal_project_impact(params: dict) -> dict:
     min_confidence = float(params.get("min_confidence", 0.05))
     if not isinstance(memory_id, str) or not memory_id.strip():
         raise ValueError("memory_id must be a non-empty string")
+    # 票 39：与 REST 同面同钳
+    from lantai.cognition.causal import CAUSAL_DEPTH_MAX, CAUSAL_DEPTH_MIN
+
+    if not CAUSAL_DEPTH_MIN <= max_depth <= CAUSAL_DEPTH_MAX:
+        raise ValueError(f"max_depth must be between {CAUSAL_DEPTH_MIN} and {CAUSAL_DEPTH_MAX}")
+    if not 0.0 <= min_confidence <= 1.0:
+        raise ValueError("min_confidence must be between 0.0 and 1.0")
 
     return project_causal_impact_service(
         memory_id=memory_id,

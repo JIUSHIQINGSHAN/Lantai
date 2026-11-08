@@ -94,7 +94,8 @@ class TestCounterfactualBound:
         with pytest.MonkeyPatch.context() as mp2:
             mp2.setattr(causal_mod.db, "get_session", counting_get_session)
             engine = causal_mod.CausalEngine()
-            # 介入第 0 环其中一叉：留 2×3^6 = 1458 条替代路径（帽 64 之外）
+            # 介入第 0 环其中一叉：max_depth=10 跳数内仍可枚举 3^5 = 243 条
+            # 替代路径（红测实测；帽 64 之外。深度更长路径本就受 max_depth 截断）
             res = engine.evaluate_counterfactual(
                 target_id=hubs[-1],
                 intervened_node_id="mem-39-mid-0-0",
