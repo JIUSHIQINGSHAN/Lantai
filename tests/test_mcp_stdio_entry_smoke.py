@@ -117,9 +117,7 @@ def test_oversize_line_with_id_rejected_with_frame_and_stays_alive(monkeypatch):
     非协议面）+ 服务存活（下一帧 ping 正常应答）。
     """
     mod = _load_mcp()
-    oversize = (
-        '{"jsonrpc":"2.0","id":9,"method":"ping","params":{"pad":"' + "x" * 1_000_001 + '"}}'
-    )
+    oversize = '{"jsonrpc":"2.0","id":9,"method":"ping","params":{"pad":"' + "x" * 1_000_001 + '"}}'
     frames = [oversize, '{"jsonrpc":"2.0","id":10,"method":"ping"}']
     monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(frames) + "\n"))
     fake_out, fake_err = io.StringIO(), io.StringIO()
