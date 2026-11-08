@@ -18,8 +18,8 @@ fastpath 白名单形态（「记住：…」），全链确定性、不依赖�
 范式——被测行为是注册配置本身，壳是仓内既定替身面）。
 """
 
-import json
 import contextlib
+import json
 
 import pytest
 from sqlmodel import select
@@ -40,6 +40,7 @@ def test_dialogue_disabled_blocks_rest_ingest(param_env, monkeypatch):
     sf, _engine = param_env
 
     from fastapi.testclient import TestClient
+
     from lantai.core.acl import Principal
     from lantai.core.auth import get_current_user
 
@@ -62,9 +63,7 @@ def test_dialogue_disabled_blocks_rest_ingest(param_env, monkeypatch):
         f"/dialogue/async 应同口径 409；现状 {resp_async.status_code}"
     )
     with sf() as s:
-        rows = s.exec(
-            select(MemoryCandidate).where(MemoryCandidate.summary.contains("票43"))
-        ).all()
+        rows = s.exec(select(MemoryCandidate).where(MemoryCandidate.summary.contains("票43"))).all()
         assert rows == [], "开关 false 不得摄取任何对话（候选真落库 = 死开关实锤）"
 
 
@@ -111,7 +110,13 @@ def test_dialogue_disabled_blocks_session_import(param_env, monkeypatch):
         p = Path(td) / "s.jsonl"
         p.write_text(
             "\n".join(
-                json.dumps({"role": "user", "content": f"记住：票43导入{i}", "timestamp": "2026-01-01T08:00:00Z"})
+                json.dumps(
+                    {
+                        "role": "user",
+                        "content": f"记住：票43导入{i}",
+                        "timestamp": "2026-01-01T08:00:00Z",
+                    }
+                )
                 for i in range(2)
             ),
             encoding="utf-8",
@@ -135,9 +140,7 @@ def test_dialogue_enabled_control_unchanged(param_env):
     res = ingest_dialogue(_FASTPATH_TEXT, user_id="user-A")
     assert res["ingested"] is True and res["status"] == "fastpath"
     with sf() as s:
-        rows = s.exec(
-            select(MemoryCandidate).where(MemoryCandidate.user_id == "user-A")
-        ).all()
+        rows = s.exec(select(MemoryCandidate).where(MemoryCandidate.user_id == "user-A")).all()
         assert len(rows) == 1, "对照臂：fastpath 候选应恰一条落库"
 
 

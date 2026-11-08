@@ -356,6 +356,19 @@ def start_scheduler():
             replace_existing=True,
         )
 
+    # 票 43：察窗到期轮询——SHADOW_CHECK_INTERVAL_SECONDS 此前零消费，观察窗
+    # 打开后永不到期评估（promote/rollback 裁决不会发生）。形态同上
+    # refresh_runtime_params 先例：无总开关、空转廉价（无 observing 窗即空回）。
+    from lantai.parameters.runtime import check_shadow_due
+
+    _scheduler.add_job(
+        check_shadow_due,
+        "interval",
+        seconds=settings.SHADOW_CHECK_INTERVAL_SECONDS,
+        id="shadow_check",
+        replace_existing=True,
+    )
+
     # Reflection 反思/蒸馏（spec: docs/plans/reflection-module-spec.md）
     if settings.REFLECT_ENABLED:
         from lantai.workers.reflect_worker import run_reflect_once

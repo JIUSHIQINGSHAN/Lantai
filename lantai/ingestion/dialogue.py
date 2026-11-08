@@ -35,6 +35,25 @@ from lantai.storage import db
 
 logger = logging.getLogger("lantai.ingestion")
 
+
+class DialogueDisabledError(ValueError):
+    """对话通道被 `DIALOGUE_ENABLED=false` 整体关闭（票 43：接线死开关）。
+
+    继承 ValueError：MCP 分发器与导入的逐条计数（宁 miss 不脏写）经既有
+    异常面自动获得；REST 侧在路由层按更具体类型译 409（服务端配置拒绝，
+    非调用方输入问题，不得落 422 滥用口径）。
+    """
+
+
+def assert_dialogue_enabled() -> None:
+    """通道开关单一真源：四个入口（REST/MCP/潜移/导入）统一经此 guard，
+    禁止各入口散写判据（票 43）。关闭时留痕后拒绝——防「静默不跑」新病灶
+    （口径同票 34 跳过留痕）。"""
+    if settings.DIALOGUE_ENABLED:
+        return
+    logger.warning("对话摄取被 DIALOGUE_ENABLED=false 阻断（通道整体关闭，票 43）")
+    raise DialogueDisabledError("dialogue channel disabled (DIALOGUE_ENABLED=false)")
+
 # 对话入口的 lane 预判（宽松 search；fastpath 整段 match 语义保持不变）
 _PREFERENCE_RE = re.compile(r"我.{0,8}?(?:喜欢|不喜欢|讨厌|偏爱|偏好)")
 _FACT_RE = re.compile(r"^我是|^我叫|我的(?:名字|生日|年龄|地址|电话|邮箱)|我住在|我来自")
@@ -81,6 +100,8 @@ def ingest_dialogue(
     status：fastpath（直通）/ new（待 evolve gate 分层）/
     pending_review（低置信度 / 提取失败兜底；闲聊直接 rejected）
     """
+    # 票 43：通道开关先于输入校验——关掉的通道对任何输入一律拒绝
+    assert_dialogue_enabled()
     text = (text or "").strip()
     if not text:
         raise ValueError("empty dialogue text")

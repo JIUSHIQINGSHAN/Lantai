@@ -79,6 +79,11 @@ def submit_async_dialogue(
     同键同文在回执 TTL 内重放原 task_id（响应多一个 replayed: true 标记），
     同键不同文 422；不传时以内容指纹为自动键，只护 LEASE_SECONDS 重试窗。
     """
+    # 票 43：通道开关在提交时 fail-fast——被拒请求不建任务、不占勘合键，
+    # 免得宿主拿着 task_id 轮询出一条 failed 假任务
+    from lantai.ingestion.dialogue import assert_dialogue_enabled
+
+    assert_dialogue_enabled()
     raw_text = (text or "").strip()
     if not raw_text:
         raise ValueError("text 不能为空")
