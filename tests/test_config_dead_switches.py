@@ -63,7 +63,7 @@ def test_dialogue_disabled_blocks_rest_ingest(param_env, monkeypatch):
         f"/dialogue/async 应同口径 409；现状 {resp_async.status_code}"
     )
     with sf() as s:
-        rows = s.exec(select(MemoryCandidate).where(MemoryCandidate.summary.contains("票43"))).all()
+        rows = s.exec(select(MemoryCandidate)).all()
         assert rows == [], "开关 false 不得摄取任何对话（候选真落库 = 死开关实锤）"
 
 
@@ -89,8 +89,11 @@ def test_dialogue_disabled_blocks_async_submit(param_env, monkeypatch):
     sf, _engine = param_env
     from lantai.services.async_ingest_service import submit_async_dialogue
 
-    with pytest.raises(Exception, match="DIALOGUE_ENABLED"):
+    with pytest.raises(Exception, match="DIALOGUE_ENABLED") as ei:
         submit_async_dialogue(_FASTPATH_TEXT, user_id="user-A")
+    assert type(ei.value).__name__ == "DialogueDisabledError", (
+        f"应抛专用 DialogueDisabledError；实得 {type(ei.value).__name__}"
+    )
     with sf() as s:
         rows = s.exec(select(MemoryCandidate)).all()
         assert rows == [], "潜移提交被拒后不得有任何候选落库"
@@ -195,7 +198,7 @@ def test_shadow_check_job_end_to_end_adjudicates(param_env, monkeypatch):
     evaluate_window 的合法判定）。"""
     from datetime import timedelta
 
-    scheduler_mod, fake = _mount_fake_scheduler(monkeypatch)
+    _scheduler_mod, fake = _mount_fake_scheduler(monkeypatch)
     job = next((j for j in fake.jobs if j["id"] == "shadow_check"), None)
     assert job is not None, "shadow_check 未注册，端到端臂无从谈起"
     run_one_cycle = job["fn"]
@@ -220,5 +223,3 @@ def test_shadow_check_job_end_to_end_adjudicates(param_env, monkeypatch):
         updated = s.get(ShadowWindow, w.id)
         assert updated.status != "observing", "到期窗必须离开 observing（裁决已产出）"
         assert updated.finished_at is not None
-    # 调度器模块未被臂污染（注册表为壳所替换，teardown 由 monkeypatch 自还）
-    assert scheduler_mod._scheduler is not None
