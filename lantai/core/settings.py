@@ -509,8 +509,8 @@ class Settings(BaseSettings):
     # digest 反思置信桶（回填校准报告区间；ADR-0002 零硬编码，见 docs/memory-quality/reflect-calibration-2026-08-11.md）
     # 桶为半开区间 [lo, hi)；最大 hi 桶按闭区间右端收边界值（conf == max(hi)）——
     # 归位判定跟数值走、不挂标签字面量，改名/调阈值后不漂移（票 86）。
-    # 越界置信（< 最小 lo 或 > 最大 hi）落 DIGEST_CONF_FALLBACK_LABEL 兜底桶：
-    # 标签与桶定义同源声明，消费侧不得裸写字面量。
+    # 不落任何半开区间的置信（< 最小 lo、> 最大 hi，含自定义桶间的缝隙）落
+    # DIGEST_CONF_FALLBACK_LABEL 兜底桶：标签与桶定义同源声明，消费侧不得裸写字面量。
     DIGEST_CONF_BUCKETS: list[tuple] = [
         ("0.5-0.6", 0.5, 0.6),
         ("0.6-0.7", 0.6, 0.7),

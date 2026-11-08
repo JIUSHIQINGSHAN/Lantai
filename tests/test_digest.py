@@ -612,6 +612,22 @@ class TestConfBucketSourceOfTruth:
         )
         assert "其他" not in rf["conf_buckets"], "worker 侧 magic label 不得残留"
 
+    def test_default_buckets_conf_one_unchanged(self, digest_env):
+        """现状锁（票 86 验收 2）：默认桶定义下 conf==1.0 归位终桶不变。
+
+        既有反思家族种料全在 0.65–0.9、其余三臂全带 monkeypatch——默认桶
+        与 1.0 的组合此前零覆盖，`conf == top_hi` 改坏将无测试报警。
+        """
+        self._seed_one(digest_env, "p-default-one", 1.0)
+        rf = self._reflect_window(digest_env)
+        assert rf["conf_buckets"] == {
+            "0.5-0.6": 0,
+            "0.6-0.7": 0,
+            "0.7-0.8": 0,
+            "0.8-0.9": 0,
+            "0.9-1.0": 1,
+        }
+
 
 class TestCollectStats:
     """五项统计数字正确（真实 DB 查询）。"""
