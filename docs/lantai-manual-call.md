@@ -28,11 +28,12 @@
   relevance gate，**不绕更正闸**（见下）
 
 **更正闸随行（v0.68 票 02，`lantai/retrieval/supersede.py`）**：非时效查询（不带
-时效参数）的检索结果会对已被更正链取代的旧值做更正闸处理——取代它的新值也在本次
-结果里时旧值直接丢弃，否则正文前加「[已更正：YYYY-MM-DD 起不再成立，仅作历史]」
-标记；`as_of` / `as_of_recorded` / `time_from` / `time_to` 任一在场属历史查询面
-（时效视图），整段跳过、逐字旧行为。开关沿用 `SHELL_HOOK_SUPERSEDED_GUARD`
-（false = 逐字旧行为）。`force: true` 不绕更正闸。
+时效参数）的检索结果会对已被更正链取代的旧值做更正闸处理——问句无回看词
+（以前/之前/上次…）且取代它的新值也在本次结果里时，旧值直接丢弃；有回看词
+（在问历史）或新值不在场时，旧值保留但正文前加「[已更正：YYYY-MM-DD 起不再
+成立，仅作历史]」标记；`as_of` / `as_of_recorded` / `time_from` / `time_to`
+任一在场属历史查询面（时效视图），整段跳过、逐字旧行为。开关沿用
+`SHELL_HOOK_SUPERSEDED_GUARD`（false = 逐字旧行为）。`force: true` 不绕更正闸。
 
 想存记忆：
 ```
