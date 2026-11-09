@@ -23,8 +23,6 @@
 chat_json 注入 RuntimeError 模拟 LLM 缺席走离线兜底——外部 LLM 边界）。
 """
 
-import json
-
 import pytest
 from sqlmodel import select
 
@@ -182,9 +180,9 @@ def test_expire_correction_reason_truncation_marked(param_env):
 
 def test_gate_decision_incoming_ref_full_length(param_env, monkeypatch):
     """红：闸门 salience 降权账本的 incoming_ref=summary_text[:200] 无标记。
-    修复后存全长（上游 summary 本有界）。真 decide() 流程：向量降级 rowid
-    召回 → 确定性互斥规则命中 → 降权写账本；LLM 相位以 chat_json 注入
-    RuntimeError 拦（外部边界替身，确定性）。"""
+    修复后存全长（下游渲染自有切片）。真 decide() 流程：向量降级 rowid
+    召回 → 确定性互斥规则命中 → 降权写账本即返回（无硬冲突不进 LLM 相位，
+    全链确定性）；chat_json 替身挂 contradiction 绑定点作纵深防御。"""
     sf, _engine = param_env
     summary = "服务已启用" + "，附加说明" * 48  # >200 字，含「启用」
     with sf() as s:
@@ -209,12 +207,15 @@ def test_gate_decision_incoming_ref_full_length(param_env, monkeypatch):
         )
         s.commit()
 
-    import lantai.llm.client as llm_client
+    # LLM 相位替身：patch 到 from-import 绑定点 contradiction.chat_json
+    # （llm.client 原点不重绑——自审轴 4 实证）。本臂确定性规则命中后
+    # decide() 即返回、不进 LLM 相位，替身是纵深防御非主机制。
+    import lantai.gate.contradiction as contradiction_mod
 
     def _no_llm(*a, **kw):
         raise RuntimeError("llm unavailable (票49 测试替身)")
 
-    monkeypatch.setattr(llm_client, "chat_json", _no_llm)
+    monkeypatch.setattr(contradiction_mod, "chat_json", _no_llm)
 
     from lantai.core.acl import Principal
     from lantai.gate.decision import decide
