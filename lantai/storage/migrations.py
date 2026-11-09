@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 41
+TARGET_SCHEMA_VERSION = 42
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -984,6 +984,39 @@ def _migrate_v41(conn) -> None:
     logger.info("数据库增量迁移 v41 完成（FTS 截断观测列）")
 
 
+def _migrate_v42(conn) -> None:
+    """v41 -> v42（票 68）：cognitivepattern.dedup_key 升唯一索引。
+
+    应用层 check-then-act（先查后插）在并发下可双行落库，schema 层无兜底。
+    存量库先按 dedup_key 去重（同键保留最早 rowid——模式行是派生数据、同签名
+    语义等价，最早行观察窗最完整），再重建唯一索引；v29 落的旧同名索引是
+    非唯一的，必须先 DROP 才能升唯一。索引沿用 v29 名（ix_cognitivepattern_
+    dedup_key）——模型侧 index=True + unique=True 声明的同名索引在 create_all
+    新库上本就是唯一的，同名同唯一性迁移库与 create_all 库才对得齐（v40 索引
+    同步对账口径）。dedup_key NULL 行（v29 前存量）不参与唯一性（SQLite NULL
+    互不冲突），不追溯。幂等。建表归 create_all（v41 同款口径）。
+    表名为 SQLModel 默认小写 cognitivepattern（v29 同名，非下划线式）。
+    """
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cognitivepattern'"
+    ).fetchone()
+    if not has_table:
+        return
+    conn.execute(
+        "DELETE FROM cognitivepattern"
+        " WHERE dedup_key IS NOT NULL"
+        "   AND rowid NOT IN ("
+        "       SELECT MIN(rowid) FROM cognitivepattern"
+        "       WHERE dedup_key IS NOT NULL GROUP BY dedup_key)"
+    )
+    conn.execute("DROP INDEX IF EXISTS ix_cognitivepattern_dedup_key")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_cognitivepattern_dedup_key"
+        " ON cognitivepattern (dedup_key)"
+    )
+    logger.info("数据库增量迁移 v42 完成（dedup_key 唯一索引）")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -1025,6 +1058,7 @@ MIGRATIONS = [
     (39, _migrate_v39),
     (40, _migrate_v40),
     (41, _migrate_v41),
+    (42, _migrate_v42),
 ]
 
 

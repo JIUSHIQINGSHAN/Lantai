@@ -110,9 +110,7 @@ class TestRecencyBounds:
         单条时间异常行即可碾压仲裁权重。修复后 rec ∈ [0, 1]（未来时间不奖励）。"""
         from lantai.cognition.conflicts import _temporal_recency
 
-        item = SimpleNamespace(
-            event_time=datetime(3000, 1, 1, tzinfo=UTC), created_at=None
-        )
+        item = SimpleNamespace(event_time=datetime(3000, 1, 1, tzinfo=UTC), created_at=None)
         rec, axis = _temporal_recency(item)
         assert axis == "event"
         assert 0.0 <= rec <= 1.0, f"未来时间 recency 无上钳（病灶实锤）：{rec}"
@@ -121,9 +119,7 @@ class TestRecencyBounds:
         """现状锁：正常过去时间语义零变化（10 天前 → 1 - 10/30）。"""
         from lantai.cognition.conflicts import _temporal_recency
 
-        item = SimpleNamespace(
-            event_time=datetime.now(UTC) - timedelta(days=10), created_at=None
-        )
+        item = SimpleNamespace(event_time=datetime.now(UTC) - timedelta(days=10), created_at=None)
         rec, _ = _temporal_recency(item)
         assert rec == pytest.approx(1.0 - 10.0 / 30.0)
 
@@ -144,9 +140,7 @@ class TestNiyiConfidenceBounds:
             engine = NiyiEngine(session=s)
             for bad in (1.5, -0.2):
                 with pytest.raises(ValueError):
-                    engine.deliberate_proposal(
-                        "update", {"confidence": bad}, "mem-n68"
-                    )
+                    engine.deliberate_proposal("update", {"confidence": bad}, "mem-n68")
 
     def test_confidence_nonnumeric_clear_error(self, mem_db):
         """红："high" 走 float() 报「could not convert string to float」——
@@ -270,9 +264,7 @@ class TestZuozhengConfidenceOr:
 
         with Session(mem_db) as s:
             chain = ZuozhengEngine(session=s).inspect_evidence("mem-z68t")
-        node = next(
-            n for n in chain["evidence_nodes"] if n["id"] == "mem-z68s"
-        )
+        node = next(n for n in chain["evidence_nodes"] if n["id"] == "mem-z68s")
         assert node["confidence"] == 0.0, (
             f"零置信源记忆被抬成 {node['confidence']}（or 0.8 病灶实锤）"
         )
@@ -308,7 +300,7 @@ class TestZuozhengConfidenceOr:
 class TestCanshangFalseContradiction:
     def test_unrelated_topics_not_flagged(self, mem_db):
         """红：两段无关主题文本共享 ≥3 个常用字 + 各含一对互斥词——字符集
-        交叉判定判「假矛盾」。修复后按词级主题交叉判定，不再误报。"""
+        交叉判定判「假矛盾」。修复后动词性开关对须词级主题交叉，不再误报。"""
         _seed_memory(mem_db, "mem-c68a", content="系统管理员启用定时备份功能模块")
         _seed_memory(mem_db, "mem-c68b", content="下班后管理员关闭照明电源设备")
         from lantai.cognition.canshang import CanshangEngine
@@ -322,7 +314,7 @@ class TestCanshangFalseContradiction:
     def test_different_subjects_not_flagged(self, mem_db):
         """红：主语不同（功能 vs 鼠标硬件）的非矛盾主张——裸子串命中
         (支持, 不支持) 词对（B 的「不支持」含子串「支持」双向命中）+ 字符集
-        交叉 ≥3 → 判假矛盾。修复后按词级主题交叉判定，不再误报。"""
+        交叉 ≥3 → 判假矛盾。修复后否定衍生对从严（词级主题交叉），不再误报。"""
         _seed_memory(mem_db, "mem-c68c", content="该功能支持自定义快捷键设置项")
         _seed_memory(mem_db, "mem-c68d", content="鼠标硬件不支持自定义宏按键编程")
         from lantai.cognition.canshang import CanshangEngine
@@ -375,42 +367,41 @@ class TestEvolutionDedupRace:
 
     def test_dedup_key_unique_index(self, mem_db):
         """确定性红：dedup_key 仅有普通 index 无唯一约束——check-then-act 在
-        并发下可双行落库，schema 层无兜底。修复后唯一索引/唯一约束存在。"""
+        并发下可双行落库，schema 层无兜底。修复后唯一索引/唯一约束存在。
+        （表名为 SQLModel 默认小写 cognitivepattern，migrations v29 同名。）"""
         inspector = sa_inspect(mem_db)
         uniques = [
             idx["name"]
-            for idx in inspector.get_indexes("cognitive_pattern")
+            for idx in inspector.get_indexes("cognitivepattern")
             if idx["unique"] and "dedup_key" in idx["column_names"]
         ]
         uniques += [
             c["name"]
-            for c in inspector.get_unique_constraints("cognitive_pattern")
+            for c in inspector.get_unique_constraints("cognitivepattern")
             if "dedup_key" in c["column_names"]
         ]
-        assert uniques, (
-            "cognitive_pattern.dedup_key 无唯一索引/约束（竞态无 schema 兜底，病灶实锤）"
-        )
+        assert uniques, "cognitivepattern.dedup_key 无唯一索引/约束（竞态无 schema 兜底，病灶实锤）"
 
-    def test_concurrent_same_signature_single_row(self, mem_db):
+    def test_concurrent_same_signature_single_row(self, tmp_path):
         """并发臂（非确定性）：双线程 ×20 同签名 detect_patterns——修复后唯一
         索引兜底恒单行。红相若通过=本次未撞 check-then-act 窗口（确定性红证
         由 schema 臂承担），如实记录不强判。不用 Barrier：worker 异常时
-        barrier.wait() 永久等待会挂死整跑（首跑实测），改异常捕获式并发。"""
+        barrier.wait() 永久等待会挂死整跑（首跑实测），改异常捕获式并发。
+        各线程独立连接（临时文件库）：StaticPool 共享单连接下双 Session
+        begin/commit 交错互踩事务（cannot commit 实测）——那测的是装置不是
+        产品并发路径。"""
         import threading
 
         from lantai.cognition.evolution import EvolutionEngine
 
-        experiences = self._experiences()
-        with Session(mem_db) as s:
-            for exp in experiences:
-                s.add(exp)
-            s.commit()
+        eng = create_engine(f"sqlite:///{tmp_path / 'race68.db'}")
+        SQLModel.metadata.create_all(eng)
 
         worker_errors: list[Exception] = []
 
         def _worker():
             try:
-                with Session(mem_db) as s:
+                with Session(eng) as s:
                     engine = EvolutionEngine(db=s)
                     for _ in range(20):
                         engine.detect_patterns(self._experiences())
@@ -425,7 +416,7 @@ class TestEvolutionDedupRace:
         assert not any(t.is_alive() for t in threads), "worker 线程 60s 未退出（挂死）"
         assert not worker_errors, f"worker 异常：{worker_errors!r}"
 
-        with Session(mem_db) as s:
+        with Session(eng) as s:
             rows = s.exec(select(CognitivePattern)).all()
         assert len(rows) == 1, f"同签名并发落库 {len(rows)} 行（双行实锤）"
 
@@ -489,9 +480,7 @@ class TestZhajiTruncation:
 
         raw = "工作便签内容甲乙丙丁" * 200  # 2000 字
         with Session(mem_db) as s:
-            ZhajiEngine(session=s).save_and_digest(
-                "s-z68", raw, write=True, max_chars=200
-            )
+            ZhajiEngine(session=s).save_and_digest("s-z68", raw, write=True, max_chars=200)
             row = s.get(SessionScratchpad, "s-z68")
         assert row is not None
         assert len(row.content) == 200, (

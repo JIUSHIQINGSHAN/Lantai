@@ -265,7 +265,9 @@ class CognitivePattern(SQLModel, table=True):
     # 幂等去重自然键（票 .scratch/review-fixes-2026-10/02）：聚类核心实词签名的
     # sha256 前 16 位；同键已存在则不再插行（每晚反思对同一输入零新增）。
     # 迁移链 v29 之前的存量行为 NULL，NULL 不参与匹配（宁 miss 不脏写）。
-    dedup_key: str | None = Field(default=None, index=True)
+    # 票 68：升 unique——check-then-act 并发双行的 schema 兜底（应用层
+    # IntegrityError 回退更新 last_seen；存量库由迁移 v42 先去重再建唯一索引）。
+    dedup_key: str | None = Field(default=None, index=True, unique=True)
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

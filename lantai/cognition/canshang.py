@@ -25,6 +25,15 @@ from lantai.models.tables import MemoryEdge, MemoryItem
 from lantai.storage import db
 
 
+def _content_tokens(text: str) -> set[str]:
+    """票 68：词级实词集合（jieba，len>1 过滤单字虚词）——佐证 verify_claim
+    与票 65 _relevant_tokens 同源口径。替换单字字符集交叉判主题相关（假矛盾源：
+    「系统管理员启用…」与「下班后管理员关闭…」共享 3 个高频单字即触发）。"""
+    import jieba
+
+    return {w.strip() for w in jieba.cut(text) if len(w.strip()) > 1}
+
+
 @dataclass
 class ConsistencyViolation:
     """参商冲突违例。"""
@@ -79,6 +88,17 @@ OPPOSITE_PAIRS = [
     ("true", "false"),
     ("yes", "no"),
 ]
+
+# 票 68：名词性状态反义子集。这两对的两词本身就是状态主张的本体（部署拓扑/
+# 节点形态），同现即同一对象的相斥状态断言——真矛盾（多主集群 vs 单机独立）
+# 两句间可以零实词交叉，主题交叉闸不适用。其余动词性开关对（启用/关闭作用于
+# 各自宾语）与否定衍生对（支持/不支持、active/inactive）从严：须词级主题
+# 交叉 ≥3 或同实体才判矛盾（否则「管理员启用备份」vs「管理员关闭照明」
+# 成假矛盾，红测锁）。
+_STATE_ANTONYM_PAIRS = {
+    frozenset(("单机", "集群")),
+    frozenset(("单节点", "多节点")),
+}
 
 
 class CanshangEngine:
@@ -170,9 +190,21 @@ class CanshangEngine:
         # 文本中是否涉及共同关键词但结论相斥
         for w1, w2 in OPPOSITE_PAIRS:
             if (w1 in content_a and w2 in content_b) or (w2 in content_a and w1 in content_b):
-                # 检查是否存在主题交叉
-                words_a = set(content_a)
-                words_b = set(content_b)
+                # 票 68：两档判定。名词性状态反义（单机/集群）同现即判——两词
+                # 即状态本体，真矛盾可以零实词交叉。其余对（动词性开关/否定
+                # 衍生）改词级实词交叉——原单字字符集 `set(content)` 对自然
+                # 语言几乎恒 ≥3（的/是/在级高频字），互斥词对只要各自出现一次
+                # 就判「直接矛盾」，无关主题成片误报（假矛盾病灶）。
+                if frozenset((w1, w2)) in _STATE_ANTONYM_PAIRS:
+                    return ConsistencyViolation(
+                        conflicting_memory_ids=[item_a.id, item_b.id],
+                        violation_type="direct_contradiction",
+                        severity="high",
+                        description=f"检测到直接相反的主张（'{w1}' vs '{w2}'）：{wrap_as_data(content_a[:30])} 与 {wrap_as_data(content_b[:30])}",
+                        metadata={"opposite_pair": (w1, w2)},
+                    )
+                words_a = _content_tokens(content_a)
+                words_b = _content_tokens(content_b)
                 overlap = len(words_a & words_b)
                 if overlap >= 3 or is_same_entity:
                     return ConsistencyViolation(

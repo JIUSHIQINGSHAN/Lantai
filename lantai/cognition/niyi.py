@@ -222,7 +222,16 @@ class NiyiEngine:
 
         # 计算置信度浮动与风险评级
         target_conf = patch_data.get("confidence", mem.confidence)
-        conf_delta = float(target_conf) - float(mem.confidence)
+        # 票 68：先验后用——裸 float() 对 "high" 报「could not convert」
+        # （调用方无从自查，REST 面炸 500），1.5/-0.2 越界静默吃进风险评级。
+        # 拒绝而非静默钳制（宁 miss 不脏写）。
+        try:
+            target_conf_f = float(target_conf)
+        except (TypeError, ValueError):
+            raise ValueError(f"confidence 须为 [0, 1] 内数值，收到 {target_conf!r}") from None
+        if not 0.0 <= target_conf_f <= 1.0:
+            raise ValueError(f"confidence 须为 [0, 1] 内数值，收到 {target_conf!r}")
+        conf_delta = target_conf_f - float(mem.confidence)
 
         if proposal_type == "deprecate":
             if impacted_count > 0:

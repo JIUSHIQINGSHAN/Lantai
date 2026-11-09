@@ -247,6 +247,12 @@ class CehouEngine:
             if not self._check_access(owner_id=row.user_id, tenant_id=row.tenant_id):
                 return {"success": False, "message": "无权访问此影子观察视窗"}
 
+            # 票 68：终态（graduated/rolled_back）窗口不再收样本——裁决已定，
+            # 继续收样本只膨胀计数与报警面（大库单窗口报警风暴），且终态指标
+            # 已不再参与任何状态跃迁。先验后写（宁 miss 不脏写）。
+            if row.state != "observing":
+                raise ValueError(f"视窗 {window_id} 已是终态（{row.state}），不再收样本")
+
             row.sample_count += 1
             if success:
                 row.success_count += 1

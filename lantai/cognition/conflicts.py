@@ -51,8 +51,11 @@ def _temporal_recency(item) -> tuple:
         return 0.5, axis
     if base.tzinfo is None:
         base = base.replace(tzinfo=UTC)
-    days_old = (datetime.now(UTC) - base).days
-    return max(0.0, 1.0 - days_old / 30.0), axis
+    # 票 68：未来时间（时钟偏斜/脏输入）视作零天龄并硬钳 [0,1]——原式
+    # max(0.0, 1.0 - days_old/30.0) 对负 days_old 无上钳，3000 年时间戳可
+    # 造出巨值 recency 碾压仲裁权重；宁按 1.0 收敛不奖励异常。
+    days_old = max((datetime.now(UTC) - base).days, 0)
+    return min(1.0, max(0.0, 1.0 - days_old / 30.0)), axis
 
 
 class ConflictEngine:

@@ -308,7 +308,9 @@ class ZhajiEngine:
                 if row:
                     if not self._check_access(owner_id=row.user_id, tenant_id=row.tenant_id):
                         raise PermissionError(f"无权修改此会话札记便签（行级隔离）: {sid}")
-                    row.content = raw_text[:DEFAULT_MAX_CHARS]
+                    # 票 68：落库上界用调用方 max_chars（原硬编码 DEFAULT_MAX_CHARS
+                    # 无视参数——digest 面与落库面上界分裂）
+                    row.content = raw_text[:max_chars]
                     row.updated_at = utcnow()
                     if u_id:
                         row.user_id = u_id
@@ -318,7 +320,8 @@ class ZhajiEngine:
                 else:
                     new_row = SessionScratchpad(
                         session_id=sid,
-                        content=raw_text[:DEFAULT_MAX_CHARS],
+                        # 票 68：同上，与 digest 面同用 max_chars
+                        content=raw_text[:max_chars],
                         user_id=u_id or "default",
                         tenant_id=t_id,
                         created_at=utcnow(),

@@ -204,7 +204,12 @@ class ZuozhengEngine:
                             id=src_mem.id,
                             content=src_mem.content,
                             node_type="memory",
-                            confidence=min(edge.confidence, src_mem.confidence or 0.8),
+                            # 票 68：`or 0.8` 把合法零置信证据抬成 0.8 权重——
+                            # 显式 None 判定（票 14 falsy-or 家族新位点）
+                            confidence=min(
+                                edge.confidence,
+                                src_mem.confidence if src_mem.confidence is not None else 0.8,
+                            ),
                             support_direction=direction,
                             relation_reason=edge.reason or f"关联关系: {direction}",
                             user_id=src_mem.user_id,
