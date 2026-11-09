@@ -15,11 +15,11 @@ from lantai.core.logger import logger
 from lantai.core.text import normalize_for_index
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem, RetrievalEvent
-from lantai.storage.fts import bm25_terms_truncated
 from lantai.parameters.registry import default_snapshot
 from lantai.parameters.validation import snapshot_hash
 from lantai.storage import db
 from lantai.storage.cas import atomic_update
+from lantai.storage.fts import bm25_terms_truncated
 
 
 def _norm_hash(query: str) -> str:

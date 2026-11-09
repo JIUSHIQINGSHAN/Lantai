@@ -21,8 +21,8 @@ from sqlmodel import select
 
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
-from lantai.core.time import utcnow
 from lantai.core.text import truncate_codepoints
+from lantai.core.time import utcnow
 from lantai.evolution.promoter import _make_checkpoint
 from lantai.models.tables import ConflictEvent, LifecycleStatus, MemoryEdge, MemoryItem
 from lantai.retrieval.temporal import _ensure_utc

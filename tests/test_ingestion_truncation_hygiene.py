@@ -30,7 +30,6 @@ from sqlmodel import select
 
 from lantai.models.tables import ConflictEvent, MemoryCandidate, MemoryItem, RetrievalEvent
 
-
 # ── 病灶 1：RSS 摘要 HTML 剥离 ────────────────────────────────────────────
 
 _FEED_XML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -54,7 +53,9 @@ def test_rss_summary_strips_html_and_unescapes(param_env, monkeypatch):
     assert len(docs) == 2, f"两条目都应入库；实得 {len(docs)}"
 
     html_doc = next(d for d in docs if "票49第一段" in (d.content or ""))
-    assert "<p>" not in html_doc.content, f"普通标签随正文进库（病灶实锤）：{html_doc.content[:120]}"
+    assert "<p>" not in html_doc.content, (
+        f"普通标签随正文进库（病灶实锤）：{html_doc.content[:120]}"
+    )
     assert "<a " not in html_doc.content and "<table>" not in html_doc.content
     assert "R&D" in html_doc.content and "&amp;" not in html_doc.content, "实体应已 unescape"
     control = next(d for d in docs if "纯文本控制" in (d.content or ""))
@@ -117,11 +118,11 @@ def test_late_correction_incoming_ref_full_length(param_env):
     """红：250 字 content 走替换型迟到更正，incoming_ref 现状截 200 无标记。
     修复后存全长（冲突判别语义完整性优先，工单口径）。"""
     sf, _engine = param_env
-    old = MemoryItem(id="old49", content="旧结论：数据库用 MySQL", status="active", user_id="u49")
-    new = MemoryItem(id="new49", content=_CONTENT_250, status="active", user_id="u49")
     with sf() as s:
-        s.add(old)
-        s.add(new)
+        s.add(
+            MemoryItem(id="old49", content="旧结论：数据库用 MySQL", status="active", user_id="u49")
+        )
+        s.add(MemoryItem(id="new49", content=_CONTENT_250, status="active", user_id="u49"))
         s.commit()
 
     from datetime import timedelta
@@ -129,11 +130,17 @@ def test_late_correction_incoming_ref_full_length(param_env):
     from lantai.cognition.late_correction import apply_supersede_correction
     from lantai.core.time import utcnow
 
-    res = apply_supersede_correction(old, new, reason="票49更正", actor="t49")
+    with sf() as s2:
+        old = s2.get(MemoryItem, "old49")
+        new = s2.get(MemoryItem, "new49")
+        res = apply_supersede_correction(old, new, session=s2, reason="票49更正", actor="t49")
+        s2.commit()
     assert res.get("ok") is True, f"更正流程真跑失败：{res}"
     with sf() as s:
         ev = s.exec(
-            select(ConflictEvent).where(ConflictEvent.kind == "override", ConflictEvent.memory_id == "old49")
+            select(ConflictEvent).where(
+                ConflictEvent.kind == "override", ConflictEvent.memory_id == "old49"
+            )
         ).first()
         assert ev is not None
         assert ev.incoming_ref == _CONTENT_250, (
@@ -146,9 +153,8 @@ def test_expire_correction_reason_truncation_marked(param_env):
     """红：无界调用方 reason 截 200 无标记。修复后经 truncate_codepoints
     带省略号（有界外部输入保留钳制，但「被截」必须可见）。"""
     sf, _engine = param_env
-    item = MemoryItem(id="exp49", content="到期结论", status="active", user_id="u49")
     with sf() as s:
-        s.add(item)
+        s.add(MemoryItem(id="exp49", content="到期结论", status="active", user_id="u49"))
         s.commit()
 
     from datetime import timedelta
@@ -158,12 +164,15 @@ def test_expire_correction_reason_truncation_marked(param_env):
 
     reason = "失效原因" * 50  # 200 字 → 补一字确保 >200
     reason += "!"
-    res = apply_expire_correction(item, valid_to=utcnow() + timedelta(days=1), reason=reason)
+    with sf() as s2:
+        item = s2.get(MemoryItem, "exp49")
+        res = apply_expire_correction(
+            item, valid_to=utcnow() + timedelta(days=1), reason=reason, session=s2
+        )
+        s2.commit()
     assert res.get("ok") is True, f"失效型更正真跑失败：{res}"
     with sf() as s:
-        ev = s.exec(
-            select(ConflictEvent).where(ConflictEvent.memory_id == "exp49")
-        ).first()
+        ev = s.exec(select(ConflictEvent).where(ConflictEvent.memory_id == "exp49")).first()
         assert ev is not None
         assert ev.incoming_ref.endswith("..."), (
             f"被截 reason 应带省略号尾标；实得尾 10 字：{ev.incoming_ref[-10:]!r}"
@@ -181,7 +190,11 @@ def test_gate_decision_incoming_ref_full_length(param_env, monkeypatch):
     with sf() as s:
         s.add(
             MemoryItem(
-                id="old50", content="系统配置：该服务已禁用", status="active", user_id="u50", importance=0.1
+                id="old50",
+                content="系统配置：该服务已禁用",
+                status="active",
+                user_id="u50",
+                importance=0.1,
             )
         )
         s.add(
@@ -221,10 +234,11 @@ def test_gate_decision_incoming_ref_full_length(param_env, monkeypatch):
 
 
 def test_dialogue_summary_truncation_marked(param_env, monkeypatch):
-    """红：候选摘要 text[:400] 无标记硬截（extractor 离线兜底同形）。
-    修复后经 truncate_codepoints 带「...」尾标（下有 400 字上界、被截可见）。"""
+    """红：候选摘要 400 字硬截无标记（extractor 离线兜底 + dialogue 兜底
+    同形两处）。修复后经 truncate_codepoints 带「...」尾标（400 字上界保留、
+    被截可见）。文本取非 fastpath 形态走真提取链（LLM 缺席 → 离线兜底）。"""
     sf, _engine = param_env
-    text = "记住：项目决策是采用事件溯源架构，" + "理由包括可审计可回放与时序一致等" * 30  # >400 字
+    text = "项目决策已定：采用事件溯源架构，" + "理由包括可审计可回放与时序一致等" * 30  # >400 字
 
     import lantai.parsing.extractor as extractor_mod
 
@@ -237,6 +251,7 @@ def test_dialogue_summary_truncation_marked(param_env, monkeypatch):
 
     res = ingest_dialogue(text, user_id="u51")
     assert res["ingested"] is True
+    assert res["fastpath"] is False, "臂前提：必须走提取路径（fastpath 摘要全长无截断面）"
     with sf() as s:
         cand = s.get(MemoryCandidate, res["candidate_id"])
         assert cand is not None
@@ -244,4 +259,4 @@ def test_dialogue_summary_truncation_marked(param_env, monkeypatch):
             f"候选摘要被截应带省略号尾标；实得尾 20 字：{(cand.summary or '')[-20:]!r}"
         )
         assert len(cand.summary) <= 400
-        assert cand.summary.startswith("记住：项目决策"), "截断保留头部语义"
+        assert cand.summary.startswith("项目决策已定"), "截断保留头部语义"

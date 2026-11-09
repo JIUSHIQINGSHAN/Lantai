@@ -25,8 +25,8 @@ from lantai.core.provenance import (
     make_provenance,
 )
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
 from lantai.core.text import truncate_codepoints
+from lantai.core.time import utcnow
 from lantai.gate.prefilter import NO_MEMORY_PATTERNS
 from lantai.models.tables import MemoryCandidate, RawDocument
 from lantai.parsing.extractor import extract_candidate
