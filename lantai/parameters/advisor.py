@@ -5,7 +5,7 @@ LLM 建议生成器——只提出候选，不直接写 settings / .env / overri
 - 证据引用必须是对应论文正文的真实子串（归一化后），防虚构。
 """
 
-from lantai.core.logger import logger
+from lantai.core.logger import logger, loggable
 from lantai.core.settings import settings
 from lantai.llm.client import chat_json
 from lantai.llm.prompts import PARAM_ADVICE_SYS_V2
@@ -135,7 +135,8 @@ def generate_param_advice(
     try:
         raw = chat_json(get_prompt("PARAM_ADVICE_SYS_V2", PARAM_ADVICE_SYS_V2), user)
     except Exception as e:  # chat_json 内部已重试 3 次
-        logger.warning("param advice LLM call failed: %s", e)
+        # 票 50：SDK 4xx str 可能回显 provider 响应体（请求片段）——单行化+截断
+        logger.warning("param advice LLM call failed: %s", loggable(e, limit=200))
         return {"ok": False, "error_code": "llm_error"}
 
     try:
@@ -146,7 +147,8 @@ def generate_param_advice(
         if isinstance(e, ParamValidationError):
             logger.info("param advice rejected: %s", e)
         else:  # pydantic ValidationError 等
-            logger.info("param advice schema invalid: %s", str(e)[:200])
+            # 票 50：pydantic v2 str 含 [input_value=…] 即 LLM 原始输出——单行化+截断
+            logger.info("param advice schema invalid: %s", loggable(str(e), limit=200))
         return {"ok": False, "error_code": "validation_error"}
 
     return {"ok": True, "payload": result}

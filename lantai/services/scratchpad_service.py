@@ -22,7 +22,7 @@
 
 from sqlmodel import Session
 
-from lantai.core.logger import logger
+from lantai.core.logger import logger, loggable
 from lantai.core.time import utcnow
 from lantai.models.tables import SessionScratchpad
 from lantai.storage import db
@@ -138,7 +138,8 @@ def write_scratchpad(
         s.add(sp)
         s.commit()
         s.refresh(sp)
-        logger.info("札记：会话【%s】已更新便签（len=%d）", sid, len(sp.content))
+        # 票 50：REST 路径段 %0A 解码换行可伪造日志行——sid 过 loggable
+        logger.info("札记：会话【%s】已更新便签（len=%d）", loggable(sid, limit=128), len(sp.content))
         return sp.model_dump(mode="json")
 
     if session is not None:

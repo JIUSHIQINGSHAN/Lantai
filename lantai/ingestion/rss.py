@@ -5,7 +5,7 @@ import feedparser
 from bs4 import BeautifulSoup
 
 from lantai.core.ids import new_id
-from lantai.core.logger import logger
+from lantai.core.logger import logger, loggable
 from lantai.ingestion.base import SourceAdapter
 from lantai.ingestion.safety import fetch_with_safety, sanitize_source_url
 from lantai.models.tables import RawDocument
@@ -33,7 +33,10 @@ class RSSAdapter(SourceAdapter):
         try:
             raw = fetch_with_safety(url)
         except ValueError as e:
-            logger.warning("RSS fetch rejected for %s: %s", url, e)
+            # 票 50：URL 原串（含 ?token= 凭证参数/内嵌换行）不进日志
+            logger.warning(
+                "RSS fetch rejected for %s: %s", loggable(url, limit=200, keep_tail=True), e
+            )
             return []
         feed = feedparser.parse(raw)
         out = []

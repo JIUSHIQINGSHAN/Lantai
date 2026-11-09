@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from lantai.core.logger import logger
+from lantai.core.logger import logger, loggable
 from lantai.llm import client as llm_client
 from lantai.llm.fence import wrap_as_data
 
@@ -186,7 +186,7 @@ class PishaEngine:
                     llm_failed=False,
                 )
         except Exception as exc:
-            logger.warning("披沙：LLM 精炼调用异常，进入确定性降级规则: %s", exc)
+            logger.warning("披沙：LLM 精炼调用异常，进入确定性降级规则: %s", loggable(exc, limit=200))
 
         # 3. 确定性降级路径（宁 miss 不脏写）
         final_text = h_cleaned or raw_text

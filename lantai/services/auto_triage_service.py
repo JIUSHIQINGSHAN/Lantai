@@ -10,7 +10,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from lantai.core.logger import logger
+from lantai.core.logger import logger, loggable
 from lantai.llm import client as llm_client
 from lantai.models.tables import MemoryCandidate
 from lantai.services.candidate_service import review_candidate
@@ -93,7 +93,8 @@ def triage_candidates_batch(
                     )
             return output
     except Exception as exc:
-        logger.warning("AI 智能预审 LLM 调用异常（降级至启发式规则）: %s", exc)
+        # 票 50：SDK 异常 str 单行化+截断（provider 响应体不透传日志）
+        logger.warning("AI 智能预审 LLM 调用异常（降级至启发式规则）: %s", loggable(exc, limit=200))
 
     # 降级策略（规则启发式）
     fallback_output = []

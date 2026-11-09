@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 from sqlmodel import Session, select
 
 from lantai.core.acl import SYSTEM_VIEWER
-from lantai.core.logger import logger
+from lantai.core.logger import logger, loggable
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import CognitiveRole, FailureRecord, LifecycleStatus, MemoryItem
 
@@ -174,7 +174,7 @@ class RunwuEngine:
                     logger.debug("润物联动探颐巡检跳过: %s", ex)
 
         except Exception as e:
-            logger.warning("润物自适应认知提取异常: %s", e)
+            logger.warning("润物自适应认知提取异常: %s", loggable(e, limit=200))
         finally:
             if should_close:
                 session.close()

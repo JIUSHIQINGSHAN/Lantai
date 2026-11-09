@@ -507,11 +507,13 @@ def consolidate_cluster(
                     exc,
                 )
 
+        # 票 50：正文不属于日志（用户记忆 + LLM 提纯产物的第二份无生命周期
+        # 留存）——只记 master.id、簇大小与内容长度（排障锚点，零正文）
         logger.info(
-            "沉潜：成功将 %d 条碎片折叠为主记忆 %s: %s",
+            "沉潜：成功将 %d 条碎片折叠为主记忆 %s（len=%d）",
             len(cluster_items),
             master.id,
-            content[:30],
+            len(content),
         )
         return master
 

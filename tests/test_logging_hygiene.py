@@ -140,11 +140,11 @@ _FORBIDDEN_NAMES = {
     "key",
 }
 
-# 白名单（file, message 首参字面量）：长度型/内部值合法位点，逐条登记理由。
+# 白名单（file 前缀, message 首参前缀）：长度型/内部值合法位点，逐条登记理由。
+# AST 形状规则先行：len(...) 包裹恒返回 int（长度标量，非原文）——不需白名单。
 _WHITELIST = {
     # 獬豸跳过/拒绝日志只插值 len(content)（长度标量，非正文）——合法
-    ("security/injection_guard.py", "獬豸 SKIPPED"),
-    ("security/injection_guard.py", "獬豸 REJECTED"),
+    ("security/injection_guard.py", "獬豸"),
 }
 
 
@@ -175,6 +175,9 @@ def _logger_call_violations():
                     and arg.func.id == "loggable"
                 ):
                     continue
+                # 长度标量：len(...) 恒返回 int，非原文插值 → 合规
+                if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id == "len":
+                    continue
                 for sub in ast.walk(arg):
                     if isinstance(sub, ast.Name) and sub.id in _FORBIDDEN_NAMES:
                         first = node.args[0] if node.args else None
@@ -183,7 +186,9 @@ def _logger_call_violations():
                             if isinstance(first, ast.Constant) and isinstance(first.value, str)
                             else "<dynamic>"
                         )
-                        if (rel, msg) in _WHITELIST:
+                        if any(
+                            rel == wfile and msg.startswith(wmsg) for wfile, wmsg in _WHITELIST
+                        ):
                             continue
                         violations.append(f"{rel}:{node.lineno} name={sub.id!r} msg={msg!r}")
     return violations

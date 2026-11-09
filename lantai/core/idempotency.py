@@ -29,7 +29,7 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 
-from lantai.core.logger import logger
+from lantai.core.logger import logger, loggable
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import IdempotencyKey
@@ -296,7 +296,8 @@ def settle(binding: dict | None, *, ok: bool, result: dict | None = None, task_i
             target = s.exec(select(IdempotencyKey).where(*scope)).first()
             return "gone" if target is None else "n/a"  # 自动指纹键：成功即走，行到期自然失效
     except _DB_ERRORS as exc:
-        logger.error("勘合：settle 失败（key=%s ok=%s）：%s", key, ok, exc)
+        # 票 50：key 宿主透传可含换行——单行化+截断后再进日志
+        logger.error("勘合：settle 失败（key=%s ok=%s）：%s", loggable(key, limit=128), ok, exc)
         return "error"
 
 
@@ -337,7 +338,8 @@ def release(
             s.exec(stmt.execution_options(synchronize_session=False))
             s.commit()
     except _DB_ERRORS as exc:
-        logger.warning("勘合：release 失败（key=%s）：%s", key, exc)
+        # 票 50：同 settle——key 过 loggable
+        logger.warning("勘合：release 失败（key=%s）：%s", loggable(key, limit=128), exc)
 
 
 def purge_expired(now: float | None = None) -> int:

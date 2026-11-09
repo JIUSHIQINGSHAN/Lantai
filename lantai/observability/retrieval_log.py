@@ -11,7 +11,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from lantai.core.ids import new_id
-from lantai.core.logger import logger
+from lantai.core.logger import logger, loggable
 from lantai.core.text import normalize_for_index
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem, RetrievalEvent
@@ -259,11 +259,12 @@ def backfill_used_ids(
                     logger.info("receipt backfill ignored (vetoed is terminal): ev=%s", event_id)
                     return
                 if request_id and ev.request_id and request_id != ev.request_id:
+                    # 票 50：request_id 宿主透传可含换行——单行化+截断
                     logger.warning(
                         "receipt request_id mismatch (kept by event_id): ev=%s ev_req=%s got=%s",
                         event_id,
-                        ev.request_id,
-                        request_id,
+                        loggable(ev.request_id, limit=128),
+                        loggable(request_id, limit=128),
                     )
                 if not _backfill_owner_ok(ev, principal):
                     logger.warning("receipt backfill refused (owner mismatch): ev=%s", event_id)

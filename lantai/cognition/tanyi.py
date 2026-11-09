@@ -17,7 +17,7 @@ from sqlmodel import Session, select
 from ulid import ULID
 
 from lantai.core.acl import ensure_can_delete
-from lantai.core.logger import logger
+from lantai.core.logger import logger, loggable
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import ConflictEvent, MemoryCheckpoint, MemoryItem
@@ -562,9 +562,10 @@ class TanyiProbingEngine:
                     if len(probes) >= limit:
                         break
 
+        # 票 50：同 probing_service——clean_q 过 loggable 单行化+截断
         logger.info(
             "探颐引擎：为查询 '%s' 检出 %d 条主动求证插桩探针",
-            clean_q[:20],
+            loggable(clean_q, limit=20),
             len(probes),
         )
         return probes

@@ -109,10 +109,12 @@ def validate_api_url(url: str) -> str:
 
     防止配置被篡改后，把 Bearer 密钥与记忆全文发送到任意地址。
     强制 https + host ∈ settings.ALLOWED_API_HOSTS。
+    异常 message 只带 parsed.scheme/host（票 50）：key-in-URL 形态
+    （Gemini 式 ``?key=``）的完整 URL 若透传进调用方日志，密钥整条留存。
     """
     parsed = urlparse(url)
     if parsed.scheme != "https":
-        raise ValueError(f"api url must be https: {url}")
+        raise ValueError(f"api url must be https: scheme={parsed.scheme!r}")
     host = (parsed.hostname or "").lower()
     allowed = set(settings.ALLOWED_API_HOSTS)
     if host not in allowed:
