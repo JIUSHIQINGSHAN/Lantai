@@ -106,12 +106,22 @@ def build_xuanjing_topology(
     mem_ids = {m.id for m in memories}
 
     if not mem_ids:
+        # 票 72：两分支 stats 键组必须一致——空图分支同样带 total_*/avg_decay_score
+        # （前端 xuanjing.js:89-95 逐字消费这三个键；空图 avg 语义为 None 非 0）
         return {
             "generated_at": _now_iso(),
             "nodes": [],
             "edges": [],
             "clusters": [],
-            "stats": {"node_count": 0, "edge_count": 0, "lane_counts": {}, "relation_counts": {}},
+            "stats": {
+                "node_count": 0,
+                "edge_count": 0,
+                "lane_counts": {},
+                "relation_counts": {},
+                "total_nodes": 0,
+                "total_edges": 0,
+                "avg_decay_score": None,
+            },
         }
 
     # 查询涉及候选记忆的拓扑边
@@ -222,6 +232,14 @@ def build_xuanjing_topology(
             "edge_count": len(edges),
             "lane_counts": dict(Counter(n["lane"] for n in nodes)),
             "relation_counts": dict(Counter(e["relation"] for e in edges)),
+            # 票 72：前端 xuanjing.js:89-95 消费的三键——total_*/avg_decay_score
+            # 此前服务端从不输出，「平均时效」控件恒显 '—'、计数被 ??
+            # 掩盖成本次加载量；avg 取节点 decay_score 均值（round 3 位）
+            "total_nodes": len(nodes),
+            "total_edges": len(edges),
+            "avg_decay_score": (
+                round(sum(n["decay_score"] for n in nodes) / len(nodes), 3) if nodes else None
+            ),
         },
     }
 

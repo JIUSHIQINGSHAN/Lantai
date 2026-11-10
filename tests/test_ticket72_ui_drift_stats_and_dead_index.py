@@ -86,7 +86,6 @@ def _create_mem(mid: str, content: str, decay_score: float) -> MemoryItem:
 def test_arm1a_empty_graph_stats_has_frontend_keys(graph_env):
     """空图态：GET /graph/xuanjing → stats 含前端消费全键；total/avg 语义正确
     （空图 total_nodes=0、avg_decay_score=None）。"""
-    session_factory = graph_env
     client = TestClient(__import__("lantai.api.app", fromlist=["app"]).app)
     resp = client.get("/graph/xuanjing")
     assert resp.status_code == 200, resp.text
