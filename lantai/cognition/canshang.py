@@ -114,11 +114,6 @@ class CanshangEngine:
         self.principal = principal
         self._conflict_engine = ConflictEngine()
 
-    def _get_session(self) -> Session:
-        if self.session is not None:
-            return self.session
-        return db.get_session()  # 票 67 弃用：仅存量调用兼容，公开方法已拆双轨
-
     def _check_access(self, item: MemoryItem) -> bool:
         """行级租户与属主 ACL 隔离校验。"""
         if self.principal is None:

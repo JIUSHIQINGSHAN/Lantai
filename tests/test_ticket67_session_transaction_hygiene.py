@@ -29,7 +29,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine
-from sqlmodel.pool import StaticPool
 
 import lantai.storage.db as db_module
 from lantai.cognition.canshang import CanshangEngine

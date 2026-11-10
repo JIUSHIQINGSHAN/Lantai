@@ -59,11 +59,6 @@ class JuanzongEngine:
         self.session = session
         self.principal = principal
 
-    def _get_session(self) -> Session:
-        if self.session is not None:
-            return self.session
-        return db.get_session()  # 票 67 弃用：仅存量调用兼容，公开方法已拆双轨
-
     def _check_access(self, dossier: Dossier) -> bool:
         """行级租户与属主 ACL 隔离校验（票 57：None 收敛 "default" 不再全放）。"""
         if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):

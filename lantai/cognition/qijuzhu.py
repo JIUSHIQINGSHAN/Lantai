@@ -56,11 +56,6 @@ class QijuzhuEngine:
         self.session = session
         self.principal = principal
 
-    def _get_session(self) -> Session:
-        if self.session is not None:
-            return self.session
-        return db.get_session()  # 票 67 弃用：仅存量调用兼容，公开方法已拆双轨
-
     def _check_memory_access(self, item: MemoryItem) -> bool:
         """MemoryItem 租户与 ACL 权限校验（宁 miss 不脏写）。"""
         if self.principal is None:
