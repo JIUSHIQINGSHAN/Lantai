@@ -12,7 +12,7 @@ import jieba
 from sqlmodel import Session, col, select
 from ulid import ULID
 
-from lantai.core.logger import logger, loggable
+from lantai.core.logger import loggable, logger
 from lantai.core.settings import settings
 from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import ConflictEvent, FactAtomic, MemoryCheckpoint, MemoryItem
@@ -328,7 +328,9 @@ def detect_memory_probes(
                 )
 
         # 票 50：clean_q 只 strip 边缘、内部换行存活，20 字窗也够伪造行——过 loggable
-        logger.info("探颐：针对查询 '%s' 检出 %d 个主动探针", loggable(clean_q, limit=20), len(probes))
+        logger.info(
+            "探颐：针对查询 '%s' 检出 %d 个主动探针", loggable(clean_q, limit=20), len(probes)
+        )
         return probes
 
     if active_session is not None:

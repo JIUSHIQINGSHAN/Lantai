@@ -29,7 +29,7 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 
-from lantai.core.logger import logger, loggable
+from lantai.core.logger import loggable, logger
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import IdempotencyKey

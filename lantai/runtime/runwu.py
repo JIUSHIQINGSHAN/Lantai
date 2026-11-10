@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 from sqlmodel import Session, select
 
 from lantai.core.acl import SYSTEM_VIEWER
-from lantai.core.logger import logger, loggable
+from lantai.core.logger import loggable, logger
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import CognitiveRole, FailureRecord, LifecycleStatus, MemoryItem
 

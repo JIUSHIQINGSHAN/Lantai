@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from lantai.core.ids import new_id
-from lantai.core.logger import logger, loggable
+from lantai.core.logger import loggable, logger
 from lantai.core.text import query_norm_hash
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem, RetrievalEvent

@@ -17,7 +17,7 @@ from sqlmodel import Session, select
 from ulid import ULID
 
 from lantai.core.acl import ensure_can_delete
-from lantai.core.logger import logger, loggable
+from lantai.core.logger import loggable, logger
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import ConflictEvent, MemoryCheckpoint, MemoryItem

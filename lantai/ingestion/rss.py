@@ -5,7 +5,7 @@ import feedparser
 from bs4 import BeautifulSoup
 
 from lantai.core.ids import new_id
-from lantai.core.logger import logger, loggable
+from lantai.core.logger import loggable, logger
 from lantai.ingestion.base import SourceAdapter
 from lantai.ingestion.safety import fetch_with_safety, sanitize_source_url
 from lantai.models.tables import RawDocument

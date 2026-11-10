@@ -387,9 +387,7 @@ def collect_pipeline_metrics(session, *, now: datetime | None = None, principal=
                 "id": latest_param.id,
                 "status": latest_param.status,
                 "error_code": latest_param.error_code or "",
-                "created_at": iso_utc(latest_param.created_at)
-                if latest_param.created_at
-                else None,
+                "created_at": iso_utc(latest_param.created_at) if latest_param.created_at else None,
             }
             if latest_param
             else None

@@ -5,7 +5,7 @@ LLM 建议生成器——只提出候选，不直接写 settings / .env / overri
 - 证据引用必须是对应论文正文的真实子串（归一化后），防虚构。
 """
 
-from lantai.core.logger import logger, loggable
+from lantai.core.logger import loggable, logger
 from lantai.core.settings import settings
 from lantai.llm.client import chat_json
 from lantai.llm.prompts import PARAM_ADVICE_SYS_V2

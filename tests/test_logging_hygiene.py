@@ -47,7 +47,9 @@ def test_mokan_audit_log_no_forged_line_and_truncated(param_env, caplog):
             params={"query": evil_query, "limit": 5},
             headers={"X-API-Key": "test"},
         )
-    assert r.status_code == 200, f"真 app 磨勘路由应 200（红必须红在日志病灶而非 5xx）：{r.status_code}"
+    assert r.status_code == 200, (
+        f"真 app 磨勘路由应 200（红必须红在日志病灶而非 5xx）：{r.status_code}"
+    )
     hits = [rec.getMessage() for rec in caplog.records if "磨勘" in rec.getMessage()]
     assert hits, "磨勘审计完成日志应存在（真链路直跑）"
     line = hits[-1]
@@ -87,10 +89,13 @@ def test_consolidation_success_log_no_content(param_env, caplog):
 
         from lantai.services.consolidation_service import consolidate_cluster
 
-        with patch(
-            "lantai.services.consolidation_service.chat_json",
-            return_value=dict(_PURIFIED),
-        ), caplog.at_level(logging.INFO, logger="lantai"):
+        with (
+            patch(
+                "lantai.services.consolidation_service.chat_json",
+                return_value=dict(_PURIFIED),
+            ),
+            caplog.at_level(logging.INFO, logger="lantai"),
+        ):
             master = consolidate_cluster(cluster_items=frags, session=s)
 
     assert master is not None, "off 直写路径应产出主记忆（链路真跑前提）"
@@ -187,7 +192,11 @@ def _logger_call_violations():
                 ):
                     continue
                 # 长度标量：len(...) 恒返回 int，非原文插值 → 合规
-                if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id == "len":
+                if (
+                    isinstance(arg, ast.Call)
+                    and isinstance(arg.func, ast.Name)
+                    and arg.func.id == "len"
+                ):
                     continue
                 for sub in ast.walk(arg):
                     if isinstance(sub, ast.Name) and sub.id in _FORBIDDEN_NAMES:
@@ -197,9 +206,7 @@ def _logger_call_violations():
                             if isinstance(first, ast.Constant) and isinstance(first.value, str)
                             else "<dynamic>"
                         )
-                        if any(
-                            rel == wfile and msg.startswith(wmsg) for wfile, wmsg in _WHITELIST
-                        ):
+                        if any(rel == wfile and msg.startswith(wmsg) for wfile, wmsg in _WHITELIST):
                             continue
                         violations.append(f"{rel}:{node.lineno} name={sub.id!r} msg={msg!r}")
     return violations

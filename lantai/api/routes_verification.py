@@ -50,9 +50,7 @@ def verification_stats() -> dict:
                     "pass_count": st.pass_count,
                     "fail_count": st.fail_count,
                     "fail_streak": st.fail_streak,
-                    "last_verified_at": (
-                        iso_utc(st.last_verified_at) or None
-                    ),
+                    "last_verified_at": (iso_utc(st.last_verified_at) or None),
                     "penalty": reliability.reliability_penalty(st.venue_class),
                 }
             )

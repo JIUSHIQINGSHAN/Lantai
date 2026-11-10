@@ -9,8 +9,8 @@ from datetime import UTC, datetime, timezone
 
 from sqlmodel import select
 
-from lantai.core.time import iso_utc
 from lantai.core.acl import viewer_of
+from lantai.core.time import iso_utc
 from lantai.models.tables import MemoryItem
 from lantai.services.edge_service import get_causal_chain
 from lantai.storage import db

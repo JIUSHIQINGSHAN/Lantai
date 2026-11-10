@@ -18,7 +18,7 @@ from typing import Any
 from sqlmodel import Session, select
 
 from lantai.core.acl import is_system_viewer, viewer_of
-from lantai.core.time import iso_utc, ensure_aware, utcnow
+from lantai.core.time import ensure_aware, iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem
 from lantai.storage import db

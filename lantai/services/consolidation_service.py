@@ -24,7 +24,7 @@ from sqlmodel import Session, select
 from ulid import ULID
 
 from lantai.core.ids import new_id
-from lantai.core.logger import logger, loggable
+from lantai.core.logger import loggable, logger
 from lantai.core.settings import settings
 from lantai.core.time import iso_utc, utcnow
 from lantai.llm.client import chat_json
@@ -310,7 +310,9 @@ def consolidate_cluster(
         except Exception as exc:
             # 票 50：SDK 异常 str 可能回显 provider 响应体（含簇内记忆片段）
             # ——单行化+截断，同 advisor.py 口径
-            logger.warning("沉潜：LLM 提纯失败，保持原库不变（宁 miss 不脏写）: %s", loggable(exc, limit=200))
+            logger.warning(
+                "沉潜：LLM 提纯失败，保持原库不变（宁 miss 不脏写）: %s", loggable(exc, limit=200)
+            )
             return None
 
         if not isinstance(res, dict) or not res.get("consolidated_content"):

@@ -233,9 +233,7 @@ def defer_candidate(
             "ok": True,
             "candidate_id": candidate_id,
             "review_due_at": iso_utc(next_due),
-            "previous_review_due_at": (
-                iso_utc(c.previous_review_due_at) or None
-            ),
+            "previous_review_due_at": (iso_utc(c.previous_review_due_at) or None),
             "defer_count": c.defer_count,
         }
 

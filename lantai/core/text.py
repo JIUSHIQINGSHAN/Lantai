@@ -55,9 +55,7 @@ def query_norm_hash(query: str) -> str:
     消费点：retrieval_log._norm_hash（检索事件 query_norm_hash 列，全 64 位）、
     mokan 审计日志 query_fp（取前 16 位）——归一改动两处同步，同文同指纹。
     """
-    digest = hashlib.sha256(
-        " ".join(normalize_for_index(query).split()).lower().encode("utf-8")
-    )
+    digest = hashlib.sha256(" ".join(normalize_for_index(query).split()).lower().encode("utf-8"))
     return digest.hexdigest()
 
 

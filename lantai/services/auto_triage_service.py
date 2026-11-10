@@ -10,7 +10,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from lantai.core.logger import logger, loggable
+from lantai.core.logger import loggable, logger
 from lantai.llm import client as llm_client
 from lantai.models.tables import MemoryCandidate
 from lantai.services.candidate_service import review_candidate
