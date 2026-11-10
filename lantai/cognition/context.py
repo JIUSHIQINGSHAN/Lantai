@@ -420,8 +420,18 @@ class CognitiveContext:
                 subject = item.get("subject", "")
                 c = item.get("content", "")
                 priority = item.get("priority", "normal")
+                # 票 63 半边 4：subject/sender 与 content 同包樊篱——subject
+                # 是用户可控自由文本（信使跨会话投递），dispatch 入口獬豸闸
+                # 只防指令覆盖形态，樊篱闭合标记形态（獬豸不命中）只能靠
+                # 渲染面围栏拦（两层防线）；sender 同族面一并包裹。
+                fenced_subject = wrap_as_data(
+                    str(subject), item_id=f"qingniao-subject-{lid}", score=1.0
+                )
+                fenced_sender = wrap_as_data(
+                    str(sender), item_id=f"qingniao-sender-{lid}", score=1.0
+                )
                 qn_lines.append(
-                    f"- [青鸟·M{idx} ({priority}) [发信方: {sender}] [主题: {subject}]] {wrap_as_data(str(c), item_id=f'qingniao-{lid}', score=1.0)}"
+                    f"- [青鸟·M{idx} ({priority}) [发信方: {fenced_sender}] [主题: {fenced_subject}]] {wrap_as_data(str(c), item_id=f'qingniao-{lid}', score=1.0)}"
                 )
 
             sections.insert(0, "\n".join(qn_lines))
