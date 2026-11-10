@@ -42,17 +42,23 @@ import threading
 import pytest
 
 from lantai.cognition.context import CognitiveContext
-from lantai.cognition.qingniao import _QINGNIAO_MAILBOX, QingniaoEngine
+from lantai.cognition.qingniao import (
+    _QINGNIAO_MAILBOX,
+    _QINGNIAO_MESSAGE_KEYS,
+    QingniaoEngine,
+)
 from lantai.core.auth import Principal
 from lantai.security.injection_guard import check_prompt_injection
 
 
 @pytest.fixture(autouse=True)
 def clean_mailbox():
-    """每次测试前后清空进程内信箱（模块级全局 dict，防串染）。"""
+    """每次测试前后清空进程内信箱与幂等索引（两全局同生共死，防串染）。"""
     _QINGNIAO_MAILBOX.clear()
+    _QINGNIAO_MESSAGE_KEYS.clear()
     yield
     _QINGNIAO_MAILBOX.clear()
+    _QINGNIAO_MESSAGE_KEYS.clear()
 
 
 def _dispatch(engine, *, receiver="agent_alpha", subject="正常协作主题", content="正常协作正文"):
@@ -208,6 +214,64 @@ def test_arm3c_message_key_dedup_single_row():
     )
     assert r1["letter"]["letter_id"] == r2["letter"]["letter_id"], "重复投递未返回原信"
     assert r2["dispatch"].get("deduplicated") is True, "重复投递未如实标注 deduplicated"
+
+
+def test_arm3d_message_key_dedup_tenant_scoped():
+    """自审 Spec 轴实抓真 bug：幂等索引键须含租户/属主维度——跨租户同
+    namespace+key 投递若共享索引会返回**他人原信 dict（含正文）**，dispatch
+    返回路径绕过 tenant 闸与属主闸（越权泄漏，脏写）。修复后 tenant-2 同
+    key 投递必须是自己的新信，与 tenant-1 原信互不可见。"""
+    engine_a = QingniaoEngine(principal=Principal(user_id="user_a", tenant_id="tenant-1"))
+    r_a = engine_a.dispatch_letter(
+        sender_agent_id="agent_sender",
+        receiver_agent_id="agent_alpha",
+        subject="租户甲的机密订单同步",
+        content="租户甲专属正文：季度营收数据。",
+        message_key="order-sync-1",
+    )
+
+    engine_b = QingniaoEngine(principal=Principal(user_id="user_b", tenant_id="tenant-2"))
+    r_b = engine_b.dispatch_letter(
+        sender_agent_id="agent_sender",
+        receiver_agent_id="agent_beta",
+        subject="租户乙的普通通知",
+        content="租户乙正文。",
+        message_key="order-sync-1",
+    )
+
+    assert r_b["letter"]["letter_id"] != r_a["letter"]["letter_id"], (
+        "跨租户同 message_key 返回了他人原信（dispatch 返回路径绕过两道闸）"
+    )
+    assert "租户甲专属正文" not in str(r_b["letter"]), (
+        "tenant-2 的 dispatch 回执泄出租户-1 信函正文"
+    )
+    assert len(_QINGNIAO_MAILBOX) == 2, "跨租户同 key 被误合并成单行"
+
+
+def test_arm3e_message_key_dedup_user_scoped_same_tenant():
+    """同租户跨 user 同 key 投递同理不共享幂等索引（属主闸在返回路径成立）。"""
+    engine_a = QingniaoEngine(principal=Principal(user_id="user_a", tenant_id="tenant-1"))
+    r_a = engine_a.dispatch_letter(
+        sender_agent_id="agent_sender",
+        receiver_agent_id="agent_alpha",
+        subject="甲的私人备忘",
+        content="甲的私人正文。",
+        message_key="memo-1",
+    )
+
+    engine_b = QingniaoEngine(principal=Principal(user_id="user_b", tenant_id="tenant-1"))
+    r_b = engine_b.dispatch_letter(
+        sender_agent_id="agent_sender",
+        receiver_agent_id="agent_beta",
+        subject="乙的普通备忘",
+        content="乙的正文。",
+        message_key="memo-1",
+    )
+
+    assert r_b["letter"]["letter_id"] != r_a["letter"]["letter_id"], (
+        "同租户跨 user 同 message_key 返回了他人原信"
+    )
+    assert "甲的私人正文" not in str(r_b["letter"]), "user_b 的 dispatch 回执泄出 user_a 信函正文"
 
 
 # ── 半边 4：subject 绕獬豸 / 渲染面裸奔（两层防线各一臂）──────────────────

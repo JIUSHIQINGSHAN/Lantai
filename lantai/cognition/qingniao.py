@@ -22,6 +22,7 @@ from typing import Any
 from sqlmodel import Session
 from ulid import ULID
 
+from lantai.core.acl import viewer_of
 from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.security.injection_guard import assert_no_prompt_injection
@@ -140,9 +141,8 @@ class QingniaoEngine:
         assert_no_prompt_injection(content)
 
         principal = self.principal
-        user_id = (
-            getattr(principal, "user_id", None) or "default" if principal is not None else "default"
-        )
+
+        user_id = viewer_of(principal)
         # 票 63 半边 1（写侧）：tenant None 收敛 "default"（票 57 家族范式）——
         # 读侧同收敛后过滤无条件建立，NULL 半边（过滤整段跳过）消灭。
         tenant_id = (
@@ -153,10 +153,13 @@ class QingniaoEngine:
 
         # 票 63 决策点 B：message_key 幂等——显式参数（非 sender+receiver+
         # subject 隐式派生：不同业务方同主题投递会被误合并，脏写）。同 key
-        # 同 namespace 重复投递返回原信 + deduplicated 如实标注。
+        # 同 namespace 同租户同属主重复投递返回原信 + deduplicated 如实标注。
+        # 索引键含 (tenant, user) 维度（自审 Spec 轴实抓：缺维度时跨租户/跨
+        # user 同 key 投递会返回他人原信 dict 含正文——dispatch 返回路径绕过
+        # tenant 闸与属主闸，越权泄漏）。
         message_key = message_key.strip() if isinstance(message_key, str) else ""
         if message_key:
-            dedup_idx = (namespace, message_key)
+            dedup_idx = (namespace, tenant_id, user_id, message_key)
             existing_id = _QINGNIAO_MESSAGE_KEYS.get(dedup_idx)
             if existing_id is not None and existing_id in _QINGNIAO_MAILBOX:
                 existing = _QINGNIAO_MAILBOX[existing_id]
@@ -194,7 +197,7 @@ class QingniaoEngine:
             "namespace": namespace,
         }
         if message_key:
-            _QINGNIAO_MESSAGE_KEYS[(namespace, message_key)] = letter_id
+            _QINGNIAO_MESSAGE_KEYS[(namespace, tenant_id, user_id, message_key)] = letter_id
 
         result = QingniaoDispatchResult(
             is_dispatched=True,
@@ -236,7 +239,6 @@ class QingniaoEngine:
             if principal is not None
             else "default"
         )
-        from lantai.core.acl import viewer_of
 
         viewer = viewer_of(principal)
 
@@ -311,7 +313,6 @@ class QingniaoEngine:
             if principal is not None
             else "default"
         )
-        from lantai.core.acl import viewer_of
 
         viewer = viewer_of(principal)
 
@@ -339,7 +340,7 @@ class QingniaoEngine:
                 "status": current,
                 "receiver_agent_id": receiver_agent_id,
                 "acknowledged_at": raw.get("acknowledged_at"),
-                "already_" + ("acknowledged" if action == "ack" else "rejected"): True,
+                "already_" + new_status: True,
             }
         if current in ("acknowledged", "rejected"):
             raise ValueError(
