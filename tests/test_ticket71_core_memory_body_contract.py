@@ -108,9 +108,13 @@ def _http_put(port: int, target: str, *, json_body: bytes | None, token: str) ->
 
 
 def test_arm1a_query_string_secret_hits_access_log(live_server, caplog):
-    """现状契约（query 形态）：PUT /core-memory?block=policy&content=SECRET →
-    uvicorn.access 记录含 SECRET 明文（泄漏面实锤）。修复后本臂随契约切换
-    改为红锁：query 形态 404/422，SECRET 不可能进日志。"""
+    """旧 query 契约**拒收锁**（票 71 契约切换后）：PUT /core-memory?block=...&
+    content=SECRET → 422（body 契约下 FastAPI query 参数校验拒绝，旧形态不可
+    再携带正文入库），且 SECRET 不落库（GET 读回无该内容）。红阶段的现状锁
+    实锤过 SECRET 进 uvicorn.access（红日志 ticket71-red.log），修复后此臂
+    转为防旧形态回潮的拒收面。"""
+    import json as _json
+
     port = live_server
     token = (
         "test"  # conftest DEV MODE：settings.API_KEY 已被清空，X-API-Key 失配走 default principal
@@ -121,11 +125,20 @@ def test_arm1a_query_string_secret_hits_access_log(live_server, caplog):
         json_body=None,
         token=token,
     )
-    assert status == 200, f"现状 query 形态应 200（契约现状锁），实际 {status}"
+    assert status == 422, f"旧 query 形态应被拒收 422（body 契约），实际 {status}"
     lines = _access_lines(caplog)
     assert lines, "uvicorn.access 无记录（取证机制失效）"
-    assert SECRET in "\n".join(lines), (
-        f"泄漏臂前提失效：query 形态的 SECRET 未进访问日志（取证面漂移）。\n{lines[:3]}"
+
+    # 旧形态未能写库（读回验证——正文没进去）
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/core-memory?namespace=default",
+        headers={"X-API-Key": token},
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = _json.loads(resp.read().decode())
+    blocks = data.get("blocks", []) if isinstance(data, dict) else []
+    assert not any(SECRET in str(b) for b in blocks), (
+        f"旧 query 形态的正文穿透进了库（拒收面失守）：{blocks}"
     )
 
 
@@ -153,8 +166,8 @@ def test_arm1b_body_secret_never_in_access_log(live_server, caplog):
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
         data = _json.loads(resp.read().decode())
-    got = data.get("policy", {}) if isinstance(data, dict) else {}
-    assert SECRET in str(got), f"body 写入未落库（读回失败）：{data}"
+    blocks = data.get("blocks", []) if isinstance(data, dict) else []
+    assert any(SECRET in str(b) for b in blocks), f"body 写入未落库（读回失败）：{data}"
 
 
 # ── 臂 2：功能回归臂（TestClient 真内存库双面）────────────────────────────
@@ -163,9 +176,9 @@ def test_arm1b_body_secret_never_in_access_log(live_server, caplog):
 @pytest.fixture()
 def client(monkeypatch):
     """同 test_console_api_contracts.py 的 client 夹具（文件内夹具非全局）。"""
-    import lantai.core.auth as auth_module
     from fastapi.testclient import TestClient
 
+    import lantai.core.auth as auth_module
     from lantai.api.app import app
 
     monkeypatch.setattr(auth_module, "db_has_api_key", lambda: False)
@@ -204,11 +217,14 @@ def test_arm3_no_query_form_callers_remain():
     offenders: list[str] = []
     scan_roots = [root / "lantai", root / "tests", root / "docs", root / "README.md"]
     # 病灶形状：PUT + core-memory? 同行（GET 读面带 query 参数是合法契约；
-    # studio.js 模板串形态 `core-memory?${params}` 由第三分支抓取）
+    # studio.js 模板串形态 `core-memory?${params}` 由第三分支抓取；
+    # TestClient params= 分行形态由第四分支抓取——core-memory 行之后 3 行内
+    # 出现 params= + block/content 键即 query-form PUT）
     pattern = re.compile(
         r"(put|PUT)[^\n]*core-memory\?"
         r"|core-memory\?[^\n]*(block|content)"
         r"|core-memory\?\$\{"
+        r'|params\s*=\s*\{[^}]*"(block|content)"'
     )
     self_file = str(Path(__file__).relative_to(root)).replace("\\", "/")
     for base in scan_roots:

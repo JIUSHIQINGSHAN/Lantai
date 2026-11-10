@@ -166,8 +166,9 @@ class TestCoreMemoryOwnership:
             _as(
                 _principal("user-A", "t-A"),
                 lambda: c.put(
+                    # 票 71：正文改 JSON body（撤出 URL 查询串）
                     "/core-memory",
-                    params={"block": "policy", "content": "A 的私有策略", "namespace": "ns-x"},
+                    json={"block": "policy", "content": "A 的私有策略", "namespace": "ns-x"},
                 ),
             )
             resp = _as(_principal("user-B", "t-B"), lambda: c.get("/core-memory?namespace=ns-x"))
@@ -181,15 +182,16 @@ class TestCoreMemoryOwnership:
             r1 = _as(
                 _principal("user-A", "t-A"),
                 lambda: c.put(
+                    # 票 71：body 契约
                     "/core-memory",
-                    params={"block": "policy", "content": "第一版", "namespace": "ns-y"},
+                    json={"block": "policy", "content": "第一版", "namespace": "ns-y"},
                 ),
             )
             r2 = _as(
                 _principal("user-A", "t-A"),
                 lambda: c.put(
                     "/core-memory",
-                    params={"block": "policy", "content": "第二版", "namespace": "ns-y"},
+                    json={"block": "policy", "content": "第二版", "namespace": "ns-y"},
                 ),
             )
             assert r1.json()["version"] == 1
@@ -208,7 +210,7 @@ class TestCoreMemoryOwnership:
                 _principal("user-A", "t-A"),
                 lambda: c.put(
                     "/core-memory",
-                    params={"block": "policy", "content": "A 的策略", "namespace": "ns-cols"},
+                    json={"block": "policy", "content": "A 的策略", "namespace": "ns-cols"},
                 ),
             )
         with session_factory() as s:
