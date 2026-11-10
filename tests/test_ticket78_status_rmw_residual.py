@@ -338,6 +338,144 @@ class TestReviveUnconsolidateVersionClaim:
             assert m.version >= 2
 
 
+class TestReviveLoserReceiptHonesty:
+    """自审 Spec 轴实抓两 REAL-BUG 的修复锁（票 78 补笔）：败方路径回执如实性。
+
+    BUG-A（record_ops_service.py 簇形态循环）：`_revive_one` 败方返回 (False,
+    False) 并记 warning，但循环 `revived += 1` 无条件计数——回执
+    fragments_revived 虚报（败方碎片没起复却计入起复数）。
+    BUG-B（unconsolidate 主记忆败方路）：sync_vector_delete（外部非事务副作用）
+    在主记忆 CAS 之前执行——败方 rollback 只撤 FTS 删除，向量删除已成事实，
+    active 记忆静默丢向量索引，且回执硬编码 vector_removed=False 失实（实际已删）。
+
+    修复语义（cas.py 方案 A 契约内）：主记忆认领（CAS）挪到 FTS/向量副作用
+    之前——胜方才动副作用，败方零副作用如实返回（vector_removed 按实情记
+    None 语义或不含失实硬编码）；_revive_one 返回三态（None=败方 / tuple=胜方），
+    簇循环消费返回值计数，败方不进 fragments_revived。
+    """
+
+    def test_cluster_revive_loser_not_counted_in_fragments_revived(self, param_env):
+        """BUG-A：簇形态下并发纠错抢先认领碎片 v2 → A 侧该碎片败方跳过，
+        fragments_revived 不得虚报为 1（应为 0 + warning 如实记）。"""
+        session_factory, _ = param_env
+        master = _mem("mem_t78g", status="active")
+        master.source_ids = ["frag_t78g"]
+        frag = _mem("frag_t78g", status="consolidated")
+        with session_factory() as s:
+            s.add(master)
+            s.add(frag)
+            from lantai.models.tables import MemoryEdge
+
+            s.add(
+                MemoryEdge(
+                    id="edge_t78g",
+                    source_memory_id="mem_t78g",
+                    target_memory_id="frag_t78g",
+                    relation="supersedes",
+                    confidence=0.9,
+                )
+            )
+            s.commit()
+
+        import lantai.services.record_ops_service as ro_mod
+
+        racing = {"done": False}
+        real_utcnow = ro_mod.utcnow
+
+        def _utcnow_with_interleave():
+            out = real_utcnow()
+            if not racing["done"]:
+                racing["done"] = True
+                # B 侧在 A 首条 DML 之前完整真实纠错碎片（correct 只拦 retracted，
+                # consolidated 可纠错）→ 碎片 version 1→2
+                out_b = correct_memory("frag_t78g", new_content="并发纠错正文", reason="票78并发")
+                assert out_b.get("ok"), f"B 侧纠错应成功：{out_b}"
+            return out
+
+        with patch(
+            "lantai.services.record_ops_service.utcnow", side_effect=_utcnow_with_interleave
+        ):
+            out = revive_consolidated("mem_t78g", reason="票78撤销全簇")
+
+        assert out.get("ok"), f"簇撤销主语义应成功（主记忆 CAS 未受 B 影响）：{out}"
+        assert out.get("fragments_revived") == 0, (
+            f"败方碎片不得计入 fragments_revived（回执虚报）：{out}"
+        )
+        assert any("frag_t78g" in w for w in out.get("warnings", [])), (
+            f"败方碎片应留 warning 明细：{out.get('warnings')}"
+        )
+        with session_factory() as s:
+            frag_row = s.get(MemoryItem, "frag_t78g")
+            # 败方碎片状态不得被覆写：B 纠错后仍是 consolidated（v2）
+            assert frag_row.status == "consolidated", f"败方碎片状态被覆写成 {frag_row.status!r}"
+            assert frag_row.version == 2
+
+    def test_unconsolidate_loser_no_vector_side_effect(self, param_env):
+        """BUG-B：主记忆败方路不得动向量库副作用（sync_vector_delete 在 CAS
+        前执行=败方也删了向量索引），回执 vector_removed 不得硬编码 False 失实。"""
+        session_factory, _ = param_env
+        master = _mem("mem_t78h", status="active")
+        master.source_ids = ["frag_t78h"]
+        frag = _mem("frag_t78h", status="consolidated")
+        with session_factory() as s:
+            s.add(master)
+            s.add(frag)
+            from lantai.models.tables import MemoryEdge
+
+            s.add(
+                MemoryEdge(
+                    id="edge_t78h",
+                    source_memory_id="mem_t78h",
+                    target_memory_id="frag_t78h",
+                    relation="supersedes",
+                    confidence=0.9,
+                )
+            )
+            s.commit()
+
+        import lantai.services.record_ops_service as ro_mod
+
+        vector_delete_calls: list[str] = []
+        real_delete = ro_mod.sync_vector_delete
+
+        racing = {"done": False}
+        real_utcnow = ro_mod.utcnow
+
+        def _utcnow_with_interleave():
+            out = real_utcnow()
+            if not racing["done"]:
+                racing["done"] = True
+                out_b = correct_memory("mem_t78h", new_content="并发纠错正文", reason="票78并发")
+                assert out_b.get("ok"), f"B 侧纠错应成功：{out_b}"
+            return out
+
+        def _recording_delete(mid: str) -> bool:
+            vector_delete_calls.append(mid)
+            return real_delete(mid)
+
+        with (
+            patch("lantai.services.record_ops_service.utcnow", side_effect=_utcnow_with_interleave),
+            patch(
+                "lantai.services.record_ops_service.sync_vector_delete",
+                side_effect=_recording_delete,
+            ),
+        ):
+            out = revive_consolidated("mem_t78h", reason="票78撤销全簇")
+
+        # 败方主记忆：CAS 落空 → 不得有任何向量删除副作用
+        assert vector_delete_calls == [], (
+            f"主记忆败方路仍执行了向量删除（副作用先于认领）：{vector_delete_calls}"
+        )
+        # 回执不得硬编码 vector_removed=False 失实——如实标注本侧未执行
+        assert out.get("vector_removed") is not False or out.get("warnings"), (
+            f"回执 vector_removed 失实（硬编码 False 而向量未被动）：{out}"
+        )
+        with session_factory() as s:
+            m = s.get(MemoryItem, "mem_t78h")
+            assert m.status == "active", f"败方主记忆状态被覆写成 {m.status!r}"
+            assert m.version == 2, f"败方主记忆 version 被覆写：{m.version}"
+
+
 # ══ #4：状态覆写族逐点（P3）═══════════════════════════════════════════════════
 
 
