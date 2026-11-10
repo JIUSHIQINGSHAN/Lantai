@@ -42,12 +42,13 @@ def test_seam1_pure_remedy_generation(db_session: Session):
         valid_to=now - timedelta(days=1),
         decay_class="exponential",
     )
-    # 2. 制造一条被替代记忆
+    # 2. 制造一条被替代记忆（票 62：诊断改读 superseded_by 列——旧种子
+    # structure={"superseded_by"} 是死键（全仓零写点），必须走真实写列路径
+    # KnowledgeLifecycleManager.supersede）
     superseded_mem = MemoryItem(
         id="mem_sup_01",
         content="老版认证接口规范",
         status="active",
-        structure={"superseded_by": "mem_sup_new"},
     )
     # 3. 制造一条低帮助碎片
     unhelpful_mem = MemoryItem(
@@ -58,6 +59,13 @@ def test_seam1_pure_remedy_generation(db_session: Session):
         helpful_count=0,
     )
     db_session.add_all([expired_mem, superseded_mem, unhelpful_mem])
+    db_session.commit()
+    # 票 62：真实 supersede 写列路径（列：lifecycle_status + superseded_by）
+    from lantai.cognition.lifecycle import KnowledgeLifecycleManager
+
+    KnowledgeLifecycleManager(db_session).supersede(
+        superseded_mem, MemoryItem(id="mem_sup_new", content="新版认证接口规范")
+    )
     db_session.commit()
 
     engine = SanxingEngine(session=db_session)
@@ -107,7 +115,6 @@ def test_seam3_batch_health_score_transition(db_session: Session):
         id="mem_stale_01",
         content="废弃 API 路由",
         status="active",
-        structure={"superseded_by": "mem_new_01"},
     )
     mem_low_help = MemoryItem(
         id="mem_low_01",
@@ -118,6 +125,13 @@ def test_seam3_batch_health_score_transition(db_session: Session):
         importance=0.8,
     )
     db_session.add_all([mem_stale, mem_low_help])
+    db_session.commit()
+    # 票 62：同 seam1——死键种子改真实写列路径
+    from lantai.cognition.lifecycle import KnowledgeLifecycleManager
+
+    KnowledgeLifecycleManager(db_session).supersede(
+        mem_stale, MemoryItem(id="mem_new_01", content="新版 API 路由")
+    )
     db_session.commit()
 
     engine = SanxingEngine(session=db_session)

@@ -185,8 +185,13 @@ class EvolutionEngine:
                 if self.db is not None and pat.source_ids:
                     from sqlmodel import select
 
+                    # 票 62：Evidence 读面 = status=="active"（对齐 zuozheng.py:148
+                    # 正确范式）——非 active 证据行（撤销/归档）不再参与认识论评分
                     rows = self.db.exec(
-                        select(Evidence).where(Evidence.source_memory_id.in_(pat.source_ids))
+                        select(Evidence).where(
+                            Evidence.source_memory_id.in_(pat.source_ids),
+                            Evidence.status == "active",
+                        )
                     ).all()
                     if rows:
                         evidence_quality = sum(r.reliability * r.independence for r in rows) / len(
@@ -243,8 +248,12 @@ class EvolutionEngine:
             else:
                 # 动态根据支撑证据与反思用量计算稳定性与有效性
                 if self.db is not None and b.source_ids:
+                    # 票 62：同 propose_beliefs——Evidence 读面只认 active 行
                     rows = self.db.exec(
-                        select(Evidence).where(Evidence.source_memory_id.in_(b.source_ids))
+                        select(Evidence).where(
+                            Evidence.source_memory_id.in_(b.source_ids),
+                            Evidence.status == "active",
+                        )
                     ).all()
                     if rows:
                         evidence_quality = sum(r.reliability * r.independence for r in rows) / len(

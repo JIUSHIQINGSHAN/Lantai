@@ -80,6 +80,10 @@ class ConflictEngine:
         evidence_strength = mean(reliability × independence) over all active Evidence rows.
         independence_mean = mean(independence) over same rows.
         Falls back to (0.5, 0.5) when no Evidence found or session is None.
+
+        票 62：docstring 此前自述「active」但查询无 status 过滤（名实不符）——
+        对齐 zuozheng.py:148 同仓正确范式，Evidence 读面 = status=="active"
+        （Evidence 表无 lifecycle 列，单键即可）。
         """
         if session is None:
             return 0.5, 0.5
@@ -88,7 +92,11 @@ class ConflictEngine:
 
         from lantai.models.tables import Evidence
 
-        rows = session.exec(select(Evidence).where(Evidence.source_memory_id == item.id)).all()
+        rows = session.exec(
+            select(Evidence).where(
+                Evidence.source_memory_id == item.id, Evidence.status == "active"
+            )
+        ).all()
 
         if not rows:
             return 0.5, 0.5

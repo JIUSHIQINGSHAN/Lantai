@@ -145,6 +145,10 @@ class SanxingEngine:
         eval_now = now or utcnow()
 
         def _evaluate(s: Session) -> SanxingHealthSnapshot:
+            # 票 62：扫描集保持 status==active 不加 lifecycle 白名单——三省是
+            # 自愈面，「superseded_but_active 残留」正是它要检出的缺陷对象；
+            # 若按读面白名单滤掉 superseded 行，下方诊断就成二阶死代码。
+            # superseded 行的退出由 generate_remedies(auto_apply) 落地。
             stmt = select(MemoryItem).where(MemoryItem.status == STATUS_ACTIVE)
             scope = self._owned_memory_scope()
             if scope is not None:
@@ -156,13 +160,19 @@ class SanxingEngine:
             unhelpful_items: list[dict[str, Any]] = []
 
             for item in active_items:
-                struct = item.structure or {}
-                if struct.get("superseded_by"):
+                # 票 62：死诊断修复——原读 structure["superseded_by"] dict 键，
+                # 全仓 grep 实锤 superseded_by 只写**列**（lifecycle.py:74 /
+                # late_correction.py:91 / zhiming.py:322），零写点写 structure
+                # 键 → 诊断恒假。改读列：真实 supersede（status 仍 active，
+                # lifecycle=SUPERSEDED + superseded_by）后才算「已替代仍活跃」
+                # 的真实残留。活跃集已按认识论白名单过滤，能进这里的
+                # lifecycle 必为 active/weakened——superseded 列非空即残留。
+                if item.superseded_by:
                     superseded_stale.append(
                         {
                             "id": item.id,
                             "content": item.content,
-                            "superseded_by": struct.get("superseded_by"),
+                            "superseded_by": item.superseded_by,
                             "reason": "superseded_but_active",
                             "user_id": item.user_id,
                             "tenant_id": item.tenant_id,

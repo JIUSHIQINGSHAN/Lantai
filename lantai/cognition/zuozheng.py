@@ -129,7 +129,12 @@ class ZuozhengEngine:
 
     def _inspect_evidence(self, s: Session, memory_id: str, max_depth: int) -> dict[str, Any]:
         target = s.get(MemoryItem, memory_id)
-        if not target or target.status != "active":
+        # 票 62：认识论态过滤——supersede 只写 lifecycle_status=superseded
+        # （status 仍 active），只看 status 时被取代旧主张仍可作佐证目标。
+        if not target or target.status != "active" or (target.lifecycle_status or "") not in (
+            "active",
+            "weakened",
+        ):
             return ProofChain(target_memory_id=None, target_content="").to_dict()
 
         if not self._check_access(
@@ -189,7 +194,12 @@ class ZuozhengEngine:
                     visited_ids.add(src_id)
 
                     src_mem = s.get(MemoryItem, src_id)
-                    if not src_mem or src_mem.status != "active":
+                    # 票 62：superseded 邻居（status 仍 active）不参与证据链扩散
+                    if (
+                        not src_mem
+                        or src_mem.status != "active"
+                        or (src_mem.lifecycle_status or "") not in ("active", "weakened")
+                    ):
                         continue
                     if not self._check_access(
                         owner_id=src_mem.user_id,
@@ -260,7 +270,11 @@ class ZuozhengEngine:
         tokens = set(cut_words) if cut_words else set(re.findall(r"[\w一-龥]+", claim.lower()))
         meaningful_tokens = {t for t in tokens if len(t) > 1} or tokens
 
-        stmt = select(MemoryItem).where(MemoryItem.status == "active")
+        stmt = select(MemoryItem).where(
+            MemoryItem.status == "active",
+            # 票 62：断言佐证只认认识论生效行（同 inspect 口径）
+            MemoryItem.lifecycle_status.in_(("active", "weakened")),
+        )
         all_memories = s.exec(stmt).all()
 
         scored_nodes: list[tuple[float, EvidenceNode]] = []

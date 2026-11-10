@@ -104,6 +104,12 @@ def _mem(
     return item
 
 
+def _mem_ownerless(s: Session, mid: str, content: str, **kw) -> MemoryItem:
+    """ownerless 行（user_id/tenant_id=None）——内部运维面（principal=None 收敛
+    viewer=default）下的可见行口径。"""
+    return _mem(s, mid, content, user_id=None, tenant_id=None, **kw)
+
+
 def _supersede(s: Session, old: MemoryItem, new_id: str) -> MemoryItem:
     """真实 supersede 写列路径（KnowledgeLifecycleManager.supersede，禁手搓字段）。"""
     return KnowledgeLifecycleManager(s).supersede(old, MemoryItem(id=new_id, content="新版"))
@@ -153,7 +159,7 @@ def test_arm1_muci_catalog_excludes_archived_retracted_superseded(db_session):
     sup = _mem(db_session, "mem-sup", "已被取代记忆的正文", domain="user", lane="fact")
     _supersede(db_session, sup, "mem-sup-new")
 
-    engine = MuciEngine(session=db_session, principal=Principal(user_id="user-1", tenant_id="t1"))
+    engine = MuciEngine(session=db_session, principal=Principal(user_id="user-1", tenant_id="tenant-1"))
     cat = engine.build_catalog(detail_level="full", max_entries_per_section=10)
 
     # 红病灶 1a：archived/retracted/superseded 全文混入目录
@@ -366,11 +372,11 @@ def test_arm5c_canshang_audit_scans_only_whitelisted_lifecycle(db_session):
 
 
 def test_arm6_gouchen_dredge_excludes_retracted(db_session):
-    # 对照（语义回归）：archived 沉埋行照常打捞
+    # 对照（语义回归）：archived 沉埋行照常打捞（正文含查询词「档案」）
     _mem(
         db_session,
         "gc-archived",
-        "早期遗留的已归档架构文档",
+        "早期遗留的已归档档案架构文档",
         status="archived",
         confidence=0.5,
         structure=None,
@@ -402,9 +408,11 @@ def test_arm6_gouchen_dredge_excludes_retracted(db_session):
 
 
 def test_arm7_sanxing_superseded_stale_reads_column(db_session):
-    old = _mem(db_session, "sx-old", "老版认证接口规范")
+    old = _mem_ownerless(db_session, "sx-old", "老版认证接口规范")
     _supersede(db_session, old, "sx-old-new")
 
+    # principal=None（三省自省是内部运维面）——_owned_memory_scope 收敛
+    # viewer=default；种子行 user_id=None（ownerless 兼容口径人人可读）
     snapshot = SanxingEngine(session=db_session).evaluate_health()
 
     # 红病灶：structure["superseded_by"] 全仓零写点 → 诊断恒假（死代码）

@@ -97,7 +97,17 @@ class MuciEngine:
             max_entries_per_section: full 模式下每板块最大摘录条目数
         """
         session = self._get_session()
-        query = select(MemoryItem).order_by(
+        # 票 62：读面 lifecycle 过滤（口径=tables.py 正交注释 + 票 15 shiyi 先例）：
+        # status 是管道态、lifecycle_status 是认识论态，supersede 只写 lifecycle
+        # （status 仍 active）——只看 status 时 archived/retracted 之外的
+        # superseded 行全文混进目录、活跃计数虚高。白名单 = 管道 active +
+        # 认识论 {active, weakened}（weakened 语义「仍参与检索但权重降低」，
+        # retired「等同于 archived」排除）。DDL NOT NULL DEFAULT 'active'，
+        # 无需 NULL 防御分支。
+        query = select(MemoryItem).where(
+            MemoryItem.status == "active",
+            MemoryItem.lifecycle_status.in_(("active", "weakened")),
+        ).order_by(
             MemoryItem.importance.desc(), MemoryItem.updated_at.desc()
         )
 
@@ -123,7 +133,13 @@ class MuciEngine:
         all_domains = set()
         all_lanes = set()
         total_memories = len(visible_items)
-        active_memories = sum(1 for it in visible_items if it.status == "active")
+        # 票 62：活跃计数 = 管道态 active 且认识论态 active（weakened 算在册
+        # 不算活跃；superseded 行已被上方白名单过滤，此处不重复判定）
+        active_memories = sum(
+            1
+            for it in visible_items
+            if it.status == "active" and (it.lifecycle_status or "") == "active"
+        )
 
         # 排序：确保输出稳定可测（按 domain 再按 lane）
         for (sec_domain, sec_lane), sec_items in sorted(
@@ -148,7 +164,12 @@ class MuciEngine:
                 "domain": sec_domain,
                 "lane": sec_lane,
                 "count": len(sec_items),
-                "active_count": sum(1 for it in sec_items if it.status == "active"),
+                # 票 62：板块活跃计数同全库口径（认识论 active 才计）
+                "active_count": sum(
+                    1
+                    for it in sec_items
+                    if it.status == "active" and (it.lifecycle_status or "") == "active"
+                ),
                 "tags": sorted(list(tags_set))[:10],
                 "latest_event_at": iso_utc(latest_time) or None,
             }

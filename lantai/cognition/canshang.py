@@ -20,6 +20,7 @@ from sqlmodel import Session, select
 
 from lantai.cognition.conflicts import ConflictEngine, _temporal_recency
 from lantai.core.auth import Principal
+from lantai.core.logger import logger
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryEdge, MemoryItem
 from lantai.storage import db
@@ -230,10 +231,19 @@ class CanshangEngine:
         if memory_ids:
             for mid in memory_ids:
                 item = s.get(MemoryItem, mid)
-                if item and self._check_access(item) and item.status == "active":
+                # 票 62：认识论态过滤——superseded 行（status 仍 active）退出审计
+                if (
+                    item
+                    and self._check_access(item)
+                    and item.status == "active"
+                    and (item.lifecycle_status or "") in ("active", "weakened")
+                ):
                     items.append(item)
         elif entity_name:
-            query = select(MemoryItem).where(MemoryItem.status == "active")
+            query = select(MemoryItem).where(
+                MemoryItem.status == "active",
+                MemoryItem.lifecycle_status.in_(("active", "weakened")),
+            )
             if (
                 self.principal is not None
                 and not self.principal.is_admin
@@ -255,7 +265,10 @@ class CanshangEngine:
                         if len(items) >= limit:
                             break
         else:
-            query = select(MemoryItem).where(MemoryItem.status == "active")
+            query = select(MemoryItem).where(
+                MemoryItem.status == "active",
+                MemoryItem.lifecycle_status.in_(("active", "weakened")),
+            )
             if (
                 self.principal is not None
                 and not self.principal.is_admin
@@ -293,7 +306,14 @@ class CanshangEngine:
             ).all()
             for e in edges:
                 target_node = s.get(MemoryItem, e.target_memory_id)
-                if not target_node or not self._check_access(target_node):
+                # 票 62：retracted/superseded target（s.get 主键直读双绕一切
+                # SQL scope）不参与多跳因果推演
+                if (
+                    not target_node
+                    or target_node.status != "active"
+                    or (target_node.lifecycle_status or "") not in ("active", "weakened")
+                    or not self._check_access(target_node)
+                ):
                     continue
                 # 检查 target_node 是否与集合中其他记忆直接矛盾
                 for other_item in items:
@@ -348,8 +368,24 @@ class CanshangEngine:
         items: list[MemoryItem] = []
         for mid in conflicting_ids:
             it = s.get(MemoryItem, mid)
-            if it and self._check_access(it):
+            # 票 62：非生效侧拒绝参与仲裁（s.get 主键直读双绕一切 SQL scope）。
+            # 宁 miss 不脏写：retracted 是笔削裁定（主张错误全检索面禁用）、
+            # superseded 是已取代旧值，二者都不得凭高分翻案；跳过留痕供审计。
+            if (
+                it
+                and it.status == "active"
+                and (it.lifecycle_status or "") in ("active", "weakened")
+                and self._check_access(it)
+            ):
                 items.append(it)
+            elif it is not None:
+                logger.info(
+                    "参商仲裁：记忆 [%s] 处于非生效态（status=%s, lifecycle=%s），"
+                    "拒绝参与仲裁（宁 miss 不脏写）",
+                    mid,
+                    it.status,
+                    it.lifecycle_status,
+                )
 
         if not items:
             return DeepArbitrationResult(

@@ -135,7 +135,12 @@ class GouchenEngine:
         ref_now = now or utcnow()
 
         def _run(s: Session) -> GouchenResult:
-            stmt = select(MemoryItem).where(MemoryItem.status != "deleted")
+            # 票 62：retracted 是笔削裁定（ADR-0047，主张错误即全检索面禁用、
+            # 不可自动复活）——不只不在 is_sunken 判定里，候选集本身就排除，
+            # 防止高 sunken_score 的 retracted 行经「沉埋」通道回灌检索面。
+            stmt = select(MemoryItem).where(
+                MemoryItem.status != "deleted", MemoryItem.status != "retracted"
+            )
             # 行级 ACL 过滤（票 57：None 收敛 viewer_of="default"，不再裸奔全库；
             # 显式系统身份/admin 全表——acl.py 立法语义，同 kaogong 已写对范式）
             if not (getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal)):
@@ -228,7 +233,10 @@ class GouchenEngine:
         t_anchor = ensure_aware(anchor_time) or utcnow()
 
         def _run(s: Session) -> HistoricalContext:
-            stmt = select(MemoryItem).where(MemoryItem.status != "deleted")
+            # 票 62：同 dredge——retracted 笔削内容不进历史语境快照
+            stmt = select(MemoryItem).where(
+                MemoryItem.status != "deleted", MemoryItem.status != "retracted"
+            )
             # 行级 ACL 过滤（票 57：None 收敛 viewer_of="default"，不再裸奔全库；
             # 显式系统身份/admin 全表——acl.py 立法语义，同 kaogong 已写对范式）
             if not (getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal)):
