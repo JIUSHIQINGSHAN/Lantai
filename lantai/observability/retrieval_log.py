@@ -5,14 +5,12 @@
 后续 dry-run/shadow 用这些事件做相对指标（zero_result / jaccard / 弱命中率）。
 """
 
-import hashlib
-
 from sqlalchemy import func
 from sqlmodel import select
 
 from lantai.core.ids import new_id
 from lantai.core.logger import logger, loggable
-from lantai.core.text import normalize_for_index
+from lantai.core.text import query_norm_hash
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem, RetrievalEvent
 from lantai.parameters.registry import default_snapshot
@@ -23,9 +21,9 @@ from lantai.storage.fts import bm25_terms_truncated
 
 
 def _norm_hash(query: str) -> str:
-    # 票 45：指纹过归一缝（观测口径不参与召回）——全角/半角同文同指纹
-    digest = hashlib.sha256(" ".join(normalize_for_index(query).split()).lower().encode("utf-8"))
-    return digest.hexdigest()
+    # 票 50 自审收敛：归一口径上移 core.text.query_norm_hash 单真源
+    # （mokan 审计日志 query_fp 同源，观测口径不参与召回）
+    return query_norm_hash(query)
 
 
 # 系统注入噪音的确定性前缀（Hermes 技能库维护 / 记忆保存 / Skill 安装模板）。
@@ -198,7 +196,9 @@ def _touch_keepalive(mem_ids: list[str], *, principal=None, event_id: str = "") 
                         )
                     except Exception:
                         logger.warning(
-                            "receipt keepalive skipped (not owner): mem=%s ev=%s", mid, event_id
+                            "receipt keepalive skipped (not owner): mem=%s ev=%s",
+                            mid,
+                            loggable(event_id, limit=128),
                         )
                         continue
                 # 票 23：注入计数原子 UPDATE（coalesce+1 对当前已提交值求值，
@@ -255,19 +255,21 @@ def backfill_used_ids(
                 ev = s.get(RetrievalEvent, event_id)
                 if not ev:
                     return
+                # 票 50：event_id/request_id 均来自 REST 回执请求体（宿主可控，
+                # 可含换行伪造日志行）——本函数五处插值统一过 loggable
+                ev_log = loggable(event_id, limit=128)
                 if ev.receipt_status == "vetoed":
-                    logger.info("receipt backfill ignored (vetoed is terminal): ev=%s", event_id)
+                    logger.info("receipt backfill ignored (vetoed is terminal): ev=%s", ev_log)
                     return
                 if request_id and ev.request_id and request_id != ev.request_id:
-                    # 票 50：request_id 宿主透传可含换行——单行化+截断
                     logger.warning(
                         "receipt request_id mismatch (kept by event_id): ev=%s ev_req=%s got=%s",
-                        event_id,
+                        ev_log,
                         loggable(ev.request_id, limit=128),
                         loggable(request_id, limit=128),
                     )
                 if not _backfill_owner_ok(ev, principal):
-                    logger.warning("receipt backfill refused (owner mismatch): ev=%s", event_id)
+                    logger.warning("receipt backfill refused (owner mismatch): ev=%s", ev_log)
                     return
                 # 覆盖写之前先取「本轮新增的 used_ids」与「本事件召回过的 id」：
                 # 保活回写只认这两者的交集（重放同一回执不累加、夹带外来 id 不计）。
@@ -291,10 +293,10 @@ def backfill_used_ids(
                     bump = [mid for mid in used_ids if mid not in already and mid in recalled]
                     break
                 s.rollback()
-                logger.info("receipt backfill raced; retrying on fresh state: ev=%s", event_id)
+                logger.info("receipt backfill raced; retrying on fresh state: ev=%s", ev_log)
             else:
                 logger.warning(
-                    "receipt backfill abandoned after retries (non-fatal): ev=%s", event_id
+                    "receipt backfill abandoned after retries (non-fatal): ev=%s", ev_log
                 )
                 return
         # 回执先落库，再单开事务做保活回写（票 03 病灶 2）：回写失败不能倒过来把

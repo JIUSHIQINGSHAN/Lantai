@@ -13,14 +13,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import hashlib
 from typing import Any
 
 from sqlmodel import Session, col, or_, select
 
 from lantai.core.acl import SYSTEM_VIEWER, Principal, is_system_viewer, viewer_of
 from lantai.core.logger import logger
-from lantai.core.text import normalize_for_index
+from lantai.core.text import query_norm_hash
 from lantai.core.time import utcnow
 from lantai.llm.fence import escape_attr, wrap_as_data
 from lantai.models.tables import MemoryEdge, MemoryItem
@@ -329,15 +328,9 @@ class MokanEngine:
         )
 
         # 票 50：query 是用户全可控值（REST %0A 可伪造日志行）——原话不进
-        # 日志（不截窗：50 字窗内仍可携带伪造行前半），只记指纹（观测口径
-        # 同 retrieval_log._norm_hash：NFKC 归一 + 小写，同文同指纹）
-        query_fp = (
-            hashlib.sha256(
-                " ".join(normalize_for_index(query).split()).lower().encode("utf-8")
-            ).hexdigest()[:16]
-            if query
-            else ""
-        )
+        # 日志（不截窗：50 字窗内仍可携带伪造行前半），只记指纹（单真源
+        # core.text.query_norm_hash，同 retrieval_log._norm_hash 归一口径）
+        query_fp = query_norm_hash(query)[:16] if query else ""
         logger.info(
             "磨勘：审计完成（query_fp=%s，总计 %d，证实 %d，争议 %d）",
             query_fp,

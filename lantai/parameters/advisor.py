@@ -145,7 +145,9 @@ def generate_param_advice(
         )
     except (ParamValidationError, Exception) as e:
         if isinstance(e, ParamValidationError):
-            logger.info("param advice rejected: %s", e)
+            # 票 50：message 内嵌 LLM 可控 ch.name/quote 文本（validation.py）
+            # ——同块 pydantic 臂同病同修，单行化+截断
+            logger.info("param advice rejected: %s", loggable(e, limit=200))
         else:  # pydantic ValidationError 等
             # 票 50：pydantic v2 str 含 [input_value=…] 即 LLM 原始输出——单行化+截断
             logger.info("param advice schema invalid: %s", loggable(str(e), limit=200))

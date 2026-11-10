@@ -126,6 +126,7 @@ def test_api_url_reject_log_has_no_secret(caplog, monkeypatch):
 # ── 臂 4：哨兵——logger 插值不得直用用户可控原文变量（AST 全仓扫描）──────
 
 # 票 50 锁定面：用户可控/宿主透传原文变量名。经 loggable() 包装即合规。
+# （review 加固：event_id/stripped——REST 回执体与 URL 剥边别名同属原文形态）
 _FORBIDDEN_NAMES = {
     "query",
     "clean_q",
@@ -134,18 +135,19 @@ _FORBIDDEN_NAMES = {
     "combined_content",
     "combined",
     "url",
+    "stripped",
     "sid",
     "session_id",
     "request_id",
+    "event_id",
     "key",
 }
 
 # 白名单（file 前缀, message 首参前缀）：长度型/内部值合法位点，逐条登记理由。
 # AST 形状规则先行：len(...) 包裹恒返回 int（长度标量，非原文）——不需白名单。
-_WHITELIST = {
-    # 獬豸跳过/拒绝日志只插值 len(content)（长度标量，非正文）——合法
-    ("security/injection_guard.py", "獬豸"),
-}
+# review 收窄：白名单条目须精确到具体 message（前缀不得宽到「任意 獬豸 开头
+# 消息」，那会把未来的原文插值也豁免掉）；新增条目须附理由。
+_WHITELIST = set()
 
 
 def _logger_call_violations():
@@ -163,9 +165,18 @@ def _logger_call_violations():
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
                 and node.func.attr in {"debug", "info", "warning", "error", "exception", "critical"}
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "logger"
             ):
+                continue
+            # review 加固：接收者不限于裸名 logger——logging.getLogger(__name__)
+            # 内联形态与别名变量同在锁定面
+            recv = node.func.value
+            if isinstance(recv, ast.Name):
+                if recv.id != "logger":
+                    continue
+            elif isinstance(recv, ast.Call) and isinstance(recv.func, ast.Attribute):
+                if recv.func.attr != "getLogger":
+                    continue
+            else:
                 continue
             for arg in node.args:
                 # 修复形态：参数整体经 loggable() 包装 → 合规
@@ -204,3 +215,38 @@ def test_logger_interpolation_sentinel():
         "logger 插值直用用户可控原文变量（须 loggable() 包装或白名单登记）：\n"
         + "\n".join(violations)
     )
+
+
+# ── AGENTS.md 测试纪律：loggable 本体不 mock 冒烟（review 发现 6）──────────
+
+
+def test_loggable_smoke_real_inputs():
+    """核心 helper 直调冒烟（不 mock）：单行化、控制符转义、截断、keep_tail
+    真尾部、None/非字符串输入、有界性（超长输入不产生超长输出）。"""
+    from lantai.core.logger import loggable
+
+    # 单行化：换行统一转义为 \n 字面量（\r、\r\n 同口径）——不再是真换行
+    assert loggable("a\nb\rc\r\nd") == "a\\nb\\nc\\nd"
+    assert "\n" not in loggable("x\ny")
+    # 控制符 → \xNN；\t 保留
+    assert loggable("a\x00b\x1fc\td") == "a\\x00b\\x1fc\td"
+    # 截断：默认保头 + …
+    assert loggable("很" * 60, limit=10) == "很" * 9 + "…"
+    assert len(loggable("很" * 60, limit=10)) <= 10
+    # keep_tail：真尾部语义（review 发现 1——此前实现保头，语义反转）
+    out = loggable("HEADTAIL" + "x" * 50, limit=10, keep_tail=True)
+    assert out.startswith("…"), f"keep_tail 应以前导 … 标示截头：{out!r}"
+    assert "HEADTAIL" not in out, f"keep_tail 应保留尾部而非头部：{out!r}"
+    assert len(out) <= 10
+    # URL 形态：尾部 query 参数位在 keep_tail 下可见
+    url_out = loggable("https://e.co/f?token=SECRETVALUE", limit=20, keep_tail=True)
+    assert "SECRETVALUE" in url_out
+    # limit=None：只单行化不截断
+    assert loggable("a\nb" * 100, limit=None) == "a\\nb" * 100
+    # None → ""；非字符串 → str() 后同口径
+    assert loggable(None) == ""
+    assert loggable(ValueError("boom\nline2")) == "boom\\nline2"
+    # 有界性：5 MB 输入 + 20 字日志位 → 输出恒 ≤20
+    big = "很" * 250_000
+    assert len(loggable(big, limit=20)) <= 20
+    assert len(loggable(big, limit=20, keep_tail=True)) <= 20

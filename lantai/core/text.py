@@ -1,5 +1,6 @@
 """共享文本工具：码点安全截断 + 总字符预算 + 来源链字段规范化（单一真源）。"""
 
+import hashlib
 import re
 import unicodedata
 
@@ -45,6 +46,19 @@ def truncate_codepoints(text: str, max_chars: int, suffix: str) -> str:
     if max_chars <= len(suffix):
         return "".join(cps[:max_chars])
     return "".join(cps[: max_chars - len(suffix)]).rstrip() + suffix
+
+
+def query_norm_hash(query: str) -> str:
+    """查询指纹单真源（票 50 自审收敛，单一真源纪律）：sha256(归一小写)。
+
+    归一口径 = normalize_for_index（NFKC→剥零宽/bidi→NFC）+ 空白折叠 + 小写。
+    消费点：retrieval_log._norm_hash（检索事件 query_norm_hash 列，全 64 位）、
+    mokan 审计日志 query_fp（取前 16 位）——归一改动两处同步，同文同指纹。
+    """
+    digest = hashlib.sha256(
+        " ".join(normalize_for_index(query).split()).lower().encode("utf-8")
+    )
+    return digest.hexdigest()
 
 
 def apply_recall_budget(lines: list[str], max_total_chars: int) -> tuple[list[str], int]:

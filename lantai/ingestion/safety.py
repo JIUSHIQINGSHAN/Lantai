@@ -68,7 +68,12 @@ def sanitize_source_url(url: str) -> str:
     stripped = url.strip()
     parsed = urlparse(stripped)
     if parsed.scheme not in settings.SSRF_ALLOWED_SCHEMES or not parsed.hostname:
-        logger.warning("source url rejected by scheme whitelist: %r", stripped[:200])
+        # 票 50：URL 原串可能含 ?token= 凭证参数——只记 scheme/host 形状
+        logger.warning(
+            "source url rejected by scheme whitelist: scheme=%r host=%r",
+            parsed.scheme,
+            parsed.hostname,
+        )
         return ""
     return stripped
 
