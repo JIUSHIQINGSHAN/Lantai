@@ -40,7 +40,11 @@ _RHETORICAL_SHAPES = re.compile(
 # 票 56：兼语/来源形状——自称捕获值以代词开头（「我叫他…」的「他明天来
 # 开会」是兼语句，「我叫」非自称）或「从…来/来的」来源结构开头（「我是
 # 从上海来的」是来源说明非自称）时放行。按宁 miss 从宽，只覆盖显然族。
-_PRONOUN_PREFIXES = ("他", "她", "它", "你", "我", "他们", "她们", "它们")
+# （单字前缀已覆盖复数项「他们/她们/它们」的 startswith 语义，不重复列。）
+_PRONOUN_PREFIXES = ("他", "她", "它", "你", "我")
+# 来源结构（预编译，与本文件既有正则同为模块级常量；「从…来」贪心已
+# 覆盖「来的/而来」尾，不设冗余分支）
+_SOURCE_SHAPE_RE = re.compile(r"^从.+(?:来|而来)")
 
 # 1. Fact 轨：用户自称、职业、居住地（注意：更具体的职业优先于通用自称，防“我是一名”被“我是”前缀截胡）
 _FACT_RULES = [
@@ -124,11 +128,13 @@ class ZhishuEngine:
                     if val:
                         # 负向检查 4（票 56）：兼语/来源形状——捕获值以代词
                         # 开头（兼语句）或「从…来/来的」来源结构开头（来源
-                        # 说明）时放行，宁 miss 不脏写
-                        if val.startswith(_PRONOUN_PREFIXES) or re.match(
-                            r"^从.+(?:来|来的|而来)", val
-                        ):
-                            break
+                        # 说明）时放行，宁 miss 不脏写。直接 return None：
+                        # release 必须终结整个 fact 轨——若只 break 内层，
+                        # 句子会落进下一条更不具体的自称轨被改道吞掉
+                        # （`我是一名他尊敬的老师` → 职业轨 release → 自称轨
+                        # 仍脏写「一名他尊敬的老师」，rail 还换了）。
+                        if val.startswith(_PRONOUN_PREFIXES) or _SOURCE_SHAPE_RE.match(val):
+                            return None
                         return cls._build_result(
                             lane="fact",
                             rail="fact",

@@ -225,6 +225,14 @@ class TestZhishuRhetoricalPrecision:
         assert ZhishuEngine.parse("我叫他明天来开会") is None
         assert ZhishuEngine.parse("我是从上海来的") is None
 
+    def test_release_terminates_whole_fact_rail_not_rechannel(self):
+        """自审臂（spec 轴实抓）：release 必须终结整个 fact 轨——`break` 只跳
+        内层会把句子落进下一条更不具体的自称轨改道吞掉：`我是一名他尊敬的
+        老师` 职业轨 release 后自称轨仍脏写「一名他尊敬的老师」（rail 还换
+        了）；`我是一名从上海来的工程师` 同理。修复后两形状必须 None。"""
+        assert ZhishuEngine.parse("我是一名他尊敬的老师") is None
+        assert ZhishuEngine.parse("我是一名从上海来的工程师") is None
+
     def test_interrogative_none_must_come_from_shape_not_suffix_luck(self):
         """红臂（句尾换字不再翻车）：`我是不是搞错了什么` 现仅因句尾「么」
         撞后缀表侥幸 None；同形状换非疑问句尾（句号收尾）必须仍 None——
