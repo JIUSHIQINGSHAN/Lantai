@@ -65,12 +65,15 @@ def test_arm1_pre_compress_module_removed():
     residue: list[str] = []
     for base in ("lantai", "tests", "scripts"):
         for f in (ROOT / base).rglob("*.py"):
+            rel = str(f.relative_to(ROOT)).replace("\\", "/")
+            if rel == "tests/test_ticket77_precompress_dead_wiring_removal.py":
+                continue  # 本文件自证行（docstring 引用病灶原文）豁免，票 72 arm3 同款
             try:
                 text = f.read_text(encoding="utf-8")
             except OSError:
                 continue
             if "pre_compress" in text:
-                residue.append(str(f.relative_to(ROOT)))
+                residue.append(rel)
     assert not residue, f"活代码面 pre_compress 残留（删除案）：{residue}"
 
 

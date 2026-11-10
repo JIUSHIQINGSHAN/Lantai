@@ -37,7 +37,7 @@ class AddMemoryReq(BaseModel):
         default="private"
     )  # 同袍（ADR-0058）：private（私有）/ swarm_shared（公共知识殿堂）
     session_id: str = Field(default="", max_length=128)  # 来源链显式透传（v022 票据 01）
-    metadata: dict = {}  # 附加元数据，落 RawDocument.meta（如 source=pre_compress）
+    metadata: dict = {}  # 附加元数据，落 RawDocument.meta（如 source=host_tool）
 
     @field_validator("metadata")
     @classmethod
