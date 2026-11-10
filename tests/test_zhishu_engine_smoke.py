@@ -199,3 +199,102 @@ class TestZhishuEngineSmoke:
         # 不匹配案例
         assert fastpath_check("今天天气怎么样") is None
         assert fastpath_check("好") is None
+
+
+class TestZhishuRhetoricalPrecision:
+    """票 56：直书精度洞——反问/兼语/来源句被 1.0 置信度写成自称事实。
+
+    模块自述契约（zhishu.py:11）「宁 miss 不脏写（precision ≥ 95%…疑问句
+    坚决放行给大模型）」。负向检查只看句尾后缀（？/吗/呢/么），反问句换
+    任何句尾即漏放；`(.+)` 贪吃全尾把兼语句/来源句截成自称。
+
+    修复口径：自称轨加反问形状负向检查（`我是/我叫` 后紧跟疑问形态即整句
+    放行，`我是不是搞错了什么` 的 None 必须来自形状判定而非句尾「么」
+    侥幸）；捕获值以代词开头或「从…来/来的」来源结构开头即放行。
+    真函数直调 parse()，禁 mock 被测链路。
+    """
+
+    def test_rhetorical_interrogative_shapes_release(self):
+        """红臂：反问/兼语/来源三脏形状修复前返回 dict（脏写），修复后必须 None。
+
+        - `我是不是该辞职了` → 旧码自称「不是该辞职了」confidence=1.0 脏写；
+        - `我叫他明天来开会` → 兼语句，「我叫」非自称；
+        - `我是从上海来的` → 来源说明非自称。
+        """
+        assert ZhishuEngine.parse("我是不是该辞职了") is None
+        assert ZhishuEngine.parse("我叫他明天来开会") is None
+        assert ZhishuEngine.parse("我是从上海来的") is None
+
+    def test_interrogative_none_must_come_from_shape_not_suffix_luck(self):
+        """红臂（句尾换字不再翻车）：`我是不是搞错了什么` 现仅因句尾「么」
+        撞后缀表侥幸 None；同形状换非疑问句尾（句号收尾）必须仍 None——
+        None 须来自形状判定，不得依赖后缀表侥幸。"""
+        assert ZhishuEngine.parse("我是不是搞错了什么") is None
+        assert ZhishuEngine.parse("我是不是搞错了什么。") is None
+        # 句尾换字的反问族（票面「句尾换字即翻车」的直证）
+        assert ZhishuEngine.parse("我是不是该换个方案") is None
+        assert ZhishuEngine.parse("我叫他是不是记错了日期") is None
+
+    def test_positive_fact_rails_unchanged(self):
+        """语义回归臂：正当自称/职业/居住地/备忘/配置提取与现状逐字一致。"""
+        r1 = ZhishuEngine.parse("我叫张三")
+        assert r1 is not None
+        assert r1["lane"] == "fact"
+        assert r1["summary"] == "用户自称：张三"
+        assert r1["extractor_confidence"] == 1.0
+
+        r2 = ZhishuEngine.parse("我是程序员")
+        assert r2 is not None
+        assert r2["lane"] == "fact"
+        assert r2["summary"] == "用户自称：程序员"
+
+        r3 = ZhishuEngine.parse("我住在北京")
+        assert r3 is not None
+        assert r3["lane"] == "fact"
+        assert r3["rail"] == "fact"
+        assert r3["summary"] == "用户居住地：北京"
+
+        r4 = ZhishuEngine.parse("记住：明天开会")
+        assert r4 is not None
+        assert r4["lane"] == "general"
+        assert r4["summary"] == "明天开会"
+
+        r5 = ZhishuEngine.parse("把 timeout 设为 30")
+        assert r5 is not None
+        assert r5["lane"] == "rule"
+        assert r5["rail"] == "config"
+        assert r5["config_key"] == "timeout"
+        assert r5["config_value"] == "30"
+
+    def test_build_result_contract_shape_locked(self):
+        """契约锁臂：_build_result 输出字段形状零变化——fastpath 消费面
+        dialogue.py:100-113 / memory_service.py:262-268 / evolve_worker.py:48,55
+        不感知、不改码（fastpath/extractor/rail/lane/summary/claims/methods/
+        constraints/actions/topic/extractor_confidence 十一字段恒在）。"""
+        r = ZhishuEngine.parse("我叫张三")
+        assert r is not None
+        for field in (
+            "fastpath",
+            "extractor",
+            "rail",
+            "lane",
+            "summary",
+            "claims",
+            "methods",
+            "constraints",
+            "actions",
+            "topic",
+            "extractor_confidence",
+        ):
+            assert field in r, f"契约字段 {field} 不得缺失"
+        assert r["fastpath"] is True
+        assert r["extractor"] == "zhishu"
+        assert r["extractor_confidence"] == 1.0
+        assert isinstance(r["claims"], list)
+
+        # decay_class 分轨形状（config 轨）不受影响
+        rc = ZhishuEngine.parse("配置 max_workers 为 8")
+        assert rc is not None
+        assert rc["decay_class"] == "procedural"
+        assert rc["config_key"] == "max_workers"
+        assert rc["config_value"] == "8"
