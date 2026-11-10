@@ -135,8 +135,9 @@ def test_candidate_and_memory_exits_same_form(param_env):
 # datetime 出口一律 iso_utc；date 对象无时区概念、isoformat 天然无后缀，不在本票。
 _WHITELIST: set[tuple[str, int]] = {
     # qijuzhu target_date 是 date 对象（get_chronicle 入参 date）：日历日无时区
-    ("cognition/qijuzhu.py", 253),
-    ("cognition/qijuzhu.py", 264),
+    # （票 67：双轨拆分 _get_daily_chronicle 后行号 253/264 → 266/277）
+    ("cognition/qijuzhu.py", 266),
+    ("cognition/qijuzhu.py", 277),
     # eval 基准集日期解析（naive strptime 补 +00:00，非产品 datetime 出口）：
     # parse_lme_date 产物进 import_lines created_at，eval 语料定置 hash 要求
     # 串形稳定（"2023-05-20T02:21:00" 无小数段），改 iso_utc 全精度会漂移
