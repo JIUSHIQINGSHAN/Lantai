@@ -23,6 +23,7 @@ from lantai.security.injection_guard import (
 )
 from lantai.services.record_ops_service import sync_vector_upsert
 from lantai.storage import db
+from lantai.storage.cas import atomic_update, cas_update
 from lantai.storage.fts import sync_fts
 
 # ==================== 票 02（v0.66）：CJK 语义判定基础件 ====================
@@ -548,10 +549,39 @@ def resolve_probe_response(
 
                 # 记录 Checkpoint 快照
                 before_snapshot = item.model_dump(mode="json")
-                item.content = conf.incoming_ref
-                item.version += 1
-                item.decay_score = 1.0
-                item.updated_at = utcnow()
+                # 票 78：版本前置 CAS（同 tanyi.py 修复）——并发 correct_memory
+                # 交错时按扫描期快照整组写回会覆盖用户显式纠正、version 重号
+                # （票 23 S8 同级）。rowcount=0 即并发败方：冲突保留 open 如实
+                # 报 conflict（宁 miss 不脏写，交人工重探）。
+                scan_version = item.version or 1
+                claimed = atomic_update(
+                    s,
+                    MemoryItem,
+                    item.id,
+                    {
+                        "content": conf.incoming_ref,
+                        "version": scan_version + 1,
+                        "decay_score": 1.0,
+                        "updated_at": utcnow(),
+                    },
+                    MemoryItem.version == scan_version,
+                    MemoryItem.status == "active",
+                )
+                if not claimed:
+                    s.rollback()
+                    logger.info(
+                        "探颐：冲突 %s 的目标记忆已被并发修改，消解让路交人工重探",
+                        actual_conflict_id,
+                    )
+                    return {
+                        "status": "conflict",
+                        "action": "concurrent_modification",
+                        "conflict_id": actual_conflict_id,
+                        "memory_id": item.id,
+                        "message": "memory changed concurrently; conflict kept open for re-probe",
+                    }
+                # CAS 胜方：ORM 对象与库端对齐（checkpoint/冲突翻转都要用新值）
+                s.refresh(item)
 
                 cp = MemoryCheckpoint(
                     id=f"cp_{ULID()}",
@@ -564,10 +594,33 @@ def resolve_probe_response(
                 )
                 s.add(cp)
 
-                conf.status = "resolved"
-                conf.resolved_by = "proactive_probe_user_confirmed"
-                conf.resolved_at = utcnow()
-                s.add(conf)
+                # 票 78：conf 翻转同走条件认领（票 22 S6 conflict_service 蓝图）——
+                # 记忆 CAS 与 conf CAS 之间人工裁决已把冲突裁成终态时，败方不
+                # 覆写终态；回滚整笔（含刚写的正文），冲突终态权威保留。
+                conf_claimed = cas_update(
+                    s,
+                    ConflictEvent,
+                    conf.id,
+                    {"status": "open"},
+                    {
+                        "status": "resolved",
+                        "resolved_by": "proactive_probe_user_confirmed",
+                        "resolved_at": utcnow(),
+                    },
+                )
+                if not conf_claimed:
+                    s.rollback()
+                    logger.info(
+                        "探颐：冲突 %s 已被并发裁决成终态，消解让路（正文写入一并回滚）",
+                        actual_conflict_id,
+                    )
+                    return {
+                        "status": "conflict",
+                        "action": "concurrent_adjudication",
+                        "conflict_id": actual_conflict_id,
+                        "memory_id": item.id,
+                        "message": "conflict adjudicated concurrently; memory write rolled back",
+                    }
                 s.add(item)
 
                 # FTS 同事务强一致（ADR-0008，同 correct_memory / promoter update 口径）

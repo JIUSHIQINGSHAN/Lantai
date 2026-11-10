@@ -538,9 +538,34 @@ def revive_consolidated(
 
         返回 (fts_synced, vector_synced) 供碎片形态回执（与 unretract 同族）；
         簇形态多碎片失败明细已在 warnings，聚合布尔说不清谁败（宁缺不糊），不取。
+
+        票 78：认领式条件 UPDATE（`WHERE version=扫描值 AND status='consolidated'`）
+        ——裸 ORM 写在并发 correct_memory 交错下两迁移重号、checkpoint 链断。
+        rowcount=0 即并发败方：跳过该碎片（revive 幂等语义天然兼容），warnings
+        如实记。胜方 refresh 对齐 ORM 后再落 checkpoint/审计。
         """
         from lantai.evolution.promoter import _make_checkpoint
 
+        # before 快照在 CAS 之前采集（认领前状态语义：before=consolidated 现状，
+        # after=refresh 后的 active——票 78 测试实锚的契约顺序）
+        before = item.model_dump(mode="json")
+        scan_status = item.status
+        scan_version = item.version or 1
+        claimed = atomic_update(
+            s,
+            MemoryItem,
+            item.id,
+            {"status": STATUS_ACTIVE, "version": scan_version + 1, "updated_at": utcnow()},
+            MemoryItem.version == scan_version,
+            MemoryItem.status == scan_status,
+        )
+        if not claimed:
+            warnings.append(
+                f"fragment {item.id} changed concurrently (version={scan_version}); revive skipped"
+            )
+            return False, False
+
+        s.refresh(item)
         fts_synced, fts_warn = _sync_fts(s, item.id, item.content)
         if not fts_synced:
             warnings.extend(fts_warn)
@@ -551,11 +576,6 @@ def revive_consolidated(
                 if fts_synced
                 else "vector resync failed; memory active but not searchable until resync"
             )
-        before = item.model_dump(mode="json")
-        item.status = STATUS_ACTIVE
-        item.version = (item.version or 1) + 1
-        item.updated_at = utcnow()
-        s.add(item)
         _make_checkpoint(s, item, before, proposal_id="", trigger="revive")
         audit_event(
             s,
@@ -632,10 +652,39 @@ def revive_consolidated(
                 if not vector_removed:
                     warnings.append("vector delete failed; SQL status filter remains authoritative")
                 master_before = item.model_dump(mode="json")
-                item.status = STATUS_RETRACTED
-                item.version = (item.version or 1) + 1
-                item.updated_at = utcnow()
-                s.add(item)
+                # 票 78：认领式条件 UPDATE（同 _revive_one）——并发 correct/
+                # retract 交错下两逻辑迁移重号、checkpoint 链断。rowcount=0
+                # 即并发败方：不重复写 retracted（终态语义幂等），如实让路。
+                scan_status = item.status
+                scan_version = item.version or 1
+                claimed = atomic_update(
+                    s,
+                    MemoryItem,
+                    memory_id,
+                    {
+                        "status": STATUS_RETRACTED,
+                        "version": scan_version + 1,
+                        "updated_at": utcnow(),
+                    },
+                    MemoryItem.version == scan_version,
+                    MemoryItem.status == scan_status,
+                )
+                if not claimed:
+                    s.rollback()
+                    warnings.append(
+                        f"master {memory_id} changed concurrently; retrans not reapplied"
+                    )
+                    return {
+                        "ok": True,
+                        "scope": "cluster",
+                        "master_id": memory_id,
+                        "fragments_revived": 0,
+                        "edges_removed": 0,
+                        "fts_removed": False,
+                        "vector_removed": False,
+                        "warnings": warnings,
+                    }
+                s.refresh(item)
                 _make_checkpoint(s, item, master_before, proposal_id="", trigger="unconsolidate")
             audit_event(
                 s,
