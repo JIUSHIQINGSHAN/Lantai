@@ -145,9 +145,7 @@ def _evidence(
 
 def test_arm1_muci_catalog_excludes_archived_retracted_superseded(db_session):
     _mem(db_session, "mem-ok", "正常活跃记忆的正文", domain="user", lane="fact")
-    _mem(
-        db_session, "mem-arch", "已归档记忆的正文", status="archived", domain="user", lane="fact"
-    )
+    _mem(db_session, "mem-arch", "已归档记忆的正文", status="archived", domain="user", lane="fact")
     _mem(
         db_session,
         "mem-retr",
@@ -159,7 +157,9 @@ def test_arm1_muci_catalog_excludes_archived_retracted_superseded(db_session):
     sup = _mem(db_session, "mem-sup", "已被取代记忆的正文", domain="user", lane="fact")
     _supersede(db_session, sup, "mem-sup-new")
 
-    engine = MuciEngine(session=db_session, principal=Principal(user_id="user-1", tenant_id="tenant-1"))
+    engine = MuciEngine(
+        session=db_session, principal=Principal(user_id="user-1", tenant_id="tenant-1")
+    )
     cat = engine.build_catalog(detail_level="full", max_entries_per_section=10)
 
     # 红病灶 1a：archived/retracted/superseded 全文混入目录
@@ -173,9 +173,7 @@ def test_arm1_muci_catalog_excludes_archived_retracted_superseded(db_session):
     assert "正常活跃记忆的正文" in all_entries
 
     # 红病灶 1b：superseded 行计入活跃计数
-    assert cat["active_memories"] == 1, (
-        f"活跃计数该只算认识论活跃行，实际 {cat['active_memories']}"
-    )
+    assert cat["active_memories"] == 1, f"活跃计数该只算认识论活跃行，实际 {cat['active_memories']}"
     sec = next(s for s in cat["sections"] if s["domain"] == "user")
     assert sec["active_count"] == 1, f"板块活跃计数混入 superseded，实际 {sec['active_count']}"
 
@@ -226,13 +224,11 @@ def test_arm3a_zuozheng_superseded_target_rejected(db_session):
     engine = ZuozhengEngine(session=db_session, principal=Principal(user_id="user-1"))
     chain = engine.inspect_evidence("mem-sup-target")
 
-    assert chain["target_memory_id"] is None, (
-        "superseded 行（status 仍 active）作为佐证目标被放行"
-    )
+    assert chain["target_memory_id"] is None, "superseded 行（status 仍 active）作为佐证目标被放行"
 
 
 def test_arm3b_zuozheng_superseded_neighbor_excluded_from_chain(db_session):
-    ok = _mem(db_session, "mem-zz-ok", "现行主张正文")
+    _mem(db_session, "mem-zz-ok", "现行主张正文")
     old = _mem(db_session, "mem-zz-old", "已取代旧主张正文")
     _supersede(db_session, old, "mem-zz-old-new")
     db_session.add(
@@ -294,14 +290,14 @@ def test_arm4_conflict_evidence_stats_only_active_rows(db_session):
 
 
 def test_arm5a_canshang_arbitrate_rejects_retracted_side(db_session, caplog):
-    a = _mem(
+    _mem(
         db_session,
         "side-active",
         "生产服务器已全面启用 TLS 1.3 强加密传输",
         confidence=0.85,
         event_time=datetime(2026, 10, 1, 10, 0, tzinfo=UTC),
     )
-    b = _mem(
+    _mem(
         db_session,
         "side-retracted",
         "生产服务器目前完全关闭 TLS 加密使用明文通信",
@@ -320,16 +316,16 @@ def test_arm5a_canshang_arbitrate_rejects_retracted_side(db_session, caplog):
         f"retracted 侧被拒绝后只剩 active 行自然生效，实际 dominant={result.dominant_memory_id}"
     )
     # 拒绝留日志（宁 miss 不脏写）
-    assert any("side-retracted" in r.message or "retracted" in r.getMessage() for r in caplog.records), (
-        "仲裁跳过非生效记忆未留日志"
-    )
+    assert any(
+        "side-retracted" in r.message or "retracted" in r.getMessage() for r in caplog.records
+    ), "仲裁跳过非生效记忆未留日志"
 
 
 def test_arm5b_canshang_multihop_skips_retracted_target(db_session):
     # 种子设计：唯一矛盾路径必须经 retracted target_node（mh-pre 与 mh-other
     # 无反义词交叉，mh-target 与 mh-other 撞 _STATE_ANTONYM_PAIRS 单机/集群
     # 同现即判）——绿态 retracted 跳过后 violation_count 才能干净归零。
-    pre = _mem(db_session, "mh-pre", "执行命令升级生产数据库至最新版本")
+    _mem(db_session, "mh-pre", "执行命令升级生产数据库至最新版本")
     _mem(db_session, "mh-other", "当前线上仅有单机独立数据库运行且无从节点")
     _mem(db_session, "mh-target", "系统处于多主集群高可用状态", status="retracted")
     db_session.add(
@@ -455,9 +451,7 @@ def _pattern(s: Session, pid: str, source_mid: str) -> CognitivePattern:
 def test_arm8a_evolution_propose_beliefs_ignores_inactive_evidence(db_session):
     _mem(db_session, "mem-ev", "发布前必须跑全量测试")
     _evidence(db_session, "ev-strong", "mem-ev", reliability=0.9, independence=1.0)
-    _evidence(
-        db_session, "ev-dead", "mem-ev", reliability=0.0, independence=0.0, status="archived"
-    )
+    _evidence(db_session, "ev-dead", "mem-ev", reliability=0.0, independence=0.0, status="archived")
     pat = _pattern(db_session, "pat-62a", "mem-ev")
 
     beliefs = EvolutionEngine(db=db_session).propose_beliefs([pat])
@@ -501,9 +495,7 @@ def test_arm8b_evolution_propose_rules_ignores_inactive_evidence(db_session):
 
     rules = EvolutionEngine(db=db_session).propose_rules([belief])
 
-    assert len(rules) == 1, (
-        f"active 证据支撑的 rule 晋升被非 active 行拖垮：产出 {len(rules)} 条"
-    )
+    assert len(rules) == 1, f"active 证据支撑的 rule 晋升被非 active 行拖垮：产出 {len(rules)} 条"
     comps = rules[0].promotion_trace["components"]
     assert comps["evidence_quality"] == pytest.approx(0.9), (
         f"rule 晋升 evidence_quality 混入非 active Evidence，实际 {comps['evidence_quality']}"

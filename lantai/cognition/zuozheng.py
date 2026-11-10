@@ -131,9 +131,14 @@ class ZuozhengEngine:
         target = s.get(MemoryItem, memory_id)
         # 票 62：认识论态过滤——supersede 只写 lifecycle_status=superseded
         # （status 仍 active），只看 status 时被取代旧主张仍可作佐证目标。
-        if not target or target.status != "active" or (target.lifecycle_status or "") not in (
-            "active",
-            "weakened",
+        if (
+            not target
+            or target.status != "active"
+            or (target.lifecycle_status or "")
+            not in (
+                "active",
+                "weakened",
+            )
         ):
             return ProofChain(target_memory_id=None, target_content="").to_dict()
 

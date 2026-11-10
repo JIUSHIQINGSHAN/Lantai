@@ -104,11 +104,13 @@ class MuciEngine:
         # 认识论 {active, weakened}（weakened 语义「仍参与检索但权重降低」，
         # retired「等同于 archived」排除）。DDL NOT NULL DEFAULT 'active'，
         # 无需 NULL 防御分支。
-        query = select(MemoryItem).where(
-            MemoryItem.status == "active",
-            MemoryItem.lifecycle_status.in_(("active", "weakened")),
-        ).order_by(
-            MemoryItem.importance.desc(), MemoryItem.updated_at.desc()
+        query = (
+            select(MemoryItem)
+            .where(
+                MemoryItem.status == "active",
+                MemoryItem.lifecycle_status.in_(("active", "weakened")),
+            )
+            .order_by(MemoryItem.importance.desc(), MemoryItem.updated_at.desc())
         )
 
         # 预过滤条件
