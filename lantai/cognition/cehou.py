@@ -21,7 +21,7 @@ from sqlmodel import Session, select
 
 from lantai.core.acl import is_system_viewer, viewer_of
 from lantai.core.auth import Principal
-from lantai.core.time import ensure_aware, utcnow
+from lantai.core.time import iso_utc, ensure_aware, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import CehouWindow
 from lantai.storage import db
@@ -70,8 +70,8 @@ class ShadowObservation:
             "metrics_delta": self.metrics_delta,
             "observation_summary": self.observation_summary,
             "fenced_summary": fenced_s,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
+            "created_at": iso_utc(self.created_at),
+            "updated_at": iso_utc(self.updated_at),
             "user_id": self.user_id,
             "tenant_id": self.tenant_id,
         }
@@ -113,7 +113,7 @@ class InspectionReport:
             "windows": self.windows,
             "report_summary": summary,
             "fenced_report": fenced_r,
-            "inspected_at": self.inspected_at.isoformat(),
+            "inspected_at": iso_utc(self.inspected_at),
         }
 
 

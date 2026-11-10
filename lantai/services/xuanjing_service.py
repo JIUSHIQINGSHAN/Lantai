@@ -9,12 +9,12 @@
 
 import math
 from collections import Counter
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlmodel import Session, or_, select
 
 from lantai.core.acl import viewer_of
+from lantai.core.time import iso_utc
 from lantai.models.tables import MemoryEdge, MemoryItem, MemoryScene
 from lantai.storage import db
 
@@ -22,7 +22,9 @@ LABEL_MAX = 48
 
 
 def _now_iso() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
+    from lantai.core.time import iso_utc, utcnow
+
+    return iso_utc(utcnow())
 
 
 def _label_from_text(content: str) -> str:
@@ -168,8 +170,8 @@ def build_xuanjing_topology(
                 "shared_scope": getattr(m, "shared_scope", "private"),
                 "lifecycle_status": getattr(m, "lifecycle_status", "active"),
                 "agent_id": m.agent_id,
-                "created_at": m.created_at.isoformat() if m.created_at else None,
-                "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+                "created_at": iso_utc(m.created_at) or None,
+                "updated_at": iso_utc(m.updated_at) or None,
             }
         )
 

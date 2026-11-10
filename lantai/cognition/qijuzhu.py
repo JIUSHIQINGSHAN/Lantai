@@ -17,7 +17,7 @@ from typing import Any
 from sqlmodel import Session, select
 
 from lantai.core.auth import Principal
-from lantai.core.time import ensure_aware, local_day_window_utc, utcnow
+from lantai.core.time import ensure_aware, iso_utc, local_day_window_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import Dossier, MemoryItem, MemoryProposal
 from lantai.storage import db
@@ -37,7 +37,7 @@ class ChronicleEvent:
     def to_dict(self) -> dict[str, Any]:
         return {
             "event_type": self.event_type,
-            "timestamp": self.timestamp.isoformat(),
+            "timestamp": iso_utc(self.timestamp),
             "title": self.title,
             "detail": self.detail,
             "ref_id": self.ref_id,
@@ -272,7 +272,7 @@ class QijuzhuEngine:
             },
             "chronicle_events": [e.to_dict() for e in events],
             "detail_level": detail_level,
-            "generated_at": utcnow().isoformat(),
+            "generated_at": iso_utc(utcnow()),
         }
 
     def get_timeline(
@@ -299,6 +299,6 @@ class QijuzhuEngine:
             "days": days,
             "total_matched": len(events),
             "events": [e.to_dict() for e in truncated_events],
-            "window_start": start_time.isoformat(),
-            "window_end": now.isoformat(),
+            "window_start": iso_utc(start_time),
+            "window_end": iso_utc(now),
         }

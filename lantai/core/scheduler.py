@@ -38,9 +38,9 @@ def _last_run_from_db(name: str) -> str | None:
 
 def record_run(name: str) -> None:
     """记录 worker 本次运行完成时间：内存（/stats 即时）+ DB（重启不丢）。"""
-    from lantai.core.time import utcnow
+    from lantai.core.time import iso_utc, utcnow
 
-    stamp = utcnow().isoformat()
+    stamp = iso_utc(utcnow())
     WORKER_LAST_RUN[name] = stamp
     try:
         from sqlalchemy import text
@@ -78,6 +78,8 @@ def scheduler_status() -> dict:
     司天（ADR-0044）监控面板的数据源之一：APScheduler 作业的真实下一次触发时间
     只有调度器自己知道，DB 里的 `scheduler_run` 只回答「上次跑没跑」。
     """
+    from lantai.core.time import iso_utc
+
     if _scheduler is None:
         return {
             "running": False,
@@ -97,7 +99,7 @@ def scheduler_status() -> dict:
                     "id": job.id,
                     "name": getattr(job, "name", job.id),
                     "trigger": str(job.trigger),
-                    "next_run_time": next_run.isoformat() if next_run else None,
+                    "next_run_time": iso_utc(next_run) or None,
                     "next_run_in_seconds": (
                         round((next_run - now).total_seconds(), 1) if next_run else None
                     ),
@@ -138,7 +140,7 @@ def worker_staleness(
     - 宽限 = max(周期 × grace_factor, 15 分钟)，吸收调度抖动；
     - 超过基线 + 周期 + 宽限 = overdue；超过 critical_factor 个完整周期 = critical。
     """
-    from lantai.core.time import utcnow
+    from lantai.core.time import iso_utc, utcnow
 
     grace_ratio = (
         float(settings.MONITOR_WORKER_GRACE_FACTOR) if grace_factor is None else float(grace_factor)
@@ -176,12 +178,12 @@ def worker_staleness(
     return {
         "name": name,
         "period_seconds": int(period.total_seconds()),
-        "last_run": last_run.isoformat() if last_run else None,
+        "last_run": iso_utc(last_run) or None,
         "last_run_age_seconds": (
             round((last_run - now).total_seconds() * -1, 1) if last_run else None
         ),
-        "baseline": baseline.isoformat(),
-        "due_at": due.isoformat(),
+        "baseline": iso_utc(baseline),
+        "due_at": iso_utc(due),
         "overdue": bool(overdue),
         "overdue_seconds": round(max(0.0, (now - due).total_seconds()), 1),
         "critical": critical,

@@ -18,7 +18,7 @@ from sqlmodel import Session, select
 from lantai.core.acl import SYSTEM_VIEWER, is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.core.logger import logger
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
@@ -275,7 +275,7 @@ class KaogongEngine:
                 "demoted": 0,
                 "kept": 0,
                 "details": [],
-                "evaluated_at": utcnow().isoformat(),
+                "evaluated_at": iso_utc(utcnow()),
                 "skipped_no_principal": True,
             }
         if self.session is not None:
@@ -347,7 +347,7 @@ class KaogongEngine:
             "demoted": demoted_count,
             "kept": kept_count,
             "details": details,
-            "evaluated_at": utcnow().isoformat(),
+            "evaluated_at": iso_utc(utcnow()),
         }
         _LATEST_KAOGONG_REPORT = report
         logger.info(

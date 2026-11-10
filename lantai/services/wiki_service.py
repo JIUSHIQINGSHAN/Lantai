@@ -50,7 +50,9 @@ def slugify(name: str) -> str:
 
 
 def _fmt_ts(dt: datetime | None) -> str:
-    return dt.isoformat(timespec="seconds") if dt else ""
+    from lantai.core.time import iso_utc
+
+    return iso_utc(dt)
 
 
 def render_scene_page(scene, members: list, related: list) -> str:

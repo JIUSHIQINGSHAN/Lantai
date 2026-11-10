@@ -14,7 +14,7 @@ from ulid import ULID
 
 from lantai.core.logger import logger, loggable
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import ConflictEvent, FactAtomic, MemoryCheckpoint, MemoryItem
 from lantai.retrieval.wanbi_retriever import fact_source_alive_clause
 from lantai.security.injection_guard import (
@@ -656,7 +656,7 @@ def resolve_probe_response(
             if is_neg:
                 # 软撤回原子事实
                 target_fact.confidence = 0.0
-                target_fact.valid_to = utcnow().isoformat()
+                target_fact.valid_to = iso_utc(utcnow())
                 s.add(target_fact)
                 s.commit()
                 return {"status": "resolved", "action": "retracted", "fact_id": target_fact.id}

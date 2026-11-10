@@ -16,7 +16,7 @@
 
 from sqlmodel import select
 
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import ConflictEvent, MemoryItem
 from lantai.storage import db
 from lantai.storage.cas import cas_update
@@ -162,7 +162,7 @@ def audit_consistency_service(
             }
             for v in report.violations
         ],
-        "audited_at": report.audited_at.isoformat(),
+        "audited_at": iso_utc(report.audited_at),
         "entity_name": report.entity_name,
     }
 

@@ -13,7 +13,7 @@ from sqlmodel import select
 from lantai.core.scheduler import worker_staleness
 from lantai.core.settings import settings
 from lantai.core.text import normalize_for_index
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import (
     ConflictEvent,
     IngestJob,
@@ -485,7 +485,7 @@ def project_work_items(
                 kind="worker",
                 source_id=name,
                 title=f"{name} 未按计划运行",
-                summary=f"上次完成：{last_run.isoformat() if last_run else '本次启动后尚无记录'}",
+                summary=f"上次完成：{iso_utc(last_run) if last_run else '本次启动后尚无记录'}",
                 section="immediate_action",
                 priority="critical" if critical else "high",
                 reason="超过两个完整周期" if critical else "超过运行周期与宽限期",

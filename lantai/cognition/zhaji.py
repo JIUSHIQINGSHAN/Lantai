@@ -19,7 +19,7 @@ from typing import Any
 from sqlmodel import Session
 
 from lantai.core.acl import viewer_of
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import SessionScratchpad
 from lantai.storage import db
@@ -48,7 +48,7 @@ class ZhajiItem:
             "key_findings": list(self.key_findings),
             "open_questions": list(self.open_questions),
             "notes": list(self.notes),
-            "updated_at": self.updated_at.isoformat(),
+            "updated_at": iso_utc(self.updated_at),
             "user_id": self.user_id,
             "tenant_id": self.tenant_id,
             "fenced_content": self.fenced_content if fenced else "",

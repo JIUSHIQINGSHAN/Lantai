@@ -20,7 +20,7 @@ import time
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.observability.metrics import get_collector, is_excluded, normalize_route
 from lantai.storage import db
 
@@ -128,7 +128,7 @@ class TelemetryWriter:
             from sqlalchemy import text
 
             days = max(1, int(settings.MONITOR_RETENTION_DAYS))
-            cutoff = (utcnow() - timedelta(days=days)).isoformat(sep=" ")
+            cutoff = iso_utc(utcnow() - timedelta(days=days))
             with db.get_session() as s:
                 result = s.exec(
                     text("DELETE FROM operation_logs WHERE created_at < :cutoff"),

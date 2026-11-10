@@ -26,7 +26,7 @@ from ulid import ULID
 from lantai.core.ids import new_id
 from lantai.core.logger import logger, loggable
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.client import chat_json
 from lantai.models.enums import ProposalStatus
 from lantai.models.tables import (
@@ -644,7 +644,7 @@ def _shadow_deadline_exceeded(s: Session) -> str | None:
     elapsed_days = (utcnow() - first_at).total_seconds() / 86400.0
     if elapsed_days > max_days:
         return (
-            f"shadow 模式已超 {max_days} 天硬时限（首条留痕 {first_at.isoformat()}，"
+            f"shadow 模式已超 {max_days} 天硬时限（首条留痕 {iso_utc(first_at)}，"
             f"已 {elapsed_days:.1f} 天）——拒绝执行巩固，请维护者拍板切 enforce 或回 off"
         )
     return None
@@ -665,7 +665,7 @@ def _record_consolidation_run(s: Session, **fields) -> None:
 def _refused_report(mode: str, error: str) -> dict:
     """拒绝执行本周期巩固时的 report（既有键不变，status=refused 可见）。"""
     return {
-        "last_run": utcnow().isoformat(),
+        "last_run": iso_utc(utcnow()),
         "consolidated_groups": 0,
         "new_memories": 0,
         "pruned_count": 0,
@@ -830,7 +830,7 @@ def run_consolidation_cycle(session: Session | None = None, principal=None) -> d
             status = "success" if (new_count + proposals_created + pruned) > 0 else "idle"
 
             report = {
-                "last_run": utcnow().isoformat(),
+                "last_run": iso_utc(utcnow()),
                 "consolidated_groups": len(clusters),
                 "new_memories": new_count,
                 "pruned_count": pruned,

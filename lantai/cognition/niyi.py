@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 
 from lantai.core.acl import viewer_of
 from lantai.core.auth import Principal
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryEdge, MemoryItem, MemoryProposal
 from lantai.storage import db
@@ -95,7 +95,7 @@ class AuditReport:
             "risk_distribution": self.risk_distribution,
             "audit_summary": self.audit_summary,
             "fenced_summary": fenced_s,
-            "inspected_at": self.inspected_at.isoformat(),
+            "inspected_at": iso_utc(self.inspected_at),
         }
 
 

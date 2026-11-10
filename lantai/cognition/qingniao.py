@@ -18,7 +18,7 @@ from typing import Any
 from sqlmodel import Session
 from ulid import ULID
 
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.security.injection_guard import assert_no_prompt_injection
 
@@ -59,8 +59,8 @@ class QingniaoLetter:
             "fenced_content": self.fenced_content if fenced else self.content,
             "user_id": self.user_id,
             "tenant_id": self.tenant_id,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "acknowledged_at": (self.acknowledged_at.isoformat() if self.acknowledged_at else None),
+            "created_at": iso_utc(self.created_at) or None,
+            "acknowledged_at": iso_utc(self.acknowledged_at) or None,
         }
 
 
@@ -78,7 +78,7 @@ class QingniaoDispatchResult:
             "is_dispatched": self.is_dispatched,
             "letter_id": self.letter_id,
             "delivered_count": self.delivered_count,
-            "dispatched_at": (self.dispatched_at.isoformat() if self.dispatched_at else None),
+            "dispatched_at": iso_utc(self.dispatched_at) or None,
         }
 
 
@@ -251,7 +251,7 @@ class QingniaoEngine:
 
         new_status = "acknowledged" if action == "ack" else "rejected"
         raw["status"] = new_status
-        raw["acknowledged_at"] = utcnow().isoformat()
+        raw["acknowledged_at"] = iso_utc(utcnow())
 
         return {
             "letter_id": letter_id,

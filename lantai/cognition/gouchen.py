@@ -18,7 +18,7 @@ from typing import Any
 from sqlmodel import Session, select
 
 from lantai.core.acl import is_system_viewer, viewer_of
-from lantai.core.time import ensure_aware, utcnow
+from lantai.core.time import iso_utc, ensure_aware, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
@@ -51,7 +51,7 @@ class GouchenItem:
             "age_days": round(self.age_days, 1),
             "status": self.status,
             "lifecycle_status": self.lifecycle_status,
-            "event_time": self.event_time.isoformat() if self.event_time else None,
+            "event_time": iso_utc(self.event_time) or None,
             "user_id": self.user_id,
             "tenant_id": self.tenant_id,
             "fenced_content": self.fenced_content if fenced else "",
@@ -70,7 +70,7 @@ class HistoricalContext:
 
     def to_dict(self, *, fenced: bool = True) -> dict[str, Any]:
         return {
-            "anchor_time": self.anchor_time.isoformat(),
+            "anchor_time": iso_utc(self.anchor_time),
             "memories": [m.to_dict(fenced=fenced) for m in self.memories],
             "total_count": self.total_count,
             "summary": self.summary,
@@ -287,7 +287,7 @@ class GouchenEngine:
                 )
 
             historical_items = historical_items[:limit]
-            summary = f"历史语境重构：锚点【{t_anchor.isoformat()}】汇聚 {len(historical_items)} 条无污染记忆快照"
+            summary = f"历史语境重构：锚点【{iso_utc(t_anchor)}】汇聚 {len(historical_items)} 条无污染记忆快照"
             aggregated_body = "\n".join(f"- {it.fenced_content}" for it in historical_items)
             full_content = f"{summary}\n{aggregated_body}" if aggregated_body else summary
             fenced_summary = wrap_as_data(full_content, item_id="history-context", score=1.0)

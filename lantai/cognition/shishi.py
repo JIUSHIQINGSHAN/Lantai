@@ -20,7 +20,7 @@ from sqlmodel import Session, select
 from ulid import ULID
 
 from lantai.core.acl import viewer_of
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import CoreMemoryBlock
 from lantai.storage import db
@@ -55,7 +55,7 @@ class ShishiVaultBlock:
             "fenced_content": self.fenced_content,
             "user_id": self.user_id,
             "tenant_id": self.tenant_id,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "updated_at": iso_utc(self.updated_at) or None,
         }
 
 
@@ -77,7 +77,7 @@ class IntegrityVerificationResult:
             "verified_blocks": self.verified_blocks,
             "tampered_blocks": self.tampered_blocks,
             "tamper_details": self.tamper_details,
-            "verified_at": self.verified_at.isoformat() if self.verified_at else None,
+            "verified_at": iso_utc(self.verified_at) or None,
         }
 
 
@@ -280,7 +280,7 @@ class ShishiEngine:
                             "recorded_digest": recorded_digest,
                             "actual_digest": actual_digest,
                             "version": r.version,
-                            "tampered_at": utcnow().isoformat(),
+                            "tampered_at": iso_utc(utcnow()),
                         }
                     )
 

@@ -18,10 +18,9 @@ get_overview(principal=None) 打开默认会话执行。
 `user_id` 才收窄，不透传留 `None` 全量——与改动前逐字一致。
 """
 
-from datetime import UTC, datetime
-
 from sqlmodel import func, select
 
+from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import (
     MemoryCandidate,
     MemoryCheckpoint,
@@ -130,7 +129,7 @@ def build_overview(session, *, principal=None) -> dict:
         prompt = prov.get("prompt") or "unknown"
         by_prompt[prompt] = by_prompt.get(prompt, 0) + 1
     return {
-        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "generated_at": iso_utc(utcnow()),
         "memories": {
             "total": int(mem_total),
             "active": int(mem_active),

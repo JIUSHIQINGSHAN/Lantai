@@ -34,7 +34,7 @@ from sqlalchemy import delete as sa_delete
 
 from lantai.core.logger import logger
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import LLMCallEvent, RetrievalEvent
 
 # 观测面保留清单（门禁对账真源）：表 → 保留旋钮 / 清扫函数 / 定义模块。
@@ -98,7 +98,7 @@ def _prune_table(model, *, table: str, days: int, floor_days: int, now: datetime
             )
             s.commit()
             deleted = int(getattr(result, "rowcount", 0) or 0)
-        _LAST_SWEEPS[table] = {"rows_deleted": deleted, "pruned_at": moment.isoformat()}
+        _LAST_SWEEPS[table] = {"rows_deleted": deleted, "pruned_at": iso_utc(moment)}
         if deleted:
             logger.info(
                 "观测面清扫 %s：删除 %d 行超龄数据（保留 %d 天，票 29）", table, deleted, effective

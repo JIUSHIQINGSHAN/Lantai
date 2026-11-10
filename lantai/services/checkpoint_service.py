@@ -19,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 from sqlmodel import delete, select
 
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import SessionCheckpoint
 from lantai.storage import db
 
@@ -176,7 +176,7 @@ def _rows_to_checkpoint(rows: list[SessionCheckpoint]) -> dict | None:
         # 票 52：裸 datetime 在 MCP 面（无 FastAPI jsonable_encoder 兜底）让
         # json.dumps 抛 TypeError——出口过 isoformat 对齐全仓约定；REST 面编码
         # 结果逐字不变（datetime 与 ISO 字符串经 FastAPI 出口同形）
-        "created_at": rows[0].created_at.isoformat(),
+        "created_at": iso_utc(rows[0].created_at),
     }
 
 

@@ -19,7 +19,7 @@ from pydantic import Field as PydanticField
 from sqlmodel import Session, select
 
 from lantai.core.acl import viewer_of
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import ConflictEvent, MemoryItem
 from lantai.storage import db
@@ -182,7 +182,7 @@ class SanxingEngine:
                             {
                                 "id": item.id,
                                 "content": item.content,
-                                "valid_to": valid_to.isoformat(),
+                                "valid_to": iso_utc(valid_to),
                                 "reason": "validity_expired",
                                 "user_id": item.user_id,
                                 "tenant_id": item.tenant_id,

@@ -20,7 +20,7 @@ from typing import Any
 from sqlmodel import Session, select
 
 from lantai.core.acl import viewer_of
-from lantai.core.time import ensure_aware, utcnow
+from lantai.core.time import iso_utc, ensure_aware, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import LifecycleStatus, MemoryItem
 from lantai.storage import db
@@ -66,7 +66,7 @@ class ZhimingTransition:
             "reason": self.reason,
             "superseded_by": self.superseded_by,
             "applied": self.applied,
-            "updated_at": self.updated_at.isoformat(),
+            "updated_at": iso_utc(self.updated_at),
         }
 
 

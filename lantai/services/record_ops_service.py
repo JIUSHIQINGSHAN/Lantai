@@ -17,7 +17,7 @@ from datetime import datetime
 from sqlmodel import Session, select
 
 from lantai.core.ids import new_id
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.client import embed
 from lantai.models.tables import MemoryAuditEvent, MemoryItem
 from lantai.storage import db
@@ -191,7 +191,7 @@ def retract_memory(
                     for e in ents:
                         s.delete(e)
                     lf.confidence = 0.0
-                    lf.valid_to = utcnow().isoformat()
+                    lf.valid_to = iso_utc(utcnow())
                     s.add(lf)
                     audit_event(
                         s,
@@ -418,7 +418,7 @@ def correct_memory(
                     "old_content": item.content,
                     "reason": reason,
                     "actor": actor,
-                    "at": utcnow().isoformat(),
+                    "at": iso_utc(utcnow()),
                     "from_version": item.version,
                 }
             )
@@ -441,9 +441,7 @@ def correct_memory(
                         return {"ok": False, "error": "invalid event_time format"}
                 if not validate_event_time_pair(parsed_et, new_etp):
                     return {"ok": False, "error": "invalid event_time pair (I1)"}
-                corrections[-1]["old_event_time"] = (
-                    item.event_time.isoformat() if item.event_time else None
-                )
+                corrections[-1]["old_event_time"] = iso_utc(item.event_time) or None
                 corrections[-1]["old_event_time_precision"] = item.event_time_precision
                 item.event_time = parsed_et
                 item.event_time_precision = new_etp
@@ -773,7 +771,7 @@ def retract_fact_atomic(
 
         # 2. 事实主表置失效
         fact.confidence = 0.0
-        fact.valid_to = utcnow().isoformat()
+        fact.valid_to = iso_utc(utcnow())
         s.add(fact)
 
         audit_event(
@@ -927,7 +925,7 @@ def supersede_fact_atomic(
             if dt_anchor < dt_vf:
                 dt_anchor = dt_vf
 
-        anchor_iso = dt_anchor.isoformat()
+        anchor_iso = iso_utc(dt_anchor)
         f_old.valid_to = anchor_iso
         f_new.valid_from = anchor_iso
         s.add_all([f_old, f_new])

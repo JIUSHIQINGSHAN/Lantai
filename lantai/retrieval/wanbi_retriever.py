@@ -10,7 +10,7 @@ from typing import Any
 from sqlmodel import Session, col, select
 
 from lantai.core.acl import viewer_of
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import FactAtomic, FactEntity, MemoryItem
 
 
@@ -190,7 +190,7 @@ def search_atomic_facts_by_query(
     if as_of is not None:
         from lantai.retrieval.temporal import _ensure_utc
 
-        as_of_iso = _ensure_utc(as_of).isoformat()
+        as_of_iso = iso_utc(as_of)
         stmt_fact = stmt_fact.where(
             (FactAtomic.valid_from.is_(None))
             | (func.datetime(FactAtomic.valid_from) <= func.datetime(as_of_iso))
@@ -201,7 +201,7 @@ def search_atomic_facts_by_query(
         )
     else:
         # 默认当前态：valid_to IS NULL 或 valid_to > now
-        now_iso = utcnow().isoformat()
+        now_iso = iso_utc(utcnow())
         stmt_fact = stmt_fact.where(
             (FactAtomic.valid_to.is_(None))
             | (func.datetime(FactAtomic.valid_to) > func.datetime(now_iso))

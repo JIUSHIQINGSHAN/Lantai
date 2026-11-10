@@ -20,7 +20,7 @@ from sqlmodel import Session, delete, select
 from lantai.core.acl import is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import SessionCheckpoint
 from lantai.storage import db
@@ -67,7 +67,7 @@ class SessionAnchor:
             "open_notes": self.open_notes,
             "text_summary": text_summary,
             "fenced_content": fenced_c,
-            "updated_at": self.updated_at.isoformat(),
+            "updated_at": iso_utc(self.updated_at),
             "user_id": self.user_id,
             "tenant_id": self.tenant_id,
             "metadata": self.metadata,
@@ -94,7 +94,7 @@ class DriftAnalysis:
             "drift_level": self.drift_level,
             "drift_reason": self.drift_reason,
             "fenced_reason": self.fenced_reason,
-            "analyzed_at": self.analyzed_at.isoformat(),
+            "analyzed_at": iso_utc(self.analyzed_at),
         }
 
 

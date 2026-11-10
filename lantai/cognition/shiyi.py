@@ -21,6 +21,7 @@ import jieba
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
+from lantai.core.time import iso_utc
 from lantai.core.acl import viewer_of
 from lantai.core.auth import Principal
 from lantai.core.settings import settings
@@ -79,7 +80,7 @@ class RemedyCandidate:
                 "confidence": round(self.confidence, 4),
                 "user_id": self.user_id,
                 "tenant_id": self.tenant_id,
-                "created_at": self.created_at.isoformat() if self.created_at else None,
+                "created_at": iso_utc(self.created_at) or None,
                 "metadata": {
                     **self.metadata,
                     "is_remedied": True,

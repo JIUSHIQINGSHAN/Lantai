@@ -10,7 +10,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import MemoryCandidate
 from lantai.storage import db
 from lantai.storage.cas import atomic_update, cas_update
@@ -232,9 +232,9 @@ def defer_candidate(
         return {
             "ok": True,
             "candidate_id": candidate_id,
-            "review_due_at": next_due.isoformat(),
+            "review_due_at": iso_utc(next_due),
             "previous_review_due_at": (
-                _aware(c.previous_review_due_at).isoformat() if c.previous_review_due_at else None
+                iso_utc(c.previous_review_due_at) or None
             ),
             "defer_count": c.defer_count,
         }
@@ -291,7 +291,7 @@ def undo_candidate_defer(
         return {
             "ok": True,
             "candidate_id": candidate_id,
-            "review_due_at": _aware(restored).isoformat(),
+            "review_due_at": iso_utc(restored),
         }
 
 

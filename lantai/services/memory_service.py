@@ -17,7 +17,7 @@ from lantai.core.provenance import (
 )
 from lantai.core.settings import settings
 from lantai.core.text import normalize_for_index
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.evolution.promoter import _make_checkpoint
 from lantai.gate.dedup import find_similar
 from lantai.ingestion.coalesce import get_coalesce_buffer
@@ -990,8 +990,8 @@ def build_memories_page(
             "decay_score": m.decay_score,
             "use_count": m.use_count,
             "scene_id": m.scene_id,
-            "created_at": m.created_at.isoformat(timespec="seconds") if m.created_at else None,
-            "updated_at": m.updated_at.isoformat(timespec="seconds") if m.updated_at else None,
+            "created_at": iso_utc(m.created_at) or None,
+            "updated_at": iso_utc(m.updated_at) or None,
             "content": content + ("…" if truncated else ""),
         }
 

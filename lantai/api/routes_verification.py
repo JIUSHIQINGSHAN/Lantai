@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sqlmodel import select
 
+from lantai.core.time import iso_utc
 from lantai.parameters import reliability
 from lantai.parameters.trust_models import SignalReliabilityStat
 from lantai.storage import db
@@ -50,7 +51,7 @@ def verification_stats() -> dict:
                     "fail_count": st.fail_count,
                     "fail_streak": st.fail_streak,
                     "last_verified_at": (
-                        st.last_verified_at.isoformat() if st.last_verified_at is not None else None
+                        iso_utc(st.last_verified_at) or None
                     ),
                     "penalty": reliability.reliability_penalty(st.venue_class),
                 }

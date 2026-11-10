@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 
 from lantai.core.acl import is_system_viewer
 from lantai.core.auth import Principal
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
@@ -150,7 +150,7 @@ class MuciEngine:
                 "count": len(sec_items),
                 "active_count": sum(1 for it in sec_items if it.status == "active"),
                 "tags": sorted(list(tags_set))[:10],
-                "latest_event_at": latest_time.isoformat() if latest_time else None,
+                "latest_event_at": iso_utc(latest_time) or None,
             }
 
             if detail_level == "full":
@@ -166,7 +166,7 @@ class MuciEngine:
                             if it.importance is not None
                             else 0.5,
                             "decay_class": it.decay_class,
-                            "updated_at": it.updated_at.isoformat() if it.updated_at else None,
+                            "updated_at": iso_utc(it.updated_at),
                         }
                     )
                 sec_data["entries"] = picked_entries
@@ -189,5 +189,5 @@ class MuciEngine:
             "detail_level": detail_level,
             "sections": sections,
             "summary": " · ".join(summary_parts),
-            "generated_at": utcnow().isoformat(),
+            "generated_at": iso_utc(utcnow()),
         }

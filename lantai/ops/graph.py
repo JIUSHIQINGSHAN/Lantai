@@ -13,7 +13,6 @@ get_graph(limit) 打开默认会话执行。
 """
 
 from collections import Counter
-from datetime import UTC
 
 from sqlmodel import Session, or_, select
 
@@ -207,9 +206,9 @@ def get_graph(limit: int = 150, principal=None) -> dict:
 
 
 def _now_iso() -> str:
-    from datetime import datetime
+    from lantai.core.time import iso_utc, utcnow
 
-    return datetime.now(UTC).isoformat(timespec="seconds")
+    return iso_utc(utcnow())
 
 
 def _doc_label(doc) -> str:

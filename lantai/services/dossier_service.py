@@ -10,6 +10,7 @@ from typing import Any
 
 from lantai.cognition.juanzong import JuanzongEngine
 from lantai.core.auth import Principal
+from lantai.core.time import iso_utc
 from lantai.models.tables import Dossier
 
 
@@ -24,8 +25,8 @@ def _serialize_dossier(dossier: Dossier) -> dict[str, Any]:
         "milestones": list(dossier.milestones or []),
         "memory_ids": list(dossier.memory_ids or []),
         "metadata": dict(dossier.metadata_json or {}),
-        "created_at": dossier.created_at.isoformat() if dossier.created_at else None,
-        "updated_at": dossier.updated_at.isoformat() if dossier.updated_at else None,
+        "created_at": iso_utc(dossier.created_at) or None,
+        "updated_at": iso_utc(dossier.updated_at) or None,
     }
 
 
@@ -151,7 +152,7 @@ def focus_dossier_service(
         "focused_memories": focus_res.focused_memories,
         "milestones": focus_res.milestones,
         "total_bound_memories": focus_res.total_bound_memories,
-        "focused_at": focus_res.focused_at.isoformat(),
+        "focused_at": iso_utc(focus_res.focused_at),
     }
 
 

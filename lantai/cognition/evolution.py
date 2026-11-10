@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 
 from lantai.core.ids import new_id
 from lantai.core.text import normalize_for_index
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import CognitivePattern, CognitiveRole, MemoryItem
 
 
@@ -211,7 +211,7 @@ class EvolutionEngine:
                         "recurrence": round(recurrence, 4),
                     },
                     "promoted_from": "pattern",
-                    "promoted_at": utcnow().isoformat(),
+                    "promoted_at": iso_utc(utcnow()),
                     "reason": f"{pat.occurrence_count} recurrences, evidence_quality={evidence_quality:.2f}",
                 }
                 belief = MemoryItem(
@@ -271,7 +271,7 @@ class EvolutionEngine:
                         "usefulness": round(usefulness, 4),
                     },
                     "promoted_from": "belief",
-                    "promoted_at": utcnow().isoformat(),
+                    "promoted_at": iso_utc(utcnow()),
                     "reason": f"usefulness={usefulness:.2f}, evidence_quality={evidence_quality:.2f}",
                 }
                 rule = MemoryItem(
@@ -317,7 +317,7 @@ class EvolutionEngine:
                         "usefulness": round(usefulness, 4),
                     },
                     "promoted_from": "rule",
-                    "promoted_at": utcnow().isoformat(),
+                    "promoted_at": iso_utc(utcnow()),
                     "reason": f"usefulness={usefulness:.2f}, stable rule promoted to principle",
                 }
                 prin = MemoryItem(

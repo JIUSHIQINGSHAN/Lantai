@@ -41,6 +41,28 @@ def parse_iso_utc(value: str) -> datetime:
     return ensure_aware(datetime.fromisoformat(text.replace("Z", "+00:00")))
 
 
+def iso_utc(dt: datetime | None) -> str:
+    """datetime → ISO-8601 UTC 串（票 53，出口单一真源，与 parse_iso_utc 对称）。
+
+    出口统一形态：``YYYY-MM-DDTHH:MM:SS.ffffff+00:00``（全精度微秒 + UTC
+    后缀）。此前同概念字段在不同出口序列化形态不同（aware 带 `+00:00`、
+    naive 无后缀、部分叠 timespec 截秒），JS `new Date()` 对无后缀串按本地
+    时区解释——悬镜面板两类字段同屏差 8 小时。
+
+    - naive（DB 列读回）：按「naive=UTC」约定 ``replace(tzinfo=UTC)`` 补
+      后缀，**墙钟数字不变**——绝不可走 astimezone（naive 调 astimezone
+      会按本地时区 Asia/Shanghai 解释平移 +8h）；
+    - aware：``astimezone(UTC)`` 折算（时刻不变、墙钟变 UTC 读数）；
+    - ``timespec="microseconds"`` 恒全精度——Python isoformat 在
+      microsecond==0 时省略小数段，不显式给会分裂出「有时无分数」形态；
+    - None → ``""``（nullable 列出口惯例，与既有三元站点同形）。
+    """
+    if dt is None:
+        return ""
+    normalized = ensure_aware(dt)
+    return normalized.isoformat(timespec="microseconds")
+
+
 def local_day_window_utc(day: date | None = None) -> tuple[datetime, datetime]:
     """本地日历日 → (start_utc, end_utc)，aware UTC。
 

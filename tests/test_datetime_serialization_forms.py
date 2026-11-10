@@ -124,16 +124,29 @@ def test_candidate_and_memory_exits_same_form(param_env):
         )
         s.add(cand)
         s.commit()
-    res = defer_candidate("c53", principal=None)
+    res = defer_candidate("c53", days=7, principal=None)
     due = res["review_due_at"]
     assert _ISO_UTC_RE.match(due), f"形态 A（candidate_service）未收敛：{due!r}"
 
 
 # ── 臂 a：哨兵——全仓裸 .isoformat( 未走 iso_utc 即红 ──────────────────────
 
-# 白名单（file 前缀, 行号）：非 datetime 的 isoformat（date/纯内部串）逐条登记。
+# 白名单（file, 行号）：非 datetime 的 isoformat（date 对象/内部用途）逐条登记。
 # datetime 出口一律 iso_utc；date 对象无时区概念、isoformat 天然无后缀，不在本票。
-_WHITELIST: set[tuple[str, int]] = set()
+_WHITELIST: set[tuple[str, int]] = {
+    # qijuzhu target_date 是 date 对象（get_chronicle 入参 date）：日历日无时区
+    ("cognition/qijuzhu.py", 253),
+    ("cognition/qijuzhu.py", 264),
+    # eval 基准集日期解析（naive strptime 补 +00:00，非产品 datetime 出口）
+    ("eval/longmemeval.py", 126),
+    # utcnow().date() —— 标题字符串里的日历日，非 datetime 出口
+    ("services/distill_service.py", 188),
+    # digest_worker day 是 date 对象（MCP date 序列化，票 52 已收口）
+    ("workers/digest_worker.py", 324),
+    ("workers/digest_worker.py", 326),
+    ("workers/digest_worker.py", 604),
+    ("workers/digest_worker.py", 610),
+}
 
 # 白名单按 (file, 行号) 精确登记；AST 扫描取 Call.func.value 为 Attribute
 # 且 attr == "isoformat" 的调用点。

@@ -22,7 +22,7 @@ from sqlmodel import select
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.core.text import truncate_codepoints
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.evolution.promoter import _make_checkpoint
 from lantai.models.tables import ConflictEvent, LifecycleStatus, MemoryEdge, MemoryItem
 from lantai.retrieval.temporal import _ensure_utc
@@ -98,7 +98,7 @@ def apply_supersede_correction(
         # 完璧（ADR-0057）+ 更漏（ADR-0048）：级联对齐旧记忆与新记忆匹配谓词的原子事实时态边界
         from lantai.models.tables import FactAtomic
 
-        anchor_iso = anchor.isoformat()
+        anchor_iso = iso_utc(anchor)
         old_facts = s.exec(
             select(FactAtomic).where(FactAtomic.source_memory_id == old_item.id)
         ).all()
@@ -145,17 +145,13 @@ def apply_supersede_correction(
                 kind="override",
                 detail={
                     "correction_type": correction_type,
-                    "old_event_time": old_item.event_time.isoformat()
-                    if old_item.event_time
-                    else None,
-                    "new_event_time": new_item.event_time.isoformat()
-                    if new_item.event_time
-                    else None,
-                    "valid_to_anchor": anchor.isoformat() if anchor else None,
+                    "old_event_time": iso_utc(old_item.event_time) or None,
+                    "new_event_time": iso_utc(new_item.event_time) or None,
+                    "valid_to_anchor": iso_utc(anchor) or None,
                     "recency_axis": "event" if new_item.event_time else "created",
                     "approximated": approximated,
                     "clamped": clamped,
-                    "anchor_raw": anchor_raw.isoformat() if anchor_raw else None,
+                    "anchor_raw": iso_utc(anchor_raw) or None,
                     "reason": reason,
                     "actor": actor,
                 },
@@ -170,7 +166,7 @@ def apply_supersede_correction(
             "ok": True,
             "old_id": old_item.id,
             "new_id": new_item.id,
-            "valid_to_anchor": anchor.isoformat() if anchor else None,
+            "valid_to_anchor": iso_utc(anchor) or None,
             "clamped": clamped,
             "approximated": approximated,
         }
@@ -221,7 +217,7 @@ def apply_expire_correction(
                 kind="override",
                 detail={
                     "correction_type": "expire",
-                    "valid_to_anchor": valid_to.isoformat(),
+                    "valid_to_anchor": iso_utc(valid_to),
                     "approximated": False,
                     "clamped": False,
                     "actor": actor,
@@ -233,7 +229,7 @@ def apply_expire_correction(
         s.flush()  # 同事务落写（commit 时机归调用方）
         if own_session:
             s.commit()
-        return {"ok": True, "old_id": old_item.id, "valid_to": vt_norm.isoformat()}
+        return {"ok": True, "old_id": old_item.id, "valid_to": iso_utc(vt_norm)}
     except Exception as exc:  # noqa: BLE001
         logger.warning("失效型迟到更正失败 old=%s：%s", old_item.id, exc)
         if own_session:
