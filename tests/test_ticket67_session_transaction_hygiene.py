@@ -31,14 +31,14 @@ from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
+import lantai.storage.db as db_module
 from lantai.cognition.canshang import CanshangEngine
+from lantai.cognition.juanzong import JuanzongEngine
 from lantai.cognition.qijuzhu import QijuzhuEngine
 from lantai.cognition.sanxing import SanxingEngine
-from lantai.cognition.juanzong import JuanzongEngine
+from lantai.core.auth import Principal
 from lantai.models.tables import MemoryItem
 from lantai.services.dossier_service import create_dossier_service, get_dossier_service
-
-import lantai.storage.db as db_module
 
 NOW = datetime(2026, 10, 30, 12, 0, 0, tzinfo=UTC)
 
@@ -219,6 +219,50 @@ def test_arm_c_toctou_retracted_candidate_skipped_not_materialized(tmp_path):
         "扫描后落库前的撤回被 auto_apply 覆写物化（TOCTOU 病灶：已撤回记忆被物化）"
     )
     assert verify.get(MemoryItem, "mem_ok").status == "archived", "正常候选未落库"
+    verify.close()
+
+
+def test_arm_c2_acl_reverify_owner_changed_midwindow(tmp_path):
+    """TOCTOU 第二形：扫描后落库前属主变更（第二会话改 user_id）——注入会话
+    非 admin 视角下该候选重验谓词不成立，静默跳过不写他人行（宁 miss 不越权）。"""
+    eng = _file_engine(tmp_path)
+    seed = Session(eng)
+    seed.add(_expired(id="mem_mine", user_id="user_a", tenant_id="tenant-1"))
+    seed.add(_expired(id="mem_steal", user_id="user_a", tenant_id="tenant-1"))
+    seed.commit()
+    seed.close()
+
+    class _StealAfterScanEngine(SanxingEngine):
+        steal_id: str = ""
+
+        def evaluate_health(self, now=None):
+            snap = super().evaluate_health(now=now)
+            if self.steal_id:
+                s2 = Session(self.session.get_bind())
+                try:
+                    row = s2.get(MemoryItem, self.steal_id)
+                    row.user_id = "user_b"  # 属主中途易主
+                    s2.add(row)
+                    s2.commit()
+                finally:
+                    s2.close()
+            return snap
+
+    s0 = Session(eng)
+    engine = _StealAfterScanEngine(
+        session=s0, principal=Principal(user_id="user_a", tenant_id="tenant-1")
+    )
+    engine.steal_id = "mem_steal"
+    res = engine.generate_remedies(auto_apply=True, now=NOW)
+
+    executed = {r.target_id: r.executed for r in res.remedies if r.defect_type == "expired"}
+    assert executed.get("mem_mine") is True, "本人正常候选被 ACL 重验误伤"
+    assert executed.get("mem_steal") is False, "属主易主候选仍被执行（越权写他人行）"
+
+    verify = Session(eng)
+    assert verify.get(MemoryItem, "mem_steal").user_id == "user_b", "易主行属主被覆写"
+    assert verify.get(MemoryItem, "mem_steal").status == "active", "易主行状态被物化"
+    assert verify.get(MemoryItem, "mem_mine").status == "archived", "本人候选未落库"
     verify.close()
 
 

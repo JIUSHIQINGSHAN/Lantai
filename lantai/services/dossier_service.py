@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlmodel import Session
+
 from lantai.cognition.juanzong import JuanzongEngine
 from lantai.core.auth import Principal
 from lantai.core.time import iso_utc
@@ -37,9 +39,10 @@ def create_dossier_service(
     memory_ids: list[str] | None = None,
     metadata: dict[str, Any] | None = None,
     principal: Principal | None = None,
+    session: Session | None = None,
 ) -> dict[str, Any]:
     """创建长程任务卷宗服务。"""
-    engine = JuanzongEngine(principal=principal)
+    engine = JuanzongEngine(session=session, principal=principal)
     dossier = engine.create_dossier(
         title=title,
         goal=goal,
@@ -53,9 +56,10 @@ def create_dossier_service(
 def get_dossier_service(
     dossier_id: str,
     principal: Principal | None = None,
+    session: Session | None = None,
 ) -> dict[str, Any] | None:
     """获取指定卷宗详情（受租户行级隔离保护）。"""
-    engine = JuanzongEngine(principal=principal)
+    engine = JuanzongEngine(session=session, principal=principal)
     dossier = engine.get_dossier(dossier_id)
     if not dossier:
         return None
@@ -66,9 +70,10 @@ def list_dossiers_service(
     status: str | None = None,
     limit: int = 50,
     principal: Principal | None = None,
+    session: Session | None = None,
 ) -> list[dict[str, Any]]:
     """查询当前用户/租户的卷宗列表。"""
-    engine = JuanzongEngine(principal=principal)
+    engine = JuanzongEngine(session=session, principal=principal)
     items = engine.list_dossiers(status=status, limit=limit)
     return [_serialize_dossier(it) for it in items]
 
@@ -77,9 +82,10 @@ def bind_memories_service(
     dossier_id: str,
     memory_ids: list[str],
     principal: Principal | None = None,
+    session: Session | None = None,
 ) -> dict[str, Any]:
     """向卷宗绑定记忆项。"""
-    engine = JuanzongEngine(principal=principal)
+    engine = JuanzongEngine(session=session, principal=principal)
     ok = engine.bind_memories(dossier_id, memory_ids)
     if not ok:
         raise ValueError(f"Dossier '{dossier_id}' not found or access denied")
@@ -95,9 +101,10 @@ def unbind_memories_service(
     dossier_id: str,
     memory_ids: list[str],
     principal: Principal | None = None,
+    session: Session | None = None,
 ) -> dict[str, Any]:
     """从卷宗解绑记忆项。"""
-    engine = JuanzongEngine(principal=principal)
+    engine = JuanzongEngine(session=session, principal=principal)
     ok = engine.unbind_memories(dossier_id, memory_ids)
     if not ok:
         raise ValueError(f"Dossier '{dossier_id}' not found or access denied")
@@ -115,9 +122,10 @@ def update_milestone_service(
     status: str,
     notes: str | None = None,
     principal: Principal | None = None,
+    session: Session | None = None,
 ) -> dict[str, Any]:
     """流转更新任务里程碑。"""
-    engine = JuanzongEngine(principal=principal)
+    engine = JuanzongEngine(session=session, principal=principal)
     dossier = engine.update_milestone(
         dossier_id=dossier_id,
         milestone_id=milestone_id,
@@ -134,9 +142,10 @@ def focus_dossier_service(
     query: str | None = None,
     limit: int = 20,
     principal: Principal | None = None,
+    session: Session | None = None,
 ) -> dict[str, Any]:
     """执行卷宗情境记忆聚焦检索。"""
-    engine = JuanzongEngine(principal=principal)
+    engine = JuanzongEngine(session=session, principal=principal)
     dossier = engine.get_dossier(dossier_id)
     if not dossier:
         raise ValueError(f"Dossier '{dossier_id}' not found or access denied")
@@ -161,9 +170,10 @@ def close_dossier_service(
     summary: str | None = None,
     archived: bool = False,
     principal: Principal | None = None,
+    session: Session | None = None,
 ) -> dict[str, Any]:
     """办结或封藏卷宗。"""
-    engine = JuanzongEngine(principal=principal)
+    engine = JuanzongEngine(session=session, principal=principal)
     dossier = engine.close_dossier(
         dossier_id=dossier_id,
         summary=summary,

@@ -102,6 +102,9 @@ def test_seam2_single_item_remediation_apply(db_session: Session):
     assert res.total_defects == 1
     assert res.applied_count == 1
 
+    # 票 67：注入会话提交权归调用方（引擎不再整体 commit 调用方会话——半边 2
+    # 病灶恰是旧行为），调用方履行提交义务后再验证持久化
+    db_session.commit()
     # 验证落库持久化：状态已流转为 archived
     refreshed = db_session.get(MemoryItem, "mem_to_expire")
     assert refreshed.status == "archived"
@@ -141,6 +144,8 @@ def test_seam3_batch_health_score_transition(db_session: Session):
     assert res.health_score_before == 90.0
     assert res.health_score_after == 100.0
     assert res.applied_count == 2
+    # 票 67：注入会话提交权归调用方（半边 2），调用方履行提交义务后再验证
+    db_session.commit()
     # 验证 low_help 重要度降权
     assert db_session.get(MemoryItem, "mem_low_01").importance <= 0.1
 

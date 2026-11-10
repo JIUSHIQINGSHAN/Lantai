@@ -117,7 +117,7 @@ class CanshangEngine:
     def _get_session(self) -> Session:
         if self.session is not None:
             return self.session
-        return db.get_session()
+        return db.get_session()  # 票 67 弃用：仅存量调用兼容，公开方法已拆双轨
 
     def _check_access(self, item: MemoryItem) -> bool:
         """行级租户与属主 ACL 隔离校验。"""
@@ -225,7 +225,19 @@ class CanshangEngine:
         limit: int = 50,
     ) -> ConsistencyAuditReport:
         """全局、指定实体或候选列表的信念一致性审计矩阵。"""
-        s = self._get_session()
+        if self.session is not None:
+            return self._audit_consistency(self.session, memory_ids, entity_name, limit)
+        with db.get_session() as s:  # 票 67：with 语义，返回即关（对齐 diben 样板）
+            return self._audit_consistency(s, memory_ids, entity_name, limit)
+
+    def _audit_consistency(
+        self,
+        s: Session,
+        memory_ids: list[str] | None,
+        entity_name: str | None,
+        limit: int,
+    ) -> ConsistencyAuditReport:
+        """单轨实现（会话由调用方管理生命周期）。"""
 
         items: list[MemoryItem] = []
         if memory_ids:
@@ -364,7 +376,15 @@ class CanshangEngine:
         conflicting_ids: list[str],
     ) -> DeepArbitrationResult:
         """基于更漏事件轴、置信度与证据链强度的深层多方冲突仲裁直断。"""
-        s = self._get_session()
+        if self.session is not None:
+            return self._arbitrate_deep_conflict(self.session, conflicting_ids)
+        with db.get_session() as s:  # 票 67
+            return self._arbitrate_deep_conflict(s, conflicting_ids)
+
+    def _arbitrate_deep_conflict(
+        self, s: Session, conflicting_ids: list[str]
+    ) -> DeepArbitrationResult:
+        """单轨实现（会话由调用方管理生命周期）。"""
         items: list[MemoryItem] = []
         for mid in conflicting_ids:
             it = s.get(MemoryItem, mid)

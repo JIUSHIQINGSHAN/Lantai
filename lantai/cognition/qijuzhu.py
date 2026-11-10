@@ -59,7 +59,7 @@ class QijuzhuEngine:
     def _get_session(self) -> Session:
         if self.session is not None:
             return self.session
-        return db.get_session()
+        return db.get_session()  # 票 67 弃用：仅存量调用兼容，公开方法已拆双轨
 
     def _check_memory_access(self, item: MemoryItem) -> bool:
         """MemoryItem 租户与 ACL 权限校验（宁 miss 不脏写）。"""
@@ -220,7 +220,20 @@ class QijuzhuEngine:
             detail_level: "summary" 或 "full"。
             now: 冻结时钟注入缝（测试用；生产缺省 = 实时）。
         """
-        session = self._get_session()
+        # 票 67：with 语义，返回即关（对齐 diben 样板；本体挪 _get_daily_chronicle 单轨）
+        if self.session is not None:
+            return self._get_daily_chronicle(self.session, date, detail_level, now)
+        with db.get_session() as session:
+            return self._get_daily_chronicle(session, date, detail_level, now)
+
+    def _get_daily_chronicle(
+        self,
+        session: Session,
+        date: str | date | None,
+        detail_level: str,
+        now: datetime | None,
+    ) -> dict[str, Any]:
+        """单轨实现（会话由调用方管理生命周期）。"""
         target_date: date
         if date is None:
             # 票 32：「今日」按本地墙钟日——库存 UTC、报表按使用者日界
@@ -286,7 +299,13 @@ class QijuzhuEngine:
             days: 回溯滑动天数，默认 3 天。
             limit: 最大返回事件数。
         """
-        session = self._get_session()
+        if self.session is not None:
+            return self._get_timeline(self.session, days, limit)
+        with db.get_session() as session:  # 票 67
+            return self._get_timeline(session, days, limit)
+
+    def _get_timeline(self, session: Session, days: int, limit: int) -> dict[str, Any]:
+        """单轨实现（会话由调用方管理生命周期）。"""
         now = utcnow()
         start_time = now - timedelta(days=days)
 

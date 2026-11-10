@@ -62,7 +62,7 @@ class JuanzongEngine:
     def _get_session(self) -> Session:
         if self.session is not None:
             return self.session
-        return db.get_session()
+        return db.get_session()  # 票 67 弃用：仅存量调用兼容，公开方法已拆双轨
 
     def _check_access(self, dossier: Dossier) -> bool:
         """行级租户与属主 ACL 隔离校验（票 57：None 收敛 "default" 不再全放）。"""
@@ -99,7 +99,22 @@ class JuanzongEngine:
         metadata: dict[str, Any] | None = None,
     ) -> Dossier:
         """创建长程任务情境卷宗。"""
-        s = self._get_session()
+        if self.session is not None:
+            return self._create_dossier(self.session, title, goal, milestones, memory_ids, metadata)
+        with db.get_session() as s:  # 票 67：with 语义，返回即关（对齐 diben 样板）
+            return self._create_dossier(s, title, goal, milestones, memory_ids, metadata)
+
+    def _create_dossier(
+        self,
+        s: Session,
+        title: str,
+        goal: str,
+        milestones: list[dict[str, Any]] | None,
+        memory_ids: list[str] | None,
+        metadata: dict[str, Any] | None,
+    ) -> Dossier:
+        """单轨实现（会话由调用方管理生命周期）。"""
+
         dos_id = new_id("dos")
 
         # 规整里程碑列表
@@ -146,7 +161,15 @@ class JuanzongEngine:
 
     def get_dossier(self, dossier_id: str, session: Session | None = None) -> Dossier | None:
         """获取卷宗详情（受租户行级安全保护）。"""
-        s = session or self._get_session()
+        if session is not None:
+            return self._get_dossier(session, dossier_id)
+        if self.session is not None:
+            return self._get_dossier(self.session, dossier_id)
+        with db.get_session() as s:  # 票 67
+            return self._get_dossier(s, dossier_id)
+
+    def _get_dossier(self, s: Session, dossier_id: str) -> Dossier | None:
+
         dossier = s.get(Dossier, dossier_id)
         if not dossier or not self._check_access(dossier):
             return None
@@ -159,7 +182,15 @@ class JuanzongEngine:
         session: Session | None = None,
     ) -> list[Dossier]:
         """查询符合权限的卷宗清单。"""
-        s = session or self._get_session()
+        if session is not None:
+            return self._list_dossiers(session, status, limit)
+        if self.session is not None:
+            return self._list_dossiers(self.session, status, limit)
+        with db.get_session() as s:  # 票 67
+            return self._list_dossiers(s, status, limit)
+
+    def _list_dossiers(self, s: Session, status: str | None, limit: int) -> list[Dossier]:
+
         stmt = select(Dossier)
         if status:
             stmt = stmt.where(Dossier.status == status)
@@ -186,7 +217,22 @@ class JuanzongEngine:
         session: Session | None = None,
     ) -> Dossier | None:
         """流转更新卷宗内的任务里程碑。"""
-        s = session or self._get_session()
+        if session is not None:
+            return self._update_milestone(session, dossier_id, milestone_id, status, notes)
+        if self.session is not None:
+            return self._update_milestone(self.session, dossier_id, milestone_id, status, notes)
+        with db.get_session() as s:  # 票 67
+            return self._update_milestone(s, dossier_id, milestone_id, status, notes)
+
+    def _update_milestone(
+        self,
+        s: Session,
+        dossier_id: str,
+        milestone_id: str,
+        status: str,
+        notes: str | None,
+    ) -> Dossier | None:
+
         dossier = self.get_dossier(dossier_id, session=s)
         if not dossier:
             return None
@@ -226,7 +272,15 @@ class JuanzongEngine:
         session: Session | None = None,
     ) -> bool:
         """向卷宗幂等且保序地绑定记忆项。"""
-        s = session or self._get_session()
+        if session is not None:
+            return self._bind_memories(session, dossier_id, memory_ids)
+        if self.session is not None:
+            return self._bind_memories(self.session, dossier_id, memory_ids)
+        with db.get_session() as s:  # 票 67
+            return self._bind_memories(s, dossier_id, memory_ids)
+
+    def _bind_memories(self, s: Session, dossier_id: str, memory_ids: list[str]) -> bool:
+
         dossier = self.get_dossier(dossier_id, session=s)
         if not dossier:
             return False
@@ -256,7 +310,15 @@ class JuanzongEngine:
         session: Session | None = None,
     ) -> bool:
         """从卷宗解绑记忆项。"""
-        s = session or self._get_session()
+        if session is not None:
+            return self._unbind_memories(session, dossier_id, memory_ids)
+        if self.session is not None:
+            return self._unbind_memories(self.session, dossier_id, memory_ids)
+        with db.get_session() as s:  # 票 67
+            return self._unbind_memories(s, dossier_id, memory_ids)
+
+    def _unbind_memories(self, s: Session, dossier_id: str, memory_ids: list[str]) -> bool:
+
         dossier = self.get_dossier(dossier_id, session=s)
         if not dossier:
             return False
@@ -282,7 +344,21 @@ class JuanzongEngine:
         session: Session | None = None,
     ) -> Dossier | None:
         """办结或归档卷宗。"""
-        s = session or self._get_session()
+        if session is not None:
+            return self._close_dossier(session, dossier_id, summary, archived)
+        if self.session is not None:
+            return self._close_dossier(self.session, dossier_id, summary, archived)
+        with db.get_session() as s:  # 票 67
+            return self._close_dossier(s, dossier_id, summary, archived)
+
+    def _close_dossier(
+        self,
+        s: Session,
+        dossier_id: str,
+        summary: str | None,
+        archived: bool,
+    ) -> Dossier | None:
+
         dossier = self.get_dossier(dossier_id, session=s)
         if not dossier:
             return None
@@ -308,7 +384,21 @@ class JuanzongEngine:
         session: Session | None = None,
     ) -> DossierFocusResult:
         """针对指定卷宗执行情境记忆聚焦检索（Dossier Context Focusing）。"""
-        s = session or self._get_session()
+        if session is not None:
+            return self._focus_dossier_context(session, dossier_id, query, limit)
+        if self.session is not None:
+            return self._focus_dossier_context(self.session, dossier_id, query, limit)
+        with db.get_session() as s:  # 票 67
+            return self._focus_dossier_context(s, dossier_id, query, limit)
+
+    def _focus_dossier_context(
+        self,
+        s: Session,
+        dossier_id: str,
+        query: str | None,
+        limit: int,
+    ) -> DossierFocusResult:
+
         dossier = self.get_dossier(dossier_id, session=s)
         if not dossier:
             return DossierFocusResult(

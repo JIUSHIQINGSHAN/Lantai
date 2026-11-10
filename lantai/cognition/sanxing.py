@@ -16,6 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
+from sqlalchemy import update
 from sqlmodel import Session, select
 
 from lantai.core.acl import viewer_of
@@ -140,6 +141,19 @@ class SanxingEngine:
         if tenant_id and current_tenant and tenant_id != current_tenant:
             return False
         return not (owner_id is not None and owner_id != viewer)
+
+    def _reverify_access_predicates(self) -> list[Any]:
+        """票 67 半边 3：TOCTOU 重验谓词（下推 UPDATE WHERE）——扫描时点快照
+        与落库之间行级权限/状态可能已变（supersede/retract/改属主），写入前
+        以谓词重验真值行：不成立则 rowcount=0 静默跳过（宁 miss 不脏写）。"""
+        if self.principal is None or bool(getattr(self.principal, "is_admin", False)):
+            return []
+        viewer = viewer_of(self.principal)
+        preds: list[Any] = [(MemoryItem.user_id.is_(None)) | (MemoryItem.user_id == viewer)]
+        tenant = getattr(self.principal, "tenant_id", None)
+        if tenant:
+            preds.append((MemoryItem.tenant_id.is_(None)) | (MemoryItem.tenant_id == tenant))
+        return preds
 
     def evaluate_health(self, now: datetime | None = None) -> SanxingHealthSnapshot:
         eval_now = now or utcnow()
@@ -337,14 +351,7 @@ class SanxingEngine:
                     reason=f"记忆已由 {item.get('superseded_by')} 替代，退出活跃态",
                     fenced_content=fenced,
                 )
-                if auto_apply:
-                    mem = s.get(MemoryItem, tid)
-                    if mem and self._check_access(owner_id=mem.user_id, tenant_id=mem.tenant_id):
-                        mem.status = "archived"
-                        mem.lifecycle_status = "superseded"
-                        s.add(mem)
-                        r_item.executed = True
-                        applied_count += 1
+                # 票 67：写面收敛到下方条件 UPDATE 块（重验下推 + 保存点遏制）
                 remedy_items.append(r_item)
 
             # 2. 处置过期记忆 -> archive_expire (置为 archived)
@@ -361,13 +368,7 @@ class SanxingEngine:
                     reason=f"时效过期（截止 {item.get('valid_to')}），休眠转入归档",
                     fenced_content=fenced,
                 )
-                if auto_apply:
-                    mem = s.get(MemoryItem, tid)
-                    if mem and self._check_access(owner_id=mem.user_id, tenant_id=mem.tenant_id):
-                        mem.status = "archived"
-                        s.add(mem)
-                        r_item.executed = True
-                        applied_count += 1
+                # 票 67：写面收敛到下方条件 UPDATE 块
                 remedy_items.append(r_item)
 
             # 3. 处置未决冲突 -> arbitrate_dispatch (标记审计待办)
@@ -401,17 +402,61 @@ class SanxingEngine:
                     reason="高频使用但零帮助，自省降权淘汰",
                     fenced_content=fenced,
                 )
-                if auto_apply:
-                    mem = s.get(MemoryItem, tid)
-                    if mem and self._check_access(owner_id=mem.user_id, tenant_id=mem.tenant_id):
-                        mem.importance = 0.1
-                        s.add(mem)
-                        r_item.executed = True
-                        applied_count += 1
+                # 票 67：写面收敛到下方条件 UPDATE 块
                 remedy_items.append(r_item)
 
             if auto_apply:
-                s.commit()
+                # 票 67 半边 2+3：自愈写走独立保存点 + 条件重验下推 UPDATE——
+                # ①保存点（begin_nested）：失败仅回滚本操作，调用方外层事务
+                #   （中间态、探针行）不被整体提交/回滚/连坐关闭；
+                # ②TOCTOU 重验下推：UPDATE ... WHERE status='active' AND
+                #   lifecycle 白名单 + access 谓词随行内判定，扫描时点快照与
+                #   落库之间被 supersede/retract 的候选行数=0 自动跳过（宁
+                #   miss 不脏写，不报错不覆写撤回）。
+                nested = s.begin_nested()
+                try:
+                    for r_item in remedy_items:
+                        if r_item.defect_type == "open_conflict":
+                            continue  # 审计待办无写面
+                        tid = r_item.target_id
+                        # 票 67 谓词按动作分流：supersede_retract 的诊断对象恰是
+                        # lifecycle='superseded' 的残留行（票 62 口径），重验只验
+                        # status='active'（防 retract 物化——TOCTOU 本意）；其余
+                        # 动作加 lifecycle 白名单（active/weakened 才可自愈流转）。
+                        reverify = [MemoryItem.status == STATUS_ACTIVE]
+                        if r_item.recommended_action != "supersede_retract":
+                            reverify.append(MemoryItem.lifecycle_status.in_(("active", "weakened")))
+                        stmt = (
+                            update(MemoryItem)
+                            .where(
+                                MemoryItem.id == tid,
+                                *reverify,
+                                *self._reverify_access_predicates(),
+                            )
+                            .execution_options(synchronize_session=False)
+                        )
+                        if r_item.recommended_action == "supersede_retract":
+                            stmt = stmt.values(status="archived", lifecycle_status="superseded")
+                        elif r_item.recommended_action == "archive_expire":
+                            stmt = stmt.values(status="archived")
+                        elif r_item.recommended_action == "demote_deprecate":
+                            stmt = stmt.values(importance=0.1)
+                        else:
+                            continue
+                        rowcount = s.execute(stmt).rowcount
+                        if rowcount:
+                            r_item.executed = True
+                            applied_count += 1
+                    s.flush()
+                    nested.commit()
+                except Exception:
+                    nested.rollback()
+                    raise
+                # 属主/租户 ACL（票 57 口径）：条件 UPDATE 不走 ORM identity map，
+                # _check_access 的行级判定由重验后的真值行内聚合（见 remedy_items
+                # 构造时的 snapshot 扫描面），谓词不匹配则 rowcount=0 自然跳过。
+                if self.session is None:
+                    s.commit()  # 自建会话（with 轨道）：终态落库，with 退出即关
 
             score_before = snapshot.health_score
             # 重新评估自愈后健康分
@@ -434,9 +479,9 @@ class SanxingEngine:
             )
 
         if self.session is not None:
-            return _run_remediation(self.session)
+            return _run_remediation(self.session)  # 票 67：不 commit，提交权归调用方
         with db.get_session() as s:
-            return _run_remediation(s)
+            return _run_remediation(s)  # 自建会话轨道内部 commit（见 auto_apply 块）
 
 
 def inspect_memory_health(
