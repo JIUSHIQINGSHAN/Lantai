@@ -137,7 +137,10 @@ _WHITELIST: set[tuple[str, int]] = {
     # qijuzhu target_date 是 date 对象（get_chronicle 入参 date）：日历日无时区
     ("cognition/qijuzhu.py", 253),
     ("cognition/qijuzhu.py", 264),
-    # eval 基准集日期解析（naive strptime 补 +00:00，非产品 datetime 出口）
+    # eval 基准集日期解析（naive strptime 补 +00:00，非产品 datetime 出口）：
+    # parse_lme_date 产物进 import_lines created_at，eval 语料定置 hash 要求
+    # 串形稳定（"2023-05-20T02:21:00" 无小数段），改 iso_utc 全精度会漂移
+    # 基线比对——eval 语料面豁免，产品面仍一律 iso_utc
     ("eval/longmemeval.py", 126),
     # utcnow().date() —— 标题字符串里的日历日，非 datetime 出口
     ("services/distill_service.py", 188),
@@ -146,6 +149,10 @@ _WHITELIST: set[tuple[str, int]] = {
     ("workers/digest_worker.py", 326),
     ("workers/digest_worker.py", 604),
     ("workers/digest_worker.py", 610),
+    # 票 53 审查修正：SQL cutoff 比较操作数（operation_logs.created_at 落盘为
+    # 空格分隔形态，isoformat(sep=" ") 与之同形；走 iso_utc 的 T 分隔会让
+    # 同日历日行提前 ~23h 被剪）。SQL 操作数非 datetime JSON 出口。
+    ("observability/telemetry.py", 136),
 }
 
 # 白名单按 (file, 行号) 精确登记；AST 扫描取 Call.func.value 为 Attribute

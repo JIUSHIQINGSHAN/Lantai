@@ -166,7 +166,7 @@ class MuciEngine:
                             if it.importance is not None
                             else 0.5,
                             "decay_class": it.decay_class,
-                            "updated_at": iso_utc(it.updated_at),
+                            "updated_at": iso_utc(it.updated_at) or None,
                         }
                     )
                 sec_data["entries"] = picked_entries

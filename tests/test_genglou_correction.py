@@ -133,7 +133,7 @@ class TestSupersedeCorrection:
             cfev = s.exec(
                 select(ConflictEvent).where(ConflictEvent.memory_id == "evs-old2")
             ).first()
-            assert cfev.detail["anchor_raw"] == "2026-01-01T00:00:00+00:00"
+            assert cfev.detail["anchor_raw"] == "2026-01-01T00:00:00.000000+00:00"  # 票 53 全精度形态
 
 
 class TestCreatedAtFallbackAnchor:

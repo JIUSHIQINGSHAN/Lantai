@@ -190,7 +190,10 @@ def search_atomic_facts_by_query(
     if as_of is not None:
         from lantai.retrieval.temporal import _ensure_utc
 
-        as_of_iso = iso_utc(as_of)
+        # as_of 形参 Any：datetime 与 ISO 字符串双收（调用面有传 str，如 jigu
+        # 冒烟与 MCP 面）——先 _ensure_utc 归一 datetime 再 iso_utc（票 53：
+        # iso_utc 只收 datetime，str 直传会炸；挂载链零阻断会吞成空事实）
+        as_of_iso = iso_utc(_ensure_utc(as_of))
         stmt_fact = stmt_fact.where(
             (FactAtomic.valid_from.is_(None))
             | (func.datetime(FactAtomic.valid_from) <= func.datetime(as_of_iso))
