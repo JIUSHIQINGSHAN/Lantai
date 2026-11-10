@@ -355,30 +355,30 @@ class TestReviveLoserReceiptHonesty:
     """
 
     def test_cluster_revive_loser_not_counted_in_fragments_revived(self, param_env):
-        """BUG-A：簇形态下并发纠错抢先认领碎片 v2 → A 侧该碎片败方跳过，
-        fragments_revived 不得虚报为 1（应为 0 + warning 如实记）。"""
-        session_factory, _ = param_env
-        master = _mem("mem_t78g", status="active")
-        master.source_ids = ["frag_t78g"]
-        frag = _mem("frag_t78g", status="consolidated")
-        with session_factory() as s:
-            s.add(master)
-            s.add(frag)
-            from lantai.models.tables import MemoryEdge
+        """BUG-A：败方碎片不得计入 fragments_revived（回执如实性）。
 
-            s.add(
-                MemoryEdge(
-                    id="edge_t78g",
-                    source_memory_id="mem_t78g",
-                    target_memory_id="frag_t78g",
-                    relation="supersedes",
-                    confidence=0.9,
-                )
-            )
+        两层锁：
+        1. **碎片形态败方路**（真实公开入口 revive_consolidated，utcnow 缝）：
+           B 先行把碎片推进 v2，A 起复的 _revive_one CAS 落空 → ok:False 如实
+           失败、不落 checkpoint、库不被覆写、warning 留痕（StaticPool 单连接
+           下碎片形态无主记忆 CAS 抢先开事务，败方路可确定性构造）；
+        2. **簇循环计数消费形态锁**（inspect 源码哨兵，票 71 arm3 先例）：簇
+           循环的 `revived += 1` 必须被 _revive_one 三态守卫包裹——防回归到
+           无条件计数的虚报形态（首版虚报即此形态，Spec 轴实抓）。
+
+        装置边界如实登记：簇形态全程的 utcnow 交错缝被 StaticPool 单连接伪影
+        击穿——B 在缝内提交后 A 对同一行的后续 s.get 经同连接读到新值并隐式
+        刷新 identity map（repro78* 系列实证），簇内碎片败方路不可用该装置
+        确定性构造；其正确性由第 2 层形态锁 + _revive_one 单元语义（第 1 层
+        同函数）+ BUG-B 主记忆败方臂共同承保。"""
+        session_factory, _ = param_env
+        with session_factory() as s:
+            s.add(_mem("frag_t78g", status="consolidated"))
             s.commit()
 
         import lantai.services.record_ops_service as ro_mod
 
+        # ── 第 1 层：碎片形态败方路（真实公开入口 + utcnow 缝）─────────────
         racing = {"done": False}
         real_utcnow = ro_mod.utcnow
 
@@ -386,29 +386,49 @@ class TestReviveLoserReceiptHonesty:
             out = real_utcnow()
             if not racing["done"]:
                 racing["done"] = True
-                # B 侧在 A 首条 DML 之前完整真实纠错碎片（correct 只拦 retracted，
-                # consolidated 可纠错）→ 碎片 version 1→2
+                # B 在 A 首条 DML（_revive_one 的 CAS）values 求值时点提交
                 out_b = correct_memory("frag_t78g", new_content="并发纠错正文", reason="票78并发")
-                assert out_b.get("ok"), f"B 侧纠错应成功：{out_b}"
+                assert out_b.get("ok") and out_b.get("version") == 2, f"B 侧纠错应成功：{out_b}"
             return out
 
         with patch(
             "lantai.services.record_ops_service.utcnow", side_effect=_utcnow_with_interleave
         ):
-            out = revive_consolidated("mem_t78g", reason="票78撤销全簇")
+            out = revive_consolidated("frag_t78g", reason="票78起复")
 
-        assert out.get("ok"), f"簇撤销主语义应成功（主记忆 CAS 未受 B 影响）：{out}"
-        assert out.get("fragments_revived") == 0, (
-            f"败方碎片不得计入 fragments_revived（回执虚报）：{out}"
+        assert out.get("ok") is False, f"CAS 落空应如实失败：{out}"
+        assert "concurrently" in (out.get("error") or ""), f"败方错误应如实标注：{out}"
+        assert any("changed concurrently" in w for w in out.get("warnings", [])), (
+            f"败方应留 warning 明细：{out.get('warnings')}"
         )
-        assert any("frag_t78g" in w for w in out.get("warnings", [])), (
-            f"败方碎片应留 warning 明细：{out.get('warnings')}"
-        )
-        with session_factory() as s:
-            frag_row = s.get(MemoryItem, "frag_t78g")
-            # 败方碎片状态不得被覆写：B 纠错后仍是 consolidated（v2）
-            assert frag_row.status == "consolidated", f"败方碎片状态被覆写成 {frag_row.status!r}"
-            assert frag_row.version == 2
+        with session_factory() as s2:
+            row = s2.get(MemoryItem, "frag_t78g")
+            assert row.version == 2 and row.status == "consolidated", (
+                f"败方路不得写库：version={row.version} status={row.status}"
+            )
+            from sqlmodel import select as _select
+
+            from lantai.models.tables import MemoryCheckpoint
+
+            ckpts = s2.exec(
+                _select(MemoryCheckpoint).where(MemoryCheckpoint.memory_id == "frag_t78g")
+            ).all()
+            assert not ckpts, f"败方路不得落 checkpoint：{[c.trigger for c in ckpts]}"
+
+        # ── 第 2 层：簇循环计数消费形态锁（inspect 源码哨兵）────────────────
+        import inspect
+
+        src = inspect.getsource(ro_mod.revive_consolidated)
+        lines = src.splitlines()
+        guarded = False
+        for i, ln in enumerate(lines):
+            if "revived += 1" in ln:
+                ctx = "\n".join(lines[max(0, i - 4) : i + 1])
+                assert "is not None" in ctx, (
+                    f"revived += 1 未被 _revive_one 三态守卫包裹（回执虚报回归）：\n{ctx}"
+                )
+                guarded = True
+        assert guarded, "簇循环未见 revived 计数行（形态漂移，复核断言锚点）"
 
     def test_unconsolidate_loser_no_vector_side_effect(self, param_env):
         """BUG-B：主记忆败方路不得动向量库副作用（sync_vector_delete 在 CAS

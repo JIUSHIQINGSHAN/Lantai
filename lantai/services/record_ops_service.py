@@ -533,11 +533,13 @@ def revive_consolidated(
         区别于普通 active 记忆与晚更正 supersedes 旧值）→ `already_active`。
     """
 
-    def _revive_one(s: Session, item: MemoryItem, warnings: list[str]) -> tuple[bool, bool]:
+    def _revive_one(s: Session, item: MemoryItem, warnings: list[str]) -> tuple[bool, bool] | None:
         """单条 consolidated → active：重同步索引 + checkpoint + 审计。
 
         返回 (fts_synced, vector_synced) 供碎片形态回执（与 unretract 同族）；
-        簇形态多碎片失败明细已在 warnings，聚合布尔说不清谁败（宁缺不糊），不取。
+        **None = 并发败方跳过**（票 78 自审补笔：调用方消费返回值区分三态——
+        胜方但索引双败也是 (False, False)，与败方不可混淆）。簇形态多碎片失败
+        明细已在 warnings，聚合布尔说不清谁败（宁缺不糊），不取。
 
         票 78：认领式条件 UPDATE（`WHERE version=扫描值 AND status='consolidated'`）
         ——裸 ORM 写在并发 correct_memory 交错下两迁移重号、checkpoint 链断。
@@ -563,7 +565,7 @@ def revive_consolidated(
             warnings.append(
                 f"fragment {item.id} changed concurrently (version={scan_version}); revive skipped"
             )
-            return False, False
+            return None
 
         s.refresh(item)
         fts_synced, fts_warn = _sync_fts(s, item.id, item.content)
@@ -645,16 +647,12 @@ def revive_consolidated(
                     warnings.append("vector delete failed; SQL status filter remains authoritative")
                 warnings.append("master was already retracted; cluster cleanup completed")
             else:
-                fts_removed, fts_warn = _sync_fts(s, memory_id, None)
-                if not fts_removed:
-                    warnings.extend(fts_warn)
-                vector_removed = sync_vector_delete(memory_id)
-                if not vector_removed:
-                    warnings.append("vector delete failed; SQL status filter remains authoritative")
+                # 票 78 自审补笔：认领先行（cas.py 方案 A——sync_vector_delete
+                # 是外部非事务副作用，rollback 撤不回；必须 CAS 胜方后才动
+                # FTS/向量，败方零副作用）。此前向量删除在 CAS 之前执行，败方
+                # rollback 后 active 主记忆静默丢向量索引、回执 vector_removed
+                # 硬编码 False 失实（红测 BUG-B 实锚）。
                 master_before = item.model_dump(mode="json")
-                # 票 78：认领式条件 UPDATE（同 _revive_one）——并发 correct/
-                # retract 交错下两逻辑迁移重号、checkpoint 链断。rowcount=0
-                # 即并发败方：不重复写 retracted（终态语义幂等），如实让路。
                 scan_status = item.status
                 scan_version = item.version or 1
                 claimed = atomic_update(
@@ -681,10 +679,18 @@ def revive_consolidated(
                         "fragments_revived": 0,
                         "edges_removed": 0,
                         "fts_removed": False,
-                        "vector_removed": False,
+                        "vector_removed": None,
                         "warnings": warnings,
                     }
                 s.refresh(item)
+                # 胜方才动副作用（与 retract_memory 既有顺序同构：先清索引再落状态，
+                # 此处状态已认领，顺序反转无害且语义等价）
+                fts_removed, fts_warn = _sync_fts(s, memory_id, None)
+                if not fts_removed:
+                    warnings.extend(fts_warn)
+                vector_removed = sync_vector_delete(memory_id)
+                if not vector_removed:
+                    warnings.append("vector delete failed; SQL status filter remains authoritative")
                 _make_checkpoint(s, item, master_before, proposal_id="", trigger="unconsolidate")
             audit_event(
                 s,
@@ -702,8 +708,10 @@ def revive_consolidated(
                     continue
                 s.delete(edge)
                 if frag.status == STATUS_CONSOLIDATED:
-                    _revive_one(s, frag, warnings)
-                    revived += 1
+                    # 票 78 自审补笔：None=败方跳过，不进 fragments_revived
+                    # （回执如实性——虚报的起复数会让调用方误判簇已完整恢复）
+                    if _revive_one(s, frag, warnings) is not None:
+                        revived += 1
             s.commit()
             return {
                 "ok": True,
@@ -719,7 +727,18 @@ def revive_consolidated(
         # ② 碎片形态：consolidated → active
         if item.status == STATUS_CONSOLIDATED:
             warnings = []
-            fts_synced, vector_synced = _revive_one(s, item, warnings)
+            revived_pair = _revive_one(s, item, warnings)
+            if revived_pair is None:
+                # 票 78 自审补笔：败方（并发修改认领落空）——不动库、如实失败
+                # （不冒充 already_active：那要求 trigger="revive" checkpoint 在场，
+                # 并发修改过行的起复历史不可假设）
+                s.rollback()
+                return {
+                    "ok": False,
+                    "error": "memory changed concurrently; revive skipped",
+                    "warnings": warnings,
+                }
+            fts_synced, vector_synced = revived_pair
             s.commit()
             return {
                 "ok": True,
