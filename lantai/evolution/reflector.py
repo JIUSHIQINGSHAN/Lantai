@@ -103,9 +103,7 @@ def record_feedback(
                 # 反馈人是失败记录的天然属主。principal=None（worker/CLI）
                 # 留 NULL 系统态——与 _stamp_owner 内部调用口径一致。
                 tenant_id=getattr(principal, "tenant_id", None) if principal else None,
-                user_id=(
-                    (getattr(principal, "user_id", None) or "default") if principal else None
-                ),
+                user_id=((getattr(principal, "user_id", None) or "default") if principal else None),
                 task=query[:100] or "retrieval_task",
                 action="recall_memory",
                 expected="helpful and truthful recall",

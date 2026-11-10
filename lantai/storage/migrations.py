@@ -1037,13 +1037,11 @@ def _migrate_v43(conn) -> None:
     if has_table:
         if not _has_index(conn, "ix_failurerecord_tenant_id"):
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS ix_failurerecord_tenant_id"
-                " ON failurerecord (tenant_id)"
+                "CREATE INDEX IF NOT EXISTS ix_failurerecord_tenant_id ON failurerecord (tenant_id)"
             )
         if not _has_index(conn, "ix_failurerecord_user_id"):
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS ix_failurerecord_user_id"
-                " ON failurerecord (user_id)"
+                "CREATE INDEX IF NOT EXISTS ix_failurerecord_user_id ON failurerecord (user_id)"
             )
     logger.info("数据库增量迁移 v43 完成（FailureRecord 归属列）")
 
