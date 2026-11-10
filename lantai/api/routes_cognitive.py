@@ -121,8 +121,9 @@ def cognitive_reflect(
     查询此前一个 scope 都没有——统计是全表数、A 与 B 的观测被**一起聚类**、
     晋升出的候选又是 ownerless 行。现在按 `ctx` 收窄（口径同票 04 的
     `_digest_scope`：`user_id == viewer OR IS NULL`，NULL 老行可见）。
-    `FailureRecord` 无归属列，`failures` 计数无法收窄，报告里以
-    `failures_scoped: false` 如实标注。
+    票 61：`FailureRecord` 已有归属列（迁移 v43），失败蒸馏来源同样按
+    viewer 收窄；`failures_scoped` 如实反映——具名用户 True，
+    内部调用/worker/admin（全量口径）False。
     """
     engine = ReflectionEngine(db, principal=ctx)
     report = engine.run_reflection()

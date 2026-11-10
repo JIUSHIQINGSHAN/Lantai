@@ -291,7 +291,15 @@ def handle_search(params: dict) -> dict:
         from lantai.runtime.middleware import build_cognitive_summary
 
         task_desc = params.get("task") or query
-        cog_summary = build_cognitive_summary(task_desc)
+        # 票 61：透传身份——此前不传，rules/failures 双轨在 build_cognitive_summary
+        # 内按 None 处理（rules 票 57 收敛 default；failures 票 61 同轨）。
+        # 宿主透传 user_id 时摘要按该身份收窄，不再跨用户泄漏。
+        _inj_principal = _principal_from_params(params)
+        cog_summary = build_cognitive_summary(
+            task_desc,
+            user_id=getattr(_inj_principal, "user_id", None) if _inj_principal else None,
+            tenant_id=getattr(_inj_principal, "tenant_id", None) if _inj_principal else None,
+        )
         if cog_summary:
             ret["cognitive_summary"] = cog_summary
     except Exception:

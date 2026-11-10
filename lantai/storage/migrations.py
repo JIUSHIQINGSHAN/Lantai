@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 42
+TARGET_SCHEMA_VERSION = 43
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -1017,6 +1017,51 @@ def _migrate_v42(conn) -> None:
     logger.info("数据库增量迁移 v42 完成（dedup_key 唯一索引）")
 
 
+def _migrate_v43(conn) -> None:
+    """v42 -> v43（票 61）：failurerecord 补归属列 tenant_id/user_id。
+
+    FailureRecord 此前无归属列——三读面（润物摘要/反省/心斋切面）想过滤
+    都无从过滤。nullable 保存量兼容：旧行归属 NULL 不回填（ownerless 保
+    系统态 vs 全归 default 属 ready-for-human 决策点，票面回执列明两选项）；
+    读侧 OR IS NULL 口径下旧行人人可读（票 57 家族兼容口径）。幂等；
+    建表归 create_all（v41 同款口径）。
+    """
+    if not _has_column(conn, "failurerecord", "tenant_id"):
+        conn.execute("ALTER TABLE failurerecord ADD COLUMN tenant_id TEXT")
+    if not _has_column(conn, "failurerecord", "user_id"):
+        conn.execute("ALTER TABLE failurerecord ADD COLUMN user_id TEXT")
+    # 索引：create_all 新库自带；旧库 ALTER 后列存在，此处补建（v41 口径）
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'failurerecord'"
+    ).fetchone()
+    if has_table:
+        if not _has_index(conn, "ix_failurerecord_tenant_id"):
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_failurerecord_tenant_id"
+                " ON failurerecord (tenant_id)"
+            )
+        if not _has_index(conn, "ix_failurerecord_user_id"):
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_failurerecord_user_id"
+                " ON failurerecord (user_id)"
+            )
+    logger.info("数据库增量迁移 v43 完成（FailureRecord 归属列）")
+
+
+def _has_index(conn, index_name: str) -> bool:
+    """查询索引是否存在（v43 专用；表不存在视为 True，同 _has_column 口径）。"""
+    try:
+        return bool(
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+                (index_name,),
+            ).fetchone()
+        )
+    except Exception as exc:
+        logger.warning("索引检查跳过 %s: %s", index_name, exc)
+        return False
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -1059,6 +1104,7 @@ MIGRATIONS = [
     (40, _migrate_v40),
     (41, _migrate_v41),
     (42, _migrate_v42),
+    (43, _migrate_v43),
 ]
 
 

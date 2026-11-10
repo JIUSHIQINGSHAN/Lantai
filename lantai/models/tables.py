@@ -276,6 +276,14 @@ class CognitivePattern(SQLModel, table=True):
 class FailureRecord(SQLModel, table=True):
     id: str = Field(primary_key=True)
 
+    # 归属（票 61）：失败记录此前无归属列——三读面（润物摘要/反省/心斋
+    # 切面）全库裸拉，他人教训被物化为本人 Belief。nullable 保存量兼容：
+    # 迁移前旧行归属 NULL（回填口径属 ready-for-human 决策点，票面回执列明），
+    # 读侧 OR IS NULL 口径下人人可读（同票 57 家族「NULL 是未记录不是属于
+    # 所有人」的既有兼容口径）。
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
+
     task: str
     action: str
     expected: str

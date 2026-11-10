@@ -360,19 +360,22 @@ class TestNoRegressionOnReadSide:
             assert "ctx" in params, f"{name} 丢了 ctx 形参（读侧归属回潮）"
 
     def test_failures_count_is_flagged_unscoped(self, cog_env):
-        """`FailureRecord` 无归属列，`failures` 计数必须标注为未收窄。
+        """`failures_scoped` 如实标注收窄状态（票 61 后语义更新）。
 
-        谎报 `failures_scoped: true` 会让读报告的人把跨用户的失败数
-        当成自己的——比不报更糟。
+        票 61 前：FailureRecord 无归属列，`failures` 计数无法收窄——恒 False。
+        票 61 后：归属列已加（迁移 v43），蒸馏来源按 viewer 收窄——具名
+        用户 True（数是自己的），内部调用/worker/admin 全量 False（数是
+        跨用户的）。谎报方向不变：报告里说 scoped 就必须真 scoped。
         """
         from lantai.cognition.reflection import ReflectionEngine
 
         with cog_env() as s:
             report = ReflectionEngine(s, principal=A).run_reflection()
-        assert report.failures_scoped is False, (
-            "failures_scoped 该是 False（FailureRecord 没有归属列，无从收窄）"
+        assert report.failures_scoped is True, (
+            "具名用户 A 的失败计数已按 viewer 收窄（票 61 迁移 v43 归属列），"
+            "failures_scoped 该如实为 True"
         )
         with _client(A) as c:
             resp = c.post("/cognitive/reflect")
         assert resp.status_code == 200, resp.text
-        assert resp.json()["failures_scoped"] is False, "路由没把 failures_scoped 传出去"
+        assert resp.json()["failures_scoped"] is True, "路由没把 failures_scoped 传出去"

@@ -73,7 +73,9 @@ def test_db():
     db_module.get_session = original
 
 
-def _seed_failure(s: Session, fid: str, lesson: str, *, user_id=None, tenant_id=None) -> FailureRecord:
+def _seed_failure(
+    s: Session, fid: str, lesson: str, *, user_id=None, tenant_id=None
+) -> FailureRecord:
     """种一条失败记录；票 61 后归属列出生即填，红测期（无列）只落行不归属。
 
     红态（表无归属列）与绿态（有列）都**必须**让行落库——红态先 commit
@@ -93,14 +95,22 @@ def _seed_failure(s: Session, fid: str, lesson: str, *, user_id=None, tenant_id=
     )
     s.add(f)
     s.commit()  # 先落行（红绿两态行都在）
-    conn = s.connection()
-    cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(failurerecord)").fetchall()]
-    if "user_id" in cols:
-        conn.exec_driver_sql(
-            "UPDATE failurerecord SET user_id=?, tenant_id=? WHERE id=?",
-            (user_id, tenant_id, fid),
-        )
-        s.commit()
+    # 归属补齐走独立 engine 连接——StaticPool 下 session.connection() 在
+    # commit 后已关闭复用会 ResourceClosedError；且裸 UPDATE 用独立连接
+    # 避免污染被测 session 的事务状态
+    eng = s.get_bind()
+    with eng.connect() as upd:
+        cols = [
+            row[1] for row in upd.exec_driver_sql("PRAGMA table_info(failurerecord)").fetchall()
+        ]
+        if "user_id" in cols:
+            upd.exec_driver_sql(
+                "UPDATE failurerecord SET user_id=?, tenant_id=? WHERE id=?",
+                (user_id, tenant_id, fid),
+            )
+            upd.commit()
+    # 让被测 session 重新读到最新行（expire 缓存）
+    s.expire_all()
     return f
 
 
@@ -153,7 +163,9 @@ class TestSummaryFaceOwnership:
         _seed_failure(test_db, "fail-A3", "A 的教训：摘要注入面泄漏", user_id="user-A")
         test_db.commit()
 
-        ret = handle_search({"query": "部署检查", "task": "部署检查", "user_id": "user-B", "top_k": 1})
+        ret = handle_search(
+            {"query": "部署检查", "task": "部署检查", "user_id": "user-B", "top_k": 1}
+        )
         cs = ret.get("cognitive_summary") or ""
         assert "A 的教训" not in cs, f"handle_search 摘要注入泄入他人教训：{cs}"
 
@@ -177,8 +189,13 @@ class TestReflectionFaceOwnership:
         engine_b = ReflectionEngine(test_db, principal=_principal("user-B"))
         report_b = engine_b.run_reflection()
 
-        # 红态实证前置：全库蒸馏真的产出了 belief 候选（否则断言空过假绿）
-        assert report_b.failure_patterns >= 1, "同签名失败应聚出 failure_pattern（防假绿前置）"
+        # 票 61 修复后行为锁：B 视角的失败计数为 0（A 的失败被 scope 过滤，
+        # B 的旧 ownerless 行不存在）——蒸馏源空，patterns 自然 0；
+        # 同时 failures_scoped 如实为 True
+        assert report_b.failures == 0, (
+            f"B 的反省仍拉到 {report_b.failures} 条失败记录（应为 0：A 的失败被过滤）"
+        )
+        assert report_b.failures_scoped is True
 
         # B 产出的 failure belief 候选不得源自 A 的失败记录
         for b in report_b.failure_belief_candidates:
@@ -191,9 +208,7 @@ class TestReflectionFaceOwnership:
             )
 
         # 全库扫一遍：任何 B 属主的新候选不得含 A 教训文本
-        rows = test_db.exec(
-            select(MemoryItem).where(MemoryItem.user_id == "user-B")
-        ).all()
+        rows = test_db.exec(select(MemoryItem).where(MemoryItem.user_id == "user-B")).all()
         for r in rows:
             assert "A 的私有部署流程" not in (r.content or ""), (
                 f"A 的教训物化为 B 的行 {r.id}：{r.content}"
@@ -214,8 +229,9 @@ class TestReflectionFaceOwnership:
         report_a = engine_a.run_reflection()
         assert report_a.failures >= 2, "本人失败记录计数不得为 0（回归臂）"
         assert report_a.failures_scoped is True, "过滤后 failures_scoped 必须如实为 True"
-        contents = [b.content or "" for b in report_a.failure_belief_candidates]
-        assert any("A 的发布闸门" in c for c in contents), (
+        # detect_patterns 词袋清洗 lowercase——内容比对大小写不敏感
+        contents = [(b.content or "").lower() for b in report_a.failure_belief_candidates]
+        assert any("a 的发布闸门" in c for c in contents), (
             f"本人教训应可蒸馏进本人 Belief：{contents}"
         )
 
@@ -255,16 +271,15 @@ class TestContextFaceOwnershipAndClamp:
     def test_top_k_positive_takes_newest(self, test_db):
         """top_k 正值取**最新** k 条（修复前无排序=插入序不定，红）。"""
         from lantai.cognition.context import CognitiveContextBuilder
-
         from lantai.core.time import utcnow
 
         for i in range(4):
             _seed_failure(test_db, f"fail-K{i}", f"新序教训 {i}", user_id="user-B")
             # 手动拉开 created_at 保证排序断言确定
             test_db.exec(
-                __import__("sqlalchemy").text(
-                    "UPDATE failurerecord SET created_at=:t WHERE id=:i"
-                ).bindparams(t=utcnow().replace(microsecond=i * 1000), i=f"fail-K{i}")
+                __import__("sqlalchemy")
+                .text("UPDATE failurerecord SET created_at=:t WHERE id=:i")
+                .bindparams(t=utcnow().replace(microsecond=i * 1000), i=f"fail-K{i}")
             )
         test_db.commit()
 
@@ -273,9 +288,7 @@ class TestContextFaceOwnershipAndClamp:
         ids = [f["id"] for f in ctx.failures]
         assert len(ids) <= 2, f"top_k=2 溢出：{ids}"
         # 最新的两条（K2/K3 拥有最大 created_at）
-        assert "fail-K3" in ids and "fail-K2" in ids, (
-            f"应取最新 k 条：{ids}"
-        )
+        assert "fail-K3" in ids and "fail-K2" in ids, f"应取最新 k 条：{ids}"
 
 
 class TestMigrationAndLegacy:
@@ -307,9 +320,7 @@ class TestMigrationAndLegacy:
 
         apply_migrations(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == TARGET_SCHEMA_VERSION
-        cols = [
-            row[1] for row in conn.execute("PRAGMA table_info(failurerecord)").fetchall()
-        ]
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(failurerecord)").fetchall()]
         assert "tenant_id" in cols and "user_id" in cols
         # 存量行数据不丢
         row = conn.execute(

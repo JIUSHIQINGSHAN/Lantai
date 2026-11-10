@@ -719,8 +719,28 @@ class CognitiveContextBuilder:
 
             target.append(record)
 
-        # 3. 拉取 FailureRecord
-        failures = self.db.exec(select(FailureRecord)).all()
+        # 3. 拉取 FailureRecord（票 61）：归属收敛 + 排序 + top_k 钳制——
+        # 此前全库裸拉、无排序、`failures[:top_k]` 负值反向切片把最旧失败
+        # 喂进 prompt。口径同 `_owned_memory_stmt`：viewer_of 收敛
+        # （None→"default"），NULL 老行人人可读；admin/system 全量；
+        # 按 created_at 降序取最新 k 条。top_k 非正整数显式拒绝
+        # （票 66 口径：拒绝而非静默修正——负值反向切片是静默错形）。
+        if not isinstance(top_k, int) or isinstance(top_k, bool) or top_k < 1:
+            raise ValueError("top_k must be a positive int")
+        failures_stmt = select(FailureRecord)
+        principal = self.principal
+        if not (principal is not None and bool(getattr(principal, "is_admin", False))):
+            from lantai.services.work_item_service import _viewer_of
+
+            viewer = _viewer_of(principal)
+            failures_stmt = failures_stmt.where(
+                (FailureRecord.user_id == viewer) | (FailureRecord.user_id.is_(None))
+            )
+        from lantai.core.time import utcnow
+
+        now = utcnow()
+        failures = self.db.exec(failures_stmt).all()
+        failures.sort(key=lambda f: f.created_at or now, reverse=True)
         for f in failures[:top_k]:
             ctx.failures.append(
                 {
