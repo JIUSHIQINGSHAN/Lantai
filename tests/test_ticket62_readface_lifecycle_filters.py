@@ -251,16 +251,17 @@ def test_arm3b_zuozheng_superseded_neighbor_excluded_from_chain(db_session):
 
 
 def test_arm3c_zuozheng_verify_claim_ignores_superseded(db_session):
-    ok = _mem(db_session, "mem-claim-ok", "系统已全面启用 TLS 加密传输")
+    _mem(db_session, "mem-claim-ok", "系统已全面启用 TLS 加密传输")
     old = _mem(db_session, "mem-claim-old", "旧版系统已全面启用 TLS 加密传输的过期配置")
     _supersede(db_session, old, "mem-claim-old-new")
-    del ok
 
     engine = ZuozhengEngine(session=db_session, principal=Principal(user_id="user-1"))
     res = engine.verify_claim("系统 TLS 加密传输配置")
     node_ids = {n["id"] for n in res["supporting_nodes"]}
 
     assert "mem-claim-old" not in node_ids, "superseded 行（status 仍 active）参与断言佐证"
+    # 对照（语义回归）：正常 active 行主路径零变化（自审 Spec 轴补锁）
+    assert "mem-claim-ok" in node_ids, "正常 active 行被读面收敛误伤"
 
 
 # ── 臂 4：冲突（conflicts）——_evidence_stats 混入非 active Evidence ────────
