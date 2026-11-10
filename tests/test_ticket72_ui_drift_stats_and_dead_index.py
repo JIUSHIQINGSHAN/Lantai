@@ -13,8 +13,12 @@
 接缝（派单预敲定）：
 - arm1 stats 契约臂 @ GET /graph/xuanjing（真内存库空图/有图两态）：前端消费
   键名以常量锁进测试防再漂移；空图 avg None、有图 avg 数值、两分支键组一致。
-- arm2 死代码臂 @ import lantai.api.routes_ui：模块级锁形态（票 64「死渲染
-  路径」先例）+ 源码文本零残留双保险。
+- arm2 死代码臂 @ import lantai.api.routes_ui：模块级锁形态（先例
+  tests/test_dead_code_removal.py，.scratch/dead-code-removal/01）+ 源码文本
+  零残留双保险。
+- arm4 契约纽带自证臂：从 xuanjing.js 源文本提取全部 stats.<key> 消费点断言
+  ⊇ FE_CONSUMED_KEYS——前端改键而常量未跟时先红（test_monitor_ui.py 读 JS
+  源交叉验证强形态同构，Standards 轴建议）。
 - arm3 回归臂：xuanjing 家族既有测试（test_xuanjing_topology_smoke /
   test_xuanjing_ui_smoke / test_graph*）随收口全量运行覆盖，不单写断言。
 
@@ -29,6 +33,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
+from lantai.api.app import app
 from lantai.core.auth import Principal, get_current_user
 from lantai.models.tables import MemoryEdge, MemoryItem
 
@@ -86,7 +91,7 @@ def _create_mem(mid: str, content: str, decay_score: float) -> MemoryItem:
 def test_arm1a_empty_graph_stats_has_frontend_keys(graph_env):
     """空图态：GET /graph/xuanjing → stats 含前端消费全键；total/avg 语义正确
     （空图 total_nodes=0、avg_decay_score=None）。"""
-    client = TestClient(__import__("lantai.api.app", fromlist=["app"]).app)
+    client = TestClient(app)
     resp = client.get("/graph/xuanjing")
     assert resp.status_code == 200, resp.text
     stats = resp.json()["stats"]
@@ -120,7 +125,7 @@ def test_arm1b_nonempty_graph_stats_values_match_nodes(graph_env):
         )
         s.commit()
 
-    client = TestClient(__import__("lantai.api.app", fromlist=["app"]).app)
+    client = TestClient(app)
     resp = client.get("/graph/xuanjing")
     assert resp.status_code == 200, resp.text
     data = resp.json()
@@ -140,7 +145,6 @@ def test_arm1c_stats_key_set_identical_across_branches(graph_env):
     """两分支键组必须一致（工单修复目标 3）：空图分支与有图分支 stats 输出
     同一组键，防「空图分支键组无人消费」的第二次漂移。"""
     session_factory = graph_env
-    app = __import__("lantai.api.app", fromlist=["app"]).app
     client = TestClient(app)
 
     empty = client.get("/graph/xuanjing").json()["stats"]
@@ -159,8 +163,9 @@ def test_arm1c_stats_key_set_identical_across_branches(graph_env):
 
 
 def test_arm2_routes_ui_has_no_dead_index_html():
-    """routes_ui 模块面：_INDEX_HTML 死副本必须删净（票 64「死渲染路径」先例
-    的模块级锁形态）+ 源码文本零残留双保险（防改名绕过 hasattr 锁）。"""
+    """routes_ui 模块面：_INDEX_HTML 死副本必须删净（先例
+    tests/test_dead_code_removal.py，dead-code-removal/01 的模块级锁形态）+
+    源码文本零残留双保险（防改名绕过 hasattr 锁）。"""
     import lantai.api.routes_ui as routes_ui_module
 
     assert not hasattr(routes_ui_module, "_INDEX_HTML"), (
@@ -172,3 +177,18 @@ def test_arm2_routes_ui_has_no_dead_index_html():
 
     src = Path(routes_ui_module.__file__).read_text(encoding="utf-8")
     assert "_INDEX_HTML" not in src, "routes_ui.py 源码仍有 _INDEX_HTML 文本残留"
+
+
+def test_arm4_frontend_source_mentions_all_consumed_keys():
+    """契约纽带自证臂（Standards 轴建议，test_monitor_ui.py 读 JS 源交叉验证
+    强形态同构）：从 xuanjing.js 源文本提取全部 stats.<key> 消费点，断言
+    FE_CONSUMED_KEYS ⊆ 提取集——前端改键名而常量未跟时在此先红，再由
+    arm1a/arm1b 锁服务端契约，两侧防漂移闭环。"""
+    import re
+    from pathlib import Path
+
+    js = Path(__file__).resolve().parents[1] / "lantai" / "api" / "ui" / "xuanjing.js"
+    consumed = set(re.findall(r"stats\.([a-z_]+)", js.read_text(encoding="utf-8")))
+    assert consumed, "xuanjing.js 源文本未提取到任何 stats.* 消费点（正则失效）"
+    missing = set(FE_CONSUMED_KEYS) - consumed
+    assert not missing, f"前端已不消费（或改名）的键仍留在 FE_CONSUMED_KEYS：{missing}"
