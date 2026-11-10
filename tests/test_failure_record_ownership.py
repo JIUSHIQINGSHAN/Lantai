@@ -141,6 +141,29 @@ class TestSummaryFaceOwnership:
         assert "B 的教训" not in joined_a
         assert "A 的教训" in joined_a
 
+    def test_tenant_narrowing_keeps_null_tenant_rows(self, test_db):
+        """自审臂（Standards 轴覆盖缺口）：tenant 收窄不排 NULL——ownerless
+        旧行（tenant_id IS NULL）不因租户条件丢失；他租户行被排除。"""
+        from lantai.runtime.runwu import RunwuEngine
+
+        _seed_failure(
+            test_db, "fail-T1", "本租户的教训：配置先校验", user_id="user-B", tenant_id="t1"
+        )
+        _seed_failure(
+            test_db, "fail-T2", "他租户的教训：跨租户行", user_id="user-B", tenant_id="t2"
+        )
+        _seed_failure(test_db, "fail-T3", "ownerless 老行教训：NULL 租户", user_id="user-B")
+        test_db.commit()
+
+        engine = RunwuEngine(db=test_db)
+        summary = engine.extract_summary(
+            task="配置校验", user_id="user-B", tenant_id="t1", max_failures=5
+        )
+        joined = "; ".join(summary.failures)
+        assert "本租户的教训" in joined, "同租户行必须可见"
+        assert "ownerless 老行教训" in joined, "NULL 租户旧行不因租户条件被排除"
+        assert "他租户的教训" not in joined, f"他租户行被排除：{joined}"
+
     def test_mcp_no_identity_converges_default(self, test_db):
         """MCP 无身份入口收敛 default：default 只见自己的 + ownerless 老行。"""
         from lantai.runtime.runwu import RunwuEngine

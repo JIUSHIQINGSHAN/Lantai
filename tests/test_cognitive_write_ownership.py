@@ -359,8 +359,10 @@ class TestNoRegressionOnReadSide:
             params = inspect.signature(getattr(rc, name)).parameters
             assert "ctx" in params, f"{name} 丢了 ctx 形参（读侧归属回潮）"
 
-    def test_failures_count_is_flagged_unscoped(self, cog_env):
-        """`failures_scoped` 如实标注收窄状态（票 61 后语义更新）。
+    def test_failures_count_scoped_flag_is_honest(self, cog_env):
+        """`failures_scoped` 如实标注收窄状态（票 61 后语义更新，原
+        test_failures_count_is_flagged_unscoped 改名——票 61 加归属列后
+        具名用户视角 scoped=True，旧名与断言名实相反）。
 
         票 61 前：FailureRecord 无归属列，`failures` 计数无法收窄——恒 False。
         票 61 后：归属列已加（迁移 v43），蒸馏来源按 viewer 收窄——具名

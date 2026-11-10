@@ -1,8 +1,10 @@
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import jieba
 from sqlmodel import Session, select
 
+from lantai.core.acl import viewer_of
 from lantai.core.settings import settings
 from lantai.models.tables import CognitiveRole, FailureRecord, LifecycleStatus, MemoryItem
 
@@ -675,6 +677,11 @@ class CognitiveContextBuilder:
         return len(task_words & content_words) / len(task_words | content_words)
 
     def build(self, task: str, top_k: int = 12) -> CognitiveContext:
+        # top_k 先验（票 61 自审）：拒绝语义须在入口生效——放第 3 步失败切面处
+        # 时第 2 步记忆切面已用未校验 top_k 切过一轮（负值各切面恰好为空纯属
+        # 巧合，票 66 口径「拒绝而非静默修正」按入口先验执行）
+        if not isinstance(top_k, int) or isinstance(top_k, bool) or top_k < 1:
+            raise ValueError("top_k must be a positive int")
         ctx = CognitiveContext(task=task)
 
         # 1. 拉取归属范围内的 MemoryItem，按综合分（task_relevance + confidence）排序
@@ -719,28 +726,23 @@ class CognitiveContextBuilder:
 
             target.append(record)
 
-        # 3. 拉取 FailureRecord（票 61）：归属收敛 + 排序 + top_k 钳制——
+        # 3. 拉取 FailureRecord（票 61）：归属收敛 + 排序——
         # 此前全库裸拉、无排序、`failures[:top_k]` 负值反向切片把最旧失败
         # 喂进 prompt。口径同 `_owned_memory_stmt`：viewer_of 收敛
         # （None→"default"），NULL 老行人人可读；admin/system 全量；
-        # 按 created_at 降序取最新 k 条。top_k 非正整数显式拒绝
-        # （票 66 口径：拒绝而非静默修正——负值反向切片是静默错形）。
-        if not isinstance(top_k, int) or isinstance(top_k, bool) or top_k < 1:
-            raise ValueError("top_k must be a positive int")
+        # 按 created_at 降序取最新 k 条（NULL created_at 沉底——旧行「未记录」
+        # 不冒充最新）；top_k 拒绝语义已在 build() 入口先验。
         failures_stmt = select(FailureRecord)
         principal = self.principal
         if not (principal is not None and bool(getattr(principal, "is_admin", False))):
-            from lantai.services.work_item_service import _viewer_of
-
-            viewer = _viewer_of(principal)
+            viewer = viewer_of(principal)
             failures_stmt = failures_stmt.where(
                 (FailureRecord.user_id == viewer) | (FailureRecord.user_id.is_(None))
             )
-        from lantai.core.time import utcnow
-
-        now = utcnow()
         failures = self.db.exec(failures_stmt).all()
-        failures.sort(key=lambda f: f.created_at or now, reverse=True)
+        # NULL created_at 沉底（created_at 有 default_factory，实践中难触达；
+        # 边角防御：min 表示「最旧」，reverse 后排最后）
+        failures.sort(key=lambda f: f.created_at or datetime.min.replace(tzinfo=UTC), reverse=True)
         for f in failures[:top_k]:
             ctx.failures.append(
                 {
