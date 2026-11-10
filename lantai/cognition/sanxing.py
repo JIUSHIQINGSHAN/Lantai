@@ -164,9 +164,9 @@ class SanxingEngine:
                 # 全仓 grep 实锤 superseded_by 只写**列**（lifecycle.py:74 /
                 # late_correction.py:91 / zhiming.py:322），零写点写 structure
                 # 键 → 诊断恒假。改读列：真实 supersede（status 仍 active，
-                # lifecycle=SUPERSEDED + superseded_by）后才算「已替代仍活跃」
-                # 的真实残留。活跃集已按认识论白名单过滤，能进这里的
-                # lifecycle 必为 active/weakened——superseded 列非空即残留。
+                # lifecycle=SUPERSEDED + superseded_by 非空）后才算「已替代
+                # 仍活跃」的真实残留（扫描集特意保留 status==active 不滤
+                # lifecycle，superseded 残留正是三省的检出对象）。
                 if item.superseded_by:
                     superseded_stale.append(
                         {
