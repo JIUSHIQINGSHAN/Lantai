@@ -56,6 +56,23 @@ def _seed_row(content: str, user_id: str | None) -> str:
     return out["memory_id"]
 
 
+def _submit_as_a():
+    """A（user-A）经 REST 路由提交同文——直调/护栏各臂共用的提交形状。"""
+    from lantai.api.routes_memory import add_raw_memory_route
+
+    return add_raw_memory_route(
+        RawMemoryReq(content=_SAME_DOC, lane="fact"), ctx=_principal("user-A")
+    )
+
+
+def _assert_row_owner(session_factory, memory_id: str, user_id: str | None, note: str) -> None:
+    """落库面属主断言：行存在且 user_id 相符（直调/HTTP 两臂共用）。"""
+    with session_factory() as s:
+        row = s.get(MemoryItem, memory_id)
+        assert row is not None, f"{note}：行 {memory_id} 不存在"
+        assert row.user_id == user_id, f"{note}：属主 {row.user_id!r} != {user_id!r}"
+
+
 class TestRestRawDedupOwnershipWiring:
     """REST 入口补 principal=ctx 接线：红臂 ×2（现状红）+ 护栏臂 ×3（现状绿）。"""
 
@@ -63,23 +80,16 @@ class TestRestRawDedupOwnershipWiring:
         """红臂 1（决定性，直调形态）：A 直调路由提交与 B 的 verbatim 行 sha256
         相同的文本，不得返回 B 的 memory_id。现状：返回 B 的 id + dedup=True（红）。"""
         session_factory, _ = param_env
-        from lantai.api.routes_memory import add_raw_memory_route
-
         b_id = _seed_row(_SAME_DOC, "user-B")
 
-        out = add_raw_memory_route(
-            RawMemoryReq(content=_SAME_DOC, lane="fact"), ctx=_principal("user-A")
-        )
+        out = _submit_as_a()
 
         assert out["memory_id"] != b_id, (
             f"REST 去重命中 B 的行（返回 {out['memory_id']}，dedup={out.get('dedup')}）"
             "——principal 未透传，票 20 守卫在 REST 是死代码"
         )
         assert out["dedup"] is False, f"A 无既有同主行，应插自己的新行：{out}"
-        with session_factory() as s:
-            a_row = s.get(MemoryItem, out["memory_id"])
-            assert a_row is not None
-            assert a_row.user_id == "user-A", f"A 的新行没落 A 的属主：{a_row.user_id!r}"
+        _assert_row_owner(session_factory, out["memory_id"], "user-A", "A 的新行")
 
     def test_http_post_add_raw_returns_own_row_not_b(self, param_env):
         """红臂 2（端到端，督导拍板保留）：get_current_user → ctx → 路由透传全链。
@@ -106,23 +116,14 @@ class TestRestRawDedupOwnershipWiring:
             f"HTTP 面去重命中 B 的行（body={body}，B 行 {b_id}）——principal 未透传"
         )
         assert body["dedup"] is False, f"A 无既有同主行，应插自己的新行：{body}"
-        with session_factory() as s:
-            a_row = s.get(MemoryItem, body["memory_id"])
-            assert a_row is not None
-            assert a_row.user_id == "user-A", f"A 的新行没落 A 的属主：{a_row.user_id!r}"
+        _assert_row_owner(session_factory, body["memory_id"], "user-A", "A 的新行")
 
     def test_own_content_still_dedups_after_wiring(self, param_env):
         """护栏 1：A 提交自己的同文两次 → 第二次 dedup=True 且 id 是 A 自己的行
         （接线不得把去重修废）。现状绿，修后必须仍绿。"""
-        from lantai.api.routes_memory import add_raw_memory_route
-
-        first = add_raw_memory_route(
-            RawMemoryReq(content=_SAME_DOC, lane="fact"), ctx=_principal("user-A")
-        )
+        first = _submit_as_a()
         assert first["dedup"] is False
-        second = add_raw_memory_route(
-            RawMemoryReq(content=_SAME_DOC, lane="fact"), ctx=_principal("user-A")
-        )
+        second = _submit_as_a()
         assert second["dedup"] is True, f"同主同文第二次应判重复：{second}"
         assert second["memory_id"] == first["memory_id"], "应收敛到 A 自己的行"
 
@@ -131,28 +132,23 @@ class TestRestRawDedupOwnershipWiring:
         （add_raw_memory docstring :757-761 的价值观拍板，接线后保持）。
         现状绿，修后必须仍绿。"""
         session_factory, _ = param_env
-        from lantai.api.routes_memory import add_raw_memory_route
-
         legacy_id = _seed_row(_SAME_DOC, None)
         with session_factory() as s:
             row = s.get(MemoryItem, legacy_id)
             assert row is not None and row.user_id is None, "前置：种出 NULL 属主老行"
 
-        out = add_raw_memory_route(
-            RawMemoryReq(content=_SAME_DOC, lane="fact"), ctx=_principal("user-A")
-        )
+        out = _submit_as_a()
         assert out["dedup"] is True, f"NULL 属主老行应判重复（价值观拍板）：{out}"
         assert out["memory_id"] == legacy_id, "应命中 NULL 属主老行"
 
     def test_b_row_untouched_after_a_submit(self, param_env):
         """护栏 3：A 提交后 B 的行原样未动（未被覆写/未被 A 改属主）。
         现状绿，修后必须仍绿。"""
-        from lantai.api.routes_memory import add_raw_memory_route
-
+        session_factory, _ = param_env
         b_id = _seed_row(_SAME_DOC, "user-B")
-        add_raw_memory_route(RawMemoryReq(content=_SAME_DOC, lane="fact"), ctx=_principal("user-A"))
+        _submit_as_a()
 
-        with param_env[0]() as s:
+        with session_factory() as s:
             b_row = s.get(MemoryItem, b_id)
             assert b_row is not None
             assert b_row.user_id == "user-B", f"B 的行属主被改：{b_row.user_id!r}"
