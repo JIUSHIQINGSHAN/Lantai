@@ -55,15 +55,12 @@ import pytest
 from sqlmodel import select
 
 from lantai.cognition.tanyi import execute_tanyi_resolution
-from lantai.core.time import utcnow
 from lantai.models.tables import ConflictEvent, MemoryCheckpoint, MemoryItem
 from lantai.services.probing_service import resolve_probe_response
 from lantai.services.record_ops_service import (
     correct_memory,
     revive_consolidated,
 )
-
-_P = None  # tanyi/probing 的 principal=None 是内部调用既有口径（MCP handle_probe_resolve）
 
 
 def _mem(mid: str, content: str = "大哥常驻上海徐汇", **over) -> MemoryItem:
@@ -620,3 +617,21 @@ def test_lifecycle_manager_zero_production_callers_lock():
     assert not offenders, (
         f"lifecycle.py 出现生产消费方（登记解除、接线前必须先加闸 CAS）：{offenders}"
     )
+
+
+def test_arm4_lifecycle_lock_scan_covers_scripts_dir():
+    """登记锁扫描面与票 77 arm1 三目录口径对齐（Standards 轴建议）：
+    scripts/ 也要纳入 pre 接线扫描——当前零命中（亲核），纳入今天不误红。"""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    offenders: list[str] = []
+    for f in (root / "scripts").rglob("*.py"):
+        try:
+            text = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if re.search(r"KnowledgeLifecycleManager|LifecycleTransitionError", text):
+            offenders.append(str(f.relative_to(root)))
+    assert not offenders, f"scripts/ 出现 lifecycle 消费方（接线前先加闸）：{offenders}"

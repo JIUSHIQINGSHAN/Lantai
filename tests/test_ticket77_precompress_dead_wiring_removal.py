@@ -15,7 +15,8 @@
 
 接缝（票面关闭条件「删除案」）：
 - arm1 死代码臂 @ import + 全仓源码扫：模块/旧测试不存在 + lantai/tests/scripts
-  三目录零残留（test_dead_code_removal.py 模块级锁形态，票 72 arm2 同构）。
+  三目录零残留（test_dead_code_removal.py 模块级锁形态，票 72 arm2 同构；
+  self_file 豁免先例 tests/test_ticket71_core_memory_body_contract.py:229-239）。
 - arm2 注释清理臂 @ db.py 源码：busy_timeout 注释理由不再引用 pre_compress，
   参数本体保留（删理由不删参数）。
 - arm3 活契约保全臂 @ 直调真 pydantic 校验：metadata 有界校验五防线不因死
@@ -67,7 +68,7 @@ def test_arm1_pre_compress_module_removed():
         for f in (ROOT / base).rglob("*.py"):
             rel = str(f.relative_to(ROOT)).replace("\\", "/")
             if rel == "tests/test_ticket77_precompress_dead_wiring_removal.py":
-                continue  # 本文件自证行（docstring 引用病灶原文）豁免，票 72 arm3 同款
+                continue  # 本文件自证行（docstring 引用病灶原文）豁免，票 71 arm3 同款
             try:
                 text = f.read_text(encoding="utf-8")
             except OSError:
@@ -150,7 +151,7 @@ def test_arm4_schemas_metadata_comment_neutral_example():
 # ── arm5：metadata 落库活契约（自 test_metadata_persisted_to_raw_document 迁移）
 
 
-def test_arm5_metadata_persisted_to_raw_document(monkeypatch):
+def test_arm5_metadata_persisted_to_raw_document():
     """AddMemoryReq.metadata → RawDocument.meta 落库（真实内存库；LLM 提取与
     向量库为外部边界替身——mock 允许面）。"""
     from lantai.models.schemas import AddMemoryReq
