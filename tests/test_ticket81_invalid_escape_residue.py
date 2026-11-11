@@ -68,6 +68,4 @@ def test_ticket81_whole_repo_scan_clean():
                 DeprecationWarning,
             ) as exc:
                 hits.append(f"{p.relative_to(_REPO_ROOT)}: {exc}")
-    assert not hits, "无效转义序列残留 {} 处（票 81 CLEAN 臂）：\n".format(
-        len(hits)
-    ) + "\n".join(hits)
+    assert not hits, f"无效转义序列残留 {len(hits)} 处（票 81 CLEAN 臂）：\n" + "\n".join(hits)
