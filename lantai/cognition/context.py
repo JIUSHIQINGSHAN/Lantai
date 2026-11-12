@@ -117,7 +117,12 @@ class CognitiveContext:
                         tl = item.get("timeline", [])
                         for event in tl:
                             ts = event.get("timestamp") or "未知时间"
-                            lines.append(f"  * [{ts}] {wrap_as_data(str(event.get('content')))}")
+                            # 票 87：时间戳位过樊篱——timeline dict 的 timestamp
+                            # 是自由文本位（来源描述可含库内正文引用），裸拼即
+                            # 闭合标记逃逸落数据位之外（票 64 同根）。
+                            lines.append(
+                                f"  * [{wrap_as_data(str(ts))}] {wrap_as_data(str(event.get('content')))}"
+                            )
                         # 反事实替代路径支持（ADR-0061 / v0.40）
                         alt_paths = item.get("alternative_paths", [])
                         if alt_paths:
@@ -225,7 +230,9 @@ class CognitiveContext:
                     l = s.get("lane", "")
                     cnt = s.get("count", 0)
                     tags = s.get("tags", [])
-                    tag_str = f" [标签: {', '.join(tags[:5])}]" if tags else ""
+                    # 票 87：标签位过樊篱——记忆标签是用户可控自由文本，裸拼即
+                    # 闭合标记逃逸落数据位之外（票 63 青鸟 subject/sender 同根）。
+                    tag_str = f" [标签: {wrap_as_data(', '.join(tags[:5]))}]" if tags else ""
                     c_lines.append(f"  * {d}/{l}: {cnt} items{tag_str}")
 
             sections.insert(0, "\n".join(c_lines))

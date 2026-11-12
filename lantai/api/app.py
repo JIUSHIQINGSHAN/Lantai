@@ -1,4 +1,5 @@
 import math
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
@@ -107,7 +108,25 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-app = FastAPI(title="兰台记忆（Lantai）", version="0.66.0", lifespan=lifespan)
+# 票 87：docs 三件套（/docs、/redoc、/openapi.json）默认关闭——生产公网面收敛，
+# 186 条路由完整契约与版本号不再随默认构造公开测绘（2026-11-09 黑盒审计病灶）。
+# dev/本地调试显式设 LANTAI_DOCS_ENABLED=true 打开；/health 与 /api/memory/health
+# 活探针、/ui/*、鉴权链不受影响（回归锁 tests/test_docs_surface_hardening.py）。
+# 形状说明：**_DOCS_KWARGS 保持 title/version 与 FastAPI( 同行——release_check
+# 「FastAPI /docs 版本」门禁正则（scripts/release_check.py:39）对本文件源码扫描
+# `FastAPI\(title="...", version="..."`，拆行即假红。
+_DOCS_ENABLED = os.environ.get("LANTAI_DOCS_ENABLED", "").lower() in ("1", "true", "yes")
+_DOCS_KWARGS = (
+    {}
+    if _DOCS_ENABLED
+    else {
+        "docs_url": None,
+        "redoc_url": None,
+        "openapi_url": None,
+    }
+)
+
+app = FastAPI(title="兰台记忆（Lantai）", version="0.66.0", lifespan=lifespan, **_DOCS_KWARGS)
 
 
 @app.exception_handler(RequestValidationError)
