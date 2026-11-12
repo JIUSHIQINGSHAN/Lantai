@@ -20,10 +20,10 @@ mild/aggressive/emergency 三级压缩、tool 头尾保留——目标是「上�
 | 项 | 决策 |
 |----|------|
 | 卸载阈值 | `SHELL_HOOK_OFFLOAD_CHARS=2000`：记忆内容超过此长度 → 全文落文件，上下文只注入摘要 + 路径；未超长走原截断注入 |
-| 落盘位置 | `docs/memory-offload/{memory_id}.md`（`OFFLOAD_OUTPUT_DIR` 可覆盖；与 digest 的 `_DEFAULT_DIGEST_DIR` 同模式） |
+| 落盘位置 | `docs/memory-offload/{memory_id}.md`（`OFFLOAD_OUTPUT_DIR` 可覆盖；与 digest 同模式。票 85 勘误：原文所引 `_DEFAULT_DIGEST_DIR` 常量已退役，默认目录改挂 `settings.data_home` 单一真源） |
 | 注入形态 | `build_offload_inject` 纯函数：`- [score] 截断摘要` + `全文: <绝对路径>` 行；evidence 与注入同源收窄 |
 | 取回通道 | MCP `offload_read(memory_id)` 返回完整原文；文件名白名单 + 解析后父目录必须在卸载目录内（防穿越） |
-| 失败语义 | 落盘/读取异常静默降级为普通截断注入（「宁 miss 不脏写」：不丢内容、不写脏数据） |
+| 失败语义 | 落盘/读取异常降级为普通截断注入 + warning 留痕（「宁 miss 不脏写」：不丢内容、不写脏数据；票 85 前静默无痕，随票补日志） |
 | 工具指南 | 截断指南附「已卸载全文可调用 offload_read 查看」 |
 
 ## 理由

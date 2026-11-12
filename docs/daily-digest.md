@@ -6,8 +6,9 @@
 
 报告文件默认落**数据根**（`settings.data_home`，票 85）：`LANTAI_HOME` 设了就是
 `$LANTAI_HOME/docs/memory-digest/YYYY-MM-DD.md`（Docker 形态即 `/data/docs/memory-digest/`）；
-未设 `LANTAI_HOME` 的仓库/开发形态回落仓库根 `docs/memory-digest/`（与 db/chroma 的推导同语义）。
-显式 `DIGEST_OUTPUT_DIR` 优先级最高。
+未设 `LANTAI_HOME` 的仓库/开发形态，落点与 db/向量库的推导**同语义**——旧配置
+`REMEMBRANCE_HOME` 回填或动态探测命中时随其落用户数据目录，全未配置才回落仓库根
+`docs/memory-digest/`。显式 `DIGEST_OUTPUT_DIR` 优先级最高。
 
 | 统计 | 说明 |
 |---|---|

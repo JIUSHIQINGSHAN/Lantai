@@ -147,7 +147,7 @@ _WHITELIST: set[tuple[str, int]] = {
     # utcnow().date() —— 标题字符串里的日历日，非 datetime 出口
     ("services/distill_service.py", 188),
     # digest_worker day 是 date 对象（MCP date 序列化，票 52 已收口）；
-    # 行号随票 85 删 _REPO_ROOT 常量 + _digest_dir 扩注整体 +8 平移（白名单
+    # 行号随票 85 删 _REPO_ROOT 常量 + _digest_dir 扩注整体 +6 平移（白名单
     # 为精确 (file, line) 登记制，位改随票更新；324 旧注释位本就非代码点，退役）
     ("workers/digest_worker.py", 332),
     ("workers/digest_worker.py", 610),
