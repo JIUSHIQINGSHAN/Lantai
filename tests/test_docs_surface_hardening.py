@@ -22,12 +22,12 @@
 """
 
 import importlib
-import os
 
 import pytest
 from fastapi.testclient import TestClient
 
 from lantai.core.settings import settings
+from tests.support import harness_state
 
 ENV_VAR = "LANTAI_DOCS_ENABLED"
 DOCS_PATHS = ("/docs", "/redoc", "/openapi.json")
@@ -46,13 +46,15 @@ def _reload_app():
 def app_factory(monkeypatch):
     """按当前 env reload 产出 app；撕卸时还原出厂形态（无 env → 三件套默认关闭）。
 
-    撕卸顺序要点：yield 后**先 pop env 再 reload**——不能指望 monkeypatch teardown
+    撕卸顺序要点：yield 后**先删 env 再 reload**——不能指望 monkeypatch teardown
     恢复（fixture teardown 先于 monkeypatch teardown，env 可能残留测试体内 setenv
     的值），否则模块 app 槽位会残留在开启形态污染同进程后续测试。
+    删除走 harness_state.unset_env（G2 登记式写入器：裸 os.environ.pop 是
+    test_harness_global_state_isolation 哨兵的违例面）。
     """
     monkeypatch.delenv(ENV_VAR, raising=False)
     yield lambda: _reload_app().app
-    os.environ.pop(ENV_VAR, None)
+    harness_state.unset_env(ENV_VAR)
     _reload_app()
 
 
