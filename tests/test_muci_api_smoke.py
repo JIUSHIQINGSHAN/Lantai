@@ -141,5 +141,10 @@ class TestMuciApiSmoke:
         assert "全域记忆知识概览" in prompt
         assert "<memory_data" in prompt
         assert "</memory_data>" in prompt
-        assert "user/fact: 3 items" in prompt
+        # 票 87：catalog 切面 domain/lane/tags 位各自樊篱包裹，旧裸渲染字面量
+        # 「user/fact: 3 items」（病灶形态）退役——断言对齐樊篱新契约（按位断
+        # 而非连串；票 63 qingniao seam4 旧断言锁病灶字面量随票更新同构）。
+        assert "<memory_data>user</memory_data>" in prompt
+        assert "<memory_data>fact</memory_data>" in prompt
+        assert "3 items" in prompt
         assert "python" in prompt

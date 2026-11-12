@@ -12,8 +12,11 @@
 
 测试形状（零 mock 被测链路）：
 1. 三件套是 FastAPI **构造期参数**（运行期不可改），同一进程内测两种配置靠
-   `importlib.reload(lantai.api.app)` 按当前 env 重建 app；fixture 撕卸时 pop env
-   并 reload，把模块 `app` 槽位还原为出厂形态（默认关闭）。
+   `create_app()` 工厂按当前 env 造一次性实例。reload 退役案：初版
+   importlib.reload 实测连坐全量——129 个测试文件 collection 期绑定旧 app
+   对象，reload 换掉模块 app 身份后 dependency_overrides 按对象同一性查表
+   落空（test_ticket72 arm1b 全量红单飞绿实锚）；工厂形态下生产 app 只在
+   模块 import 期构造一次，测试造一次性实例零模块状态搅动。
 2. 裸 `TestClient(app)`（不走 lifespan）是仓库既有惯例（test_async_ingest.py:61）：
    /health 与 /api/memory/health 是纯静态 handler，无需 startup 产物。
 3. 樊篱臂直调 `CognitiveContext.to_prompt()` 纯渲染（零 db），断言对齐樊篱语义
@@ -21,13 +24,11 @@
    不用被测函数生成期望值。
 """
 
-import importlib
-
 import pytest
 from fastapi.testclient import TestClient
 
+from lantai.api.app import create_app
 from lantai.core.settings import settings
-from tests.support import harness_state
 
 ENV_VAR = "LANTAI_DOCS_ENABLED"
 DOCS_PATHS = ("/docs", "/redoc", "/openapi.json")
@@ -36,26 +37,15 @@ DOCS_PATHS = ("/docs", "/redoc", "/openapi.json")
 TEST_ENV_KEY = "env-" + "secret"
 
 
-def _reload_app():
-    import lantai.api.app as app_module
-
-    return importlib.reload(app_module)
-
-
 @pytest.fixture()
 def app_factory(monkeypatch):
-    """按当前 env reload 产出 app；撕卸时还原出厂形态（无 env → 三件套默认关闭）。
+    """按当前 env 经 create_app() 工厂产出一次性 app 实例。
 
-    撕卸顺序要点：yield 后**先删 env 再 reload**——不能指望 monkeypatch teardown
-    恢复（fixture teardown 先于 monkeypatch teardown，env 可能残留测试体内 setenv
-    的值），否则模块 app 槽位会残留在开启形态污染同进程后续测试。
-    删除走 harness_state.unset_env（G2 登记式写入器：裸 os.environ.pop 是
-    test_harness_global_state_isolation 哨兵的违例面）。
+    env 清理由 monkeypatch.delenv/setenv 自带 teardown 完成——工厂在调用瞬间
+    读 env，不持有任何模块级快照，无需撕卸还原。
     """
     monkeypatch.delenv(ENV_VAR, raising=False)
-    yield lambda: _reload_app().app
-    harness_state.unset_env(ENV_VAR)
-    _reload_app()
+    yield create_app
 
 
 # ── docs 三件套 ────────────────────────────────────────────────────────────────
