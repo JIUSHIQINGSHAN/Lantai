@@ -22,9 +22,20 @@ from lantai.models.tables import MemoryItem, MemoryScene
 from lantai.services.scene_service import cosine_sim
 from lantai.storage import db
 
-# 仓库根 = lantai/services/ → lantai/ → 仓库根
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_DEFAULT_WIKI_DIR = _REPO_ROOT / "docs" / "memory-wiki"
+
+def wiki_dir() -> Path:
+    """Wiki 输出目录（票 85）：显式 WIKI_OUTPUT_DIR 优先；为空时落数据根
+    settings.data_home/docs/memory-wiki（LANTAI_HOME，未设回仓库根）。
+
+    此前默认由 Path(__file__) 推导安装前缀——wheel/容器形态下 root 只读，
+    mem:sync wiki 刷新降级（调用方 warning 可见，功能死）。
+    """
+    return (
+        Path(settings.WIKI_OUTPUT_DIR)
+        if settings.WIKI_OUTPUT_DIR
+        else settings.data_home / "docs" / "memory-wiki"
+    )
+
 
 _WIKI_OVERVIEW_SYS = (
     "你是知识库维护者。根据全部页面清单（标题 + 类型 + 描述），写一篇 2-5 段的全局综述，"
@@ -33,11 +44,6 @@ _WIKI_OVERVIEW_SYS = (
     "2) 用 [[页面标题]] wikilink 指向具体页（只用标题，不带路径后缀）；"
     '3) 只输出 JSON {"overview": "综述正文"}。'
 )
-
-
-def wiki_dir() -> Path:
-    """Wiki 输出目录：settings.WIKI_OUTPUT_DIR 为空时默认仓库 docs/memory-wiki。"""
-    return Path(settings.WIKI_OUTPUT_DIR) if settings.WIKI_OUTPUT_DIR else _DEFAULT_WIKI_DIR
 
 
 def slugify(name: str) -> str:

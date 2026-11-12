@@ -4,7 +4,10 @@
 
 ## 报告内容
 
-报告文件：`docs/memory-digest/YYYY-MM-DD.md`（可用 `DIGEST_OUTPUT_DIR` 改输出目录）。
+报告文件默认落**数据根**（`settings.data_home`，票 85）：`LANTAI_HOME` 设了就是
+`$LANTAI_HOME/docs/memory-digest/YYYY-MM-DD.md`（Docker 形态即 `/data/docs/memory-digest/`）；
+未设 `LANTAI_HOME` 的仓库/开发形态回落仓库根 `docs/memory-digest/`（与 db/chroma 的推导同语义）。
+显式 `DIGEST_OUTPUT_DIR` 优先级最高。
 
 | 统计 | 说明 |
 |---|---|

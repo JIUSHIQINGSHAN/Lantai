@@ -9,15 +9,18 @@ from pathlib import Path
 from lantai.core.settings import settings
 from lantai.core.text import truncate_codepoints
 
-# 仓库根 = lantai/services/ → lantai/ → 仓库根
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_DEFAULT_OFFLOAD_DIR = _REPO_ROOT / "docs" / "memory-offload"
-
 
 def offload_dir() -> Path:
-    """卸载全文目录：settings.OFFLOAD_OUTPUT_DIR 为空时默认仓库 docs/memory-offload。"""
+    """卸载全文目录（票 85）：显式 OFFLOAD_OUTPUT_DIR 优先；为空时落数据根
+    settings.data_home/docs/memory-offload（LANTAI_HOME，未设回仓库根）。
+
+    此前默认由 Path(__file__) 推导安装前缀——wheel/容器形态下 root 只读，
+    落盘失败静默降级（shell_hook 降级臂已补 warning 可观测，票 85 同收）。
+    """
     return (
-        Path(settings.OFFLOAD_OUTPUT_DIR) if settings.OFFLOAD_OUTPUT_DIR else _DEFAULT_OFFLOAD_DIR
+        Path(settings.OFFLOAD_OUTPUT_DIR)
+        if settings.OFFLOAD_OUTPUT_DIR
+        else settings.data_home / "docs" / "memory-offload"
     )
 
 

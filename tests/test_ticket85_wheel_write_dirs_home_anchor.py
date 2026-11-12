@@ -71,7 +71,8 @@ def test_data_home_matches_db_derivation(tmp_path):
     home = tmp_path / "constructed"
     s = Settings(LANTAI_HOME=str(home))
     assert s.data_home == home
-    assert s.DATABASE_URL == f"sqlite:///{home / 'remembrance.db'}"
+    expected_db = f"sqlite:///{home / 'remembrance.db'}"
+    assert expected_db == s.DATABASE_URL  # ruff SIM300 口径：全大写属性名视作常量在右
 
     legacy = tmp_path / "legacy"
     s2 = Settings(LANTAI_HOME="", REMEMBRANCE_HOME=str(legacy))
