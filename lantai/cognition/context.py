@@ -230,10 +230,14 @@ class CognitiveContext:
                     l = s.get("lane", "")
                     cnt = s.get("count", 0)
                     tags = s.get("tags", [])
-                    # 票 87：标签位过樊篱——记忆标签是用户可控自由文本，裸拼即
-                    # 闭合标记逃逸落数据位之外（票 63 青鸟 subject/sender 同根）。
+                    # 票 87：标签/辨域位过樊篱——tags 是用户可控自由文本
+                    # （AddMemoryReq.tags 直通落库），domain 声明为枚举位
+                    # （user/session/agent）但存在 LLM curator 传导写入点
+                    # （promoter proposed_patch），间接可控同根（票 64）。
                     tag_str = f" [标签: {wrap_as_data(', '.join(tags[:5]))}]" if tags else ""
-                    c_lines.append(f"  * {d}/{l}: {cnt} items{tag_str}")
+                    c_lines.append(
+                        f"  * {wrap_as_data(str(d))}/{wrap_as_data(str(l))}: {cnt} items{tag_str}"
+                    )
 
             sections.insert(0, "\n".join(c_lines))
 

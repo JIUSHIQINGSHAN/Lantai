@@ -71,8 +71,6 @@ from lantai.storage.db import init_db
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import os
-
     concurrency = int(os.environ.get("WEB_CONCURRENCY", "1") or "1")
     if concurrency > 1:
         logger.warning(
