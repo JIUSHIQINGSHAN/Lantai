@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _RELEASE_CHECK = REPO_ROOT / "scripts" / "release_check.py"
 _MIGRATE_HOME = REPO_ROOT / "scripts" / "migrate_home.py"
@@ -146,11 +148,12 @@ def test_build_gate_subprocess_passes_explicit_environment():
     assert env_copies, "build gate 应复制宿主环境以保留 uv/Python 工具链"
 
 
-def test_health_git_sha_is_real_smoke_and_uses_explicit_utf8_decode(monkeypatch):
+def test_health_git_sha_is_real_smoke_and_uses_explicit_utf8_decode():
     import lantai.api.routes_health as routes_health
 
-    monkeypatch.setattr(routes_health, "_git_sha_cache", None)
-    sha = routes_health._current_git_sha()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(routes_health, "_git_sha_cache", None)
+        sha = routes_health._current_git_sha()
     assert (
         sha
         == subprocess.check_output(
