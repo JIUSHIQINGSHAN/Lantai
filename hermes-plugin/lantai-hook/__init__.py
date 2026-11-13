@@ -91,12 +91,79 @@ def resolve_hook_paths() -> tuple[str, str]:
 
 
 _VENV_PY, _SHELL_HOOK = resolve_hook_paths()
-_REQUEST_TIMEOUT = 5.0  # 注入请求超时（秒）
-_DIALOGUE_TIMEOUT = 30.0  # 对话写入请求超时（秒，含 LLM 提取）
-# 票 73：就绪探测读墙——独立于探测 deadline（15s 只挡迭代之间）。冷启动加载
-# chromadb/jieba 10-15s 是合法等待（prewarm 在 stdin 循环之前，探测阻塞本就是
-# 等加载），墙宽给 4 倍余量；超墙即判挂死 kill，本轮未就绪，下轮重启重探。
-_READY_READ_WALL = 60.0
+
+
+# ── 插件墙必须严格长于服务端墙（巡检 2026-11-08 1200）────────────────────
+# serve 子进程自己有一道墙（settings.SHELL_HOOK_TIMEOUT / SHELL_HOOK_DIALOGUE_TIMEOUT）：
+# 超墙即回降级帧，被放弃的工作线程在后台跑完、照常落库。插件这道 watchdog 墙
+# 到点会 kill 整个子进程——若两墙等宽（此前对话通道 30s == 30s），到点时谁先
+# 触发是竞态，实测 watchdog 几乎总是先到：慢提取那一轮被连进程杀掉、对话静默
+# 丢失，同进程里其他后台线程一并陪葬，下一条还得冷启动。所以插件墙 = 服务端墙
+# + 宽限：服务端墙先到、回降级帧、子进程存活；插件墙只兜「子进程真卡死」。
+# 服务端墙读取口径与 serve 子进程一致：进程环境变量优先（子进程继承本进程
+# 环境），其次仓库根 .env（settings 的 env_file），都没有回落 settings 默认值。
+_SERVER_HOOK_TIMEOUT_DEFAULT = 2.0  # == settings.SHELL_HOOK_TIMEOUT 默认
+_SERVER_DIALOGUE_TIMEOUT_DEFAULT = 30.0  # == settings.SHELL_HOOK_DIALOGUE_TIMEOUT 默认
+_REQUEST_GRACE = 3.0  # 注入类请求宽限（秒）
+_DIALOGUE_GRACE = 5.0  # 对话写入宽限（秒）：降级帧回传 + 线程 join 抖动
+_REQUEST_TIMEOUT_FLOOR = 5.0  # 注入请求承诺下限（票 73：默认 5s 不变）
+
+
+def _dotenv_value(env_path: Path, name: str) -> str | None:
+    """从 .env 读单个键（最小解析：KEY=VALUE、可选 export 前缀/引号/行尾注释）。"""
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    found: str | None = None
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        key, _, value = line.partition("=")
+        if key.strip() != name:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        else:
+            value = value.split(" #", 1)[0].split("\t#", 1)[0].strip()
+        found = value  # 同名多行取最后一行（与 dotenv 覆盖语义一致）
+    return found
+
+
+def _server_wall(name: str, default: float, hook_path: str | None = None) -> float:
+    """读 serve 子进程实际生效的服务端墙（秒）；非法/非正值回落默认。"""
+    raw = os.environ.get(name)
+    if raw is None:
+        hp = _SHELL_HOOK if hook_path is None else hook_path
+        if hp:
+            raw = _dotenv_value(Path(hp).resolve().parent.parent / ".env", name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _plugin_walls(hook_path: str | None = None) -> tuple[float, float]:
+    """返回 (注入请求墙, 对话写入墙)，均严格长于对应服务端墙。"""
+    hook_wall = _server_wall("SHELL_HOOK_TIMEOUT", _SERVER_HOOK_TIMEOUT_DEFAULT, hook_path)
+    dialogue_wall = _server_wall(
+        "SHELL_HOOK_DIALOGUE_TIMEOUT", _SERVER_DIALOGUE_TIMEOUT_DEFAULT, hook_path
+    )
+    return (
+        max(_REQUEST_TIMEOUT_FLOOR, hook_wall + _REQUEST_GRACE),
+        dialogue_wall + _DIALOGUE_GRACE,
+    )
+
+
+# 注入请求超时（默认 5s）/ 对话写入请求超时（默认 30s 服务端墙 + 5s 宽限 = 35s，含 LLM 提取）
+_REQUEST_TIMEOUT, _DIALOGUE_TIMEOUT = _plugin_walls()
 _MIN_QUERY_CHARS = 2
 # 注：此处曾有 `_TRIGGER_WORDS` 触发词表，服务于「≤15 字且无触发词就跳过」的
 # 插件侧硬预过滤。该预过滤已在续审 2026-10-31 P0-3 删除（它先于 serve 的
@@ -155,47 +222,47 @@ def _ensure_proc() -> subprocess.Popen | None:
             return None
 
 
-def _exchange_line(proc: subprocess.Popen, line: bytes, timeout: float) -> bytes:
-    """写一行请求、读一行响应，整体受 timeout 看门狗保护（票 73）。
+def _kill_wedged_proc(proc: subprocess.Popen) -> None:
+    """watchdog 出口：kill 超时未应答的 serve 子进程（对已死进程幂等 no-op）。
 
-    病：读路径逐字节 read(1) 无墙（模块头承诺的 5s/30s 硬超时常量从未接线），
-    子进程「活着但不应答」时首次 read(1) 即永久阻塞且握着 _lock——_ensure_proc
-    与其余通道全部跟进冻结，pre_llm_call 是宿主同步回调 → Hermes 整轮冻死。
-
-    修法：threading.Timer 到期 kill 子进程——阻塞中的 write/read 以 EOF 返回，
-    随后抛 TimeoutError（⊂ OSError）路由进各通道既有 except 分支：静默降级 +
-    _proc 置 None，下次 _ensure_proc 按 poll() 存活判据自动重启恢复服务。
-    竞态窗口（响应恰在超时瞬间到齐被误杀）后果是本轮宁 miss、下轮重启。
+    kill 后管道写端关闭 → 阻塞中的 read(1) 以 EOF 返回、阻塞中的 write 以
+    BrokenPipeError 返回，调用方走既有降级分支；_ensure_proc 下次见 poll()
+    非空即自动重启新子进程（票 73 自愈闭环）。
     """
-    killed = threading.Event()
+    try:
+        proc.kill()
+    except OSError:
+        return  # 已退出：send_signal 对 returncode 非空的进程是 no-op，此处兜竞态
+    logger.warning("lantai-hook: serve 子进程超时未应答，已 kill (pid=%s)", proc.pid)
 
-    def _kill() -> None:
-        killed.set()
-        logger.warning(
-            "lantai-hook: 请求超过 %.1fs 未应答，看门狗 kill 子进程 (pid=%s)", timeout, proc.pid
-        )
-        with contextlib.suppress(OSError):
-            proc.kill()
 
-    timer = threading.Timer(timeout, _kill)
-    timer.daemon = True
-    timer.start()
+def _request_line(proc: subprocess.Popen, line: bytes, timeout: float) -> bytearray:
+    """写一行请求 + 读一行响应（调用方须持 _lock），整体受硬超时墙保护。
+
+    逐字节读一行，防 readline 因编码问题截断。墙由后台 watchdog 线程兜底：
+    Windows 阻塞管道读无法被中断，超时即 kill 子进程 → read(1) 自然 EOF /
+    write 自然 BrokenPipeError → 写读两段都必然终结。timeout<=0 不设墙（仅测试
+    逃生用）。正常应答远快于墙，watchdog 到点前即被 cancel，路径零漂移。
+    """
+    watchdog = None
+    if timeout is not None and timeout > 0:
+        watchdog = threading.Timer(timeout, _kill_wedged_proc, args=(proc,))
+        watchdog.daemon = True
+        watchdog.start()
     try:
         assert proc.stdin is not None and proc.stdout is not None
         proc.stdin.write(line)
         proc.stdin.flush()
-        # 逐字节读一行，防 readline 因编码问题截断
         buf = bytearray()
         while True:
             ch = proc.stdout.read(1)
             if not ch or ch == b"\n":
                 break
             buf += ch
+        return buf
     finally:
-        timer.cancel()
-    if killed.is_set():
-        raise TimeoutError(f"lantai-hook: 超过 {timeout:.1f}s 未应答 (pid={proc.pid})")
-    return bytes(buf)
+        if watchdog is not None:
+            watchdog.cancel()
 
 
 def _wait_ready(timeout: float = 15.0) -> bool:
@@ -216,9 +283,13 @@ def _wait_ready(timeout: float = 15.0) -> bool:
             if proc.poll() is not None:
                 return False  # 子进程已退出
             with _lock:
-                # 票 73：探测交换同走看门狗——挂死子进程由 _READY_READ_WALL 兜底
-                # kill，TimeoutError（⊂ OSError）落外层 except → return False
-                buf = _exchange_line(proc, b'{"query":""}\n', _READY_READ_WALL)
+                # 探测墙 = 距 deadline 的剩余时间：旧实现只在两次阻塞读之间检查
+                # deadline，子进程活着不吐行时第一次 read(1) 即永久阻塞（票 73）
+                buf = _request_line(
+                    proc,
+                    b'{"query":""}\n',
+                    max(deadline - __import__("time").time(), 0.1),
+                )
             # Windows 下 print 输出 \r\n，剥离 \r 再解析
             try:
                 json.loads(buf.decode("utf-8", errors="replace").strip().rstrip("\r"))
@@ -252,8 +323,7 @@ def _call_hook(query: str, session_id: str = "") -> dict | None:
             line = (
                 json.dumps({"query": query, "session_id": session_id}, ensure_ascii=False) + "\n"
             ).encode("utf-8")
-            # 票 73：写+读整体受看门狗保护（模块头承诺的 5s 硬超时首次落地）
-            buf = _exchange_line(proc, line, _REQUEST_TIMEOUT)
+            buf = _request_line(proc, line, _REQUEST_TIMEOUT)
         out = buf.decode("utf-8", errors="replace").strip().rstrip("\r")
         if not out:
             return None
@@ -294,8 +364,7 @@ def _call_dialogue(text: str, session_id: str = "", turn: int | None = None) -> 
                 )
                 + "\n"
             ).encode("utf-8")
-            # 票 73：写+读整体受看门狗保护（30s 墙，含 LLM 提取）
-            _exchange_line(proc, line, _DIALOGUE_TIMEOUT)
+            _request_line(proc, line, _DIALOGUE_TIMEOUT)
     except (OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: dialogue call failed: %r", exc)
         global _proc, _proc_ready
@@ -323,8 +392,7 @@ def _call_backfill(event_id: str, used_ids: list[str]) -> None:
                 )
                 + "\n"
             ).encode("utf-8")
-            # 票 73：写+读整体受看门狗保护（5s 墙）
-            _exchange_line(proc, line, _REQUEST_TIMEOUT)
+            _request_line(proc, line, _REQUEST_TIMEOUT)
     except (OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: backfill call failed: %r", exc)
         global _proc, _proc_ready
@@ -349,8 +417,7 @@ def _call_veto(event_id: str) -> None:
                 json.dumps({"type": "retrieval_veto", "event_id": event_id}, ensure_ascii=False)
                 + "\n"
             ).encode("utf-8")
-            # 票 73：写+读整体受看门狗保护（5s 墙）
-            _exchange_line(proc, line, _REQUEST_TIMEOUT)
+            _request_line(proc, line, _REQUEST_TIMEOUT)
     except (OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: veto call failed: %r", exc)
         global _proc, _proc_ready
@@ -368,8 +435,7 @@ def _call_checkpoint() -> str | None:
     try:
         with _lock:
             line = (json.dumps({"type": "checkpoint"}, ensure_ascii=False) + "\n").encode("utf-8")
-            # 票 73：写+读整体受看门狗保护（5s 墙）
-            buf = _exchange_line(proc, line, _REQUEST_TIMEOUT)
+            buf = _request_line(proc, line, _REQUEST_TIMEOUT)
         out = buf.decode("utf-8", errors="replace").strip().rstrip("\r")
         if not out:
             return None
@@ -400,8 +466,7 @@ def _call_checkpoint_write(session_id: str, blocks: dict) -> None:
                 )
                 + "\n"
             ).encode("utf-8")
-            # 票 73：写+读整体受看门狗保护（30s 墙，会话收尾写不轻易中断）
-            _exchange_line(proc, line, _DIALOGUE_TIMEOUT)
+            _request_line(proc, line, _REQUEST_TIMEOUT)
     except (OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: checkpoint write failed: %r", exc)
         global _proc, _proc_ready

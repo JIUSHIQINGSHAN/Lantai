@@ -126,6 +126,10 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
   `retrieval_veto` / `checkpoint` / `checkpoint_write`）超时 → `{}`——部分结果比
   无结果更危险（误导 LLM）；`query` 通道例外：带 `_query_fallback` 兜底，超时
   降级返回画像帧（置顶画像无检索依赖，不该被检索超时连带丢弃）。
+- **超时轮的迟到事件就地收尾**：宿主超时拿到的是兜底画像帧（**不带 `event_id`**），
+  daemon worker 跑完仍会把该轮原话落成 pending 事件，宿主永远补不了回执/否决帧——
+  服务端在超时回调里对该事件执行 `mark_abandoned`（pending→missed 并抹原话，
+  ADR-0084 §2.6），原话不留库。
 - **异常一律静默降级**：hook 绝不抛异常、不拖垮宿主。
 - **畸形/非对象 JSON 帧**（`null`/`[1,2]`/`123`/`"str"`）→ `{}`。常驻模式下逐个降级，**进程不被打死**。
 - **单宿主故障隔离**：任一宿主的坏帧/超时不影响其他宿主与服务端。

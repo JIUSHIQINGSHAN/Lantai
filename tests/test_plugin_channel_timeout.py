@@ -123,8 +123,8 @@ class TestCallHookTimeout:
         elapsed = time.monotonic() - t0
         assert elapsed < mod._REQUEST_TIMEOUT + 3.0, f"承诺 5s 墙，实测 {elapsed:.1f}s"
         assert proc.poll() is not None, "超时后子进程应被看门狗 kill"
-        assert mod._proc is None and mod._proc_ready is False, (
-            "超时应经既有异常路径复位 _proc/_proc_ready，触发下次重启"
+        assert mod._proc is None or mod._proc.poll() is not None, (
+            "超时后 _proc 须已复位或已死（master #42 实现：_ensure_proc 按 poll() 判活自动重启）"
         )
 
 
@@ -143,7 +143,9 @@ class TestDialogueChannelTimeout:
         assert "err" not in box, f"超时应静默降级，不该外抛：{box}"
         assert box.get("out") is None
         assert proc.poll() is not None, "超时后子进程应被 kill"
-        assert mod._proc is None, "超时应复位 _proc"
+        assert mod._proc is None or mod._proc.poll() is not None, (
+            "超时后 _proc 须已复位或已死（_ensure_proc 按 poll() 重启）"
+        )
 
 
 class TestOtherChannelsTimeout:
@@ -170,7 +172,9 @@ class TestOtherChannelsTimeout:
         assert "err" not in box, f"超时应静默降级，不该外抛：{box}"
         assert box.get("out") is None, f"{call} 超时应返回 None：{box}"
         assert proc.poll() is not None, "超时后子进程应被 kill"
-        assert mod._proc is None, "超时应复位 _proc"
+        assert mod._proc is None or mod._proc.poll() is not None, (
+            "超时后 _proc 须已复位或已死（_ensure_proc 按 poll() 重启）"
+        )
 
 
 class TestWaitReadyHang:
@@ -180,8 +184,8 @@ class TestWaitReadyHang:
         proc = _hung_child()
         mod._proc = proc
         mod._proc_ready = False
-        mod._READY_READ_WALL = 1.0
-        t, box = _call_in_thread(mod._wait_ready, 15.0)
+        # master #42 实现：探测读墙 = 距 deadline 的剩余时间（无独立 _READY_READ_WALL）
+        t, box = _call_in_thread(mod._wait_ready, 1.0)
         assert not t.is_alive(), "修复前 _wait_ready 探测读永久阻塞（红）"
         assert box.get("out") is False, f"挂死子进程应判未就绪：{box}"
         assert proc.poll() is not None, "读墙到期应 kill 子进程"

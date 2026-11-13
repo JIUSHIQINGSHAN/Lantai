@@ -293,6 +293,7 @@ FROZEN_DEFAULTS = {
         ("0.8-0.9", 0.8, 0.9),
         ("0.9-1.0", 0.9, 1.0),
     ],
+    "DIGEST_CONF_FALLBACK_LABEL": "其他",
     "HIERARCHICAL_LAYER_BOOST": 1.25,
     "HIERARCHICAL_LAYER_DEFAULT": "auto",
     "SHELL_HOOK_MAX_INJECT_ITEMS": 5,

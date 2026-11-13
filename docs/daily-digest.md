@@ -4,7 +4,7 @@
 
 ## 报告内容
 
-报告文件：`docs/memory-digest/YYYY-MM-DD.md`（可用 `DIGEST_OUTPUT_DIR` 改输出目录）。
+报告文件：`<数据目录>/docs/memory-digest/YYYY-MM-DD.md`。数据目录 = `LANTAI_HOME`（未设时为仓库根，仅仓库形态）：仓库形态即 `docs/memory-digest/`，wheel/容器形态随 `LANTAI_HOME`（如 `/data/docs/memory-digest/`）。可用 `DIGEST_OUTPUT_DIR` 显式改输出目录（优先于数据目录推导）。
 
 | 统计 | 说明 |
 |---|---|
