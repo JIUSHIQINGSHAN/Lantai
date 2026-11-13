@@ -147,11 +147,11 @@ _WHITELIST: set[tuple[str, int]] = {
     # utcnow().date() —— 标题字符串里的日历日，非 datetime 出口
     ("services/distill_service.py", 188),
     # digest_worker day 是 date 对象（MCP date 序列化，票 52 已收口）；
-    # 行号随票 85 删 _REPO_ROOT 常量 + _digest_dir 扩注整体 +6 平移（白名单
-    # 为精确 (file, line) 登记制，位改随票更新；324 旧注释位本就非代码点，退役）
-    ("workers/digest_worker.py", 332),
-    ("workers/digest_worker.py", 610),
-    ("workers/digest_worker.py", 616),
+    # 票 84：移除日窗复制实现后，三个 date 序列化点随行平移；
+    # 白名单仍精确到 (file, line)，不扩大豁免范围。
+    ("workers/digest_worker.py", 322),
+    ("workers/digest_worker.py", 600),
+    ("workers/digest_worker.py", 606),
     # 票 53 审查修正：SQL cutoff 比较操作数（operation_logs.created_at 落盘为
     # 空格分隔形态，isoformat(sep=" ") 与之同形；走 iso_utc 的 T 分隔会让
     # 同日历日行提前 ~23h 被剪）。SQL 操作数非 datetime JSON 出口。

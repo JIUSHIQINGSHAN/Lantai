@@ -5,11 +5,12 @@
   五项统计：新增记忆 / 修改记忆 / 待审数 / 归档数 / 检索统计
 """
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from sqlmodel import func, select
 
+from lantai.core import time as core_time
 from lantai.core.scheduler import record_run
 from lantai.core.settings import settings
 from lantai.models.tables import (
@@ -188,20 +189,8 @@ def _digest_dir() -> Path:
 
 
 def _local_day_window_utc(day: date | None = None) -> tuple[datetime, datetime]:
-    """本地日历日 → (start_utc, end_utc)，aware UTC。
-
-    先把本地日界换算成 UTC，再与库值比较（避免 Chronos 时区类 bug）。
-    aware：锁定的 sqlmodel 0.0.42 无库级防护（datetime 字段映射裸
-    DateTime，naive 查询绑定参数也静默落库）——绑定参数恒 aware UTC
-    靠约定与读侧 _ensure_utc 归一，非库强制；落盘文本形态与 naive 版
-    逐条一致（SQLite 按分量格式化、无偏移后缀）。
-    """
-    local_now = datetime.now().astimezone()
-    if day is None:
-        day = local_now.date()
-    local_start = datetime.combine(day, time.min, tzinfo=local_now.tzinfo)
-    local_end = local_start + timedelta(days=1)
-    return (local_start.astimezone(UTC), local_end.astimezone(UTC))
+    """兼容入口：宿主本地日界由 core.time 统一转换成 aware UTC 查询窗。"""
+    return core_time.local_day_window_utc(day)
 
 
 def _digest_scope(column, principal):

@@ -72,9 +72,9 @@ def local_day_window_utc(day: date | None = None) -> tuple[datetime, datetime]:
     靠约定与读侧 _ensure_utc 归一，非库强制；落盘文本形态与 naive 版
     逐条一致（SQLite 按分量格式化、无偏移后缀）。
 
-    票 32 起为读侧本地日语味的共享真源（qijuzhu 起居注/usage 每日桶
-    直调本函数）；digest_worker._local_day_window_utc 是同语义的首版
-    私有实现（票 31），后续收敛待其锁定面稳定后委托本函数。
+    票 32 起为读侧本地日语义的共享真源：qijuzhu 起居注/usage 每日桶
+    直调本函数；票 84 起 digest_worker 的兼容入口也委托本函数。
+    本地指服务进程的宿主时区；此处不决定独立配置的 UTC cron 触发点。
     """
     local_now = datetime.now().astimezone()
     if day is None:
