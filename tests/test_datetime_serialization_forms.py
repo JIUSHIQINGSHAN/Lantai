@@ -147,8 +147,7 @@ _WHITELIST: set[tuple[str, int]] = {
     # utcnow().date() —— 标题字符串里的日历日，非 datetime 出口
     ("services/distill_service.py", 188),
     # digest_worker day 是 date 对象（MCP date 序列化，票 52 已收口）；
-    # 票 84：移除日窗复制实现后，三个 date 序列化点随行平移；
-    # 白名单仍精确到 (file, line)，不扩大豁免范围。
+    # 票 84/86 合流后按最终三个调用点精确登记，不扩大豁免范围。
     ("workers/digest_worker.py", 322),
     ("workers/digest_worker.py", 600),
     ("workers/digest_worker.py", 606),

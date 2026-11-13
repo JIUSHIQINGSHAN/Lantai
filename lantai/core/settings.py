@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     DIGEST_ENABLED: bool = True
     # UTC 小时，分钟固定 55；默认仅在 UTC+8 对应本地 23:55，其他宿主须自行换算（票 84）。
     DIGEST_CRON_HOUR: int = 15
-    DIGEST_OUTPUT_DIR: str = ""  # 为空时 = 数据根 settings.data_home/docs/memory-digest（票 85）
+    DIGEST_OUTPUT_DIR: str = ""  # 为空时 = 数据目录 settings.data_home/docs/memory-digest（票 85）
 
     # Lane 分轨衰减：每类记忆的基础保留强度与重要性放大系数
     # base_s = 记忆半衰期（天），importance_boost = 重要性加权分数
@@ -317,7 +317,8 @@ class Settings(BaseSettings):
     # 上下文卸载（借鉴 TencentDB Agent Memory offload_server/compact 窄版）：
     # 超长记忆全文落文件，上下文只注入摘要 + 路径；需要时经 MCP offload_read 取全文
     SHELL_HOOK_OFFLOAD_CHARS: int = 2000  # 记忆内容超过此长度 → 落文件 + 摘要注入
-    OFFLOAD_OUTPUT_DIR: str = ""  # 为空时 = 数据根 settings.data_home/docs/memory-offload（票 85）
+    # 为空时 = 数据目录 settings.data_home/docs/memory-offload（票 85）。
+    OFFLOAD_OUTPUT_DIR: str = ""
 
     # 票06：BM25 关键词 CJK 3-gram 滑窗分词，OR 召回与 AND 确定性两路共用
     # （trigram 索引下 2 字词无法匹配，整句短语匹配不覆盖词中错字/词面重叠改写；
@@ -348,7 +349,7 @@ class Settings(BaseSettings):
     # 记忆 Wiki（借鉴 TencentDB Agent Memory LLM-Wiki）：场景/技能 → 持续维护的页面
     # docs/memory-wiki/{index.md, overview.md, pages/}；overview 综述 + [[wikilink]] 下钻
     WIKI_ENABLED: bool = True
-    WIKI_OUTPUT_DIR: str = ""  # 为空时 = 数据根 settings.data_home/docs/memory-wiki（票 85）
+    WIKI_OUTPUT_DIR: str = ""  # 为空时 = 数据目录 settings.data_home/docs/memory-wiki（票 85）
     WIKI_OVERVIEW_LLM: bool = True  # overview 优先 LLM 综述；失败/关闭 → 确定性综述
     WIKI_PAGE_MAX_MEMBERS: int = 50  # 场景页最多列出的成员数
     WIKI_MEMBER_CHARS: int = 120  # 成员摘要截断字符数
@@ -531,6 +532,10 @@ class Settings(BaseSettings):
     REFLECT_STALE_SCAN_ENABLED: bool = False  # R4/R5 默认关（误报风险，保守起步）
 
     # digest 反思置信桶（回填校准报告区间；ADR-0002 零硬编码，见 docs/memory-quality/reflect-calibration-2026-08-11.md）
+    # 桶为半开区间 [lo, hi)；最大 hi 桶按闭区间右端收边界值（conf == max(hi)）——
+    # 归位判定跟数值走、不挂标签字面量，改名/调阈值后不漂移（票 86）。
+    # 不落任何半开区间的置信（< 最小 lo、> 最大 hi，含自定义桶间的缝隙）落
+    # DIGEST_CONF_FALLBACK_LABEL 兜底桶：标签与桶定义同源声明，消费侧不得裸写字面量。
     DIGEST_CONF_BUCKETS: list[tuple] = [
         ("0.5-0.6", 0.5, 0.6),
         ("0.6-0.7", 0.6, 0.7),
@@ -538,6 +543,7 @@ class Settings(BaseSettings):
         ("0.8-0.9", 0.8, 0.9),
         ("0.9-1.0", 0.9, 1.0),
     ]
+    DIGEST_CONF_FALLBACK_LABEL: str = "其他"
 
     @property
     def data_home(self) -> Path:

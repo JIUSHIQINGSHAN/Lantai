@@ -169,8 +169,7 @@ def _format_offload_entry(item, score: float, max_chars: int) -> tuple[str, str]
             item.content, score, max_chars, _OFFLOAD_SUFFIX, path, time_str=time_str
         )
     except Exception as exc:
-        # 票 85：降级可观测——wheel/容器形态下默认目录在 root 只读安装前缀时
-        # 每次长记忆注入全文丢失无痕（fail-soft 语义保持，缺的是留痕）。
+        # 票 85：落盘失败降级保持可观测，保留记忆标识便于定位，避免记录正文。
         logger.warning("offload 落盘失败，降级为截断注入（memory_id=%s）: %s", item.id, exc)
         return _format_memory_entry(
             item.content, score, max_chars, _RECALL_TRUNCATION_SUFFIX, time_str=time_str

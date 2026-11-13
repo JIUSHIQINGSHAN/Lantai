@@ -1,6 +1,7 @@
 """上下文卸载服务（借鉴 TencentDB Agent Memory offload_server/compact 窄版落点）。
 
-长记忆全文落文件 docs/memory-offload/{memory_id}.md，上下文只注入摘要 + 路径，
+长记忆全文落文件 <数据目录>/docs/memory-offload/{memory_id}.md（数据目录 =
+LANTAI_HOME，未设时仓库根，票 85），上下文只注入摘要 + 路径，
 需要时经 MCP offload_read 取完整原文。纯函数与文件副作用分离（冒烟可测不 mock）。
 """
 
@@ -11,11 +12,8 @@ from lantai.core.text import truncate_codepoints
 
 
 def offload_dir() -> Path:
-    """卸载全文目录（票 85）：显式 OFFLOAD_OUTPUT_DIR 优先；为空时落数据根
-    settings.data_home/docs/memory-offload（LANTAI_HOME，未设回仓库根）。
-
-    此前默认由 Path(__file__) 推导安装前缀——wheel/容器形态下 root 只读，
-    落盘失败静默降级（shell_hook 降级臂已补 warning 可观测，票 85 同收）。
+    """卸载全文目录（票 85）：显式 OFFLOAD_OUTPUT_DIR 优先；默认落数据目录
+    settings.data_home/docs/memory-offload，与 db/chroma 同源。
     """
     return (
         Path(settings.OFFLOAD_OUTPUT_DIR)

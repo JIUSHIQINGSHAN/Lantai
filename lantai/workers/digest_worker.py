@@ -1,7 +1,7 @@
 """盘点 worker——TTL 归档 + Daily Digest 每日盘点报告（Ticket 02/03）。
 
 - run_candidate_ttl：每日清理超龄 pending_review 候选 → rejected（Ticket 02）
-- run_digest_once：生成当日盘点报告 docs/memory-digest/YYYY-MM-DD.md（Ticket 03）
+- run_digest_once：生成当日盘点报告 <数据目录>/docs/memory-digest/YYYY-MM-DD.md（Ticket 03；数据目录 = LANTAI_HOME，未设时仓库根，票 85）
   五项统计：新增记忆 / 修改记忆 / 待审数 / 归档数 / 检索统计
 """
 
@@ -128,9 +128,11 @@ def _aggregate_reflection(s, start: datetime, end: datetime, *, principal=None) 
     by_type: dict[str, dict[str, int]] = {}
     for ptype, status, cnt in rows:
         by_type.setdefault(ptype, {})[status] = int(cnt)
-    # 票 84：标签只用于展示；数值最上界所在的桶闭合右端点。
+    # 桶定义调用时读 settings（票 84/86）；标签只用于展示。
+    # 最大 hi 桶闭合右端点，越界置信落同源配置的兜底桶。
     buckets = tuple(settings.DIGEST_CONF_BUCKETS)
     top_hi = max((hi for _, _, hi in buckets), default=None)
+    fallback_label = settings.DIGEST_CONF_FALLBACK_LABEL
     conf_buckets = {label: 0 for label, _, _ in buckets}
     for conf in conf_values:
         for label, lo, hi in buckets:
@@ -138,7 +140,7 @@ def _aggregate_reflection(s, start: datetime, end: datetime, *, principal=None) 
                 conf_buckets[label] += 1
                 break
         else:
-            conf_buckets["其他"] = conf_buckets.get("其他", 0) + 1
+            conf_buckets[fallback_label] = conf_buckets.get(fallback_label, 0) + 1
     return {
         "created": int(created),
         "applied": int(applied),
@@ -174,12 +176,10 @@ def run_receipt_miss_scan() -> int:
 
 
 def _digest_dir() -> Path:
-    """报告输出目录（票 85）：显式 DIGEST_OUTPUT_DIR 优先；为空时落数据根
-    settings.data_home/docs/memory-digest（LANTAI_HOME，未设回仓库根）。
+    """报告输出目录（票 85）：显式 DIGEST_OUTPUT_DIR 优先；为空时落数据目录
+    settings.data_home/docs/memory-digest，与 db/chroma 同源。
 
-    此前默认由 Path(__file__) 推导安装前缀——wheel/容器形态下即 root 只读的
-    site-packages，每日 digest job 必炸 PermissionError（巡检立案轮 10 真探针
-    实锚）；db/chroma 早已走 LANTAI_HOME，写面归一同一推导。
+    不按安装前缀（``Path(__file__)``）推导——wheel/容器形态前缀只读，每日 job 必炸。
     """
     return (
         Path(settings.DIGEST_OUTPUT_DIR)

@@ -1,379 +1,292 @@
-"""票 27：MCP 约束面与描述面失真——schema 承诺了没做 / 做了没承诺。
+"""票 27（v0.68-next-window）回归锁：MCP 约束面与描述面四处失真。
 
-病灶（立案轮 5 普查，HEAD `dc7d86b5` 逐处亲核）：
-1. `triage_auto_pilot` schema 承诺 limit [1,500]、conf [0.0,1.0]，handler 裸
-   int()/float() 强转零范围检查（同族 `triage_analyze` 有 1..500 校验，同名
-   limit 两工具行为不一致）——虚广告方向；
-2. `candidate_review`/`crystal_decide` 的 reject 分支服务层强制 reason 必填，
-   schema 广告为可选且无描述——描述面欠账（对照 `memory_unarchive` 真 可选
-   reason 的认真范例）；
-3. `qijuzhu_chronicle` 的 date/detail_level 在 days>1 分支被静默丢弃（票 07
-   「假承诺」轻量版：参数收到、不消费）；
-4. 弱广告搭车面：conflicts_list.status 枚举 / 各工具 limit·top_k·days 数值
-   界 / add.content 最短长度——handler 强校验、schema 零承诺，按 schema 写的
-   调用方靠试错发现契约。
+票面四病灶（schema 承诺了 handler 没做 / handler 做了 schema 没承诺）：
 
-哨兵形态同票 26：AST 结构化导航提取（绝不 ast.walk——嵌套 items.properties
-覆写陷阱）+ 真子进程 dispatch 冒烟（-I -X utf8 + 隔离 LANTAI_HOME + 真
-init_db，零 mock）。**不可修项如实登记**：`domain` 枚举跨工具不一致不是失真
-——search 的 "all"=不过滤（hybrid 语义），muci/shiyi_pipeline 的 domain 是
-`MemoryItem.domain` 列等值过滤（"all"=零行静默空结果），语义不同源，见
-test_domain_enum_semantics_difference_is_not_a_defect。
+1. `triage_auto_pilot` schema 承诺 limit [1,500]、conf [0.0,1.0]
+   （mcp.py TOOLS["triage_auto_pilot"]），handler `float()/int()` 强转零范围
+   校验（handle_triage_auto_pilot）——limit=0/99999 直通 DB 查询、conf=9 全收；
+   同族 `triage_analyze` 有校验，同名 limit 两工具行为不一致。
+2. `candidate_review` / `crystal_decide` reject 分支服务层强制必填 reason
+   （candidate_service.py:139 / crystal_service.py:226），schema 却默认 ""
+   非必填——忠实按 schema 调用 {approve:false} 必吃 -32602（描述面补声明）。
+3. `qijuzhu_chronicle` days>1 转投 get_timeline_service(days, limit)，
+   date/detail_level 被静默丢弃（handle_qijuzhu_chronicle），schema 描述
+   「默认今日」/枚举无分支注记（description 改案：注明仅单日分支生效）。
+4. 弱承诺面：conflicts_list handler 校验 status 枚举 + limit [1,500]
+   schema 零枚举零范围；search/verbatim_search top_k 校验 [1,100]
+   schema 无范围；检索族 domain 消费端接受 "all"（hybrid.py `domain != "all"`
+   哨兵）而 graph_expand_search/shiyi_remedy/shiyi_pipeline 声明面缺枚举。
+
+两臂零内部 mock：
+- 子进程真 stdio（test_mcp_stdio_entry_smoke.py 同形态）：校验臂发真实
+  tools/call 帧断言 -32602，黑盒覆盖 handle→handler 全链。
+- 帧级 handle() + TOOLS 静态对账：真 import，不 mock，声明面与 handler
+  校验口径逐项相等。
 """
 
-import ast
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+import pytest
 
-import lantai.storage.db as db_module
-from lantai.cli.mcp import handle, handle_qijuzhu_chronicle
-from lantai.models.tables import MemoryCandidate
+ROOT = Path(__file__).resolve().parent.parent
+MCP_PATH = ROOT / "lantai" / "cli" / "mcp.py"
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-MCP_PATH = REPO_ROOT / "lantai" / "cli" / "mcp.py"
-PY = sys.executable
+pytestmark = pytest.mark.mcp_full_surface()
 
 
-def _dict_literal(node):
-    if not isinstance(node, ast.Dict):
-        return {}
-    return {k.value: v for k, v in zip(node.keys, node.values) if isinstance(k, ast.Constant)}
+def _load_mcp():
+    spec = importlib.util.spec_from_file_location("mcp_server_schema_contract", MCP_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
-def _desc_text(node):
-    d = _dict_literal(node)
-    v = d.get("description")
-    return v.value if isinstance(v, ast.Constant) else ""
-
-
-def _json_value(node):
-    """声明节点的 JSON 值（Constant→标量、List→列表）。"""
-    if isinstance(node, ast.Constant):
-        return node.value
-    if isinstance(node, ast.List):
-        return [_json_value(e) for e in node.elts]
-    return None
-
-
-def _load_props():
-    """结构化提取：{工具名: {参数名: 参数声明节点}}（逐层导航，不走 walk）。"""
-    tree = ast.parse(MCP_PATH.read_text(encoding="utf-8"))
-    assigns = {
-        n.targets[0].id: n
-        for n in tree.body
-        if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name)
-    }
-    tools = _dict_literal(assigns["TOOLS"].value)
-    out = {}
-    for tname, schema_node in tools.items():
-        ins = _dict_literal(_dict_literal(schema_node).get("inputSchema"))
-        props_node = ins.get("properties")
-        out[tname] = _dict_literal(props_node) if props_node else {}
-    return out
-
-
-def _call_tool(tool: str, arguments: dict) -> dict:
-    """真 dispatch 一跳（ValueError → -32602 的映射走生产路径）。"""
-    return handle(
+def _call(mod, name, arguments):
+    return mod.handle(
         {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "tools/call",
-            "params": {"name": tool, "arguments": arguments},
+            "params": {"name": name, "arguments": arguments},
         }
     )
 
 
-def _ok(resp: dict) -> bool:
-    return "result" in resp
+# ---------------------------------------------------------------------------
+# 臂 1：真子进程 stdio——triage_auto_pilot 范围校验（修复前现状红：成功返回）
+# ---------------------------------------------------------------------------
 
 
-def _err(resp: dict) -> tuple[int, str]:
-    e = resp.get("error") or {}
-    return int(e.get("code", 0)), str(e.get("message", ""))
+def test_stdio_triage_auto_pilot_rejects_out_of_range(tmp_path):
+    """真子进程：limit=0/99999、min_approve_conf=9 必须 -32602（schema 承诺兑现）。"""
+    env = dict(os.environ)
+    home = tmp_path / "home"
+    home.mkdir()
+    env["LANTAI_HOME"] = str(home)
+    env["REMEMBRANCE_HOME"] = str(home)
+    env["PYTHONPATH"] = str(ROOT)
+    env["LANTAI_MCP_PROFILE"] = "full"  # 核心集（6 工具）不含 triage_auto_pilot
+    env.pop("MCP_TOOL_PROFILE", None)
 
-
-# ── schema 声明面（AST，红：承诺缺关键词/缺描述）────────────────────
-
-
-def test_triage_auto_pilot_ranges_machine_readable():
-    """schema 的数值范围必须是机器可读关键词（minimum/maximum），不只靠
-    description 文案——handler 校验与 schema 承诺才有可比对的锚。"""
-    props = _load_props()["triage_auto_pilot"]
-    limit = _dict_literal(props["limit"])
-    assert _json_value(limit.get("minimum")) == 1 and _json_value(limit.get("maximum")) == 500, (
-        f"limit 范围承诺非机器可读（票 27 病灶 1）：{limit}"
-    )
-    for name in ("min_approve_conf", "max_reject_conf"):
-        node = _dict_literal(props[name])
-        assert (
-            _json_value(node.get("minimum")) == 0.0 and _json_value(node.get("maximum")) == 1.0
-        ), f"{name} 范围承诺非机器可读（票 27 病灶 1）：{node}"
-
-
-def test_conflicts_list_status_enum_and_limit_bounds():
-    """conflicts_list：handler 已强校验 status 枚举与 limit [1,500]，schema
-    零承诺——做了没承诺（票 27 病灶 4）。"""
-    props = _load_props()["conflicts_list"]
-    status = _dict_literal(props["status"])
-    enum = _json_value(status.get("enum"))
-    assert enum == ["open", "resolved", "dismissed", "all"], (
-        f"status 枚举未广告（票 27 病灶 4）：{enum}"
-    )
-    limit = _dict_literal(props["limit"])
-    assert _json_value(limit.get("minimum")) == 1 and _json_value(limit.get("maximum")) == 500
-
-
-def test_conditional_required_reason_described():
-    """candidate_review / crystal_decide：reject 分支服务层强制 reason 必填，
-    schema 必须注明条件必填（描述层说明，与 revive_consolidated 范例同风格）。"""
-    props = _load_props()
-    for tool in ("candidate_review", "crystal_decide"):
-        desc = _desc_text(props[tool]["reason"])
-        assert "reject" in desc and "必填" in desc, (
-            f"{tool}.reason 缺条件必填注记（票 27 病灶 2）：{desc!r}"
-        )
-
-
-def test_qijuzhu_branch_semantics_described():
-    """qijuzhu_chronicle：date/detail_level 仅单日分支生效——description 必须
-    注明分支语义（票 27 病灶 3 描述面）。"""
-    props = _load_props()["qijuzhu_chronicle"]
-    for name in ("date", "detail_level"):
-        desc = _desc_text(props[name])
-        assert "单日" in desc, f"qijuzhu_chronicle.{name} 缺分支语义注记（票 27 病灶 3）：{desc!r}"
-
-
-def test_weak_advertised_bounds_described():
-    """搭车抽检面（票 27 病灶 4）：handler 强校验、schema 零承诺的数值界/长度
-    补机器可读承诺（纯声明，零行为变化）。"""
-    props = _load_props()
-    checks = [
-        ("search", "top_k", {"minimum": 1, "maximum": 100}),
-        ("verbatim_search", "top_k", {"minimum": 1, "maximum": 100}),
-        ("scenes_list", "limit", {"minimum": 1, "maximum": 500}),
-        ("candidates_pending", "limit", {"minimum": 1, "maximum": 500}),
-        ("recall_report", "days", {"minimum": 1, "maximum": 365}),
-        ("autodream_report", "limit", {"minimum": 1, "maximum": 5000}),
+    frames = [
+        '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}',
+        '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"triage_auto_pilot","arguments":{"limit":0}}}',
+        '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"triage_auto_pilot","arguments":{"limit":99999}}}',
+        '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"triage_auto_pilot","arguments":{"min_approve_conf":9}}}',
     ]
-    for tool, param, want in checks:
-        node = _dict_literal(props[tool][param])
-        for k, v in want.items():
-            assert _json_value(node.get(k)) == v, (
-                f"{tool}.{param} 缺 {k}={v}（票 27 病灶 4）：{node}"
+    proc = subprocess.run(
+        [sys.executable, "-c", "from lantai.cli.mcp import main; main()"],
+        input=("\n".join(frames) + "\n").encode("utf-8"),
+        capture_output=True,
+        cwd=str(ROOT),
+        env=env,
+        timeout=300,
+    )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")[-2000:]
+
+    by_id = {}
+    for raw in proc.stdout.decode("utf-8").splitlines():
+        resp = json.loads(raw)
+        by_id[resp["id"]] = resp
+
+    assert set(by_id) == {1, 2, 3, 4}, sorted(by_id)
+    for bad_id, what in [(2, "limit=0"), (3, "limit=99999"), (4, "min_approve_conf=9")]:
+        assert "error" in by_id[bad_id], f"{what} 应被拒，现状: {by_id[bad_id]}"
+        assert by_id[bad_id]["error"]["code"] == -32602, f"{what}: {by_id[bad_id]['error']}"
+
+
+# ---------------------------------------------------------------------------
+# 臂 2：帧级参数矩阵 + 服务层 reject 必填现状锁
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_args",
+    [
+        {"limit": 0},
+        {"limit": -1},
+        {"limit": 99999},
+        {"limit": "50"},  # str 强转直通的旧形态必须拒
+        {"limit": True},  # bool 是 int 子类，同族 triage_analyze 已拒
+        {"min_approve_conf": 9},
+        {"min_approve_conf": -0.5},
+        {"min_approve_conf": "0.9"},
+        {"max_reject_conf": 1.5},
+    ],
+)
+def test_triage_auto_pilot_param_matrix_rejected(bad_args):
+    mod = _load_mcp()
+    resp = _call(mod, "triage_auto_pilot", bad_args)
+    assert "error" in resp, f"{bad_args} 应 -32602，现状: {resp}"
+    assert resp["error"]["code"] == -32602, resp["error"]
+
+
+def test_triage_auto_pilot_valid_bounds_pass_validation():
+    """合法边界值必须过校验（不因校验拒绝）；dry_run 空库返回报告不写库。"""
+    mod = _load_mcp()
+    resp = _call(
+        mod,
+        "triage_auto_pilot",
+        {"limit": 500, "min_approve_conf": 0.0, "max_reject_conf": 1.0, "dry_run": True},
+    )
+    assert "error" not in resp, resp.get("error")
+    payload = json.loads(resp["result"]["content"][0]["text"])
+    assert "scanned" in payload, payload
+
+
+def test_candidate_review_reject_requires_reason_current_lock(param_env):
+    """现状锁：真实 pending 候选 + {approve:false} 无 reason 必失败且信息提及 reason。
+
+    服务层先查库后验 reason（candidate_service.review_candidate），不存在的 id
+    只会撞 "candidate not found"——必须造真行才走得到必填校验。
+    """
+    from lantai.models.tables import MemoryCandidate
+
+    session_factory, _ = param_env
+    with session_factory() as s:
+        s.add(
+            MemoryCandidate(
+                id="t27-cand-reject",
+                document_id="doc-t27",
+                status="pending_review",
             )
-    content = _dict_literal(props["add"]["content"])
-    assert _json_value(content.get("minLength")) == 10, f"add.content 缺 minLength=10：{content}"
-
-
-def test_domain_enum_semantics_difference_is_not_a_defect():
-    """不可修项锁（复查结论）：muci_catalog/shiyi_pipeline 的 domain 是
-    `MemoryItem.domain` 列等值过滤（muci.py:104），"all" 会静默返回零行——
-    与 search 的 "all"=不过滤语义不同源，枚举**不得**统一到含 "all"
-    （工单修复目标 4 的「统一」方向经消费端核对判不可修）。"""
-    props = _load_props()
-    for tool in ("muci_catalog", "shiyi_pipeline"):
-        enum = _json_value(_dict_literal(props[tool]["domain"]).get("enum"))
-        assert "all" not in (enum or []), (
-            f"{tool}.domain 枚举被误加 all（列等值过滤语义下 all=静默空结果）：{enum}"
         )
-    assert _json_value(_dict_literal(props["muci_catalog"]["domain"]).get("enum")) == [
-        "user",
-        "session",
-        "agent",
-    ], "muci_catalog.domain 枚举漂移"
+        s.commit()
+
+    mod = _load_mcp()
+    resp = _call(mod, "candidate_review", {"candidate_id": "t27-cand-reject", "approve": False})
+    assert "error" in resp, "reject 无 reason 必须失败"
+    assert "reason" in resp["error"]["message"], resp["error"]
 
 
-# ── 行为面（真 dispatch / 隔离子进程，红：承诺没做）──────────────────
+def test_crystal_decide_reject_requires_reason_current_lock(param_env):
+    """现状锁：真实结晶候选 + reject 无 reason 必失败且信息提及 reason。"""
+    from lantai.models.tables import SkillCrystal
+
+    session_factory, _ = param_env
+    with session_factory() as s:
+        s.add(SkillCrystal(id="t27-crystal-reject", skill_name="t27_lock_skill"))
+        s.commit()
+
+    mod = _load_mcp()
+    resp = _call(mod, "crystal_decide", {"crystal_id": "t27-crystal-reject", "approve": False})
+    assert "error" in resp, "reject 无 reason 必须失败"
+    assert "reason" in resp["error"]["message"], resp["error"]
 
 
-def test_triage_auto_pilot_bounds_enforced(tmp_path):
-    """红测主臂：triage_auto_pilot 的 limit/conf 越界必须 -32602（现状：
-    裸强转零检查，limit=0/99999/conf=1.5 全部成功返回）。
+# ---------------------------------------------------------------------------
+# 臂 3：TOOLS 声明面与 handler 校验口径静态对账（真 import，不 mock）
+# ---------------------------------------------------------------------------
 
-    真子进程（-I -X utf8 + 隔离 LANTAI_HOME + 真 init_db），dry_run=True
-    保证越界样本（修复前会真跑巡检）零副作用。"""
-    cases = [
-        ({"limit": 0, "dry_run": True}, "limit must be an int in [1, 500]"),
-        ({"limit": 99999, "dry_run": True}, "limit must be an int in [1, 500]"),
-        ({"min_approve_conf": 1.5, "dry_run": True}, "min_approve_conf"),
-        ({"max_reject_conf": -0.5, "dry_run": True}, "max_reject_conf"),
+
+def test_conflicts_list_schema_matches_handler_validation():
+    """handler 校验 status 枚举 + limit [1,500]，schema 必须如数承诺。"""
+    mod = _load_mcp()
+    schema = mod.TOOLS["conflicts_list"]["inputSchema"]["properties"]
+    assert schema["status"].get("enum") == ["open", "resolved", "dismissed", "all"], schema[
+        "status"
     ]
-    code = (
-        "import json\n"
-        "from lantai.storage import db\n"
-        "db.init_db()\n"
-        "from lantai.cli import mcp\n"
-        "out = []\n"
-        "for args in json.loads(__import__('sys').argv[1]):\n"
-        "    resp = mcp.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',\n"
-        "                       'params': {'name': 'triage_auto_pilot', 'arguments': args}})\n"
-        "    out.append(resp)\n"
-        "print('MCPCALLS' + json.dumps(out, ensure_ascii=False))\n"
+    assert "[1, 500]" in schema["limit"].get("description", ""), schema["limit"]
+
+
+@pytest.mark.parametrize("tool", ["search", "verbatim_search"])
+def test_search_family_top_k_schema_declares_bound(tool):
+    """top_k handler 校验 [1,100]，schema description 必须声明边界。"""
+    mod = _load_mcp()
+    top_k = mod.TOOLS[tool]["inputSchema"]["properties"]["top_k"]
+    assert "[1, 100]" in top_k.get("description", ""), (tool, top_k)
+
+
+@pytest.mark.parametrize("tool", ["graph_expand_search", "shiyi_remedy", "shiyi_pipeline"])
+def test_retrieval_domain_enum_unified_with_all(tool):
+    """检索族 domain 消费端接受 "all"（hybrid 哨兵），schema 枚举必须如实声明。"""
+    mod = _load_mcp()
+    domain = mod.TOOLS[tool]["inputSchema"]["properties"]["domain"]
+    assert domain.get("enum") == ["user", "session", "agent", "all"], (tool, domain)
+
+
+def test_search_domain_enum_baseline_locked():
+    """基线锚：search 的 domain 枚举含 "all"（统一口径的基准线）。"""
+    mod = _load_mcp()
+    domain = mod.TOOLS["search"]["inputSchema"]["properties"]["domain"]
+    assert domain.get("enum") == ["user", "session", "agent", "all"], domain
+
+
+@pytest.mark.parametrize("tool", ["candidate_review", "crystal_decide"])
+def test_reason_description_declares_reject_required(tool):
+    """reject 分支必填 reason 必须写进 schema description（忠实调用不吃 -32602）。"""
+    mod = _load_mcp()
+    reason = mod.TOOLS[tool]["inputSchema"]["properties"]["reason"]
+    assert "必填" in reason.get("description", ""), (tool, reason)
+
+
+def test_qijuzhu_chronicle_branch_scoped_params_declared():
+    """date/detail_level 仅单日分支生效必须写进 schema description（不再暗示全程生效）。"""
+    mod = _load_mcp()
+    props = mod.TOOLS["qijuzhu_chronicle"]["inputSchema"]["properties"]
+    assert "days=1" in props["date"].get("description", ""), props["date"]
+    assert "days=1" in props["detail_level"].get("description", ""), props["detail_level"]
+
+
+def test_qijuzhu_chronicle_multi_day_ignores_single_day_params_current_lock():
+    """现状锁：days>1 走 timeline 分支，date/detail_level 不影响返回形态。"""
+    mod = _load_mcp()
+    base = json.loads(_call(mod, "qijuzhu_chronicle", {"days": 3})["result"]["content"][0]["text"])
+    noisy = json.loads(
+        _call(mod, "qijuzhu_chronicle", {"days": 3, "date": "2026-01-01", "detail_level": "full"})[
+            "result"
+        ]["content"][0]["text"]
     )
-    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
-    (tmp_path / "home").mkdir(parents=True, exist_ok=True)
-    env["LANTAI_HOME"] = str(tmp_path / "home")
-    env["LANTAI_MCP_PROFILE"] = "full"
-    env["PYTHONIOENCODING"] = "utf-8"
-    proc = subprocess.run(  # noqa: S603 — 固定 argv 测试装置
-        [PY, "-I", "-X", "utf8", "-u", "-c", code, json.dumps([c[0] for c in cases])],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=180,
-        cwd=str(REPO_ROOT),
-        env=env,
-    )
-    assert proc.returncode == 0, proc.stderr[-400:]
-    line = next(l for l in proc.stdout.splitlines() if l.startswith("MCPCALLS"))
-    results = json.loads(line[len("MCPCALLS") :])
-    for (args, want_msg), resp in zip(cases, results):
-        assert not _ok(resp), f"越界参数被静默接受（票 27 病灶 1）：{args} → {resp}"
-        code_, msg = _err(resp)
-        assert code_ == -32602, f"{args} 错误码 {code_}（应为 -32602）：{msg}"
-        assert want_msg.split(" ")[0] in msg or want_msg in msg, f"{args} 错误信息不可定位：{msg!r}"
+    # 同库同窗下两次多日查询的键形态一致（date/detail_level 均不参与多日分支）；
+    # 唯一差异是 v0.68 #43 票 27 病灶 3 的回执体 warnings 如实标记未消费参数
+    assert set(base) == set(noisy) - {"warnings"}, (sorted(base), sorted(noisy))
+    assert any("date" in w and "detail_level" in w for w in noisy["warnings"]), noisy
 
 
-def test_triage_auto_pilot_boundaries_accepted(tmp_path):
-    """现状锁（修复后语义）：合法边界值 1/500、0.0/1.0 照常执行（dry_run）。"""
-    code = (
-        "import json\n"
-        "from lantai.storage import db\n"
-        "db.init_db()\n"
-        "from lantai.cli import mcp\n"
-        "args = {'limit': 500, 'min_approve_conf': 1.0, 'max_reject_conf': 0.0, 'dry_run': True}\n"
-        "resp = mcp.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',\n"
-        "                   'params': {'name': 'triage_auto_pilot', 'arguments': args}})\n"
-        "print('MCPCALLS' + json.dumps([resp], ensure_ascii=False))\n"
-    )
-    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
-    (tmp_path / "home").mkdir(parents=True, exist_ok=True)
-    env["LANTAI_HOME"] = str(tmp_path / "home")
-    env["LANTAI_MCP_PROFILE"] = "full"
-    env["PYTHONIOENCODING"] = "utf-8"
-    proc = subprocess.run(  # noqa: S603
-        [PY, "-I", "-X", "utf8", "-u", "-c", code],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=180,
-        cwd=str(REPO_ROOT),
-        env=env,
-    )
-    assert proc.returncode == 0, proc.stderr[-400:]
-    line = next(l for l in proc.stdout.splitlines() if l.startswith("MCPCALLS"))
-    (resp,) = json.loads(line[len("MCPCALLS") :])
-    assert _ok(resp), f"合法边界值被误拒（票 27）：{_err(resp)}"
+@pytest.mark.parametrize(
+    ("tool", "param", "bound"),
+    [
+        ("scenes_list", "limit", "[1, 500]"),
+        ("candidates_pending", "limit", "[1, 500]"),
+    ],
+)
+def test_list_tools_limit_bound_declared(tool, param, bound):
+    """搭车声明（票 27 病灶 4）：handler 校验 [1,500] 的列表工具 schema 必须声明。"""
+    mod = _load_mcp()
+    prop = mod.TOOLS[tool]["inputSchema"]["properties"][param]
+    assert bound in prop.get("description", ""), (tool, prop)
 
 
-def test_conflicts_list_status_enforced(monkeypatch):
-    """现状锁：conflicts_list 的 status 枚举与 limit 界 handler 一直强校验
-    （票 27 病灶 4 的「做了」侧）。"""
-    monkeypatch.setenv("LANTAI_MCP_PROFILE", "full")
-    bad = _call_tool("conflicts_list", {"status": "bogus"})
-    code_, msg = _err(bad)
-    assert code_ == -32602 and "status" in msg, f"非法 status 未拦：{code_} {msg}"
-    good = _call_tool("conflicts_list", {"status": "open"})
-    assert _ok(good), f"合法 status 被误拒：{_err(good)}"
+@pytest.mark.parametrize(
+    ("tool", "param", "bound"),
+    [
+        ("recall_report", "days", "[1, 365]"),
+        ("autodream_report", "limit", "[1, 5000]"),
+    ],
+)
+def test_optional_param_bound_declared(tool, param, bound):
+    """搭车声明（票 27 病灶 4）：可选参数 handler 校验 [1,N]，schema 必须声明边界。"""
+    mod = _load_mcp()
+    prop = mod.TOOLS[tool]["inputSchema"]["properties"][param]
+    assert bound in prop.get("description", ""), (tool, prop)
 
 
-def test_reject_reason_required_error_message(monkeypatch):
-    """现状锁（票 27 病灶 2 的「做了」侧）：reject 无 reason 服务层强制必填，
-    错误信息可定位（含 reason）。"""
-    monkeypatch.setenv("LANTAI_MCP_PROFILE", "full")
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    SQLModel.metadata.create_all(engine)
-
-    def session_factory() -> Session:
-        return Session(engine)
-
-    with (
-        patch_db(session_factory),
-        _SeedCandidate(session_factory),
-    ):
-        resp = _call_tool(
-            "candidate_review",
-            {"candidate_id": "cand-lock", "approve": False},
-        )
-        code_, msg = _err(resp)
-        assert code_ == -32602 and "reason" in msg.lower(), (
-            f"reject 无 reason 错误信息不可定位：{code_} {msg!r}"
-        )
+def test_add_content_min_length_declared():
+    """搭车声明（票 27 病灶 4）：content ≥10 字符（schemas.py AddMemoryReq 校验）必须声明。"""
+    mod = _load_mcp()
+    content = mod.TOOLS["add"]["inputSchema"]["properties"]["content"]
+    assert "10" in content.get("description", ""), content
 
 
-def test_qijuzhu_multi_day_marks_unused_params():
-    """红测主臂（票 27 病灶 3）：days>1 时 date/detail_level 被静默丢弃——
-    回执体必须含「参数未适用」标记（宁 visible 不静默）；单日分支真消费、
-    不加标记。"""
-    from unittest.mock import Mock, patch
+def test_triage_auto_pilot_no_op_cast_removed():
+    """守卫：limit 校验后不得残留 int() 强转（isinstance 已保证，no-op 误导读者）。"""
+    import inspect
 
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    SQLModel.metadata.create_all(engine)
-
-    def session_factory() -> Session:
-        return Session(engine)
-
-    vs = Mock(search=Mock(return_value=[]), add=Mock(), delete=Mock())
-    with (
-        patch.object(db_module, "get_session", session_factory),
-        patch("lantai.llm.client.embed", return_value=[[0.1] * 8]),
-        patch("lantai.storage.vector_store.get_vector_store", return_value=vs),
-    ):
-        multi = handle_qijuzhu_chronicle({"days": 3, "date": "2026-01-01", "detail_level": "full"})
-        text = json.dumps(multi, ensure_ascii=False)
-        assert "参数未适用" in text, (
-            f"多日分支静默丢弃 date/detail_level（票 27 病灶 3）：{text[:300]}"
-        )
-        single = handle_qijuzhu_chronicle({"days": 1, "date": "2026-01-01"})
-        assert "参数未适用" not in json.dumps(single, ensure_ascii=False), "单日分支误报参数未适用"
-
-
-# ── 小工具 ────────────────────────────────────────────────────────
-
-
-def patch_db(session_factory):
-    from unittest.mock import patch
-
-    import lantai.models.tables  # noqa: F401
-
-    return patch.object(db_module, "get_session", session_factory)
-
-
-class _SeedCandidate:
-    """种子 pending_review 候选（reject 流程先验存在与状态，再验 reason）。"""
-
-    def __init__(self, session_factory):
-        self.session_factory = session_factory
-
-    def __enter__(self):
-        with self.session_factory() as s:
-            s.add(
-                MemoryCandidate(
-                    id="cand-lock",
-                    document_id="doc-lock",
-                    status="pending_review",
-                    summary="票 27 reject reason 现状锁种子",
-                )
-            )
-            s.commit()
-        return self
-
-    def __exit__(self, *exc):
-        return False
+    mod = _load_mcp()
+    src = inspect.getsource(mod.handle_triage_auto_pilot)
+    assert "int(limit)" not in src, "校验后的 int(limit) 是 no-op，应删除"
