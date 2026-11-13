@@ -22,8 +22,6 @@ from lantai.models.tables import (
 from lantai.services.candidate_service import run_candidate_ttl_once
 from lantai.storage import db
 
-# 反思提案置信桶（ADR-0002 零硬编码：边界走 settings，见校准报告）
-_CONF_BUCKETS = tuple(settings.DIGEST_CONF_BUCKETS)
 _TYPE_ORDER = ("add", "update", "merge", "deprecate")
 _STATUS_COLS = ("applied", "pending", "rejected", "other")
 
@@ -129,10 +127,13 @@ def _aggregate_reflection(s, start: datetime, end: datetime, *, principal=None) 
     by_type: dict[str, dict[str, int]] = {}
     for ptype, status, cnt in rows:
         by_type.setdefault(ptype, {})[status] = int(cnt)
-    conf_buckets = {label: 0 for label, _, _ in _CONF_BUCKETS}
+    # 票 84：标签只用于展示；数值最上界所在的桶闭合右端点。
+    buckets = tuple(settings.DIGEST_CONF_BUCKETS)
+    top_hi = max((hi for _, _, hi in buckets), default=None)
+    conf_buckets = {label: 0 for label, _, _ in buckets}
     for conf in conf_values:
-        for label, lo, hi in _CONF_BUCKETS:
-            if lo <= conf < hi or (label == "0.9-1.0" and conf == 1.0):
+        for label, lo, hi in buckets:
+            if lo <= conf < hi or (lo <= conf == hi == top_hi):
                 conf_buckets[label] += 1
                 break
         else:
@@ -412,7 +413,7 @@ def render_digest_markdown(stats: dict) -> str:
         lines += _type_status_rows(rf)
         buckets = rf.get("conf_buckets", {})
         if buckets:
-            labels = [b[0] for b in _CONF_BUCKETS]
+            labels = [b[0] for b in settings.DIGEST_CONF_BUCKETS]
             labels += [k for k in buckets if k not in labels]
             lines += [
                 "",
@@ -523,7 +524,7 @@ def render_calibration_markdown(stats: dict) -> str:
     buckets = refl.get("conf_buckets", {})
     if buckets:
         lines += ["", "## 置信桶（窗口新增）", "", "| 桶 | 数量 |", "|---|---|"]
-        labels = [b[0] for b in _CONF_BUCKETS]
+        labels = [b[0] for b in settings.DIGEST_CONF_BUCKETS]
         labels += [k for k in buckets if k not in labels]
         for label in labels:
             lines.append(f"| {label} | {buckets.get(label, 0)} |")
