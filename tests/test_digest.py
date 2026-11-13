@@ -532,6 +532,48 @@ class TestCalibrationStats:
         assert "[其他]×1" in md
 
 
+class TestConfidenceBucketBoundaries:
+    """票 84：展示标签不决定数值端点，真实提案统计与两种渲染同源。"""
+
+    @pytest.mark.parametrize("rename_top", [False, True], ids=["default", "renamed-top"])
+    def test_numeric_boundaries_and_outliers(self, digest_env, monkeypatch, rename_top):
+        from lantai.workers import digest_worker
+
+        top_label = "最高置信" if rename_top else "0.9-1.0"
+        buckets = [*settings.DIGEST_CONF_BUCKETS[:-1], (top_label, 0.9, 1.0)]
+        monkeypatch.setattr(settings, "DIGEST_CONF_BUCKETS", buckets)
+        now = _now_aware()
+        _seed(
+            digest_env,
+            [
+                MemoryProposal(
+                    id=f"boundary_{i}",
+                    proposal_type="add",
+                    decided_by="reflect",
+                    confidence=confidence,
+                    status="pending",
+                    created_at=now,
+                )
+                for i, confidence in enumerate((0.9, 1.0, -0.1, 1.1))
+            ],
+        )
+
+        stats = digest_worker.collect_digest_stats()
+        expected = {
+            "0.5-0.6": 0,
+            "0.6-0.7": 0,
+            "0.7-0.8": 0,
+            "0.8-0.9": 0,
+            top_label: 2,
+            "其他": 2,
+        }
+        assert stats["reflection"]["conf_buckets"] == expected
+        assert f"[{top_label}]×2" in digest_worker.render_digest_markdown(stats)
+        calibration = digest_worker.collect_calibration_stats()
+        assert calibration["reflection"]["conf_buckets"] == expected
+        assert f"| {top_label} | 2 |" in digest_worker.render_calibration_markdown(calibration)
+
+
 class TestCollectStats:
     """五项统计数字正确（真实 DB 查询）。"""
 
