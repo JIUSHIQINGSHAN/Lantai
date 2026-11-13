@@ -265,13 +265,19 @@ class TestDedupNoCrossUserMutation:
         assert not props, f"落库了指向别人的提案：{[p.id for p in props]}"
 
     def test_own_merge_still_bumps(self, dd_env):
-        """反向：A 对自己的记忆照常 merge bump（不能修废）。"""
+        """反向：A 对自己的记忆照常 merge bump（不能修废）。
+
+        票 23 起目标行必须从传入的同一 session 取得（生产 _apply_dedup 链即
+        此形状）：bump 改库端原子 UPDATE 后 refresh 对齐 ORM 对象，detached
+        实例不再兼容——旧实现的 add() 复活提交会把陈旧快照冲回库（恰是票 23
+        要消灭的 RMW）。
+        """
         engine = dd_env
         _mem(engine, "m-A", "user-A", "A 喜欢喝咖啡", importance=0.5)
 
-        out = memory_service._dedup_merge(
-            Session(engine), _row(engine, "m-A"), 0.95, principal=_principal("user-A")
-        )
+        with Session(engine) as s:
+            target = s.get(MemoryItem, "m-A")
+            out = memory_service._dedup_merge(s, target, 0.95, principal=_principal("user-A"))
         assert out is not None and out.get("dedup_action") == "merge", f"A 自己的 merge 被拒：{out}"
         assert _row(engine, "m-A").importance == pytest.approx(0.6), "A 自己的 importance 没 bump"
 

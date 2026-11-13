@@ -1,3 +1,4 @@
+import logging
 import math
 
 from sqlmodel import select
@@ -6,14 +7,25 @@ from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
+from lantai.storage.cas import atomic_update
+
+logger = logging.getLogger(__name__)
+
+# 票 35：强度下限兜底——importance 写入面立法前入库的历史毒行（如 chat 泳道
+# importance=-0.6）会让 strength=0.0（ZeroDivisionError）或 <0（exp(+x)
+# OverflowError），keyset 主循环零容错即全库衰减停摆。写入面已三路钳制后此处
+# 兜底保证历史毒行不再炸穿引擎：按地板强度衰减 → decay 立即跌破归档阈值 →
+# 被正常归档，引擎自愈。地板只咬「公式算出非正强度」的行，正常行永不及它
+# （chat 泳道最低正常强度 = base_s = 3.0）。
+MIN_LANE_STRENGTH_DAYS = 1e-6
 
 
 def _lane_strength(importance: float, use_count: int, lane: str) -> float:
-    """按 lane profile 计算记忆保持强度 S"""
+    """按 lane profile 计算记忆保持强度 S（非正强度兜底到 MIN_LANE_STRENGTH_DAYS）"""
     profile = settings.LANE_DECAY_PROFILES.get(lane, settings.LANE_DECAY_PROFILES["general"])
     base_s = profile["base_s"]
     boost = profile["importance_boost"]
-    return base_s + boost * importance + 2 * math.log1p(use_count)
+    return max(base_s + boost * importance + 2 * math.log1p(use_count), MIN_LANE_STRENGTH_DAYS)
 
 
 # ---- 票 03（v0.66 P0-4）：豁免分两档，两条归档路各自明确认哪些标记 ----
@@ -134,14 +146,24 @@ def apply_forgetting(principal=None, *, page_size: int = 500):
                         m.decay_score = 1.0
                         changed = True
                 else:
-                    last = m.last_used_at or m.created_at
-                    if last.tzinfo is not None and now.tzinfo is None:
-                        last = last.replace(tzinfo=None)
-                    elif last.tzinfo is None and now.tzinfo is not None:
-                        last = last.replace(tzinfo=now.tzinfo)
-                    days = max(0.0, (now - last).total_seconds() / 86400.0)
-                    strength = _lane_strength(m.importance, _usage_signal(m), m.lane)
-                    new_decay = math.exp(-days / strength)
+                    try:
+                        last = m.last_used_at or m.created_at
+                        if last.tzinfo is not None and now.tzinfo is None:
+                            last = last.replace(tzinfo=None)
+                        elif last.tzinfo is None and now.tzinfo is not None:
+                            last = last.replace(tzinfo=now.tzinfo)
+                        days = max(0.0, (now - last).total_seconds() / 86400.0)
+                        strength = _lane_strength(m.importance, _usage_signal(m), m.lane)
+                        new_decay = math.exp(-days / strength)
+                    except Exception:
+                        # 票 35 循环容错：脏数据行（TEXT importance 经无闸 import 面
+                        # 落库是票 47 收口前的现实入口）不再炸穿 keyset 主循环——
+                        # 宁 miss 不脏写，本周期跳过该行并留痕，健康行照常衰减
+                        # （修复前：同页对照行已算好的衰减随异常一起回滚）。
+                        logger.warning(
+                            "遗忘：记忆 %s 衰减计算异常，本周期跳过（票 35）", m.id, exc_info=True
+                        )
+                        continue
 
                     # Ticket 2.4 [DD-06]: 跳过极微小更新
                     if abs(m.decay_score - new_decay) >= 0.001:
@@ -161,8 +183,29 @@ def apply_forgetting(principal=None, *, page_size: int = 500):
                         m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD and not _decay_exempt(m)
                     )
                     if (decay_breached or ttl_expired) and m.status != "archived":
-                        m.status = "archived"
-                        changed = True
+                        # 票 23：归档改条件 UPDATE 写时重验判定输入（status/tier/
+                        # importance/helpful_count/last_used_at）——扫描窗口内被
+                        # 反馈/保活救活的行跳过归档、连衰减分也不写，下轮按新
+                        # 状态重判（红测 W1；archived 没有 undo 入口，宁 miss
+                        # 不脏写）。判定输入未变时衰减分随同语句原子落库。
+                        archived = atomic_update(
+                            s,
+                            MemoryItem,
+                            m.id,
+                            {"status": "archived", "decay_score": new_decay},
+                            MemoryItem.status == "active",
+                            MemoryItem.tier == m.tier,
+                            MemoryItem.importance == m.importance,
+                            MemoryItem.helpful_count == m.helpful_count,
+                            MemoryItem.last_used_at == m.last_used_at,
+                        )
+                        if archived:
+                            changed = True
+                        else:
+                            # 判定输入已变：丢弃本行在本页累积的 ORM 脏属性
+                            # （如上面已赋的衰减分），不搭批间 commit 顺车写回。
+                            changed = False
+                            s.expunge(m)
 
                 if changed:
                     s.add(m)

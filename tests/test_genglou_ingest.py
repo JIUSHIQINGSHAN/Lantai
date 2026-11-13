@@ -204,7 +204,8 @@ class TestEventTimeChain:
         # 带 +00:00：提取结果为 aware UTC（恒 aware UTC 是本仓纪律，链路
         # candidate → proposal → MemoryItem.event_time 全程可比对、落盘形态
         # 一致）。时刻数值不变——仍是 2026-09-15 00:00:00 UTC。
-        assert prov.get("event_time") == "2026-09-15T00:00:00+00:00"
+        # 票 53：出口过 iso_utc，全精度形态（.000000 显式小数段）
+        assert prov.get("event_time") == "2026-09-15T00:00:00.000000+00:00"
         assert prov.get("event_time_precision") == "day"
 
         # 无时间文本：failed 标注，不猜

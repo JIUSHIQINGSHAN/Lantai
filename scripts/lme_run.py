@@ -45,6 +45,10 @@ from lantai.eval.longmemeval import (
     session_recall_hit,
 )
 
+# 票 30 A2：报告面 stdout 钉 UTF-8——cp936 宿主 print GBK 外字符（emoji/U+2028/罕用字）直接崩
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs/benchmarks/longmemeval-2026-10"
 DATA = ROOT / "data/longmemeval/longmemeval_s_cleaned.json"
@@ -104,6 +108,9 @@ def _server_env(config: dict | None, qid: str | None) -> dict:
     """
     env = {
         "PATH": os.environ.get("PATH", ""),
+        # 子进程 stdio/日志句柄钉 UTF-8（票 30 A3）：不钉则 uvicorn 把兰台中文日志
+        # 按 cp936 写 server.log（调试产物损坏级）
+        "PYTHONIOENCODING": "utf-8",
         "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
         # Windows home 解析链（缺省会让 chromadb/sentence-transformers 报
         # "Could not determine home directory" → 向量通道静默降级关键词，

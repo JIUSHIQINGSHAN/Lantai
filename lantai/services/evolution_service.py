@@ -9,6 +9,7 @@ from lantai.models.enums import ProposalStatus
 from lantai.models.schemas import FeedbackReq, ProposalDecisionReq
 from lantai.models.tables import MemoryCheckpoint, MemoryItem, MemoryProposal
 from lantai.storage import db
+from lantai.storage.cas import cas_update
 from lantai.workers.evolve_worker import run_evolve_once
 
 
@@ -126,27 +127,37 @@ def decide_proposal(proposal_id: str, req: ProposalDecisionReq, *, principal=Non
         if not req.approve and not (req.reason or "").strip():
             raise ValueError("reject reason is required")
         _ensure_can_decide(principal, prop)
-        prop.decision_reason = req.reason or ""
-        # decided_at（ADR-0053）：裁决即落时刻，不等 apply——approve 与 reject 同口径。
-        # 巩固拒绝冷却期按此起算（ADR-0050 边界「冷却期起算点用 created_at 近似」的修法）。
-        prop.decided_at = utcnow()
+        # 票 22 S2：裁决认领——「pending → 裁决态」条件 UPDATE 作为本事务第一条
+        # DML（CAS）。此前双 approve 都过状态门各自进 apply；reject 与 apply 交错
+        # 时 reject 持旧 ORM 对象可把已 APPLIED 覆写回 REJECTED（内容已写库、
+        # 账面显示拒绝的脏账）。rowcount=0 即并发败方：不回写、不进 apply
+        # （RuntimeError → 路由 409，契约同下方既有口径）。
+        decision = ProposalStatus.APPROVED if req.approve else ProposalStatus.REJECTED
+        claimed = cas_update(
+            s,
+            MemoryProposal,
+            proposal_id,
+            {"status": ProposalStatus.PENDING},
+            {
+                "status": decision,
+                "decision_reason": req.reason or "",
+                # decided_at（ADR-0053）：裁决即落时刻，不等 apply——approve 与 reject 同口径。
+                # 巩固拒绝冷却期按此起算（ADR-0050 边界「冷却期起算点用 created_at 近似」的修法）。
+                "decided_at": utcnow(),
+                "decided_by": "user",
+            },
+        )
+        if claimed != 1:
+            raise RuntimeError("proposal state changed; refresh and retry")
+        s.commit()
         if req.approve:
-            prop.status = ProposalStatus.APPROVED
-            prop.decided_by = "user"
-            s.add(prop)
-            s.commit()
             # principal 下传到 apply（票 .scratch/proposal-apply-gaps/issues/16）：
             # approve 会 `apply_proposal` 直接写库，而提案的三个寻址字段全部
             # 来自 LLM 输出——A 批准一条指向 B 的记忆的提案，就等于能改写
             # B 的记忆（deprecate 归档 / merge 除名 / consolidation 折叠，
             # 均无 undo）。归属校验在 service 层（worker/MCP 也走这条路）。
             return apply_proposal(proposal_id, principal=principal)
-        else:
-            prop.status = ProposalStatus.REJECTED
-            prop.decided_by = "user"
-            s.add(prop)
-            s.commit()
-            return {"ok": True}
+        return {"ok": True}
 
 
 def do_rollback(memory_id: str, principal=None) -> dict:
@@ -163,15 +174,71 @@ def record_feedback_entry(req: FeedbackReq, principal=None) -> dict:
     """记录反馈。
 
     归属（票 .scratch/readside-gaps/13）：同上，下传 principal。
+
+    票 24 子项 3：宿主/网络层重试会原样重发同一份反馈——三计数是考功/遗忘
+    的输入，重放即虚增（「高频低效」误判面）。REST（routes_evolution.py
+    /feedback）与 MCP（cli/mcp.py feedback 工具）双入口都收敛在本 entry，
+    勘合票据挂这里：自动指纹键（fp: 前缀，键 = 整个请求体 + viewer 的
+    sha256），重试窗 = LEASE_SECONDS（600s，勘合教义：重试发生在秒-分钟
+    尺度）——窗内同体重放判 pending → 如实 ack 不再计数；窗后同文再发 =
+    新反馈事件，照常计数。指纹覆盖整个请求体（含 query/hallucination_risk）：
+    不同 query 的两次「有用」是两个真实事件，都计数。选**幂等票据**而非
+    原子递增：原子递增（票 23 F1）解决的是并发丢失，对重放无能为力。服务层
+    `record_feedback` 保持纯函数——票 23 F1 并发双计数契约与 10 处直调不动；
+    权限拒绝（ok=False）随失败语义释放票据（重试可重新走完整判定）。
+    幂等层故障承勘合本体 fail-open：照常执行，宁重放不挡主路。
     """
-    return record_feedback(
-        req.memory_id,
-        req.query,
-        req.helped,
-        req.user_accepted,
-        req.hallucination_risk,
-        principal=principal,
+    import json as _json
+
+    from lantai.core.idempotency import auto_key, claim
+    from lantai.core.idempotency import fingerprint_payload as _fp
+    from lantai.core.idempotency import settle as _settle
+
+    viewer = (
+        (getattr(principal, "user_id", None) or "default") if principal is not None else "default"
     )
+    tenant_id = (getattr(principal, "tenant_id", None) or "") if principal is not None else ""
+    fp = _fp(
+        _json.dumps(req.model_dump(), sort_keys=True, ensure_ascii=False),
+        viewer,
+        "feedback",
+        "",
+        None,
+    )
+    key = auto_key(fp)
+    verdict = claim(key, viewer, tenant_id, fp)
+    if verdict["action"] == "disabled":
+        return record_feedback(
+            req.memory_id,
+            req.query,
+            req.helped,
+            req.user_accepted,
+            req.hallucination_risk,
+            principal=principal,
+        )
+    if verdict["action"] in ("replay", "pending"):
+        return {"ok": True, "replayed": True}
+    binding = {
+        "key": key,
+        "user_id": viewer,
+        "tenant_id": tenant_id,
+        "claimed_at": verdict["claimed_at"],
+        "explicit": False,
+    }
+    try:
+        out = record_feedback(
+            req.memory_id,
+            req.query,
+            req.helped,
+            req.user_accepted,
+            req.hallucination_risk,
+            principal=principal,
+        )
+    except Exception:
+        _settle(binding, ok=False)
+        raise
+    _settle(binding, ok=bool(out.get("ok")))
+    return out
 
 
 def run_evolve() -> dict:

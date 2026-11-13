@@ -32,7 +32,7 @@ class LifecycleStatus(StrEnum):
 
 from datetime import datetime
 
-from sqlalchemy import ForeignKey
+from sqlalchemy import ForeignKey, Index, UniqueConstraint, text
 from sqlmodel import JSON, Column, Field, SQLModel
 
 from lantai.core.time import utcnow
@@ -187,6 +187,23 @@ class MemoryItem(SQLModel, table=True):
     superseded_at: datetime | None = None  # 被取代的时间
     retired_at: datetime | None = None  # 正式退役的时间
 
+    # 票 24 子项 2：内容键部分唯一索引——add_raw_memory / create_skill 的
+    # 去重是「SELECT(key=sha256) → embed（网络往返）→ INSERT」，并发同文两路
+    # 都判重落空即双行 + 双份向量/FTS。索引口径与去重 SELECT 逐字对齐：
+    # (memory_type, key, user_id) 且仅约束 key 非空的 active 行——default=""
+    # 的无键行与 NULL 属主老行（真实库 391 条 verbatim 全 NULL）不受约束
+    # （SQLite 复合键含 NULL 互异），归档/撤回行不挡同文重存。
+    __table_args__ = (
+        Index(
+            "uq_memoryitem_type_key_user_active",
+            "memory_type",
+            "key",
+            "user_id",
+            unique=True,
+            sqlite_where=text("key != '' AND status = 'active'"),
+        ),
+    )
+
 
 class MemoryScene(SQLModel, table=True):
     """场景聚合（ADR-0012，借鉴 TencentDB Agent Memory L2 场景层）。
@@ -248,7 +265,9 @@ class CognitivePattern(SQLModel, table=True):
     # 幂等去重自然键（票 .scratch/review-fixes-2026-10/02）：聚类核心实词签名的
     # sha256 前 16 位；同键已存在则不再插行（每晚反思对同一输入零新增）。
     # 迁移链 v29 之前的存量行为 NULL，NULL 不参与匹配（宁 miss 不脏写）。
-    dedup_key: str | None = Field(default=None, index=True)
+    # 票 68：升 unique——check-then-act 并发双行的 schema 兜底（应用层
+    # IntegrityError 回退更新 last_seen；存量库由迁移 v42 先去重再建唯一索引）。
+    dedup_key: str | None = Field(default=None, index=True, unique=True)
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -256,6 +275,14 @@ class CognitivePattern(SQLModel, table=True):
 
 class FailureRecord(SQLModel, table=True):
     id: str = Field(primary_key=True)
+
+    # 归属（票 61）：失败记录此前无归属列——三读面（润物摘要/反省/心斋
+    # 切面）全库裸拉，他人教训被物化为本人 Belief。nullable 保存量兼容：
+    # 迁移前旧行归属 NULL（回填口径属 ready-for-human 决策点，票面回执列明），
+    # 读侧 OR IS NULL 口径下人人可读（同票 57 家族「NULL 是未记录不是属于
+    # 所有人」的既有兼容口径）。
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)
 
     task: str
     action: str
@@ -374,7 +401,15 @@ class CoreMemoryBlock(SQLModel, table=True):
     `/core-memory` 又不带身份，于是 A 写的 policy 块任意登录用户一读就到。
     列由迁移 v25 补；老行留 NULL（「未记录」的事实状态，宁 miss 不脏写），
     读侧对 NULL 属主按调用方身份收窄——见 get_core_memory 的口径说明。
+
+    票 23：`(block, namespace, user_id)` 唯一约束——并发首写按「SELECT 判空
+    → INSERT」曾双插平行行（红测 F5a）；迁移 v38 建同名唯一索引，NULL 属主
+    老行不参与（SQLite UNIQUE 对 NULL 视为互异）。
     """
+
+    __table_args__ = (
+        UniqueConstraint("block", "namespace", "user_id", name="uq_corememoryblock_block_ns_user"),
+    )
 
     id: str = Field(primary_key=True)
     block: str = Field(index=True)
@@ -639,6 +674,9 @@ class RetrievalEvent(SQLModel, table=True):
     is_system_noise: bool = Field(
         default=False, index=True
     )  # 系统注入噪音（技能库维护等），评估统计时排除
+    fts_terms_truncated: bool = Field(
+        default=False, index=True
+    )  # 票 49：FTS 关键词超 _GRAM_TERMS_MAX 被截——长查询尾部 gram 静默丢失自此可见
     # 回执链（ADR-0049，票 04）：检索事件 → 注入 evidence → 宿主回执 → 可追溯出口
     request_id: str | None = Field(
         default=None, index=True
@@ -873,6 +911,7 @@ class IdempotencyKey(SQLModel, table=True):
     response_json: str | None = None
     state: str = "accepted"
     created_at: float = Field(default_factory=lambda: utcnow().timestamp(), index=True)
+    token: str | None = None
 
 
 class FactAtomic(SQLModel, table=True):
@@ -945,3 +984,32 @@ class Dossier(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class CehouWindow(SQLModel, table=True):
+    """测候影子观察视窗（ADR-0073）持久层（票 60）。
+
+    影子实验视窗的唯一真源——此前是 `cehou.py` 的进程内模块级 dict
+    `_SHADOW_WINDOWS`：无属主校验可被任意覆盖夺权、多 worker 各一份、重启清零。
+    window_id 即主键（调用方自由字符串，同 ID 重开 = 同属主 upsert / 他人 409 拒绝）。
+    """
+
+    __tablename__ = "cehou_window"
+
+    window_id: str = Field(primary_key=True)
+    target_type: str = Field(index=True)  # param | rule | proposal
+    target_id: str = Field(index=True)
+    state: str = Field(default="observing", index=True)  # observing | graduated | rolled_back
+    days_observed: int = 0
+    required_days: int = 7
+    min_samples: int = 10
+    sample_count: int = 0
+    success_count: int = 0
+    failure_count: int = 0
+    total_latency_ms: float = 0.0
+    total_score_delta: float = 0.0
+    alerts: list = Field(default_factory=list, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow)
+    tenant_id: str | None = Field(default=None, index=True)
+    user_id: str | None = Field(default=None, index=True)

@@ -774,8 +774,9 @@ def _hybrid_search_impl(
     bm25_ranks = {r[0]: idx for idx, r in enumerate(fts_bm25_results)}
 
     # 回声抑制（v022 吸收 M2，ADR-0046 时间窗语义；默认关）：仅抑制本会话
-    # 窗口期内新写入的回声，窗口外同会话记忆照常召回（session 域检索本就
-    # 按 session 圈定候选池，删光同 session 会清空会话内召回）。
+    # 窗口期内新写入的回声，窗口外同会话记忆照常召回（票 18 摘除 FTS/LIKE
+    # 的 session 收窄后跨会话行同样进入关键词通道——回声抑制按行属性 +
+    # 时间窗工作，与召回通道的 scope 无关，不受影响）。
     # 开关与出身都显式——空 session 不过滤（上游纪律）。
     echo_session = None
     echo_cutoff = None
@@ -1168,10 +1169,16 @@ def _keyword_fallback(
     clean_q = query.strip()
     import re
 
+    from lantai.core.text import LIKE_ESCAPE_CHAR, like_escape
+
     clean_q_no_punct = re.sub(r"[^\w\u4e00-\u9fa5]+", " ", clean_q).strip()
     tokens = [w for w in clean_q_no_punct.split() if w.strip()]
     if not tokens:
         tokens = [w for w in list(clean_q.replace(" ", "")) if w.strip()]
+        # 票 28 病灶 2：裸字回退路径守门——逐字符碎片剥除 LIKE 通配与
+        # 转义元字符（% _ \），剥完为空则本臂空手（宁空不全库）。主路径
+        # token 含义保留，仅经 like_escape 转义后进 LIKE。
+        tokens = [w2 for w2 in (re.sub(r"[%_\\]+", "", w) for w in tokens) if w2]
 
     has_short_tokens = any(len(t) < 3 for t in tokens)
 
@@ -1180,22 +1187,23 @@ def _keyword_fallback(
             from sqlalchemy import or_
 
             def _like_cb(s):
-                conditions = [MemoryItem.content.like(f"%{t}%") for t in tokens]
+                conditions = [
+                    MemoryItem.content.like(f"%{like_escape(t)}%", escape=LIKE_ESCAPE_CHAR)
+                    for t in tokens
+                ]
                 stmt = (
                     select(MemoryItem.id)
                     .where(MemoryItem.status == "active")
                     .where(or_(*conditions))
                 )
                 if principal:
-                    if getattr(principal, "tenant_id", None):
-                        stmt = stmt.where(MemoryItem.tenant_id == principal.tenant_id)
                     if not bool(getattr(principal, "is_admin", False)) and not _is_system_viewer(
                         principal
                     ):
                         # 归属（票 `.scratch/fts-null-owner/03`）：**必须带
                         # OR IS NULL**。LIKE 是关键词召回的最后一层
                         # （向量挂了走 FTS，FTS 挂了只剩它），且
-                        # `has_short_tokens`（`hybrid.py:877`）让它在
+                        # `has_short_tokens`（`hybrid.py:1176`）让它在
                         # **短词查询时必然参与**——中文单字词、缩写、
                         # 型号（"3080"、"RX"）都 <3 字符。真实库 657 行
                         # memoryitem 里 636 行是 NULL 属主（96.8%），
@@ -1210,8 +1218,21 @@ def _keyword_fallback(
                                 MemoryItem.user_id.is_(None),
                             )
                         )
-                    if getattr(principal, "session_id", None):
-                        stmt = stmt.where(MemoryItem.session_id == principal.session_id)
+                        # 租户（票 18）：原为 `if principal:` 下的独立臂，admin
+                        # 也被过滤（比终闸窄）；现收进本豁免守卫（与终闸
+                        # `_query_items:662-668` 同构）并补 `OR IS NULL` 半边——
+                        # 修前带头调用把 NULL 租户老行在 LIKE 这层单独塌空。
+                        if getattr(principal, "tenant_id", None):
+                            stmt = stmt.where(
+                                or_(
+                                    MemoryItem.tenant_id == principal.tenant_id,
+                                    MemoryItem.tenant_id.is_(None),
+                                )
+                            )
+                    # session 收窄已摘除（票 18 implement 轮裁决）：终闸
+                    # `_query_items` 从不过滤 session、向量通道同样不过——此处
+                    # `session_id == ?` 是与终闸相反的孤儿语义，带头调用还会
+                    # 连带滤掉全部 NULL session 老行。
                 stmt = stmt.limit(max(fetch_n, p.fts_recall_top_k))
                 return s.exec(stmt).all()
 

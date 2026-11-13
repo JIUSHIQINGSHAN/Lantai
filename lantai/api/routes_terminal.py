@@ -1,18 +1,19 @@
 """Glass-box Terminal：透明化对话与记忆透视 SSE 端点"""
 
-import contextlib
 import json
+import math
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from lantai.core.auth import get_current_user
 from lantai.core.logger import logger
 from lantai.core.time import utcnow
 from lantai.services.edge_service import list_edges_batch
 from lantai.services.memory_service import list_memories
+from lantai.storage.cas import atomic_update
 from lantai.storage.db import get_session
 
 router = APIRouter()
@@ -27,14 +28,21 @@ def get_db_conn():
 class ChatReq(BaseModel):
     query: str
     domain: str = "user"
-    top_k: int = 8
+    # 票 42：1..100——对齐 SearchReq.top_k 既有上界（同走检索内核）
+    top_k: int = Field(default=8, ge=1, le=100)
     force: bool = True
 
 
 class MemoryUpdateReq(BaseModel):
     content: str | None = None
-    importance: float | None = None
-    confidence: float | None = None
+    # 票 35：importance 裸 float 曾直落毒行——chat 泳道 importance≤-0.6 使遗忘
+    # 强度≤0，math.exp 正指数/除零让 apply_forgetting 确定性崩溃、全库衰减停摆
+    # （ge/le 同时拒 NaN/±inf：非有限值过不了比较约束）。超界拒绝 422，宁 miss
+    # 不脏写；存量毒行由 _lane_strength 下限兜底（forgetting.py）。
+    importance: float | None = Field(default=None, ge=0.0, le=1.0)
+    # 票 35 双轴自审采纳项：confidence 与 importance 同模型同型毒面——NaN 过验
+    # 后 SQLite 绑 NULL 撞 NOT NULL 即 500，负值 200 毒写；同款约束不按字段分裂。
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     memory_type: str | None = None
 
 
@@ -167,7 +175,12 @@ async def terminal_chat_stream(req: ChatReq, principal=Depends(get_current_user)
 
 
 @router.get("/terminal/graph")
-def terminal_graph(domain: str = "", limit: int = 100, principal=Depends(get_current_user)):
+def terminal_graph(
+    # 票 41：limit 在边界拦（service 的 [1,100] ValueError 不再裸奔成 500）
+    domain: str = "",
+    limit: int = Query(default=100, ge=1, le=100),
+    principal=Depends(get_current_user),
+):
     """获取记忆图谱数据（节点 + 边）用于 D3 力导向图"""
     memories = list_memories(
         lane="",
@@ -295,6 +308,13 @@ def update_memory(memory_id: str, req: MemoryUpdateReq, principal=Depends(get_cu
             m.content = req.content
             updates += 1
         if req.importance is not None:
+            # 票 35：importance 与保持强度公式直连（forgetting._lane_strength），无界
+            # 负值让遗忘引擎确定性崩溃——更新面拒绝越界（422，宁 miss 不脏写）。
+            # 不走 pydantic Field(ge/le)：FastAPI 422 响应体以 allow_nan=False 渲染，
+            # 验证错误的 input 携带 NaN/inf 时 422 自身会渲染炸 500，故在 handler
+            # 显式拒（与本文件 assert_no_prompt_injection 的 422 同一惯语）。
+            if not math.isfinite(req.importance) or not (0.0 <= req.importance <= 1.0):
+                raise HTTPException(422, "importance 必须是 [0.0, 1.0] 内的有限数值（票 35）")
             m.importance = req.importance
             updates += 1
         if req.confidence is not None:
@@ -335,7 +355,7 @@ def delete_memory(memory_id: str, principal=Depends(get_current_user)):
     session, conn = get_db_conn()
     try:
         from lantai.core.acl import ensure_can_delete
-        from lantai.models.tables import MemoryItem
+        from lantai.models.tables import MemoryEdge, MemoryItem
         from lantai.services import record_ops_service
         from lantai.storage.fts import sync_fts
 
@@ -370,6 +390,17 @@ def delete_memory(memory_id: str, principal=Depends(get_current_user)):
         # 完璧级联（X-01）：事实与记忆同一事务；级联失败整体回滚并报 500，记忆不删
         try:
             record_ops_service.purge_facts_for_memory(session, memory_id)
+            # 票 38：该记忆为任一端的全部 MemoryEdge 同事务清理——边表无外键
+            # 约束，清理靠应用层；悬空边对 admin/内部读面永久可见。双端范式
+            # 照抄 eval/forgetting_quality.py（边+行+FTS 同事务删）。
+            from sqlalchemy import or_
+
+            session.query(MemoryEdge).filter(
+                or_(
+                    MemoryEdge.source_memory_id == memory_id,
+                    MemoryEdge.target_memory_id == memory_id,
+                )
+            ).delete(synchronize_session=False)
             session.delete(m)
             session.commit()
         except Exception as exc:
@@ -579,34 +610,110 @@ def merge_memories(req: MergeReq, principal=Depends(get_current_user)):
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
 
+        # 票 23：tgt 版本入口 CAS（写阶段第一条 DML，对最新已提交状态求值）——
+        # 读与写回之间 tgt 被并发纠错推进时，陈旧合并会把对方 correction 连同
+        # 正文整体抹掉、版本重号（红测 terminal merge）。败方 409（路由既有
+        # 冲突形状），重试即按最新版本重新合并。
+        tgt_entry_version = tgt.version or 1
+        claimed = atomic_update(
+            session,
+            MemoryItem,
+            tgt.id,
+            {"version": tgt_entry_version + 1},
+            MemoryItem.version == tgt_entry_version,
+        )
+        if not claimed:
+            raise HTTPException(409, "target memory changed concurrently; retry merge")
+
         tgt.content = merged_content
         tgt.importance = new_importance
-        tgt.version = (tgt.version or 1) + 1
+        tgt.version = tgt_entry_version + 1
+        src_id, tgt_id = src.id, tgt.id
+
+        # FTS 同事务强一致（ADR-0008，票 20）：合并改文 + 删源各同步一份索引。
+        # 改文若索引失同步会留下「SQL 新文、FTS 旧文」的幽灵正文——全仓改文路径
+        # （correct_memory/tanyi/probing/promoter/rollback）全部双层同步，merge
+        # 是唯一例外，本票收口；失败直接抛出随事务回滚，不静默降级。
+        from lantai.storage.fts import sync_fts
+
+        sync_fts(session, tgt_id, merged_content)
+        sync_fts(session, src_id, None)
 
         # 完璧血统（X-01）：source 的事实改挂到 target，避免 source 删除后留下孤儿事实
         from lantai.services import record_ops_service
 
-        record_ops_service.repoint_facts(session, src.id, tgt.id)
-        session.delete(src)
+        record_ops_service.repoint_facts(session, src_id, tgt_id)
 
-        # 创建 supersedes 边记录
-        from lantai.services.edge_service import add_edge
+        # src 双向边清理 + supersedes 边收编（票 20，口径＝票面修复目标 2/3）：
+        # supersedes(tgt→src) 是合并血缘，保留；其余 src 双向边是端点已物理删除
+        # 的死拓扑，随合并删除。supersedes 边自 create_edge 独立 session 收编进
+        # 合并同事务（promoter.py:401-408 同款 in-session 构造 + dup 查重）——
+        # 原实现独立 commit 先于合并 commit 且被 contextlib.suppress 包裹：
+        # 合并 commit 失败回滚会留幽灵 supersedes 边（两行 active 血缘在场，
+        # _apply_supersedes_order 据此降权），反向则血缘缺失无痕。
+        from sqlmodel import or_, select
 
-        with contextlib.suppress(Exception):
-            add_edge(
-                req.target_id,
-                req.source_id,
-                "supersedes",
-                1.0,
-                # 归属随 principal 落列（票 .scratch/ownership-gaps/03）：
-                # 合并边不带属主，DELETE 的 ACL 与审计都无从下手
-                user_id=principal.user_id,
-                tenant_id=principal.tenant_id,
-                agent_id=principal.agent_id,
-                session_id=principal.session_id,
+        from lantai.core.ids import new_id
+        from lantai.models.tables import MemoryEdge
+
+        stale_edges = session.exec(
+            select(MemoryEdge).where(
+                or_(MemoryEdge.source_memory_id == src_id, MemoryEdge.target_memory_id == src_id)
+            )
+        ).all()
+        for e in stale_edges:
+            if (
+                e.relation == "supersedes"
+                and e.source_memory_id == tgt_id
+                and e.target_memory_id == src_id
+            ):
+                continue  # 合并血缘（含历史既有边），保留
+            session.delete(e)
+
+        dup = session.exec(
+            select(MemoryEdge).where(
+                MemoryEdge.relation == "supersedes",
+                MemoryEdge.source_memory_id == tgt_id,
+                MemoryEdge.target_memory_id == src_id,
+            )
+        ).first()
+        if dup is None:
+            session.add(
+                MemoryEdge(
+                    id=new_id("edge"),
+                    source_memory_id=tgt_id,
+                    target_memory_id=src_id,
+                    relation="supersedes",
+                    confidence=1.0,
+                    # 归属随 principal 落列（票 .scratch/ownership-gaps/03）：
+                    # 合并边不带属主，DELETE 的 ACL 与审计都无从下手
+                    user_id=principal.user_id,
+                    tenant_id=principal.tenant_id,
+                    agent_id=principal.agent_id,
+                    session_id=principal.session_id,
+                )
             )
 
+        session.delete(src)
         session.commit()
-        return {"ok": True, "merged_into": req.target_id, "content": merged_content}
+
+        # 向量同步（票 20）：commit 后执行（promoter 序——embed/向量调用不占数据
+        # 库事务），失败如实回报 warnings 不静默（correct_memory :452-454 形态）。
+        warnings: list[str] = []
+        try:
+            from lantai.retrieval.hybrid import delete_memory_item
+
+            delete_memory_item(src_id)
+        except Exception:
+            logger.exception("vector delete of merged source failed (reported, not silent)")
+            warnings.append("vector delete of source failed; source removed in SQL/FTS only")
+        if not record_ops_service.sync_vector_upsert(tgt_id, tgt):
+            warnings.append("vector resync of target failed; content updated in SQL/FTS only")
+        return {
+            "ok": True,
+            "merged_into": req.target_id,
+            "content": merged_content,
+            "warnings": warnings,
+        }
     finally:
         session.close()

@@ -73,6 +73,9 @@ class InspectionReport:
 - 强制校验 `tenant_id` 与 `user_id`，非特权用户仅可访问与记录属于自己的观察视窗；
 - 样本量不足或门槛未满足时坚决维持观察态（`observing`），严禁静默转正。
 
+### 2.6 存储形态增补（v0.68 票 60）：影子视窗落库
+初版把影子视窗状态存于模块级 `_SHADOW_WINDOWS` 内存 dict（多 worker 各进程各持一份、重启即蒸发、创建路径无属主校验可被同名覆盖夺权）。v0.68 票 60 起，影子视窗落 `cehou_window` 表（迁移 v38，window_id 作主键）：创建按 window_id upsert 且属主校验——已存在且非本人/可信访问者 → 拒绝（宁 miss 不脏写）；本人重复开窗幂等返回现有行，窗内样本与状态作为实验证据不被重置；多 worker 一致性与重启恢复随落库自动解决。`inspect_window`/`scan_active_windows`/`record_sample` 的判定语义与本节 2.3/2.4 约定逐条不变。
+
 ### 2.5 认知上下文切面与 MCP 工具扩容
 1. **认知上下文**：`CognitiveContext` 新增 `cehou_digest` 切面，在 `to_prompt()` 中渲染 `## Shadow Observation & Graduation (测候 · {count})`；
 2. **MCP 工具池**：注册 `cehou_observe` 工具，工具池由 85 项扩充至 **86 项**，保持 1:1 双向映射守卫。

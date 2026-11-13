@@ -627,6 +627,27 @@ def test_ping_and_initialized_notification():
     assert mod.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
 
 
+def test_notifications_all_silent_no_reply():
+    """票 76：JSON-RPC 2.0 规范——无 id 的 notifications/* 帧一律不回帧。
+
+    通知按 method 前缀判别，不再枚举通知名：notifications/cancelled 等标准
+    通知此前落到 method-not-found 分支，回 id:null 的 -32601 错误帧，严格
+    客户端把多余响应行视为协议违规。判别键是「无 id」：带 id 的同名 method
+    仍是请求，照常回帧（-32601 method not found 是合法应答）。
+    """
+    mod = _load_mcp()
+    for method in (
+        "notifications/initialized",
+        "notifications/cancelled",
+        "notifications/progress",
+        "notifications/roots/list_changed",
+        "notifications/未来新增的未知通知",
+    ):
+        assert mod.handle({"jsonrpc": "2.0", "method": method}) is None, method
+    resp = mod.handle({"jsonrpc": "2.0", "id": 14, "method": "notifications/cancelled"})
+    assert resp is not None and resp["error"]["code"] == -32601, resp
+
+
 def test_tools_call_missing_arguments_rejected():
     """tools/call 缺参（params 非 object / arguments 非 object）→ -32602 标准错误。"""
     mod = _load_mcp()

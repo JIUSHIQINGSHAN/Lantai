@@ -163,6 +163,8 @@ class LantaiVerbatimAdapter:
         d = _dotenv()
         env = {
             "PATH": os.environ.get("PATH", ""),
+            # 子进程 stdio/日志句柄钉 UTF-8（票 30 A3）：不钉则中文日志按 cp936 落 server.log
+            "PYTHONIOENCODING": "utf-8",
             # launcher 以脚本路径起 uvicorn(import string)，sys.path[0]=scripts/
             # 不含 repo 根 → "Could not import module lantai.api.app"（2026-10-28）
             "PYTHONPATH": str(REPO_ROOT),

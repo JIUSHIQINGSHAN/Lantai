@@ -5,15 +5,18 @@
 
 与上游的三处主要分歧（全部有据）：
 1. claim 即回执——抢占与回执是同一行：提交时 INSERT（new），worker 结算时
-   条件 UPDATE（按 created_at 令牌，防过期接管后迟到结算覆盖新主）。
-   上游 P1-10 的 SELECT→INSERT 两步竞态在一条原子 INSERT 语义下不存在。
+   按 token 令牌寻行（v44 起令牌与时间解耦，票 80），防过期接管后迟到结算
+   覆盖新主。上游 P1-10 的 SELECT→INSERT 两步竞态在一条原子 INSERT 语义下
+   不存在。
 2. 两种键两段语义——显式键（宿主传 idempotency_key）done 回执保留 TTL 天；
    自动指纹键（未传键，key=fp:<sha256>）只护 LEASE_SECONDS（600s）重试窗，
    settle 成功不落 done（行保持 accepted 到过期）。理由：MCP
    dialogue_add_async 不透传 session_id/turn，自动指纹长期保留会把「同一段
    话隔天再说」误判成重试——重试发生在秒-分钟尺度，长期去重是显式键的职责。
 3. 时间一律 epoch 浮点秒——租约/TTL 是浮点运算，避开 sqlmodel aware/naive
-   datetime 跨版本读回漂移的已知雷。
+   datetime 跨版本读回漂移的已知雷。所有权令牌不沿用时间：粗刻度时钟下
+   相邻两次取时可同值（票 80 实测 time.time() 紧循环 10 万次仅 5 个唯一值），
+   claim/接管另发 uuid4 token，created_at 只承担租约/TTL 运算。
 
 不变量：同一 (key,user,tenant)+同指纹在租约窗内至多执行一次；
 任务失败后同键必须可重试；回执表里永不出现正文（白名单回执）。
@@ -22,12 +25,15 @@ fail-open：幂等层 DB 异常记 error 后按无幂等放行——去重层故
 
 import hashlib
 import json
+import uuid
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import update as sa_update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 
-from lantai.core.logger import logger
+from lantai.core.logger import loggable, logger
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import IdempotencyKey
@@ -83,6 +89,18 @@ def _receipt_json(result: dict | None) -> str | None:
     return json.dumps(receipt, ensure_ascii=False, default=str) if receipt else None
 
 
+def _legacy_created_at_cond(created_at: float | None):
+    """升级窗旧判据：created_at 相等且 token IS NULL（票 80）。
+
+    「token IS NULL」限定是这个判据不被旧时间戳误命中新世界行的唯一屏障
+    ——粗刻度时钟下接管可把新主行 created_at 写成与旧令牌同值，裸浮点
+    相等会误删新主（冻结钟双臂红基线实锤）。take_over（存量老行接管）、
+    settle（旧 binding 结算）、release（运维面带 claimed_at 释放）三处共用
+    本形状，收敛单一真源防三处漂移。
+    """
+    return and_(IdempotencyKey.token.is_(None), IdempotencyKey.created_at == created_at)
+
+
 def claim(key: str, user_id: str, tenant_id: str, fingerprint: str, task_id: str = "") -> dict:
     """抢占写入键。
 
@@ -92,7 +110,9 @@ def claim(key: str, user_id: str, tenant_id: str, fingerprint: str, task_id: str
     settle 补的洞，兰台一条 INSERT 不开这个洞）。
 
     返回动作指令：
-    - {"action": "new", "claimed_at": <float>}：抢到，可提交执行；
+    - {"action": "new", "claimed_at": <float>, "token": <str>}：抢到，可提交
+      执行；token 是所有权令牌（uuid4，票 80），binding 必须随行携带，迟到
+      的 release/settle 以它寻行；
     - {"action": "replay", "task_id": ...}：同键同文且回执有效，重放原任务号；
     - {"action": "pending", "retry_after": <sec>}：同键同文但任务在跑/键刚被
       接管，让客户端稍后用原 task_id 查询；
@@ -101,9 +121,10 @@ def claim(key: str, user_id: str, tenant_id: str, fingerprint: str, task_id: str
     """
     normalized = str(key or "").strip()
     if not normalized:
-        return {"action": "new", "claimed_at": None}
+        return {"action": "new", "claimed_at": None, "token": None}
 
     now = utcnow().timestamp()
+    token = uuid.uuid4().hex
     receipt_json = _receipt_json({"task_id": task_id}) if task_id else None
     from lantai.storage import db
 
@@ -117,11 +138,12 @@ def claim(key: str, user_id: str, tenant_id: str, fingerprint: str, task_id: str
                 response_json=receipt_json,
                 state="accepted",
                 created_at=now,
+                token=token,
             )
             s.add(row)
             try:
                 s.commit()
-                return {"action": "new", "claimed_at": now}
+                return {"action": "new", "claimed_at": now, "token": token}
             except SQLAlchemyError as exc:
                 s.rollback()
                 if "unique" not in str(exc).lower() and "primary" not in str(exc).lower():
@@ -151,14 +173,14 @@ def _judge_existing(row: IdempotencyKey, fingerprint: str, now: float, task_id: 
         # 同键不同文：未过期即冲突；过期则条件接管（显式键换内容重用是合法态）
         if now - row.created_at < TTL_SECONDS:
             raise ValueError("idempotency key conflict: same key, different content")
-        return _take_over(row, fingerprint, now, task_id)
+        return _take_over(row, fingerprint, now, task_id, expected_state=row.state)
     if row.state == "done":
         # done 回执 TTL 内有效；回执里的 task_id 是重放答案
         if now - row.created_at < TTL_SECONDS:
             old_task_id = _receipt_task_id(row.response_json)
             if old_task_id:
                 return {"action": "replay", "task_id": old_task_id}
-        return _take_over(row, fingerprint, now, task_id)
+        return _take_over(row, fingerprint, now, task_id, expected_state=row.state)
     # accepted（provisional）：租约窗内 = 任务在跑或刚提交，重放原任务号让
     # 客户端轮询；租约过期 = 原任务丢失（重启/驱逐），条件接管重新执行——
     # 不能永远 pending 把客户端锁死。
@@ -170,36 +192,70 @@ def _judge_existing(row: IdempotencyKey, fingerprint: str, now: float, task_id: 
             "action": "pending",
             "retry_after": max(1.0, LEASE_SECONDS - (now - row.created_at)),
         }
-    return _take_over(row, fingerprint, now, task_id)
+    return _take_over(row, fingerprint, now, task_id, expected_state=row.state)
 
 
-def _take_over(row: IdempotencyKey, fingerprint: str, now: float, task_id: str = "") -> dict:
-    """过期行的条件接管：created_at 仍是旧值才算抢到（并发双发现只一个赢）。
+def _take_over(
+    row: IdempotencyKey,
+    fingerprint: str,
+    now: float,
+    task_id: str = "",
+    expected_state: str = "accepted",
+) -> dict:
+    """过期行的条件接管：令牌仍等于读到的旧值才算抢到（并发双发现只一个赢）。
 
-    与 claim 同理，接管即回执：新任务号随接管一并落库，重试方仍拿得到
-    轮询目标（回执从出生有任务号的不变量在接管行上同样成立）。
+    判据是 token 列（v44 起，票 80）：接管成功即改写 token，旧主迟到的
+    release/settle 按旧 token 寻行必落空——粗刻度时钟下相邻两次取时可同值，
+    令牌与时间解耦后同刻度不再构成碰撞。升级窗存量老行 token 为 NULL，
+    沿用 created_at 相等判据并限定 token IS NULL：新世界出生的行必有 token，
+    不会被旧时间戳误命中。
+
+    票 24 子项 1：接管此前是「SELECT 令牌复核 → Python 判 → ORM 主键 UPDATE」
+    三步——令牌比对只在 SELECT 里，落账 UPDATE 按主键定位，对 created_at 已被
+    并发方推进的行照写（last-writer-wins），两并发接管都读到旧令牌都判赢 →
+    同键双执行。现收敛为**单条条件 UPDATE**（`WHERE 主键三元组 AND
+    created_at=旧令牌 AND state=扫描值`，写阶段第一条 DML 对最新已提交状态
+    求值）+ rowcount 判定胜负：rowcount=1 抢到；rowcount=0 = 对手已接管、
+    行已被释放（失败 settle）、或扫描后状态已前移（accepted 窗内被迟到结算
+    finalize 成 done）——一律 pending 让客户端重试，不覆写新主。state 守卫
+    防的是：judge 判 accepted 过期与 worker finalize done 之间（settle 不改
+    created_at，仅令牌挡不住）的新鲜 done 回执被接管覆写、完成任务被重执行。
+    与 claim 同理，接管即回执：新任务号随接管一并落库（回执从出生有任务号
+    的不变量在接管行上同样成立）。
     """
     from lantai.storage import db
 
+    new_token = uuid.uuid4().hex
     try:
         with db.get_session() as s:
-            target = s.exec(
-                select(IdempotencyKey).where(
+            cond = (
+                IdempotencyKey.token == row.token
+                if row.token
+                else _legacy_created_at_cond(row.created_at)
+            )
+            receipt = _receipt_json({"task_id": task_id}) if task_id else None
+            result = s.exec(
+                sa_update(IdempotencyKey)
+                .where(
                     IdempotencyKey.key == row.key,
                     IdempotencyKey.user_id == row.user_id,
                     IdempotencyKey.tenant_id == row.tenant_id,
-                    IdempotencyKey.created_at == row.created_at,
+                    cond,
+                    IdempotencyKey.state == expected_state,
                 )
-            ).first()
-            if target is None:
-                return {"action": "pending", "retry_after": 1.0}
-            target.fingerprint = fingerprint
-            target.response_json = _receipt_json({"task_id": task_id}) if task_id else None
-            target.state = "accepted"
-            target.created_at = now
-            s.add(target)
+                .values(
+                    fingerprint=fingerprint,
+                    response_json=receipt,
+                    state="accepted",
+                    created_at=now,
+                    token=new_token,
+                )
+                .execution_options(synchronize_session=False)
+            )
             s.commit()
-            return {"action": "new", "claimed_at": now}
+            if result.rowcount:
+                return {"action": "new", "claimed_at": now, "token": new_token}
+            return {"action": "pending", "retry_after": 1.0}
     except _DB_ERRORS as exc:
         logger.error("勘合：过期接管失败，按无幂等处理：%s", exc)
         return {"action": "disabled"}
@@ -222,8 +278,14 @@ def settle(binding: dict | None, *, ok: bool, result: dict | None = None, task_i
     ok=True：显式键落 done 回执（白名单标量）；自动指纹键不落 done——行
     保持 accepted 到租约过期自然失效。ok=False：删除自己令牌的行，重试可
     重新执行（失败的任务永远不得以 accepted 重放，上游 S-2/S-8 教训）。
-    只结清 created_at 令牌匹配的那条 claim——行过期被接管后，迟到的结算
-    找不到行即返回 "gone"，不覆盖新主。
+    只结清 token 令牌匹配的那条 claim（票 80）——行过期被接管后令牌已换
+    新，迟到的结算找不到行即返回 "gone"，不覆盖新主；升级窗旧 binding
+    （只有 claimed_at）走「created_at 相等且 token IS NULL」旧判据，同样
+    不会命中已接管的行。
+
+    票 24 子项 1 姊妹窗口：两条写路都收敛为**单条条件语句**（WHERE 带令牌
+    判据，写阶段第一条 DML 对最新已提交状态求值）+ rowcount 判定：0 = 令牌
+    已失效，如实返回 "gone"，新主的行一动不动。
     返回 "finalized" | "released" | "gone" | "skipped" | "error" | "n/a"。
     """
     if not binding or not binding.get("key"):
@@ -231,37 +293,46 @@ def settle(binding: dict | None, *, ok: bool, result: dict | None = None, task_i
     key = binding["key"]
     user_id = binding.get("user_id") or ""
     tenant_id = binding.get("tenant_id") or ""
+    token = binding.get("token")
     claimed_at = binding.get("claimed_at")
     from lantai.storage import db
 
     try:
         with db.get_session() as s:
-            target = s.exec(
-                select(IdempotencyKey).where(
-                    IdempotencyKey.key == key,
-                    IdempotencyKey.user_id == user_id,
-                    IdempotencyKey.tenant_id == tenant_id,
-                    IdempotencyKey.created_at == claimed_at,
-                )
-            ).first()
-            if target is None:
-                return "gone"
+            # 旧 binding 无 token（升级窗/手工构造）走旧判据
+            cond = IdempotencyKey.token == token if token else _legacy_created_at_cond(claimed_at)
+            scope = (
+                IdempotencyKey.key == key,
+                IdempotencyKey.user_id == user_id,
+                IdempotencyKey.tenant_id == tenant_id,
+                cond,
+            )
             if not ok:
-                s.delete(target)
+                result = s.exec(
+                    sa_delete(IdempotencyKey)
+                    .where(*scope)
+                    .execution_options(synchronize_session=False)
+                )
                 s.commit()
-                return "released"
+                return "released" if result.rowcount else "gone"
             if binding.get("explicit") is True:
                 receipt = dict(result or {})
                 receipt["task_id"] = task_id or str(receipt.get("task_id") or "")
                 receipt["durable"] = True
-                target.response_json = _receipt_json(receipt)
-                target.state = "done"
-                s.add(target)
+                receipt_json = _receipt_json(receipt)
+                result = s.exec(
+                    sa_update(IdempotencyKey)
+                    .where(*scope)
+                    .values(response_json=receipt_json, state="done")
+                    .execution_options(synchronize_session=False)
+                )
                 s.commit()
-                return "finalized"
-            return "n/a"  # 自动指纹键：成功即走，行到期自然失效
+                return "finalized" if result.rowcount else "gone"
+            target = s.exec(select(IdempotencyKey).where(*scope)).first()
+            return "gone" if target is None else "n/a"  # 自动指纹键：成功即走，行到期自然失效
     except _DB_ERRORS as exc:
-        logger.error("勘合：settle 失败（key=%s ok=%s）：%s", key, ok, exc)
+        # 票 50：key 宿主透传可含换行——单行化+截断后再进日志
+        logger.error("勘合：settle 失败（key=%s ok=%s）：%s", loggable(key, limit=128), ok, exc)
         return "error"
 
 
@@ -274,29 +345,39 @@ def release(
 ) -> None:
     """删除 claim 使重试可执行（settle(ok=False) 的底层；独立暴露给运维面）。
 
-    带 claimed_at 时只删自己那条 claim；无令牌时清同键全部未完成 claim
+    带 claimed_at 时只删自己那条 claim（v44 起限定 token IS NULL 的升级窗
+    旧判据——粗刻度时钟下接管可把新主行 created_at 改写回与旧令牌相等，
+    裸浮点相等判据会误删新主行，票 80；新世界 claim 的定向释放走
+    settle(ok=False)，binding 携带 token）；无令牌时清同键全部未完成 claim
     （运维面强释放）。**done 回执在任何形态下都不删**（已完成的结果不能被
     运维面顺手抹掉重放）——此前 `state != "done"` 守卫只在带令牌分支内，
     无令牌调用把 done 回执一并删净、重试从 replay 退化成 re-execution
     （票 75，探针 `.scratch/_v068_probe_r9_release_nukes_done.py` 实锤）。
+
+    票 24 子项 1：删除此前是「SELECT 令牌复核 → ORM 主键 DELETE」两步——
+    接管插在 SELECT 与 DELETE 之间时，带令牌的旧主 release 把新主 claim
+    整行删掉（重试即双执行）。现收敛为单条条件 DELETE（WHERE 带令牌与
+    state != 'done'，对最新已提交状态求值）：令牌已失效即删 0 行，新主的
+    行一动不动。无令牌强释放仍是运维语义（删全部未完成 claim，接管竞态
+    属运维操作时序边缘，如实保留）。
     """
     from lantai.storage import db
 
     try:
         with db.get_session() as s:
-            stmt = select(IdempotencyKey).where(
+            stmt = sa_delete(IdempotencyKey).where(
                 IdempotencyKey.key == key,
                 IdempotencyKey.user_id == user_id,
                 IdempotencyKey.tenant_id == tenant_id,
                 IdempotencyKey.state != "done",
             )
             if claimed_at is not None:
-                stmt = stmt.where(IdempotencyKey.created_at == claimed_at)
-            for target in s.exec(stmt).all():
-                s.delete(target)
+                stmt = stmt.where(_legacy_created_at_cond(claimed_at))
+            s.exec(stmt.execution_options(synchronize_session=False))
             s.commit()
     except _DB_ERRORS as exc:
-        logger.warning("勘合：release 失败（key=%s）：%s", key, exc)
+        # 票 50：同 settle——key 过 loggable
+        logger.warning("勘合：release 失败（key=%s）：%s", loggable(key, limit=128), exc)
 
 
 def purge_expired(now: float | None = None) -> int:

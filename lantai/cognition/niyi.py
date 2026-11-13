@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 
 from lantai.core.acl import viewer_of
 from lantai.core.auth import Principal
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryEdge, MemoryItem, MemoryProposal
 from lantai.storage import db
@@ -95,7 +95,7 @@ class AuditReport:
             "risk_distribution": self.risk_distribution,
             "audit_summary": self.audit_summary,
             "fenced_summary": fenced_s,
-            "inspected_at": self.inspected_at.isoformat(),
+            "inspected_at": iso_utc(self.inspected_at),
         }
 
 
@@ -222,7 +222,16 @@ class NiyiEngine:
 
         # 计算置信度浮动与风险评级
         target_conf = patch_data.get("confidence", mem.confidence)
-        conf_delta = float(target_conf) - float(mem.confidence)
+        # 票 68：先验后用——裸 float() 对 "high" 报「could not convert」
+        # （调用方无从自查，REST 面炸 500），1.5/-0.2 越界静默吃进风险评级。
+        # 拒绝而非静默钳制（宁 miss 不脏写）。
+        try:
+            target_conf_f = float(target_conf)
+        except (TypeError, ValueError):
+            raise ValueError(f"confidence 须为 [0, 1] 内数值，收到 {target_conf!r}") from None
+        if not 0.0 <= target_conf_f <= 1.0:
+            raise ValueError(f"confidence 须为 [0, 1] 内数值，收到 {target_conf!r}")
+        conf_delta = target_conf_f - float(mem.confidence)
 
         if proposal_type == "deprecate":
             if impacted_count > 0:

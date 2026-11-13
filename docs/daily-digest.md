@@ -4,7 +4,7 @@
 
 ## 报告内容
 
-报告文件：`docs/memory-digest/YYYY-MM-DD.md`（可用 `DIGEST_OUTPUT_DIR` 改输出目录）。
+报告文件：`<数据目录>/docs/memory-digest/YYYY-MM-DD.md`。数据目录 = `LANTAI_HOME`（未设时为仓库根，仅仓库形态）：仓库形态即 `docs/memory-digest/`，wheel/容器形态随 `LANTAI_HOME`（如 `/data/docs/memory-digest/`）。可用 `DIGEST_OUTPUT_DIR` 显式改输出目录（优先于数据目录推导）。
 
 | 统计 | 说明 |
 |---|---|
@@ -18,7 +18,7 @@
 
 ## 触发方式
 
-- 定时任务：每天 `DIGEST_CRON_HOUR`（默认 UTC 22:00 ≈ 上海 06:00）自动生成；可改 `DIGEST_CRON_HOUR`，或 `DIGEST_ENABLED=False` 关闭。
+- 定时任务：每天 `DIGEST_CRON_HOUR`（默认 UTC 15:55 ≈ 上海 23:55 日末，票 31：触发点贴近所报告本地日的日界，早晨触发只覆盖当天前几小时）自动生成；可改 `DIGEST_CRON_HOUR`，或 `DIGEST_ENABLED=False` 关闭。
 - 按需读取：Hermes 用 MCP 工具 `get_digest`；REST `GET /digest/today`（需 API key，未生成则先生成）。
 
 ## 与待审队列的关系

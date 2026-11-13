@@ -19,6 +19,7 @@
     python scripts/perf_bench.py --scale 2000       # 单档规模
     python scripts/perf_bench.py --profile          # 附带 cProfile 热点（原始 .pstats 落 --out 目录）
     python scripts/perf_bench.py --only hybrid_search --iterations 30
+    python scripts/perf_bench.py --only mcp_serve_search   # 只跑 MCP serve 通道（真实 stdio 子进程）
 
 注意：请用带 chromadb 的 py3.11 虚拟环境运行（本工作树为 .venv311；主仓 .venv
 与工作树根 .venv 都没有 chromadb——用错环境向量库会静默降级纯 Python 替身，
@@ -39,17 +40,24 @@ import random
 import re
 import shutil
 import statistics
+import subprocess
 import sys
 import tempfile
+import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from queue import Empty, Queue
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 EMBED_DIM = 128
+
+# 替身绑定还原的哨兵：区分「绑定原本不存在」与「存在但值为 None」——
+# 漏还/误建 None 幽灵绑定都算把脏留进生产单例（v0.68 票 12 P3 项）
+_BINDING_MISSING = object()
 
 
 def _apply_llm_env_guards() -> dict[str, str | None]:
@@ -303,6 +311,14 @@ class BenchContext:
         self.hit_queries, self.miss_queries = build_query_set(rows)
         self.shell_hook = None
         self.sanity = {}
+        self.mcp_channel: dict | None = None
+        # 写场景唯一序号流（按场景名一条，_unique_call 消费）——timed 与
+        # profile 轮共用，profile 不重放（v0.68 票 12 缺口 1）
+        self.write_seq: dict[str, dict] = {}
+
+    def seq_state(self, scenario: str) -> dict:
+        """取指定写场景的唯一序号流持有位（无则开一条从 0 起）。"""
+        return self.write_seq.setdefault(scenario, {"n": 0})
 
 
 @contextmanager
@@ -396,7 +412,7 @@ def _bench_env_inner(n_rows: int, seed: int, workdir: Path | None):
         (gate_decision_mod, "embed"),
         (gate_scorer_mod, "embed"),
     ]:
-        saved_llm[(mod.__name__, attr)] = getattr(mod, attr, None)
+        saved_llm[(mod.__name__, attr)] = getattr(mod, attr, _BINDING_MISSING)
 
     def _fake_extraction(*args, **kwargs):
         return {
@@ -438,7 +454,13 @@ def _bench_env_inner(n_rows: int, seed: int, workdir: Path | None):
         db_module.FTS_OK = saved_db["FTS_OK"]
         for (mod_name, attr), value in saved_llm.items():
             mod = sys.modules.get(mod_name)
-            if mod is not None and value is not None:
+            if mod is None:
+                continue
+            if value is _BINDING_MISSING:
+                # 原本不存在的绑定还原为不存在，不留 None 幽灵
+                if hasattr(mod, attr):
+                    delattr(mod, attr)
+            else:
                 setattr(mod, attr, value)
         for k, v in saved.items():
             setattr(settings, k, v)
@@ -459,7 +481,6 @@ def _resolve_vector_backend(settings):
 def _seed_db(session_factory, vector_store, rows) -> None:
     """灌库：ORM 插入（吃到 SQLModel 的 Python 层默认值）+ FTS + 向量入库。"""
     from lantai.models.tables import MemoryItem
-    from lantai.storage.fts import sync_fts
 
     with session_factory() as s:
         items = [MemoryItem(**r) for r in rows]
@@ -558,13 +579,16 @@ def scen_build_context(ctx, i):
     ctx.shell_hook.build_context(q, session_id="perf-bench")
 
 
-def _unique_call(fn):
+def _unique_call(fn, state):
     """写场景用真实调用计数生成唯一内容：warmup 与正式轮共用一条序号流，
     不重放相同内容。基线要测的是「全新写入」的全成本路径（文档 INSERT +
     候选 INSERT 各一次）；重复内容自票 .scratch/v068-perf/02 修复后在产品
     代码里合法（在场复用文档、照建候选），但那是更便宜的另一条路径，混在
-    一起会把 P50 拉低失真。"""
-    state = {"n": 0}
+    一起会把 P50 拉低失真。
+    state 由调用方持有（BenchContext 按场景名一条流，见 seq_state）：
+    profile 轮复用 timed 轮的同一 state 续接新内容，不重放——曾因每次
+    新建闭包（计数器从 0 起）让 profile 重放已摄取内容，被 content_hash
+    在场复用分支吸收、热点表系统性失真（v0.68 票 12 缺口 1）。"""
 
     def call(_i):
         n = state["n"]
@@ -592,7 +616,7 @@ def _ingest_add_memory_once(n: int) -> None:
 
 
 def make_scen_ingest_add_memory(ctx, iterations: int = 0):
-    return _unique_call(_ingest_add_memory_once)
+    return _unique_call(_ingest_add_memory_once, ctx.seq_state("ingest_add_memory"))
 
 
 def make_scen_ingest_fastpath(ctx, iterations: int = 0):
@@ -614,7 +638,7 @@ def make_scen_ingest_fastpath(ctx, iterations: int = 0):
             user_id="default",
         )
 
-    return _unique_call(once)
+    return _unique_call(once, ctx.seq_state("ingest_fastpath"))
 
 
 _proposal_seq = {"n": 0}
@@ -703,6 +727,194 @@ def load_shell_hook(ctx) -> None:
     ctx.shell_hook = mod
 
 
+# ── MCP serve 通道（真实 stdio JSON-RPC 子进程，端到端）────────
+# 第三条关键路径：宿主（Hermes 等）经 MCP stdio 通道调用的真实端到端延迟，
+# 与进程内 hybrid_search 场景的差值 ≈ 通道开销（JSON-RPC 解析 + 管道 + 结果
+# 序列化/围栏/证据构建）。子进程是**真实服务进程**：`python -c` 引导 → 补嵌入
+# 替身（经 perf_bench 模块自体加载同一 fake_embed，与父进程口径一致）→
+# lantai.cli.mcp.main() 标准主循环；settings 经环境变量指向同一临时库
+# （LANTAI_HOME/DATABASE_URL/CHROMADB_PATH，字段名即 env 名、无前缀），向量库
+# 走生产同款 ChromaVectorStore 打开父进程灌好的同一 chromadb 目录。只测读路径
+# （search 是宿主典型请求）：写工具会与父进程并发写同一 SQLite/chroma，混进
+# 锁等待就不再是通道时延。
+_MCP_BOOTSTRAP = """\
+import importlib.util
+import os
+
+os.environ.pop("PYTHONPATH", None)  # 双保险（launcher_mcp 同款防线）
+spec = importlib.util.spec_from_file_location(
+    "perf_bench_child", os.environ["PERF_BENCH_PATH"]
+)
+pb = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(pb)
+import lantai.llm.client as llm_client
+import lantai.retrieval.hybrid as hybrid_mod
+
+llm_client.embed = pb.fake_embed  # 与父进程同一确定性替身：外部 embedding API 不计
+hybrid_mod.embed = pb.fake_embed
+from lantai.cli.mcp import main
+
+main()
+"""
+
+
+class McpServeClient:
+    """行分隔 JSON-RPC 2.0 stdio 客户端（与 `lantai/cli/mcp.py` 主循环对齐）。
+
+    读线程 + 队列：请求写一行、响应读一行，`get(timeout)` 兜底防子进程挂死把
+    bench 拖死；stderr 由排水线程收进小环形缓冲，失败时随异常带出末几行。
+    """
+
+    def __init__(self, home: Path, request_timeout_s: float = 90.0):
+        env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+        env.update(
+            {
+                "PERF_BENCH_PATH": str(REPO_ROOT / "scripts" / "perf_bench.py"),
+                "LANTAI_HOME": str(home),
+                "DATABASE_URL": f"sqlite:///{(home / 'bench.db').as_posix()}",
+                "CHROMADB_PATH": str(home / ".chromadb"),
+                # 子进程实例化自己的 settings（读 env）：rerank 是外部服务，须与
+                # 父进程同口径关档，否则 search 会真连 reranker
+                "RERANKER_ENABLED": "false",
+            }
+        )
+        self._timeout_s = request_timeout_s
+        self._proc = subprocess.Popen(
+            [sys.executable, "-c", _MCP_BOOTSTRAP],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            cwd=str(REPO_ROOT),
+            text=True,
+            encoding="utf-8",
+            errors="replace",  # 子进程 stderr 未强制 UTF-8（GBK 警告文本），解码坏字节只降级不炸
+        )
+        self._resp: Queue = Queue()
+        self._stderr_tail: list[str] = []
+        self._id = 0
+
+        def _pump():
+            for line in self._proc.stdout:
+                self._resp.put(line)
+            self._resp.put(None)  # EOF 哨兵
+
+        def _drain_err():
+            for line in self._proc.stderr:
+                self._stderr_tail.append(line.rstrip())
+                del self._stderr_tail[:-8]
+
+        self._threads = [
+            threading.Thread(target=_pump, daemon=True),
+            threading.Thread(target=_drain_err, daemon=True),
+        ]
+        for t in self._threads:
+            t.start()
+
+    def _stderr_hint(self) -> str:
+        return "\n".join(self._stderr_tail[-8:]) or "(stderr 无输出)"
+
+    def request(self, method: str, params: dict | None = None, notify: bool = False):
+        self._id += 1
+        msg: dict = {"jsonrpc": "2.0", "id": self._id, "method": method}
+        if params:
+            msg["params"] = params
+        if notify:
+            msg.pop("id")
+        self._proc.stdin.write(json.dumps(msg, ensure_ascii=False) + "\n")
+        self._proc.stdin.flush()
+        if notify:
+            return None  # 通知无响应
+        try:
+            line = self._resp.get(timeout=self._timeout_s)
+        except Empty:
+            raise RuntimeError(
+                f"MCP {method} 响应超时（>{self._timeout_s}s）；stderr 末尾：\n{self._stderr_hint()}"
+            ) from None
+        if line is None:
+            raise RuntimeError(
+                f"MCP serve 子进程在处理 {method} 前退出（exit={self._proc.poll()}）；"
+                f"stderr 末尾：\n{self._stderr_hint()}"
+            )
+        resp = json.loads(line)
+        if resp.get("error"):
+            raise RuntimeError(f"MCP {method} 返回错误：{resp['error']}")
+        return resp
+
+    def close(self):
+        with suppress(Exception):
+            self._proc.stdin.close()
+        try:
+            self._proc.wait(timeout=10)
+        except Exception:
+            self._proc.kill()
+
+
+def _assert_mcp_hits(resp: dict) -> None:
+    """tools/call search 的响应必须真命中——零命中的时延数字没有意义。"""
+    content = (resp.get("result") or {}).get("content") or []
+    payload = json.loads(content[0]["text"]) if content else {}
+    if not (payload.get("results") or []):
+        raise AssertionError("MCP search 零命中——通道时延数字无意义（语料/闸门装配坏了）")
+
+
+def make_scen_mcp_serve(ctx, iterations: int):
+    """工厂场景：spawn 真实 MCP serve 子进程 → initialize 握手 → tools/call search。
+
+    冷启动（spawn→initialize）、首查（含子进程 chromadb 装载）、ping 通道底价
+    一次性记入 `ctx.mcp_channel`；返回的 call(i) 只计稳态 search 往返。
+    """
+    client = McpServeClient(ctx.home)
+    try:
+        t_ready0 = time.perf_counter()
+        client.request(
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "perf-bench", "version": "0"},
+            },
+        )
+        client.request("notifications/initialized", notify=True)
+        spawn_to_ready_ms = round((time.perf_counter() - t_ready0) * 1000, 1)
+
+        pings = []
+        for _ in range(5):
+            t = time.perf_counter()
+            client.request("ping")
+            pings.append(round((time.perf_counter() - t) * 1000, 3))
+        pings.sort()
+
+        t = time.perf_counter()
+        resp = client.request(
+            "tools/call",
+            {"name": "search", "arguments": {"query": ctx.hit_queries[0], "top_k": 5}},
+        )
+        first_search_ms = round((time.perf_counter() - t) * 1000, 1)
+        _assert_mcp_hits(resp)
+    except Exception:
+        client.close()
+        raise
+
+    def call(i):
+        q = ctx.hit_queries[i % len(ctx.hit_queries)]
+        resp = client.request(
+            "tools/call", {"name": "search", "arguments": {"query": q, "top_k": 5}}
+        )
+        _assert_mcp_hits(resp)
+
+    call.close = client.close  # run_scenario 统一收口：子进程不许泄漏
+    ctx.mcp_channel = {
+        "spawn_to_ready_ms": spawn_to_ready_ms,
+        "first_search_ms": first_search_ms,
+        "ping_ms_median": pings[len(pings) // 2],
+        "ping_ms": pings,
+        "profile": "default(HERMES_CORE_TOOLS)",
+        "note": "search 为宿主典型请求；写工具不测（与父进程并发写库会混入锁等待，非通道时延）",
+    }
+    return call
+
+
 # (场景函数/工厂, 迭代数, warmup)。读路径先跑；写路径后跑（改库）；
 # apply_forgetting 全表扫会把语料归档，最后跑且 warmup=0（冷扫本身就是测点）。
 SCENARIOS = {
@@ -711,6 +923,8 @@ SCENARIOS = {
     "hybrid_search": (scen_hybrid_search, 30, 2),
     "hybrid_shiyi_miss": (scen_hybrid_shiyi_miss, 15, 1),
     "build_context": (scen_build_context, 30, 2),
+    # MCP serve 通道（读路径，真实 stdio JSON-RPC 子进程；spawn 的子进程随场景收口）
+    "mcp_serve_search": (make_scen_mcp_serve, 30, 2),
     # 外部替身自价（报告单列，不与本地管线混账）
     "embed_fake_cost": (scen_embed_cost, 50, 2),
     "vector_backend_search": (scen_vector_backend_search, 30, 2),
@@ -734,7 +948,14 @@ def _resolve_call(ctx, name: str, iterations: int):
 
 def run_scenario(ctx, name: str, iterations: int):
     _fn, _iters, warmup = SCENARIOS[name]
-    return run_timed(_resolve_call(ctx, name, iterations), iterations, warmup=warmup)
+    call = _resolve_call(ctx, name, iterations)
+    try:
+        return run_timed(call, iterations, warmup=warmup)
+    finally:
+        # 工厂场景可挂 close（如 mcp_serve 的 stdio 子进程）：无论成败都收口
+        closer = getattr(call, "close", None)
+        if closer is not None:
+            closer()
 
 
 # ── 健全性自检 ────────────────────────────────────────────────
@@ -744,6 +965,9 @@ def sanity_check(ctx) -> dict:
     from lantai.storage.fts import search_fts, search_fts_bm25
 
     load_shell_hook(ctx)
+    assert ctx.hit_queries, (
+        "hit 查询集为空——语料太小（无 ≥15 字 active 行），加大 --scale 或语料规模"
+    )
     q = ctx.hit_queries[0]
     with ctx.session_factory() as s:
         fts = search_fts(_raw_conn(s), q, top_k=10, principal=ctx.default_principal)
@@ -886,6 +1110,15 @@ def write_report(scale_results: dict, out_dir: Path) -> tuple[Path, Path]:
                 f"{m['mean_ms']} | {m['min_ms']} | {m['max_ms']} | {m['stdev_ms']} |"
             )
         lines.append("")
+        mcp = res.get("mcp_channel")
+        if mcp:
+            lines.append(
+                f"- MCP serve 通道（真实 stdio JSON-RPC 子进程，{mcp['profile']}）："
+                f"冷启动 spawn→initialize {mcp['spawn_to_ready_ms']}ms，"
+                f"首查（含子进程 chromadb 装载）{mcp['first_search_ms']}ms，"
+                f"ping 通道底价中位 {mcp['ping_ms_median']}ms"
+            )
+            lines.append("")
         for name, p in (res.get("profiles") or {}).items():
             lines.append(f"### 热点：{name}（cProfile，{p['iterations']} 迭代）")
             if p.get("pstats_dump"):
@@ -919,11 +1152,15 @@ def run_scale(
     only: list[str] | None = None,
     profile: bool = False,
     profile_dump_dir: Path | None = None,
+    workdir: Path | None = None,
 ) -> dict:
-    """单档规模全场景基线。返回 {env, scenarios, profiles}。"""
-    with bench_env(n_rows, seed=seed) as ctx:
-        load_shell_hook(ctx)
-        sanity_check(ctx)
+    """单档规模全场景基线。返回 {env, scenarios, profiles}。
+
+    workdir 透传给 bench_env（测试缝：真库留点供回归锁断言，正常运行
+    保持 None 由 bench_env 建临时目录并在离开时清理）。
+    """
+    with bench_env(n_rows, seed=seed, workdir=workdir) as ctx:
+        sanity_check(ctx)  # 内部先 load_shell_hook——此处不再重复加载（票 12 P3）
         scenario_names = [n for n in SCENARIOS if (only is None or n in only)]
         scenarios = {}
         for name in scenario_names:
@@ -931,7 +1168,15 @@ def run_scale(
             scenarios[name] = run_scenario(ctx, name, iters)
         profiles = {}
         if profile:
-            for name in ["hybrid_search", "build_context", "ingest_add_memory", "apply_proposal"]:
+            # ingest_fastpath 进 profile 列表的前提（票 12）：写场景 profile 轮
+            # 与 timed 轮共用唯一序号流、不重放（_unique_call + ctx.seq_state）
+            for name in [
+                "hybrid_search",
+                "build_context",
+                "ingest_add_memory",
+                "ingest_fastpath",
+                "apply_proposal",
+            ]:
                 if name in scenario_names:
                     dump = (
                         profile_dump_dir / f"{n_rows}-{name}.pstats"
@@ -939,7 +1184,12 @@ def run_scale(
                         else None
                     )
                     profiles[name] = profile_scenario(ctx, name, dump_path=dump)
-        return {"env": collect_env_info(ctx), "scenarios": scenarios, "profiles": profiles}
+        return {
+            "env": collect_env_info(ctx),
+            "scenarios": scenarios,
+            "profiles": profiles,
+            "mcp_channel": ctx.mcp_channel,
+        }
 
 
 def main(argv=None) -> int:
@@ -958,6 +1208,12 @@ def main(argv=None) -> int:
         help="产物目录（默认 .scratch/v068-perf/artifacts/run-<时间戳>）",
     )
     args = ap.parse_args(argv)
+
+    unknown = [n for n in (args.only or []) if n not in SCENARIOS]
+    if unknown:
+        # --only 拼错名曾静默跑零场景、exit 0、照常出「成功」报告（v0.68 票 12
+        # 缺口 2）——与「禁止假绿」直接冲突，必须在任何跑批前拒绝
+        ap.error(f"--only 含未知场景名 {unknown}，拒绝静默空跑；合法场景：{', '.join(SCENARIOS)}")
 
     out_dir = args.out or (
         REPO_ROOT

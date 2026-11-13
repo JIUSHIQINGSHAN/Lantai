@@ -8,16 +8,14 @@ import psutil
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 
-from lantai.core.auth import Principal, get_current_user
+from lantai.core.auth import Principal, get_current_user, require_admin
 from lantai.core.settings import settings
 
 router = APIRouter()
 
-
-def require_admin(principal: Principal = Depends(get_current_user)) -> Principal:
-    if principal.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin privileges required")
-    return principal
+# require_admin 定义已收敛 `lantai/core/auth.py` 单一真源（票 19：worker 触发
+# 与考功报告四个路由模块与 admin 面共用同一守卫）；此处 re-export 保持既有
+# import 路径可用。
 
 
 ADMIN_HTML = """<!DOCTYPE html>

@@ -152,6 +152,9 @@ def import_session_jsonl(
         "errors": stats["errors"],
         "skipped_assistant": stats["skipped_assistant"],
         "sessions": stats["sessions"],
+        # 票 43：逐条摄取失败/被拒计数透出——此前只在内部累计（返回面
+        # imported:0 + errors:0 无从区分「没得导」与「通道被关」），静默不跑
+        "ingest_errors": ingest_errors,
         "imported": 0 if dry_run else len(messages) - ingest_errors,
         "would_import": len(
             messages

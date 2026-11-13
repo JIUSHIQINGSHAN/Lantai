@@ -1,7 +1,9 @@
+import math
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlmodel import select
+from sqlalchemy import or_
+from sqlmodel import delete, select
 
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
@@ -22,6 +24,7 @@ from lantai.models.tables import (
 from lantai.retrieval.hybrid import delete_memory_item, index_memory_item
 from lantai.security.injection_guard import check_prompt_injection
 from lantai.storage import db
+from lantai.storage.cas import atomic_update, cas_update
 from lantai.storage.fts import sync_fts
 
 # 提案类型白名单（票据 `.scratch/proposal-type-whitelist/`）：
@@ -210,6 +213,24 @@ def _is_datetime_column(name: str) -> bool:
     return ann is datetime or datetime in getattr(ann, "__args__", ())
 
 
+# 票 36：rollback 还原循环排除的生命周期/治理字段——状态迁移只能走各自的门
+# （retract/unretract admin-only/archive/知命状态机 ADR-0081），回滚是「内容
+# 版本回滚」不是「生命周期倒带」（checkpoint 词汇表语义同此口径）。retract
+# 不打 checkpoint、不 bump version，撤回后最新 checkpoint 的 after.status 恒
+# 为撤回前的 "active"——不排除则撤回可被 rollback 复活，绕过 admin-only
+# unretract 门（ADR-0047 笔削四分法：主张错误即全检索面禁用、不可自动复活）。
+_LIFECYCLE_FIELDS = frozenset(
+    {
+        "status",
+        "lifecycle_status",
+        "superseded_by",
+        "weakened_at",
+        "superseded_at",
+        "retired_at",
+    }
+)
+
+
 def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = False) -> dict:
     """应用提案。
 
@@ -332,6 +353,26 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
             return out
 
         emb = embed([content])[0] if content else []
+        # 票 22 S3：apply 认领——「pending|approved → applied」条件 UPDATE 作为
+        # 本事务第一条 DML。此前状态门检查后隔 embed 网络往返才提交 APPLIED，
+        # REST decide 内联 × run_pending_proposals 定时逐条 × evolve/reflect
+        # 自动应用并发双跑各自落库（add 双平行记忆 / update checkpoint 重号 /
+        # consolidation 双主记忆——stale 硬门查的是自己 session 的快照，挡不住
+        # 并发另一路）。认领放在 embed 之后（方案 A：先无事务评估、后短事务
+        # 条件提交——网络调用不持写锁），rowcount=0 即并发败方：不写任何内容
+        # 直接让路；胜方回滚（含异常路径）认领一并撤销，无中间态残留。
+        claimed = cas_update(
+            s,
+            MemoryProposal,
+            prop.id,
+            {"status": [ProposalStatus.PENDING, ProposalStatus.APPROVED]},
+            {"status": ProposalStatus.APPLIED, "applied_at": utcnow()},
+        )
+        if claimed != 1:
+            logger.warning(
+                "提案 %s apply 认领失败：状态已被并发改写，跳过（并发胜方已落库）", prop.id
+            )
+            return {"ok": False, "reason": "not applicable"}
         # 分支附加返回（ADR-0050：evidence 三分缺口记入 apply 返回与日志）；其余分支为空
         apply_extra: dict = {}
 
@@ -348,23 +389,37 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
             s.flush()
             _make_checkpoint(s, existing, before, prop.id, trigger="reflect")
             if prop.evidence_ids:
-                dup = s.exec(
-                    select(MemoryEdge).where(
-                        MemoryEdge.relation == "supersedes",
-                        MemoryEdge.source_memory_id == prop.evidence_ids[0],
-                        MemoryEdge.target_memory_id == existing.id,
+                # 票 40：successor 存在性校验——evidence_ids[0] 是 LLM curator
+                # 输出，幽灵 id 直接落边即脏写（同文件 consolidation 分支对照
+                # 口径：「src is None → 不建边」）；幽灵边会进 reflector R1 的
+                # superseded_by 映射，目标被 unarchive 复原后即被误标。
+                # 提案照常留痕（deprecate 主语义不受影响），缺口留日志。
+                successor = s.get(MemoryItem, prop.evidence_ids[0])
+                if successor is None:
+                    logger.info(
+                        "deprecate %s：evidence_ids[0]=%r 不存在，跳过 supersedes 边"
+                        "（宁 miss 不脏写，票 40 对齐 consolidation 口径）",
+                        existing.id,
+                        prop.evidence_ids[0],
                     )
-                ).first()
-                if dup is None:
-                    s.add(
-                        MemoryEdge(
-                            id=new_id("edge"),
-                            source_memory_id=prop.evidence_ids[0],
-                            target_memory_id=existing.id,
-                            relation="supersedes",
-                            confidence=prop.confidence,
+                else:
+                    dup = s.exec(
+                        select(MemoryEdge).where(
+                            MemoryEdge.relation == "supersedes",
+                            MemoryEdge.source_memory_id == prop.evidence_ids[0],
+                            MemoryEdge.target_memory_id == existing.id,
                         )
-                    )
+                    ).first()
+                    if dup is None:
+                        s.add(
+                            MemoryEdge(
+                                id=new_id("edge"),
+                                source_memory_id=prop.evidence_ids[0],
+                                target_memory_id=existing.id,
+                                relation="supersedes",
+                                confidence=prop.confidence,
+                            )
+                        )
             sync_fts(s, existing.id, None)
             delete_memory_item(existing.id)
         elif prop.proposal_type == "merge" and existing:
@@ -455,6 +510,28 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     "detail": {"consolidated_evidence_ids": stale_hits},
                 }
             patch_full = prop.proposed_patch
+            raw_importance = float(patch_full.get("importance", 0.5))
+            if not math.isfinite(raw_importance):
+                # 票 35：生成面立法前的存量 patch 可能携带 NaN/inf——NaN 经 max/min
+                # 习语会洗成 1.0（脏写），直落 SQLite 又被绑成 NULL 炸 NOT NULL。
+                # 落 REJECTED 终态（同 stale 硬门口径：仅早退会把 APPROVED 永留，
+                # evolve_worker 每轮重试＝livelock）。
+                logger.warning(
+                    "提案 %s apply 拒绝：patch importance=%r 非有限值（票 35）",
+                    prop.id,
+                    raw_importance,
+                )
+                out = _reject_proposal(
+                    prop, "importance_not_finite", {"importance": raw_importance}
+                )
+                s.add(prop)
+                s.commit()
+                return out
+            importance = max(0.0, min(1.0, raw_importance))
+            if importance != raw_importance:
+                logger.warning(
+                    "提案 %s patch importance=%s 越界，钳入 [0,1]（票 35）", prop.id, raw_importance
+                )
             # 主记忆构造取 proposed_patch 不重推断（生成侧 _master_patch 平移现状构造：
             # decay_class 恒 semantic、decay_score=1.0、不设四元组——行为零漂移）
             master = MemoryItem(
@@ -464,7 +541,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                 lane=patch_full.get("lane", settings.DEFAULT_LANE),
                 source_ids=list(patch_full.get("source_ids") or evidence_ids),
                 confidence=float(patch_full.get("confidence", prop.confidence)),
-                importance=float(patch_full.get("importance", 0.5)),
+                importance=importance,
                 decay_score=1.0,
                 decay_class=patch_full.get("decay_class", "semantic"),
                 status="active",
@@ -729,7 +806,11 @@ def rollback(memory_id: str, principal=None) -> dict:
         ckpts = s.exec(
             select(MemoryCheckpoint)
             .where(MemoryCheckpoint.memory_id == memory_id)
-            .order_by(MemoryCheckpoint.version.desc())
+            .order_by(
+                MemoryCheckpoint.version.desc(),
+                MemoryCheckpoint.created_at.desc(),
+                MemoryCheckpoint.id.desc(),
+            )
         ).all()
         if len(ckpts) < 2:
             return {"ok": False, "reason": "no previous version"}
@@ -751,6 +832,28 @@ def rollback(memory_id: str, principal=None) -> dict:
                 # service 契约是 dict（被 worker/eval/MCP 多处消费，形状不能动），
                 # 403 语义在路由边界由 _ok_or_raise 翻译；这里只报「不允许」。
                 return {"ok": False, "reason": f"forbidden: {exc.detail}"}
+        # 票 36：撤回态守卫（同 correct_memory「retracted memory cannot be
+        # corrected」同款护栏）——撤回的复活唯一合法入口是 admin-only 的
+        # unretract（ADR-0047 笔削四分法）。守卫先于 CAS 认领：被拒时不写
+        # 任何一行、不追加 checkpoint（不留半写）。
+        from lantai.services.record_ops_service import STATUS_RETRACTED
+
+        if mem.status == STATUS_RETRACTED:
+            return {"ok": False, "reason": "retracted"}
+        # 票 23：整行写回前先做入口版本 CAS（写阶段第一条 DML，对最新已提交
+        # 状态求值）——checkpoint 选取与写回之间该行被并发纠错/合并推进时，
+        # 陈旧快照会把对方正文整行抹掉、版本倒退重号（红测 rollback）。败方
+        # 如实拒绝（宁 miss 不脏写），重试即按最新版本重新选 prev。
+        entry_version = mem.version or 1
+        claimed = atomic_update(
+            s,
+            MemoryItem,
+            memory_id,
+            {"version": entry_version + 1},
+            MemoryItem.version == entry_version,
+        )
+        if not claimed:
+            return {"ok": False, "reason": "memory changed since checkpoint read; retry"}
         before = mem.model_dump(mode="json")
         # 快照类型还原（票 .scratch/review-fixes-2026-10/issues/04 测试实证的另一根因）：
         # `prev.after` 是 `model_dump(mode="json")` 的 JSON 形态——datetime 字段是
@@ -773,31 +876,56 @@ def rollback(memory_id: str, principal=None) -> dict:
             )
             return {"ok": False, "reason": f"corrupt checkpoint snapshot: {e}"}
         for k, v in restored.items():
-            if hasattr(mem, k) and k != "id":
+            # version 不随快照回写：版本号由上面的入口 CAS 认领（entry+1），
+            # ORM 属性须显式对齐，否则旧值搭 commit 顺车把认领号覆掉（票 23）
+            if hasattr(mem, k) and k != "id" and k != "version" and k not in _LIFECYCLE_FIELDS:
+                # 票 36：生命周期/治理字段同样不随快照回写（见 _LIFECYCLE_FIELDS）
                 setattr(mem, k, v)
-        mem.version += 1
+        mem.version = entry_version + 1
         mem.updated_at = utcnow()
         s.add(mem)
         _make_checkpoint(s, mem, before, proposal_id="", trigger="rollback")
-        sync_fts(s, mem.id, mem.content)
-        # 向量重建（票 .scratch/review-fixes-2026-10/issues/04）：此前回滚只还原
-        # SQL 与 FTS，Chroma 里仍是回滚前正文的 embedding——同文件 add/update/
-        # merge/consolidation 分支均有 index_memory_item，唯 rollback 没有，回滚
-        # 后语义召回错位。复用 `record_ops_service.sync_vector_upsert`（既有等价
-        # 惯例：同款 index_memory_item + 8 键 metadata 契约）；失败降级留痕不静默
-        # （exception 日志 + vector_synced=False 如实回报，不阻断回滚主语义，
-        # 口径同笔削四分法 record_ops_service 的降级面）。延迟 import：record_ops_
-        # service 亦延迟引用本模块，避免顶层循环。
-        from lantai.services.record_ops_service import sync_vector_upsert
+        # 票 36：仅 active 行重建索引——retract「撤回即清索引」的既有语义下，
+        # 复活半程不得为非 active 行重写 FTS/向量（工单修正：search_fts 无
+        # status 过滤兜底，禁用在终闸——索引必须写侧守住）。archived 行索引
+        # 本就保留（archive「复原零成本」），内容陈旧由 unarchive 出闸时的
+        # 重同步收口（unarchive 既有 sync_fts/sync_vector_upsert）。
+        index_skipped_reason = None
+        vector_synced = False
+        from lantai.services.record_ops_service import STATUS_RETRACTED as _RETRACTED
 
-        vector_synced = sync_vector_upsert(mem.id, mem)
+        if mem.status == _RETRACTED:
+            # 防御臂 b 层：撤回行即便走到此处（守卫放开后）也绝不重建索引——
+            # 「撤回即清索引」是写侧语义（search_fts 无 status 过滤兜底，禁用
+            # 在终闸）。收口轮自审修正：跳过只限撤回行——archived 行的 archive
+            # 语义是「FTS/Chroma 保留（复原零成本）」，必须随回滚内容重同步
+            # （unarchive 出闸只补缺失层、不校验陈旧，跳过会让 SQL/索引错位
+            # 永久残留）。
+            index_skipped_reason = "retracted"
+        else:
+            sync_fts(s, mem.id, mem.content)
+            # 向量重建（票 .scratch/review-fixes-2026-10/issues/04）：此前回滚只还原
+            # SQL 与 FTS，Chroma 里仍是回滚前正文的 embedding——同文件 add/update/
+            # merge/consolidation 分支均有 index_memory_item，唯 rollback 没有，回滚
+            # 后语义召回错位。复用 `record_ops_service.sync_vector_upsert`（既有等价
+            # 惯例：同款 index_memory_item + 8 键 metadata 契约）；失败降级留痕不静默
+            # （exception 日志 + vector_synced=False 如实回报，不阻断回滚主语义，
+            # 口径同笔削四分法 record_ops_service 的降级面）。延迟 import：record_ops_
+            # service 亦延迟引用本模块，避免顶层循环。
+            from lantai.services.record_ops_service import sync_vector_upsert
+
+            vector_synced = sync_vector_upsert(mem.id, mem)
         s.commit()
-        if not vector_synced:
+        if not vector_synced and index_skipped_reason is None:
             logger.warning(
                 "回滚 %s：向量重建失败，向量库仍为回滚前正文（SQL/FTS 已回滚，留痕不静默）",
                 mem.id,
             )
-        return {"ok": True, "vector_synced": vector_synced}
+        receipt = {"ok": True, "vector_synced": vector_synced}
+        if index_skipped_reason is not None:
+            # 契约 dict 只增键、不改形状（票 36 D 口径）
+            receipt["index_skipped"] = index_skipped_reason
+        return receipt
 
 
 def delete_memory(memory_id: str, principal=None) -> dict:
@@ -835,6 +963,18 @@ def delete_memory(memory_id: str, principal=None) -> dict:
 
         try:
             purge_facts_for_memory(s, memory_id)
+            # 票 38：该记忆为任一端的全部 MemoryEdge 同事务清理——边表无外键
+            # 约束（tables.py:311-325），清理靠应用层；悬空边对 admin/内部读面
+            # （MCP list_edges/CLI/worker）永久可见且是边数统计噪声。双端范式
+            # 照抄 eval/forgetting_quality.py（边+行+FTS 同事务删）。
+            s.exec(
+                delete(MemoryEdge).where(
+                    or_(
+                        MemoryEdge.source_memory_id == memory_id,
+                        MemoryEdge.target_memory_id == memory_id,
+                    )
+                )
+            )
             s.delete(mem)
             sync_fts(s, memory_id, None)
             s.commit()

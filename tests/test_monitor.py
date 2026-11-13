@@ -16,6 +16,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import lantai.storage.db as db_module
 from lantai.core.scheduler import worker_staleness
+from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryCandidate, MemoryItem, SchedulerRun
 from lantai.observability import metrics as metrics_module
@@ -469,7 +470,7 @@ def test_render_prometheus_exposes_snapshot(monitor_env):
 
 
 # ── 路由与中间件（真实 HTTP 链路）──────────────────────────────────────
-def test_monitor_routes_and_telemetry_roundtrip(monitor_env):
+def test_monitor_routes_and_telemetry_roundtrip(monitor_env, monkeypatch):
     from fastapi.testclient import TestClient
 
     from lantai.api.app import app
@@ -520,7 +521,17 @@ def test_monitor_routes_and_telemetry_roundtrip(monitor_env):
         assert "lantai_up 1" in prom.text
 
         # 未知 worker 不触发任何副作用，返回 422
-        assert client.post("/monitor/workers/not-a-worker/run").status_code == 422
+        # 票 19：worker 手动触发已收 admin 闸——真 env key 身份过守卫抵达
+        # service（未知名 ValueError → 422，断言意图不变：无副作用）。此
+        # monkeypatch 放在本测试最后一段：前面各只读路由仍走 DEV MODE 面。
+        monkeypatch.setattr(settings, "API_KEY", "k19-monitor-admin", raising=False)
+        assert (
+            client.post(
+                "/monitor/workers/not-a-worker/run",
+                headers={"X-API-Key": "k19-monitor-admin"},
+            ).status_code
+            == 422
+        )
 
 
 def test_unmatched_404s_collapse_in_metrics_but_keep_path_in_logs(monitor_env):

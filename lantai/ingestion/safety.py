@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from lantai.core.logger import logger
 from lantai.core.settings import settings
 
 
@@ -53,6 +54,30 @@ def validate_media_url(url: str) -> str:
     return url
 
 
+def sanitize_source_url(url: str) -> str:
+    """来源链接白名单（票 69）：scheme ∈ SSRF_ALLOWED_SCHEMES 且必须有 hostname。
+
+    与 validate_fetch_url / validate_media_url 的 raise 语义刻意不同：来源
+    url 是条目附属字段，不合格式**置空**并记 warning（宁 miss 不脏写），
+    条目本身照常入库——拒收整条会把攻击变成拒绝服务。伪协议串一旦入库，
+    会经星图 /graph 出口（ops/graph.py 节点 url）抵达 /ui/map 来源节点点击
+    处理器 window.open，在继承 opener 源的新文档里同源执行 JS。
+    """
+    if not isinstance(url, str) or not url.strip():
+        return ""
+    stripped = url.strip()
+    parsed = urlparse(stripped)
+    if parsed.scheme not in settings.SSRF_ALLOWED_SCHEMES or not parsed.hostname:
+        # 票 50：URL 原串可能含 ?token= 凭证参数——只记 scheme/host 形状
+        logger.warning(
+            "source url rejected by scheme whitelist: scheme=%r host=%r",
+            parsed.scheme,
+            parsed.hostname,
+        )
+        return ""
+    return stripped
+
+
 _DATA_URI_IMAGE_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")
 
 
@@ -89,15 +114,21 @@ def validate_api_url(url: str) -> str:
 
     防止配置被篡改后，把 Bearer 密钥与记忆全文发送到任意地址。
     强制 https + host ∈ settings.ALLOWED_API_HOSTS。
+    异常 message 只带 parsed.scheme/host（票 50）：key-in-URL 形态
+    （Gemini 式 ``?key=``）的完整 URL 若透传进调用方日志，密钥整条留存。
     """
     parsed = urlparse(url)
     if parsed.scheme != "https":
-        raise ValueError(f"api url must be https: {url}")
+        raise ValueError(f"api url must be https: scheme={parsed.scheme!r}")
     host = (parsed.hostname or "").lower()
     allowed = set(settings.ALLOWED_API_HOSTS)
     if host not in allowed:
         raise ValueError(f"api host not allowed: {host}")
     return url
+
+
+# 票 48：流式限长的读取块大小——峰值内存 ≈ max_bytes + 块缓冲
+_FETCH_CHUNK_BYTES = 64 * 1024
 
 
 def fetch_with_safety(
@@ -127,15 +158,25 @@ def fetch_with_safety(
     current = validate_fetch_url(url)
     for _ in range(max_redirects + 1):
         with httpx.Client(follow_redirects=False, timeout=timeout) as client:
-            r = client.get(current, headers={"User-Agent": f"lantai/{app_version}"})
-        if r.status_code in (301, 302, 303, 307, 308):
-            loc = r.headers.get("location")
-            if not loc:
-                break
-            current = validate_fetch_url(str(httpx.URL(current).join(loc)))
-            continue
-        r.raise_for_status()
-        if len(r.content) > max_bytes:
-            raise ValueError(f"response too large: {len(r.content)} bytes > {max_bytes}")
-        return r.content
+            # 票 48：限长从事后检查改流式断连——非流式 get 先把响应体完整读入
+            # 内存再判 len，恶意源（无限流/缓慢灌注）在超时窗内可灌数十 GB，
+            # 同进程（REST+scheduler+MCP 单进程模型）OOM 陪葬。逐块累计、
+            # 超限即断：峰值 ≈ max_bytes + 块缓冲。重定向跳同样流式（响应体
+            # 不落内存，只取 location 头）。
+            with client.stream(
+                "GET", current, headers={"User-Agent": f"lantai/{app_version}"}
+            ) as r:
+                if r.status_code in (301, 302, 303, 307, 308):
+                    loc = r.headers.get("location")
+                    if not loc:
+                        break
+                    current = validate_fetch_url(str(httpx.URL(current).join(loc)))
+                    continue
+                r.raise_for_status()
+                buf = bytearray()
+                for chunk in r.iter_bytes(chunk_size=_FETCH_CHUNK_BYTES):
+                    buf.extend(chunk)
+                    if len(buf) > max_bytes:
+                        raise ValueError(f"response too large: >{max_bytes} bytes (stream aborted)")
+                return bytes(buf)
     raise ValueError("too many redirects")

@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timezone
 from sqlmodel import select
 
 from lantai.core.acl import viewer_of
+from lantai.core.time import iso_utc
 from lantai.models.tables import MemoryItem
 from lantai.services.edge_service import get_causal_chain
 from lantai.storage import db
@@ -123,7 +124,7 @@ def trace_decision_provenance(
             {
                 "memory_id": nid,
                 "content": m.content,
-                "timestamp": ts.isoformat() if ts else None,
+                "timestamp": iso_utc(ts) or None,
                 "_sort_ts": ts or datetime.min.replace(tzinfo=UTC),
             }
         )
@@ -198,7 +199,7 @@ def get_event_timeline(
                     {
                         "memory_id": mem.id,
                         "content": mem.content,
-                        "timestamp": ts.isoformat() if ts else None,
+                        "timestamp": iso_utc(ts) or None,
                         "_sort_ts": ts or datetime.min.replace(tzinfo=UTC),
                     }
                 )

@@ -132,8 +132,8 @@ def test_design_no_build_step_claim():
 
 
 def test_release_gate_list_has_docs_reference_check():
-    """哨兵上线连锁：门禁 13 项清单含新项（与 p1 锁的计数断言互为表里）。"""
+    """哨兵上线连锁：门禁清单含新项（与 p1 锁的计数断言互为表里）。票 04 起 11 项、票 29 起 14 项——新增检查项时同步这里的分母。"""
     doc = _read("docs/release-process.md")
     section = doc.split("## 上传前门禁", 1)[1].split("## ", 1)[0]
     assert "文档引用对账" in section, "新哨兵应登记进门禁清单"
-    assert "13 项" in section
+    assert "14 项" in section

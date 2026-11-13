@@ -135,12 +135,13 @@ class TestCoreMemory:
         assert isinstance(resp.json()["blocks"], list)
 
     def test_put_core_memory(self, client):
-        resp = client.put("/core-memory?block=identity&content=test%20user")
+        # 票 71：block/content 改 JSON body（正文撤出 URL 查询串）
+        resp = client.put("/core-memory", json={"block": "identity", "content": "test user"})
         assert resp.status_code == 200
         assert resp.json()["block"] == "identity"
 
     def test_put_invalid_block(self, client):
-        resp = client.put("/core-memory?block=invalid&content=test")
+        resp = client.put("/core-memory", json={"block": "invalid", "content": "test"})
         assert resp.status_code == 400
 
 
@@ -209,8 +210,11 @@ class TestEvolution:
         resp = client.get("/proposals")
         assert resp.status_code == 200
 
-    def test_evolve_run(self, client):
-        resp = client.post("/evolve/run")
+    def test_evolve_run(self, client, monkeypatch):
+        """票 19：/evolve/run 已收 admin 闸——真鉴权链 env key 身份触发；
+        断言意图不变（演化周期真的跑了，ok:true）。"""
+        monkeypatch.setattr(settings, "API_KEY", "k19-e2e-admin", raising=False)
+        resp = client.post("/evolve/run", headers={"X-API-Key": "k19-e2e-admin"})
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
@@ -290,7 +294,8 @@ class TestIntegration:
         assert resp.status_code == 200
 
         # 3. CoreMemory
-        resp = client.put("/core-memory?block=task&content=testing")
+        # 票 71：body 契约
+        resp = client.put("/core-memory", json={"block": "task", "content": "testing"})
         assert resp.status_code == 200
 
         resp = client.get("/core-memory")

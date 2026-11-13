@@ -29,6 +29,23 @@ _NEGATIVE_KEYWORDS = (
     "刚才有人",
 )
 
+# 票 56：反问/疑问形状负向检查——`我是`/`我叫` 等自称前缀后紧跟疑问形态
+# 即整句放行给大模型（不截断不猜测）。句尾后缀表只看句尾，反问句换任何
+# 句尾即漏放（`我是不是该辞职了` 被写成「用户自称：不是该辞职了」）；
+# `我是不是搞错了什么` 现靠句尾「么」侥幸 None，须转为形状判定。
+_RHETORICAL_SHAPES = re.compile(
+    r"^(?:我的名字|我的职业|我是|我叫|我住在|我现居|我常住|我定居|我从事|我是一名?)\s*[:：]?\s*(?:是不是|不是|还是|算不算|难道|究竟|怎么|为什么|为何|啥|什么)"
+)
+
+# 票 56：兼语/来源形状——自称捕获值以代词开头（「我叫他…」的「他明天来
+# 开会」是兼语句，「我叫」非自称）或「从…来/来的」来源结构开头（「我是
+# 从上海来的」是来源说明非自称）时放行。按宁 miss 从宽，只覆盖显然族。
+# （单字前缀已覆盖复数项「他们/她们/它们」的 startswith 语义，不重复列。）
+_PRONOUN_PREFIXES = ("他", "她", "它", "你", "我")
+# 来源结构（预编译，与本文件既有正则同为模块级常量；「从…来」贪心已
+# 覆盖「来的/而来」尾，不设冗余分支）
+_SOURCE_SHAPE_RE = re.compile(r"^从.+(?:来|而来)")
+
 # 1. Fact 轨：用户自称、职业、居住地（注意：更具体的职业优先于通用自称，防“我是一名”被“我是”前缀截胡）
 _FACT_RULES = [
     (
@@ -97,6 +114,11 @@ class ZhishuEngine:
             if kw in text:
                 return None
 
+        # 负向检查 3（票 56）：反问/疑问形状——自称前缀后紧跟疑问形态，
+        # 形状判定取代句尾后缀侥幸（句尾换字不再翻车），整句放行给大模型
+        if _RHETORICAL_SHAPES.match(text):
+            return None
+
         # --- 轨 1: Fact 自我事实 ---
         for pat_list, prefix in _FACT_RULES:
             for pat in pat_list:
@@ -104,6 +126,15 @@ class ZhishuEngine:
                 if m:
                     val = m.group(1).strip()
                     if val:
+                        # 负向检查 4（票 56）：兼语/来源形状——捕获值以代词
+                        # 开头（兼语句）或「从…来/来的」来源结构开头（来源
+                        # 说明）时放行，宁 miss 不脏写。直接 return None：
+                        # release 必须终结整个 fact 轨——若只 break 内层，
+                        # 句子会落进下一条更不具体的自称轨被改道吞掉
+                        # （`我是一名他尊敬的老师` → 职业轨 release → 自称轨
+                        # 仍脏写「一名他尊敬的老师」，rail 还换了）。
+                        if val.startswith(_PRONOUN_PREFIXES) or _SOURCE_SHAPE_RE.match(val):
+                            return None
                         return cls._build_result(
                             lane="fact",
                             rail="fact",

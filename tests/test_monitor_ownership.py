@@ -19,6 +19,8 @@
 路由层用真实 TestClient 打真实 HTTP 链路。
 """
 
+import os
+import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -220,6 +222,57 @@ def _snapshot(factory, principal, **kw):
     return build_monitor_snapshot(factory(), principal=principal, **kw)
 
 
+_ISO_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:\d{2}|Z)?$")
+
+
+def _assert_no_pid_leak(snap) -> None:
+    """pid 不被响应体携带——按「携带形态」扫，不做裸数字子串扫描。
+
+    响应体合法地含大量数字（调度器 period_seconds、时间戳、计数），裸
+    `str(getpid()) not in str(snap)` 与它们碰撞：PID≈3600 撞
+    `'period_seconds': 3600`（ingest worker 周期）即假红——watch 台账
+    `monitor-ownership-pid-substring-collision` 实录。pid 真正被携带的
+    形态只有两种，分开扫：
+
+    - 键值面：pid 形键（pid / process_pid / pid_hash …，含边界不含
+      rapid 这类巧合同名）的值必须是 None——非 admin 脱敏契约的直读判据；
+    - 字符串面：字符串叶值（路径 / URL / debug 文案）里 pid 十进制串不得
+      作为**独立数字段**出现（前后不邻数字）：`pid=3600` 抓，
+      `173600000` 这种更长数字段的内嵌不抓——那不是 pid。
+
+    整数叶值不扫：值恰等于 pid 的合法常量不构成指纹——它与「碰巧同值」
+    不可区分、不含 pid 信息；扫它就是把响应体里每个数字都当泄漏，正是
+    台账实录的假红通道。整串 ISO 时间戳同样豁免：年份/微秒数字段与
+    4~6 位 pid 同形状，是同一假红家族的高频合法载体（`due_at` 里年年
+    有 2026）。残留碰撞面如实记账：非时间戳字符串值里恰好含独立数字段
+    等于 pid（如路径里一个叫 `3600` 的目录段）仍会红——概率远低于裸
+    子串扫描，且朝安全侧偏（宁可误报人工看一眼，不放过真携带）。
+    """
+    pid = str(os.getpid())
+    standalone_pid = re.compile(rf"(?<!\d){re.escape(pid)}(?!\d)")
+    stack: list[tuple[str, object]] = [("", snap)]
+    while stack:
+        path, node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                child = f"{path}.{key}" if path else str(key)
+                name = str(key).lower()
+                if value is not None and (
+                    name == "pid"
+                    or name.startswith("pid_")
+                    or name.endswith("_pid")
+                    or "_pid_" in name
+                ):
+                    raise AssertionError(f"{child} 泄漏 pid：{value!r}")
+                stack.append((child, value))
+        elif isinstance(node, (list, tuple)):
+            for i, item in enumerate(node):
+                stack.append((f"{path}[{i}]", item))
+        elif isinstance(node, str) and not _ISO_TIMESTAMP.match(node):
+            if standalone_pid.search(node):
+                raise AssertionError(f"{path} 字符串值夹带 pid：{node!r}")
+
+
 # ── Red 1（决定性）：宿主机指纹脱敏 ─────────────────────────────────
 
 
@@ -298,7 +351,56 @@ class TestHostFingerprintMaskedForNonAdmin:
         import sys
 
         assert sys.version.split()[0] not in text, "响应体里有完整 python 版本串"
-        assert str(__import__("os").getpid()) not in text, "响应体里有 pid"
+        _assert_no_pid_leak(snap)
+
+
+# ── pid 扫描面精度（watch 台账 monitor-ownership-pid-substring-collision）──────
+
+
+class TestPidScanPrecision:
+    """pid 泄漏扫描的精度契约：不假红于合法常量，不放过真携带。
+
+    台账实录：票 47 终树全量轮 PID≈3600 与响应体合法常量
+    `'period_seconds': 3600`（ingest worker 周期，INGEST_CRON_MINUTES
+    默认 60×60）子串碰撞，`str(getpid()) not in str(snap)` 概率性假红——
+    泄漏并不存在（3600 是调度器常量，不是宿主指纹）。本组钉三条：
+    合法常量不触发（修复臂）；键值携带 / 字符串夹带必触发（两条回归锁，
+    修复前即绿，如实标注——它们锁的是修复不许修废）。
+    """
+
+    def test_pid_scan_does_not_flag_legit_numeric_constants(self, monitor_owned_env, monkeypatch):
+        """修复臂（红）：PID 撞上合法数字常量时，扫描面不得假红。
+
+        getpid 钉 3600（台账复现要点）；响应体里 3600 是 ingest worker
+        的周期常量，不含任何 pid 信息——扫描面必须放行。
+        """
+        monkeypatch.setattr(os, "getpid", lambda: 3600)
+        snap = _snapshot(monitor_owned_env, A)
+        # 前置：碰撞载体真的在响应体里——没有它，红臂就失去靶子
+        periods = {w["period_seconds"] for w in snap["scheduler"]["workers"]}
+        assert 3600 in periods, f"前置失效：响应体没有 3600 常量，红臂失去靶子：{periods}"
+        assert "'period_seconds': 3600" in str(snap)
+        _assert_no_pid_leak(snap)
+
+    def test_pid_scan_still_catches_structured_pid_value(self, monitor_owned_env):
+        """回归锁（修复前即绿）：pid 以键值对形态回到响应体必被抓。
+
+        这是原断言要抓的真泄漏（脱敏回归——`process.pid` 本应为 None）。
+        """
+        snap = _snapshot(monitor_owned_env, A)
+        snap["process"]["pid"] = os.getpid()
+        with pytest.raises(AssertionError, match="pid"):
+            _assert_no_pid_leak(snap)
+
+    def test_pid_scan_still_catches_string_embedded_pid(self, monitor_owned_env):
+        """回归锁（修复前即绿）：pid 以字符串夹带形态泄漏必被抓。
+
+        debug 文案/路径/URL 里嵌 pid 是另一种真携带，字符串面不豁免。
+        """
+        snap = _snapshot(monitor_owned_env, A)
+        snap["debug_note"] = f"worker pinned to pid={os.getpid()}"
+        with pytest.raises(AssertionError, match="pid"):
+            _assert_no_pid_leak(snap)
 
 
 # ── Red 2：admin 全量（不能把运维修废）─────────────────────────────

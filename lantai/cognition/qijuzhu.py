@@ -17,7 +17,7 @@ from typing import Any
 from sqlmodel import Session, select
 
 from lantai.core.auth import Principal
-from lantai.core.time import utcnow
+from lantai.core.time import ensure_aware, iso_utc, local_day_window_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import Dossier, MemoryItem, MemoryProposal
 from lantai.storage import db
@@ -37,7 +37,7 @@ class ChronicleEvent:
     def to_dict(self) -> dict[str, Any]:
         return {
             "event_type": self.event_type,
-            "timestamp": self.timestamp.isoformat(),
+            "timestamp": iso_utc(self.timestamp),
             "title": self.title,
             "detail": self.detail,
             "ref_id": self.ref_id,
@@ -55,11 +55,6 @@ class QijuzhuEngine:
     ):
         self.session = session
         self.principal = principal
-
-    def _get_session(self) -> Session:
-        if self.session is not None:
-            return self.session
-        return db.get_session()
 
     def _check_memory_access(self, item: MemoryItem) -> bool:
         """MemoryItem 租户与 ACL 权限校验（宁 miss 不脏写）。"""
@@ -211,24 +206,43 @@ class QijuzhuEngine:
         self,
         date: str | date | None = None,
         detail_level: str = "summary",
+        now: datetime | None = None,
     ) -> dict[str, Any]:
         """获取指定日期的全息起居注纪事。
 
         Args:
             date: 日期字符串 (YYYY-MM-DD) 或 date 对象，默认今日。
             detail_level: "summary" 或 "full"。
+            now: 冻结时钟注入缝（测试用；生产缺省 = 实时）。
         """
-        session = self._get_session()
+        # 票 67：with 语义，返回即关（对齐 diben 样板；本体挪 _get_daily_chronicle 单轨）
+        if self.session is not None:
+            return self._get_daily_chronicle(self.session, date, detail_level, now)
+        with db.get_session() as session:
+            return self._get_daily_chronicle(session, date, detail_level, now)
+
+    def _get_daily_chronicle(
+        self,
+        session: Session,
+        date: str | date | None,
+        detail_level: str,
+        now: datetime | None,
+    ) -> dict[str, Any]:
+        """单轨实现（会话由调用方管理生命周期）。"""
         target_date: date
         if date is None:
-            target_date = utcnow().date()
+            # 票 32：「今日」按本地墙钟日——库存 UTC、报表按使用者日界
+            # （core/time.local_day_window_utc 同一裁决）；UTC 日历日会把
+            # 北京 00:00–08:00 的活动落进昨天的纪事。
+            reference = ensure_aware(now or utcnow())
+            target_date = reference.astimezone().date()
         elif isinstance(date, str):
             target_date = datetime.strptime(date, "%Y-%m-%d").date()
         else:
             target_date = date
 
-        start_time = datetime.combine(target_date, time.min, tzinfo=UTC)
-        end_time = datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=UTC)
+        # 票 32：显式日期同样按本地日→UTC 窗口（与每日盘点同一日界）
+        start_time, end_time = local_day_window_utc(target_date)
 
         events = self._fetch_events_between(session, start_time, end_time)
         # 按时间正序
@@ -266,7 +280,7 @@ class QijuzhuEngine:
             },
             "chronicle_events": [e.to_dict() for e in events],
             "detail_level": detail_level,
-            "generated_at": utcnow().isoformat(),
+            "generated_at": iso_utc(utcnow()),
         }
 
     def get_timeline(
@@ -280,7 +294,13 @@ class QijuzhuEngine:
             days: 回溯滑动天数，默认 3 天。
             limit: 最大返回事件数。
         """
-        session = self._get_session()
+        if self.session is not None:
+            return self._get_timeline(self.session, days, limit)
+        with db.get_session() as session:  # 票 67
+            return self._get_timeline(session, days, limit)
+
+    def _get_timeline(self, session: Session, days: int, limit: int) -> dict[str, Any]:
+        """单轨实现（会话由调用方管理生命周期）。"""
         now = utcnow()
         start_time = now - timedelta(days=days)
 
@@ -293,6 +313,6 @@ class QijuzhuEngine:
             "days": days,
             "total_matched": len(events),
             "events": [e.to_dict() for e in truncated_events],
-            "window_start": start_time.isoformat(),
-            "window_end": now.isoformat(),
+            "window_start": iso_utc(start_time),
+            "window_end": iso_utc(now),
         }

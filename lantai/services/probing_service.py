@@ -12,9 +12,9 @@ import jieba
 from sqlmodel import Session, col, select
 from ulid import ULID
 
-from lantai.core.logger import logger
+from lantai.core.logger import loggable, logger
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import ConflictEvent, FactAtomic, MemoryCheckpoint, MemoryItem
 from lantai.retrieval.wanbi_retriever import fact_source_alive_clause
 from lantai.security.injection_guard import (
@@ -23,6 +23,7 @@ from lantai.security.injection_guard import (
 )
 from lantai.services.record_ops_service import sync_vector_upsert
 from lantai.storage import db
+from lantai.storage.cas import atomic_update, cas_update
 from lantai.storage.fts import sync_fts
 
 # ==================== 票 02（v0.66）：CJK 语义判定基础件 ====================
@@ -49,7 +50,16 @@ _CLAUSE_SPLIT_RE = re.compile(_EDGE_CLASS)
 _AFFIRM_BOUNDARY_CLASS = "[" + _PUNCT_FW + r"\s,.!?~" + "的啊呀吧呢]"
 # 改变动词：「还是」后面跟着它们就不是「留旧」。
 _CHANGE_VERB = "改成|改为|换成|改用|变成|换用|改动|改"
-_HAISHI_KEEP_OLD = "还是(?![^" + _PUNCT_FW + r"\s]*?(?:" + _CHANGE_VERB + "))"
+# 票 44：前瞻内惰性扫必须**有界**——无界 `[^标点\s]*?` 在「还是」长流 +
+# 改动词压末尾的病理输入下每起点扫全段（O(n²)，40K 实测 7.4s、翻倍 ×4.0），
+# 探颐每次回执消解必经 + 入口零上界 = 单请求卡死 threadpool 一线程。
+# {0,16} 窗：「还是」与改动词的 realistic 间距远小于 16 字（CJK 小句以标点
+# 收束）；窗外语主的改动词按「留旧」处理（宁 miss 不脏写口径，误判方向是
+# 留旧不写库，不是误写）。每起点 O(16) → 全局线性。
+_HAISHI_VERB_WINDOW = 16
+_HAISHI_KEEP_OLD = (
+    "还是(?![^" + _PUNCT_FW + r"\s]{0," + str(_HAISHI_VERB_WINDOW) + "}?(?:" + _CHANGE_VERB + "))"
+)
 
 # 正反问 / 是非问：用户把问题丢回来，这不是答复，任何分支都不得据此写库。
 _INTERROGATIVE_PATTERNS = ["是不是", "有没有", "要不要", "能不能", "是否", "难道"]
@@ -318,7 +328,10 @@ def detect_memory_probes(
                     }
                 )
 
-        logger.info("探颐：针对查询 '%s' 检出 %d 个主动探针", clean_q[:20], len(probes))
+        # 票 50：clean_q 只 strip 边缘、内部换行存活，20 字窗也够伪造行——过 loggable
+        logger.info(
+            "探颐：针对查询 '%s' 检出 %d 个主动探针", loggable(clean_q, limit=20), len(probes)
+        )
         return probes
 
     if active_session is not None:
@@ -536,10 +549,39 @@ def resolve_probe_response(
 
                 # 记录 Checkpoint 快照
                 before_snapshot = item.model_dump(mode="json")
-                item.content = conf.incoming_ref
-                item.version += 1
-                item.decay_score = 1.0
-                item.updated_at = utcnow()
+                # 票 78：版本前置 CAS（同 tanyi.py 修复）——并发 correct_memory
+                # 交错时按扫描期快照整组写回会覆盖用户显式纠正、version 重号
+                # （票 23 S8 同级）。rowcount=0 即并发败方：冲突保留 open 如实
+                # 报 conflict（宁 miss 不脏写，交人工重探）。
+                scan_version = item.version or 1
+                claimed = atomic_update(
+                    s,
+                    MemoryItem,
+                    item.id,
+                    {
+                        "content": conf.incoming_ref,
+                        "version": scan_version + 1,
+                        "decay_score": 1.0,
+                        "updated_at": utcnow(),
+                    },
+                    MemoryItem.version == scan_version,
+                    MemoryItem.status == "active",
+                )
+                if not claimed:
+                    s.rollback()
+                    logger.info(
+                        "探颐：冲突 %s 的目标记忆已被并发修改，消解让路交人工重探",
+                        actual_conflict_id,
+                    )
+                    return {
+                        "status": "conflict",
+                        "action": "concurrent_modification",
+                        "conflict_id": actual_conflict_id,
+                        "memory_id": item.id,
+                        "message": "memory changed concurrently; conflict kept open for re-probe",
+                    }
+                # CAS 胜方：ORM 对象与库端对齐（checkpoint/冲突翻转都要用新值）
+                s.refresh(item)
 
                 cp = MemoryCheckpoint(
                     id=f"cp_{ULID()}",
@@ -552,10 +594,33 @@ def resolve_probe_response(
                 )
                 s.add(cp)
 
-                conf.status = "resolved"
-                conf.resolved_by = "proactive_probe_user_confirmed"
-                conf.resolved_at = utcnow()
-                s.add(conf)
+                # 票 78：conf 翻转同走条件认领（票 22 S6 conflict_service 蓝图）——
+                # 记忆 CAS 与 conf CAS 之间人工裁决已把冲突裁成终态时，败方不
+                # 覆写终态；回滚整笔（含刚写的正文），冲突终态权威保留。
+                conf_claimed = cas_update(
+                    s,
+                    ConflictEvent,
+                    conf.id,
+                    {"status": "open"},
+                    {
+                        "status": "resolved",
+                        "resolved_by": "proactive_probe_user_confirmed",
+                        "resolved_at": utcnow(),
+                    },
+                )
+                if not conf_claimed:
+                    s.rollback()
+                    logger.info(
+                        "探颐：冲突 %s 已被并发裁决成终态，消解让路（正文写入一并回滚）",
+                        actual_conflict_id,
+                    )
+                    return {
+                        "status": "conflict",
+                        "action": "concurrent_adjudication",
+                        "conflict_id": actual_conflict_id,
+                        "memory_id": item.id,
+                        "message": "conflict adjudicated concurrently; memory write rolled back",
+                    }
                 s.add(item)
 
                 # FTS 同事务强一致（ADR-0008，同 correct_memory / promoter update 口径）
@@ -646,7 +711,7 @@ def resolve_probe_response(
             if is_neg:
                 # 软撤回原子事实
                 target_fact.confidence = 0.0
-                target_fact.valid_to = utcnow().isoformat()
+                target_fact.valid_to = iso_utc(utcnow())
                 s.add(target_fact)
                 s.commit()
                 return {"status": "resolved", "action": "retracted", "fact_id": target_fact.id}

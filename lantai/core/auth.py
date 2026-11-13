@@ -12,7 +12,7 @@ import hmac
 import secrets
 from dataclasses import dataclass
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlmodel import select
 
@@ -174,3 +174,19 @@ def get_current_user(request: Request) -> Principal:
             detail="Missing credentials: provide X-API-Key or Authorization Bearer",
         )
     raise HTTPException(status_code=401, detail="Missing Authorization header")
+
+
+def require_admin(principal: Principal = Depends(get_current_user)) -> Principal:
+    """Admin 面守卫（票 19 自 `routes_admin.py` 收敛单一真源——三个路由模块
+    与 admin 面共用，防「每个模块各自手写守卫」的改一处漏一家族病）。
+
+    严格 `role == "admin"`，与 `Principal.is_admin`（含 `"system"`，service
+    层口径）是**两个并存的语义**：admin 面从严，system 角色不放行。
+    已知契约（`docs/compose/spec/p0-auth-entry.md:68` Out-of-Scope P1 登记）：
+    admin 仅 env key（`ApiKey` 表无 role 列，库内 Bearer 与 DEV MODE 恒
+    user）→ 非 env-key 部署形态对 admin 面一律 403；角色真正可赋值是登记
+    在案的延后项，不在各守卫挂载点的裁量范围。
+    """
+    if principal.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    return principal

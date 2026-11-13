@@ -17,6 +17,7 @@ from typing import Any
 from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session, select
 
+from lantai.core.acl import is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.core.ids import new_id
 from lantai.core.time import utcnow
@@ -58,37 +59,28 @@ class JuanzongEngine:
         self.session = session
         self.principal = principal
 
-    def _get_session(self) -> Session:
-        if self.session is not None:
-            return self.session
-        return db.get_session()
-
     def _check_access(self, dossier: Dossier) -> bool:
-        """行级租户与属主 ACL 隔离校验。"""
-        if self.principal is None:
+        """行级租户与属主 ACL 隔离校验（票 57：None 收敛 "default" 不再全放）。"""
+        if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
             return True
-        if self.principal.is_admin:
-            return True
+        viewer = viewer_of(self.principal)
         tenant_id = getattr(self.principal, "tenant_id", None)
         if tenant_id and dossier.tenant_id and dossier.tenant_id != tenant_id:
             return False
-        return not (
-            dossier.user_id and self.principal.user_id and dossier.user_id != self.principal.user_id
-        )
+        return dossier.user_id is None or dossier.user_id == viewer
 
     def _check_memory_access(self, item: MemoryItem) -> bool:
-        """校验记忆项的行级权限。"""
-        if self.principal is None:
+        """校验记忆项的行级权限（票 57：None 收敛 "default"，他人原文不外泄）。"""
+        if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
             return True
-        if self.principal.is_admin:
-            return True
+        viewer = viewer_of(self.principal)
         tenant_id = getattr(self.principal, "tenant_id", None)
         if tenant_id and item.tenant_id and item.tenant_id != tenant_id:
             return False
-        if item.user_id and self.principal.user_id and item.user_id != self.principal.user_id:
+        if item.user_id is not None and item.user_id != viewer:
             return False
         return not (
-            self.principal.allowed_lanes
+            getattr(self.principal, "allowed_lanes", None)
             and item.lane
             and item.lane not in self.principal.allowed_lanes
         )
@@ -102,7 +94,22 @@ class JuanzongEngine:
         metadata: dict[str, Any] | None = None,
     ) -> Dossier:
         """创建长程任务情境卷宗。"""
-        s = self._get_session()
+        if self.session is not None:
+            return self._create_dossier(self.session, title, goal, milestones, memory_ids, metadata)
+        with db.get_session() as s:  # 票 67：with 语义，返回即关（对齐 diben 样板）
+            return self._create_dossier(s, title, goal, milestones, memory_ids, metadata)
+
+    def _create_dossier(
+        self,
+        s: Session,
+        title: str,
+        goal: str,
+        milestones: list[dict[str, Any]] | None,
+        memory_ids: list[str] | None,
+        metadata: dict[str, Any] | None,
+    ) -> Dossier:
+        """单轨实现（会话由调用方管理生命周期）。"""
+
         dos_id = new_id("dos")
 
         # 规整里程碑列表
@@ -127,7 +134,8 @@ class JuanzongEngine:
                     valid_memory_ids.append(mid.strip())
 
         meta = dict(metadata or {})
-        user_id = self.principal.user_id if self.principal else None
+        # 票 57：owner 一律 viewer_of 收敛（None→"default"），卷宗不落 NULL 属主行
+        user_id = viewer_of(self.principal)
         tenant_id = getattr(self.principal, "tenant_id", None) if self.principal else None
 
         dossier = Dossier(
@@ -148,7 +156,15 @@ class JuanzongEngine:
 
     def get_dossier(self, dossier_id: str, session: Session | None = None) -> Dossier | None:
         """获取卷宗详情（受租户行级安全保护）。"""
-        s = session or self._get_session()
+        if session is not None:
+            return self._get_dossier(session, dossier_id)
+        if self.session is not None:
+            return self._get_dossier(self.session, dossier_id)
+        with db.get_session() as s:  # 票 67
+            return self._get_dossier(s, dossier_id)
+
+    def _get_dossier(self, s: Session, dossier_id: str) -> Dossier | None:
+
         dossier = s.get(Dossier, dossier_id)
         if not dossier or not self._check_access(dossier):
             return None
@@ -161,7 +177,15 @@ class JuanzongEngine:
         session: Session | None = None,
     ) -> list[Dossier]:
         """查询符合权限的卷宗清单。"""
-        s = session or self._get_session()
+        if session is not None:
+            return self._list_dossiers(session, status, limit)
+        if self.session is not None:
+            return self._list_dossiers(self.session, status, limit)
+        with db.get_session() as s:  # 票 67
+            return self._list_dossiers(s, status, limit)
+
+    def _list_dossiers(self, s: Session, status: str | None, limit: int) -> list[Dossier]:
+
         stmt = select(Dossier)
         if status:
             stmt = stmt.where(Dossier.status == status)
@@ -170,10 +194,10 @@ class JuanzongEngine:
         if tenant_id and not (self.principal and self.principal.is_admin):
             stmt = stmt.where((Dossier.tenant_id == tenant_id) | (Dossier.tenant_id.is_(None)))
 
-        if self.principal is not None and not self.principal.is_admin and self.principal.user_id:
-            stmt = stmt.where(
-                (Dossier.user_id == self.principal.user_id) | (Dossier.user_id.is_(None))
-            )
+        # 票 57：None 收敛 viewer_of="default"——此前无身份跳过本过滤，全库可见
+        if not (getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal)):
+            viewer = viewer_of(self.principal)
+            stmt = stmt.where((Dossier.user_id == viewer) | (Dossier.user_id.is_(None)))
 
         stmt = stmt.order_by(Dossier.updated_at.desc()).limit(limit)
         items = s.exec(stmt).all()
@@ -188,7 +212,22 @@ class JuanzongEngine:
         session: Session | None = None,
     ) -> Dossier | None:
         """流转更新卷宗内的任务里程碑。"""
-        s = session or self._get_session()
+        if session is not None:
+            return self._update_milestone(session, dossier_id, milestone_id, status, notes)
+        if self.session is not None:
+            return self._update_milestone(self.session, dossier_id, milestone_id, status, notes)
+        with db.get_session() as s:  # 票 67
+            return self._update_milestone(s, dossier_id, milestone_id, status, notes)
+
+    def _update_milestone(
+        self,
+        s: Session,
+        dossier_id: str,
+        milestone_id: str,
+        status: str,
+        notes: str | None,
+    ) -> Dossier | None:
+
         dossier = self.get_dossier(dossier_id, session=s)
         if not dossier:
             return None
@@ -228,7 +267,15 @@ class JuanzongEngine:
         session: Session | None = None,
     ) -> bool:
         """向卷宗幂等且保序地绑定记忆项。"""
-        s = session or self._get_session()
+        if session is not None:
+            return self._bind_memories(session, dossier_id, memory_ids)
+        if self.session is not None:
+            return self._bind_memories(self.session, dossier_id, memory_ids)
+        with db.get_session() as s:  # 票 67
+            return self._bind_memories(s, dossier_id, memory_ids)
+
+    def _bind_memories(self, s: Session, dossier_id: str, memory_ids: list[str]) -> bool:
+
         dossier = self.get_dossier(dossier_id, session=s)
         if not dossier:
             return False
@@ -258,7 +305,15 @@ class JuanzongEngine:
         session: Session | None = None,
     ) -> bool:
         """从卷宗解绑记忆项。"""
-        s = session or self._get_session()
+        if session is not None:
+            return self._unbind_memories(session, dossier_id, memory_ids)
+        if self.session is not None:
+            return self._unbind_memories(self.session, dossier_id, memory_ids)
+        with db.get_session() as s:  # 票 67
+            return self._unbind_memories(s, dossier_id, memory_ids)
+
+    def _unbind_memories(self, s: Session, dossier_id: str, memory_ids: list[str]) -> bool:
+
         dossier = self.get_dossier(dossier_id, session=s)
         if not dossier:
             return False
@@ -284,7 +339,21 @@ class JuanzongEngine:
         session: Session | None = None,
     ) -> Dossier | None:
         """办结或归档卷宗。"""
-        s = session or self._get_session()
+        if session is not None:
+            return self._close_dossier(session, dossier_id, summary, archived)
+        if self.session is not None:
+            return self._close_dossier(self.session, dossier_id, summary, archived)
+        with db.get_session() as s:  # 票 67
+            return self._close_dossier(s, dossier_id, summary, archived)
+
+    def _close_dossier(
+        self,
+        s: Session,
+        dossier_id: str,
+        summary: str | None,
+        archived: bool,
+    ) -> Dossier | None:
+
         dossier = self.get_dossier(dossier_id, session=s)
         if not dossier:
             return None
@@ -310,7 +379,21 @@ class JuanzongEngine:
         session: Session | None = None,
     ) -> DossierFocusResult:
         """针对指定卷宗执行情境记忆聚焦检索（Dossier Context Focusing）。"""
-        s = session or self._get_session()
+        if session is not None:
+            return self._focus_dossier_context(session, dossier_id, query, limit)
+        if self.session is not None:
+            return self._focus_dossier_context(self.session, dossier_id, query, limit)
+        with db.get_session() as s:  # 票 67
+            return self._focus_dossier_context(s, dossier_id, query, limit)
+
+    def _focus_dossier_context(
+        self,
+        s: Session,
+        dossier_id: str,
+        query: str | None,
+        limit: int,
+    ) -> DossierFocusResult:
+
         dossier = self.get_dossier(dossier_id, session=s)
         if not dossier:
             return DossierFocusResult(

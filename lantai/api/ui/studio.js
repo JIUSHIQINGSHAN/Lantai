@@ -290,8 +290,12 @@ async function saveCoreBlock(e) {
   const block = $('#coreBlockSelect').value;
   const content = $('#coreBlockContent').value;
   try {
-    const params = new URLSearchParams({block, content});
-    await api(`/core-memory?${params}`, {method: 'PUT'});
+    // 票 71：正文改 JSON body（api() helper 自动补 Content-Type），撤出 URL
+    // 查询串——uvicorn 访问日志默认含 query string，policy 正文不得进 URL 面
+    await api('/core-memory', {
+      method: 'PUT',
+      body: JSON.stringify({block, content, namespace: 'default'}),
+    });
     showToast(`🧠 核心记忆块「${block}」已保存`);
     promptsLoaded = false;
     await loadPromptsPanel();

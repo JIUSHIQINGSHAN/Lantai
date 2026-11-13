@@ -1,3 +1,5 @@
+from lantai.core.settings import settings
+from lantai.core.text import truncate_codepoints
 from lantai.llm.client import chat_json
 from lantai.llm.prompts import EXTRACT_SYS, EXTRACT_USER_TEMPLATE
 from lantai.services.prompt_service import get_prompt
@@ -11,10 +13,14 @@ def extract_candidate(title: str, content: str) -> dict:
         title=title, content=content[:6000]
     )
     try:
-        data = chat_json(get_prompt("EXTRACT_SYS", EXTRACT_SYS), user)
+        # 票 48：ingest 链单发预算（预算模式一次机会即止，chat_json D-04 同
+        # 范式）——逐 doc 串行调用挂起的上游不再占死整个 ingest job
+        data = chat_json(
+            get_prompt("EXTRACT_SYS", EXTRACT_SYS), user, timeout=settings.LLM_INGEST_TIMEOUT
+        )
     except Exception:
         return {
-            "summary": content[:400],
+            "summary": truncate_codepoints(content, 400, "..."),  # 票 49：被截可见
             "claims": [],
             "methods": [],
             "constraints": [],

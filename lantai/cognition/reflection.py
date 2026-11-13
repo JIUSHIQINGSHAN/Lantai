@@ -21,9 +21,10 @@ class ReflectionReport:
     proposed_patterns: list = field(default_factory=list)
     failure_belief_candidates: list = field(default_factory=list)
     summary: str = ""
-    # 归属（票 `.scratch/cognitive-write-gaps/01`）：`FailureRecord` 没有
-    # 归属列，`failures` 计数无法按人收窄。**如实标注而不静默**——调用方
-    # （面板 / 报告）看到 `false` 就知道这个数跨用户，不会误当成自己的。
+    # 归属（票 61）：`FailureRecord` 已有归属列（迁移 v43），failures 轨
+    # **可**按人收窄——`failures_scoped` 如实反映：principal=None（内部
+    # 调用/worker）与 admin 全量（同 `_reflection_scope` 口径），其余按
+    # viewer 收窄（本人 + ownerless 系统态旧行）。
     failures_scoped: bool = True
 
 
@@ -138,13 +139,18 @@ class ReflectionEngine:
     def run_reflection(self) -> ReflectionReport:
         report = ReflectionReport()
 
-        # 归属（票 .scratch/cognitive-write-gaps/01）：FailureRecord 无归属列，
-        # 这一项**无法**按人收窄——如实标注，不发明归属。
-        report.failures_scoped = False
-
-        # 步骤 1：统计失败记录，并从 lesson/cause 归纳 failure_pattern
-        failures = self.db.exec(select(FailureRecord)).all()
+        # 归属（票 61）：FailureRecord 已有归属列（迁移 v43），蒸馏来源限定
+        # 「本人 + ownerless 系统态旧行」——A 的失败教训不得蒸馏成 B 的
+        # Belief（_stamp_owner 只盖过滤后来源，物化即冒名）。None/admin
+        # 全量同 `_reflection_scope` 口径（内部 worker 一过滤就空转）。
+        failure_scope = _reflection_scope(FailureRecord.user_id, self.principal)
+        failures_query = select(FailureRecord)
+        if failure_scope is not None:
+            failures_query = failures_query.where(failure_scope)
+        failures = self.db.exec(failures_query).all()
         report.failures = len(failures)
+        # failures_scoped 如实反映：收窄过（scope 非 None）= True；None/admin 全量 = False
+        report.failures_scoped = failure_scope is not None
 
         failure_belief_candidates: list[MemoryItem] = []
         if failures:

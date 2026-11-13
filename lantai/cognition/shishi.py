@@ -15,14 +15,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from ulid import ULID
 
 from lantai.core.acl import viewer_of
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import CoreMemoryBlock
 from lantai.storage import db
+from lantai.storage.cas import atomic_update
 
 VALID_BLOCKS = frozenset({"identity", "policy", "task"})
 
@@ -53,7 +55,7 @@ class ShishiVaultBlock:
             "fenced_content": self.fenced_content,
             "user_id": self.user_id,
             "tenant_id": self.tenant_id,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "updated_at": iso_utc(self.updated_at) or None,
         }
 
 
@@ -75,7 +77,7 @@ class IntegrityVerificationResult:
             "verified_blocks": self.verified_blocks,
             "tampered_blocks": self.tampered_blocks,
             "tamper_details": self.tamper_details,
-            "verified_at": self.verified_at.isoformat() if self.verified_at else None,
+            "verified_at": iso_utc(self.verified_at) or None,
         }
 
 
@@ -138,9 +140,24 @@ class ShishiEngine:
                 CoreMemoryBlock.namespace == namespace,
             )
             if not is_admin:
-                stmt = stmt.where(
-                    (CoreMemoryBlock.user_id == user_id) | (CoreMemoryBlock.user_id.is_(None))
-                )
+                # 写面只认自己的行(票 68 位点 5):读面「本人或 ownerless」的可见
+                # 范围若用于写查找,任意用户可改写 ownerless 行——宁 miss 不脏写,
+                # ownerless 行不进写范围,封存落自己名下新行。
+                stmt = stmt.where(CoreMemoryBlock.user_id == user_id)
+                if tenant_id:
+                    # 写面租户判据(票 68 位点 5 的 tenant 缺席半边,审查补):
+                    # 同 user_id 异租户的行不进写范围(宁 miss 不脏写,落本租户
+                    # 新行);本租户未知(ownerless-tenant 行)不拦,与 _check_access
+                    # 「双方都有 tenant 才比对」的口径一致。
+                    stmt = stmt.where(
+                        (CoreMemoryBlock.tenant_id.is_(None))
+                        | (CoreMemoryBlock.tenant_id == tenant_id)
+                    )
+            else:
+                # admin 定靶确定性(票 68 位点 5):同 (block, namespace) 多用户行
+                # 并存时裸 .first() 命中哪行全凭存储序(SQLite 实况 rowid),按
+                # (user_id, tenant_id) 升序确定性取最小属主行。
+                stmt = stmt.order_by(CoreMemoryBlock.user_id, CoreMemoryBlock.tenant_id)
 
             row = s.exec(stmt).first()
             digest = compute_content_digest(block, content, namespace)
@@ -156,16 +173,23 @@ class ShishiEngine:
                         f"CoreMemoryBlock '{block}' in namespace '{namespace}' is sealed in Shishi vault and immutable"
                     )
 
-                new_version = (row.version or 1) + 1
-                row.content = content
-                row.version = new_version
-                row.updated_at = utcnow()
-                # 编码签名与锁定元信息至 agent_id
                 lock_flag = ":sealed:immutable" if is_immutable else ":sealed"
-                row.agent_id = f"sha256={digest}{lock_flag}"
-                s.add(row)
+                # 票 23：版本号库端自增——两路并发封存各 +1 都落账（红测 F5b）；
+                # content/签名/锁定元信息同语句原子（末写者胜）。
+                atomic_update(
+                    s,
+                    CoreMemoryBlock,
+                    row.id,
+                    values={
+                        "content": content,
+                        "version": CoreMemoryBlock.version + 1,
+                        "updated_at": utcnow(),
+                        "agent_id": f"sha256={digest}{lock_flag}",
+                    },
+                )
                 s.commit()
                 s.refresh(row)
+                new_version = row.version
                 target_id = row.id
             else:
                 new_version = 1
@@ -184,8 +208,35 @@ class ShishiEngine:
                     updated_at=utcnow(),
                 )
                 s.add(row)
-                s.commit()
-                s.refresh(row)
+                try:
+                    s.commit()
+                except IntegrityError:
+                    # 票 23：并发首写撞 (block, namespace, user_id) 唯一约束——
+                    # 败方重读既有行按更新路收敛（末写者胜），不再双插双行；
+                    # 重读行可能是他人加锁的 sealed 行，不可变检查重验。
+                    s.rollback()
+                    row = s.exec(stmt).first()
+                    if row is None:
+                        raise
+                    if row.agent_id and ":sealed:immutable" in str(row.agent_id) and not is_admin:
+                        raise PermissionError(
+                            f"CoreMemoryBlock '{block}' in namespace '{namespace}' is sealed in Shishi vault and immutable"
+                        ) from None
+                    atomic_update(
+                        s,
+                        CoreMemoryBlock,
+                        row.id,
+                        values={
+                            "content": content,
+                            "version": CoreMemoryBlock.version + 1,
+                            "updated_at": utcnow(),
+                            "agent_id": encoded_agent,
+                        },
+                    )
+                    s.commit()
+                    s.refresh(row)
+                    new_version = row.version
+                    target_id = row.id
 
             fenced = wrap_as_data(content, item_id=f"shishi-{block}", score=1.0)
             vault_block = ShishiVaultBlock(
@@ -244,7 +295,7 @@ class ShishiEngine:
                             "recorded_digest": recorded_digest,
                             "actual_digest": actual_digest,
                             "version": r.version,
-                            "tampered_at": utcnow().isoformat(),
+                            "tampered_at": iso_utc(utcnow()),
                         }
                     )
 

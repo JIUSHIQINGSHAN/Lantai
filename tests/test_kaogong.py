@@ -10,6 +10,7 @@
 from fastapi.testclient import TestClient
 
 from lantai.api.app import app
+from lantai.core.settings import settings
 from lantai.models.tables import MemoryItem
 from lantai.services.kaogong_service import (
     evaluate_memory_item_grade,
@@ -122,7 +123,7 @@ class TestKaogongServiceDB:
 class TestKaogongEndpointsAndMCP:
     """测试 REST 端点与 MCP 工具。"""
 
-    def test_rest_kaogong_cycle(self, param_env):
+    def test_rest_kaogong_cycle(self, param_env, monkeypatch):
         session_factory, _ = param_env
         client = TestClient(app)
 
@@ -141,14 +142,16 @@ class TestKaogongEndpointsAndMCP:
             s.add(m)
             s.commit()
 
-        # 触发 REST 考功周期
-        r1 = client.post("/evolution/kaogong")
+        # 触发 REST 考功周期（票 19：报告路由已收 admin 闸——真 env key 身份，
+        # 断言意图不变；周期路由非本票守卫面，带头只是随行认证）
+        monkeypatch.setattr(settings, "API_KEY", "k19-kaogong-admin", raising=False)
+        r1 = client.post("/evolution/kaogong", headers={"X-API-Key": "k19-kaogong-admin"})
         assert r1.status_code == 200
         data1 = r1.json()
         assert data1["evaluated"] >= 1
 
         # 获取考功报告
-        r2 = client.get("/evolution/kaogong/report")
+        r2 = client.get("/evolution/kaogong/report", headers={"X-API-Key": "k19-kaogong-admin"})
         assert r2.status_code == 200
         assert "evaluated" in r2.json()
 

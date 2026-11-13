@@ -8,6 +8,10 @@ REM Clear Hermes venv pollution
 set "PYTHONPATH="
 set "PYTHONHOME="
 
+REM UTF-8 mode (ticket 30): MCP stdio serves JSON-RPC with CJK payloads;
+REM console codepage cp936 would mojibake frames regardless of reconfigure
+set "PYTHONUTF8=1"
+
 REM Repo root = directory of this bat; run from there so -m resolves the package
 cd /d "%~dp0"
 

@@ -25,6 +25,10 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+# 票 30 A2：报告面 stdout 钉 UTF-8——cp936 宿主 print GBK 外字符（emoji/U+2028/罕用字）直接崩
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
@@ -102,6 +106,10 @@ FAILURE_DIAGNOSIS: dict[str, tuple[str, str]] = {
         'python -c "from lantai.cli import mcp; print(len(mcp._get_active_tools()), len(mcp.TOOLS))"',
     ),
     "迁移与列约束漂移": ("约束漂移", "python -m pytest tests/test_legacy_schema_parity.py -q"),
+    "观测面保留对称性": (
+        "约束漂移",
+        "python -m pytest tests/test_observability_retention.py -q（红灯明细点名缺旋钮/缺清扫/缺挂载的表）",
+    ),
     "文档引用对账": (
         "文档断线",
         "python -m pytest tests/test_release_check.py -q -k=docs_reference（红灯明细含 file:lineno 死链清单）",
@@ -211,7 +219,16 @@ def check_version_consistency(
 
 
 def _git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], cwd=repo_root, capture_output=True, text=True)
+    # Git-for-Windows 输出 UTF-8；裸 text=True 会按 locale（cp936 宿主）解码，
+    # CJK 分支名/文件名直接 UnicodeDecodeError 或 mojibake（票 30 A4）。
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
 
 
 def _find_ruff(repo_root: Path) -> str:
@@ -374,6 +391,70 @@ payload = {
     "home_isolated": os.path.normcase(str(settings.LANTAI_HOME))
     != os.path.normcase(os.environ.get("LANTAI_GATE_HOST_HOME", "__none__")),
 }
+# 票 25：升级库形态模拟——全新库 create_all 天然带全部模型索引（探针恒绿），
+# 升级库漂移（remembrance.db 形态：表在、索引缺、身份列缺）只有在这个形态下
+# 才可见。造一个姊妹文件：create_all → 剥离全部非 autoindex 索引 → memoryitem
+# 身份四列删除（由迁移链 ALTER 补回）→ 真 apply_migrations 全链 → 索引对账
+# （模型声明集 ⊆ 库集）+ user_version 对 TARGET 核对（迁移未应用拦截）+
+# 二次 apply 幂等核对（重复应用拦截）。
+from sqlalchemy.engine import make_url as _make_url
+
+_up_url = str(_make_url(settings.DATABASE_URL).set(database=_make_url(settings.DATABASE_URL).database + ".upgrade_sim.db"))
+_up_engine = create_engine(_up_url)
+SQLModel.metadata.create_all(_up_engine)
+_up_conn = _up_engine.raw_connection()
+try:
+    for (_nm,) in _up_conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex%'"
+    ).fetchall():
+        _up_conn.execute('DROP INDEX "' + _nm + '"')
+    for _col in ("user_id", "tenant_id", "agent_id", "session_id"):
+        try:
+            _up_conn.execute("ALTER TABLE memoryitem DROP COLUMN " + _col)
+        except Exception as _col_exc:
+            payload["upgrade_sim_notes"] = payload.get("upgrade_sim_notes") or []
+            payload["upgrade_sim_notes"].append(f"memoryitem.{_col} 模拟缺列失败: {_col_exc}")
+    _up_conn.commit()
+    from lantai.storage.migrations import (
+        TARGET_SCHEMA_VERSION as _UP_TARGET,
+        apply_migrations as _apply_migrations,
+    )
+
+    _apply_migrations(_up_conn)
+    upgrade_user_version = _up_conn.execute("PRAGMA user_version").fetchone()[0]
+
+    def _up_ix_names():
+        _c = _up_engine.raw_connection()
+        try:
+            return {
+                r[0]
+                for r in _c.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex%'"
+                ).fetchall()
+            }
+        finally:
+            _c.close()
+
+    _before_second = _up_ix_names()
+    _apply_migrations(_up_conn)
+    idempotent = _before_second == _up_ix_names()
+    index_drift = []
+    _insp_up = inspect(_up_engine)  # 必须 inspect upgrade 库本体——复用全新库的
+    # insp 会把索引对账看回全新库，漂移将再次不可见（票 25）
+    up_tables = set(_insp_up.get_table_names())
+    for _tname, _table in meta.items():
+        if _tname not in up_tables:
+            continue
+        _got = {r["name"] for r in _insp_up.get_indexes(_tname)}
+        for _nm in sorted({ix.name for ix in _table.indexes} - _got):
+            index_drift.append(f"{_tname}: 缺 {_nm}")
+finally:
+    _up_conn.close()
+    _up_engine.dispose()
+payload["index_drift"] = index_drift
+payload["idempotent"] = idempotent
+payload["upgrade_user_version"] = upgrade_user_version
+payload["upgrade_target"] = _UP_TARGET
 print("SCHEMAPAYLOAD" + json.dumps(payload, ensure_ascii=False))
 """
 
@@ -424,6 +505,10 @@ def isolated_probe_env(probe_home: str) -> dict[str, str]:
     """
     os.makedirs(probe_home, exist_ok=True)
     env = os.environ.copy()
+    # 子进程 stdio 钉 UTF-8（票 30 A1，对齐 verify_lantai.py 姊妹口径）：cp936 宿主下
+    # 子 Python 对管道按 locale 编码——嵌 GBK 外字符的失败信息让探针 UnicodeEncodeError
+    # 假 FAIL 挡发布，中文 gate 消息以 GBK 落管则父侧 UTF-8 解码全 U+FFFD。
+    env["PYTHONIOENCODING"] = "utf-8"
     env["LANTAI_HOME"] = probe_home
     env["REMEMBRANCE_HOME"] = probe_home  # 旧变量名兼容（settings 仍会读它）
     env["DATABASE_URL"] = ""  # 空值 => 由 LANTAI_HOME 推导
@@ -771,6 +856,16 @@ def schema_drift_issues_from_payload(payload: dict) -> list[str]:
     ]
     issues += [f"建库缺表：{name}" for name in payload.get("missing_tables") or []]
     issues += [f"列/约束漂移：{item}" for item in payload.get("drift") or []]
+    # 票 25：升级库索引漂移 / 版本未推到 TARGET（迁移未应用）/ 重复应用不幂等。
+    # 三个维度全部来自「存量库形态模拟」——全新库探针恒绿，升级库漂移只有
+    # 在模拟形态下才可见。
+    issues += [f"索引漂移（升级库）：{item}" for item in payload.get("index_drift") or []]
+    _target = payload.get("upgrade_target")
+    _uv = payload.get("upgrade_user_version")
+    if _uv is not None and _target is not None and _uv != _target:
+        issues.append(f"迁移版本不一致：upgrade 模拟库 user_version={_uv} != TARGET {_target}")
+    if payload.get("idempotent") is False:
+        issues.append("迁移重复应用不幂等：二次 apply_migrations 后状态发生变化（票 25）")
     return issues
 
 
@@ -781,6 +876,10 @@ def schema_drift_probe(repo_root: Path, *, python: str | None = None, timeout: i
         "migration_failures": [],
         "missing_tables": [],
         "drift": [],
+        "index_drift": [],
+        "idempotent": True,
+        "upgrade_user_version": None,
+        "upgrade_target": None,
         "tables_checked": 0,
         "tables_built": 0,
         "home_isolated": False,
@@ -825,6 +924,186 @@ def schema_drift_issues(repo_root: Path) -> list[str]:
     issues = schema_drift_issues_from_payload(payload)
     if not payload.get("home_isolated"):
         issues.append("schema 探针没有跑在临时 LANTAI_HOME 里——它自己就可能污染生产，不放行")
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# 观测面保留对称性（票 29）
+#
+# 三条观测链此前只有 operation_logs 有 MONITOR_RETENTION_DAYS prune，
+# retrieval_event / llm_call_event 无界增长——且门禁没有任何「观测追加表 ↔
+# 保留期」对账，新增无保留期的追加表全部门禁放行。本项对账单一真源
+# lantai/observability/retention.py 的 OBSERVABILITY_RETENTION_TABLES 清单：
+# 每张表必须有 settings 旋钮、清扫函数本体、生产挂载点（scheduler 的
+# prune_all 或 telemetry flush 自扫），缺一即拒发。
+# ---------------------------------------------------------------------------
+
+
+def retention_symmetry_issues_from_sources(
+    settings_text: str, retention_text: str, scheduler_text: str, telemetry_text: str
+) -> list[str]:
+    """纯函数对账（测试可注入合成源）：清单 ↔ settings ↔ 清扫 ↔ 挂载。"""
+    import ast as _ast
+
+    issues: list[str] = []
+
+    def _tree(text: str, label: str):
+        try:
+            return _ast.parse(text)
+        except SyntaxError as exc:
+            issues.append(f"{label} 无法解析（票 29 对账中止）：{exc}")
+            return None
+
+    retention_tree = _tree(retention_text, "lantai/observability/retention.py")
+    if retention_tree is None:
+        return issues
+
+    # 清单真源：OBSERVABILITY_RETENTION_TABLES 顶层 dict 字面量（结构化导航，
+    # 不走 ast.walk——嵌套字面量覆写陷阱，票 27 教训）
+    inventory = None
+    for node in retention_tree.body:
+        if isinstance(node, _ast.AnnAssign) and isinstance(node.target, _ast.Name):
+            if node.target.id == "OBSERVABILITY_RETENTION_TABLES" and isinstance(
+                node.value, _ast.Dict
+            ):
+                inventory = node.value
+        elif isinstance(node, _ast.Assign) and any(
+            isinstance(t, _ast.Name) and t.id == "OBSERVABILITY_RETENTION_TABLES"
+            for t in node.targets
+        ):
+            if isinstance(node.value, _ast.Dict):
+                inventory = node.value
+    if inventory is None:
+        issues.append(
+            "retention.py 缺 OBSERVABILITY_RETENTION_TABLES 清单——观测面保留对账无单一真源（票 29）"
+        )
+        return issues
+
+    tables: dict[str, dict[str, str]] = {}
+    for k, v in zip(inventory.keys, inventory.values):
+        if not (isinstance(k, _ast.Constant) and isinstance(v, _ast.Dict)):
+            continue
+        spec: dict[str, str] = {}
+        for sk, sv in zip(v.keys, v.values):
+            if isinstance(sk, _ast.Constant) and isinstance(sv, _ast.Constant):
+                spec[str(sk.value)] = str(sv.value)
+        tables[str(k.value)] = spec
+    if not tables:
+        issues.append("OBSERVABILITY_RETENTION_TABLES 清单为空——观测追加表全部脱保（票 29）")
+        return issues
+
+    # settings 旋钮（类体内 Assign 目标名全集；此处是平面名字收集，walk 安全）
+    settings_tree = _tree(settings_text, "lantai/core/settings.py")
+    knob_names: set[str] = set()
+    if settings_tree is not None:
+        for node in _ast.walk(settings_tree):
+            if isinstance(node, _ast.Assign):
+                knob_names.update(t.id for t in node.targets if isinstance(t, _ast.Name))
+            elif isinstance(node, _ast.AnnAssign) and isinstance(node.target, _ast.Name):
+                knob_names.add(node.target.id)
+
+    # 清扫函数定义（逐模块收集 FunctionDef 名）
+    texts = {
+        "lantai/observability/retention.py": retention_tree,
+        "lantai/observability/telemetry.py": _tree(
+            telemetry_text, "lantai/observability/telemetry.py"
+        ),
+    }
+    sweep_defs: dict[str, set[str]] = {}
+    for module, tree in texts.items():
+        names: set[str] = set()
+        if tree is not None:
+            for node in _ast.walk(tree):
+                if isinstance(node, _ast.FunctionDef):
+                    names.add(node.name)
+        sweep_defs[module] = names
+
+    # 挂载面：scheduler add_job(... prune_all ...) + prune_all 体逐表调清扫 +
+    # telemetry flush 自扫 operation_logs（self.prune()）
+    scheduler_tree = _tree(scheduler_text, "lantai/core/scheduler.py")
+    mounted: set[str] = set()
+    prune_all_calls: set[str] = set()
+    if scheduler_tree is not None:
+        for node in _ast.walk(scheduler_tree):
+            if (
+                isinstance(node, _ast.Call)
+                and isinstance(node.func, _ast.Attribute)
+                and node.func.attr == "add_job"
+                and node.args
+                and isinstance(node.args[0], _ast.Name)
+            ):
+                mounted.add(node.args[0].id)
+    for node in _ast.walk(retention_tree):
+        if isinstance(node, _ast.FunctionDef) and node.name == "prune_all":
+            for sub in _ast.walk(node):
+                if isinstance(sub, _ast.Call) and isinstance(sub.func, _ast.Name):
+                    prune_all_calls.add(sub.func.id)
+    telemetry_self_prune = False
+    telemetry_tree = texts["lantai/observability/telemetry.py"]
+    if telemetry_tree is not None:
+        for node in _ast.walk(telemetry_tree):
+            if (
+                isinstance(node, _ast.Call)
+                and isinstance(node.func, _ast.Attribute)
+                and node.func.attr == "prune"
+                and isinstance(node.func.value, _ast.Name)
+                and node.func.value.id == "self"
+            ):
+                telemetry_self_prune = True
+
+    for table, spec in sorted(tables.items()):
+        knob = spec.get("knob", "")
+        sweep = spec.get("sweep", "")
+        module = spec.get("module", "")
+        if not knob or knob not in knob_names:
+            issues.append(
+                f"观测表 {table} 保留旋钮 {knob or '(未声明)'} 缺失于 settings.py"
+                "（无界增长，票 29）"
+            )
+        if sweep and sweep not in sweep_defs.get(module, set()):
+            issues.append(f"观测表 {table} 清扫函数 {sweep} 未在 {module} 定义（清单失真，票 29）")
+        if module == "lantai/observability/telemetry.py":
+            if not telemetry_self_prune:
+                issues.append(
+                    f"观测表 {table} 清扫 {sweep} 无生产挂载点（telemetry 未自扫，票 29）"
+                )
+        elif sweep and sweep not in prune_all_calls:
+            issues.append(f"观测表 {table} 清扫 {sweep} 未被 prune_all 调用（挂载链断裂，票 29）")
+    if "prune_all" not in mounted:
+        issues.append(
+            "scheduler 未挂载 observability_purge（prune_all）——清扫存在但永不运行"
+            "即不对称复发的静默形态（票 29）"
+        )
+    return issues
+
+
+def retention_symmetry_issues(repo_root: Path) -> list[str]:
+    """读真仓四源做保留对称性对账；retention.py 缺失 = 单一真源不存在 = 拒发。"""
+    paths = {
+        "settings": repo_root / "lantai" / "core" / "settings.py",
+        "retention": repo_root / "lantai" / "observability" / "retention.py",
+        "scheduler": repo_root / "lantai" / "core" / "scheduler.py",
+        "telemetry": repo_root / "lantai" / "observability" / "telemetry.py",
+    }
+    missing = [name for name, path in paths.items() if not path.exists()]
+    if "retention" in missing:
+        return [
+            "lantai/observability/retention.py 不存在——retrieval_event / llm_call_event"
+            " 无行级清理且对账无真源（票 29）"
+        ]
+    texts = {
+        name: path.read_text(encoding="utf-8")
+        for name, path in paths.items()
+        if name not in missing
+    }
+    issues = retention_symmetry_issues_from_sources(
+        texts["settings"],
+        texts["retention"],
+        texts["scheduler"],
+        texts["telemetry"],
+    )
+    for name in missing:
+        issues.append(f"retention 对账源文件缺失：{name}（票 29）")
     return issues
 
 
@@ -1485,6 +1764,17 @@ def main(argv: list[str] | None = None) -> int:
             "迁移与列约束漂移",
             True,
             "临时 LANTAI_HOME 内 init_db() 全链通过，metadata 与实表列/NULL 约束一致",
+        )
+
+    retention_failures = retention_symmetry_issues(REPO_ROOT)
+    for issue in retention_failures:
+        check("观测面保留对称性", False, issue)
+    if not retention_failures:
+        check(
+            "观测面保留对称性",
+            True,
+            "三条观测链（operation_logs / retrieval_event / llm_call_event）"
+            "逐表有 settings 旋钮 + 清扫函数 + 生产挂载（OBSERVABILITY_RETENTION_TABLES 对账，票 29）",
         )
 
     legacy_payload = legacy_parity_probe(REPO_ROOT)

@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
+from lantai.cognition.jiaochou import SCAN_CANDIDATES_MAX
 from lantai.core.auth import get_current_user
 from lantai.services.jiaochou_service import (
     collate_memories_service,
@@ -43,11 +44,19 @@ def jiaochou_collate_route(
 
 @router.get("/jiaochou/scan")
 def jiaochou_scan_route(
-    limit: int = Query(50, ge=1, le=200, description="最大扫描冗余对数"),
+    # 票 59：上界对齐引擎池硬上界 SCAN_CANDIDATES_MAX——REST 侧不再静默钳制，
+    # 超界 422（pydantic）与引擎 ValueError 同一口径。
+    limit: int = Query(
+        50, ge=1, le=SCAN_CANDIDATES_MAX, description="扫描候选池行数上界兼返回对数上界（1..100）"
+    ),
     similarity_threshold: float = Query(0.7, ge=0.1, le=1.0, description="相似度聚类阈值"),
     ctx=Depends(get_current_user),
 ) -> dict[str, Any]:
-    """扫描当前权限范围内的活跃记忆近义冗余簇。"""
+    """扫描当前权限范围内的活跃记忆近义冗余簇。
+
+    口径（票 59）：候选池 = 最近创建的 min(limit, 100) 行，池内两两取最相似
+    limit 对报告；threshold 越界 (0,1] 拒绝。
+    """
     return scan_redundancy_service(
         limit=limit,
         similarity_threshold=similarity_threshold,
