@@ -58,6 +58,8 @@ docs/memory-quality/*.md
 # v0.68 测试诚实性审计报告：一次性工程审计（非运行时再生、无记忆正文），
 # 被测试 docstring 与票据引用，随分支入库（先例同 chinese-memory-v1.md 白名单）
 !docs/memory-quality/test-honesty-audit-2026-11.md
+# 票 84：部署时区与日报窗口裁决诊断（按 development-workflow 归档要求）
+!docs/memory-quality/digest-boundaries-diagnosis-2026-11-13.md
 
 .uv-cache/
 .mimosa/
