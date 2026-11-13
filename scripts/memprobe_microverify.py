@@ -26,6 +26,10 @@ from pathlib import Path
 
 import requests
 
+# 票 30 A2：报告面 stdout 钉 UTF-8——cp936 宿主 print GBK 外字符（emoji/U+2028/罕用字）直接崩
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs/benchmarks/memprobe-2026-10"
 MV_HOME = ROOT / ".scratch/memprobe-suite/mv-home"
@@ -60,6 +64,8 @@ def _assert_double_gate() -> Path:
 def _server_env() -> dict:
     env = {
         "PATH": os.environ.get("PATH", ""),
+        # 子进程 stdio/日志句柄钉 UTF-8（票 30 A3）：不钉则中文日志按 cp936 落 server.log
+        "PYTHONIOENCODING": "utf-8",
         "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
         "USERPROFILE": os.environ.get("USERPROFILE", ""),
         "HOMEDRIVE": os.environ.get("HOMEDRIVE", ""),

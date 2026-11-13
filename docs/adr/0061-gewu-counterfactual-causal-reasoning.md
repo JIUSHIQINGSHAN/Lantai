@@ -34,7 +34,19 @@
    - MCP 工具：暴露 `causal_counterfactual` 与 `causal_project_impact` 工具，保持 MCP 1:1 双向守卫对齐；
 4. **测试纪律严格贯彻**：
    - 必须通过真实 in-memory SQLite 构造不 mock 核心逻辑的冒烟测试套件。
+5. **遍历设界（v0.68 票 39 增补）**：
+   - 反事实逆向回溯与关键路径枚举均为全简单路径遍历（per-path visited 防环），
+     n 层 k 叉菱形的路径数 ≈ k^n——`max_depth` 入口设界（REST pydantic ge/le、
+     MCP -32602、引擎直调 ValueError 三面镜像，单一真源
+     `COUNTERFACTUAL_MAX_DEPTH_LIMIT=10`），存活路径硬上限
+     `COUNTERFACTUAL_PATH_CAP=64`（BFS 先到先停，`paths_truncated` 外显，
+     partial 语义同校雠/拾遗 `scan_truncated`）；
+   - 帽内结论语义不变；`find_critical_causal_path` 超帽时帽外路径不参与置信度
+     择优（语义收窄如实入 docstring）；该函数产品代码零调用方（死代码留档，
+     删除与否留待维护者裁决）；
+   - 遍历层共享单一 DB 会话，会话开合与路径数×深度解耦。
 
 ## 影响
 - 使兰台认知层由“被动时序回溯”升华至“主动反事实分析与决策影响前瞻”，为 Agent 决策安全与因果归因提供深层推演支撑；
-- 保持既有系统零破坏与平滑演进。
+- 保持既有系统零破坏与平滑演进；
+- 合法形状请求不再能驱动指数级路径枚举与逐路径会话开合（票 39：与 N-02 拾遗全表扫描同族的资源放大面收口）。

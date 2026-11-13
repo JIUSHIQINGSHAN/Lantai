@@ -106,7 +106,9 @@ def test_main_timeout_returns_empty_json(monkeypatch, capsys):
 
 
 def test_stdin_forced_utf8_reconfigure(monkeypatch):
-    """回归：Windows GBK 环境下 stdin 必须被强制为 UTF-8。
+    """回归：Windows GBK 环境下 stdin/stdout 必须被强制为 UTF-8，stderr 同钉
+    且 errors=replace（票 30 A5：logger.exception 的异常 repr 嵌 GBK 外字符时
+    不再崩日志丢行）。
 
     修复背景：Hermes 按 UTF-8 写 JSON（含中文 query），Python 默认按 GBK 解码
     →「你好」变「浣犲ソ」→ 检索零命中、注入静默失效。reconfigure 必须在读 stdin 前执行。
@@ -115,17 +117,23 @@ def test_stdin_forced_utf8_reconfigure(monkeypatch):
     class FakeStream:
         def __init__(self):
             self.encoding = "gbk"
+            self.errors = None
 
-        def reconfigure(self, encoding=None):
+        def reconfigure(self, encoding=None, errors=None):
             self.encoding = encoding
+            self.errors = errors
 
     fake_stdin = FakeStream()
     fake_stdout = FakeStream()
+    fake_stderr = FakeStream()
     monkeypatch.setattr("sys.stdin", fake_stdin)
     monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("sys.stderr", fake_stderr)
     _load_hook(monkeypatch)
     assert fake_stdin.encoding == "utf-8"
     assert fake_stdout.encoding == "utf-8"
+    assert fake_stderr.encoding == "utf-8"
+    assert fake_stderr.errors == "replace"
 
 
 def test_handle_one_empty_returns_empty(monkeypatch):

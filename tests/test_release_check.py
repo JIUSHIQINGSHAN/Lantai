@@ -17,7 +17,15 @@ _spec.loader.exec_module(RC)
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
 
 
 def _ensure_real_git_available(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -25,6 +25,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+# 票 30 A2：报告面 stdout 钉 UTF-8——cp936 宿主 print GBK 外字符（emoji/U+2028/罕用字）直接崩
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 REPO = Path(__file__).resolve().parents[1]
 OUT_DIR = REPO / "tests" / "fixtures" / "legacy-schema"
 SNAPSHOT_SCHEMA_VERSION = 1
@@ -99,6 +103,10 @@ def build(tag: str) -> Path:
         cwd=str(REPO),
         capture_output=True,
         text=True,
+        # Git-for-Windows 发 UTF-8；裸 text=True 按 cp936 解码，失败路径的
+        # stderr（含 CJK 路径/tag）直接 mojibake（票 30 A4 同族）
+        encoding="utf-8",
+        errors="replace",
     )
     if git_err.returncode != 0:
         shutil.rmtree(parent, ignore_errors=True)

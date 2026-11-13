@@ -911,6 +911,7 @@ class IdempotencyKey(SQLModel, table=True):
     response_json: str | None = None
     state: str = "accepted"
     created_at: float = Field(default_factory=lambda: utcnow().timestamp(), index=True)
+    token: str | None = None
 
 
 class FactAtomic(SQLModel, table=True):

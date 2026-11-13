@@ -14,6 +14,10 @@ sys.path.insert(0, ".")
 
 from lantai.services.wiki_service import run_wiki_update_once  # noqa: E402
 
+# 票 30 A2：报告面 stdout 钉 UTF-8——cp936 宿主 print GBK 外字符（emoji/U+2028/罕用字）直接崩
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="兰台记忆 Wiki 刷新")

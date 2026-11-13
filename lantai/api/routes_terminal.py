@@ -35,8 +35,14 @@ class ChatReq(BaseModel):
 
 class MemoryUpdateReq(BaseModel):
     content: str | None = None
-    importance: float | None = None
-    confidence: float | None = None
+    # 票 35：importance 裸 float 曾直落毒行——chat 泳道 importance≤-0.6 使遗忘
+    # 强度≤0，math.exp 正指数/除零让 apply_forgetting 确定性崩溃、全库衰减停摆
+    # （ge/le 同时拒 NaN/±inf：非有限值过不了比较约束）。超界拒绝 422，宁 miss
+    # 不脏写；存量毒行由 _lane_strength 下限兜底（forgetting.py）。
+    importance: float | None = Field(default=None, ge=0.0, le=1.0)
+    # 票 35 双轴自审采纳项：confidence 与 importance 同模型同型毒面——NaN 过验
+    # 后 SQLite 绑 NULL 撞 NOT NULL 即 500，负值 200 毒写；同款约束不按字段分裂。
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     memory_type: str | None = None
 
 

@@ -19,6 +19,10 @@ sys.path.insert(0, str(MP_SRC))
 
 import compute_metrics as CM  # noqa: E402, N812 — MemProbe 官方聚合器（外部套件，只读）
 
+# 票 30 A2：报告面 stdout 钉 UTF-8——cp936 宿主 print GBK 外字符（emoji/U+2028/罕用字）直接崩
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 EVID = REPO_ROOT / "docs/benchmarks/memprobe-2026-10"
 REPORT = EVID / "report.json"
 EPISODES = REPO_ROOT / ".scratch/memprobe-suite/MemProbe/MemProbe-main/data/suite56/episodes.jsonl"
