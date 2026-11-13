@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -20,8 +19,7 @@ from sqlmodel import Session, select
 
 from lantai.core.acl import viewer_of
 from lantai.core.auth import Principal
-from lantai.core.numeric import clamp_unit_interval
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryEdge, MemoryItem, MemoryProposal
 from lantai.storage import db
@@ -97,34 +95,8 @@ class AuditReport:
             "risk_distribution": self.risk_distribution,
             "audit_summary": self.audit_summary,
             "fenced_summary": fenced_s,
-            "inspected_at": self.inspected_at.isoformat(),
+            "inspected_at": iso_utc(self.inspected_at),
         }
-
-
-def _coerce_unit_interval(raw) -> float | None:
-    """patch.confidence 入参判别(票 68 位点 2)。
-
-    int/float → 钳 [0,1](经 core.numeric.clamp_unit_interval 单一真源,
-    票 35:NaN/±inf 等非有限值不得靠 min/max 实参顺序碰运气);数值字符串
-    (float() 可解析)→ 同样钳制;其余(含 bool——True/False 不是置信度,
-    宁拒不猜)与非有限值 → None,由调用方按错误回执拒绝——NaN 是「非数值」
-    而非 0.0,拒绝不 fabricated。返回值保证落在 [0,1],调用方无需再防越界。
-    """
-    if isinstance(raw, bool):
-        return None
-    if isinstance(raw, (int, float)):
-        if not math.isfinite(float(raw)):
-            return None
-        return clamp_unit_interval(raw, default=0.0)
-    if isinstance(raw, str):
-        try:
-            v = float(raw.strip())
-        except ValueError:
-            return None
-        if not math.isfinite(v):
-            return None
-        return clamp_unit_interval(v, default=0.0)
-    return None
 
 
 class NiyiEngine:
@@ -249,26 +221,17 @@ class NiyiEngine:
         }
 
         # 计算置信度浮动与风险评级
-        # 置信度入参判别(票 68 位点 2):非数值(LLM 传 "high" 之类)按本函数既有
-        # 失败形态回执「推演终止」(与下方未找到目标同族),不裸 float() 冒 500;
-        # 数值越界钳 [0,1] 再算 delta——拒绝而非静默修正,钳制而非放行幽灵增量。
-        raw_conf = patch_data.get("confidence", mem.confidence)
-        target_conf = _coerce_unit_interval(raw_conf)
-        if target_conf is None:
-            return DeliberationOutcome(
-                proposal_type=proposal_type,
-                target_memory_id=target_memory_id,
-                before_state={},
-                after_patch=patch_data,
-                impacted_edges_count=impacted_count,
-                impacted_edge_details=[],
-                risk_level="low",
-                deliberation_reason=(f"patch.confidence 非数值({raw_conf!r}),拒绝推演,推演终止"),
-                confidence_delta=0.0,
-                user_id=mem.user_id,
-                tenant_id=mem.tenant_id,
-            ).to_dict(fenced=True)
-        conf_delta = target_conf - float(mem.confidence)
+        target_conf = patch_data.get("confidence", mem.confidence)
+        # 票 68：先验后用——裸 float() 对 "high" 报「could not convert」
+        # （调用方无从自查，REST 面炸 500），1.5/-0.2 越界静默吃进风险评级。
+        # 拒绝而非静默钳制（宁 miss 不脏写）。
+        try:
+            target_conf_f = float(target_conf)
+        except (TypeError, ValueError):
+            raise ValueError(f"confidence 须为 [0, 1] 内数值，收到 {target_conf!r}") from None
+        if not 0.0 <= target_conf_f <= 1.0:
+            raise ValueError(f"confidence 须为 [0, 1] 内数值，收到 {target_conf!r}")
+        conf_delta = target_conf_f - float(mem.confidence)
 
         if proposal_type == "deprecate":
             if impacted_count > 0:

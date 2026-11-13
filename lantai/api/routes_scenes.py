@@ -6,7 +6,7 @@ GET  /scenes            场景列表（heat 降序）
 GET  /scenes/{scene_id} 场景 + 成员详情（MCP scene_get 下钻同源）
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from lantai.core.acl import Principal
 from lantai.core.auth import get_current_user
@@ -21,7 +21,12 @@ def rebuild_scenes(threshold: float | None = None) -> dict:
 
 
 @router.post("/assign")
-def assign_unassigned(limit: int = 50, threshold: float | None = None) -> dict:
+def assign_unassigned(
+    # 票 42：1..500（写面：批量改 MemoryItem.scene_id；list_scenes 的
+    # service 双校验口径不同，不在本票动）
+    limit: int = Query(50, ge=1, le=500),
+    threshold: float | None = None,
+) -> dict:
     """增量聚类补跑：无 scene_id 的 active 记忆并入既有场景（消化期自动调用同源）。"""
     return scene_service.assign_unassigned(limit=limit, threshold=threshold)
 

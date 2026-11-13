@@ -45,6 +45,9 @@ NULL_DRIFT_WAIVERS: dict[str, str] = {
     "memorycandidate.shared_scope": (
         "v36 ALTER ADD COLUMN 建为 nullable；模型 default='private'，ORM 不落 NULL（票 06）"
     ),
+    "retrieval_event.fts_terms_truncated": (
+        "v41 ALTER ADD COLUMN BOOLEAN DEFAULT 0，建为 nullable；模型 default=False（票 49）"
+    ),
 }
 
 _REQUIRED_COL_KEYS = {"name", "type", "nullable", "default", "pk"}

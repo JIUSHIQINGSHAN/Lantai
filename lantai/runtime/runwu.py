@@ -24,7 +24,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlmodel import Session, select
 
-from lantai.core.logger import logger
+from lantai.core.acl import SYSTEM_VIEWER
+from lantai.core.logger import loggable, logger
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import CognitiveRole, FailureRecord, LifecycleStatus, MemoryItem
 
@@ -112,8 +113,11 @@ class RunwuEngine:
             )
             if tenant_id is not None:
                 stmt = stmt.where(MemoryItem.tenant_id == tenant_id)
-            if user_id is not None:
-                stmt = stmt.where((MemoryItem.user_id == user_id) | (MemoryItem.user_id.is_(None)))
+            # 票 57：user_id 缺省（MCP 无身份）收敛 "default"——规则不再跨用户
+            # 全表拉取；显式系统身份全表（acl.py 立法语义，worker 刻意）。
+            viewer = user_id if (isinstance(user_id, str) and user_id.strip()) else "default"
+            if viewer != SYSTEM_VIEWER:
+                stmt = stmt.where((MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None)))
 
             items = session.exec(stmt).all()
             scored_items = []
@@ -133,7 +137,25 @@ class RunwuEngine:
 
             # 2. 失败记录提取（FailureRecord）
             if max_failures > 0:
+                # 票 61：failures 轨归属收敛——此前全库裸拉，A 的失败教训进
+                # B 的摘要。user 口径与上方 rules 轨（票 57）同一形状：None
+                # （MCP 无身份）收敛 "default"；显式系统身份全表（worker 刻意）；
+                # NULL 老行（迁移前存量）人人可读。**tenant 只收窄不过滤**：
+                # ownerless 旧行（tenant_id IS NULL）不因租户条件被排除
+                # （rules 轨同形状——MemoryItem.tenant_id 过滤同样只加
+                # `==` 条件不动 NULL 行？否：rules 轨 `tenant_id == x` 会把
+                # NULL 租户行排除。failures 轨按兼容优先，NULL 旧行保留，
+                # 与 user 轨 OR IS NULL 口径对齐）。
                 f_stmt = select(FailureRecord)
+                if viewer != SYSTEM_VIEWER:
+                    f_stmt = f_stmt.where(
+                        (FailureRecord.user_id == viewer) | (FailureRecord.user_id.is_(None))
+                    )
+                    if tenant_id is not None:
+                        f_stmt = f_stmt.where(
+                            (FailureRecord.tenant_id == tenant_id)
+                            | (FailureRecord.tenant_id.is_(None))
+                        )
                 f_records = session.exec(f_stmt).all()
                 scored_failures = []
                 for f in f_records:
@@ -170,7 +192,7 @@ class RunwuEngine:
                     logger.debug("润物联动探颐巡检跳过: %s", ex)
 
         except Exception as e:
-            logger.warning("润物自适应认知提取异常: %s", e)
+            logger.warning("润物自适应认知提取异常: %s", loggable(e, limit=200))
         finally:
             if should_close:
                 session.close()

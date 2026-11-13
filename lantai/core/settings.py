@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     LLM_MAX_CONCURRENCY: int = 4
     LLM_ACQUIRE_TIMEOUT: float = 30.0
 
+    # LLM 出站时长预算（票 48）：SDK 默认 timeout=600s + max_retries=2 叠加
+    # tenacity 3 连击 → 单次 chat_json 最坏 ≈90 分钟，挂起的上游占死 ingest
+    # job 与许可并发闸。显式立法：单请求墙 LLM_TIMEOUT，SDK 层重试关闭
+    # （应用层 tenacity 已有界——双层重试是乘法放大）；ingest 提取链另给
+    # 单发预算 LLM_INGEST_TIMEOUT（预算模式一次机会即止，embed D-04 同范式）
+    LLM_TIMEOUT: float = 120.0
+    LLM_MAX_RETRIES: int = 0
+    LLM_INGEST_TIMEOUT: float = 60.0
+
     # MCP 工具循环守卫（票据 .scratch/mcp-loop-guard/01，上游 f0.3++ LoopGuard 同款）：
     # 同一工具+参数指纹在 window_s 秒内失败 threshold 次 → 熔断 cooldown_s 秒，
     # 冷却结束放单个探针请求恢复。宿主 LLM 陷「调工具→失败→再调」死循环时的止损。
@@ -84,8 +93,10 @@ class Settings(BaseSettings):
 
     # Daily Digest（Ticket 03）：每日盘点报告 docs/memory-digest/YYYY-MM-DD.md
     DIGEST_ENABLED: bool = True
-    DIGEST_CRON_HOUR: int = 22  # UTC 22:00 = 本地(Asia/Shanghai) 06:00 早晨
-    DIGEST_OUTPUT_DIR: str = ""  # 为空时 = 仓库根 docs/memory-digest
+    DIGEST_CRON_HOUR: int = 15  # UTC 15:55 = 本地(Asia/Shanghai) 23:55 日末（票 31：触发点须贴近所报告本地日的日界，早晨触发只覆盖当天前几小时）
+    DIGEST_OUTPUT_DIR: str = (
+        ""  # 为空时 = 数据目录(LANTAI_HOME,未设时仓库根) docs/memory-digest（票 85）
+    )
 
     # Lane 分轨衰减：每类记忆的基础保留强度与重要性放大系数
     # base_s = 记忆半衰期（天），importance_boost = 重要性加权分数
@@ -265,12 +276,6 @@ class Settings(BaseSettings):
     DEDUP_ANCHOR_LOW: float = 0.3  # 锚点重合 < 此值：有新增值 → insert
     # ADR-0023 实质新词扩展信号：旧锚点零丢失 + 新增实质词 ≥ 此值 → update 提案
     DEDUP_EXTRA_ANCHOR_LIMIT: int = 2
-    # 校雠存量冗余扫描候选池硬上界（票 59）：O(n²) 两两比对的计算量随全库 active
-    # 行数平方增长，`limit` 只截输出不截计算量。扫描 SQL 按此 LIMIT 钉住候选池
-    # （cap+1 探测截断），超出部分不比对，结果以 scan_truncated 标注（宁 miss 不
-    # 拖死进程；同族先例 SHIYI_SCAN_BUDGET_MS）。与 REST GET /jiaochou/scan 的
-    # limit le=200 同数量级，默认值即 200。
-    JIAOCHOU_MAX_SCAN_CANDIDATES: int = 200
 
     # 探颐（ADR-0037 · v0.30）：主动探针与自然交互消歧机制开关
     ENABLE_PROACTIVE_PROBING: bool = True
@@ -313,7 +318,9 @@ class Settings(BaseSettings):
     # 上下文卸载（借鉴 TencentDB Agent Memory offload_server/compact 窄版）：
     # 超长记忆全文落文件，上下文只注入摘要 + 路径；需要时经 MCP offload_read 取全文
     SHELL_HOOK_OFFLOAD_CHARS: int = 2000  # 记忆内容超过此长度 → 落文件 + 摘要注入
-    OFFLOAD_OUTPUT_DIR: str = ""  # 为空时 = 仓库根 docs/memory-offload
+    OFFLOAD_OUTPUT_DIR: str = (
+        ""  # 为空时 = 数据目录(LANTAI_HOME,未设时仓库根) docs/memory-offload（票 85）
+    )
 
     # 票06：BM25 关键词 CJK 3-gram 滑窗分词，OR 召回与 AND 确定性两路共用
     # （trigram 索引下 2 字词无法匹配，整句短语匹配不覆盖词中错字/词面重叠改写；
@@ -344,7 +351,9 @@ class Settings(BaseSettings):
     # 记忆 Wiki（借鉴 TencentDB Agent Memory LLM-Wiki）：场景/技能 → 持续维护的页面
     # docs/memory-wiki/{index.md, overview.md, pages/}；overview 综述 + [[wikilink]] 下钻
     WIKI_ENABLED: bool = True
-    WIKI_OUTPUT_DIR: str = ""  # 为空时 = 仓库根 docs/memory-wiki
+    WIKI_OUTPUT_DIR: str = (
+        ""  # 为空时 = 数据目录(LANTAI_HOME,未设时仓库根) docs/memory-wiki（票 85）
+    )
     WIKI_OVERVIEW_LLM: bool = True  # overview 优先 LLM 综述；失败/关闭 → 确定性综述
     WIKI_PAGE_MAX_MEMBERS: int = 50  # 场景页最多列出的成员数
     WIKI_MEMBER_CHARS: int = 120  # 成员摘要截断字符数
@@ -363,6 +372,14 @@ class Settings(BaseSettings):
     SHELL_HOOK_MAX_CHARS_PER_SCENE: int = 400  # 单个场景导航块预算
     SCENE_MAX_MEMBERS_SHOWN: int = 8  # 导航块最多列出的成员 key 数
     RECALL_MONITOR_WINDOW_DAYS: int = 7  # 零召回率监控默认窗口（天）
+    # 观测面保留期（票 29，ADR-0002 零硬编码）：三条观测链此前只有 operation_logs
+    # 有 MONITOR_RETENTION_DAYS prune，retrieval_event / llm_call_event 无界增长。
+    # 不复用 MONITOR_RETENTION_DAYS（取证窗与观察窗语义不同源）；清扫运行时钳制
+    # max(config, RECALL_MONITOR_WINDOW_DAYS)——TTL 短于观察窗会让 recall_report
+    # 窗口计数静默失真（ADR-0027）。llm_call_event 的司天降级率窗 24h 低于任何
+    # 天粒度 TTL，结构性满足，无需单独下限旋钮。
+    RETRIEVAL_EVENT_RETENTION_DAYS: int = 30  # 检索事件保留天数（弱标注/评估数据面）
+    LLM_CALL_EVENT_RETENTION_DAYS: int = 30  # LLM 外呼结局保留天数（司天降级率数据源）
 
     # SSRF 防护
     SSRF_ALLOWED_SCHEMES: tuple = ("http", "https")
@@ -421,6 +438,13 @@ class Settings(BaseSettings):
     CONSOLIDATION_MIN_CLUSTER_SIZE: int = (
         3  # 聚类下限：同关键词命中记忆数 ≥ 此值才成簇（ADR-0002 零硬编码，原硬编码 3）
     )
+    # 沉潜调度（票 34）：与 digest/reflect 同形——cron 时刻 + ENABLED 开关。
+    # 原 hour=19/minute=30 硬编码（注释自证「北京时间凌晨 03:30」——只对
+    # 东八区宿主成立）破例 ADR-0002 零硬编码口径，此处收口；默认值即原
+    # 硬编码，默认行为零变化。
+    CONSOLIDATION_ENABLED: bool = True
+    CONSOLIDATION_CRON_HOUR: int = 19  # UTC 小时（UTC 19:30 = 北京 03:30，夜梦沉淀窗口）
+    CONSOLIDATION_CRON_MINUTE: int = 30
     CONSOLIDATION_PRUNE_THRESHOLD: float = (
         0.05  # 突触修剪阈值：decay_score < 此值即剪（ADR-0002 零硬编码，原硬编码 0.05）
     )
@@ -486,6 +510,11 @@ class Settings(BaseSettings):
     REFLECT_CRON_HOUR: int = 22  # UTC；与 digest 同小时错 1 分钟
     REFLECT_MAX_BATCH: int = 20  # 单次蒸馏候选上限（LLM 成本防护）
     # 察窗：观察期滑动窗口口径（ADR-0027）。从连续改为窗口内计数。
+    # 消费面（票 34 现状核对）：①scripts/reflect_observation_status.py
+    # --check（发布准备工具，standalone sqlite3 直读）；②reflect_worker
+    # 每次 scheduled 运行前真评察窗并在回执/日志透出（未毕业不跳过——
+    # 合格运行日由运行本身产生，自闸即死锁）。ADR-0027 影响段曾承诺
+    # release_check 接线，从未落地（实施现状见该 ADR 增补段）。
     REFLECT_OBSERVATION_WINDOW_DAYS: int = 14  # 滑动窗口大小（天）
     REFLECT_OBSERVATION_REQUIRED_RUNS: int = 7  # 窗口内合格运行天数门槛
     REFLECT_IMPORTANCE_POOL: float = (
@@ -507,9 +536,10 @@ class Settings(BaseSettings):
     REFLECT_STALE_SCAN_ENABLED: bool = False  # R4/R5 默认关（误报风险，保守起步）
 
     # digest 反思置信桶（回填校准报告区间；ADR-0002 零硬编码，见 docs/memory-quality/reflect-calibration-2026-08-11.md）
-    # 消费契约（digest_worker._aggregate_reflection，票 86）：hi >= 1.0 的桶按
-    # 数值语义收纳 conf == 1.0（右端闭区间），与标签名无关——调整桶定义时
-    # 须保持有一个 hi >= 1.0 的桶，否则 1.0 落「其他」兜底桶。
+    # 桶为半开区间 [lo, hi)；最大 hi 桶按闭区间右端收边界值（conf == max(hi)）——
+    # 归位判定跟数值走、不挂标签字面量，改名/调阈值后不漂移（票 86）。
+    # 不落任何半开区间的置信（< 最小 lo、> 最大 hi，含自定义桶间的缝隙）落
+    # DIGEST_CONF_FALLBACK_LABEL 兜底桶：标签与桶定义同源声明，消费侧不得裸写字面量。
     DIGEST_CONF_BUCKETS: list[tuple] = [
         ("0.5-0.6", 0.5, 0.6),
         ("0.6-0.7", 0.6, 0.7),
@@ -517,6 +547,16 @@ class Settings(BaseSettings):
         ("0.8-0.9", 0.8, 0.9),
         ("0.9-1.0", 0.9, 1.0),
     ]
+    DIGEST_CONF_FALLBACK_LABEL: str = "其他"
+
+    @property
+    def data_home(self) -> Path:
+        """数据目录单一真源：LANTAI_HOME（未设时仓库根）——db/chroma 与文档写面共用（票 85）。
+
+        wheel/容器形态下安装前缀只读，文档写面（digest/offload/wiki）若按安装前缀
+        推导必炸或静默降级；一律挂这里，与 DATABASE_URL/CHROMADB_PATH 同源。
+        """
+        return Path(self.LANTAI_HOME) if self.LANTAI_HOME else _REPO_ROOT
 
     def model_post_init(self, __context):
         """DATABASE_URL / CHROMADB_PATH 未显式设置时从 LANTAI_HOME 推导（兼容旧 REMEMBRANCE_HOME）。"""
@@ -534,7 +574,7 @@ class Settings(BaseSettings):
             if user_data.is_dir() and (user_data / "remembrance.db").is_file():
                 self.LANTAI_HOME = str(user_data)
 
-        home = Path(self.LANTAI_HOME) if self.LANTAI_HOME else _REPO_ROOT
+        home = self.data_home
         if not self.DATABASE_URL:
             self.DATABASE_URL = f"sqlite:///{home / 'remembrance.db'}"
         if not self.CHROMADB_PATH:

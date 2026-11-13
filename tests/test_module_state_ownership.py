@@ -235,16 +235,13 @@ def test_a_exercise_real_production_paths():
 """
 
 CHILD_FOREIGN_LEAK = """
-import lantai.cli.mcp as mcp_mod
+import lantai.cognition.kaogong as kaogong
 import lantai.observability.metrics as metrics
 
 
 def test_b_leak_foreign_state():
     metrics.set_collector(metrics.MetricsCollector())
-    # 原第二外来样例是 cehou._SHADOW_WINDOWS 植入——票 60 落库后内存注册表已删除，
-    # 外来泄漏样例换成同款手法（无主懒单例替换，兜底护栏照样点名）
-    mcp_mod._guard_instance = mcp_mod.LoopGuard()
-    mcp_mod._guard_instance.begin("child-planted-key")
+    kaogong._LATEST_KAOGONG_REPORT = {"child": "planted-report"}
 """
 
 
@@ -315,7 +312,9 @@ def test_child_session_with_owners_names_only_foreign_leaks(tmp_path):
         ln.startswith("[已回滚] lantai.observability.metrics._collector 被 1 例") for ln in lines
     ), f"外来 collector 泄漏没被点名（护栏被削弱）：\n{joined}"
     assert "test_b_foreign.py" in joined
-    assert any(ln.startswith("[已回滚] lantai.cli.mcp._guard_instance") for ln in lines), joined
+    assert any(
+        ln.startswith("[已回滚] lantai.cognition.kaogong._LATEST_KAOGONG_REPORT") for ln in lines
+    ), joined
     assert "test_a_production.py" not in joined, f"生产副作用仍落进兜底台账：\n{joined}"
     for name in (
         "lantai.observability.telemetry._writer",

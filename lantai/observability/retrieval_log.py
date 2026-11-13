@@ -5,22 +5,25 @@
 后续 dry-run/shadow 用这些事件做相对指标（zero_result / jaccard / 弱命中率）。
 """
 
-import hashlib
-
+from sqlalchemy import func
 from sqlmodel import select
 
 from lantai.core.ids import new_id
-from lantai.core.logger import logger
+from lantai.core.logger import loggable, logger
+from lantai.core.text import query_norm_hash
 from lantai.core.time import utcnow
 from lantai.models.tables import MemoryItem, RetrievalEvent
 from lantai.parameters.registry import default_snapshot
 from lantai.parameters.validation import snapshot_hash
 from lantai.storage import db
+from lantai.storage.cas import atomic_update
+from lantai.storage.fts import bm25_terms_truncated
 
 
 def _norm_hash(query: str) -> str:
-    digest = hashlib.sha256(" ".join(query.split()).lower().encode("utf-8"))
-    return digest.hexdigest()
+    # 票 50 自审收敛：归一口径上移 core.text.query_norm_hash 单真源
+    # （mokan 审计日志 query_fp 同源，观测口径不参与召回）
+    return query_norm_hash(query)
 
 
 # 系统注入噪音的确定性前缀（Hermes 技能库维护 / 记忆保存 / Skill 安装模板）。
@@ -114,6 +117,10 @@ def log_retrieval(
                     latency_ms=int(latency_ms),
                     zero_result=not result_ids,
                     is_system_noise=is_system_noise(query),
+                    # 票 49：截断事实是查询的确定函数——原查询在抹除前照算
+                    # （同 is_system_noise/estimated_tokens 既有范式），长查询
+                    # 尾部 gram 静默丢失自此在事件面可见
+                    fts_terms_truncated=bm25_terms_truncated(query),
                     scene_ids=_scenes_from_results(results),
                     estimated_tokens=(estimate_tokens(query) + _tokens_from_results(results)),
                 )
@@ -171,6 +178,7 @@ def _touch_keepalive(mem_ids: list[str], *, principal=None, event_id: str = "") 
         return 0
     touched = 0
     try:
+        now = utcnow()
         with db.get_session() as s:
             for mid in mem_ids:
                 item = s.get(MemoryItem, mid)
@@ -188,13 +196,24 @@ def _touch_keepalive(mem_ids: list[str], *, principal=None, event_id: str = "") 
                         )
                     except Exception:
                         logger.warning(
-                            "receipt keepalive skipped (not owner): mem=%s ev=%s", mid, event_id
+                            "receipt keepalive skipped (not owner): mem=%s ev=%s",
+                            mid,
+                            loggable(event_id, limit=128),
                         )
                         continue
-                item.injection_count = int(item.injection_count or 0) + 1
-                item.last_used_at = utcnow()
-                s.add(item)
-                touched += 1
+                # 票 23：注入计数原子 UPDATE（coalesce+1 对当前已提交值求值，
+                # 两事件并发回执同一条记忆各 +1 都落库，红测 F2a）+ status
+                # 写时重验（保活不是复活）。sync=False 下 ORM 属性不参与写。
+                touched += atomic_update(
+                    s,
+                    MemoryItem,
+                    mid,
+                    {
+                        "injection_count": func.coalesce(MemoryItem.injection_count, 0) + 1,
+                        "last_used_at": now,
+                    },
+                    MemoryItem.status == "active",
+                )
             s.commit()
     except Exception:
         logger.exception("receipt keepalive writeback failed (non-fatal)")
@@ -229,32 +248,57 @@ def backfill_used_ids(
     try:
         bump: list[str] = []
         with db.get_session() as s:
-            ev = s.get(RetrievalEvent, event_id)
-            if not ev:
-                return
-            if ev.receipt_status == "vetoed":
-                logger.info("receipt backfill ignored (vetoed is terminal): ev=%s", event_id)
-                return
-            if request_id and ev.request_id and request_id != ev.request_id:
-                logger.warning(
-                    "receipt request_id mismatch (kept by event_id): ev=%s ev_req=%s got=%s",
+            # 票 23：回执覆盖写改认领式条件 UPDATE（WHERE receipt_status=扫描值），
+            # 败方 rowcount=0 → 回滚后重读最新状态重算增量（重放同一回执不再双计
+            # 保活，红测 F2b；vetoed 终态不再被迟到处回执拉回 acked，红测 F2c）。
+            for _attempt in range(3):
+                ev = s.get(RetrievalEvent, event_id)
+                if not ev:
+                    return
+                # 票 50：event_id/request_id 均来自 REST 回执请求体（宿主可控，
+                # 可含换行伪造日志行）——本函数五处插值统一过 loggable
+                ev_log = loggable(event_id, limit=128)
+                if ev.receipt_status == "vetoed":
+                    logger.info("receipt backfill ignored (vetoed is terminal): ev=%s", ev_log)
+                    return
+                if request_id and ev.request_id and request_id != ev.request_id:
+                    logger.warning(
+                        "receipt request_id mismatch (kept by event_id): ev=%s ev_req=%s got=%s",
+                        ev_log,
+                        loggable(ev.request_id, limit=128),
+                        loggable(request_id, limit=128),
+                    )
+                if not _backfill_owner_ok(ev, principal):
+                    logger.warning("receipt backfill refused (owner mismatch): ev=%s", ev_log)
+                    return
+                # 覆盖写之前先取「本轮新增的 used_ids」与「本事件召回过的 id」：
+                # 保活回写只认这两者的交集（重放同一回执不累加、夹带外来 id 不计）。
+                already = set(ev.used_ids or [])
+                recalled = set(ev.result_ids or [])
+                now = utcnow()
+                scanned_status = ev.receipt_status
+                claimed = atomic_update(
+                    s,
+                    RetrievalEvent,
                     event_id,
-                    ev.request_id,
-                    request_id,
+                    {
+                        "used_ids": list(used_ids),
+                        "receipt_status": "acked",
+                        "receipt_at": now,
+                    },
+                    RetrievalEvent.receipt_status == scanned_status,
                 )
-            if not _backfill_owner_ok(ev, principal):
-                logger.warning("receipt backfill refused (owner mismatch): ev=%s", event_id)
+                if claimed:
+                    s.commit()
+                    bump = [mid for mid in used_ids if mid not in already and mid in recalled]
+                    break
+                s.rollback()
+                logger.info("receipt backfill raced; retrying on fresh state: ev=%s", ev_log)
+            else:
+                logger.warning(
+                    "receipt backfill abandoned after retries (non-fatal): ev=%s", ev_log
+                )
                 return
-            # 覆盖写之前先取「本轮新增的 used_ids」与「本事件召回过的 id」：
-            # 保活回写只认这两者的交集（重放同一回执不累加、夹带外来 id 不计）。
-            already = set(ev.used_ids or [])
-            recalled = set(ev.result_ids or [])
-            ev.used_ids = list(used_ids)
-            ev.receipt_status = "acked"
-            ev.receipt_at = utcnow()
-            s.add(ev)
-            s.commit()
-            bump = [mid for mid in used_ids if mid not in already and mid in recalled]
         # 回执先落库，再单开事务做保活回写（票 03 病灶 2）：回写失败不能倒过来把
         # acked 拖回 pending（ADR-0049 弱标注地基完整性优先）；顺序执行也避免在同一
         # 引擎上套嵌两个 Session——内存库的 StaticPool 共用一条 DBAPI 连接，套嵌会

@@ -17,28 +17,17 @@ from datetime import datetime
 from typing import Any
 
 import jieba
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import is_system_viewer, viewer_of
 from lantai.core.auth import Principal
-from lantai.core.settings import settings
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
 
-# 扫描入参合法域：与 REST GET /jiaochou/scan 的 Query(ge/le) 同界——引擎是单一
-# 真源（REST 的 pydantic 校验与 MCP 的 ValueError → -32602 都从这里取值），
-# 改界只改这里，描述面随之。
-SCAN_LIMIT_MIN = 1
-SCAN_LIMIT_MAX = 200
-SIMILARITY_THRESHOLD_MIN = 0.1
-SIMILARITY_THRESHOLD_MAX = 1.0
-# 扫描比对的单侧文本预算（票面修复目标 1「必要的预过滤（长文本）」）：cap 只限
-# 比对对数，不限单对成本——万字节正文 × cap² 对仍是拖死面。扫描对超预算正文按
-# 前缀近似比对（输出 text/proposal 仍是全文，不做脏写）；量级依据：仓内记忆正文
-# 预算面 SHELL_HOOK_MAX_CHARS_PER_MEMORY=200 / CHECKPOINT_MAX_CONTENT=600，
-# 1000 字覆盖绝大多数记忆，19,900 对 × ~0.1ms ≈ 秒级最坏面。
-_SCAN_COMPARE_MAX_CHARS = 1000
+# 票 59：扫描候选池硬上界。模块常量而非 Settings 旋钮——这是资源安全上界，
+# 不该被运行时配置调大（同 refine_service.REFINE_BATCH_LIMIT_MAX 的处置口径）。
+SCAN_CANDIDATES_MAX = 100
 
 
 @dataclass
@@ -91,31 +80,9 @@ class JiaochouEngine:
         self.session = session
         self.principal = principal
 
-    def _check_access(
-        self,
-        *,
-        owner_id: str | None,
-        tenant_id: str | None,
-        shared_scope: str = "private",
-    ) -> bool:
-        """行级安全隔离校验（宁 miss 不脏写）。"""
-        if self.principal is None:
-            # 外部/未透传身份默认收敛到 "default" 属主空间（票 59 身份臂；口径同
-            # zhaji._check_access 与 acl.viewer_of——NULL 老行必须可见，否则单人
-            # 部署读侧整体空转），不再继承 worker 的全表权限。
-            return owner_id in (None, "default")
-        if getattr(self.principal, "is_admin", False):
-            return True
-        if shared_scope == "swarm_shared":
-            return True
-
-        viewer = viewer_of(self.principal)
-        current_tenant = getattr(self.principal, "tenant_id", None)
-
-        if tenant_id and current_tenant and tenant_id != current_tenant:
-            return False
-
-        return not (owner_id is not None and owner_id != viewer)
+    # 票 59 死代码处置：`_check_access` 的唯一消费点 `_scan_redundancy` 已把行级
+    # ACL 下推 SQL where（None 收敛 viewer_of，同票 57 六引擎口径），Python 侧
+    # 第二套判据随之删除——行级 ACL 单一真源即那条 where（钩沉死代码处置同判）。
 
     def compare_and_collate(
         self,
@@ -123,19 +90,10 @@ class JiaochouEngine:
         text_b: str,
         memory_id_a: str | None = None,
         memory_id_b: str | None = None,
-        *,
-        compare_budget: int | None = None,
     ) -> dict[str, Any]:
-        """对两段文本/记忆执行双向语义校勘对齐。
-
-        ``compare_budget``：分词面的单侧文本截断预算（仅影响相似度计算，输出
-        text/proposal 仍用原文）；None = 全文比对（collate 工具面默认）。扫描面
-        传 ``_SCAN_COMPARE_MAX_CHARS`` 钉单对成本。
-        """
-        seg_a = (text_a or "")[:compare_budget] if compare_budget else text_a or ""
-        seg_b = (text_b or "")[:compare_budget] if compare_budget else text_b or ""
-        words_a = [w.strip().lower() for w in jieba.cut(seg_a) if len(w.strip()) > 1]
-        words_b = [w.strip().lower() for w in jieba.cut(seg_b) if len(w.strip()) > 1]
+        """对两段文本/记忆执行双向语义校勘对齐。"""
+        words_a = [w.strip().lower() for w in jieba.cut(text_a or "") if len(w.strip()) > 1]
+        words_b = [w.strip().lower() for w in jieba.cut(text_b or "") if len(w.strip()) > 1]
 
         set_a = set(words_a)
         set_b = set(words_b)
@@ -185,83 +143,84 @@ class JiaochouEngine:
     ) -> dict[str, Any]:
         """扫描当前权限范围内的活跃记忆，查找近义冗余配对。
 
-        扫描口径（票 59）：
-        - 候选池硬上界 ``settings.JIAOCHOU_MAX_SCAN_CANDIDATES``（SQL LIMIT，超出
-          截断并在结果 ``scan_truncated`` 标注）——两两比对的计算量随候选池平方
-          增长，必须与库大小解耦，否则 MCP 面一次正常调用即可拖死 stdio 单线程；
-        - 单侧比对预算 ``_SCAN_COMPARE_MAX_CHARS``：超长正文按前缀近似比对
-          （输出仍是原文全文），单对成本与正文长度解耦；
-        - ``limit`` ∈ [1, 200]、``similarity_threshold`` ∈ [0.1, 1.0]，越界拒绝
-          （ValueError，MCP 分发层转 -32602；NaN 任何比较为 False，同样被拒绝）；
-        - ``limit`` 是「先扫到的 N 对」（库返回序；SQLite 实况为 rowid/插入序），
-          不是「最相似的 N 对」。
+        扫描口径（票 59）：候选池 = 按 `created_at` 最近优先取 `min(limit,
+        SCAN_CANDIDATES_MAX)` 行；池内预分词一次再做两两 set-Jaccard，取最相似
+        的 `limit` 对复用 `compare_and_collate` 出报告。`limit` 同时钳制计算池与
+        输出（钳制到 [1, SCAN_CANDIDATES_MAX]），`similarity_threshold` 合法区间
+        (0, 1]，越界拒绝（ValueError）。早于池窗口的冗余对不可见——宁界不爆，
+        资源安全优先于完备性；本工具是 LLM 可自主调用的 MCP 面，计算量必须恒定。
         """
-        if not isinstance(limit, int) or isinstance(limit, bool):
-            raise ValueError(f"limit must be an integer, got {limit!r}")
-        if not (SCAN_LIMIT_MIN <= limit <= SCAN_LIMIT_MAX):
-            raise ValueError(
-                f"limit must be in [{SCAN_LIMIT_MIN}, {SCAN_LIMIT_MAX}], got {limit!r}"
-            )
-        if not (SIMILARITY_THRESHOLD_MIN <= similarity_threshold <= SIMILARITY_THRESHOLD_MAX):
-            raise ValueError(
-                "similarity_threshold must be in "
-                f"[{SIMILARITY_THRESHOLD_MIN}, {SIMILARITY_THRESHOLD_MAX}], "
-                f"got {similarity_threshold!r}"
-            )
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise ValueError("limit must be an integer")
+        if isinstance(similarity_threshold, bool) or not isinstance(
+            similarity_threshold, (int, float)
+        ):
+            raise ValueError("similarity_threshold must be a number")
+        threshold = float(similarity_threshold)
+        if not (0.0 < threshold <= 1.0):
+            raise ValueError("similarity_threshold must be in (0, 1]")
+        pool_size = max(1, min(limit, SCAN_CANDIDATES_MAX))
+
         if self.session is not None:
-            return self._scan_redundancy(self.session, limit, similarity_threshold)
+            return self._scan_redundancy(self.session, pool_size, threshold)
         with db.get_session() as s:
-            return self._scan_redundancy(s, limit, similarity_threshold)
+            return self._scan_redundancy(s, pool_size, threshold)
 
     def _scan_redundancy(
         self,
         s: Session,
-        limit: int,
+        pool_size: int,
         similarity_threshold: float,
     ) -> dict[str, Any]:
-        cap = max(1, int(settings.JIAOCHOU_MAX_SCAN_CANDIDATES))
-        # cap+1 探测截断：取到 cap+1 行才知道「还有更多」，比「恰好等于 cap」启发式诚实
-        stmt = select(MemoryItem).where(MemoryItem.status == "active").limit(cap + 1)
-        mems = list(s.exec(stmt).all())
-        scan_truncated = len(mems) > cap
-        mems = mems[:cap]
-
-        accessible_mems = [
-            m
-            for m in mems
-            if self._check_access(
-                owner_id=m.user_id,
-                tenant_id=m.tenant_id,
-                shared_scope=getattr(m, "shared_scope", "private"),
-            )
-        ]
-
-        pairs: list[dict[str, Any]] = []
-        n = len(accessible_mems)
-        for i in range(n):
-            for j in range(i + 1, n):
-                m_a = accessible_mems[i]
-                m_b = accessible_mems[j]
-
-                # 快速字符与词条初筛（超预算正文按前缀近似比对，钉单对成本）
-                diff = self.compare_and_collate(
-                    text_a=m_a.content,
-                    text_b=m_b.content,
-                    memory_id_a=m_a.id,
-                    memory_id_b=m_b.id,
-                    compare_budget=_SCAN_COMPARE_MAX_CHARS,
+        stmt = select(MemoryItem).where(MemoryItem.status == "active")
+        # 行级 ACL 下推 SQL（票 57 口径）：None 收敛 viewer_of="default"（只看默认
+        # 属主 + NULL 老行），admin/SYSTEM_VIEWER 显式全表，swarm_shared 公共结晶
+        # 人人可读（原 `_check_access` 判序）；租户不匹配同判 False。
+        if not (getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal)):
+            viewer = viewer_of(self.principal)
+            current_tenant = getattr(self.principal, "tenant_id", None)
+            owner_clause = (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
+            if current_tenant:
+                owner_clause = owner_clause & (
+                    (MemoryItem.tenant_id.is_(None)) | (MemoryItem.tenant_id == current_tenant)
                 )
-                if diff["similarity"] >= similarity_threshold:
-                    pairs.append(diff)
-                    if len(pairs) >= limit:
-                        break
-            if len(pairs) >= limit:
-                break
+            stmt = stmt.where(owner_clause | (MemoryItem.shared_scope == "swarm_shared"))
 
-        pairs.sort(key=lambda x: x["similarity"], reverse=True)
+        # 候选池硬上界：最近创建优先（created_at+id 双键稳定序），计算量 O(池²)
+        # 恒定，不再全表 O(n²)（票 59 病灶 1+2）。
+        stmt = stmt.order_by(col(MemoryItem.created_at).desc(), col(MemoryItem.id).desc()).limit(
+            pool_size
+        )
+        pool = list(s.exec(stmt).all())
+
+        # 预分词一次（O(池) 次 jieba 调用），两两只做廉价 set-Jaccard；报告对
+        # （≤ pool_size 个）才复用 compare_and_collate 出完整差异报告——公式同源，
+        # 单一真源不复制。
+        token_sets = [
+            set(w.strip().lower() for w in jieba.cut(m.content or "") if len(w.strip()) > 1)
+            for m in pool
+        ]
+        candidate_pairs: list[tuple[float, int, int]] = []
+        for i in range(len(pool)):
+            for j in range(i + 1, len(pool)):
+                union_len = len(token_sets[i].union(token_sets[j]))
+                sim = len(token_sets[i].intersection(token_sets[j])) / max(union_len, 1)
+                if sim >= similarity_threshold:
+                    candidate_pairs.append((sim, i, j))
+        candidate_pairs.sort(key=lambda t: (-t[0], t[1], t[2]))
+
+        pairs = [
+            self.compare_and_collate(
+                text_a=pool[i].content,
+                text_b=pool[j].content,
+                memory_id_a=pool[i].id,
+                memory_id_b=pool[j].id,
+            )
+            for _, i, j in candidate_pairs[:pool_size]
+        ]
         return {
             "total_pairs": len(pairs),
             "redundant_pairs": pairs,
-            "scanned_items": len(accessible_mems),
-            "scan_truncated": scan_truncated,
+            "scanned_pool": len(pool),
+            "candidates_cap": SCAN_CANDIDATES_MAX,
         }

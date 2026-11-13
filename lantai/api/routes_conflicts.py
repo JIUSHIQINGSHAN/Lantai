@@ -24,9 +24,8 @@ router = APIRouter(tags=["conflicts"])
 
 @router.get("/conflicts")
 def list_conflicts(
-    # 票 42:limit=-5 修复前在 service 走 rows[:-5] Python 切片(「去掉末尾5条」
-    # 语义倒挂);下推 SQL 后由 422 拒绝。界 [1,500] 与 MCP 孪生
-    # handle_conflicts_list(mcp.py:929)同源
+    # 票 42：1..500——limit 负值在切片语义下是「去掉末尾 N 条」（rows[:-5]），
+    # 不是无上限；全表捞回本就是性能债（service 侧已下推 SQL）
     limit: int = Query(50, ge=1, le=500),
     status: str = "open",
     ctx=Depends(get_current_user),

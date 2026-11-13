@@ -7,43 +7,24 @@
 3. 判定应验转正或异常熔断回滚；
 4. 全链路贯穿樊篱（wrap_as_data）防注入标记隔离；
 5. 落实行级租户与属主安全隔离（宁 miss 不脏写）。
-
-存储语义（v0.68 票 60）：影子视窗落 `cehou_window` 表（window_id 作主键，upsert 且
-属主校验）。此前是模块级 `_SHADOW_WINDOWS` 内存 dict——多 worker 各进程各持一份、
-重启即蒸发、创建路径无属主校验可被同名覆盖夺权，三者随落库一并收口。
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy.exc import IntegrityError
+from fastapi import HTTPException
 from sqlmodel import Session, select
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import is_system_viewer, viewer_of
 from lantai.core.auth import Principal
-from lantai.core.time import ensure_aware, utcnow
+from lantai.core.time import ensure_aware, iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import CehouWindow
 from lantai.storage import db
-
-# 单视窗报警条数上限（票 68 位点 8）：alerts 是无上限 JSON 列，错误率持续
-# 超标时逐条样本的失败率各有差异、告警文案各不相同，一直 append 会被撑爆。
-# 上限取 20（够覆盖最小样本要求的完整观察期），先到先得保留，超限不再追加
-# （宁 miss 不脏写）——视窗异常本身已由状态跃迁表达，报警只是留痕。
-MAX_WINDOW_ALERTS = 20
-
-
-def _append_alert(row: CehouWindow, alert: str) -> None:
-    """向视窗 alerts 追加一条告警（去重 + 上限封顶；JSON 列整列重赋值）。"""
-    current = row.alerts or []
-    if alert in current or len(current) >= MAX_WINDOW_ALERTS:
-        return
-    row.alerts = [*current, alert]
 
 
 @dataclass
@@ -89,8 +70,8 @@ class ShadowObservation:
             "metrics_delta": self.metrics_delta,
             "observation_summary": self.observation_summary,
             "fenced_summary": fenced_s,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
+            "created_at": iso_utc(self.created_at),
+            "updated_at": iso_utc(self.updated_at),
             "user_id": self.user_id,
             "tenant_id": self.tenant_id,
         }
@@ -132,7 +113,7 @@ class InspectionReport:
             "windows": self.windows,
             "report_summary": summary,
             "fenced_report": fenced_r,
-            "inspected_at": self.inspected_at.isoformat(),
+            "inspected_at": iso_utc(self.inspected_at),
         }
 
 
@@ -142,19 +123,6 @@ class CehouEngine:
     def __init__(self, session: Session | None = None, principal: Principal | None = None):
         self.session = session
         self.principal = principal
-
-    @contextmanager
-    def _own_session(self) -> Iterator[Session]:
-        """落库会话：装配传入的 session 优先（service 层）；未装配（引擎直调/
-        工具冒烟）时自开临时会话。写操作由各方法自行 commit，两种装配下语义一致。"""
-        if self.session is not None:
-            yield self.session
-        else:
-            with db.get_session() as session:
-                yield session
-
-    def _get_window(self, session: Session, window_id: str) -> CehouWindow | None:
-        return session.exec(select(CehouWindow).where(CehouWindow.window_id == window_id)).first()
 
     def _check_access(
         self,
@@ -184,67 +152,70 @@ class CehouEngine:
         required_days: int = 7,
         min_samples: int = 10,
     ) -> dict[str, Any]:
-        """创建或注册一个影子观察期视窗（落库）。
+        """创建或注册一个影子观察期视窗（票 60：落库 CehouWindow，window_id 主键）。
 
-        同名 window_id 已存在时先做属主校验：非本人/可信访问者 → 拒绝并如实返回
-        access_denied（修复前是无条件覆盖，B 用户可静默篡改 A 的对照实验数据）；
-        本人/可信访问者重复开窗 → 幂等返回现有行——窗内样本与状态是实验证据，
-        不许被重置。多 worker 并发首建同名窗时 INSERT 撞主键（SELECT/INSERT 间
-        有竞态窗口）：转译为 rollback 后按同一属主复检入口裁决，不裸抛 IntegrityError。
+        属主校验：已存在且非本人 → HTTPException(409) 拒绝覆盖（宁 miss 不脏写，
+        不再静默篡改他人实验对照组）；admin/SYSTEM_VIEWER 豁免；同属主重开 =
+        重新注册本 ID 实验（upsert 重置观察计数）。owner 恒 `viewer_of` 收敛
+        （None→"default"，不再落 NULL 属主窗，票 57 口径）。
         """
-        viewer = viewer_of(self.principal) if self.principal else None
-        current_tenant = getattr(self.principal, "tenant_id", None) if self.principal else None
+        viewer = viewer_of(self.principal)
+        current_tenant = getattr(self.principal, "tenant_id", None)
+        t = utcnow()
 
-        with self._own_session() as session:
-            existing = self._get_window(session, window_id)
-            if existing is None:
-                t = utcnow()
-                row = CehouWindow(
-                    window_id=window_id,
-                    target_type=target_type,
-                    target_id=target_id,
-                    state="observing",
-                    required_days=required_days,
-                    min_samples=min_samples,
-                    days_observed=0,
-                    sample_count=0,
-                    success_count=0,
-                    failure_count=0,
-                    total_latency_ms=0.0,
-                    total_score_delta=0.0,
-                    alerts=[],
-                    tenant_id=current_tenant,
-                    user_id=viewer,
-                    created_at=t,
-                    updated_at=t,
+        # 票 66：先验后写——required_days<=0 时 days>=req_days 恒真，按天观察
+        # 闸门形同虚设。界对齐 REST CreateWindowRequest Field [1,90]/[1,1000]
+        # （双面同钳，REST 为真源）；拒绝而非静默钳制（宁 miss 不脏写）。
+        if (
+            isinstance(required_days, bool)
+            or not isinstance(required_days, int)
+            or not 1 <= required_days <= 90
+        ):
+            raise ValueError(f"required_days 须为 [1, 90] 内整数，收到 {required_days!r}")
+        if (
+            isinstance(min_samples, bool)
+            or not isinstance(min_samples, int)
+            or not 1 <= min_samples <= 1000
+        ):
+            raise ValueError(f"min_samples 须为 [1, 1000] 内整数，收到 {min_samples!r}")
+
+        def _create(s: Session) -> dict[str, Any]:
+            row = s.get(CehouWindow, window_id)
+            privileged = getattr(self.principal, "is_admin", False) or is_system_viewer(
+                self.principal
+            )
+            if row is not None and not privileged and row.user_id not in (None, viewer):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"shadow window {window_id} already exists with a different owner",
                 )
-                session.add(row)
-                try:
-                    session.commit()
-                except IntegrityError:
-                    # 竞态窗口内另一 worker 先落了同名窗：回滚后按同一属主复检入口裁决
-                    session.rollback()
-                    existing = self._get_window(session, window_id)
-                    if existing is None:
-                        raise
-                else:
-                    session.refresh(row)
-                    return self._format_row(row).to_dict(fenced=True)
-            return self._resolve_existing(session, existing, window_id)
+            # 同 ID = 原行更新（PK 不动，重新注册本 ID 实验）；新 ID = 建行
+            data = row if row is not None else CehouWindow(window_id=window_id)
+            data.target_type = target_type
+            data.target_id = target_id
+            data.state = "observing"
+            data.required_days = required_days
+            data.min_samples = min_samples
+            data.days_observed = 0
+            data.sample_count = 0
+            data.success_count = 0
+            data.failure_count = 0
+            data.total_latency_ms = 0.0
+            data.total_score_delta = 0.0
+            data.alerts = []
+            data.created_at = t
+            data.updated_at = t
+            data.user_id = viewer
+            data.tenant_id = current_tenant
+            s.add(data)
+            s.commit()
+            s.refresh(data)  # expire_on_commit 清空 __dict__，refresh 后 model_dump 才有值
+            return self._format_observation(data.model_dump()).to_dict(fenced=True)
 
-    def _resolve_existing(
-        self, session: Session, existing: CehouWindow, window_id: str
-    ) -> dict[str, Any]:
-        """同名窗已存在时的统一裁决入口：属主校验不过 → 拒绝；通过 → 幂等返回现有行。"""
-        if not self._check_access(owner_id=existing.user_id, tenant_id=existing.tenant_id):
-            return {
-                "success": False,
-                "state": "access_denied",
-                "message": (
-                    f"影子观察视窗 {window_id} 已存在且属主校验未通过，拒绝覆盖（宁 miss 不脏写）"
-                ),
-            }
-        return self._format_row(existing).to_dict(fenced=True)
+        if self.session is not None:
+            return _create(self.session)
+        with db.get_session() as s:
+            return _create(s)
 
     def record_sample(
         self,
@@ -253,24 +224,34 @@ class CehouEngine:
         latency_ms: float = 0.0,
         score_delta: float = 0.0,
     ) -> dict[str, Any]:
-        """向指定视窗上报一条实测运行样本（落库）。"""
-        with self._own_session() as session:
-            row = self._get_window(session, window_id)
+        """向指定视窗上报一条实测运行样本。"""
+
+        # 票 66：先验后写——非有限值落 REAL 累计列是永久毒化（NaN 绑定 NULL、
+        # 比较恒假；inf 累计后任何后续裁决都失真），负耗时是无意义样本。
+        # 引擎单咽喉点同守 MCP 裸传面与 REST 面；拒绝而非静默钳制。
+        for _nm, _val in (("latency_ms", latency_ms), ("score_delta", score_delta)):
+            if (
+                isinstance(_val, bool)
+                or not isinstance(_val, (int, float))
+                or not math.isfinite(_val)
+            ):
+                raise ValueError(f"{_nm} 须为有限数值，收到 {_val!r}")
+        if latency_ms < 0:
+            raise ValueError(f"latency_ms 不得为负，收到 {latency_ms!r}")
+
+        def _record(s: Session) -> dict[str, Any]:
+            row = s.get(CehouWindow, window_id)
             if row is None:
                 return {"success": False, "message": f"Window {window_id} not found"}
 
             if not self._check_access(owner_id=row.user_id, tenant_id=row.tenant_id):
                 return {"success": False, "message": "无权访问此影子观察视窗"}
 
+            # 票 68：终态（graduated/rolled_back）窗口不再收样本——裁决已定，
+            # 继续收样本只膨胀计数与报警面（大库单窗口报警风暴），且终态指标
+            # 已不再参与任何状态跃迁。先验后写（宁 miss 不脏写）。
             if row.state != "observing":
-                # 终态闸（票 68 位点 8）：graduated/rolled_back 的视窗裁决已定，
-                # 迟到样本不得再改写 sample_count/成败/漂移累计——宁 miss 不脏写。
-                return {
-                    "success": False,
-                    "message": f"视窗 {window_id} 已终态（{row.state}），不再接收样本",
-                    "window_id": window_id,
-                    "sample_count": row.sample_count,
-                }
+                raise ValueError(f"视窗 {window_id} 已是终态（{row.state}），不再收样本")
 
             row.sample_count += 1
             if success:
@@ -282,52 +263,117 @@ class CehouEngine:
             row.total_score_delta += score_delta
             row.updated_at = utcnow()
 
-            # 漂移与报警检测（JSON 列的内嵌 list 不被 ORM 追踪，必须整列重新赋值）
+            # 漂移与报警检测（JSON 列原地 append 不被 SQLAlchemy 判脏，整体重赋值）
             s_count = row.sample_count
             fail_rate = row.failure_count / max(s_count, 1)
             if s_count >= 5 and fail_rate >= 0.4:
-                _append_alert(row, f"视窗 {window_id} 错误率激增至 {round(fail_rate * 100, 1)}%")
+                alert = f"视窗 {window_id} 错误率激增至 {round(fail_rate * 100, 1)}%"
+                if alert not in row.alerts:
+                    row.alerts = [*row.alerts, alert]
 
-            session.add(row)
-            session.commit()
+            s.add(row)
+            s.commit()
             return {"success": True, "window_id": window_id, "sample_count": s_count}
+
+        if self.session is not None:
+            return _record(self.session)
+        with db.get_session() as s:
+            return _record(s)
 
     def inspect_window(
         self,
         window_id: str,
         mock_days_observed: int | None = None,
     ) -> dict[str, Any] | None:
-        """巡检指定观察期视窗，核算累计指标并裁决状态跃迁（落库）。"""
-        with self._own_session() as session:
-            row = self._get_window(session, window_id)
+        """巡检指定观察期视窗，核算累计指标并裁决状态跃迁。"""
+
+        # 票 66：先验后写——str mock_days 落库后 days>=req_days TypeError 毒化
+        # 该窗所有后续巡检（票 60 只救了事务，类型脏值仍可入库）；10**9 一检
+        # 即伪造毕业。界 [0, 36500]（百年）对齐 REST InspectRequest。
+        if mock_days_observed is not None:
+            if (
+                isinstance(mock_days_observed, bool)
+                or not isinstance(mock_days_observed, int)
+                or not 0 <= mock_days_observed <= 36500
+            ):
+                raise ValueError(
+                    f"mock_days_observed 须为 [0, 36500] 内整数，收到 {mock_days_observed!r}"
+                )
+
+        def _inspect(s: Session) -> dict[str, Any] | None:
+            row = s.get(CehouWindow, window_id)
             if row is None:
                 return None
 
             if not self._check_access(owner_id=row.user_id, tenant_id=row.tenant_id):
                 return {"state": "access_denied", "message": "无权访问"}
 
-            obs = self._inspect_row(session, row, mock_days_observed)
-            session.commit()
-            return obs.to_dict(fenced=True)
+            if mock_days_observed is not None:
+                row.days_observed = mock_days_observed
+            else:
+                # SQLite 往返剥 tzinfo（票 32 归一口径）：绑定前必 ensure_aware
+                row.days_observed = max((utcnow() - ensure_aware(row.created_at)).days, 0)
+
+            s_count = row.sample_count
+            succ_rate = row.success_count / max(s_count, 1) if s_count > 0 else 0.0
+            days = row.days_observed
+            req_days = row.required_days
+            min_samp = row.min_samples
+
+            # 判定状态跃迁
+            if row.state == "observing":
+                # 1. 熔断回滚：样本不少于 5 且失败率高于 60%
+                if s_count >= min(min_samp, 5) and (1.0 - succ_rate) >= 0.6:
+                    row.state = "rolled_back"
+                    row.alerts = [*row.alerts, "观察期实测指标严重劣化，触发自动熔断回滚"]
+                # 2. 应验转正：天数与样本均满足且胜率 ≥ 80%
+                elif days >= req_days and s_count >= min_samp and succ_rate >= 0.8:
+                    row.state = "graduated"
+
+            row.updated_at = utcnow()
+            s.add(row)
+            s.commit()
+            s.refresh(row)  # 同 create：expire_on_commit 后需 refresh 再 model_dump
+            return self._format_observation(row.model_dump()).to_dict(fenced=True)
+
+        if self.session is not None:
+            return _inspect(self.session)
+        with db.get_session() as s:
+            return _inspect(s)
 
     def scan_active_windows(self, target_type: str | None = None) -> dict[str, Any]:
-        """全域扫描当前租户内影子视窗并生成汇总巡检报告（落库）。"""
+        """全域扫描当前权限范围内的影子视窗并生成汇总巡检报告。
+
+        行级 ACL 下推 SQL（票 57 口径）：None 收敛 `viewer_of`="default"（只见默认
+        属主 + NULL 老行窗），admin/`SYSTEM_VIEWER` 全表；租户不匹配同判不可见。
+        """
         windows: list[dict[str, Any]] = []
         alerts: list[str] = []
         obs_c = 0
         grad_c = 0
         rb_c = 0
 
-        with self._own_session() as session:
-            rows = session.exec(select(CehouWindow)).all()
-            for row in rows:
-                if not self._check_access(owner_id=row.user_id, tenant_id=row.tenant_id):
-                    continue
-                if target_type and row.target_type != target_type:
-                    continue
+        def _scan(s: Session) -> dict[str, Any]:
+            nonlocal obs_c, grad_c, rb_c
+            stmt = select(CehouWindow)
+            if not (getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal)):
+                viewer = viewer_of(self.principal)
+                current_tenant = getattr(self.principal, "tenant_id", None)
+                owner_clause = (CehouWindow.user_id == viewer) | (CehouWindow.user_id.is_(None))
+                if current_tenant:
+                    owner_clause = owner_clause & (
+                        (CehouWindow.tenant_id.is_(None))
+                        | (CehouWindow.tenant_id == current_tenant)
+                    )
+                stmt = stmt.where(owner_clause)
+            rows = list(s.exec(stmt).all())
 
-                obs = self._inspect_row(session, row, None)
-                res = obs.to_dict(fenced=True)
+            for row in rows:
+                res = self.inspect_window(row.window_id)
+                if not res or res.get("state") == "access_denied":
+                    continue
+                if target_type and res.get("target_type") != target_type:
+                    continue
 
                 state = res["state"]
                 if state == "observing":
@@ -337,103 +383,68 @@ class CehouEngine:
                 elif state == "rolled_back":
                     rb_c += 1
 
-                for a in row.alerts or []:
+                for a in row.alerts:
                     if a not in alerts:
                         alerts.append(a)
 
                 windows.append(res)
-            session.commit()
 
-        report = InspectionReport(
-            total_windows=len(windows),
-            observing_count=obs_c,
-            graduated_count=grad_c,
-            rolled_back_count=rb_c,
-            alerts=alerts,
-            windows=windows,
-        )
-        return report.to_dict(fenced=True)
+            report = InspectionReport(
+                total_windows=len(windows),
+                observing_count=obs_c,
+                graduated_count=grad_c,
+                rolled_back_count=rb_c,
+                alerts=alerts,
+                windows=windows,
+            )
+            return report.to_dict(fenced=True)
 
-    def _inspect_row(
-        self,
-        session: Session,
-        row: CehouWindow,
-        mock_days_observed: int | None,
-    ) -> ShadowObservation:
-        """就地核算单行指标并裁决状态跃迁（写回字段，commit 由调用方负责）。
+        if self.session is not None:
+            return _scan(self.session)
+        with db.get_session() as s:
+            return _scan(s)
 
-        与内存形态的判定语义逐条一致：真实时钟天数 = (utcnow - created_at).days
-        下钳 0；熔断 = 样本数 ≥ min(min_samples, 5) 且失败率 ≥ 0.6；
-        转正 = 天数与样本均达标且胜率 ≥ 0.8。
-        """
-        if mock_days_observed is not None:
-            row.days_observed = mock_days_observed
-        else:
-            # sqlmodel 0.0.42 无库级时区防护，SQLite 读回的 created_at 是 naive——
-            # 按「naive 即 UTC」的仓口径补齐后再相减（core.time.ensure_aware 约定）
-            row.days_observed = max((utcnow() - ensure_aware(row.created_at)).days, 0)
+    def _format_observation(self, data: dict[str, Any]) -> ShadowObservation:
+        s_count = data["sample_count"]
+        succ_rate = data["success_count"] / max(s_count, 1) if s_count > 0 else 0.0
+        avg_lat = data["total_latency_ms"] / max(s_count, 1) if s_count > 0 else 0.0
+        avg_score_d = data["total_score_delta"] / max(s_count, 1) if s_count > 0 else 0.0
 
-        s_count = row.sample_count
-        succ_rate = row.success_count / max(s_count, 1) if s_count > 0 else 0.0
-        days = row.days_observed
-        req_days = row.required_days
-        min_samp = row.min_samples
-
-        # 判定状态跃迁
-        if row.state == "observing":
-            # 1. 熔断回滚：样本不少于 5 且失败率高于 60%
-            if s_count >= min(min_samp, 5) and (1.0 - succ_rate) >= 0.6:
-                row.state = "rolled_back"
-                _append_alert(row, "观察期实测指标严重劣化，触发自动熔断回滚")
-            # 2. 应验转正：天数与样本均满足且胜率 ≥ 80%
-            elif days >= req_days and s_count >= min_samp and succ_rate >= 0.8:
-                row.state = "graduated"
-
-        row.updated_at = utcnow()
-        session.add(row)
-        return self._format_row(row)
-
-    def _format_row(self, row: CehouWindow) -> ShadowObservation:
-        s_count = row.sample_count
-        succ_rate = row.success_count / max(s_count, 1) if s_count > 0 else 0.0
-        avg_lat = row.total_latency_ms / max(s_count, 1) if s_count > 0 else 0.0
-        avg_score_d = row.total_score_delta / max(s_count, 1) if s_count > 0 else 0.0
-
-        state = row.state
+        state = data["state"]
         if state == "graduated":
             summary = (
-                f"视窗 {row.window_id} ({row.target_type}:{row.target_id}) "
-                f"已观察 {row.days_observed}/{row.required_days} 天，"
+                f"视窗 {data['window_id']} ({data['target_type']}:{data['target_id']}) "
+                f"已观察 {data['days_observed']}/{data['required_days']} 天，"
                 f"累计 {s_count} 样本且胜率达 {round(succ_rate * 100, 1)}%，已应验转正入库"
             )
         elif state == "rolled_back":
             summary = (
-                f"视窗 {row.window_id} 胜率仅 {round(succ_rate * 100, 1)}%，"
+                f"视窗 {data['window_id']} 胜率仅 {round(succ_rate * 100, 1)}%，"
                 "发生显著指标退化，已异常回滚"
             )
         else:
             summary = (
-                f"视窗 {row.window_id} 观测中 ({row.days_observed}/{row.required_days} 天)，"
-                f"样本数: {s_count}/{row.min_samples}，胜率: {round(succ_rate * 100, 1)}%"
+                f"视窗 {data['window_id']} 观测中 ({data['days_observed']}/{data['required_days']} 天)，"
+                f"样本数: {s_count}/{data['min_samples']}，胜率: {round(succ_rate * 100, 1)}%"
             )
 
         return ShadowObservation(
-            window_id=row.window_id,
-            target_type=row.target_type,
-            target_id=row.target_id,
+            window_id=data["window_id"],
+            target_type=data["target_type"],
+            target_id=data["target_id"],
             state=state,
-            days_observed=row.days_observed,
-            required_days=row.required_days,
+            days_observed=data["days_observed"],
+            required_days=data["required_days"],
             sample_count=s_count,
-            min_samples=row.min_samples,
+            min_samples=data["min_samples"],
             success_rate=succ_rate,
             metrics_delta={
                 "avg_latency_ms": round(avg_lat, 2),
                 "avg_score_delta": round(avg_score_d, 4),
             },
             observation_summary=summary,
-            created_at=row.created_at,
-            updated_at=row.updated_at,
-            user_id=row.user_id,
-            tenant_id=row.tenant_id,
+            created_at=data["created_at"],
+            updated_at=data["updated_at"],
+            user_id=data.get("user_id"),
+            tenant_id=data.get("tenant_id"),
         )

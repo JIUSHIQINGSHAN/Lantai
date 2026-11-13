@@ -1,9 +1,8 @@
 """测候（Cehou）服务层——影子观察期巡检与演化状态监控服务 (ADR-0073)。
 
 为 REST 路由、MCP 工具与认知上下文切面提供视窗巡检、视窗扫描与样本上报服务。
-影子视窗自 v0.68 票 60 起落 `cehou_window` 表（此前为模块级内存注册表，多 worker
-不共享、重启清零）：本层每次调用经 `db.get_session()` 装配引擎，属主校验与
-upsert 语义见 `lantai.cognition.cehou.CehouEngine`。
+视窗状态落库 `CehouWindow` 表（票 60）：持久、跨 worker 一致、重启可恢复；
+本层是无状态转发，不持有任何注册表。
 """
 
 from __future__ import annotations

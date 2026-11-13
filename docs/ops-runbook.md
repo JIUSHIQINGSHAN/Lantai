@@ -21,7 +21,7 @@ curl -s http://127.0.0.1:8767/monitor/prometheus | head -40
 | 看什么 | 指标 | 异常时怎么办 |
 |--------|------|--------------|
 | 服务活着吗 | `summary.status` / 告警区 | `critical` 优先处理，`scheduler_not_running` 先查启动日志 |
-| worker 停没停 | 调度器表「状态」列 | 逾期 → `POST /monitor/workers/{name}/run` 手动补跑 |
+| worker 停没停 | 调度器表「状态」列 | 逾期 → `POST /monitor/workers/{name}/run` 手动补跑（v0.68 票 19 起 admin 专用：带 `X-API-Key: <env key>` 头） |
 | 接口慢不慢 | p95 延迟 + 端点耗时排行 | 排行里 p95 高的端点通常是 LLM/精排调用，查端点可达性 |
 | 有没有报错 | 5xx 错误率 + 最近问题请求 | `/monitor/logs?only_problems=true` 看具体端点与状态码 |
 | 库在膨胀吗 | 存储占用 + 表行数 | 跑遗忘/沉淀；必要时备份后归档旧库 |
@@ -119,7 +119,7 @@ docker run -d -p 8767:8767 -e API_KEY=... -e OPENAI_API_KEY=... -v /your/data:/d
 | `python scripts/memory_overview.py` | 记忆概览（总数、待审、检查点） |
 | `python scripts/reflect_observation_status.py` | 观察期门禁状态 |
 | `python scripts/recall_health.py` | 召回健康度 |
-| `POST /monitor/workers/digest/run`（服务在跑时；或 `GET /digest/today` 取当日结果） | 手动生成每日盘点 |
+| `POST /monitor/workers/digest/run`（服务在跑时；或 `GET /digest/today` 取当日结果） | 手动生成每日盘点（v0.68 票 19 起需 admin：请求带 `X-API-Key: <env key>` 头） |
 | `python scripts/release_check.py vX.Y.Z` | 发布准备检查 |
 | `pytest tests/ -q` | 全量测试 |
 | `python scripts/run_forgetting_quality.py --check` | 评测集门禁 |

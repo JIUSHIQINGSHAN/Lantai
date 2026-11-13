@@ -4,8 +4,11 @@
 1. 建立结构化提纯契约 PishaResult（原置信度与重估置信度、指代消解明细、降噪标签等）；
 2. 针对提取候选处于模糊带（0.2~0.5）或弱指代口语文本，提供多轨提纯去噪纯函数；
 3. 支持结合上下文与实体线索（entity_hints）进行确定性消解与去粗取精；
-4. 全面集成樊篱防注入围栏（wrap_as_data）；
-5. 落实行级租户与属主安全隔离（宁漏不越权、宁 miss 不脏写）。
+4. 樊篱防注入围栏（wrap_as_data）双向覆盖——LLM 提纯入口的库内数据与出口的精炼产物
+   （票 58：此前只覆盖出口）。
+
+DB 写面（候选落库/批量扫描/ACL/备份/毒闸/幂等）不在本引擎——单一真源在
+`services.refine_service`（票 58 死代码处置，见下方删除注记）。
 """
 
 from __future__ import annotations
@@ -14,15 +17,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlmodel import Session, select
-
-from lantai.core.acl import viewer_of
-from lantai.core.auth import Principal
-from lantai.core.logger import logger
+from lantai.core.logger import loggable, logger
 from lantai.llm import client as llm_client
 from lantai.llm.fence import wrap_as_data
-from lantai.models.tables import MemoryCandidate
-from lantai.storage import db
 
 # 常见口语化副词、助词、废话前缀列表（启发式去噪）
 COLLOQUIAL_NOISE_PATTERNS = [
@@ -89,31 +86,7 @@ class PishaResult:
 
 
 class PishaEngine:
-    """披沙（Pisha）候选记忆递归提纯去噪与指代消解引擎。"""
-
-    def __init__(self, session: Session | None = None, principal: Principal | None = None):
-        self.session = session
-        self.principal = principal
-
-    def _check_access(
-        self,
-        *,
-        owner_id: str | None,
-        tenant_id: str | None,
-    ) -> bool:
-        """行级安全隔离校验（宁漏不越权）。"""
-        if self.principal is None:
-            return True
-        if getattr(self.principal, "is_admin", False):
-            return True
-
-        viewer = viewer_of(self.principal)
-        current_tenant = getattr(self.principal, "tenant_id", None)
-
-        if tenant_id and current_tenant and tenant_id != current_tenant:
-            return False
-
-        return not (owner_id is not None and owner_id != viewer)
+    """披沙（Pisha）候选记忆递归提纯去噪与指代消解引擎（纯函数，无 DB 写面）。"""
 
     @staticmethod
     def _apply_heuristic_denoise(text: str) -> tuple[str, list[str]]:
@@ -169,11 +142,14 @@ class PishaEngine:
             )
 
         # 2. 调用 LLM 提纯（若有模型可用）
-        user_prompt = f"【待精炼候选文本】:\n{h_cleaned}\n"
+        # 票 58：库内数据出 prompt 前一律樊篱包裹（wrap_as_data）——模块 docstring
+        # 所称「全面集成樊篱」此前只覆盖出口（fenced_content），入口的候选正文/
+        # 上下文裸拼，注入载荷可越出数据位操纵精炼裁决（票 55 同族）。
+        user_prompt = f"【待精炼候选文本】:\n{wrap_as_data(h_cleaned)}\n"
         if context:
-            user_prompt += f"\n【上下文背景】:\n{context}\n"
+            user_prompt += f"\n【上下文背景】:\n{wrap_as_data(context)}\n"
         if pronoun_map:
-            user_prompt += f"\n【已知实体映射线索】:\n{pronoun_map}\n"
+            user_prompt += f"\n【已知实体映射线索】:\n{wrap_as_data(str(pronoun_map))}\n"
 
         try:
             res = llm_client.chat_json(REFINE_SYSTEM_PROMPT, user_prompt)
@@ -210,7 +186,9 @@ class PishaEngine:
                     llm_failed=False,
                 )
         except Exception as exc:
-            logger.warning("披沙：LLM 精炼调用异常，进入确定性降级规则: %s", exc)
+            logger.warning(
+                "披沙：LLM 精炼调用异常，进入确定性降级规则: %s", loggable(exc, limit=200)
+            )
 
         # 3. 确定性降级路径（宁 miss 不脏写）
         final_text = h_cleaned or raw_text
@@ -248,99 +226,11 @@ class PishaEngine:
             llm_failed=True,
         )
 
-    def refine_candidate(self, candidate_id: str) -> dict[str, Any]:
-        """对数据库中单条候选执行披沙提纯与状态联动。"""
-        cand_id = (candidate_id or "").strip()
-        if not cand_id:
-            raise ValueError("candidate_id 不能为空")
-
-        if self.session is not None:
-            return self._refine_candidate(self.session, cand_id)
-        with db.get_session() as s:
-            return self._refine_candidate(s, cand_id)
-
-    def _refine_candidate(self, s: Session, cand_id: str) -> dict[str, Any]:
-        cand = s.get(MemoryCandidate, cand_id)
-        if not cand:
-            raise ValueError(f"候选记录未找到: {cand_id}")
-
-        if not self._check_access(owner_id=cand.user_id, tenant_id=cand.tenant_id):
-            raise PermissionError(f"无权操作此候选记忆（行级租户/属主隔离）: {cand_id}")
-
-        orig_text = cand.summary or (cand.claims[0] if cand.claims else "")
-        initial_conf = float(getattr(cand, "extractor_confidence", 0.4) or 0.4)
-        context_str = str(cand.provenance) if cand.provenance else ""
-
-        result = self.refine_text(
-            text=orig_text,
-            context=context_str,
-            initial_confidence=initial_conf,
-        )
-
-        if not result.is_valid:
-            cand.status = "rejected"
-            cand.extractor_confidence = 0.0
-            cand.provenance = {
-                **(cand.provenance or {}),
-                "pisha_rejected": True,
-                "pisha_reason": result.reason,
-            }
-        else:
-            cand.summary = result.refined_text
-            cand.claims = [result.refined_text]
-            cand.extractor_confidence = result.refined_confidence
-            cand.lane = result.lane
-            cand.provenance = {
-                **(cand.provenance or {}),
-                "pisha_refined": True,
-                "pronoun_resolutions": result.pronoun_resolutions,
-                "denoise_tags": result.denoise_tags,
-                "pisha_reason": result.reason,
-            }
-
-        s.add(cand)
-        s.commit()
-        s.refresh(cand)
-
-        return {
-            "candidate_id": cand.id,
-            "status": cand.status,
-            "refined_text": cand.summary,
-            "confidence": cand.extractor_confidence,
-            "is_valid": result.is_valid,
-            "pisha_result": result.to_dict(fenced=True),
-        }
-
-    def batch_refine_candidates(
-        self,
-        min_conf: float = 0.2,
-        max_conf: float = 0.6,
-        limit: int = 10,
-    ) -> list[dict[str, Any]]:
-        """批量扫描模糊带候选并执行披沙提纯。"""
-        if self.session is not None:
-            return self._batch_refine(self.session, min_conf, max_conf, limit)
-        with db.get_session() as s:
-            return self._batch_refine(s, min_conf, max_conf, limit)
-
-    def _batch_refine(
-        self, s: Session, min_conf: float, max_conf: float, limit: int
-    ) -> list[dict[str, Any]]:
-        stmt = (
-            select(MemoryCandidate)
-            .where(MemoryCandidate.status == "pending_review")
-            .where(MemoryCandidate.extractor_confidence >= min_conf)
-            .where(MemoryCandidate.extractor_confidence <= max_conf)
-            .limit(limit)
-        )
-        cands = s.exec(stmt).all()
-        refined_list: list[dict[str, Any]] = []
-        for c in cands:
-            if not self._check_access(owner_id=c.user_id, tenant_id=c.tenant_id):
-                continue
-            try:
-                res = self._refine_candidate(s, c.id)
-                refined_list.append(res)
-            except Exception as e:
-                logger.warning("批处理精炼候选失败 (id=%s): %s", c.id, e)
-        return refined_list
+    # 票 58 死代码处置：引擎版 DB 写面（refine_candidate/_refine_candidate/
+    # batch_refine_candidates/_batch_refine/_check_access）与构造器的
+    # session/principal 参数整体删除——production 零调用（全仓 grep 仅
+    # services.refine_service 走 refine_text 纯函数），与 service 版行为分叉
+    # （无毒闸/无备份/无幂等/ACL 判据独立），是「后续接线即爆」的影子实现。
+    # DB 写面单一真源 = services.refine_service（备份/毒闸/幂等/ACL
+    # ensure_can_delete 全在）；引擎只保留纯函数 refine_text。既有引擎冒烟
+    # seams 2-4 迁到 service 层（tests/test_pisha_engine_smoke.py 同文件重写）。

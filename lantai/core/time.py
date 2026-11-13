@@ -1,6 +1,6 @@
 import logging
 import re
-from datetime import UTC, datetime, timedelta, timezone, tzinfo
+from datetime import UTC, date, datetime, time, timedelta, timezone, tzinfo
 from functools import lru_cache
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,49 @@ def parse_iso_utc(value: str) -> datetime:
     if not text:
         raise ValueError("empty ISO timestamp")
     return ensure_aware(datetime.fromisoformat(text.replace("Z", "+00:00")))
+
+
+def iso_utc(dt: datetime | None) -> str:
+    """datetime → ISO-8601 UTC 串（票 53，出口单一真源，与 parse_iso_utc 对称）。
+
+    出口统一形态：``YYYY-MM-DDTHH:MM:SS.ffffff+00:00``（全精度微秒 + UTC
+    后缀）。此前同概念字段在不同出口序列化形态不同（aware 带 `+00:00`、
+    naive 无后缀、部分叠 timespec 截秒），JS `new Date()` 对无后缀串按本地
+    时区解释——悬镜面板两类字段同屏差 8 小时。
+
+    - naive（DB 列读回）：按「naive=UTC」约定 ``replace(tzinfo=UTC)`` 补
+      后缀，**墙钟数字不变**——绝不可走 astimezone（naive 调 astimezone
+      会按本地时区 Asia/Shanghai 解释平移 +8h）；
+    - aware：``astimezone(UTC)`` 折算（时刻不变、墙钟变 UTC 读数）；
+    - ``timespec="microseconds"`` 恒全精度——Python isoformat 在
+      microsecond==0 时省略小数段，不显式给会分裂出「有时无分数」形态；
+    - None → ``""``（nullable 列出口惯例，与既有三元站点同形）。
+    """
+    if dt is None:
+        return ""
+    normalized = ensure_aware(dt)
+    return normalized.isoformat(timespec="microseconds")
+
+
+def local_day_window_utc(day: date | None = None) -> tuple[datetime, datetime]:
+    """本地日历日 → (start_utc, end_utc)，aware UTC。
+
+    先把本地日界换算成 UTC，再与库值比较（避免 Chronos 时区类 bug）。
+    aware：锁定的 sqlmodel 0.0.42 无库级防护（datetime 字段映射裸
+    DateTime，naive 查询绑定参数也静默落库）——绑定参数恒 aware UTC
+    靠约定与读侧 _ensure_utc 归一，非库强制；落盘文本形态与 naive 版
+    逐条一致（SQLite 按分量格式化、无偏移后缀）。
+
+    票 32 起为读侧本地日语味的共享真源（qijuzhu 起居注/usage 每日桶
+    直调本函数）；digest_worker._local_day_window_utc 是同语义的首版
+    私有实现（票 31），后续收敛待其锁定面稳定后委托本函数。
+    """
+    local_now = datetime.now().astimezone()
+    if day is None:
+        day = local_now.date()
+    local_start = datetime.combine(day, time.min, tzinfo=local_now.tzinfo)
+    local_end = local_start + timedelta(days=1)
+    return (local_start.astimezone(UTC), local_end.astimezone(UTC))
 
 
 # 注入帧时间渲染的粒度集（票据 .scratch/inject-frame-time/01，上游 f0.1+ 5cee73e 同款）。

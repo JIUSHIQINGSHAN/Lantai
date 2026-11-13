@@ -1,15 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from lantai.core.auth import get_current_user
+from lantai.core.auth import Principal, get_current_user, require_admin
 from lantai.models.schemas import FeedbackReq, ProposalDecisionReq
 from lantai.services.evolution_service import (
     decide_proposal,
     do_rollback,
     list_proposals,
     record_feedback_entry,
-    run_evolve,
 )
+from lantai.services.worker_operation_service import run_worker
 
 router = APIRouter()
 
@@ -44,9 +44,8 @@ def _ok_or_raise(result: dict) -> dict:
 
 @router.get("/proposals")
 def list_proposals_route(
+    # 票 42：1..500（只读 payload 面，service 侧 .limit() 直推 SQL）
     status: str = "pending",
-    # 票 42:limit=-1 修复前直落 SQL 全量吐提案(reason 常含记忆正文);
-    # 界 [1,500] 与 MCP 孪生 handle_proposals_list(mcp.py:1192)同源
     limit: int = Query(50, ge=1, le=500),
     ctx=Depends(get_current_user),
 ):
@@ -94,8 +93,20 @@ def feedback_route(req: FeedbackReq, ctx=Depends(get_current_user)):
 
 
 @router.post("/evolve/run")
-def evolve_run_route():
-    return run_evolve()
+def evolve_run_route(principal: Principal = Depends(require_admin)):
+    """直跑全表演化周期（票 19：此前零身份——任何持 key 者可直跑，LLM 批量
+    消费 + 全库 tier/importance 写，runner 以系统身份执行）。全局动作面，
+    仅 admin。
+
+    票 22 放大器：经 run_worker("evolve") 同名互斥执行——cron 定时任务与
+    手动触发并发进入只成功一个，互斥冲突映射 409；响应形状保持
+    run_evolve() 既有契约（{"ok": True}）。
+    """
+    try:
+        run_worker("evolve")
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+    return {"ok": True}
 
 
 @router.post("/evolution/kaogong")
@@ -111,8 +122,15 @@ def kaogong_run_route(ctx=Depends(get_current_user)):
 
 
 @router.get("/evolution/kaogong/report")
-def kaogong_report_route():
-    """考功（ADR-0031）：获取最新考功评定审计报告。"""
+def kaogong_report_route(principal: Principal = Depends(require_admin)):
+    """考功（ADR-0031）：获取最新考功评定审计报告。
+
+    票 19：require_admin——报告是全局快照（`_LATEST_KAOGONG_REPORT`，
+    admin/系统身份周期产生），`get_report` **不按调用方收窄**，
+    `details[].fenced_content` 携带记忆明文全文，任何 user 可读＝跨属主
+    正文泄漏；且空报告态透传身份会触发**用户身份的全表写周期**。故只挂
+    闸、不透传 principal——空态语义保持 `skipped_no_principal` 安全空转
+    （现状锁）。"""
     from lantai.services.kaogong_service import get_kaogong_report
 
     return get_kaogong_report()
@@ -123,10 +141,18 @@ def consolidate_run_route(ctx=Depends(get_current_user)):
     """沉潜（ADR-0036）：执行一次闲时夜梦记忆沉淀与折叠压缩周期。
 
     归属（票 .scratch/readside-gaps/12）：此前一个身份都不取，全表折叠/裁剪。
+
+    票 22 放大器：撞上运行中的周期（cron × 手动）→ 409。互斥在周期入口
+    （consolidation_service._CYCLE_LOCK），本路由不改调用身份——
+    principal=ctx 保持归属收窄（票 19/12 口径），不走 run_worker 注册表
+    （注册表以 system 身份跑会放大成全表，且 cron 直调绕过路由级互斥）。
     """
     from lantai.services.consolidation_service import run_consolidation_cycle
 
-    return run_consolidation_cycle(principal=ctx)
+    try:
+        return run_consolidation_cycle(principal=ctx)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 @router.get("/evolution/consolidate/report")

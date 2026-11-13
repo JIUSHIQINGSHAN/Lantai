@@ -17,8 +17,9 @@ from typing import Any
 
 from sqlmodel import Session, select
 
+from lantai.core.acl import is_system_viewer
 from lantai.core.auth import Principal
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
@@ -55,10 +56,11 @@ class MuciEngine:
 
     def _check_access(self, item: MemoryItem) -> bool:
         """行级租户与属主 ACL 隔离校验（严格宁 miss 不脏写）。"""
+        if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
+            return True
         if self.principal is None:
-            return True
-        if getattr(self.principal, "is_admin", False):
-            return True
+            # 票 57：无身份收敛 "default" 属主空间（同 zhaji 口径），不再全放
+            return item.user_id in (None, "default")
 
         # 1. 租户隔离
         if self.principal.tenant_id:
@@ -95,8 +97,20 @@ class MuciEngine:
             max_entries_per_section: full 模式下每板块最大摘录条目数
         """
         session = self._get_session()
-        query = select(MemoryItem).order_by(
-            MemoryItem.importance.desc(), MemoryItem.updated_at.desc()
+        # 票 62：读面 lifecycle 过滤（口径=tables.py 正交注释 + 票 15 shiyi 先例）：
+        # status 是管道态、lifecycle_status 是认识论态，supersede 只写 lifecycle
+        # （status 仍 active）——只看 status 时 archived/retracted 之外的
+        # superseded 行全文混进目录、活跃计数虚高。白名单 = 管道 active +
+        # 认识论 {active, weakened}（weakened 语义「仍参与检索但权重降低」，
+        # retired「等同于 archived」排除）。DDL NOT NULL DEFAULT 'active'，
+        # 无需 NULL 防御分支。
+        query = (
+            select(MemoryItem)
+            .where(
+                MemoryItem.status == "active",
+                MemoryItem.lifecycle_status.in_(("active", "weakened")),
+            )
+            .order_by(MemoryItem.importance.desc(), MemoryItem.updated_at.desc())
         )
 
         # 预过滤条件
@@ -121,7 +135,13 @@ class MuciEngine:
         all_domains = set()
         all_lanes = set()
         total_memories = len(visible_items)
-        active_memories = sum(1 for it in visible_items if it.status == "active")
+        # 票 62：活跃计数 = 管道态 active 且认识论态 active（weakened 算在册
+        # 不算活跃；superseded 行已被上方白名单过滤，此处不重复判定）
+        active_memories = sum(
+            1
+            for it in visible_items
+            if it.status == "active" and (it.lifecycle_status or "") == "active"
+        )
 
         # 排序：确保输出稳定可测（按 domain 再按 lane）
         for (sec_domain, sec_lane), sec_items in sorted(
@@ -146,9 +166,14 @@ class MuciEngine:
                 "domain": sec_domain,
                 "lane": sec_lane,
                 "count": len(sec_items),
-                "active_count": sum(1 for it in sec_items if it.status == "active"),
+                # 票 62：板块活跃计数同全库口径（认识论 active 才计）
+                "active_count": sum(
+                    1
+                    for it in sec_items
+                    if it.status == "active" and (it.lifecycle_status or "") == "active"
+                ),
                 "tags": sorted(list(tags_set))[:10],
-                "latest_event_at": latest_time.isoformat() if latest_time else None,
+                "latest_event_at": iso_utc(latest_time) or None,
             }
 
             if detail_level == "full":
@@ -164,7 +189,7 @@ class MuciEngine:
                             if it.importance is not None
                             else 0.5,
                             "decay_class": it.decay_class,
-                            "updated_at": it.updated_at.isoformat() if it.updated_at else None,
+                            "updated_at": iso_utc(it.updated_at) or None,
                         }
                     )
                 sec_data["entries"] = picked_entries
@@ -187,5 +212,5 @@ class MuciEngine:
             "detail_level": detail_level,
             "sections": sections,
             "summary": " · ".join(summary_parts),
-            "generated_at": utcnow().isoformat(),
+            "generated_at": iso_utc(utcnow()),
         }

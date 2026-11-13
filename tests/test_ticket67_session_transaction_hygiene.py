@@ -1,209 +1,297 @@
-"""票 67(会话/事务卫生家族)红绿验收——三引擎裸 Session 泄漏 + auto_apply 整体提交调用方会话 + TOCTOU。
+"""票 67 红测：会话/事务卫生家族（裸 Session 泄漏 / auto_apply 整体提交 / TOCTOU）。
 
-测试纪律(AGENTS.md):全部真库直调,不 mock 被测链路。
+三面病灶（工单锚点，HEAD=ab91c7cf 亲读行号）：
+1. 裸 Session 泄漏：juanzong.py:62 / canshang.py:117 / qijuzhu.py:59 的
+   _get_session 裸 return db.get_session()（自建 Session 无 close 无 with），
+   方法返回后会话连同活动事务一起弃置（Session↔SessionTransaction 强引用环），
+   QueuePool 连接滞留——MCP 卷宗/参商高频调用下池耗尽整库 TimeoutError。
+   红臂形态校准（票面 Answer 登记）：CPython 分代 GC 会不定期回收弃置会话，
+   「池计数增长」非确定——红载体改为确定性等价面「方法返回后自建会话仍处于
+   活动事务（未关闭）」；池耗尽形态保留为绿锁集成臂（小池 50 连发不炸 + 归零）。
+2. sanxing.py:413-414 auto_apply 对传入 session 直接 s.commit()——调用方
+   中间态被整体提交/回滚。红臂：外层会话持未提交探针行，自愈内部真失败
+   （SQLite RAISE(ABORT) 触发器——真库约束拒绝，非 mock）→ 修复前探针行被
+   整体回滚=红；修复后自愈写走独立短会话，外层事务原样=绿。
+3. sanxing.py:331-400 采纳流程扫描时点快照与落库之间无重验（TOCTOU）——
+   已撤回记忆可被物化。红臂经 evaluate_health 真公共接缝编排并发落点（重检
+   后、落库前第二会话真写撤回——时序替身注入在接缝，被测链路全真，票 52
+   handler 接缝注入同口径）：修复前撤回被覆写=红；修复后写入前重验、谓词
+   不成立跳过该候选不报错（宁 miss 不脏写）=绿，正常候选照常落库。
 
-- 泄漏臂:真 QueuePool 文件库上连续调三引擎的自建会话路径(不注入 session),
-  用 ``pool.checkedout()`` 实证连接是否随调用归还。修复前滞留的机理已实证
-  (``.scratch/v0.68-test-honesty/tools/_probe67_pool_gc.py``):未 close 的
-  Session 因 Session↔Transaction↔Connection 循环引用,refcount 死亡不还连接,
-  第 16 次调用即 QueuePool(5+10) 耗尽 → TimeoutError——票面预言的故障形态。
-- 保存点臂:调用方会话持未提交行时,auto_apply 不得整体提交调用方事务。
-- TOCTOU 臂:提名条件(unhelpful 的计数判定)在 Python 侧读会话对象,借调用方
-  会话身份映射的滞留读打开 check/use 窗——第二会话把前提(helpful_count=0)
-  真写推翻后,落库前不重验就会按滞留计数降权。修复 = 重取证(refresh)后重验
-  提名条件,条件不再成立则跳过(宁 miss 不脏写)。status/retract 变体只在
-  自有会话路径的「快照会话已关、落库会话新开」缝隙里出现(提名 SQL 过滤
-  status,调用方路径骗不过 WHERE),与本臂同一处重验收口。
-- 回归臂:自有会话路径(self-owned)的 auto_apply 仍必须真实落库、卷宗自建
-  会话路径的写读不回归。
+纪律：真引擎直调禁 mock 被测链路；测试库一律 tmp_path/内存独立库
+（红线：一个连接都不许碰 .env LANTAI_HOME 真实开发库）。
 """
 
 from __future__ import annotations
 
-import gc
-from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine
 
+import lantai.storage.db as db_module
 from lantai.cognition.canshang import CanshangEngine
 from lantai.cognition.juanzong import JuanzongEngine
 from lantai.cognition.qijuzhu import QijuzhuEngine
 from lantai.cognition.sanxing import SanxingEngine
-from lantai.models.tables import Dossier, MemoryItem
+from lantai.core.auth import Principal
+from lantai.models.tables import MemoryItem
+from lantai.services.dossier_service import create_dossier_service, get_dossier_service
+
+NOW = datetime(2026, 10, 30, 12, 0, 0, tzinfo=UTC)
 
 
-@pytest.fixture
-def real_engine(tmp_path):
-    """真文件库 + 默认 QueuePool(5+10):连接池语义可观测,多会话真隔离。"""
-    engine = create_engine(f"sqlite:///{tmp_path / 'ticket67.db'}")
-    SQLModel.metadata.create_all(engine)
-    yield engine
-    gc.collect()
-    engine.dispose()
+def _expired(**kw) -> MemoryItem:
+    """票 67 标准候选种子：valid_to 已过、非程序铁律（三省 expired 病灶判定）。"""
+    return MemoryItem(
+        content=kw.pop("content", "过期凭证"),
+        status="active",
+        valid_to=NOW - timedelta(days=1),
+        decay_class="linear",
+        **kw,
+    )
 
 
-@contextmanager
-def _db_engine_swap(engine):
-    """把 db.engine 临时指到被测真库(仓内既有口径),用毕必还(绊线盯未还原)。"""
-    import lantai.storage.db as db_module
-
-    orig = db_module.engine
-    db_module.engine = engine
-    try:
-        yield
-    finally:
-        db_module.engine = orig
+def _file_engine(tmp_path, *, pool_size=None, max_overflow=None, pool_timeout=None):
+    kw = {"connect_args": {"check_same_thread": False}}
+    if pool_size is not None:
+        kw.update(pool_size=pool_size, max_overflow=max_overflow, pool_timeout=pool_timeout)
+    eng = create_engine(f"sqlite:///{tmp_path / 'ticket67.db'}", **kw)
+    SQLModel.metadata.create_all(eng)
+    return eng
 
 
-def _seed_memory(engine: Session, **kwargs) -> None:
-    with Session(engine) as s:
-        s.add(MemoryItem(status="active", confidence=0.9, **kwargs))
-        s.commit()
+def _install_recording_factory(monkeypatch, eng):
+    """接缝替身（票 52 handler 注入同口径）：db.get_session 指向独立测试库并
+    逐一记录自建会话——被测引擎的会话获取与全部业务逻辑照真执行。"""
+    recorded: list[Session] = []
+
+    def factory() -> Session:
+        s = Session(eng)
+        recorded.append(s)
+        return s
+
+    monkeypatch.setattr(db_module, "get_session", factory)
+    return recorded
 
 
-# ── 臂 1:泄漏红臂(三引擎自建会话必须用毕即还)──────────────────────
+# ── 臂 A1：裸 Session 泄漏（红载体：方法返回后自建会话仍在活动事务）────────
 
 
-def test_engine_self_owned_sessions_release_connections(real_engine):
-    """连续 10 次自建会话调用后,池内不得有滞留连接。
+def test_arm_a1a_juanzong_owned_session_closed_after_return(tmp_path, monkeypatch):
+    recorded = _install_recording_factory(monkeypatch, _file_engine(tmp_path))
+    JuanzongEngine().create_dossier("泄漏臂卷宗")
+    assert recorded, "自建会话路径未被触发（接缝替身失效）"
+    s = recorded[0]
+    assert not s.in_transaction(), (
+        "create_dossier 返回后自建 Session 仍处于活动事务（未 close，裸 Session 泄漏）"
+    )
 
-    10 < QueuePool(5+10)=15:修复前红(checkedout 大于 0)且留足余量不撞
-    30s 耗尽墙;修复后 0。调用期间挂起 gc——未 close 的 Session 因循环引用
-    只能等 gc 兜底回收,挂起后红态确定性(每调必漏),修复后的显式 close
-    不依赖 gc、照常为 0。同时每步断言功能结果,兼作真冒烟。
-    """
-    with _db_engine_swap(real_engine):
-        gc.disable()
+
+def test_arm_a1b_canshang_owned_session_closed_after_return(tmp_path, monkeypatch):
+    recorded = _install_recording_factory(monkeypatch, _file_engine(tmp_path))
+    CanshangEngine().audit_consistency()
+    assert recorded, "自建会话路径未被触发（接缝替身失效）"
+    s = recorded[0]
+    assert not s.in_transaction(), (
+        "audit_consistency 返回后自建 Session 仍处于活动事务（未 close，裸 Session 泄漏）"
+    )
+
+
+def test_arm_a1c_qijuzhu_owned_session_closed_after_return(tmp_path, monkeypatch):
+    recorded = _install_recording_factory(monkeypatch, _file_engine(tmp_path))
+    QijuzhuEngine().get_daily_chronicle()
+    assert recorded, "自建会话路径未被触发（接缝替身失效）"
+    s = recorded[0]
+    assert not s.in_transaction(), (
+        "get_daily_chronicle 返回后自建 Session 仍处于活动事务（未 close，裸 Session 泄漏）"
+    )
+
+
+# ── 臂 A2（绿锁集成）：小池 50 连发不炸 + 活跃连接归零 ─────────────────────
+
+
+def test_arm_a2_pool_survives_50_unclosed_calls(tmp_path, monkeypatch):
+    eng = _file_engine(tmp_path, pool_size=2, max_overflow=2, pool_timeout=0.5)
+    monkeypatch.setattr(db_module, "get_session", lambda: Session(eng))
+    failures: list[str] = []
+    for i in range(50):
         try:
-            for _ in range(2):
-                assert JuanzongEngine().list_dossiers() == []
-                assert JuanzongEngine().get_dossier("dos-none") is None
-                report = CanshangEngine().audit_consistency(memory_ids=[])
-                assert report.violation_count == 0
-                verdict = CanshangEngine().arbitrate_deep_conflict(["mem-none"])
-                assert verdict.dominant_memory_id is None
-                chronicle = QijuzhuEngine().get_daily_chronicle()
-                assert chronicle["metrics"]["total_events"] == 0
+            JuanzongEngine().create_dossier(f"连发卷宗{i}")
+            CanshangEngine().audit_consistency()
+            QijuzhuEngine().get_daily_chronicle()
+        except Exception as e:  # noqa: BLE001 - 泄漏故障形态收集器
+            failures.append(f"iter{i}: {type(e).__name__}: {e}")
+            break
+    assert not failures, f"池耗尽（裸 Session 泄漏故障形态）：{failures[:3]}"
+    assert eng.pool.checkedout() == 0, f"活跃连接未归零：{eng.pool.checkedout()}"
 
-            pool = real_engine.pool
-            assert pool.checkedout() == 0, (
-                f"自建会话调用归还后连接池仍有 {pool.checkedout()} 条滞留连接"
-                f"(状态: {pool.status()!r})——裸 Session 未关闭"
+
+# ── 臂 B：auto_apply 整体提交调用方会话（保存点/独立会话语义）──────────────
+
+
+def test_arm_b_caller_midstate_survives_internal_failure(tmp_path):
+    eng = _file_engine(tmp_path)
+    # 真库约束拒绝（非 mock）：RAISE(ABORT) 触发器封死 status='archived' 的 UPDATE
+    with eng.connect() as conn:
+        conn.execute(
+            text(
+                "CREATE TRIGGER t67_archive_guard BEFORE UPDATE ON memoryitem "
+                "WHEN NEW.status='archived' "
+                "BEGIN SELECT RAISE(ABORT, 'ticket67-guard: archive forbidden'); END;"
             )
-        finally:
-            gc.enable()
-
-
-# ── 臂 2:保存点红臂(auto_apply 不得整体提交调用方事务)──────────────
-
-
-def test_auto_apply_does_not_commit_caller_pending_row(real_engine):
-    """调用方会话持未提交行时,auto_apply 只落自己的保存点,不整体提交外层事务。"""
-    _seed_memory(
-        real_engine,
-        id="mem_sup_01",
-        content="老版认证接口规范",
-        structure={"superseded_by": "mem_sup_new"},
-    )
-
-    with Session(real_engine) as caller:
-        pending = MemoryItem(id="mem_pending", content="调用方未提交行", status="active")
-        caller.add(pending)
-        caller.flush()  # 已入事务未提交
-
-        res = SanxingEngine(session=caller).generate_remedies(auto_apply=True)
-        assert res.applied_count == 1  # 自愈本体确实执行了
-
-        # 观察者会话:未提交行不得被引擎代为提交(修复前整体 commit = 红)
-        with Session(real_engine) as observer:
-            assert observer.get(MemoryItem, "mem_pending") is None
-
-        # 保存点已释放:自愈结果在调用方事务内可见
-        assert caller.get(MemoryItem, "mem_sup_01").status == "archived"
-        caller.commit()
-
-    # 调用方自己提交后,两行都应持久
-    with Session(real_engine) as observer:
-        assert observer.get(MemoryItem, "mem_pending") is not None
-        assert observer.get(MemoryItem, "mem_sup_01").status == "archived"
-
-
-# ── 臂 3:TOCTOU 红臂(重取证后条件不再成立 → 跳过,宁 miss 不脏写)──────
-
-
-def test_auto_apply_skips_candidate_whose_premise_changed_after_nomination(real_engine):
-    """提名后、落库前提名前提被第二会话推翻:auto_apply 不得按滞留计数降权。
-
-    unhelpful 的提名判定(use_count>=5 且 helpful_count==0)在 Python 侧读
-    会话对象——调用方身份映射持有滞留读时,落库前不重验就会把「已有帮助」
-    的记忆按旧计数降权(票面 TOCTOU:提交时不再重验)。
-    """
-    _seed_memory(
-        real_engine,
-        id="mem_unh_01",
-        content="高频零帮助碎片",
-        use_count=10,
-        helpful_count=0,
-        importance=0.8,
-    )
-
-    with Session(real_engine) as caller:
-        # 先载入调用方会话身份映射,再由第二会话真写推翻前提
-        loaded = caller.get(MemoryItem, "mem_unh_01")
-        assert loaded.helpful_count == 0
-
-        with Session(real_engine) as helper:
-            row = helper.get(MemoryItem, "mem_unh_01")
-            row.helpful_count = 1
-            helper.commit()
-
-        res = SanxingEngine(session=caller).generate_remedies(auto_apply=True)
-        assert res.applied_count == 0  # 修复前:按滞留计数照常降权 = 红
-        assert res.remedies[0].executed is False
-
-    with Session(real_engine) as observer:
-        row = observer.get(MemoryItem, "mem_unh_01")
-        assert row.helpful_count == 1
-        assert row.importance != 0.1  # 降权不得落库(修复前 = 0.1 = 红)
-
-
-# ── 臂 4:回归臂(自有会话路径的落库语义不回归)──────────────────────
-
-
-def test_sanxing_self_owned_session_still_persists(real_engine):
-    """自有会话路径(db.engine)的 auto_apply 仍必须外层提交真实落库——收口不许把生产默认路径改哑。"""
-    _seed_memory(
-        real_engine,
-        id="mem_owned",
-        content="自有会话路径自愈对象",
-        structure={"superseded_by": "mem_succ"},
-    )
-
-    with _db_engine_swap(real_engine):
-        res = SanxingEngine(principal=None).generate_remedies(auto_apply=True)
-        assert res.applied_count == 1
-
-    with Session(real_engine) as observer:
-        assert observer.get(MemoryItem, "mem_owned").status == "archived"
-
-
-def test_juanzong_self_owned_session_persists_and_detached_read(real_engine):
-    """卷宗自建会话路径:写入持久 + 会话关闭后返回对象属性仍可读(序列化面不回归)。"""
-    with _db_engine_swap(real_engine):
-        dossier = JuanzongEngine().create_dossier(
-            title="票 67 回归案卷",
-            goal="验证自建会话关闭后对象仍可序列化读取",
-            milestones=[{"id": "ms-1", "title": "起案", "status": "done"}],
         )
-        assert dossier.id.startswith("dos_")
-        assert dossier.title == "票 67 回归案卷"  # 会话已还,属性须已加载
+        conn.commit()
 
-        found = JuanzongEngine().get_dossier(dossier.id)
-        assert found is not None
-        assert found.goal.startswith("验证自建会话")
+    seed = Session(eng)
+    seed.add(_expired(id="mem_guard"))
+    seed.commit()
+    seed.close()
 
-    with Session(real_engine) as observer:
-        row = observer.get(Dossier, dossier.id)
-        assert row is not None
-        assert row.milestones[0]["status"] == "done"
+    # 外层调用方会话：先写一行探针（不 commit）——自愈不得动它
+    outer = Session(eng)
+    outer.add(MemoryItem(id="mem_probe_outer", content="外层未提交中间态", status="active"))
+    outer.flush()
+
+    engine = SanxingEngine(session=outer)
+    with pytest.raises(Exception) as ei:
+        engine.generate_remedies(auto_apply=True, now=NOW)
+    assert "ticket67-guard" in str(ei.value), f"自愈内部失败未真发生：{ei.value}"
+
+    # 外层事务原样：探针行仍在会话事务中、未提交、未被回滚
+    assert outer.in_transaction(), "自愈内部失败后调用方事务被连坐关闭"
+    probe = outer.get(MemoryItem, "mem_probe_outer")
+    assert probe is not None and probe.status == "active", "外层探针行被整体回滚丢失"
+
+    # 且探针/半途自愈均未落库（其他连接不可见——未被整体提交）
+    outsider = Session(eng)
+    assert outsider.get(MemoryItem, "mem_probe_outer") is None, "外层中间态被整体提交"
+    assert outsider.get(MemoryItem, "mem_guard").status == "active", "自愈半途行被提交"
+    outsider.close()
+
+
+# ── 臂 C：TOCTOU——扫描后落库前撤回，修复前物化成功（撤回被覆写）────────────
+
+
+class _RetractAfterScanEngine(SanxingEngine):
+    """时序编排替身：evaluate_health 全链照真执行，仅在「扫描返回后、落库前」
+    的真实并发窗口内以第二会话执行真撤回（第二会话真 UPDATE + 真 commit）。"""
+
+    retract_ids: tuple[str, ...] = ()
+
+    def evaluate_health(self, now=None):
+        snap = super().evaluate_health(now=now)
+        if self.retract_ids:
+            s2 = Session(self.session.get_bind())
+            try:
+                for mid in self.retract_ids:
+                    row = s2.get(MemoryItem, mid)
+                    row.status = "retracted"
+                    s2.add(row)
+                s2.commit()
+            finally:
+                s2.close()
+        return snap
+
+
+def test_arm_c_toctou_retracted_candidate_skipped_not_materialized(tmp_path):
+    eng = _file_engine(tmp_path)
+    seed = Session(eng)
+    seed.add(_expired(id="mem_ok"))
+    seed.add(_expired(id="mem_bye"))
+    seed.commit()
+    seed.close()
+
+    s0 = Session(eng)
+    engine = _RetractAfterScanEngine(session=s0)
+    engine.retract_ids = ("mem_bye",)
+    res = engine.generate_remedies(auto_apply=True, now=NOW)
+
+    executed = {r.target_id: r.executed for r in res.remedies if r.defect_type == "expired"}
+    assert executed.get("mem_ok") is True, "正常候选被 TOCTOU 修复误伤（该落未落）"
+    assert executed.get("mem_bye") is False, "已撤回候选仍被执行（宁 miss 不脏写破约）"
+    assert res.applied_count == 1, f"applied_count 与执行面不符：{res.applied_count}"
+
+    verify = Session(eng)
+    assert verify.get(MemoryItem, "mem_bye").status == "retracted", (
+        "扫描后落库前的撤回被 auto_apply 覆写物化（TOCTOU 病灶：已撤回记忆被物化）"
+    )
+    assert verify.get(MemoryItem, "mem_ok").status == "archived", "正常候选未落库"
+    verify.close()
+
+
+def test_arm_c2_acl_reverify_owner_changed_midwindow(tmp_path):
+    """TOCTOU 第二形：扫描后落库前属主变更（第二会话改 user_id）——注入会话
+    非 admin 视角下该候选重验谓词不成立，静默跳过不写他人行（宁 miss 不越权）。"""
+    eng = _file_engine(tmp_path)
+    seed = Session(eng)
+    seed.add(_expired(id="mem_mine", user_id="user_a", tenant_id="tenant-1"))
+    seed.add(_expired(id="mem_steal", user_id="user_a", tenant_id="tenant-1"))
+    seed.commit()
+    seed.close()
+
+    class _StealAfterScanEngine(SanxingEngine):
+        steal_id: str = ""
+
+        def evaluate_health(self, now=None):
+            snap = super().evaluate_health(now=now)
+            if self.steal_id:
+                s2 = Session(self.session.get_bind())
+                try:
+                    row = s2.get(MemoryItem, self.steal_id)
+                    row.user_id = "user_b"  # 属主中途易主
+                    s2.add(row)
+                    s2.commit()
+                finally:
+                    s2.close()
+            return snap
+
+    s0 = Session(eng)
+    engine = _StealAfterScanEngine(
+        session=s0, principal=Principal(user_id="user_a", tenant_id="tenant-1")
+    )
+    engine.steal_id = "mem_steal"
+    res = engine.generate_remedies(auto_apply=True, now=NOW)
+
+    executed = {r.target_id: r.executed for r in res.remedies if r.defect_type == "expired"}
+    assert executed.get("mem_mine") is True, "本人正常候选被 ACL 重验误伤"
+    assert executed.get("mem_steal") is False, "属主易主候选仍被执行（越权写他人行）"
+
+    verify = Session(eng)
+    assert verify.get(MemoryItem, "mem_steal").user_id == "user_b", "易主行属主被覆写"
+    assert verify.get(MemoryItem, "mem_steal").status == "active", "易主行状态被物化"
+    assert verify.get(MemoryItem, "mem_mine").status == "archived", "本人候选未落库"
+    verify.close()
+
+
+# ── 臂 D：回归锁（自有会话路径持久化 + dossier_service 注入会话）────────────
+
+
+def test_arm_d1_owned_session_path_still_persists(tmp_path, monkeypatch):
+    eng = _file_engine(tmp_path)
+    monkeypatch.setattr(db_module, "get_session", lambda: Session(eng))
+    seed = Session(eng)
+    seed.add(_expired(id="mem_owned"))
+    seed.commit()
+    seed.close()
+
+    res = SanxingEngine().generate_remedies(auto_apply=True, now=NOW)  # 自建会话路径
+    assert res.applied_count == 1
+
+    verify = Session(eng)
+    assert verify.get(MemoryItem, "mem_owned").status == "archived", (
+        "自建会话路径的自愈持久化被独立会话改造误伤"
+    )
+    verify.close()
+
+
+def test_arm_d2_dossier_service_accepts_injected_session(tmp_path, monkeypatch):
+    recorded = _install_recording_factory(monkeypatch, _file_engine(tmp_path))
+    # 显式独立会话（worker 长连接复用语义——不经过 db.get_session 接缝）
+    s = Session(_file_engine(tmp_path))
+    d = create_dossier_service("注入会话卷宗", goal="票 67", session=s)
+    got = get_dossier_service(d["id"], session=s)
+    assert got is not None and got["title"] == "注入会话卷宗"
+    # 注入会话路径不得自建新会话（worker 长连接复用语义保持）
+    assert recorded == [], "service 注入 session 后仍自建会话（长连接复用语义破坏）"

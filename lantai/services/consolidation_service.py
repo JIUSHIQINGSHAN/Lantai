@@ -14,18 +14,19 @@ fail-loud：拒绝执行本周期巩固并 ERROR 留痕——宁巩固停摆，�
 """
 
 import contextlib
+import math
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from threading import Lock
 
 import jieba.analyse
 from sqlmodel import Session, select
 from ulid import ULID
 
 from lantai.core.ids import new_id
-from lantai.core.logger import logger
-from lantai.core.numeric import clamp_unit_interval
+from lantai.core.logger import loggable, logger
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.client import chat_json
 from lantai.models.enums import ProposalStatus
 from lantai.models.tables import (
@@ -34,7 +35,7 @@ from lantai.models.tables import (
     MemoryItem,
     MemoryProposal,
 )
-from lantai.retrieval.hybrid import index_memory_item
+from lantai.retrieval.hybrid import delete_memory_item, index_memory_item
 from lantai.security.injection_guard import check_prompt_injection
 from lantai.storage import db
 from lantai.storage.fts import sync_fts
@@ -307,7 +308,11 @@ def consolidate_cluster(
         try:
             res = chat_json(system=sys_prompt, user=user_prompt)
         except Exception as exc:
-            logger.warning("沉潜：LLM 提纯失败，保持原库不变（宁 miss 不脏写）: %s", exc)
+            # 票 50：SDK 异常 str 可能回显 provider 响应体（含簇内记忆片段）
+            # ——单行化+截断，同 advisor.py 口径
+            logger.warning(
+                "沉潜：LLM 提纯失败，保持原库不变（宁 miss 不脏写）: %s", loggable(exc, limit=200)
+            )
             return None
 
         if not isinstance(res, dict) or not res.get("consolidated_content"):
@@ -352,13 +357,17 @@ def consolidate_cluster(
             logger.warning("沉潜：TrustMem 迁移校验不通过，放弃折叠以防脏写")
             return None
 
-        # 票 35：LLM JSON 输出无钳制——负值毒行落库后遗忘强度≤0，apply_forgetting
-        # 确定性崩溃全库停摆（提示注入诱导提取器输出负值即可达）。钳入 [0,1] 并
-        # 留痕（票面「钳入界内」口径：折叠内容已过獬豸闸/TrustMem 两道验证，
-        # 为一个标量丢弃整簇折叠得不偿失）；类型/非有限臂视同缺省不抛穿沉潜周期。
-        # confidence 与 importance 同源同险（双轴自审采纳项），同一真源收敛。
-        importance = clamp_unit_interval(res.get("importance", 0.8), default=0.8)
-        confidence = clamp_unit_interval(res.get("confidence", 0.9), default=0.9)
+        raw_importance = float(res.get("importance", 0.8))
+        if not math.isfinite(raw_importance):
+            logger.warning(
+                "沉潜：LLM 提取 importance=%r 非有限值，跳过该簇（宁 miss 不脏写，票 35）",
+                raw_importance,
+            )
+            return None
+        importance = max(0.0, min(1.0, raw_importance))
+        if importance != raw_importance:
+            logger.warning("沉潜：LLM 提取 importance=%s 越界，钳入 [0,1]（票 35）", raw_importance)
+        confidence = float(res.get("confidence", 0.9))
 
         dom = getattr(cluster_items[0], "domain", "user")
         lane = cluster_items[0].lane
@@ -484,11 +493,31 @@ def consolidate_cluster(
         s.commit()
         s.refresh(master)
 
+        # 票 21：碎片向量清理——SQL 先 commit、向量后删（routes_terminal.py:381-385、
+        # promoter.delete_memory promoter.py:842-843「向量库在 SQL 提交成功后再删」
+        # 统一次序；promoter consolidation apply 分支对碎片连做删 FTS + 删向量
+        # promoter.py:523-524，此处此前只删 FTS 漏了向量——碎片幽灵与主记忆竞争
+        # fetch_n 名额，极端时刚沉潜的主记忆在向量通道欠召回）。折叠已提交不可
+        # 回滚，单条删除失败不中断、不回滚（与上方 :468-472 失败可见口径同源，
+        # 仅级别降为 warning：残条由检索终闸 status 过滤兜底、复职路径重同步可
+        # 重建），宁留可见残条不留静默。
+        for fid in source_ids:
+            try:
+                delete_memory_item(fid)
+            except Exception as exc:
+                logger.warning(
+                    "沉潜：碎片 %s 向量清理失败（折叠已提交，残条由检索终闸过滤兜底）: %s",
+                    fid,
+                    exc,
+                )
+
+        # 票 50：正文不属于日志（用户记忆 + LLM 提纯产物的第二份无生命周期
+        # 留存）——只记 master.id、簇大小与内容长度（排障锚点，零正文）
         logger.info(
-            "沉潜：成功将 %d 条碎片折叠为主记忆 %s: %s",
+            "沉潜：成功将 %d 条碎片折叠为主记忆 %s（len=%d）",
             len(cluster_items),
             master.id,
-            content[:30],
+            len(content),
         )
         return master
 
@@ -617,7 +646,7 @@ def _shadow_deadline_exceeded(s: Session) -> str | None:
     elapsed_days = (utcnow() - first_at).total_seconds() / 86400.0
     if elapsed_days > max_days:
         return (
-            f"shadow 模式已超 {max_days} 天硬时限（首条留痕 {first_at.isoformat()}，"
+            f"shadow 模式已超 {max_days} 天硬时限（首条留痕 {iso_utc(first_at)}，"
             f"已 {elapsed_days:.1f} 天）——拒绝执行巩固，请维护者拍板切 enforce 或回 off"
         )
     return None
@@ -638,7 +667,7 @@ def _record_consolidation_run(s: Session, **fields) -> None:
 def _refused_report(mode: str, error: str) -> dict:
     """拒绝执行本周期巩固时的 report（既有键不变，status=refused 可见）。"""
     return {
-        "last_run": utcnow().isoformat(),
+        "last_run": iso_utc(utcnow()),
         "consolidated_groups": 0,
         "new_memories": 0,
         "pruned_count": 0,
@@ -652,6 +681,18 @@ def _refused_report(mode: str, error: str) -> dict:
         # 票 11：拒绝路径未进簇循环，warnings 恒空表——键集与运行后 report 对齐。
         "warnings": [],
     }
+
+
+# 票 22 放大器互斥：cron 定时周期 × /evolution/consolidate 手动触发可并发
+# 双跑——聚类候选集相同，巩固产物（主记忆/折叠/checkpoint/FTS）双份落库。
+# 非阻塞单飞（路由映射 409），不排队叠加。**不走 run_worker 注册表**是刻意
+# 偏差（票 22 Answer 已说明）：run_consolidation_cycle(principal=ctx) 按
+# 调用者身份收窄候选集，改注册即改成 system 全表（票 19/12 的归属收窄被
+# 推翻），且 cron 直调本函数、路由级互斥挡不住 cron×手动——故锁在周期入口。
+# **非重入 Lock**：锁内无自递归路径，同线程重入也是真双跑，必须拒绝
+# （RLock 会放行同线程重入——那正是本锁要挡的并发形态）。
+# 跨进程（MCP 第二进程）不受进程内锁约束——ADR 级残留竞态（W2/W4 同口径）。
+_CYCLE_LOCK = Lock()
 
 
 def run_consolidation_cycle(session: Session | None = None, principal=None) -> dict:
@@ -791,7 +832,7 @@ def run_consolidation_cycle(session: Session | None = None, principal=None) -> d
             status = "success" if (new_count + proposals_created + pruned) > 0 else "idle"
 
             report = {
-                "last_run": utcnow().isoformat(),
+                "last_run": iso_utc(utcnow()),
                 "consolidated_groups": len(clusters),
                 "new_memories": new_count,
                 "pruned_count": pruned,
@@ -822,10 +863,15 @@ def run_consolidation_cycle(session: Session | None = None, principal=None) -> d
             )
         return report
 
-    if session is not None:
-        return _run(session)
-    with db.get_session() as s:
-        return _run(s)
+    if not _CYCLE_LOCK.acquire(blocking=False):
+        raise RuntimeError("consolidation cycle is already running")
+    try:
+        if session is not None:
+            return _run(session)
+        with db.get_session() as s:
+            return _run(s)
+    finally:
+        _CYCLE_LOCK.release()
 
 
 def consolidation_audit_report(window_days: int = 7) -> dict:

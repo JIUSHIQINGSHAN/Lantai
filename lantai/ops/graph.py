@@ -13,10 +13,10 @@ get_graph(limit) 打开默认会话执行。
 """
 
 from collections import Counter
-from datetime import UTC
 
 from sqlmodel import Session, or_, select
 
+from lantai.ingestion.safety import sanitize_source_url
 from lantai.models.tables import MemoryEdge, MemoryItem, MemoryScene, RawDocument
 from lantai.storage import db
 
@@ -167,7 +167,9 @@ def build_graph(session: Session, limit: int = 150, principal=None) -> dict:
                 "lane": None,
                 "decay_class": None,
                 "scene_id": None,
-                "url": d.url or None,
+                # 票 69：出口与入口同闸——直写库/历史存量脏行在这里被拦，
+                # 不依赖入库面（rss/add）修后是否干净
+                "url": sanitize_source_url(d.url) or None,
             }
         )
 
@@ -204,9 +206,9 @@ def get_graph(limit: int = 150, principal=None) -> dict:
 
 
 def _now_iso() -> str:
-    from datetime import datetime
+    from lantai.core.time import iso_utc, utcnow
 
-    return datetime.now(UTC).isoformat(timespec="seconds")
+    return iso_utc(utcnow())
 
 
 def _doc_label(doc) -> str:

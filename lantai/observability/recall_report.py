@@ -12,7 +12,7 @@ from datetime import timedelta
 from sqlmodel import select
 
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import RetrievalEvent
 from lantai.storage import db
 
@@ -112,7 +112,7 @@ def recall_report(days: int | None = None, *, principal=None) -> dict:
     real_n = len(real)
     return {
         "window_days": window,
-        "start": start.isoformat(),
+        "start": iso_utc(start),
         "total": total,
         "system_noise": noise,
         "real": real_n,
@@ -176,7 +176,7 @@ def recent_retrieval_events(limit: int = 20, principal=None) -> list[dict]:
             "zero_result": e.zero_result,
             "is_system_noise": e.is_system_noise,
             "estimated_tokens": e.estimated_tokens,
-            "created_at": e.created_at.isoformat() if e.created_at else None,
+            "created_at": iso_utc(e.created_at) or None,
         }
         for e in events
     ]

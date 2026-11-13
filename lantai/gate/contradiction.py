@@ -1,5 +1,6 @@
 from lantai.core.logger import logger
 from lantai.llm.client import chat_json
+from lantai.llm.fence import build_adjudication_user
 from lantai.llm.prompts import CONTRADICTION_SYS
 
 
@@ -16,7 +17,9 @@ def check_contradiction(new_claim: str, existing_content: str) -> dict:
 
     宁 miss 不脏写：检不了就不下结论，交人裁决。
     """
-    user = f"NEW:\n{new_claim}\n\nEXISTING:\n{existing_content}"
+    # 票 55：EXISTING 段是库内正文——裸插可被正文语义级说辞操纵 contradicts
+    # 裁决（獬豸正则闸不在其射程），走樊篱数据位；NEW 段同包（候选摘要同属不可信文本）。
+    user = build_adjudication_user(("NEW", new_claim), ("EXISTING", existing_content))
     try:
         return chat_json(CONTRADICTION_SYS, user)
     except Exception as e:

@@ -23,7 +23,7 @@ from dataclasses import asdict, dataclass, field
 
 from lantai.core.logger import logger
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 
 # 进程启动时刻（模块导入即固定）：uptime 与 worker 逾期基线共用
 PROCESS_STARTED_AT = utcnow()
@@ -284,7 +284,7 @@ class MetricsCollector:
             "window": self.window(window_seconds, now),
             "endpoints": self.endpoints(window_seconds, limit=20, now=now),
             "recent_problems": self.recent(20, only_problems=True),
-            "process_started_at": PROCESS_STARTED_AT.isoformat(),
+            "process_started_at": iso_utc(PROCESS_STARTED_AT),
         }
 
     def reset(self) -> None:

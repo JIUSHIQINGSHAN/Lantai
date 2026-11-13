@@ -8,8 +8,6 @@
   * `lantai.cognition.cehou._SHADOW_WINDOWS` 0 → 9 条，键名就是
     `win-svc-api-test-01` / `win-rest-test-01` 这类测试自用 id，且 cezhou.py
     会遍历全表做扫描聚合（:264）；
-    （**已收敛**：票 60 落库 cehou_window 表后内存注册表不复存在，
-    EXPECTED_CHANNELS 相应摘除该对——护栏指向不存在的属性即空转死账）
   * `lantai.core.scheduler.WORKER_LAST_RUN` 0 → 6 条，而 `get_last_run()`
     （scheduler.py:64）把它当「DB 查不到时的兜底真值」读；
   * `lantai.gate.prefilter._PATTERN_CACHE` 键没变、**值被原地改掉**（只比对
@@ -48,7 +46,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # 本文件与 conftest 各自声明一遍同一张表：漂移即红（护栏被人删项、改名、
 # 加了不存在的属性，都在这里被抓住，而不是悄悄变成空转）。
 EXPECTED_CHANNELS = (
-    # ("lantai.cognition.cehou", "_SHADOW_WINDOWS") 已随票 60 落库收敛并摘除
+    # ("lantai.cognition.cehou", "_SHADOW_WINDOWS") 票 60 退役：影子窗落库
+    # CehouWindow 表，进程内注册表删除——通道随实体一起消失，见 conftest 同注。
     ("lantai.core.scheduler", "WORKER_LAST_RUN"),
     ("lantai.gate.prefilter", "_PATTERN_CACHE"),
     ("lantai.gate.prefilter", "_KEYWORD_WARNED"),
@@ -146,12 +145,14 @@ CHILD_DIRTY = """
 import os
 from pathlib import Path
 
+import lantai.cognition.kaogong as kaogong
 import lantai.cli.mcp as mcp_mod
 import lantai.gate.prefilter as pf
 import lantai.observability.metrics as metrics
 
 
 def test_a_plant_pollution():
+    kaogong._LATEST_KAOGONG_REPORT = {"child": "planted-report"}
     pf._PATTERN_CACHE.update(key="child-planted-key", pattern="child-planted-pattern")
     mcp_mod._guard_instance = mcp_mod.LoopGuard()
     mcp_mod._guard_instance.begin("child-planted-key")
@@ -167,6 +168,7 @@ import json
 import os
 from pathlib import Path
 
+import lantai.cognition.kaogong as kaogong
 import lantai.cli.mcp as mcp_mod
 import lantai.gate.prefilter as pf
 import lantai.observability.metrics as metrics
@@ -174,6 +176,8 @@ import lantai.observability.metrics as metrics
 
 def test_b_look_for_leakage():
     leaked = []
+    if kaogong._LATEST_KAOGONG_REPORT.get("child") == "planted-report":
+        leaked.append("kaogong._LATEST_KAOGONG_REPORT")
     if pf._PATTERN_CACHE.get("key") == "child-planted-key":
         leaked.append("prefilter._PATTERN_CACHE")
     if getattr(mcp_mod._guard_instance, "_states", None):

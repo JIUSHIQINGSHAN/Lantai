@@ -15,7 +15,7 @@ pid、OS 指纹、鉴权拓扑、全库记忆/待审计数、以及别人的请�
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
-from lantai.core.auth import get_current_user
+from lantai.core.auth import Principal, get_current_user, require_admin
 from lantai.ops.monitor import (
     get_monitor_snapshot,
     list_operation_logs,
@@ -76,8 +76,11 @@ def monitor_prometheus(window: int = Query(None, ge=60, le=86400), ctx=Depends(g
 
 
 @router.post("/monitor/workers/{worker_name}/run")
-def monitor_run_worker(worker_name: str, ctx=Depends(get_current_user)):
-    """手动触发一次 worker（与案牍共用 `worker_operation_service`，同名互斥）。"""
+def monitor_run_worker(worker_name: str, principal: Principal = Depends(require_admin)):
+    """手动触发一次 worker（与案牍共用 `worker_operation_service`，同名互斥）。
+
+    票 19：此前收 ctx 即弃——同名互斥只防并发不防滥用，任何持 key 者可持续
+    占住互斥位饿死 scheduler 同名作业。全局动作面，仅 admin（runner 系统身份）。"""
     try:
         return run_worker(worker_name)
     except RuntimeError as exc:

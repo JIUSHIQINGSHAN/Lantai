@@ -25,7 +25,8 @@ from lantai.core.provenance import (
     make_provenance,
 )
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.text import truncate_codepoints
+from lantai.core.time import iso_utc, utcnow
 from lantai.gate.prefilter import NO_MEMORY_PATTERNS
 from lantai.models.tables import MemoryCandidate, RawDocument
 from lantai.parsing.extractor import extract_candidate
@@ -34,6 +35,26 @@ from lantai.services.candidate_service import enqueue_rejected
 from lantai.storage import db
 
 logger = logging.getLogger("lantai.ingestion")
+
+
+class DialogueDisabledError(ValueError):
+    """对话通道被 `DIALOGUE_ENABLED=false` 整体关闭（票 43：接线死开关）。
+
+    继承 ValueError：MCP 分发器与导入的逐条计数（宁 miss 不脏写）经既有
+    异常面自动获得；REST 侧在路由层按更具体类型译 409（服务端配置拒绝，
+    非调用方输入问题，不得落 422 滥用口径）。
+    """
+
+
+def assert_dialogue_enabled() -> None:
+    """通道开关单一真源：四个入口（REST/MCP/潜移/导入）统一经此 guard，
+    禁止各入口散写判据（票 43）。关闭时留痕后拒绝——防「静默不跑」新病灶
+    （口径同票 34 跳过留痕）。"""
+    if settings.DIALOGUE_ENABLED:
+        return
+    logger.warning("对话摄取被 DIALOGUE_ENABLED=false 阻断（通道整体关闭，票 43）")
+    raise DialogueDisabledError("dialogue channel disabled (DIALOGUE_ENABLED=false)")
+
 
 # 对话入口的 lane 预判（宽松 search；fastpath 整段 match 语义保持不变）
 _PREFERENCE_RE = re.compile(r"我.{0,8}?(?:喜欢|不喜欢|讨厌|偏爱|偏好)")
@@ -81,6 +102,8 @@ def ingest_dialogue(
     status：fastpath（直通）/ new（待 evolve gate 分层）/
     pending_review（低置信度 / 提取失败兜底；闲聊直接 rejected）
     """
+    # 票 43：通道开关先于输入校验——关掉的通道对任何输入一律拒绝
+    assert_dialogue_enabled()
     text = (text or "").strip()
     if not text:
         raise ValueError("empty dialogue text")
@@ -140,8 +163,12 @@ def ingest_dialogue(
         session_id=session_id,
         turn=turn,
     )
-    if secret_hits and settings.SECRET_GUARD_MODE == "enforce":
-        return _secret_guard_route(result, secret_hits)
+    # 密钥三态路由单一真源（X-06，票 17-4）：调用方不复制 mode 判据——
+    # off 由 detect_secret_shapes 内部处理（恒空），shadow/enforce 由
+    # route_secret_hits 内部处理；此处无条件委托（与 fastpath 臂同口径）。
+    result = _secret_guard_route(result, secret_hits)
+    if result["status"] == "pending_review":
+        return result
     if data["extractor_confidence"] < settings.DIALOGUE_MIN_EXTRACTOR_CONF:
         if data["extractor_confidence"] < settings.CANDIDATE_MIN_CONFIDENCE:
             # 沙汰：低于地板信噪门 → 直接 rejected（ADR-0026）
@@ -204,12 +231,15 @@ def _create_candidate(
 
         et, etp = extract_explicit_event_time(text)
         if et is not None:
-            origin_extra["event_time"] = et.isoformat()
+            origin_extra["event_time"] = iso_utc(et)
             origin_extra["event_time_precision"] = etp
         else:
             origin_extra["event_time_extract_failed"] = True
     except Exception:
-        pass
+        # 票 17-5：提取器异常不再静默吞——异常同属「尝试失败」，按上方设计
+        # 意图如实留痕（日志）+ 落失败标记（U3 标注面），宁 miss 不脏写不变
+        origin_extra["event_time_extract_failed"] = True
+        logger.warning("event_time 提取异常（dialogue），已标记 failed", exc_info=True)
     if (session_id or "").strip():
         origin_extra["origin_session_id"] = session_id.strip()
     if turn is not None:
@@ -242,7 +272,8 @@ def _create_candidate(
             session_id=(session_id or "").strip() or None,
             document_id=doc.id,
             topic=fp_data.get("topic") if fp_data else [],
-            summary=(fp_data.get("summary") if fp_data else None) or text[:400],
+            summary=(fp_data.get("summary") if fp_data else None)
+            or truncate_codepoints(text, 400, "..."),  # 票 49：被截可见
             claims=fp_data.get("claims", []) if fp_data else [],
             methods=fp_data.get("methods", []) if fp_data else [],
             constraints=fp_data.get("constraints", []) if fp_data else [],

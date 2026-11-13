@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from lantai.core.auth import Principal, get_current_user
-from lantai.ingestion.dialogue import ingest_dialogue
+from lantai.ingestion.dialogue import DialogueDisabledError, ingest_dialogue
 
 router = APIRouter(tags=["dialogue"])
 
@@ -35,6 +35,10 @@ def dialogue_route(req: DialogueIngestReq, ctx: Principal = Depends(get_current_
             session_id=req.session_id,
             turn=req.turn,
         )
+    except DialogueDisabledError as e:
+        # 票 43：通道被 DIALOGUE_ENABLED=false 关闭是服务端配置拒绝（409），
+        # 非调用方输入问题——不得落 ValueError→422 的滥用口径
+        raise HTTPException(409, str(e)) from e
     except ValueError as e:
         raise HTTPException(422, str(e))
 
@@ -55,6 +59,9 @@ def dialogue_async_route(req: DialogueIngestReq, ctx: Principal = Depends(get_cu
             idempotency_key=req.idempotency_key,
             tenant_id=ctx.tenant_id or "",
         )
+    except DialogueDisabledError as e:
+        # 票 43：同 /dialogue 主路——配置拒绝译 409，不入 422 滥用口径
+        raise HTTPException(409, str(e)) from e
     except ValueError as e:
         raise HTTPException(422, str(e))
 

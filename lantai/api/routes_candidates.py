@@ -27,9 +27,8 @@ router = APIRouter(tags=["candidates"])
 
 @router.get("/candidates/pending")
 def candidates_pending(
-    # 票 42:limit=-1 修复前直落 SQL 全量吐待审正文(这正是「宁 miss 不脏写」
-    # 的裁决入口);界 [1,500] 与 MCP 孪生 handle_candidates_pending(mcp.py:437)同源
-    limit: int = Query(50, ge=1, le=500),
+    # 票 42：1..200（候选类上界，裁决入口读面）
+    limit: int = Query(50, ge=1, le=200),
     ctx=Depends(get_current_user),
 ):
     return list_pending_candidates(limit, principal=ctx)
@@ -38,12 +37,19 @@ def candidates_pending(
 @router.post("/candidates/{candidate_id}/review")
 def candidates_review(candidate_id: str, req: CandidateReviewReq, ctx=Depends(get_current_user)):
     try:
-        return review_candidate(candidate_id, approve=req.approve, reason=req.reason, principal=ctx)
+        res = review_candidate(candidate_id, approve=req.approve, reason=req.reason, principal=ctx)
     except CandidateStateConflict as e:
         raise HTTPException(409, str(e)) from e
     except ValueError as e:
         status = 404 if "not found" in str(e) else 422
         raise HTTPException(status, str(e)) from e
+    # 票 41：approve 路径 propose 返回 None（LLM 不可用 / target 不可寻址）
+    # 时 service 以 ok:False 结构化回报——REST 面译 409 Conflict，不再
+    # 200 + ok:False（票 .scratch/api-error-status/01 同病残留；MCP/auto_
+    # triage 消费方走 dict 契约不受影响）
+    if not res.get("ok", True):
+        raise HTTPException(409, str(res.get("error", "review failed")))
+    return res
 
 
 @router.post("/candidates/{candidate_id}/defer")
@@ -90,11 +96,10 @@ def candidates_refine(candidate_id: str, ctx=Depends(get_current_user)):
 
 @router.post("/candidates/batch_refine")
 def candidates_batch_refine(
-    # 票 42:min_conf/max_conf 补 [0,1] 浮点界、limit 补 [1,200](候选批量族;
-    # 三者修复前裸传,负 min_conf 会把全库候选捞进模糊带)
+    # 票 42：置信度带 [0,1]——越界值静默空批（扫描不到任何候选），边界拒绝
     min_conf: float = Query(0.15, ge=0.0, le=1.0),
     max_conf: float = Query(0.6, ge=0.0, le=1.0),
-    limit: int = Query(20, ge=1, le=200),
+    limit: int = Query(20, ge=1, le=100, description="最大处理候选条目数（票 58 双界）"),
     ctx=Depends(get_current_user),
 ):
     """披沙（ADR-0030）：批量对模糊区间的候选执行提纯。
@@ -109,9 +114,8 @@ def candidates_batch_refine(
 
 @router.post("/candidates/ai_triage")
 def candidates_ai_triage(
-    # 票 42:limit 是「候选正文整批送 LLM」的成本放大面,界 [1,500] 与 MCP
-    # 孪生 triage_analyze(mcp.py:478)同源
-    limit: int = Query(50, ge=1, le=500),
+    # 票 42：1..200——逐条送 LLM 的成本放大面（票 58 同款批量上界口径）
+    limit: int = Query(50, ge=1, le=200),
     ctx=Depends(get_current_user),
 ):
     """AI 智能预审：扫描待审候选并返回智能研判与决策建议。

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 
-from lantai.core.auth import get_current_user
+from lantai.core.auth import Principal, get_current_user, require_admin
 from lantai.models.schemas import SourceReq
 from lantai.services.source_service import (
     add_source,
@@ -29,16 +29,18 @@ def list_sources_route(ctx=Depends(get_current_user)):
 
 
 @router.post("/ingest/run")
-def ingest_run_route():
+def ingest_run_route(principal: Principal = Depends(require_admin)):
+    """直跑摄取 worker（票 19 复查补刀：此前零身份——与 `/workers/ingest/run`
+    触发同一 `run_ingest_once`，不挂闸则守卫被平行 URL 整体架空）。全局
+    动作面，仅 admin（runner 系统身份）。"""
     return run_ingest()
 
 
 @router.get("/candidates")
 def list_candidates_route(
+    # 票 42：1..200（候选类上界）
     status: str = "new",
-    # 票 42:limit=-1 修复前直落 SQL 全量吐候选 summary/claims 明文;界 [1,500]
-    # 对齐候选只读族(MCP 孪生 [1,500] 家族)
-    limit: int = Query(20, ge=1, le=500),
+    limit: int = Query(20, ge=1, le=200),
     ctx=Depends(get_current_user),
 ):
     """候选列表（`status` 过滤 + 归属收窄）。

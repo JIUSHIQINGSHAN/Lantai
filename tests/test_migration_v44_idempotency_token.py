@@ -1,13 +1,13 @@
-"""v41: 老库 idempotency_keys 缺 token 列时，迁移链必须补上（票 80，原 74）。
+"""v44: 老库 idempotency_keys 缺 token 列时，迁移链必须补上（票 80，原 74）。
 
-勘合所有权令牌与时间解耦（v41 起 claim/接管写 uuid4 token，条件语句按
+勘合所有权令牌与时间解耦（v44 起 claim/接管写 uuid4 token，条件语句按
 token 判据）：此前令牌即 created_at 裸 epoch 浮点，粗刻度时钟下相邻两次
 取时可同值，接管把新主行 created_at 改写回与旧令牌相等时，旧主带令牌
 release/settle 的条件删除命中新主行——重试即双执行。
 
-跳号申报：v39/v40 已被未合入的并行流占用（PR #43：票 24/25），按票 25
-「已被占用即取下一空闲号 + 漂移登记」先例改号 v41；老库锚点取 v38（本
-分支基线的链顶），合入后对 38 库依序跑 39/40/41。
+跳号申报：v39–v43 已被 master（PR #43）占用，按票 25「已被占用即取
+下一空闲号 + 漂移登记」先例改号 v44；老库锚点取 v38，迁移链对 38 库依序
+跑 39–44。
 
 与 test_migration_v36 同一约定：不 mock，真实临时 SQLite + 真实
 apply_migrations；升级窗老行（token NULL）的引擎侧语义锁见
@@ -55,7 +55,7 @@ def test_legacy_db_missing_idempotency_token_is_restored(tmp_path):
         apply_migrations(conn)
         conn.commit()
 
-        assert TARGET_SCHEMA_VERSION >= 41, (
+        assert TARGET_SCHEMA_VERSION >= 44, (
             f"迁移链目标版本仍是 {TARGET_SCHEMA_VERSION}，没有为令牌列开台阶"
         )
         assert conn.execute("PRAGMA user_version").fetchone()[0] == TARGET_SCHEMA_VERSION

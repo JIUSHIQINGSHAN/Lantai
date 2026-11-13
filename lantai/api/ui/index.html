@@ -688,8 +688,9 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-  <script src="https://cdn.jsdelivr.net/npm/d3@7" crossorigin="anonymous"></script>
-  <script>window.d3 || document.write('<script src="/ui/assets/d3.v7.min.js">\x3c/script>');</script>
+  <!-- 票 70：d3 本地资产（v7.9.0 已在仓）——去 jsdelivr CDN 引用，零出站、
+       零无校验远端脚本投毒面；document.write 回退随 CDN 一并删除 -->
+  <script src="/ui/assets/d3.v7.min.js"></script>
   <script type="module" src="/ui/assets/app.js"></script>
 </body>
 </html>

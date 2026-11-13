@@ -13,8 +13,9 @@
 """
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from lantai.core.acl import SESSION_ID_PATTERN
 from lantai.core.auth import get_current_user
 from lantai.services.checkpoint_service import (
     cleanup_old_checkpoints,
@@ -28,15 +29,16 @@ router = APIRouter()
 
 
 class CheckpointWriteReq(BaseModel):
-    session_id: str
+    # 票 54：字符集收窄（纵深第二层）——session_id 进底本围栏 item_id
+    # 属性，pydantic pattern 非法即 422，不静默截断；与 MCP 面同钳。
+    session_id: str = Field(pattern=SESSION_ID_PATTERN)
     blocks: dict
 
 
 @router.get("/checkpoint")
 def list_checkpoints_route(
     memory_id: str = "",
-    # 票 42:limit=-1 修复前直落 SQL——checkpoint 的 before/after 是完整行快照,
-    # 负 limit 等于把编年史整个吐出去;上界 100 对齐票面「checkpoint 族」
+    # 票 42：1..100——checkpoint 是完整行快照，放大尤甚（回滚历史逐版本返回）
     limit: int = Query(20, ge=1, le=100),
     session_id: str = "",
     ctx=Depends(get_current_user),
@@ -62,9 +64,8 @@ def latest_checkpoint_route(ctx=Depends(get_current_user)):
 
 @router.post("/checkpoint/cleanup")
 def cleanup_checkpoint_route(
-    # 票 42:负值修复前是 service ValueError 未译的 500(票 41 语义病同族);
-    # 路由层先拒成 422,service 层 >=1 校验保持为内部调用方的后盾
-    max_sessions: int | None = Query(None, ge=1, le=500),
+    # 票 41：可校验输入在边界拦（service 的 ValueError 兜底不再裸奔成 500）
+    max_sessions: int | None = Query(default=None, ge=1),
     ctx=Depends(get_current_user),
 ):
     return cleanup_old_checkpoints(max_sessions, principal=ctx)

@@ -50,3 +50,11 @@ CONTEXT.md 观察期定义：「只认 7 次连续、无异常且无 LLM 失败�
 - [ADR-0013](0013-naming-system.md) — 察窗命名登记
 - [CONTEXT.md](../../CONTEXT.md) — 观察期词汇定义
 - [v0.15 路线计划书](../plans/roadmap-2026-08-v015.md) — A 项观察期回填校准
+
+## 实施现状（票 34 收口轮增补，2026-11-08 现场亲核）
+
+- 本 ADR 影响段曾承诺「发布门禁 release_check.py 会调用 --check」——**从未接线**（release_check 全文零引用 `reflect_observation_status`）。消费点现状两处：
+  1. `scripts/reflect_observation_status.py`（standalone sqlite3 直读，人工发布准备工具）；
+  2. `lantai/workers/reflect_worker.py::observation_status`（票 34 新增）：每次 scheduled 运行真评察窗，结果进运行回执 `res["observation"]` + `logger.info` 留痕——两实现因连接形态分置，判据一致性由 `tests/test_scheduler_config_gaps.py` 判据双锁臂钉死。
+- **worker 不自闸（立法级裁决，票 34 拍板 (c)）**：察窗的合格运行日（source=scheduled）由 worker 运行本身产生——不足即跳过则样本永不累积，察窗语义自毁，任何 ≥7 天停机后系统永久无法恢复。CONTEXT.md 察窗条目的立法语义是「真实运行数据**收集**窗口……积累足够合格运行样本后才触发**校准**」：worker 是采样器，本 ADR 门槛的闸门对象是校准/发布裁决，不是采样器自身。评估必须发生（每次运行透出），阻断不得发生。
+- 已知形态注记：脚本的窗口锚是本地今日（`datetime.now().date()`）而日键是 UTC 日——非东八区宿主上边界日计数可能差一天（既有形态，票 34 未改动）；worker 侧窗口锚统一 UTC 日。

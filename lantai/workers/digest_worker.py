@@ -1,7 +1,7 @@
 """盘点 worker——TTL 归档 + Daily Digest 每日盘点报告（Ticket 02/03）。
 
 - run_candidate_ttl：每日清理超龄 pending_review 候选 → rejected（Ticket 02）
-- run_digest_once：生成当日盘点报告 docs/memory-digest/YYYY-MM-DD.md（Ticket 03）
+- run_digest_once：生成当日盘点报告 <数据目录>/docs/memory-digest/YYYY-MM-DD.md（Ticket 03；数据目录 = LANTAI_HOME，未设时仓库根，票 85）
   五项统计：新增记忆 / 修改记忆 / 待审数 / 归档数 / 检索统计
 """
 
@@ -22,16 +22,6 @@ from lantai.models.tables import (
 from lantai.services.candidate_service import run_candidate_ttl_once
 from lantai.storage import db
 
-# 仓库根 = lantai/workers/ → lantai/ → 仓库根
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_DEFAULT_DIGEST_DIR = _REPO_ROOT / "docs" / "memory-digest"
-
-# 反思提案置信桶（ADR-0002 零硬编码：边界走 settings，见校准报告）
-_CONF_BUCKETS = tuple(settings.DIGEST_CONF_BUCKETS)
-# 「其他」兜底桶标签——settings 桶定义之外才出现的置信值归此（票 86：分桶
-# 单点消费；渲染面经 labels 合并对 dict 键透传自动跟随，桶定义改名/拆分
-# 不得牵动兜底语义）
-_CONF_BUCKET_OTHER = "其他"
 _TYPE_ORDER = ("add", "update", "merge", "deprecate")
 _STATUS_COLS = ("applied", "pending", "rejected", "other")
 
@@ -137,16 +127,20 @@ def _aggregate_reflection(s, start: datetime, end: datetime, *, principal=None) 
     by_type: dict[str, dict[str, int]] = {}
     for ptype, status, cnt in rows:
         by_type.setdefault(ptype, {})[status] = int(cnt)
-    conf_buckets = {label: 0 for label, _, _ in _CONF_BUCKETS}
+    # 桶定义调用时读 settings（票 86：import 期快照会让 settings 改动被无视）；
+    # 终桶（最大 hi）按闭区间右端收边界值，判定跟数值走、不挂标签字面量；
+    # 越界置信落 DIGEST_CONF_FALLBACK_LABEL（与桶定义同源，不裸写「其他」）。
+    buckets = tuple(settings.DIGEST_CONF_BUCKETS)
+    top_hi = max((hi for _, _, hi in buckets), default=None)
+    fallback_label = settings.DIGEST_CONF_FALLBACK_LABEL
+    conf_buckets = {label: 0 for label, _, _ in buckets}
     for conf in conf_values:
-        for label, lo, hi in _CONF_BUCKETS:
-            # 终桶右端闭区间凭数值语义（hi >= 1.0 收 conf == 1.0），不挂 label
-            # 字面量（票 86：桶定义改名/拆分后语义不得漂移）
-            if lo <= conf < hi or (hi >= 1.0 and conf == 1.0):
+        for label, lo, hi in buckets:
+            if lo <= conf < hi or (hi == top_hi and conf == top_hi):
                 conf_buckets[label] += 1
                 break
         else:
-            conf_buckets[_CONF_BUCKET_OTHER] = conf_buckets.get(_CONF_BUCKET_OTHER, 0) + 1
+            conf_buckets[fallback_label] = conf_buckets.get(fallback_label, 0) + 1
     return {
         "created": int(created),
         "applied": int(applied),
@@ -182,8 +176,15 @@ def run_receipt_miss_scan() -> int:
 
 
 def _digest_dir() -> Path:
-    """报告输出目录：settings.DIGEST_OUTPUT_DIR 为空时默认仓库 docs/memory-digest。"""
-    return Path(settings.DIGEST_OUTPUT_DIR) if settings.DIGEST_OUTPUT_DIR else _DEFAULT_DIGEST_DIR
+    """报告输出目录：DIGEST_OUTPUT_DIR 显式优先；默认落数据目录（LANTAI_HOME，票 85）。
+
+    不按安装前缀（``Path(__file__)``）推导——wheel/容器形态前缀只读，每日 job 必炸。
+    """
+    return (
+        Path(settings.DIGEST_OUTPUT_DIR)
+        if settings.DIGEST_OUTPUT_DIR
+        else settings.data_home / "docs" / "memory-digest"
+    )
 
 
 def _local_day_window_utc(day: date | None = None) -> tuple[datetime, datetime]:
@@ -412,7 +413,7 @@ def render_digest_markdown(stats: dict) -> str:
         lines += _type_status_rows(rf)
         buckets = rf.get("conf_buckets", {})
         if buckets:
-            labels = [b[0] for b in _CONF_BUCKETS]
+            labels = [b[0] for b in settings.DIGEST_CONF_BUCKETS]
             labels += [k for k in buckets if k not in labels]
             lines += [
                 "",
@@ -523,7 +524,7 @@ def render_calibration_markdown(stats: dict) -> str:
     buckets = refl.get("conf_buckets", {})
     if buckets:
         lines += ["", "## 置信桶（窗口新增）", "", "| 桶 | 数量 |", "|---|---|"]
-        labels = [b[0] for b in _CONF_BUCKETS]
+        labels = [b[0] for b in settings.DIGEST_CONF_BUCKETS]
         labels += [k for k in buckets if k not in labels]
         for label in labels:
             lines.append(f"| {label} | {buckets.get(label, 0)} |")

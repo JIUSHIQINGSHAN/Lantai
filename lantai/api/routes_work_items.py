@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from lantai.core.auth import get_current_user
+from lantai.core.auth import Principal, get_current_user, require_admin
 from lantai.models.work_items import (
     BatchActionResult,
     BatchDeferRequest,
@@ -78,7 +78,10 @@ def batch_organize_route(req: BatchOrganizeRequest, ctx=Depends(get_current_user
 
 
 @router.post("/workers/{worker_name}/run")
-def run_worker_route(worker_name: str):
+def run_worker_route(worker_name: str, principal: Principal = Depends(require_admin)):
+    """手动触发 worker（票 19：此前零身份——runner 以系统身份执行，任何持
+    key 者可驱动 ingest/evolve/forget/digest/reflect 全库批处理）。全局
+    动作面，仅 admin。"""
     try:
         return run_worker(worker_name)
     except RuntimeError as exc:

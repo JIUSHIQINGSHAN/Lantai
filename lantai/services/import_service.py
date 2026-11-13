@@ -13,7 +13,10 @@ from datetime import UTC, datetime
 from sqlmodel import select
 
 from lantai.core.settings import settings
+from lantai.core.text import normalize_for_index
 from lantai.models.tables import MemoryItem
+from lantai.security.injection_guard import assert_no_prompt_injection
+from lantai.security.secret_guard import detect_secret_shapes
 from lantai.services.memory_service import build_verbatim_item
 from lantai.storage import db
 from lantai.storage.fts import sync_fts
@@ -103,14 +106,18 @@ def parse_import_lines(text: str) -> tuple[list[dict], list[dict]]:
 def _store_imported_memory(s, content, created_at, updated_at, lane, tags) -> str:
     """verbatim 直存单行：返回 'imported' | 'duplicate'。
 
-    内容 sha256 幂等去重（与 add_raw_memory 同语义）；created_at/updated_at
+    内容 sha256 幂等去重（与 add_raw_memory 同语义：身份键过归一缝 + 存量
+    原文 sha 双键并查，票 46 / ADR-0085）；created_at/updated_at
     保留原始时间戳（updated_at 缺省取 created_at）。embedding/向量索引失败
     不阻断落库（FTS 仍可检索）。
     """
-    h = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    h_norm = hashlib.sha256(normalize_for_index(content).encode("utf-8")).hexdigest()
+    h_raw = hashlib.sha256(content.encode("utf-8")).hexdigest()
     existing = s.exec(
         select(MemoryItem).where(
-            MemoryItem.memory_type == "verbatim", MemoryItem.key == h, MemoryItem.status == "active"
+            MemoryItem.memory_type == "verbatim",
+            MemoryItem.key.in_([h_norm, h_raw]),
+            MemoryItem.status == "active",
         )
     ).first()
     if existing:
@@ -153,6 +160,34 @@ def import_memory_lines(lines: list[dict], allowed_lanes: list[str] | None = Non
     report = {"imported": 0, "duplicates": 0, "errors": []}
     with db.get_session() as s:
         for line in lines:
+            # 獬豸（票 47）：本面曾是守卫矩阵 11 处挂闸面的唯一漏网——批量导入
+            # 是持 API key 的主写入口（聊天导出/网页摘录/第三方笔记），注入载荷
+            # 直入 FTS+向量后经 evidence.py content[:200] 回宿主上下文，獬豸
+            # 「注入内容进不了库」边界失效。命中行记 errors 不导入（宁 miss 不
+            # 脏写）；闸位在 sha 去重**之前**——duplicate 命中不等于过闸，毒行
+            # 不得借重导洗白。
+            try:
+                assert_no_prompt_injection(line["content"])
+            except ValueError as exc:
+                report["errors"].append(
+                    {"content": line["content"][:60], "reason": f"獬豸阻断：{exc}"}
+                )
+                continue
+
+            # 密钥熔断（X-06 同 ingest_worker 口径）：off 不检测；shadow 检测+
+            # warning 留痕不阻断（detect_secret_shapes 内建）；enforce 命中拒。
+            # 本面 verbatim 直存无候选可转待审（route_secret_hits 需要
+            # candidate_id），errors 报告即「不静默」载体。
+            secret_hits = detect_secret_shapes(line["content"])
+            if secret_hits and settings.SECRET_GUARD_MODE == "enforce":
+                report["errors"].append(
+                    {
+                        "content": line["content"][:60],
+                        "reason": f"密钥熔断命中 {secret_hits}（enforce 拒导入，票 47）",
+                    }
+                )
+                continue
+
             if allowed_lanes is not None and line["lane"] not in allowed_lanes:
                 report["errors"].append(
                     {

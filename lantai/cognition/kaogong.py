@@ -18,10 +18,11 @@ from sqlmodel import Session, select
 from lantai.core.acl import SYSTEM_VIEWER, is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.core.logger import logger
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
+from lantai.storage.cas import atomic_update
 
 # 全局最新考功报告快照缓存
 _LATEST_KAOGONG_REPORT: dict[str, Any] = {
@@ -274,7 +275,7 @@ class KaogongEngine:
                 "demoted": 0,
                 "kept": 0,
                 "details": [],
-                "evaluated_at": utcnow().isoformat(),
+                "evaluated_at": iso_utc(utcnow()),
                 "skipped_no_principal": True,
             }
         if self.session is not None:
@@ -300,17 +301,42 @@ class KaogongEngine:
                 continue
             res = self.evaluate_item(mem)
             if res.action == "promote_longterm":
-                mem.tier = "longterm"
-                mem.decay_class = "semantic"
-                mem.importance = res.new_importance
-                s.add(mem)
-                promoted_count += 1
-                details.append(res.to_dict(fenced=True))
+                # 票 23：判定类写路径——条件 UPDATE 写时重验扫描期
+                # importance/tier/status（判定输入），扫描到落笔之间被并发
+                # 反馈/保活改过的行跳过本次落笔（宁 miss 不脏写，红测 F6）；
+                # 快照绝对值覆写会把刚被表扬的记忆打成低分。
+                claimed = atomic_update(
+                    s,
+                    MemoryItem,
+                    mem.id,
+                    {
+                        "tier": "longterm",
+                        "decay_class": "semantic",
+                        "importance": res.new_importance,
+                    },
+                    MemoryItem.importance == mem.importance,
+                    MemoryItem.tier == mem.tier,
+                    MemoryItem.status == "active",
+                )
+                if claimed:
+                    promoted_count += 1
+                    details.append(res.to_dict(fenced=True))
+                else:
+                    kept_count += 1
             elif res.action == "demote_deprecate":
-                mem.importance = res.new_importance
-                s.add(mem)
-                demoted_count += 1
-                details.append(res.to_dict(fenced=True))
+                claimed = atomic_update(
+                    s,
+                    MemoryItem,
+                    mem.id,
+                    {"importance": res.new_importance},
+                    MemoryItem.importance == mem.importance,
+                    MemoryItem.status == "active",
+                )
+                if claimed:
+                    demoted_count += 1
+                    details.append(res.to_dict(fenced=True))
+                else:
+                    kept_count += 1
             else:
                 kept_count += 1
 
@@ -321,7 +347,7 @@ class KaogongEngine:
             "demoted": demoted_count,
             "kept": kept_count,
             "details": details,
-            "evaluated_at": utcnow().isoformat(),
+            "evaluated_at": iso_utc(utcnow()),
         }
         _LATEST_KAOGONG_REPORT = report
         logger.info(

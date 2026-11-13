@@ -18,9 +18,9 @@ router = APIRouter()
 
 @router.get("/crystals")
 def crystals_list_route(
+    # 票 42：1..200（候选态列表，对齐候选类上界）
     status: str = "candidate",
-    # 票 42:界 [1,500] 与 MCP 孪生 handle_crystals_list(mcp.py:1264)同源
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=200),
     ctx=Depends(get_current_user),
 ):
     """结晶候选项列表（默认 candidate 待审）。"""

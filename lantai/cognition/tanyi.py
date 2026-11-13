@@ -17,7 +17,7 @@ from sqlmodel import Session, select
 from ulid import ULID
 
 from lantai.core.acl import ensure_can_delete
-from lantai.core.logger import logger
+from lantai.core.logger import loggable, logger
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
 from lantai.models.tables import ConflictEvent, MemoryCheckpoint, MemoryItem
@@ -26,6 +26,7 @@ from lantai.security.injection_guard import (
     is_blocked_by_injection_guard,
 )
 from lantai.services.record_ops_service import sync_vector_upsert
+from lantai.storage.cas import atomic_update
 from lantai.storage.fts import sync_fts
 
 
@@ -196,13 +197,44 @@ def execute_tanyi_resolution(
                 "message": str(e),
             }
 
+        # 票 78：版本前置 CAS——「扫描期快照 → 整组写回」在并发 correct_memory
+        # 交错下会把用户显式纠正的正文用旧语义正文覆盖、version 重号（票 23 S8
+        # 同级）。条件 UPDATE 认领下一版本号（写阶段第一条 DML 对最新已提交
+        # 状态求值），rowcount=0 即并发败方：冲突保留 open 交人工重探，如实
+        # 返回 conflict 形状（宁 miss 不脏写）。
         before_snapshot = item.model_dump(mode="json")
+        scan_version = item.version or 1
+        claimed = atomic_update(
+            session,
+            MemoryItem,
+            item.id,
+            {
+                "content": applied_content,
+                "version": scan_version + 1,
+                "decay_score": 1.0,
+                "updated_at": utcnow(),
+            },
+            MemoryItem.version == scan_version,
+            MemoryItem.status == "active",
+        )
+        if not claimed:
+            session.rollback()
+            logger.info(
+                "探颐：冲突 %s 的目标记忆已被并发修改（版本 %s→已推进），消解让路交人工重探",
+                conflict_id,
+                scan_version,
+            )
+            return {
+                "status": "conflict",
+                "action": "concurrent_modification",
+                "intent": intent,
+                "conflict_id": conflict_id,
+                "memory_id": item.id,
+                "message": "memory changed concurrently; conflict kept open for re-probe",
+            }
 
-        item.content = applied_content
-        item.version = (item.version or 1) + 1
-        item.decay_score = 1.0
-        item.updated_at = utcnow()
-
+        # CAS 胜方：ORM 对象与库端对齐（checkpoint/冲突翻转都要用新值）
+        session.refresh(item)
         cp = MemoryCheckpoint(
             id=f"cp_{ULID()}",
             memory_id=item.id,
@@ -218,7 +250,6 @@ def execute_tanyi_resolution(
         conf.resolved_by = "tanyi_proactive_user_confirmed"
         conf.resolved_at = utcnow()
         session.add(conf)
-        session.add(item)
 
         # 同步全文与向量（容错 SQLite 内存测试无 FTS 表的场景）
         try:
@@ -562,9 +593,10 @@ class TanyiProbingEngine:
                     if len(probes) >= limit:
                         break
 
+        # 票 50：同 probing_service——clean_q 过 loggable 单行化+截断
         logger.info(
             "探颐引擎：为查询 '%s' 检出 %d 条主动求证插桩探针",
-            clean_q[:20],
+            loggable(clean_q, limit=20),
             len(probes),
         )
         return probes
