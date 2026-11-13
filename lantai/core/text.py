@@ -29,7 +29,7 @@ def normalize_session_id(value, *, default=None):
 
 
 def like_escape(token: str) -> str:
-    """把用户 token 转成 LIKE 模式串里的字面文本：\ % _ 三字符前缀反斜杠。
+    r"""把用户 token 转成 LIKE 模式串里的字面文本：\ % _ 三字符前缀反斜杠。
 
     配套用法：col.like(f"%{like_escape(t)}%", escape=LIKE_ESCAPE_CHAR)。
     剥离通配符会把「查询 foo_bar 应命中字面 foo_bar」的验收废掉，故票 28

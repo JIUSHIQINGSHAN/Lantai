@@ -638,6 +638,7 @@ def namespace_provenance_issues(repo_root: Path, *, env: dict[str, str] | None =
     之外、或 import 即崩，都判红并给出可操作文案（清 PYTHONPATH 复跑）。
     """
     run_env = os.environ.copy() if env is None else dict(env)
+    run_env["PYTHONIOENCODING"] = "utf-8"
     try:
         proc = subprocess.run(  # noqa: S603
             [
@@ -715,6 +716,7 @@ def suite_gate_issues(
     with tempfile.TemporaryDirectory(prefix="lantai_gate_suite_") as work_dir:
         report_path = os.path.join(work_dir, "tripwire_report.txt")
         env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONPATH"] = os.pathsep.join([str(support), env.get("PYTHONPATH", "")]).strip(
             os.pathsep
         )
@@ -1586,11 +1588,14 @@ def run_build_gate(
     """
     with tempfile.TemporaryDirectory(prefix="lantai_gate_build_") as outdir:
         problems: list[str] = []
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
         for cmd in build_wheel_commands(repo_root, outdir, python=python):
             try:
                 proc = subprocess.run(  # noqa: S603
                     cmd,
                     cwd=str(repo_root),
+                    env=env,
                     capture_output=True,
                     text=True,
                     encoding="utf-8",

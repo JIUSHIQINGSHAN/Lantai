@@ -12,6 +12,7 @@ LANTAI_HOME 数据迁移脚本（安全版）。
 """
 
 import argparse
+import ctypes
 import shutil
 import sqlite3
 import subprocess
@@ -19,6 +20,16 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _decode_setx_stderr(stderr: bytes | None) -> str:
+    if not stderr:
+        return ""
+    if sys.platform == "win32":
+        encoding = f"cp{ctypes.windll.kernel32.GetOEMCP()}"
+    else:
+        encoding = "utf-8"
+    return stderr.decode(encoding, errors="replace")
 
 
 def _fail(msg: str) -> None:
@@ -101,7 +112,7 @@ def main() -> int:
             ["setx", "LANTAI_HOME", str(target)], check=True, capture_output=True, shell=False
         )
     except subprocess.CalledProcessError as e:
-        _fail(f"setx 失败（需管理员？）: {e.stderr.decode(errors='ignore')}")
+        _fail(f"setx 失败（需管理员？）: {_decode_setx_stderr(e.stderr)}")
 
     # 5) 同时写入项目根 .env（双保险，供以项目根为 cwd 的进程读取）
     env_path = REPO_ROOT / ".env"

@@ -24,7 +24,9 @@ from lantai.storage import db
 
 
 def wiki_dir() -> Path:
-    """Wiki 输出目录：WIKI_OUTPUT_DIR 显式优先；默认落数据目录（LANTAI_HOME，票 85）。"""
+    """Wiki 输出目录（票 85）：显式 WIKI_OUTPUT_DIR 优先；默认落数据目录
+    settings.data_home/docs/memory-wiki，与 db/chroma 同源。
+    """
     return (
         Path(settings.WIKI_OUTPUT_DIR)
         if settings.WIKI_OUTPUT_DIR

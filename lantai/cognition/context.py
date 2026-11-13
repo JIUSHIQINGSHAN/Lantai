@@ -117,7 +117,12 @@ class CognitiveContext:
                         tl = item.get("timeline", [])
                         for event in tl:
                             ts = event.get("timestamp") or "未知时间"
-                            lines.append(f"  * [{ts}] {wrap_as_data(str(event.get('content')))}")
+                            # 票 87：时间戳位过樊篱——timeline dict 的 timestamp
+                            # 是自由文本位（来源描述可含库内正文引用），裸拼即
+                            # 闭合标记逃逸落数据位之外（票 64 同根）。
+                            lines.append(
+                                f"  * [{wrap_as_data(str(ts))}] {wrap_as_data(str(event.get('content')))}"
+                            )
                         # 反事实替代路径支持（ADR-0061 / v0.40）
                         alt_paths = item.get("alternative_paths", [])
                         if alt_paths:
@@ -225,8 +230,14 @@ class CognitiveContext:
                     l = s.get("lane", "")
                     cnt = s.get("count", 0)
                     tags = s.get("tags", [])
-                    tag_str = f" [标签: {', '.join(tags[:5])}]" if tags else ""
-                    c_lines.append(f"  * {d}/{l}: {cnt} items{tag_str}")
+                    # 票 87：标签/辨域位过樊篱——tags 是用户可控自由文本
+                    # （AddMemoryReq.tags 直通落库），domain 声明为枚举位
+                    # （user/session/agent）但存在 LLM curator 传导写入点
+                    # （promoter proposed_patch），间接可控同根（票 64）。
+                    tag_str = f" [标签: {wrap_as_data(', '.join(tags[:5]))}]" if tags else ""
+                    c_lines.append(
+                        f"  * {wrap_as_data(str(d))}/{wrap_as_data(str(l))}: {cnt} items{tag_str}"
+                    )
 
             sections.insert(0, "\n".join(c_lines))
 

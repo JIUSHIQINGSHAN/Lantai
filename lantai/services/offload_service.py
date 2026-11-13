@@ -12,7 +12,9 @@ from lantai.core.text import truncate_codepoints
 
 
 def offload_dir() -> Path:
-    """卸载全文目录：OFFLOAD_OUTPUT_DIR 显式优先；默认落数据目录（LANTAI_HOME，票 85）。"""
+    """卸载全文目录（票 85）：显式 OFFLOAD_OUTPUT_DIR 优先；默认落数据目录
+    settings.data_home/docs/memory-offload，与 db/chroma 同源。
+    """
     return (
         Path(settings.OFFLOAD_OUTPUT_DIR)
         if settings.OFFLOAD_OUTPUT_DIR

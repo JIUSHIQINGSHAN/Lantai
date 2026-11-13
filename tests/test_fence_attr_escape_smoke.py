@@ -1,4 +1,4 @@
-"""票 54/51：樊篱 `wrap_as_data` 属性位零转义——用户可控 session_id 提前闭合开标记。
+r"""票 54/51：樊篱 `wrap_as_data` 属性位零转义——用户可控 session_id 提前闭合开标记。
 
 `.scratch/v0.68-next-window-2026-11/issues/54-fence-attr-unescaped-session-id.md`
 （票 51 mokan 标记同病同轮收口，票面修复目标 3）

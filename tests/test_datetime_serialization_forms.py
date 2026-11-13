@@ -146,11 +146,11 @@ _WHITELIST: set[tuple[str, int]] = {
     ("eval/longmemeval.py", 126),
     # utcnow().date() —— 标题字符串里的日历日，非 datetime 出口
     ("services/distill_service.py", 188),
-    # digest_worker day 是 date 对象（MCP date 序列化，票 52 已收口）
-    ("workers/digest_worker.py", 331),
-    ("workers/digest_worker.py", 333),
-    ("workers/digest_worker.py", 611),
-    ("workers/digest_worker.py", 617),
+    # digest_worker day 是 date 对象（MCP date 序列化，票 52 已收口）；
+    # 票 84/86 合流后按最终三个调用点精确登记，不扩大豁免范围。
+    ("workers/digest_worker.py", 322),
+    ("workers/digest_worker.py", 600),
+    ("workers/digest_worker.py", 606),
     # 票 53 审查修正：SQL cutoff 比较操作数（operation_logs.created_at 落盘为
     # 空格分隔形态，isoformat(sep=" ") 与之同形；走 iso_utc 的 T 分隔会让
     # 同日历日行提前 ~23h 被剪）。SQL 操作数非 datetime JSON 出口。

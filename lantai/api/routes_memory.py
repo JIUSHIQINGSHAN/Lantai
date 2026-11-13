@@ -81,12 +81,17 @@ def add_raw_memory_route(req: RawMemoryReq, ctx: Principal = Depends(get_current
     # 归属四元组必须随 principal 落列（票 .scratch/ownership-gaps/03）：
     # verbatim 是库里条数最多的一类，属主恒 NULL 会让按属主过滤的检索
     # （fts.py:160 的 `AND m.user_id = ?`）把它整类滤光。
+    # principal=ctx（票 20/79）：add_raw_memory 的去重归属收窄以 principal
+    # 形参为开关，MCP（handle_raw_add）与 obsidian（sync_obsidian_note）都
+    # 透传了，REST 入口漏接线——不传则去重 SELECT 无归属过滤，A 提交与 B
+    # 的 verbatim 行 sha256 相同的文本即命中 B 的行、拿到 B 的 memory_id。
     try:
         return add_raw_memory(
             req,
             user_id=ctx.user_id or "default",
             tenant_id=ctx.tenant_id,
             agent_id=ctx.agent_id,
+            principal=ctx,
         )
     except ValueError as e:
         # 獬豸注入拒绝走 ValueError（同 dialogue 路由 422 范式）

@@ -1,4 +1,4 @@
-"""票 28：LIKE 通配与裸标点降级臂过匹配收口（三处 LIKE 点统一转义真源）。
+r"""票 28：LIKE 通配与裸标点降级臂过匹配收口（三处 LIKE 点统一转义真源）。
 
 病灶（督导现场复核 HEAD `14bb3412`，行号以此为准）：
 1. `lantai/retrieval/hybrid.py:1184` `content.like(f"%{t}%")` 无 escape——`_`

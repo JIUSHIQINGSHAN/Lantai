@@ -677,6 +677,7 @@ def test_mcp_fail_message_only_advertises_remedies_that_really_narrow(monkeypatc
 def test_isolated_probe_env_isolates_home_and_forbids_dev_mode(tmp_path):
     home = str(tmp_path / "probe_home")
     env = RC.isolated_probe_env(home)
+    assert env["PYTHONIOENCODING"].split(":", 1)[0] == "utf-8"
     assert os.path.normcase(env["LANTAI_HOME"]) == os.path.normcase(home)
     assert env.get("API_KEY"), "探针需要非空 API_KEY（空则 DEV MODE 回退掩盖真实分支）"
     assert "LANTAI_MCP_PROFILE" not in env, "探针必须模拟『不设 profile』的默认暴露现场"
@@ -1002,6 +1003,12 @@ def test_suite_gate_blocks_when_nothing_actually_ran(tmp_path):
 def test_namespace_provenance_clean_env_passes():
     """干净环境（PYTHONPATH 清空）下五个哨兵全部落在本仓/活动解释器内。"""
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    assert RC.namespace_provenance_issues(RC.REPO_ROOT, env=env) == []
+
+
+def test_namespace_provenance_preserves_import_resolution_with_utf8_pipe():
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    env["PYTHONIOENCODING"] = "utf-8"
     assert RC.namespace_provenance_issues(RC.REPO_ROOT, env=env) == []
 
 

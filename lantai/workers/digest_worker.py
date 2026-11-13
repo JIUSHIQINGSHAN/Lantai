@@ -5,11 +5,12 @@
   五项统计：新增记忆 / 修改记忆 / 待审数 / 归档数 / 检索统计
 """
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from sqlmodel import func, select
 
+from lantai.core import time as core_time
 from lantai.core.scheduler import record_run
 from lantai.core.settings import settings
 from lantai.models.tables import (
@@ -127,16 +128,15 @@ def _aggregate_reflection(s, start: datetime, end: datetime, *, principal=None) 
     by_type: dict[str, dict[str, int]] = {}
     for ptype, status, cnt in rows:
         by_type.setdefault(ptype, {})[status] = int(cnt)
-    # 桶定义调用时读 settings（票 86：import 期快照会让 settings 改动被无视）；
-    # 终桶（最大 hi）按闭区间右端收边界值，判定跟数值走、不挂标签字面量；
-    # 越界置信落 DIGEST_CONF_FALLBACK_LABEL（与桶定义同源，不裸写「其他」）。
+    # 桶定义调用时读 settings（票 84/86）；标签只用于展示。
+    # 最大 hi 桶闭合右端点，越界置信落同源配置的兜底桶。
     buckets = tuple(settings.DIGEST_CONF_BUCKETS)
     top_hi = max((hi for _, _, hi in buckets), default=None)
     fallback_label = settings.DIGEST_CONF_FALLBACK_LABEL
     conf_buckets = {label: 0 for label, _, _ in buckets}
     for conf in conf_values:
         for label, lo, hi in buckets:
-            if lo <= conf < hi or (hi == top_hi and conf == top_hi):
+            if lo <= conf < hi or (lo <= conf == hi == top_hi):
                 conf_buckets[label] += 1
                 break
         else:
@@ -176,7 +176,8 @@ def run_receipt_miss_scan() -> int:
 
 
 def _digest_dir() -> Path:
-    """报告输出目录：DIGEST_OUTPUT_DIR 显式优先；默认落数据目录（LANTAI_HOME，票 85）。
+    """报告输出目录（票 85）：显式 DIGEST_OUTPUT_DIR 优先；为空时落数据目录
+    settings.data_home/docs/memory-digest，与 db/chroma 同源。
 
     不按安装前缀（``Path(__file__)``）推导——wheel/容器形态前缀只读，每日 job 必炸。
     """
@@ -188,20 +189,8 @@ def _digest_dir() -> Path:
 
 
 def _local_day_window_utc(day: date | None = None) -> tuple[datetime, datetime]:
-    """本地日历日 → (start_utc, end_utc)，aware UTC。
-
-    先把本地日界换算成 UTC，再与库值比较（避免 Chronos 时区类 bug）。
-    aware：锁定的 sqlmodel 0.0.42 无库级防护（datetime 字段映射裸
-    DateTime，naive 查询绑定参数也静默落库）——绑定参数恒 aware UTC
-    靠约定与读侧 _ensure_utc 归一，非库强制；落盘文本形态与 naive 版
-    逐条一致（SQLite 按分量格式化、无偏移后缀）。
-    """
-    local_now = datetime.now().astimezone()
-    if day is None:
-        day = local_now.date()
-    local_start = datetime.combine(day, time.min, tzinfo=local_now.tzinfo)
-    local_end = local_start + timedelta(days=1)
-    return (local_start.astimezone(UTC), local_end.astimezone(UTC))
+    """兼容入口：宿主本地日界由 core.time 统一转换成 aware UTC 查询窗。"""
+    return core_time.local_day_window_utc(day)
 
 
 def _digest_scope(column, principal):

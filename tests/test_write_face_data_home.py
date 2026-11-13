@@ -160,3 +160,9 @@ class TestDocsTruthLock:
         assert "LANTAI_HOME" in text, "daily-digest.md 输出口径未写数据目录语义（wheel 形态失真）"
         assert "数据目录" in text, "daily-digest.md 输出口径未写「数据目录」一词（两形态语义回退）"
         assert "DIGEST_OUTPUT_DIR" in text, "daily-digest.md 丢失显式覆盖开关说明（优先级契约回退）"
+        assert "宿主本地日" in text and "调度器使用 UTC" in text, (
+            "daily-digest.md 必须区分宿主日界与 UTC 调度口径（票 84）"
+        )
+        assert "夏令时" in text and "尾部" in text, (
+            "daily-digest.md 必须说明固定 UTC 调度的夏令时与触发后尾部限制（票 84）"
+        )
