@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.68.0] - 2026-11-13
+
 ### Added
 
 - **离线性能基线工具 `scripts/perf_bench.py`（v0.68 并行流 D 票 `.scratch/v068-perf/01`）**：进程内直调核心函数（FTS/BM25、hybrid_search、build_context、摄取、apply_proposal、apply_forgetting），自建临时 SQLite（真实建表 + 迁移链 + FTS5 trigram）按规模灌入种子化合成语料（默认 1000/5000 两档），输出 P50/P95 基线（JSON + Markdown 双格式）；LLM/embedding 用确定性替身并单列计量、不与本地管线混账，向量库用生产同款内嵌 ChromaDB 0.6.3（装不上自动降级纯 Python 替身并声明）。`--profile` 附 cProfile 热点表并落原始 `.pstats`（可用 pstats 交互复盘）。内置健全性自检（三通道召回/闸门放行/fastpath 命中），不满足拒绝出报告。基线结论：本地管线 5000 行全链 60-70ms，头号热点是向量通道 ACL `$or` 过滤令 chroma 元数据全表扫（17× 劣化，票 `.scratch/v068-perf/03`）。冒烟锁：`tests/test_perf_bench_smoke.py`（不 mock 直调真实实现）。
