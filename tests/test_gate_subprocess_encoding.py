@@ -179,5 +179,11 @@ def test_setx_native_oem_stderr_decodes_cjk_diagnostic():
     migrate_home = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migrate_home)
 
-    raw_stderr = "需要管理员权限".encode("oem")
+    if sys.platform == "win32":
+        import ctypes
+
+        encoding = f"cp{ctypes.windll.kernel32.GetOEMCP()}"
+    else:
+        encoding = "utf-8"
+    raw_stderr = "需要管理员权限".encode(encoding)
     assert migrate_home._decode_setx_stderr(raw_stderr) == "需要管理员权限"
