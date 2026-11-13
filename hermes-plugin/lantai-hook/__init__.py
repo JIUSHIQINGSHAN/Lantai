@@ -89,8 +89,79 @@ def resolve_hook_paths() -> tuple[str, str]:
 
 
 _VENV_PY, _SHELL_HOOK = resolve_hook_paths()
-_REQUEST_TIMEOUT = 5.0  # 注入请求超时（秒）
-_DIALOGUE_TIMEOUT = 30.0  # 对话写入请求超时（秒，含 LLM 提取）
+
+
+# ── 插件墙必须严格长于服务端墙（巡检 2026-11-08 1200）────────────────────
+# serve 子进程自己有一道墙（settings.SHELL_HOOK_TIMEOUT / SHELL_HOOK_DIALOGUE_TIMEOUT）：
+# 超墙即回降级帧，被放弃的工作线程在后台跑完、照常落库。插件这道 watchdog 墙
+# 到点会 kill 整个子进程——若两墙等宽（此前对话通道 30s == 30s），到点时谁先
+# 触发是竞态，实测 watchdog 几乎总是先到：慢提取那一轮被连进程杀掉、对话静默
+# 丢失，同进程里其他后台线程一并陪葬，下一条还得冷启动。所以插件墙 = 服务端墙
+# + 宽限：服务端墙先到、回降级帧、子进程存活；插件墙只兜「子进程真卡死」。
+# 服务端墙读取口径与 serve 子进程一致：进程环境变量优先（子进程继承本进程
+# 环境），其次仓库根 .env（settings 的 env_file），都没有回落 settings 默认值。
+_SERVER_HOOK_TIMEOUT_DEFAULT = 2.0  # == settings.SHELL_HOOK_TIMEOUT 默认
+_SERVER_DIALOGUE_TIMEOUT_DEFAULT = 30.0  # == settings.SHELL_HOOK_DIALOGUE_TIMEOUT 默认
+_REQUEST_GRACE = 3.0  # 注入类请求宽限（秒）
+_DIALOGUE_GRACE = 5.0  # 对话写入宽限（秒）：降级帧回传 + 线程 join 抖动
+_REQUEST_TIMEOUT_FLOOR = 5.0  # 注入请求承诺下限（票 73：默认 5s 不变）
+
+
+def _dotenv_value(env_path: Path, name: str) -> str | None:
+    """从 .env 读单个键（最小解析：KEY=VALUE、可选 export 前缀/引号/行尾注释）。"""
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    found: str | None = None
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        key, _, value = line.partition("=")
+        if key.strip() != name:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        else:
+            value = value.split(" #", 1)[0].split("\t#", 1)[0].strip()
+        found = value  # 同名多行取最后一行（与 dotenv 覆盖语义一致）
+    return found
+
+
+def _server_wall(name: str, default: float, hook_path: str | None = None) -> float:
+    """读 serve 子进程实际生效的服务端墙（秒）；非法/非正值回落默认。"""
+    raw = os.environ.get(name)
+    if raw is None:
+        hp = _SHELL_HOOK if hook_path is None else hook_path
+        if hp:
+            raw = _dotenv_value(Path(hp).resolve().parent.parent / ".env", name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _plugin_walls(hook_path: str | None = None) -> tuple[float, float]:
+    """返回 (注入请求墙, 对话写入墙)，均严格长于对应服务端墙。"""
+    hook_wall = _server_wall("SHELL_HOOK_TIMEOUT", _SERVER_HOOK_TIMEOUT_DEFAULT, hook_path)
+    dialogue_wall = _server_wall(
+        "SHELL_HOOK_DIALOGUE_TIMEOUT", _SERVER_DIALOGUE_TIMEOUT_DEFAULT, hook_path
+    )
+    return (
+        max(_REQUEST_TIMEOUT_FLOOR, hook_wall + _REQUEST_GRACE),
+        dialogue_wall + _DIALOGUE_GRACE,
+    )
+
+
+# 注入请求超时（默认 5s）/ 对话写入请求超时（默认 30s 服务端墙 + 5s 宽限 = 35s，含 LLM 提取）
+_REQUEST_TIMEOUT, _DIALOGUE_TIMEOUT = _plugin_walls()
 _MIN_QUERY_CHARS = 2
 # 注：此处曾有 `_TRIGGER_WORDS` 触发词表，服务于「≤15 字且无触发词就跳过」的
 # 插件侧硬预过滤。该预过滤已在续审 2026-10-31 P0-3 删除（它先于 serve 的
