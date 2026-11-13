@@ -24,6 +24,9 @@ class TestStudioUI:
         assert "札记" in text or "便签" in text
         assert "沉潜" in text
         assert "演练" in text or "检索" in text
+        assert 'id="mainContent"' in text
+        assert 'class="skip-link"' in text
+        assert 'aria-label="移动端主导航"' in text
 
     def test_ui_assets_serve_properly(self, param_env):
         client = TestClient(app)

@@ -40,6 +40,8 @@ const state = {
 const shell = $('.app-shell');
 const queue = $('#queue');
 const inspector = $('#inspector');
+const VIEW_NAMES = new Set(['overview', 'tasks', 'vault', 'xuanjing', 'studio', 'playground', 'terminal', 'monitor', 'system']);
+let inspectorTrigger = null;
 let refreshTimer = null;
 
 function updateConnection() {
@@ -63,17 +65,38 @@ onUnauthorized(() => {
   }
 });
 
-function setView(view) {
+function viewFromHash() {
+  const value = location.hash.replace(/^#\/?/, '');
+  return VIEW_NAMES.has(value) ? value : 'tasks';
+}
+
+function setView(view, {updateHash = true, focusHeading = false} = {}) {
+  if (!VIEW_NAMES.has(view)) view = 'tasks';
+  const viewChanged = state.view !== view;
   state.view = view;
-  document.querySelectorAll('.view').forEach(value => value.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(value => {
+    const active = value.id === `${view}View`;
+    value.classList.toggle('active', active);
+    value.setAttribute('aria-hidden', String(!active));
+  });
   document.querySelectorAll('[data-view]').forEach(value => {
     const active = value.dataset.view === view;
     value.classList.toggle('active', active);
     if (active) value.setAttribute('aria-current', 'page');
     else value.removeAttribute('aria-current');
   });
-  const targetView = $(`#${view}View`);
-  if (targetView) targetView.classList.add('active');
+  if (updateHash && viewFromHash() !== view) history.pushState(null, '', `#/${view}`);
+  const title = $(`#${view}View h1`)?.textContent || '案牍审阅';
+  document.title = `${title} · 兰台`;
+  if (focusHeading && viewChanged) {
+    const heading = $(`#${view}View h1`);
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus({preventScroll: true});
+    }
+  }
+  const activeMobileNav = $(`.mobile-nav [data-view="${view}"]`);
+  activeMobileNav?.scrollIntoView({block: 'nearest', inline: 'nearest', behavior: 'instant'});
   if (view !== 'tasks') closeInspector();
   if (view !== 'monitor') deactivateMonitor();
   if (view !== 'terminal') deactivateTerminal();
@@ -288,6 +311,10 @@ function renderRow(item) {
   row.dataset.id = item.id;
   row.dataset.priority = item.priority;
   row.tabIndex = 0;
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-label', `查看案牍：${item.title}`);
+  row.setAttribute('aria-controls', 'inspector');
+  row.setAttribute('aria-expanded', String(item.id === state.activeId));
   row.classList.toggle('active', item.id === state.activeId);
   const check = node('input', 'row-check');
   check.type = 'checkbox'; check.checked = state.selected.has(item.id);
@@ -300,6 +327,7 @@ function renderRow(item) {
   });
   const main = node('div', 'row-main');
   main.append(node('strong', '', item.title), node('small', '', item.summary || (item.badges || []).join(' · ')));
+  main.title = item.title;
   
   // AI 智能预审研判建议徽标
   const aiRec = state.aiTriageMap?.get(item.source_id);
@@ -324,10 +352,18 @@ function renderRow(item) {
   const time = node('span', 'row-time', formatDate(item.due_at || item.created_at, true));
   const risk = node('span', 'risk-label', RISK_LABELS[item.risk]); risk.dataset.risk = item.risk;
   row.append(check, main, reason, kind, risk, time);
-  row.addEventListener('click', () => openInspector(item.id));
+  row.addEventListener('click', () => { inspectorTrigger = row; openInspector(item.id); });
   row.addEventListener('keydown', event => {
-    if (event.key === 'Enter') openInspector(item.id);
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') moveRowFocus(row, event.key === 'ArrowDown' ? 1 : -1);
+    if (event.target !== row) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      inspectorTrigger = row;
+      openInspector(item.id);
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveRowFocus(row, event.key === 'ArrowDown' ? 1 : -1);
+    }
   });
   return row;
 }
@@ -352,15 +388,25 @@ async function openInspector(id, {silent = false} = {}) {
   }
   state.activeId = id;
   shell.classList.add('inspector-open'); inspector.setAttribute('aria-hidden', 'false');
-  document.querySelectorAll('.work-row').forEach(row => row.classList.toggle('active', row.dataset.id === id));
+  inspector.inert = false;
+  document.querySelectorAll('.work-row').forEach(row => {
+    const active = row.dataset.id === id;
+    row.classList.toggle('active', active);
+    row.setAttribute('aria-expanded', String(active));
+  });
   $('#inspectorKind').textContent = KIND_LABELS[item.kind];
   $('#inspectorTitle').textContent = item.title;
-  if (!silent) $('#inspectorBody').replaceChildren(node('div', 'inspector-empty', '正在读取详情'));
+  if (!silent) {
+    $('#inspectorBody').replaceChildren(node('div', 'inspector-empty', '正在读取详情'));
+    $('#inspectorActions').replaceChildren();
+    $('#closeInspector').focus({preventScroll: true});
+  }
   try {
     const detail = await api(`/work-items/detail/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.source_id)}`);
     if (state.detailDirty && silent) { markRefreshPending(); return; }
     state.activeDetail = detail; state.detailDirty = false; state.refreshPending = false;
     renderDetail(detail);
+    if (!silent && inspector.contains(document.activeElement)) $('#inspectorTitle').focus({preventScroll: true});
   } catch (error) {
     if (error.status === 404) { showToast('该案牍已发生变化'); state.activeId = ''; await loadQueue(); return; }
     $('#inspectorBody').replaceChildren(node('div', 'inspector-empty', `读取失败：${error.message}`));
@@ -369,8 +415,18 @@ async function openInspector(id, {silent = false} = {}) {
 
 function closeInspector() {
   state.activeId = ''; state.activeDetail = null; state.detailDirty = false; state.refreshPending = false;
+  const focusWasInside = inspector.contains(document.activeElement);
   shell.classList.remove('inspector-open'); inspector.setAttribute('aria-hidden', 'true');
-  document.querySelectorAll('.work-row').forEach(row => row.classList.remove('active'));
+  inspector.inert = true;
+  document.querySelectorAll('.work-row').forEach(row => {
+    row.classList.remove('active');
+    row.setAttribute('aria-expanded', 'false');
+  });
+  if (focusWasInside) {
+    const target = inspectorTrigger?.isConnected ? inspectorTrigger : $(`[data-view="${state.view}"]`);
+    target?.focus({preventScroll: true});
+  }
+  inspectorTrigger = null;
 }
 
 function detailSection(title, content) {
@@ -762,7 +818,7 @@ async function batchOrganize() {
 }
 
 function bindEvents() {
-  document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => setView(button.dataset.view)));
+  document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => setView(button.dataset.view, {focusHeading: true})));
   $('#refreshButton').addEventListener('click', () => loadQueue());
   $('#aiTriageBtn')?.addEventListener('click', runAiAutoTriage);
   $('#systemRefresh').addEventListener('click', async () => { setView('tasks'); await loadQueue(); });
@@ -795,7 +851,7 @@ function bindEvents() {
   $('#quickConsolidateBtn')?.addEventListener('click', triggerConsolidation);
 
   document.querySelectorAll('[data-goto]').forEach(btn => {
-    btn.addEventListener('click', () => setView(btn.dataset.goto));
+    btn.addEventListener('click', () => setView(btn.dataset.goto, {focusHeading: true}));
   });
 
   document.addEventListener('keydown', event => {
@@ -812,9 +868,21 @@ function bindEvents() {
   });
 }
 
+function applyTheme(theme) {
+  const light = theme === 'louchuang';
+  document.documentElement.dataset.theme = light ? 'louchuang' : 'jijin';
+  const button = $('#themeButton');
+  button.setAttribute('aria-pressed', String(light));
+  button.setAttribute('aria-label', light ? '切换到吉金深色主题' : '切换到漏窗浅色主题');
+  button.title = light ? '当前：漏窗（浅色）· 点击切换吉金' : '当前：吉金（深色）· 点击切换漏窗';
+  button.textContent = light ? '明' : '式';
+}
+
 function toggleTheme() {
   const next = document.documentElement.dataset.theme === 'louchuang' ? 'jijin' : 'louchuang';
-  document.documentElement.dataset.theme = next; localStorage.setItem('lantai-theme', next);
+  applyTheme(next);
+  localStorage.setItem('lantai-theme', next);
+  showToast(next === 'louchuang' ? '已切换漏窗浅色主题' : '已切换吉金深色主题');
 }
 
 function debounce(fn, wait) {
@@ -823,14 +891,20 @@ function debounce(fn, wait) {
 
 function initTheme() {
   const queryTheme = new URLSearchParams(location.search).get('theme');
-  document.documentElement.dataset.theme = queryTheme === 'louchuang' ? 'louchuang' : (localStorage.getItem('lantai-theme') || 'jijin');
+  const storedTheme = localStorage.getItem('lantai-theme');
+  const preferredTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'louchuang' : 'jijin';
+  applyTheme(queryTheme === 'louchuang' ? 'louchuang' : (storedTheme || preferredTheme));
 }
 
 async function init() {
+  inspector.inert = true;
   initTheme(); updateConnection(); bindEvents();
+  if (location.hash && location.hash !== `#/${viewFromHash()}`) history.replaceState(null, '', `#/${viewFromHash()}`);
+  window.addEventListener('popstate', () => setView(viewFromHash(), {updateHash: false, focusHeading: true}));
   setAfterUndo(loadQueue);
   initMonitor({notify: message => showToast(message)});
-  await loadQueue();
+  setView(viewFromHash(), {updateHash: false});
+  if (state.view !== 'tasks') await loadQueue();
   refreshMonitorBadge();
   refreshTimer = setInterval(() => {
     if (document.hidden) return;

@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/ui/assets/terminal.css">
 </head>
 <body>
+  <a class="skip-link" href="#mainContent">跳到主要内容</a>
   <div class="app-shell">
     <!-- 全局主侧边栏 -->
     <aside class="sidebar" aria-label="主导航">
@@ -28,7 +29,7 @@
         <button class="nav-item" data-view="system"><span>系统脉搏</span><b id="navSystemCount">0</b></button>
       </nav>
       <div class="sidebar-footer">
-        <button class="utility-button" id="themeButton" title="切换吉金/漏窗主题" aria-label="切换主题">式</button>
+        <button class="utility-button" id="themeButton" type="button" title="切换吉金/漏窗主题" aria-label="切换主题" aria-pressed="false">式</button>
         <button class="connection-button" id="connectionButton" title="连接设置">
           <i id="connectionDot"></i><span id="connectionText">本机连接</span>
         </button>
@@ -36,7 +37,7 @@
     </aside>
 
     <!-- 工作区主体 -->
-    <main class="workspace">
+    <main class="workspace" id="mainContent" tabindex="-1">
       <!-- 1. 中枢总览 (Overview) -->
       <section class="view" id="overviewView">
         <header class="topbar">
@@ -305,7 +306,7 @@
       <section class="view" id="studioView">
         <header class="topbar">
           <div><h1>认知进化工作室</h1><p>管理智能体人格基座（L/G/E）、札记便签与夜梦沉淀</p></div>
-          <div class="tab-switcher">
+          <div class="tab-switcher" role="tablist" aria-label="认知进化功能">
             <button class="tab-btn active" data-studio-tab="persona">👑 器识人格</button>
             <button class="tab-btn" data-studio-tab="scratchpad">📝 会话札记</button>
             <button class="tab-btn" data-studio-tab="consolidation">🌙 沉潜夜梦</button>
@@ -645,7 +646,7 @@
     <!-- 抽屉式案牍详情 (Inspector) -->
     <aside class="inspector" id="inspector" aria-label="案牍详情" aria-hidden="true">
       <header class="inspector-header">
-        <div><span id="inspectorKind">案牍</span><h2 id="inspectorTitle">选择一项查看详情</h2></div>
+        <div><span id="inspectorKind">案牍</span><h2 id="inspectorTitle" tabindex="-1">选择一项查看详情</h2></div>
         <button class="icon-button" id="closeInspector" title="关闭详情" aria-label="关闭详情">×</button>
       </header>
       <div class="inspector-body" id="inspectorBody">
