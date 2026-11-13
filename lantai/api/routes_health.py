@@ -57,6 +57,8 @@ def _current_git_sha() -> str | None:
                 cwd=Path(__file__).resolve().parents[2],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
             )
             if r.returncode == 0:
