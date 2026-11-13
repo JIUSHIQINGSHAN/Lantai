@@ -24,7 +24,13 @@
 
 ## 回归与既有项校准
 
-修复后 digest 文件 13P；日窗及票 31/32/34/53 家族 43P；完整受影响家族（含 scheduler、qijuzhu、usage 和设置冻结锁）72P，均 exit 0。全仓 Ruff check 与 format --check 通过。全量测试和离线遗忘质量门禁的最终状态在工单 Answer 中单独记录，不能用局部回归替代。
+修复后 digest 文件 13P；日窗及票 31/32/34/53 家族 43P；完整受影响家族（含 scheduler、qijuzhu、usage 和设置冻结锁）72P，均 exit 0。普通合并远端候选分支为 `ec1bbafd` 后，保留票 84/85/86 双方测试，扩展家族 96P、exit 0；后续文档边界锁 `8ebce157` 对应文件 11P、exit 0。全仓 Ruff check 与 format --check 通过（761 个 Python 文件），`git diff --check` 通过。离线遗忘质量门禁六项均 PASS、exit 0。
+
+最终 `8ebce157` 的顺序覆盖率全量命令为 `PYTHONPATH=tests/support PYTHONIOENCODING=utf-8 API_KEY=test-key .venv/Scripts/python.exe -m pytest tests/ -q --cov=lantai --cov-report=term-missing -o addopts= -p no:cacheprovider -p real_home_tripwire`。结果 **3885 passed / 14 failed / 13 warnings，731.57s，exit 1**，全部失败在票 83 两个测试文件（12 个运行时契约失败、2 个源码哨兵失败），日志 `ticket84-ci-suite-sequential.log`。覆盖率总计 92%，digest_worker 为 100%；这些数字不能替代验收。
+
+该顺序命令虽加载绊线插件，但**没有传入 `LANTAI_GATE_REPORT`**，插件按现有契约未武装，因此没有本次全量的宿主目录隔离证明。另一份 `ticket84-ci-tripwire.txt` 来自已中止的运行，只有 ARMED、没有 FINISH，不能与本次全量拼接使用。完整 `release_check.py` 同样 exit 1（11 条 PASS / 5 条 FAIL，含任务分支、票 83 未跟踪文件、既有 tag、套件收尾和绊线证据缺失），日志 `ticket84-merged-release-check.log`；不构成发布许可。
+
+过程偏差留存：曾有后台超时、插件路径漏配及两棵本轮 pytest 重叠；这些运行均不计作有效全量证据，发现后仅停止本轮启动的测试进程。之后取得上述单棵顺序覆盖率全量的完整摘要，未删除、修改或跳过票 83 测试。实现已推送候选分支，工单保留 `claimed` 待整仓验收；不标 resolved、不改版本、不打 tag、不发布。
 
 reflect 分钟位在工单原基线已经接线，属于票面误报；qijuzhu 本地日和 consolidation 调度设置分别由票 32、34 覆盖，本轮不重复实现。置信桶与远端票 86 属同族；本轮按明确实施令修本地仍存在的缺陷，合流时需保留两边测试和既有契约。
 
