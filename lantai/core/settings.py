@@ -93,7 +93,8 @@ class Settings(BaseSettings):
 
     # Daily Digest（Ticket 03）：每日盘点报告 docs/memory-digest/YYYY-MM-DD.md
     DIGEST_ENABLED: bool = True
-    DIGEST_CRON_HOUR: int = 15  # UTC 15:55 = 本地(Asia/Shanghai) 23:55 日末（票 31：触发点须贴近所报告本地日的日界，早晨触发只覆盖当天前几小时）
+    # UTC 小时，分钟固定 55；默认仅在 UTC+8 对应本地 23:55，其他宿主须自行换算（票 84）。
+    DIGEST_CRON_HOUR: int = 15
     DIGEST_OUTPUT_DIR: str = ""  # 为空时 = 数据根 settings.data_home/docs/memory-digest（票 85）
 
     # Lane 分轨衰减：每类记忆的基础保留强度与重要性放大系数
@@ -501,7 +502,7 @@ class Settings(BaseSettings):
     REFLECT_ENABLED: bool = (
         True  # 观察期开启（2026-08-11 起；8/15 校准数据不足，延长观察至有 7 个完整运行日）
     )
-    REFLECT_CRON_HOUR: int = 22  # UTC；与 digest 同小时错 1 分钟
+    REFLECT_CRON_HOUR: int = 22  # UTC 小时，分钟为 scheduler._REFLECT_CRON_MINUTE；与日报独立配置
     REFLECT_MAX_BATCH: int = 20  # 单次蒸馏候选上限（LLM 成本防护）
     # 察窗：观察期滑动窗口口径（ADR-0027）。从连续改为窗口内计数。
     # 消费面（票 34 现状核对）：①scripts/reflect_observation_status.py
