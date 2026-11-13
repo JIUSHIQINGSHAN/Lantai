@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import threading
+from collections.abc import Iterator
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -46,7 +47,7 @@ def _chromium_executable() -> str:
 
 
 @pytest.fixture()
-def studio_layout_server():
+def studio_layout_server() -> Iterator[str]:
     """Serve real UI markup and styles without business API calls or user data."""
     markup = (_UI_DIR / "index.html").read_text(encoding="utf-8")
     markup = re.sub(r"<script\b[^>]*>.*?</script>", "", markup, flags=re.S | re.I)
@@ -112,7 +113,9 @@ window.addEventListener('load', () => {
 
 
 @pytest.mark.parametrize(("width", "columns"), [(320, 1), (1440, 2)])
-def test_studio_layout_in_real_chromium(tmp_path, studio_layout_server, width, columns):
+def test_studio_layout_in_real_chromium(
+    tmp_path: Path, studio_layout_server: str, width: int, columns: int
+) -> None:
     """Real CSS layout must fit 320px and preserve the desktop grid."""
     proc = subprocess.run(
         [
