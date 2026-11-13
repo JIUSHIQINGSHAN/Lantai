@@ -9,7 +9,7 @@
 """
 
 from fastapi import HTTPException
-from sqlalchemy import func, update
+from sqlalchemy import func
 from sqlmodel import select
 
 from lantai.core.ids import new_id
@@ -43,6 +43,7 @@ from lantai.parameters.validation import (
     validate_snapshot,
 )
 from lantai.storage import db
+from lantai.storage.cas import cas_update
 
 # ---------------------------------------------------------------- 查询
 
@@ -160,15 +161,21 @@ def decide_suggestion(suggestion_id: str, req: DecisionRequest, actor: str) -> D
         except ParamValidationError as e:
             raise HTTPException(422, f"registry_validation_failed: {e}")
 
-        # 4) CAS：条件更新保证只有一个批准者成功
-        result = s.exec(
-            update(ParamSuggestion)
-            .where(ParamSuggestion.id == suggestion_id, ParamSuggestion.status == "pending")
-            .values(
-                status="accepted", decided_at=utcnow(), decided_by=actor, decision_note=req.note
-            )
+        # 4) CAS：条件更新保证只有一个批准者成功（票 22：收敛到 storage.cas
+        # 单一真源——本仓条件 UPDATE 的孤本范式升级为全库裁决/认领通用入口）
+        claimed = cas_update(
+            s,
+            ParamSuggestion,
+            suggestion_id,
+            {"status": "pending"},
+            {
+                "status": "accepted",
+                "decided_at": utcnow(),
+                "decided_by": actor,
+                "decision_note": req.note,
+            },
         )
-        if result.rowcount != 1:
+        if claimed != 1:
             raise HTTPException(409, "suggestion_already_decided")
 
         # 5) 追加 apply 事件（revision UNIQUE 兜底极端并发）

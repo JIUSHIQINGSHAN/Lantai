@@ -2,7 +2,7 @@ from sqlmodel import select
 
 from lantai.core import scheduler as scheduler_mod
 from lantai.core.ids import new_id
-from lantai.core.logger import logger
+from lantai.core.logger import loggable, logger
 from lantai.core.provenance import PROVENANCE_PROMPT_EXTRACT, make_provenance
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
@@ -191,7 +191,8 @@ def run_coalesce_idle():
             )
             ms._create_candidate_with_extraction(req)
         except Exception:
-            logger.exception("coalesce flush persist failed for key=%s", key)
+            # 票 50：coalesce key 内嵌 session_id（宿主透传）——单行化+截断
+            logger.exception("coalesce flush persist failed for key=%s", loggable(key, limit=128))
             # 持久化失败：锁内恢复该批消息（不触发二次冲刷），下轮再试
             buffer.requeue(key, result.get("items", []))
     scheduler_mod.record_run("coalesce")

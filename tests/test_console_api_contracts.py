@@ -122,7 +122,8 @@ def test_prompts_and_core_memory_roundtrip(client):
     res = client.get("/prompts/__contract_test__")
     assert res.status_code == 200 and res.json()["template"] == "测试模板 {q}"
 
-    res = client.put("/core-memory", params={"block": "policy", "content": "契约测试策略"})
+    # 票 71：正文改 JSON body（撤出 URL 查询串）
+    res = client.put("/core-memory", json={"block": "policy", "content": "契约测试策略"})
     assert res.status_code == 200
     res = client.get("/core-memory")
     assert res.status_code == 200

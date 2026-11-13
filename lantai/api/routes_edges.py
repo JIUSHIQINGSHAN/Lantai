@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from lantai.cognition.causal import COUNTERFACTUAL_MAX_DEPTH_LIMIT
+from lantai.cognition.causal import CAUSAL_DEPTH_MAX, CAUSAL_DEPTH_MIN
 from lantai.core.auth import get_current_user
 from lantai.services.edge_service import (
     add_edge,
@@ -26,24 +26,21 @@ class EdgeReq(BaseModel):
     source_memory_id: str
     target_memory_id: str
     relation: str
-    # 票 42:越界置信度修复前直接落库(写面毒值,下游读面按 0~1 语义消费);
-    # [0,1] 与 routes_terminal.MemoryUpdateReq.confidence 孪生同界
-    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    confidence: float = 0.5
 
 
 class CounterfactualReq(BaseModel):
     target_memory_id: str
     intervened_node_id: str
-    # 票 39：深度上界单一真源在引擎（COUNTERFACTUAL_MAX_DEPTH_LIMIT），
-    # 与 MCP -32602 继承同一契约；无界深度是指数路径枚举的一半入口面。
-    max_depth: int = Field(default=10, ge=1, le=COUNTERFACTUAL_MAX_DEPTH_LIMIT)
+    # 票 39：max_depth 双端无界（10**9 合法）入口即钳；引擎侧另有路径帽/
+    # 扩展预算双界兜底，此处是纵深入口闸
+    max_depth: int = Field(default=10, ge=CAUSAL_DEPTH_MIN, le=CAUSAL_DEPTH_MAX)
 
 
 class ProjectImpactReq(BaseModel):
     memory_id: str
-    # 票 42:深度上界对齐票 39 反事实面的单一真源(同一引擎族,孪生同契约);
-    # min_confidence [0,1] 与 EdgeReq.confidence 同族
-    max_depth: int = Field(default=5, ge=1, le=COUNTERFACTUAL_MAX_DEPTH_LIMIT)
+    # 票 39：同面同钳
+    max_depth: int = Field(default=5, ge=CAUSAL_DEPTH_MIN, le=CAUSAL_DEPTH_MAX)
     min_confidence: float = Field(default=0.05, ge=0.0, le=1.0)
 
 

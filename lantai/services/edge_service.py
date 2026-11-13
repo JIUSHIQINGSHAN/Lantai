@@ -1,6 +1,7 @@
 """记忆关系（边）service 层——从路由 handler 下沉"""
 
 from lantai.core.acl import viewer_of
+from lantai.services.record_ops_service import STATUS_ACTIVE
 from lantai.storage.edges import (
     create_edge,
     delete_edge,
@@ -68,6 +69,10 @@ def _edge_visible(e, principal, viewer: str) -> bool:
             mem = s.get(MemoryItem, mid)
             if mem is None:
                 return False
+            # 票 40：端点判活——撤回契约「全检索面禁用」覆盖边读面（软态
+            # 端点的边对非 admin 不再返回；admin/principal=None 面不受此滤）
+            if mem.status != STATUS_ACTIVE:
+                return False
             if (mem.user_id or None) not in (None, viewer):
                 return False
     return True
@@ -97,20 +102,26 @@ def _filter_visible_batch(edges, viewer: str) -> list:
     if not edges:
         return []
     endpoint_ids = list({mid for e in edges for mid in (e.source_memory_id, e.target_memory_id)})
-    owners: dict[str, str | None] = {}
+    owners: dict[str, tuple[str | None, str]] = {}
     with get_session() as s:
         for i in range(0, len(endpoint_ids), 400):
             chunk = endpoint_ids[i : i + 400]
             rows = s.exec(
-                select(MemoryItem.id, MemoryItem.user_id).where(MemoryItem.id.in_(chunk))
+                select(MemoryItem.id, MemoryItem.user_id, MemoryItem.status).where(
+                    MemoryItem.id.in_(chunk)
+                )
             ).all()
-            for mid, uid in rows:
-                owners[mid] = uid
+            for mid, uid, st in rows:
+                owners[mid] = (uid, st)
 
     def _ok(mid: str) -> bool:
         if mid not in owners:
             return False
-        return (owners[mid] or None) in (None, viewer)
+        uid, st = owners[mid]
+        # 票 40：端点判活（同 _edge_visible——软态端点的边对非 admin 隐藏）
+        if st != STATUS_ACTIVE:
+            return False
+        return (uid or None) in (None, viewer)
 
     return [e for e in edges if _ok(e.source_memory_id) and _ok(e.target_memory_id)]
 
@@ -192,7 +203,12 @@ def get_chain(memory_id: str, principal=None) -> dict:
                 ok = True
                 for mid in (hop["memory_id"], hop["superseded_by"]):
                     mem = s.get(MemoryItem, mid)
-                    if mem is None or (mem.user_id or None) not in (None, viewer):
+                    # 票 40 自审补口：链读面同判活（撤回契约覆盖 supersedes 链）
+                    if (
+                        mem is None
+                        or mem.status != STATUS_ACTIVE
+                        or (mem.user_id or None) not in (None, viewer)
+                    ):
                         ok = False
                         break
                 if ok:
@@ -217,7 +233,12 @@ def get_causal_chain(
         viewer = viewer_of(principal)
         with get_session() as s:
             root_mem = s.get(MemoryItem, memory_id)
-            if root_mem is None or (root_mem.user_id or None) not in (None, viewer):
+            # 票 40 自审补口：根节点判活（撤回契约覆盖因果链起点）
+            if (
+                root_mem is None
+                or root_mem.status != STATUS_ACTIVE
+                or (root_mem.user_id or None) not in (None, viewer)
+            ):
                 return {"chain": []}
 
     chain = storage_get_causal_chain(memory_id, direction=direction, max_depth=max_depth)
@@ -232,7 +253,12 @@ def get_causal_chain(
                 ok = True
                 for mid in (hop["from_id"], hop["to_id"]):
                     mem = s.get(MemoryItem, mid)
-                    if mem is None or (mem.user_id or None) not in (None, viewer):
+                    # 票 40 自审补口：链读面同判活（撤回契约覆盖因果链）
+                    if (
+                        mem is None
+                        or mem.status != STATUS_ACTIVE
+                        or (mem.user_id or None) not in (None, viewer)
+                    ):
                         ok = False
                         break
                 if not ok:

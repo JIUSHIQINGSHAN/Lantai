@@ -11,12 +11,13 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from fastapi import HTTPException
 from sqlmodel import Session, col, func, select
 from ulid import ULID
 
-from lantai.core.acl import ensure_can_delete, viewer_of
+from lantai.core.acl import ensure_can_delete, is_system_viewer, viewer_of
 from lantai.core.logger import logger
-from lantai.core.time import utcnow
+from lantai.core.time import ensure_aware, utcnow
 from lantai.models.tables import LifecycleStatus, MemoryCheckpoint, MemoryItem
 from lantai.services.record_ops_service import (
     STATUS_ACTIVE,
@@ -57,9 +58,7 @@ class ChenfengEngine:
         - 铁律（procedural）天然豁免封藏。
         - 仅对 active 状态条目执行检测。
         """
-        eval_now = now or utcnow()
-        if eval_now.tzinfo is None:
-            eval_now = eval_now.replace(tzinfo=UTC)
+        eval_now = ensure_aware(now or utcnow())
 
         def _scan(s: Session) -> list[dict[str, Any]]:
             stmt = select(MemoryItem).where(MemoryItem.status == STATUS_ACTIVE)
@@ -82,10 +81,8 @@ class ChenfengEngine:
                     reasons.append(f"decay_score({item.decay_score:.3f}) < {decay_threshold}")
 
                 # 规则 2: 长期未访问且 0 使用
-                last_time = item.last_used_at or item.created_at
+                last_time = ensure_aware(item.last_used_at or item.created_at)
                 if last_time:
-                    if last_time.tzinfo is None:
-                        last_time = last_time.replace(tzinfo=UTC)
                     idle_days = (eval_now - last_time).total_seconds() / 86400.0
                     if idle_days > inactive_days and (item.use_count or 0) == 0:
                         reasons.append(
@@ -219,15 +216,22 @@ class ChenfengEngine:
             if scene:
                 stmt = stmt.where(MemoryItem.scene_id == scene)
             if time_from:
-                stmt = stmt.where(MemoryItem.created_at >= time_from)
+                # 票 32：绑定前必归一——+08:00 aware 裸绑定不做偏移换算，
+                # 墙上时钟被当 UTC 文本与库内 UTC 值比较，窗口静默漂移 +8h
+                # （凌晨漏掉/次日混入双向）。
+                stmt = stmt.where(MemoryItem.created_at >= ensure_aware(time_from))
             if time_to:
-                stmt = stmt.where(MemoryItem.created_at <= time_to)
+                stmt = stmt.where(MemoryItem.created_at <= ensure_aware(time_to))
             if query:
                 # 兼容多关键词模糊查询与空格分词
                 for term in query.split():
                     term_clean = term.strip()
                     if term_clean:
-                        stmt = stmt.where(col(MemoryItem.content).contains(term_clean))
+                        # 票 28 病灶 4：contains 底层 LIKE，autoescape 把 % _ 等通配当字面
+                        # （查询 foo_bar 不得通配捞进 fooXbar）。
+                        stmt = stmt.where(
+                            col(MemoryItem.content).contains(term_clean, autoescape=True)
+                        )
 
             # 统计符合条件的条目总数
             count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -264,13 +268,22 @@ class ChenfengEngine:
             if item is None:
                 return {"ok": False, "error": "memory not found"}
 
-            # 行级 ACL 租户防越权校验
-            ensure_can_delete(
-                self.principal,
-                resource_user_id=item.user_id,
-                resource_tenant_id=item.tenant_id,
-                lane=item.lane,
-            )
+            # 行级 ACL（票 57）：ensure_can_delete 对 None principal 三段 getattr
+            # 全落空 → 不抛直接放行，MCP 无身份可解封任意他人记忆。收敛：None
+            # 只能动 default 属主/NULL 老行；显式系统身份全表（acl.py 立法语义，
+            # 刻意）；具名照旧走 ensure_can_delete 单一真源。
+            if is_system_viewer(self.principal):
+                pass
+            elif self.principal is None:
+                if item.user_id not in (None, "default"):
+                    raise HTTPException(status_code=403, detail="resource belongs to another user")
+            else:
+                ensure_can_delete(
+                    self.principal,
+                    resource_user_id=item.user_id,
+                    resource_tenant_id=item.tenant_id,
+                    lane=item.lane,
+                )
 
             actor = viewer_of(self.principal)
             return unarchive_memory(memory_id=memory_id, actor=actor, reason=reason, session=s)

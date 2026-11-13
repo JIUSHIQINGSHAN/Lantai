@@ -121,8 +121,9 @@ def cognitive_reflect(
     查询此前一个 scope 都没有——统计是全表数、A 与 B 的观测被**一起聚类**、
     晋升出的候选又是 ownerless 行。现在按 `ctx` 收窄（口径同票 04 的
     `_digest_scope`：`user_id == viewer OR IS NULL`，NULL 老行可见）。
-    `FailureRecord` 无归属列，`failures` 计数无法收窄，报告里以
-    `failures_scoped: false` 如实标注。
+    票 61：`FailureRecord` 已有归属列（迁移 v43），失败蒸馏来源同样按
+    viewer 收窄；`failures_scoped` 如实反映——具名用户 True，
+    内部调用/worker/admin（全量口径）False。
     """
     engine = ReflectionEngine(db, principal=ctx)
     report = engine.run_reflection()
@@ -143,8 +144,7 @@ def cognitive_reflect(
 @router.get("/context")
 def cognitive_context(
     task: str = "",
-    # 票 66:界对齐 MCP search 面 [1, 100];修复前 top_k<=0 静默返回全空切面
-    # (builder 里 len(target) >= top_k 对非正值恒真)
+    # 票 42：1..100——对齐 SearchReq.top_k 既有上界；0 会让 per-role 检索空转
     top_k: int = Query(12, ge=1, le=100),
     db: Session = Depends(get_session),
     ctx=Depends(get_current_user),
@@ -172,7 +172,8 @@ def cognitive_context(
 @router.get("/context/prompt")
 def cognitive_context_prompt(
     task: str = "",
-    top_k: int = Query(12, ge=1, le=100),  # 票 66:与 /context 同界
+    # 票 42：1..100——对齐 SearchReq.top_k 既有上界
+    top_k: int = Query(12, ge=1, le=100),
     db: Session = Depends(get_session),
     ctx=Depends(get_current_user),
 ) -> dict:
@@ -187,10 +188,11 @@ def cognitive_context_prompt(
 @router.get("/summary")
 def cognitive_summary(
     task: str = "",
-    max_rules: int = 2,
-    max_failures: int = 1,
-    max_probes: int = 1,
-    char_budget: int = 350,
+    # 票 42：max_* 0 合法（engine 有 >0 短路），只封大数与 char_budget 面积
+    max_rules: int = Query(2, ge=0, le=50),
+    max_failures: int = Query(1, ge=0, le=50),
+    max_probes: int = Query(1, ge=0, le=50),
+    char_budget: int = Query(350, ge=100, le=100000),
     db: Session = Depends(get_session),
     ctx=Depends(get_current_user),
 ) -> dict:

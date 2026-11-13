@@ -24,7 +24,7 @@
 ## 上传前门禁
 
 `python scripts/release_check.py vX.Y.Z`（上传前可加 `--online` 检查远程 tag）实际判定
-**13 项**，全部 PASS 才允许进入上传步骤。下表与门禁输出**逐项点名一一对应**——照单
+**14 项**，全部 PASS 才允许进入上传步骤。下表与门禁输出**逐项点名一一对应**——照单
 自查，缺一项就会被门禁打红（自查口径窄于门禁 = 假绿）：
 
 1. **CI lint 门禁**：`ruff check` + `ruff format --check` 全绿。门禁先自查自身可跑性——它红 = CI 的全量测试一步不跑。
@@ -37,9 +37,10 @@
 8. **MCP 默认暴露**（票 05 续31，评审线 G3/N-04/C-15/R-02）：`lantai/cli/mcp.py::_get_active_tools()` 的**默认档必须是 `HERMES_CORE_TOOLS` 核心白名单**——不设 `LANTAI_MCP_PROFILE`/`MCP_TOOL_PROFILE`、设空、或设了认不出来的取值，一律 fail-closed 到核心集（未知取值额外可观测告警，绝不静默）。全量注册表只有一个入口：显式 `LANTAI_MCP_PROFILE=full`。门禁项「MCP 默认暴露」以探针实测判定（`isolated_probe_env()` 剥掉 profile 变量，只看默认档；部署侧设变量不能让该项变绿，也不能拿它冒充默认已收窄）。收窄/放宽属契约变更：动 `_get_active_tools()` 的语义必须同步改 `tests/test_mcp_default_minimal_exposure.py` 的判据与本条口径，需要全量测试面里依赖非核心工具的模块显式打标 `pytestmark = pytest.mark.mcp_full_surface()`（这是「白纸黑字选了 full」的登记形态，不许拿它当默认）。**注入帧点名约束（巡检 2026-11-06 22:00 P1）**：`scripts/shell_hook.py` 等给模型看的注入文案里点名的 MCP 工具必须在核心集内——往注入帧加新工具指引之前，先把该工具并入 `HERMES_CORE_TOOLS`（或换用已在核心集的工具），否则默认档部署的模型会去调一个 `tools/list` 里不存在的工具（-32602）。该约束由 `tests/test_hook_named_tools_in_default_profile.py` 自动拦截（PR #32），此处登记是给读门禁的人与 AI 说明约束来源。
 9. **命名空间 provenance**（票 04，`scripts/release_check.py::namespace_provenance_issues`）：第一方（`lantai`/`tests`）与三方哨兵（`pydantic`/`sqlmodel`/`fastapi`）在**当前门禁会话**里的解析落点必须全在本仓或活动解释器内。发布门禁恰恰运行在维护者本机——Hermes 宿主拉起的 shell 带全局 `PYTHONPATH`（hermes-agent 目录 + 宿主 venv site-packages），会从两个位次遮蔽：正式包压命名空间（`tests` 面）、PYTHONPATH 先于 venv site-packages（三方依赖面，实测 hermes 的 pydantic 二进制不兼容崩）。不拦就是把「跑在别人的代码上」当绿灯发布。**判红时的处置：清空 `PYTHONPATH`（或换干净 shell）复跑门禁**，不要改代码迁就环境。本仓侧的防线（勿回退）：`tests/__init__.py` + `tests/support/__init__.py` 正包标记（删掉即回归票 04 病灶）、`tests/support/harness_state.py::scrub_foreign_sys_path` 装配期清污（AST 扫描器对登记式写入器豁免 SYSPATH_WRITE，其余文件仍一律判红）；回归锁 `tests/test_pytest_collection_env_shading.py`（收集/解析双臂 + 依赖遮蔽臂）与 `tests/test_release_check.py` 的 provenance 三臂（含 sitecustomize 位次实证与修复前世界 tripwire）。威胁边界如实声明：门禁拦的是 PYTHONPATH/包解析位次劫持；解释器级启动钩子（sitecustomize 直接装 import hook、改 `sys.modules`）超出文件级判据的拦截能力，属宿主机治理问题。CI 的发布阶段（`build.needs: tests`）由套件内的同款回归锁间接闸住；本条是维护者本机闸门的显式登记。
 10. **迁移与列约束漂移**：临时 `LANTAI_HOME` 内 `init_db()` 全链通过，metadata 与实表列/NULL 约束一致。
-11. **老库升级回放与列对齐**（门禁自动执行，票 06）：`tests/fixtures/legacy-schema/*.json`里每个锚点（上一发布标签的真实 DDL 快照，**不含任何行数据**）经当前迁移链升到目标版本后，必须与模型完全对齐——缺表 / 缺列 / 主键 / 索引一律为零，NULL 方向差异只能落在`scripts/schema_parity.py` 的书面清单内。锚点为空、迁移链没跑到目标版本、清单里出现复现不出来的死条目，都判红。**每次发布后补一份上一个标签的快照**：`python scripts/legacy_schema_snapshot.py --tag v<上一版>`。
-12. **全量测试 + 宿主目录绊线**：门禁自己以 **CI 同口径**跑 `pytest tests/ -q --cov=lantai --cov-report=term-missing -o addopts= -p no:cacheprovider -p <绊线插件>`，退出码 0 且**至少一条真实通过用例**（空跑/skip 不算测试通过），全程未连接宿主真实 `LANTAI_HOME`。发布者自查请用同参数命令——裸 `pytest tests/ -q` 口径窄于门禁（缺覆盖率插桩与绊线），不作为放行依据。
-13. **遗忘质量离线门禁**：`python scripts/run_forgetting_quality.py --check` 通过（CI tests.yml 的同一条步骤）。
+11. **观测面保留对称性**（票 29，`scripts/release_check.py::retention_symmetry_issues`）：三条观测追加表（`operation_logs` / `retrieval_event` / `llm_call_event`）逐表对账「settings 保留旋钮 ↔ 清扫函数本体 ↔ 生产挂载（scheduler `observability_purge` 或 telemetry flush 自扫）」，判据真源是 `lantai/observability/retention.py` 的 `OBSERVABILITY_RETENTION_TABLES` 清单。**后续新增观测追加表必须进清单并配齐三件套**，否则本项判红拒发——防止「局部测试通过」冒充「整体可观测性成立」（无保留期的追加表会无界增长，TTL 短于观察窗还会让窗口计数静默失真）。
+12. **老库升级回放与列对齐**（门禁自动执行，票 06）：`tests/fixtures/legacy-schema/*.json`里每个锚点（上一发布标签的真实 DDL 快照，**不含任何行数据**）经当前迁移链升到目标版本后，必须与模型完全对齐——缺表 / 缺列 / 主键 / 索引一律为零，NULL 方向差异只能落在`scripts/schema_parity.py` 的书面清单内。锚点为空、迁移链没跑到目标版本、清单里出现复现不出来的死条目，都判红。**每次发布后补一份上一个标签的快照**：`python scripts/legacy_schema_snapshot.py --tag v<上一版>`。
+13. **全量测试 + 宿主目录绊线**：门禁自己以 **CI 同口径**跑 `pytest tests/ -q --cov=lantai --cov-report=term-missing -o addopts= -p no:cacheprovider -p <绊线插件>`，退出码 0 且**至少一条真实通过用例**（空跑/skip 不算测试通过），全程未连接宿主真实 `LANTAI_HOME`。发布者自查请用同参数命令——裸 `pytest tests/ -q` 口径窄于门禁（缺覆盖率插桩与绊线），不作为放行依据。
+14. **遗忘质量离线门禁**：`python scripts/run_forgetting_quality.py --check` 通过（CI tests.yml 的同一条步骤）。
 
 配套人工项（门禁不判、缺一不可）：
 

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -13,7 +14,9 @@ _scheduler: BackgroundScheduler | None = None
 WORKER_LAST_RUN: dict[str, str] = {}
 
 # 每日 cron 任务分钟位（启动补跑与 cron 注册共用一处，改调度点不用同步改两处）
-_DIGEST_CRON_MINUTE = 0
+# 票 31：digest 触发点 UTC 15:55 = 本地(Asia/Shanghai) 23:55——贴近它所报告
+# 本地日的日界（早晨触发只覆盖当天前几小时，触发后到达的数据永远缺席当日报告）。
+_DIGEST_CRON_MINUTE = 55
 _REFLECT_CRON_MINUTE = 1
 
 
@@ -35,9 +38,9 @@ def _last_run_from_db(name: str) -> str | None:
 
 def record_run(name: str) -> None:
     """记录 worker 本次运行完成时间：内存（/stats 即时）+ DB（重启不丢）。"""
-    from lantai.core.time import utcnow
+    from lantai.core.time import iso_utc, utcnow
 
-    stamp = utcnow().isoformat()
+    stamp = iso_utc(utcnow())
     WORKER_LAST_RUN[name] = stamp
     try:
         from sqlalchemy import text
@@ -75,6 +78,8 @@ def scheduler_status() -> dict:
     司天（ADR-0044）监控面板的数据源之一：APScheduler 作业的真实下一次触发时间
     只有调度器自己知道，DB 里的 `scheduler_run` 只回答「上次跑没跑」。
     """
+    from lantai.core.time import iso_utc
+
     if _scheduler is None:
         return {
             "running": False,
@@ -94,7 +99,7 @@ def scheduler_status() -> dict:
                     "id": job.id,
                     "name": getattr(job, "name", job.id),
                     "trigger": str(job.trigger),
-                    "next_run_time": next_run.isoformat() if next_run else None,
+                    "next_run_time": iso_utc(next_run) or None,
                     "next_run_in_seconds": (
                         round((next_run - now).total_seconds(), 1) if next_run else None
                     ),
@@ -135,7 +140,7 @@ def worker_staleness(
     - 宽限 = max(周期 × grace_factor, 15 分钟)，吸收调度抖动；
     - 超过基线 + 周期 + 宽限 = overdue；超过 critical_factor 个完整周期 = critical。
     """
-    from lantai.core.time import utcnow
+    from lantai.core.time import iso_utc, utcnow
 
     grace_ratio = (
         float(settings.MONITOR_WORKER_GRACE_FACTOR) if grace_factor is None else float(grace_factor)
@@ -173,12 +178,12 @@ def worker_staleness(
     return {
         "name": name,
         "period_seconds": int(period.total_seconds()),
-        "last_run": last_run.isoformat() if last_run else None,
+        "last_run": iso_utc(last_run) or None,
         "last_run_age_seconds": (
             round((last_run - now).total_seconds() * -1, 1) if last_run else None
         ),
-        "baseline": baseline.isoformat(),
-        "due_at": due.isoformat(),
+        "baseline": iso_utc(baseline),
+        "due_at": iso_utc(due),
         "overdue": bool(overdue),
         "overdue_seconds": round(max(0.0, (now - due).total_seconds()), 1),
         "critical": critical,
@@ -196,6 +201,12 @@ def _parse_utc_iso(value: str) -> datetime | None:
         return None
 
 
+def _most_recent_daily_fire(now: datetime, cron_hour: int, cron_minute: int) -> datetime:
+    """最近一次已到点的每日调度时刻（UTC）：now 未到今日触发点则取昨日。"""
+    today_fire = now.replace(hour=cron_hour, minute=cron_minute, second=0, microsecond=0)
+    return today_fire if now >= today_fire else today_fire - timedelta(days=1)
+
+
 def should_catch_up(
     name: str,
     cron_hour: int,
@@ -208,8 +219,7 @@ def should_catch_up(
     if last_run is None:
         last_run = get_last_run(name)
     now = now or datetime.now(UTC)
-    today_fire = now.replace(hour=cron_hour, minute=cron_minute, second=0, microsecond=0)
-    most_recent_fire = today_fire if now >= today_fire else today_fire - timedelta(days=1)
+    most_recent_fire = _most_recent_daily_fire(now, cron_hour, cron_minute)
     if last_run is None:
         return True
     last_dt = _parse_utc_iso(last_run)
@@ -218,23 +228,38 @@ def should_catch_up(
     return last_dt < most_recent_fire
 
 
-def _catch_up_daily_jobs() -> None:
+def _catch_up_daily_jobs(now: datetime | None = None) -> None:
     """启动补跑：每日 cron 任务错过调度点（进程当时未运行）时补跑一次，
-    观察期样本不因重启/关机断档。"""
+    观察期样本不因重启/关机断档。
+
+    now 参数供测试注入冻结时钟（生产调用缺省 = 实时）。
+    """
     if _scheduler is None:
         return
+    now = now or datetime.now(UTC)
     jobs = []
     if settings.DIGEST_ENABLED:
         from lantai.workers.digest_worker import run_digest_once
 
-        jobs.append(("digest", run_digest_once, settings.DIGEST_CRON_HOUR, _DIGEST_CRON_MINUTE))
+        # 票 31：补跑锚定错过触发点所报告的本地日（触发点 UTC 换系统本地日，
+        # 与 _local_day_window_utc 同一口径），不锚启动时刻——否则错过的那日
+        # 数据会被写成启动日残报。
+        fire_utc = _most_recent_daily_fire(now, settings.DIGEST_CRON_HOUR, _DIGEST_CRON_MINUTE)
+        jobs.append(
+            (
+                "digest",
+                partial(run_digest_once, day=fire_utc.astimezone().date()),
+                settings.DIGEST_CRON_HOUR,
+                _DIGEST_CRON_MINUTE,
+            )
+        )
     if settings.REFLECT_ENABLED:
         from lantai.workers.reflect_worker import run_reflect_once
 
         jobs.append(("reflect", run_reflect_once, settings.REFLECT_CRON_HOUR, _REFLECT_CRON_MINUTE))
     for name, fn, hour, minute in jobs:
-        if should_catch_up(name, hour, minute):
-            run_at = datetime.now(UTC) + timedelta(seconds=2)
+        if should_catch_up(name, hour, minute, now=now):
+            run_at = now + timedelta(seconds=2)
             _scheduler.add_job(
                 fn, "date", run_date=run_at, id=f"{name}_catchup", replace_existing=True
             )
@@ -297,7 +322,9 @@ def start_scheduler():
         replace_existing=True,
     )
 
-    # Ticket 03: Daily Digest 每日盘点报告（本地早晨；DIGEST_CRON_HOUR 为 UTC 小时）
+    # Ticket 03: Daily Digest 每日盘点报告（票 31：本地日末——UTC 15:55 =
+    # 上海 23:55，贴近所报告本地日的日界；DIGEST_CRON_HOUR 为 UTC 小时，
+    # 分钟位单一真源 _DIGEST_CRON_MINUTE，注册必须显式带上）
     if settings.DIGEST_ENABLED:
         from lantai.workers.digest_worker import run_digest_once
 
@@ -305,6 +332,7 @@ def start_scheduler():
             run_digest_once,
             "cron",
             hour=settings.DIGEST_CRON_HOUR,
+            minute=_DIGEST_CRON_MINUTE,
             id="digest",
             replace_existing=True,
         )
@@ -329,6 +357,20 @@ def start_scheduler():
             id="param_refresh",
             replace_existing=True,
         )
+
+    # 票 43：察窗到期轮询——SHADOW_CHECK_INTERVAL_SECONDS 此前零消费，观察窗
+    # 打开后永不到期评估（promote/rollback 裁决不会发生）。无条件注册（形态同
+    # candidate_ttl/receipt_miss 先例）：无 SHADOW 总开关可挂，空转廉价——
+    # 无 observing 窗即空回。
+    from lantai.parameters.runtime import check_shadow_due
+
+    _scheduler.add_job(
+        check_shadow_due,
+        "interval",
+        seconds=settings.SHADOW_CHECK_INTERVAL_SECONDS,
+        id="shadow_check",
+        replace_existing=True,
+    )
 
     # Reflection 反思/蒸馏（spec: docs/plans/reflection-module-spec.md）
     if settings.REFLECT_ENABLED:
@@ -355,17 +397,19 @@ def start_scheduler():
             replace_existing=True,
         )
 
-    # 沉潜（ADR-0036）：每日夜梦沉淀与折叠压缩（北京时间凌晨 03:30 / UTC 19:30）
-    from lantai.services.consolidation_service import run_consolidation_cycle
+    # 沉潜（ADR-0036）：每日夜梦沉淀与折叠压缩（UTC 19:30 = 北京 03:30，
+    # 票 34：时刻与开关走 settings——与 digest/reflect 同形，非东八区宿主可自定）
+    if settings.CONSOLIDATION_ENABLED:
+        from lantai.services.consolidation_service import run_consolidation_cycle
 
-    _scheduler.add_job(
-        run_consolidation_cycle,
-        "cron",
-        hour=19,
-        minute=30,
-        id="consolidation",
-        replace_existing=True,
-    )
+        _scheduler.add_job(
+            run_consolidation_cycle,
+            "cron",
+            hour=settings.CONSOLIDATION_CRON_HOUR,
+            minute=settings.CONSOLIDATION_CRON_MINUTE,
+            id="consolidation",
+            replace_existing=True,
+        )
 
     # F7: coalesce idle flush（每 2 秒检查一次空闲缓冲；冲刷结果持久化，不静默丢弃）
     if settings.COALESCE_ENABLED:
@@ -379,6 +423,14 @@ def start_scheduler():
     from lantai.core.idempotency import purge_expired
 
     _scheduler.add_job(purge_expired, "interval", hours=1, id="kanhe_purge", replace_existing=True)
+
+    # 观测面保留清扫（票 29）：retrieval_event / llm_call_event TTL，每小时一次，
+    # 镜像 kanhe_purge 形态（清扫自身吞错返回 0，不反噬调度链）
+    from lantai.observability.retention import prune_all
+
+    _scheduler.add_job(
+        prune_all, "interval", hours=1, id="observability_purge", replace_existing=True
+    )
 
     _scheduler.start()
     logger.info("Scheduler started with ingest/evolve/forget jobs")

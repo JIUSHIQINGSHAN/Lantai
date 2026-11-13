@@ -20,17 +20,16 @@ from lantai.services.edge_service import add_edge, get_causal_chain
 from lantai.services.provenance_service import get_event_timeline, trace_decision_provenance
 from lantai.storage import db
 
-# 反事实遍历设界单一真源（票 39）：REST pydantic ge/le 与 MCP -32602 继承同一契约。
-# 路径帽先到先停（BFS 序），partial 语义同校雠/拾遗 scan_truncated——宁截断外显，
-# 不给合法形状请求留指数枚举面。
-COUNTERFACTUAL_MAX_DEPTH_LIMIT = 10
-COUNTERFACTUAL_PATH_CAP = 64
-
-
-def _validate_counterfactual_depth(max_depth: int) -> None:
-    """票 39 深度上界校验（引擎内两遍历面共用；REST pydantic 与 MCP -32602 镜像同界）。"""
-    if not isinstance(max_depth, int) or not 1 <= max_depth <= COUNTERFACTUAL_MAX_DEPTH_LIMIT:
-        raise ValueError(f"max_depth must be an int in [1, {COUNTERFACTUAL_MAX_DEPTH_LIMIT}]")
+# 票 39：全简单路径枚举面双界。逆向回溯是 per-path visited 的全路径枚举
+# （防死循环但不防指数），链式 k 叉菱形路径数 ≈ k^n。路径帽封顶返回规模，
+# 扩展预算封顶 BFS 查询次数（每扩展 = 一次父跳查询）。先到先停，命中任一
+# 界即置 paths_truncated（partial 语义，口径同拾遗 scan_truncated）——结论
+# 照常给出但明确标注不完整，不静默丢弃也不脏写完整性。
+_COUNTERFACTUAL_PATH_CAP = 64
+_COUNTERFACTUAL_NODE_BUDGET = 512
+# 入口深度/置信度钳制界（REST pydantic ge/le 与 MCP ValueError 同源，票 39）
+CAUSAL_DEPTH_MIN = 1
+CAUSAL_DEPTH_MAX = 20
 
 
 @dataclass
@@ -181,6 +180,47 @@ class CausalEngine:
                 return False
             return (mem.user_id or None) in (None, viewer)
 
+    def _get_parent_hops(self, node: str, s: Session, viewer: Any) -> list[dict[str, Any]]:
+        """逆向父跳查询（票 39：共享调用方 session，消除路径数 × 深度次开合）。"""
+        hops = []
+        # 1. node 作为 target，被其他 source causes/leads_to
+        stmt1 = select(MemoryEdge).where(
+            MemoryEdge.target_memory_id == node,
+            MemoryEdge.relation.in_(["causes", "leads_to"]),
+        )
+        for edge in s.exec(stmt1).all():
+            parent_mem = s.get(MemoryItem, edge.source_memory_id)
+            if parent_mem is not None and parent_mem.status == "active":
+                if viewer is None or (parent_mem.user_id or None) in (None, viewer):
+                    hops.append(
+                        {
+                            "edge_id": edge.id,
+                            "from_id": edge.source_memory_id,
+                            "to_id": edge.target_memory_id,
+                            "relation": edge.relation,
+                            "confidence": edge.confidence,
+                        }
+                    )
+        # 2. node 作为 source，triggered_by 指向前置 target
+        stmt2 = select(MemoryEdge).where(
+            MemoryEdge.source_memory_id == node,
+            MemoryEdge.relation == "triggered_by",
+        )
+        for edge in s.exec(stmt2).all():
+            parent_mem = s.get(MemoryItem, edge.target_memory_id)
+            if parent_mem is not None and parent_mem.status == "active":
+                if viewer is None or (parent_mem.user_id or None) in (None, viewer):
+                    hops.append(
+                        {
+                            "edge_id": edge.id,
+                            "from_id": edge.target_memory_id,
+                            "to_id": edge.source_memory_id,
+                            "relation": edge.relation,
+                            "confidence": edge.confidence,
+                        }
+                    )
+        return hops
+
     def evaluate_counterfactual(
         self,
         target_id: str,
@@ -195,12 +235,10 @@ class CausalEngine:
         - intervened_node_id: 被阻断的介入节点 ID
         - is_necessary: 是否为绝对必要根因（阻断后下游完全断裂）
         - reachable_without_node: 阻断后是否依然可达
-        - alternative_paths: 替代存活因果路径列表（若有，至多 COUNTERFACTUAL_PATH_CAP 条）
-        - paths_truncated: 路径帽截断标注（先到先停，帽外路径未探索）
+        - alternative_paths: 替代存活因果路径列表（若有；票 39 起受路径帽封顶）
+        - paths_truncated: 搜索是否被路径帽/扩展预算截断（partial 语义）
         - narrative: 自然语言解释
         """
-        _validate_counterfactual_depth(max_depth)
-
         if not self._check_node_access(target_id):
             return {
                 "found": False,
@@ -209,7 +247,6 @@ class CausalEngine:
                 "is_necessary": False,
                 "reachable_without_node": False,
                 "alternative_paths": [],
-                "paths_truncated": False,
                 "narrative": f"目标节点 {target_id} 不存在或无访问权限",
             }
 
@@ -221,7 +258,6 @@ class CausalEngine:
                 "is_necessary": True,
                 "reachable_without_node": False,
                 "alternative_paths": [],
-                "paths_truncated": False,
                 "narrative": f"目标节点自身即为介入阻断节点 {intervened_node_id}，阻断后直接消除。",
             }
 
@@ -231,71 +267,33 @@ class CausalEngine:
         if self.principal is not None and not bool(getattr(self.principal, "is_admin", False)):
             viewer = viewer_of(self.principal)
 
-        def _get_parent_hops(node: str, session: Session) -> list[dict[str, Any]]:
-            hops = []
-            # 票 39：会话由遍历层共享传入——此前每队列项各开一次会话，
-            # 开合次数 = 路径数 × 深度；只读遍历共享一个会话即可。
-            # 1. node 作为 target，被其他 source causes/leads_to
-            stmt1 = select(MemoryEdge).where(
-                MemoryEdge.target_memory_id == node,
-                MemoryEdge.relation.in_(["causes", "leads_to"]),
-            )
-            for edge in session.exec(stmt1).all():
-                parent_mem = session.get(MemoryItem, edge.source_memory_id)
-                if parent_mem is not None and parent_mem.status == "active":
-                    if viewer is None or (parent_mem.user_id or None) in (None, viewer):
-                        hops.append(
-                            {
-                                "edge_id": edge.id,
-                                "from_id": edge.source_memory_id,
-                                "to_id": edge.target_memory_id,
-                                "relation": edge.relation,
-                                "confidence": edge.confidence,
-                            }
-                        )
-            # 2. node 作为 source，triggered_by 指向前置 target
-            stmt2 = select(MemoryEdge).where(
-                MemoryEdge.source_memory_id == node,
-                MemoryEdge.relation == "triggered_by",
-            )
-            for edge in session.exec(stmt2).all():
-                parent_mem = session.get(MemoryItem, edge.target_memory_id)
-                if parent_mem is not None and parent_mem.status == "active":
-                    if viewer is None or (parent_mem.user_id or None) in (None, viewer):
-                        hops.append(
-                            {
-                                "edge_id": edge.id,
-                                "from_id": edge.target_memory_id,
-                                "to_id": edge.source_memory_id,
-                                "relation": edge.relation,
-                                "confidence": edge.confidence,
-                            }
-                        )
-            return hops
-
         # 收集所有不含 intervened_node_id 的有效路径
-        # BFS / DFS 逆向回溯
+        # BFS / DFS 逆向回溯（票 39：单 session 贯穿 + 路径帽/扩展预算双界，
+        # 队列扩展数即 _get_parent_hops 查询数，预算同时是 DB 会话复杂度锁）
         from collections import deque
 
         queue = deque([([target_id], [])])  # (visited_nodes, path_hops)
         surviving_paths: list[list[dict[str, Any]]] = []
-        paths_truncated = False
+        truncated = False
+        expansions = 0
 
-        with db.get_session() as session:
+        with db.get_session() as s:
             while queue:
-                if len(surviving_paths) >= COUNTERFACTUAL_PATH_CAP:
-                    # 票 39 路径帽：先到先停（BFS 序）。队列项每项终将收出一条
-                    # 完整路径，到帽仍有队列即确有未探索路径，如实标注截断。
-                    paths_truncated = True
-                    break
                 current_chain, current_hops = queue.popleft()
+                if len(surviving_paths) >= _COUNTERFACTUAL_PATH_CAP:
+                    truncated = True
+                    break
                 if len(current_hops) >= max_depth:
                     if current_hops:
                         surviving_paths.append(list(reversed(current_hops)))
                     continue
+                if expansions >= _COUNTERFACTUAL_NODE_BUDGET:
+                    truncated = True
+                    break
 
+                expansions += 1
                 curr_node = current_chain[-1]
-                parents = _get_parent_hops(curr_node, session)
+                parents = self._get_parent_hops(curr_node, s, viewer)
                 # 过滤掉介入节点
                 valid_parents = [
                     h
@@ -311,6 +309,15 @@ class CausalEngine:
                         queue.append((current_chain + [phop["from_id"]], current_hops + [phop]))
 
         if not surviving_paths:
+            if truncated:
+                # 票 39：搜索被截断且零存活路径——不脏写「必要根因」确定性结论
+                narrative = (
+                    f"反事实推演：搜索在路径帽/扩展预算内未发现绕过 {intervened_node_id} "
+                    f"的替代路径，暂判目标 {target_id} 为必要根因；但搜索已截断"
+                    f"（paths_truncated），该结论可能受截断影响。"
+                )
+            else:
+                narrative = f"反事实推演：若阻断前置节点 {intervened_node_id}，目标 {target_id} 的因果链将完全断裂，证实该节点为必要根因。"
             return {
                 "found": True,
                 "target_id": target_id,
@@ -318,10 +325,13 @@ class CausalEngine:
                 "is_necessary": True,
                 "reachable_without_node": False,
                 "alternative_paths": [],
-                "paths_truncated": False,
-                "narrative": f"反事实推演：若阻断前置节点 {intervened_node_id}，目标 {target_id} 的因果链将完全断裂，证实该节点为必要根因。",
+                "paths_truncated": truncated,
+                "narrative": narrative,
             }
 
+        narrative = f"反事实推演：即使阻断节点 {intervened_node_id}，目标 {target_id} 仍可通过 {len(surviving_paths)} 条替代路径达成。"
+        if truncated:
+            narrative += f"（搜索已截断：仅枚举前 {len(surviving_paths)} 条，替代路径不止于此。）"
         return {
             "found": True,
             "target_id": target_id,
@@ -329,8 +339,8 @@ class CausalEngine:
             "is_necessary": False,
             "reachable_without_node": True,
             "alternative_paths": surviving_paths,
-            "paths_truncated": paths_truncated,
-            "narrative": f"反事实推演：即使阻断节点 {intervened_node_id}，目标 {target_id} 仍可通过 {len(surviving_paths)} 条替代路径达成。",
+            "paths_truncated": truncated,
+            "narrative": narrative,
         }
 
     def project_causal_impact(
@@ -417,6 +427,45 @@ class CausalEngine:
             "max_depth_reached": max_reached,
         }
 
+    def _get_upstream_edges(self, node: str, s: Session, viewer: Any) -> list[dict[str, Any]]:
+        """逆向上游边查询（票 39：共享调用方 session；置信度缺省 0.5 供乘积衰减）。"""
+        hops = []
+        stmt1 = select(MemoryEdge).where(
+            MemoryEdge.target_memory_id == node,
+            MemoryEdge.relation.in_(["causes", "leads_to"]),
+        )
+        for edge in s.exec(stmt1).all():
+            parent_mem = s.get(MemoryItem, edge.source_memory_id)
+            if parent_mem is not None and parent_mem.status == "active":
+                if viewer is None or (parent_mem.user_id or None) in (None, viewer):
+                    hops.append(
+                        {
+                            "edge_id": edge.id,
+                            "from_id": edge.source_memory_id,
+                            "to_id": edge.target_memory_id,
+                            "relation": edge.relation,
+                            "confidence": edge.confidence or 0.5,
+                        }
+                    )
+        stmt2 = select(MemoryEdge).where(
+            MemoryEdge.source_memory_id == node,
+            MemoryEdge.relation == "triggered_by",
+        )
+        for edge in s.exec(stmt2).all():
+            parent_mem = s.get(MemoryItem, edge.target_memory_id)
+            if parent_mem is not None and parent_mem.status == "active":
+                if viewer is None or (parent_mem.user_id or None) in (None, viewer):
+                    hops.append(
+                        {
+                            "edge_id": edge.id,
+                            "from_id": edge.target_memory_id,
+                            "to_id": edge.source_memory_id,
+                            "relation": edge.relation,
+                            "confidence": edge.confidence or 0.5,
+                        }
+                    )
+        return hops
+
     def find_critical_causal_path(
         self,
         target_id: str,
@@ -424,12 +473,9 @@ class CausalEngine:
     ) -> dict[str, Any]:
         """在 DAG 因果网络中计算通向 target_id 的最高置信度主导关键因果路径。
 
-        票 39 留痕：产品代码零调用方（死代码留档，ADR-0061 记其为已交付能力）。
-        遍历与 evaluate_counterfactual 同款全简单路径枚举，受同一深度上界与
-        路径帽约束；超帽先到先停，paths_truncated 标注（帽外路径不参与择优）。
+        留痕（票 39）：生产零调用的兼容面（smoke 测试在用），但同为全路径
+        枚举，同款补路径帽/扩展预算双界——返回增加 paths_truncated 标注。
         """
-        _validate_counterfactual_depth(max_depth)
-
         if not self._check_node_access(target_id):
             return {
                 "found": False,
@@ -437,82 +483,51 @@ class CausalEngine:
                 "critical_path": [],
                 "path_confidence": 0.0,
                 "root_id": None,
-                "paths_truncated": False,
             }
 
         viewer = None
         if self.principal is not None and not bool(getattr(self.principal, "is_admin", False)):
             viewer = viewer_of(self.principal)
 
-        def _get_upstream_edges(node: str) -> list[dict[str, Any]]:
-            hops = []
-            with db.get_session() as s:
-                stmt1 = select(MemoryEdge).where(
-                    MemoryEdge.target_memory_id == node,
-                    MemoryEdge.relation.in_(["causes", "leads_to"]),
-                )
-                for edge in s.exec(stmt1).all():
-                    parent_mem = s.get(MemoryItem, edge.source_memory_id)
-                    if parent_mem is not None and parent_mem.status == "active":
-                        if viewer is None or (parent_mem.user_id or None) in (None, viewer):
-                            hops.append(
-                                {
-                                    "edge_id": edge.id,
-                                    "from_id": edge.source_memory_id,
-                                    "to_id": edge.target_memory_id,
-                                    "relation": edge.relation,
-                                    "confidence": edge.confidence or 0.5,
-                                }
-                            )
-                stmt2 = select(MemoryEdge).where(
-                    MemoryEdge.source_memory_id == node,
-                    MemoryEdge.relation == "triggered_by",
-                )
-                for edge in s.exec(stmt2).all():
-                    parent_mem = s.get(MemoryItem, edge.target_memory_id)
-                    if parent_mem is not None and parent_mem.status == "active":
-                        if viewer is None or (parent_mem.user_id or None) in (None, viewer):
-                            hops.append(
-                                {
-                                    "edge_id": edge.id,
-                                    "from_id": edge.target_memory_id,
-                                    "to_id": edge.source_memory_id,
-                                    "relation": edge.relation,
-                                    "confidence": edge.confidence or 0.5,
-                                }
-                            )
-            return hops
-
-        # 遍历所有路径计算置信度乘积
+        # 遍历所有路径计算置信度乘积（票 39：单 session 贯穿 + 双界封顶）
         all_paths: list[tuple[float, list[dict[str, Any]], str]] = []
-        paths_truncated = False
         from collections import deque
 
         queue = deque([([target_id], [], 1.0)])
+        truncated = False
+        expansions = 0
 
-        while queue:
-            if len(all_paths) >= COUNTERFACTUAL_PATH_CAP:
-                # 票 39 路径帽：先到先停（BFS 序），帽外路径不参与置信度择优。
-                paths_truncated = True
-                break
-            visited_chain, hops_so_far, conf = queue.popleft()
-            if len(hops_so_far) >= max_depth:
-                if hops_so_far:
-                    all_paths.append((conf, list(reversed(hops_so_far)), visited_chain[-1]))
-                continue
+        with db.get_session() as s:
+            while queue:
+                visited_chain, hops_so_far, conf = queue.popleft()
+                if len(all_paths) >= _COUNTERFACTUAL_PATH_CAP:
+                    truncated = True
+                    break
+                if len(hops_so_far) >= max_depth:
+                    if hops_so_far:
+                        all_paths.append((conf, list(reversed(hops_so_far)), visited_chain[-1]))
+                    continue
+                if expansions >= _COUNTERFACTUAL_NODE_BUDGET:
+                    truncated = True
+                    break
 
-            curr = visited_chain[-1]
-            up_hops = _get_upstream_edges(curr)
-            valid_up = [h for h in up_hops if h["from_id"] not in visited_chain]
+                expansions += 1
+                curr = visited_chain[-1]
+                up_hops = self._get_upstream_edges(curr, s, viewer)
+                valid_up = [h for h in up_hops if h["from_id"] not in visited_chain]
 
-            if not valid_up:
-                if hops_so_far:
-                    all_paths.append((conf, list(reversed(hops_so_far)), curr))
-            else:
-                for h in valid_up:
-                    queue.append(
-                        (visited_chain + [h["from_id"]], hops_so_far + [h], conf * h["confidence"])
-                    )
+                if not valid_up:
+                    if hops_so_far:
+                        all_paths.append((conf, list(reversed(hops_so_far)), curr))
+                else:
+                    for h in valid_up:
+                        queue.append(
+                            (
+                                visited_chain + [h["from_id"]],
+                                hops_so_far + [h],
+                                conf * h["confidence"],
+                            )
+                        )
 
         if not all_paths:
             return {
@@ -521,7 +536,7 @@ class CausalEngine:
                 "critical_path": [],
                 "path_confidence": 1.0,
                 "root_id": target_id,
-                "paths_truncated": False,
+                "paths_truncated": truncated,
             }
 
         # 挑选置信度最高的路径
@@ -532,5 +547,5 @@ class CausalEngine:
             "critical_path": best_path,
             "path_confidence": best_conf,
             "root_id": root_id,
-            "paths_truncated": paths_truncated,
+            "paths_truncated": truncated,
         }

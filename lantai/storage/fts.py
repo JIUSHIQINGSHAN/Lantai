@@ -78,6 +78,29 @@ def _owner_filter_clause(principal) -> tuple[str, str] | None:
     return " AND (m.user_id = ? OR m.user_id IS NULL)", viewer_of(principal)
 
 
+def _tenant_filter_clause(principal) -> tuple[str, str] | None:
+    """租户过滤子句（票 18）：tenant/session 维此前逐读侧手写严格等值、漏
+    `OR IS NULL` 半边——带头调用把 NULL 租户老行（真实库主体形态）整批滤掉，
+    向量降级时关键词即全部召回通道 → 半召回塌缩。半边口径对齐终闸
+    `_query_items`（`hybrid.py`）；修前 admin 带头在关键词通道比向量通道
+    看得更少。
+
+    与 `_owner_filter_clause` 同构：principal=None（worker 契约＝不过滤）、
+    system viewer、admin 三种豁免在**函数内自查**——现两调用点的外层守卫
+    与此重复是冗余保险，防未来新调用点忘挂守卫（单一真源不自豁免就等于
+    重新发明「改一处漏一处」）。"""
+    if principal is None:
+        return None
+    if _is_system_viewer(principal):
+        return None
+    if bool(getattr(principal, "is_admin", False)):
+        return None
+    tenant_id = getattr(principal, "tenant_id", None)
+    if not tenant_id:
+        return None
+    return " AND (m.tenant_id = ? OR m.tenant_id IS NULL)", tenant_id
+
+
 def init_fts(conn: sqlite3.Connection) -> bool:
     """初始化 FTS5 虚拟表；自动迁移旧 schema。返回词汇召回通道是否真正可用。
 
@@ -134,15 +157,21 @@ def sync_fts(session, memory_id: str, content: str | None) -> None:
 
     content 非 None：先删后插（UPSERT 语义）；
     content 为 None：删除该记忆的 FTS 行。
+
+    票 45：入索引的 content 副本过归一缝 `normalize_for_index`——trigram
+    按精确码位切 gram，未归一副本让全角/ZWSP/NFD 正文与归一查询确定性
+    失配。只归一索引副本，MemoryItem.content 原文零触碰（ADR-0085）。
     """
     from sqlalchemy import text
+
+    from lantai.core.text import normalize_for_index
 
     conn = session.connection()
     conn.execute(text("DELETE FROM memory_fts WHERE memory_id = :id"), {"id": memory_id})
     if content:
         conn.execute(
             text("INSERT INTO memory_fts(memory_id, content) VALUES (:id, :content)"),
-            {"id": memory_id, "content": content},
+            {"id": memory_id, "content": normalize_for_index(content)},
         )
 
 
@@ -159,30 +188,54 @@ def fts_has_row(session, memory_id: str) -> bool:
 
 def index_fts(conn: sqlite3.Connection, memory_id: str, content: str):
     """索引单条（独立连接场景；生产路径用 sync_fts，此函数仅供测试/脚本）。"""
+    from lantai.core.text import normalize_for_index
+
     try:
         conn.execute(
-            "INSERT INTO memory_fts(memory_id, content) VALUES (?, ?)", (memory_id, content)
+            "INSERT INTO memory_fts(memory_id, content) VALUES (?, ?)",
+            (memory_id, normalize_for_index(content)),
         )
         conn.commit()
     except Exception as e:
         logger.warning("FTS5 index failed for %s: %s", memory_id, e)
 
 
+def rebuild_fts(session) -> int:
+    """全量重建 FTS 索引（票 45 存量落点）：truncate 后从 memoryitem 逐行重灌。
+
+    索引是派生数据——归一缝上线前的存量行是未归一原文，查询侧归一后反向
+    失配（索引侧「ＡＩ」vs 查询侧「AI」）。只重灌索引副本，正文零触碰；
+    不 commit（同 sync_fts 口径，事务归调用方）。运维入口 scripts/rebuild_fts.py。
+    """
+    from sqlalchemy import text
+
+    from lantai.core.text import normalize_for_index
+
+    conn = session.connection()
+    conn.execute(text("DELETE FROM memory_fts"))
+    rows = conn.execute(
+        text("SELECT id, content FROM memoryitem WHERE content IS NOT NULL AND content != ''")
+    ).fetchall()
+    for memory_id, content in rows:
+        conn.execute(
+            text("INSERT INTO memory_fts(memory_id, content) VALUES (:id, :content)"),
+            {"id": memory_id, "content": normalize_for_index(content)},
+        )
+    return len(rows)
+
+
 _GRAM_TERMS_MAX = 24
 
 
-def _bm25_keywords(query: str) -> list:
-    """BM25 关键词（票06）：CJK 3-gram 滑窗 + ASCII 整词，单一真源，OR/AND 两路共用。
-
-    trigram 索引的最小匹配单元是 3 字符——中文 2 字词（偏好/机房间）天然不可
-    匹配，整句短语匹配（旧行为）则不覆盖词中错字与词面重叠改写。3-gram 滑窗
-    让错字只污染个别 gram、共享词根即可部分命中；OR + bm25 排序负责降噪。
-    上限 _GRAM_TERMS_MAX 防 OR 链过长（现状整改票04 如实声明：同样作用于 AND
-    路径 search_fts——超 24 gram 的长查询尾部被静默截断，存在假阳性面）。
-    """
+def _bm25_terms(query: str) -> list:
+    """BM25 关键词全量（票 49 自 _bm25_keywords 拆出）：CJK 3-gram 滑窗 +
+    ASCII 整词，未截断——截断单一真源在 _bm25_keywords 的收尾切片。"""
     from lantai.core.settings import settings
+    from lantai.core.text import normalize_for_index
 
-    cleaned = re.sub(r"[^\w\u4e00-\u9fa5]+", " ", query or "")
+    # 票 45：查询先过归一缝——与索引副本同口径，否则全角查询词对半角索引
+    # （及反向）、NFD 对 NFC 确定性失配。
+    cleaned = re.sub(r"[^\w\u4e00-\u9fa5]+", " ", normalize_for_index(query))
     if not settings.FTS_BM25_GRAM_TOKENIZE:
         return [w.strip() for w in cleaned.split() if len(w.strip()) >= 3]
     terms: list = []
@@ -198,7 +251,39 @@ def _bm25_keywords(query: str) -> list:
             if gram not in seen:
                 seen.add(gram)
                 terms.append(gram)
+    return terms
+
+
+def _bm25_keywords(query: str) -> list:
+    """BM25 关键词（票06）：CJK 3-gram 滑窗 + ASCII 整词，单一真源，OR/AND 两路共用。
+
+    trigram 索引的最小匹配单元是 3 字符——中文 2 字词（偏好/机房间）天然不可
+    匹配，整句短语匹配（旧行为）则不覆盖词中错字与词面重叠改写。3-gram 滑窗
+    让错字只污染个别 gram、共享词根即可部分命中；OR + bm25 排序负责降噪。
+    上限 _GRAM_TERMS_MAX 防 OR 链过长（现状整改票04 如实声明：同样作用于 AND
+    路径 search_fts——超 24 gram 的长查询尾部被静默截断，存在假阳性面；
+    票 49：截断事实经 `bm25_terms_truncated` 落 retrieval_event，不再静默）。
+    """
+    from lantai.core.settings import settings
+
+    terms = _bm25_terms(query)
+    if not settings.FTS_BM25_GRAM_TOKENIZE:
+        return terms
     return terms[:_GRAM_TERMS_MAX]
+
+
+def bm25_terms_truncated(query: str) -> bool:
+    """票 49：该查询的关键词是否被 _GRAM_TERMS_MAX 截断（纯函数，同查询恒同判）。
+
+    截断只发生在 gram 档（off 档整词列表不设限）；观测面经 log_retrieval 落
+    retrieval_event.fts_terms_truncated——超长查询尾部 gram 静默丢失自此可见
+    （AND/OR 两路共用 _bm25_keywords，任一路截断在本谓词下等价可见）。
+    """
+    from lantai.core.settings import settings
+
+    if not settings.FTS_BM25_GRAM_TOKENIZE:
+        return False
+    return len(_bm25_terms(query)) > _GRAM_TERMS_MAX
 
 
 def search_fts(
@@ -228,10 +313,17 @@ def search_fts(
         if domain and domain != "all":
             sql += " AND m.domain = ?"
             params.append(domain)
-        if principal is not None and not _is_system_viewer(principal):
-            if getattr(principal, "tenant_id", None):
-                sql += " AND m.tenant_id = ?"
-                params.append(principal.tenant_id)
+        if (
+            principal is not None
+            and not _is_system_viewer(principal)
+            and not bool(getattr(principal, "is_admin", False))
+        ):
+            # 租户（票 18）：单一真源 `_tenant_filter_clause`（半边 + 豁免口径见其
+            # docstring）——修前两函数各自手写严格等值，正是「改一处漏一处」。
+            tenant = _tenant_filter_clause(principal)
+            if tenant is not None:
+                sql += tenant[0]
+                params.append(tenant[1])
             # 同袍（ADR-0058）：Agent 私有隔离与公共知识殿堂放行
             if getattr(principal, "agent_id", None):
                 sql += (
@@ -245,9 +337,10 @@ def search_fts(
             if owner is not None:
                 sql += owner[0]
                 params.append(owner[1])
-            if getattr(principal, "session_id", None):
-                sql += " AND m.session_id = ?"
-                params.append(principal.session_id)
+            # session 收窄已摘除（票 18 implement 轮裁决）：终闸 `_query_items`
+            # 从不过滤 session、向量通道同样不过——此处 `m.session_id = ?` 的
+            # 收窄是与终闸相反的孤儿语义（跨会话行关键词通道独删），带头调用
+            # 还会连带滤掉全部 NULL session 老行。
 
         sql += " ORDER BY rank LIMIT ?"
         params.append(top_k)
@@ -255,9 +348,7 @@ def search_fts(
         cursor = conn.execute(sql, tuple(params))
         return [row[0] for row in cursor.fetchall()]
     except Exception as e:
-        import logging
-
-        logging.getLogger(__name__).warning("FTS search failed: %s", e)
+        logger.warning("FTS search failed: %s", e)
         return []
 
 
@@ -284,10 +375,18 @@ def search_fts_bm25(
         if domain and domain != "all":
             sql += " AND m.domain = ?"
             params.append(domain)
-        if principal is not None and not _is_system_viewer(principal):
-            if getattr(principal, "tenant_id", None):
-                sql += " AND m.tenant_id = ?"
-                params.append(principal.tenant_id)
+        if (
+            principal is not None
+            and not _is_system_viewer(principal)
+            and not bool(getattr(principal, "is_admin", False))
+        ):
+            # 租户（票 18）：与 `search_fts` 共用 `_tenant_filter_clause` 单一真源
+            # ——两个函数是同一处手写的同一段，改一处漏一处等于没改（票 11 就
+            # 差点只改到一处）。
+            tenant = _tenant_filter_clause(principal)
+            if tenant is not None:
+                sql += tenant[0]
+                params.append(tenant[1])
             # 同袍（ADR-0058）：Agent 私有隔离与公共知识殿堂放行
             if getattr(principal, "agent_id", None):
                 sql += (
@@ -301,9 +400,7 @@ def search_fts_bm25(
             if owner is not None:
                 sql += owner[0]
                 params.append(owner[1])
-            if getattr(principal, "session_id", None):
-                sql += " AND m.session_id = ?"
-                params.append(principal.session_id)
+            # session 收窄摘除：裁决与依据同 `search_fts`（票 18）。
 
         sql += " ORDER BY score LIMIT ?"
         params.append(top_k)
@@ -311,7 +408,5 @@ def search_fts_bm25(
         cursor = conn.execute(sql, tuple(params))
         return [(row[0], row[1]) for row in cursor.fetchall()]
     except Exception as e:
-        import logging
-
-        logging.getLogger(__name__).warning("FTS BM25 search failed: %s", e)
+        logger.warning("FTS BM25 search failed: %s", e)
         return []

@@ -8,7 +8,7 @@ MemoryItem（promoter 落库），最终每条提取类记忆都能回答"这套
 """
 
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 
 PROVENANCE_PROMPT_EXTRACT = "extract-v1"  # lantai/llm/prompts.py EXTRACT_SYS
 PROVENANCE_PROMPT_FASTPATH_DIRECT = "fastpath-direct"  # memory_service fastpath（规则直通，零 LLM）
@@ -28,7 +28,7 @@ def make_provenance(prompt: str, extra: dict | None = None) -> dict:
     prov = {
         "prompt": prompt,
         "model": settings.LLM_MODEL,
-        "extracted_at": utcnow().isoformat(),
+        "extracted_at": iso_utc(utcnow()),
     }
     if extra:
         prov.update(extra)

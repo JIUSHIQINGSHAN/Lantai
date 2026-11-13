@@ -3,6 +3,7 @@
 契约：stdin JSON → stdout {context} 或 {}；2s 硬超时；异常静默降级。"""
 
 import contextlib
+import json
 import os
 import sys
 import warnings
@@ -181,7 +182,9 @@ def _format_offload_entry(item, score: float, max_chars: int) -> tuple[str, str]
         return build_offload_inject(
             item.content, score, max_chars, _OFFLOAD_SUFFIX, path, time_str=time_str
         )
-    except Exception:
+    except Exception as exc:
+        # 静默降级会掩盖容器内「全文永远写不出来」的持续故障（票 85）——降级照旧，但必须留痕。
+        logger.warning("offload 全文落盘失败，降级为截断注入: %s", exc)
         return _format_memory_entry(
             item.content, score, max_chars, _RECALL_TRUNCATION_SUFFIX, time_str=time_str
         )
@@ -820,7 +823,16 @@ def main():
             if not line:
                 continue
             result = _handle_one(line)
-            sys.stdout.write(render_host_response(result) + "\n")
+            try:
+                rendered = render_host_response(result)
+            except Exception as exc:
+                # 票 52：render 守卫——开 allow_nan=False 后序列化病只值一行
+                # 错误帧，不得打死 serve 常驻循环（插件正逐字节等本帧响应）。
+                logger.warning("shell_hook: 响应渲染失败: %r", exc)
+                rendered = json.dumps(
+                    {"error": f"render failed: {type(exc).__name__}"}, ensure_ascii=False
+                )
+            sys.stdout.write(rendered + "\n")
             sys.stdout.flush()
         return
 

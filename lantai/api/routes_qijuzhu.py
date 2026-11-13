@@ -18,6 +18,16 @@ from lantai.services.qijuzhu_service import (
 router = APIRouter(tags=["qijuzhu"])
 
 
+def _validate_date_or_422(date_str: str) -> None:
+    """票 66：路径日期先验——坏格式 422 带指引，不冒泡 500（票 41 同病收口）。"""
+    from datetime import datetime
+
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"date 格式须为 YYYY-MM-DD，收到 {date_str!r}")
+
+
 @router.get("/qijuzhu/today")
 def qijuzhu_today_route(
     detail_level: Literal["summary", "full"] = Query(
@@ -56,13 +66,9 @@ def qijuzhu_date_route(
     ctx=Depends(get_current_user),
 ) -> dict[str, Any]:
     """获取指定历史日期的起居注全息纪事 (YYYY-MM-DD)。"""
-    # 票 66:坏格式日期修复前 strptime ValueError 冒泡成 500;包成 422 错误回执
-    # (拒绝而非静默修正),格式解析单一真源仍在引擎 strptime
-    try:
-        return get_daily_chronicle_service(
-            date_str=date_str,
-            detail_level=detail_level,
-            principal=ctx,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    _validate_date_or_422(date_str)
+    return get_daily_chronicle_service(
+        date_str=date_str,
+        detail_level=detail_level,
+        principal=ctx,
+    )

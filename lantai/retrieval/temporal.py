@@ -10,6 +10,8 @@
 
 from datetime import UTC, datetime, timedelta, timezone
 
+from lantai.core.time import iso_utc
+
 PRECISION_DELTAS = {
     # 精度 → 锚点向后展开的不确定区间宽度（左闭右开；second 特判为点）
     "year": timedelta(days=366),
@@ -174,10 +176,10 @@ def temporal_view_filter(
         if matched_by:
             explain_map[m.id] = {
                 "view": "as_of" if as_of_dt else "window",
-                "event_time": m.event_time.isoformat() if m.event_time else None,
+                "event_time": iso_utc(m.event_time) or None,
                 "event_time_precision": m.event_time_precision or None,
-                "valid_from": m.valid_from.isoformat() if m.valid_from else None,
-                "valid_to": m.valid_to.isoformat() if m.valid_to else None,
+                "valid_from": iso_utc(m.valid_from) or None,
+                "valid_to": iso_utc(m.valid_to) or None,
                 "matched_by": matched_by,
             }
         kept.append(m)

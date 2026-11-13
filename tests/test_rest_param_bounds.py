@@ -1,52 +1,48 @@
-"""票 42:REST 面 limit/浮点参数边界裸奔组——422 拒绝 + conflicts SQL 下推 + 签名一致性哨兵。
+"""票 42：limit/top_k 边界裸奔组——负值 limit 直通 SQL 的五种语义并存。
 
-红测纪律(AGENTS.md):真内存库 + 真 service 链(TestClient 直打路由、考功真落库),
-不 mock 被测链路。界限与 MCP 孪生面对齐(mcp.py 的 [1,500] 家族为单一真源;
-考功/知命 1000;checkpoint 列表 100;披沙批量 200)——修复前非法 limit 五种语义并存
-(422 / 400 / 500 / Python 切片反转 / SQL 负值=不限),修复后统一 422 拒绝。
+病灶（立案基线 `d2d784fe`，行号以现树为准）：SQLite ``LIMIT -1`` = 无上限、
+``LIMIT 0`` = 空集。REST 面整型/浮点参数一路裸传 SQL 或 Python 切片——
+写副作用类（考功/知命全库写）、LLM 成本类（候选整批送外呼）、payload 放大
+类（checkpoint 完整行快照）三族无界，``/conflicts`` 还是先 ``.all()`` 全表
+捞回再 ``rows[:limit]`` 切片（``limit=-5`` 语义是「去掉末尾 5 条」），
+``/cognitive/context`` 的 ``top_k<=0`` 每切面静默空。本票把裸奔组对齐模范组
+（``Query(ge=1, le=N)``，取值依据在票面 Answer 登记表）、conflicts 的 limit
+下推 SQL、并上线 AST 一致性哨兵（裸数值参数即红，白名单 fail-closed 登记
+service 层双层校验组与跨票归属）。
 
-哨兵测试:AST 扫描 routes_*.py 全部 int/float 参数签名,ge+le 双界缺失即裸;
-白名单逐条登记「他层已校验(注明 file:line 实证)」或「残余待立案(如实标注)」
-——防新增路由带病上线(形态同票 26 双向对账哨兵思路)。
+红测形态：TestClient 真路由 + 真服务链 + 真内存 SQLite（同
+``test_rest_error_semantics.api_env`` 先例）。考功/知命周期为纯库内计算
+无 LLM（``kaogong.py``/``zhiming.py`` 全文仅 import fence 做出闸包裹），
+``limit=-1`` 驱动全库写的副作用可直接断言；哨兵为工单明示形态（扫描
+routes_*.py 签名，非被测链路，无 mock 问题）。cognitive 路由的
+``Depends(get_session)`` 是 import 期绑定对象，模块属性 patch 覆盖不到，
+用 ``dependency_overrides`` 打同一函数对象。
 """
 
 import ast
-from datetime import UTC, datetime, timedelta
+import contextlib
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine
 
-API_DIR = Path(__file__).parent.parent / "lantai" / "api"
+import lantai.storage.db as db_module
+from lantai.core.acl import Principal
+from lantai.core.auth import get_current_user
+from lantai.models.tables import ConflictEvent, MemoryCandidate, MemoryCheckpoint, MemoryItem
+
+
+def _principal(user_id: str, *, role: str = "user"):
+    return Principal(user_id=user_id, tenant_id=None, allowed_lanes=None, role=role)
 
 
 @pytest.fixture()
-def rest_env(monkeypatch):
-    """REST 面内存库(同 test_param_boundary_clamps.rest_env 范式):db.get_session
-    模块属性 patch + Depends(get_session) dependency_overrides 双机制挂同一引擎。
-    本票涉及的全部 service 链都是纯库操作(考功/知命/冲突/底本/钩沉/磨勘),
-    不触 embed/LLM——除内存库外零 mock。"""
-    from fastapi import FastAPI
-
+def api_env():
+    """真内存 SQLite + 真 app（依赖覆写身份），禁 mock 被测链路。"""
     import lantai.models.tables  # noqa: F401
-    import lantai.storage.db as db_module
-    from lantai.api.routes_candidates import router as candidates_router
-    from lantai.api.routes_cehou import router as cehou_router
-    from lantai.api.routes_checkpoint import router as checkpoint_router
-    from lantai.api.routes_conflicts import router as conflicts_router
-    from lantai.api.routes_crystals import router as crystals_router
-    from lantai.api.routes_edges import router as edges_router
-    from lantai.api.routes_evolution import router as evolution_router
-    from lantai.api.routes_gouchen import router as gouchen_router
-    from lantai.api.routes_kaogong import router as kaogong_router
-    from lantai.api.routes_mokan import router as mokan_router
-    from lantai.api.routes_pisha import router as pisha_router
-    from lantai.api.routes_search import router as search_router
-    from lantai.api.routes_sources import router as sources_router
-    from lantai.api.routes_zhiming import router as zhiming_router
-    from lantai.storage.db import get_session
 
     engine = create_engine(
         "sqlite://",
@@ -58,585 +54,395 @@ def rest_env(monkeypatch):
     def session_factory() -> Session:
         return Session(engine)
 
-    def _override_session():
-        with Session(engine) as session:
-            yield session
-
-    monkeypatch.setattr(db_module, "get_session", session_factory)
-
-    app = FastAPI()
-    for router in (
-        kaogong_router,
-        zhiming_router,
-        candidates_router,
-        pisha_router,
-        checkpoint_router,
-        crystals_router,
-        evolution_router,
-        sources_router,
-        gouchen_router,
-        mokan_router,
-        conflicts_router,
-        cehou_router,
-        edges_router,
-        search_router,
+    with (
+        patch.object(db_module, "get_session", session_factory),
+        patch("lantai.storage.vector_store.ChromaVectorStore"),
     ):
-        app.include_router(router)
-    app.dependency_overrides[get_session] = _override_session
-    with TestClient(app) as client:
-        yield client, session_factory
+        yield session_factory
 
 
-def _seed_memory(
-    s,
-    mid,
-    content,
-    *,
-    user_id="default",
-    use_count=0,
-    helpful_count=0,
-    tier="working",
-    importance=0.5,
-):
-    from lantai.models.tables import MemoryItem
+@contextlib.contextmanager
+def _client(principal) -> TestClient:
+    from lantai.api.app import app
 
-    now = datetime.now(UTC)
-    s.add(
-        MemoryItem(
-            id=mid,
-            memory_type="semantic",
-            key=f"k-{mid}",
-            content=content,
-            lane="fact",
-            status="active",
-            user_id=user_id,
-            importance=importance,
-            decay_score=1.0,
-            decay_class="episodic",
-            tier=tier,
-            use_count=use_count,
-            helpful_count=helpful_count,
-            created_at=now - timedelta(days=3),
-            updated_at=now - timedelta(hours=1),
+    app.dependency_overrides[get_current_user] = lambda: principal
+    try:
+        with TestClient(app, raise_server_exceptions=False) as c:
+            yield c
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+def _seed_memory(session_factory, mem_id: str, user_id: str, content: str = "考功种子") -> None:
+    with session_factory() as s:
+        s.add(
+            MemoryItem(
+                id=mem_id,
+                memory_type="semantic",
+                key=f"k-{mem_id}",
+                content=content,
+                lane="work",
+                user_id=user_id,
+                status="active",
+            )
         )
-    )
-
-
-# ── 写副作用类:limit=-1 驱动全库考功写 ──
-
-
-def test_kaogong_eval_limit_out_of_bounds_rejected_without_writes(rest_env):
-    """limit=-1 修复前 200 且全库考功落库(SQLite LIMIT -1 = 无上限);修复后 422 零写。
-
-    写副作用实证:种子记忆 use_count=4/helpful=4(采纳率 100% ≥ 0.8 上考线),
-    修复前负 limit 会把它考功晋升(tier→longterm、importance+0.1)——拒绝墙必须
-    挡住写,且界内合法链路照常晋升(墙没杀掉功能)。
-    """
-    from lantai.models.tables import MemoryItem
-
-    client, session_factory = rest_env
-    with session_factory() as s:
-        _seed_memory(s, "kg1", "考功高采纳记忆", use_count=4, helpful_count=4)
         s.commit()
 
-    resp = client.post("/kaogong/eval", json={"limit": -1})
-    assert resp.status_code == 422
-    # 毒化臂:被拒调用不得落任何考功写
-    with session_factory() as s:
-        row = s.get(MemoryItem, "kg1")
-        assert row.tier == "working"
-        assert row.importance == pytest.approx(0.5)
 
-    # 上界臂:1001 拒,1000(考功/知命族界)过
-    assert client.post("/kaogong/eval", json={"limit": 1001}).status_code == 422
-    ok = client.post("/kaogong/eval", json={"limit": 1000})
-    assert ok.status_code == 200
-    assert ok.json()["evaluated"] == 1
-    # 合法链路真写仍可达:界内全量跑完,上考晋升真实落库
+def _seed_checkpoints(session_factory, mem_id: str, count: int = 3) -> None:
     with session_factory() as s:
-        row = s.get(MemoryItem, "kg1")
-        assert row.tier == "longterm"
-        assert row.importance == pytest.approx(0.6)
-
-
-def test_lifecycle_audit_limit_out_of_bounds_rejected(rest_env):
-    """limit=-1 修复前 200 全库巡检(auto_apply=true 时批量状态机写);修复后 422。"""
-    client, session_factory = rest_env
-    with session_factory() as s:
-        _seed_memory(s, "zm1", "知命巡检记忆")
+        for i in range(count):
+            s.add(
+                MemoryCheckpoint(
+                    id=f"ck-t42-{i}",
+                    memory_id=mem_id,
+                    version=i + 1,
+                    before={"v": i},
+                    after={"v": i + 1},
+                )
+            )
         s.commit()
 
-    resp = client.post("/lifecycle/audit", json={"limit": -1, "auto_apply": True})
-    assert resp.status_code == 422
-    assert client.post("/lifecycle/audit", json={"limit": 1001}).status_code == 422
-    # 边界回归臂:界内极值照常巡检
-    assert client.post("/lifecycle/audit", json={"limit": 1000}).status_code == 200
+
+# ── 病灶 1：写副作用类（limit=-1 驱动全库考功/巡检写）──
 
 
-# ── LLM 成本放大类:候选整批送 LLM / 模糊带浮点无界 ──
+def test_kaogong_eval_negative_limit_writes_whole_db_then_422(api_env):
+    """limit=-1 修复前对全库记忆执行考功并落库（红跑实测 200 + evaluated==3），
+    修复后边界 422。"""
+    for i in range(3):
+        _seed_memory(api_env, f"m-kg-{i}", user_id="alice")
+    with _client(_principal("alice")) as c:
+        r = c.post("/kaogong/eval", json={"limit": -1})
+    assert r.status_code == 422, f"负 limit 必须边界拒绝，实际 {r.status_code} {r.text[:200]}"
 
 
-def test_candidates_pending_limit_bounds(rest_env):
-    """limit=-1 修复前 200 全量(裁决入口正是全表捞重灾区);修复后 422,界 [1,500]。"""
-    from lantai.models.tables import MemoryCandidate
+def test_lifecycle_audit_negative_limit_then_422(api_env):
+    for i in range(3):
+        _seed_memory(api_env, f"m-zm-{i}", user_id="alice")
+    with _client(_principal("alice")) as c:
+        r = c.post("/lifecycle/audit", json={"auto_apply": True, "limit": -1})
+    assert r.status_code == 422, f"负 limit 必须边界拒绝，实际 {r.status_code} {r.text[:200]}"
 
-    client, session_factory = rest_env
-    now = datetime.now(UTC)
-    with session_factory() as s:
+
+# ── 病灶 3：payload 放大类（checkpoint 是完整行快照）──
+
+
+def test_checkpoint_negative_limit_returns_all_rows_then_422(api_env):
+    """红跑实测：3 条快照在库，limit=-1 修复前 200 且三条全回（放大实证）。"""
+    _seed_memory(api_env, "m-ck", user_id="alice")
+    _seed_checkpoints(api_env, "m-ck", count=3)
+    with _client(_principal("alice")) as c:
+        r = c.get("/checkpoint", params={"memory_id": "m-ck", "limit": -1})
+    assert r.status_code == 422, f"负 limit 必须边界拒绝，实际 {r.status_code} {r.text[:200]}"
+
+
+def test_candidates_pending_negative_limit_then_422(api_env):
+    with api_env() as s:
         for i in range(3):
             s.add(
                 MemoryCandidate(
-                    id=f"cand-{i}",
-                    document_id="d1",
-                    summary=f"待审候选{i}",
+                    id=f"cand-t42-{i}",
+                    document_id="doc-t42",
+                    user_id="alice",
                     status="pending_review",
-                    user_id="default",
-                    extractor_confidence=0.4,
-                    review_due_at=now + timedelta(days=i),
+                    summary=f"票42种子候选{i}",
                 )
             )
         s.commit()
-
-    resp = client.get("/candidates/pending", params={"limit": -1})
-    assert resp.status_code == 422
-    two = client.get("/candidates/pending", params={"limit": 2})
-    assert two.status_code == 200
-    assert len(two.json()["candidates"]) == 2
-    assert client.get("/candidates/pending", params={"limit": 501}).status_code == 422
-    assert client.get("/candidates/pending", params={"limit": 500}).status_code == 200
+    with _client(_principal("alice")) as c:
+        r = c.get("/candidates/pending", params={"limit": -1})
+    assert r.status_code == 422, f"负 limit 必须边界拒绝，实际 {r.status_code} {r.text[:200]}"
 
 
-def test_candidates_ai_triage_limit_bounds_empty_library(rest_env):
-    """ai_triage limit 无界修复前 200(空库红臂:候选为空则不触 LLM,锁参数面本身)。
-
-    界 [1,500] 与 MCP 孪生 triage_analyze(mcp.py:478)同源——正文送 LLM 的
-    成本放大面,孪生面早已钳制,REST 面补齐。
-    """
-    client, _ = rest_env
-    assert client.post("/candidates/ai_triage", params={"limit": 0}).status_code == 422
-    assert client.post("/candidates/ai_triage", params={"limit": -1}).status_code == 422
-    assert client.post("/candidates/ai_triage", params={"limit": 501}).status_code == 422
-    ok = client.post("/candidates/ai_triage", params={"limit": 500})
-    assert ok.status_code == 200
-    assert ok.json() == {"total": 0, "recommendations": []}
+# ── 病灶 4：conflicts 全表捞 + Python 切片 ──
 
 
-def test_batch_refine_and_pisha_float_and_limit_bounds(rest_env):
-    """min_conf/max_conf 浮点无界 + limit 负值:修复前 200(空库不触 LLM),修复后 422。
-
-    浮点界 [0,1] 对齐票 42 修复目标 2;limit [1,200] 对齐候选批量族。
-    """
-    client, _ = rest_env
-    assert client.post("/candidates/batch_refine", params={"min_conf": -0.5}).status_code == 422
-    assert client.post("/candidates/batch_refine", params={"max_conf": 1.5}).status_code == 422
-    assert client.post("/candidates/batch_refine", params={"limit": 0}).status_code == 422
-    ok = client.post("/candidates/batch_refine")
-    assert ok.status_code == 200
-
-    assert client.post("/pisha/batch", json={"min_conf": -0.5}).status_code == 422
-    assert client.post("/pisha/batch", json={"max_conf": 2.0}).status_code == 422
-    assert client.post("/pisha/batch", json={"limit": -1}).status_code == 422
-    assert client.post("/pisha/batch", json={}).status_code == 200
+def test_conflicts_negative_limit_becomes_422(api_env):
+    """修复前 ``limit=-5`` 是「去掉末尾 5 条」的切片语义（200），修复后 422。"""
+    with _client(_principal("alice")) as c:
+        r = c.get("/conflicts", params={"limit": -5})
+    assert r.status_code == 422, f"负 limit 必须边界拒绝，实际 {r.status_code} {r.text[:200]}"
 
 
-# ── 只读 payload 放大类:checkpoint 完整行快照无限放大 ──
-
-
-def test_checkpoint_list_limit_bounded(rest_env):
-    """limit=-1 修复前 200 全量(checkpoint 的 before/after 是完整行快照,放大尤甚);
-    修复后 422,界 [1,100];界内语义(version 降序截断)不变。"""
-    from lantai.models.tables import MemoryCheckpoint
-
-    client, session_factory = rest_env
-    with session_factory() as s:
-        _seed_memory(s, "cp1", "底本锚点记忆")
-        for v in (1, 2, 3):
-            s.add(
-                MemoryCheckpoint(
-                    id=f"ckpt-{v}",
-                    memory_id="cp1",
-                    version=v,
-                    before={"content": f"v{v - 1}" if v > 1 else ""},
-                    after={"content": f"v{v}"},
-                )
-            )
-        s.commit()
-
-    resp = client.get("/checkpoint", params={"memory_id": "cp1", "limit": -1})
-    assert resp.status_code == 422
-    two = client.get("/checkpoint", params={"memory_id": "cp1", "limit": 2})
-    assert two.status_code == 200
-    assert [c["version"] for c in two.json()["checkpoints"]] == [3, 2]
-    assert client.get("/checkpoint", params={"memory_id": "cp1", "limit": 101}).status_code == 422
-    assert client.get("/checkpoint", params={"memory_id": "cp1", "limit": 100}).status_code == 200
-
-
-def test_checkpoint_cleanup_max_sessions_bounds(rest_env):
-    """max_sessions=-1 修复前 500(service ValueError 未译,票 41 语义病同族);
-    修复后 422(路由层先拒,service 层 >=1 校验保持为后盾),界 [1,500]。"""
-    client, _ = rest_env
-    assert client.post("/checkpoint/cleanup", params={"max_sessions": -1}).status_code == 422
-    assert client.post("/checkpoint/cleanup", params={"max_sessions": 0}).status_code == 422
-    assert client.post("/checkpoint/cleanup", params={"max_sessions": 501}).status_code == 422
-    # 缺省(走 CHECKPOINT_MAX_SESSIONS 配置)照常
-    assert client.post("/checkpoint/cleanup").status_code == 200
-
-
-# ── conflicts:负值 Python 切片反转 + SQL 下推 ──
-
-
-def test_conflicts_limit_sql_pushdown_and_bounds(rest_env):
-    """limit=-5 修复前 200 且 rows[:-5] 切片反转(「去掉末尾5条」语义);修复后 422。
-
-    下推后语义锁定:DEV viewer(default)只认自己记忆上的冲突;无主记忆上的
-    事件(r4,时间最新)对 viewer 不可见——若下推把 limit 放在可见性过滤之前,
-    r4 会顶替进结果,这条断言就红。limit=2 仍是时间降序取前 2。
-    """
-    from lantai.models.tables import ConflictEvent, MemoryItem
-
-    client, session_factory = rest_env
-    base = datetime.now(UTC)
-    with session_factory() as s:
-        _seed_memory(s, "cm-a", "甲的记忆", user_id="default")
-        _seed_memory(s, "cm-b", "乙的记忆", user_id="default")
-        _seed_memory(s, "cm-n", "无主记忆", user_id=None)
-        for i, (mid, ref) in enumerate(
-            [("cm-a", "r1"), ("cm-b", "r2"), ("cm-b", "r3"), ("cm-n", "r4")]
-        ):
+def test_conflicts_limit_two_returns_two_after_pushdown(api_env):
+    """下推不变量锁：``limit=2`` 在切片与 SQL 下推两种实现下都返回 2 条
+    （现状即绿，如实申报——红测只锁行为不锁实现）。"""
+    _seed_memory(api_env, "m-cf", user_id="alice")
+    with api_env() as s:
+        for i in range(3):
             s.add(
                 ConflictEvent(
-                    id=f"ce-{i}",
-                    memory_id=mid,
-                    incoming_ref=ref,
-                    rule_name="mutex",
-                    status="open",
-                    created_at=base - timedelta(minutes=10 - i),
+                    id=f"cf-t42-{i}",
+                    memory_id="m-cf",
+                    incoming_ref=f"冲突源{i}",
                 )
             )
         s.commit()
-        assert s.get(MemoryItem, "cm-a") is not None
-
-    assert client.get("/conflicts", params={"limit": -5}).status_code == 422
-    two = client.get("/conflicts", params={"limit": 2})
-    assert two.status_code == 200
-    events = two.json()["events"]
-    # r4 挂在无主记忆上、时间最新——可见性过滤必须先于 limit 生效
-    assert [e["incoming_ref"] for e in events] == ["r3", "r2"]
-    full = client.get("/conflicts", params={"limit": 500})
-    assert [e["incoming_ref"] for e in full.json()["events"]] == ["r3", "r2", "r1"]
-    assert client.get("/conflicts", params={"limit": 501}).status_code == 422
+    with _client(_principal("alice")) as c:
+        r = c.get("/conflicts", params={"limit": 2})
+    assert r.status_code == 200
+    assert len(r.json()["events"]) == 2
 
 
-def test_conflicts_pushdown_keeps_owner_scope(rest_env):
-    """对照臂(下推前即绿):SQL 下推不得改可见性语义——非 admin 只见自己记忆上的
-    冲突、NULL 属主不可见(宁 miss 不脏写)、admin 全权、principal=None 收敛 default。"""
-    from lantai.core.auth import Principal
-    from lantai.models.tables import ConflictEvent
-    from lantai.services.conflict_service import list_conflict_events
-
-    _, session_factory = rest_env
-    base = datetime.now(UTC)
-    with session_factory() as s:
-        _seed_memory(s, "sc-a", "甲的记忆", user_id="a")
-        _seed_memory(s, "sc-b", "乙的记忆", user_id="b")
-        _seed_memory(s, "sc-n", "无主记忆", user_id=None)
-        for i, mid in enumerate(["sc-a", "sc-b", "sc-b", "sc-n"]):
-            s.add(
-                ConflictEvent(
-                    id=f"sce-{i}",
-                    memory_id=mid,
-                    incoming_ref=f"ref-{i}",
-                    rule_name="mutex",
-                    status="open",
-                    created_at=base - timedelta(minutes=10 - i),
-                )
-            )
+def test_conflicts_visible_filter_invariant_after_pushdown(api_env):
+    """下推不变量锁：alice 的冲突对 bob 零可见、对 admin 全可见——可见性
+    过滤从内存切片改为 ``in_`` 下推后行为等价（现状即绿）。"""
+    _seed_memory(api_env, "m-cf2", user_id="alice")
+    with api_env() as s:
+        s.add(ConflictEvent(id="cf-t42-a", memory_id="m-cf2", incoming_ref="alice 的冲突"))
         s.commit()
-
-    viewer_b = list_conflict_events(limit=10, principal=Principal(user_id="b"))
-    assert [e["incoming_ref"] for e in viewer_b["events"]] == ["ref-2", "ref-1"]
-
-    admin = list_conflict_events(limit=10, principal=Principal(user_id="x", role="admin"))
-    assert len(admin["events"]) == 4
-
-    # principal=None 收敛 "default":a/b 的行不可见,无主行也不可见
-    internal = list_conflict_events(limit=10, principal=None)
-    assert internal["events"] == []
+    with _client(_principal("bob")) as c:
+        r_bob = c.get("/conflicts", params={"limit": 50})
+    with _client(_principal("root", role="admin")) as c:
+        r_admin = c.get("/conflicts", params={"limit": 50})
+    assert r_bob.status_code == 200
+    assert [e["id"] for e in r_bob.json()["events"] if e["id"] == "cf-t42-a"] == []
+    assert r_admin.status_code == 200
+    assert "cf-t42-a" in [e["id"] for e in r_admin.json()["events"]]
 
 
-# ── 钩沉/磨勘/只读列表 ──
+# ── 病灶 5：/cognitive/context top_k ≤ 0 每切面静默空 ──
 
 
-def test_gouchen_bounds(rest_env):
-    """min_sunken_score 无界修复前 200(阈值 1.5 = 永真沉没、-0.1 = 永不沉没);
-    limit 负值在引擎里是 [:limit] 切片反转。修复后 422。"""
-    client, _ = rest_env
-    assert client.post("/gouchen/dredge", json={"min_sunken_score": 1.5}).status_code == 422
-    assert client.post("/gouchen/dredge", json={"min_sunken_score": -0.1}).status_code == 422
-    assert client.post("/gouchen/dredge", json={"limit": 0}).status_code == 422
-    assert client.post("/gouchen/dredge", json={}).status_code == 200
-    snap = {"anchor_time": "2026-01-01T00:00:00Z"}
-    assert client.get("/gouchen/snapshot", params={**snap, "limit": -1}).status_code == 422
-    assert client.get("/gouchen/snapshot", params={**snap, "limit": 500}).status_code == 200
+def test_cognitive_context_top_k_zero_then_422(api_env):
+    """top_k=0 修复前 200 且每切面静默空（``len(target) >= top_k`` 恒真），
+    修复后 422。"""
+    from lantai.storage.db import get_session
+
+    with _client(_principal("alice")) as c:
+        c.app.dependency_overrides[get_session] = api_env
+        try:
+            r = c.get("/cognitive/context", params={"task": "部署知识", "top_k": 0})
+        finally:
+            c.app.dependency_overrides.pop(get_session, None)
+    assert r.status_code == 422, f"top_k=0 必须边界拒绝，实际 {r.status_code} {r.text[:200]}"
 
 
-def test_readonly_payload_limits(rest_env):
-    """磨勘/提案/结晶/来源候选四只读面:limit=-1 修复前 200 全量,修复后 422(界 [1,500])。"""
-    client, _ = rest_env
-    assert client.get("/mokan/audit", params={"limit": -1}).status_code == 422
-    assert client.get("/proposals", params={"limit": -1}).status_code == 422
-    assert client.get("/crystals", params={"limit": -1}).status_code == 422
-    assert client.get("/candidates", params={"status": "new", "limit": -1}).status_code == 422
-    # 界内回归臂
-    assert client.get("/mokan/audit", params={"limit": 500}).status_code == 200
-    assert client.get("/proposals", params={"limit": 500}).status_code == 200
-    assert client.get("/crystals", params={"limit": 500}).status_code == 200
-    assert client.get("/candidates", params={"status": "new", "limit": 500}).status_code == 200
+# ── 病灶 2：浮点无界（越界置信度带静默空批）──
 
 
-# ── 测候 mock_days:票 66 MCP 孪生臂的 REST 面补齐 ──
+def test_pisha_batch_conf_out_of_range_then_422(api_env):
+    with _client(_principal("alice")) as c:
+        r = c.post("/pisha/batch", json={"min_conf": 1.5, "max_conf": 2.0})
+    assert r.status_code == 422, f"越界置信度必须边界拒绝，实际 {r.status_code} {r.text[:200]}"
 
 
-def test_cehou_mock_days_rest_twin_bounds(rest_env):
-    """mock_days_observed=-1 修复前 200 且 row.days_observed 直接被写负值(cehou.py:348
-    整列赋值);修复后 422 零染。上界 365 对齐票 66 MCP 臂(REST required_days 界 90
-    的 4 倍余量,同一孪生契约)。"""
-    from lantai.models.tables import CehouWindow
-
-    client, session_factory = rest_env
-    created = client.post(
-        "/cehou/windows",
-        json={"window_id": "w-t42", "target_type": "param", "target_id": "t1"},
-    )
-    assert created.status_code == 200
-
-    assert (
-        client.post(
-            "/cehou/inspect", json={"window_id": "w-t42", "mock_days_observed": -1}
-        ).status_code
-        == 422
-    )
-    assert (
-        client.post(
-            "/cehou/inspect", json={"window_id": "w-t42", "mock_days_observed": 366}
-        ).status_code
-        == 422
-    )
-    # 毒化臂:被拒调用不得写视窗状态
-    with session_factory() as s:
-        row = s.exec(select(CehouWindow).where(CehouWindow.window_id == "w-t42")).one()
-        assert row.days_observed == 0
-        assert row.state == "observing"
-
-    ok = client.post("/cehou/inspect", json={"window_id": "w-t42", "mock_days_observed": 365})
-    assert ok.status_code == 200
-    with session_factory() as s:
-        row = s.exec(select(CehouWindow).where(CehouWindow.window_id == "w-t42")).one()
-        assert row.days_observed == 365
-        assert row.state == "observing"
+def test_gouchen_dredge_out_of_range_then_422(api_env):
+    with _client(_principal("alice")) as c:
+        r_limit = c.post("/gouchen/dredge", json={"limit": -1})
+        r_conf = c.post("/gouchen/dredge", json={"min_sunken_score": 5.0})
+    assert r_limit.status_code == 422, f"实际 {r_limit.status_code} {r_limit.text[:200]}"
+    assert r_conf.status_code == 422, f"实际 {r_conf.status_code} {r_conf.text[:200]}"
 
 
-# ── 边写面 confidence + 格物投影孪生 ──
+def test_mokan_audit_negative_limit_then_422(api_env):
+    with _client(_principal("alice")) as c:
+        r = c.get("/mokan/audit", params={"limit": -1})
+    assert r.status_code == 422, f"实际 {r.status_code} {r.text[:200]}"
 
 
-def test_edges_confidence_and_project_impact_bounds(rest_env):
-    """confidence 越界修复前 200 且落库(写面毒值);修复后 422。
-    project-impact max_depth 对齐票 39 反事实面单一真源 [1,COUNTERFACTUAL_MAX_DEPTH_LIMIT]。"""
-    from lantai.models.tables import MemoryEdge
+# ── 修复目标 5：一致性哨兵（AST 扫描签名，白名单 fail-closed）──
 
-    client, session_factory = rest_env
-    with session_factory() as s:
-        _seed_memory(s, "e1", "边起点记忆")
-        _seed_memory(s, "e2", "边终点记忆")
-        s.commit()
+ROUTES_DIR = Path("lantai/api")
+_BOUND_KWARGS = {"ge", "gt", "le", "lt"}
+_BUILDER_NAMES = {"Field", "Query", "Path", "Body"}
 
-    base_edge = {"source_memory_id": "e1", "target_memory_id": "e2", "relation": "supports"}
-    assert client.post("/edges", json={**base_edge, "confidence": 1.5}).status_code == 422
-    assert client.post("/edges", json={**base_edge, "confidence": -0.2}).status_code == 422
-    ok = client.post("/edges", json={**base_edge, "confidence": 0.9})
-    assert ok.status_code == 200
-    with session_factory() as s:
-        edges = s.exec(select(MemoryEdge)).all()
-        assert len(edges) == 1
-        assert edges[0].confidence == pytest.approx(0.9)
-
-    assert (
-        client.post("/edges/project-impact", json={"memory_id": "e1", "max_depth": 0}).status_code
-        == 422
-    )
-    assert (
-        client.post("/edges/project-impact", json={"memory_id": "e1", "max_depth": 11}).status_code
-        == 422
-    )
-    assert (
-        client.post(
-            "/edges/project-impact", json={"memory_id": "e1", "min_confidence": 1.5}
-        ).status_code
-        == 422
-    )
-    assert client.post("/edges/project-impact", json={"memory_id": "e1"}).status_code == 200
-
-
-def test_graph_expand_min_edge_conf_bounds(rest_env):
-    """票 42 修复目标 2 点名浮点:min_edge_conf 越界修复前 200 直传检索层
-    (负阈值把全部边捞进联想面),修复后 422。
-
-    界内接受臂走真 pydantic 模型构造——HTTP 界内臂会真跑 graph_augmented_search
-    → embed 外部边界,不在本票面内(双轴自审采纳项:点名项只登记不修即 spec 缺口)。
-    """
-    from lantai.api.routes_search import GraphExpandReq
-
-    client, _ = rest_env
-    assert (
-        client.post("/search/graph_expand", json={"query": "q", "min_edge_conf": 1.5}).status_code
-        == 422
-    )
-    assert (
-        client.post("/search/graph_expand", json={"query": "q", "min_edge_conf": -0.1}).status_code
-        == 422
-    )
-    GraphExpandReq(query="q", min_edge_conf=0.5)
-    GraphExpandReq(query="q")
-
-
-# ── 一致性哨兵:routes_*.py 数值参数签名全量扫描 ──
-
-
-def _numeric_annotation(ann: ast.expr) -> bool:
-    """注解是否含 int/float(含 `int | None` 形态)。"""
-    return any(isinstance(node, ast.Name) and node.id in ("int", "float") for node in ast.walk(ann))
-
-
-def _has_ge_and_le(call: ast.expr | None) -> bool:
-    """默认值是否为带 ge+le 双界的 Query(...)/Field(...) 调用。"""
-    if not isinstance(call, ast.Call):
-        return False
-    if not (isinstance(call.func, ast.Name) and call.func.id in ("Query", "Field")):
-        return False
-    kws = {k.arg for k in call.keywords if k.arg}
-    return "ge" in kws and "le" in kws
-
-
-def _collect_bare_numeric_params() -> set[tuple[str, str, str]]:
-    """扫描 routes_*.py:返回无 ge+le 双界的数值参数 (文件名, 属主, 参数名) 集合。
-
-    覆盖两类签名:路由 handler 的参数(默认值须 Query 双界)与 pydantic 模型
-    字段(默认值须 Field 双界)。下划线开头的函数是模块内部 helper,非路由面,跳过。
-    """
-    bare: set[tuple[str, str, str]] = set()
-    for path in sorted(API_DIR.glob("routes_*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in tree.body:
-            if isinstance(node, ast.ClassDef):
-                for stmt in node.body:
-                    if (
-                        isinstance(stmt, ast.AnnAssign)
-                        and isinstance(stmt.annotation, (ast.Name, ast.BinOp, ast.Subscript))
-                        and _numeric_annotation(stmt.annotation)
-                    ):
-                        call = stmt.value if isinstance(stmt.value, ast.Call) else None
-                        if not _has_ge_and_le(call):
-                            bare.add((path.name, node.name, stmt.target.id))
-            elif isinstance(node, ast.FunctionDef):
-                if node.name.startswith("_"):
-                    continue
-                for arg in node.args.args:
-                    if arg.annotation is None or not _numeric_annotation(arg.annotation):
-                        continue
-                    idx = node.args.args.index(arg)
-                    defaults = node.args.defaults
-                    off = len(node.args.args) - len(defaults)
-                    default = defaults[idx - off] if idx >= off else None
-                    if not _has_ge_and_le(default if isinstance(default, ast.Call) else None):
-                        bare.add((path.name, node.name, arg.arg))
-    return bare
-
-
-# 白名单分三类,逐条人工核证(2026-11-09,票 42 实现轮):
-# ① 他层已校验——service/ops 层有同语义界,签名裸但有真源(注明 file:line);
-# ② 同层部分约束——签名已有 ge 单界,语义上无上界(序号/分页偏移),非残余;
-# ③ 残余待立案——真实裸奔但非本票病族/需另行立案,如实登记不粉饰。
-WHITELIST: dict[tuple[str, str, str], str] = {
-    # ── ① 他层已校验(逐一实证)──
-    ("routes_graph.py", "graph_route", "limit"): "ops/graph.py:26 validate_graph_limit [1,500]",
-    ("routes_memory.py", "list_memories_route", "limit"): (
-        "memory_service.py:790 build_memories_page [1,100],ValueError→422"
-    ),
-    ("routes_memory.py", "list_memories_route", "offset"): "memory_service.py:792 >=0",
-    ("routes_recall_chain.py", "recall_chain_route", "max_depth"): (
-        "ops/recall_chain.py:28 validate_chain_params [1,5]"
-    ),
-    ("routes_recall_chain.py", "recall_chain_route", "branch"): ("ops/recall_chain.py:30 [1,10]"),
-    ("routes_recall_chain.py", "recall_chain_route", "min_score"): ("ops/recall_chain.py:32 [0,1]"),
-    ("routes_recall_chain.py", "recall_chain_route", "total_max"): (
-        "ops/recall_chain.py:38 [1,50]"
-    ),
-    ("routes_retrieval.py", "get_recall_report", "days"): (
-        "observability/recall_report.py:77 [1,365],ValueError→400"
-    ),
-    ("routes_retrieval.py", "get_recent_events", "limit"): (
-        "observability/recall_report.py:161 [1,100]"
-    ),
-    ("routes_scenes.py", "list_scenes", "limit"): "scene_service.py:375 [1,500]",
-    # ── ② 同层已有部分约束(ge 单界,语义无上界;非残余)──
-    ("routes_dialogue.py", "DialogueIngestReq", "turn"): "序号参数已有 ge=0 下界,无上界语义",
-    ("routes_param_advice.py", "list_suggestions", "offset"): "分页偏移已有 ge=0 下界",
-    ("routes_param_advice.py", "list_overrides", "offset"): "分页偏移已有 ge=0 下界",
-    ("routes_work_items.py", "list_work_items_route", "offset"): "分页偏移已有 ge=0 下界",
-    # ── ③ 残余待立案(真实裸奔,非本票病族或需专项)──
-    ("routes_cehou.py", "SampleRequest", "latency_ms"): (
-        "残余:票 66 MCP 臂拒非有限值,REST 孪生待收口(负有限值合法,ge/le 表达不了,"
-        "需 allow_inf_nan 语义)"
-    ),
-    ("routes_cehou.py", "SampleRequest", "score_delta"): (
-        "残余:同 latency_ms——负有限值合法(退步观测),非有限值拒绝待 REST 收口"
-    ),
-    ("routes_cognitive.py", "cognitive_summary", "max_rules"): "残余:渲染帽非 SQL/LLM 直传",
-    ("routes_cognitive.py", "cognitive_summary", "max_failures"): "残余:渲染帽",
-    ("routes_cognitive.py", "cognitive_summary", "max_probes"): "残余:渲染帽",
-    ("routes_cognitive.py", "cognitive_summary", "char_budget"): "残余:渲染帽(提示预算)",
-    ("routes_edges.py", "decision_provenance_route", "max_depth"): (
-        "残余:格物读路径遍历深度,票 39 家族孪生待收口"
-    ),
-    ("routes_edges.py", "event_timeline_route", "max_depth"): "残余:同上",
-    ("routes_edges.py", "causal_chain_route", "max_depth"): "残余:同上",
-    ("routes_evolution.py", "EpisodeFeedbackReq", "lam"): "残余:RL 超参写面,语义待查",
-    ("routes_evolution.py", "EpisodeFeedbackReq", "gamma"): "残余:RL 超参写面",
-    ("routes_memory.py", "search_archived_memories_route", "limit"): (
-        "残余:chenfeng.search_archived 无校验实证(stmt.limit 直传),负值=SQLite 无上限"
-    ),
-    ("routes_memory.py", "search_archived_memories_route", "offset"): (
-        "残余:同上(offset 负值 SQLite 语义未查)"
-    ),
-    ("routes_obsidian.py", "verbatim_search_route", "top_k"): (
-        "残余:MCP 孪生已钳 [1,100](mcp.py:1369),REST 待收口"
-    ),
-    ("routes_scenes.py", "rebuild_scenes", "threshold"): "残余:聚类阈值(None=配置默认),批处理面",
-    ("routes_scenes.py", "assign_unassigned", "limit"): (
-        "残余:消化期批处理面,MCP scenes_list 已钳 [1,500] 而此面未钳"
-    ),
-    ("routes_scenes.py", "assign_unassigned", "threshold"): "残余:聚类阈值",
-    ("routes_scratchpad.py", "DistillScratchpadReq", "max_chars"): (
-        "残余:票 68 位点 9 已登记——引擎硬编码 1000 忽略该参(死参)"
-    ),
-    ("routes_search.py", "GraphExpandReq", "top_k"): (
-        "残余:双面皆裸,结构性帽 max_expanded=10(graph_retriever.py:49)兜底"
-    ),
-    ("routes_search.py", "GraphExpandReq", "max_hops"): "残余:同上(结构性帽兜底)",
-    ("routes_terminal.py", "ChatReq", "top_k"): "残余:终局面 top_k",
-    ("routes_terminal.py", "terminal_graph", "limit"): "残余:终局面 limit",
+# 修复后仍裸的位点——每条必须带理由；键失效（位点消失/改名）即红（fail-closed，
+# 同票 09 文档哨兵惯例）。两类：service/ops 层已有数值真源（双层校验），与
+# 跨票归属（别票在案，此处只登记不修）。
+_WHITELIST: dict[tuple[str, str, str], str] = {
+    # service 层双层校验（票面对照组：模范真源）
+    (
+        "routes_memory.py",
+        "list_memories_route",
+        "limit",
+    ): "memory_service.build_memories_page 1<=limit<=100 双层校验",
+    (
+        "routes_memory.py",
+        "list_memories_route",
+        "offset",
+    ): "SQLite 负 OFFSET 语义=0，分页偏移非放大面",
+    (
+        "routes_memory.py",
+        "search_archived_memories_route",
+        "limit",
+    ): "同 list_memories_route（build_memories_page）",
+    ("routes_memory.py", "search_archived_memories_route", "offset"): "同 offset（SQLite 负值=0）",
+    (
+        "routes_graph.py",
+        "graph_route",
+        "limit",
+    ): "路由体 validate_graph_limit [1,500]（ops/graph.py 单一真源）",
+    (
+        "routes_retrieval.py",
+        "get_recent_events",
+        "limit",
+    ): "service recent_retrieval_events [1,100] 校验 + ValueError→400",
+    (
+        "routes_recall_chain.py",
+        "recall_chain_route",
+        "max_depth",
+    ): "ops.validate_chain_params [1,5]",
+    ("routes_recall_chain.py", "recall_chain_route", "branch"): "ops.validate_chain_params [1,10]",
+    (
+        "routes_recall_chain.py",
+        "recall_chain_route",
+        "min_score",
+    ): "ops.validate_chain_params [0.0,1.0]",
+    (
+        "routes_recall_chain.py",
+        "recall_chain_route",
+        "total_max",
+    ): "ops.validate_chain_params [1,50]",
+    (
+        "routes_scenes.py",
+        "list_scenes",
+        "limit",
+    ): "scene_service.list_scenes [1,500] 校验（service 层单一真源）",
+    # 图遍历有 visited 判活兜底（立案轮 6 判净），max_depth 无 payload 放大；
+    # 链读面同源钳制归票 39 族跟进
+    (
+        "routes_edges.py",
+        "decision_provenance_route",
+        "max_depth",
+    ): "图遍历 visited 兜底；链读面同源钳归票 39 族跟进",
+    ("routes_edges.py", "event_timeline_route", "max_depth"): "同上",
+    ("routes_edges.py", "causal_chain_route", "max_depth"): "同上",
+    ("routes_edges.py", "EdgeReq", "confidence"): "边置信度语义参数 [0,1]；数值边界家族归票 68",
+    # 跨票归属登记（已知裸，别票在案）
+    (
+        "routes_cehou.py",
+        "SampleRequest",
+        "latency_ms",
+    ): "测候样本数值语义参数（非分页/预算面）；数值钳制族归票 66/68",
+    ("routes_cehou.py", "SampleRequest", "score_delta"): "同上（score_delta 语义可负）",
+    (
+        "routes_search.py",
+        "GraphExpandReq",
+        "top_k",
+    ): "票 40 子项 6 已实锤登记（GraphExpandReq 无界）",
+    ("routes_search.py", "GraphExpandReq", "max_hops"): "同上",
+    ("routes_search.py", "GraphExpandReq", "min_edge_conf"): "同上（概率浮点）",
+    (
+        "routes_evolution.py",
+        "EpisodeFeedbackReq",
+        "lam",
+    ): "episode 只登记不接权重（察窗纪律）；数值钳制归票 68",
+    ("routes_evolution.py", "EpisodeFeedbackReq", "gamma"): "同上",
 }
 
 
-def test_rest_numeric_param_signature_sentinel():
-    """哨兵:routes_*.py 全部数值参数必须 Query/Field ge+le 双界,或登记白名单。
+def _has_bound(call: ast.Call) -> bool:
+    return any(kw.arg in _BOUND_KWARGS for kw in call.keywords)
 
-    新增路由带裸数值参数 → 本测试红(白名单外逐个点名)。白名单是经核证的
-    登记簿,不是豁免口:①类注明他层校验真源,②类如实标注「残余待立案」。
-    """
-    bare = _collect_bare_numeric_params()
-    offenders = bare - set(WHITELIST)
-    assert not offenders, (
-        "裸数值参数(无 ge+le 双界且未登记白名单)——新路由带病上线或既有面被改坏:\n"
-        + "\n".join(f"  {f} :: {owner} :: {param}" for f, owner, param in sorted(offenders))
+
+def _builder_with_bound(node: ast.expr) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in _BUILDER_NAMES
+        and _has_bound(node)
     )
+
+
+def _annot_is_plain_num(ann: ast.expr | None) -> bool:
+    return isinstance(ann, ast.Name) and ann.id in ("int", "float")
+
+
+def _annotated_bound(ann: ast.expr) -> bool:
+    """Annotated[int, Field(ge=...)] 形态即有约束。"""
+    if (
+        isinstance(ann, ast.Subscript)
+        and isinstance(ann.value, ast.Name)
+        and ann.value.id == "Annotated"
+    ):
+        sl = ann.slice
+        elts = sl.elts if isinstance(sl, ast.Tuple) else [sl]
+        return any(isinstance(el, ast.Call) and _has_bound(el) for el in elts)
+    return False
+
+
+def _router_decorated(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    for d in node.decorator_list:
+        if (
+            isinstance(d, ast.Call)
+            and isinstance(d.func, ast.Attribute)
+            and isinstance(d.func.value, ast.Name)
+            and d.func.value.id == "router"
+        ):
+            return True
+        if (
+            isinstance(d, ast.Attribute)
+            and isinstance(d.value, ast.Name)
+            and d.value.id == "router"
+        ):
+            return True
+    return False
+
+
+def _scan_param_bound_violations() -> list[str]:
+    violations: list[str] = []
+    for path in sorted(ROUTES_DIR.glob("routes_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                for stmt in node.body:
+                    if not isinstance(stmt, ast.AnnAssign):
+                        continue
+                    if not _annot_is_plain_num(stmt.annotation) or _annotated_bound(
+                        stmt.annotation
+                    ):
+                        continue
+                    key = (path.name, node.name, stmt.target.id)
+                    if key in _WHITELIST:
+                        continue
+                    if stmt.value is None:
+                        violations.append(f"{key[0]}::{key[1]}::{key[2]} (required)")
+                        continue
+                    if _builder_with_bound(stmt.value):
+                        continue
+                    violations.append(f"{key[0]}::{key[1]}::{key[2]} (pydantic field)")
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if not _router_decorated(node):
+                    continue
+                args = node.args.args
+                defaults = node.args.defaults
+                for arg in args:
+                    if not _annot_is_plain_num(arg.annotation):
+                        continue
+                    if (path.name, node.name, arg.arg) in _WHITELIST:
+                        continue
+                    idx_from_end = args[::-1].index(arg)
+                    if idx_from_end >= len(defaults):
+                        violations.append(f"{path.name}::{node.name}::{arg.arg} (required)")
+                        continue
+                    default = defaults[::-1][idx_from_end]
+                    if isinstance(default, ast.Constant):
+                        violations.append(f"{path.name}::{node.name}::{arg.arg} (bare-default)")
+                        continue
+                    if _builder_with_bound(default):
+                        continue
+                    violations.append(f"{path.name}::{node.name}::{arg.arg} (builder-no-bound)")
+    return violations
+
+
+def test_param_bound_sentinel_zero_violations_and_whitelist_valid():
+    """裸数值参数即红；白名单键必须被扫描面上的实体消费（fail-closed 防漂移）。"""
+    violations = _scan_param_bound_violations()
+    assert violations == [], "裸 int/float 参数必须带数值约束或登记白名单:\n" + "\n".join(
+        violations
+    )
+    consumed: set[tuple[str, str, str]] = set()
+    for path in sorted(ROUTES_DIR.glob("routes_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                for stmt in node.body:
+                    if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                        consumed.add((path.name, node.name, stmt.target.id))
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for arg in node.args.args:
+                    consumed.add((path.name, node.name, arg.arg))
+    stale = [k for k in _WHITELIST if k not in consumed]
+    assert stale == [], f"白名单键失效（位点已消失/改名），请清理: {stale}"

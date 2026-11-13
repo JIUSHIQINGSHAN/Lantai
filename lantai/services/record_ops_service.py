@@ -17,10 +17,11 @@ from datetime import datetime
 from sqlmodel import Session, select
 
 from lantai.core.ids import new_id
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.client import embed
 from lantai.models.tables import MemoryAuditEvent, MemoryItem
 from lantai.storage import db
+from lantai.storage.cas import atomic_update
 from lantai.storage.fts import sync_fts
 
 logger = logging.getLogger(__name__)
@@ -190,7 +191,7 @@ def retract_memory(
                     for e in ents:
                         s.delete(e)
                     lf.confidence = 0.0
-                    lf.valid_to = utcnow().isoformat()
+                    lf.valid_to = iso_utc(utcnow())
                     s.add(lf)
                     audit_event(
                         s,
@@ -384,90 +385,106 @@ def correct_memory(
     """纠错（笔）：就地改文并保留版本历史（旧文进 provenance.corrections）。"""
 
     def _run(s: Session) -> dict:
-        item = s.get(MemoryItem, memory_id)
-        if item is None:
-            return dict(_NOT_FOUND)
         text = (new_content or "").strip()
         if not text:
             return {"ok": False, "error": "content is required"}
         # 獬豸（票据 .scratch/xiezhi-injection-guard/01）：纠错是内容改写面，
-        # 新文会覆盖原正文进 FTS+向量——同族同闸
+        # 新文会覆盖原正文进 FTS+向量——同族同闸（text 恒定，闸外置循环）
         from lantai.security.injection_guard import assert_no_prompt_injection
 
         try:
             assert_no_prompt_injection(text)
         except ValueError as e:
             return {"ok": False, "error": str(e)}
-        if text == item.content:
-            return {"ok": False, "error": "content unchanged"}
-        if item.status == STATUS_RETRACTED:
-            return {"ok": False, "error": "retracted memory cannot be corrected"}
-        warnings: list[str] = []
-        prov = dict(item.provenance or {})
-        corrections = list(prov.get("corrections") or [])
-        corrections.append(
-            {
-                "old_content": item.content,
-                "reason": reason,
-                "actor": actor,
-                "at": utcnow().isoformat(),
-                "from_version": item.version,
+
+        # 票 23：版本前置 CAS——「读快照 → 拼 corrections → 整列写回」在并发
+        # 纠错下会吃掉对方的 correction 历史、version 双双写同一号（红测 S8）。
+        # 改为认领该行的下一版本号（`WHERE version=扫描值`，写阶段第一条 DML
+        # 对最新已提交状态求值），败方回滚后重读重拼（有界重试、无 jitter：
+        # SQLite 单写者，重读即见对方提交）；逐尝试重验 unchanged/retracted。
+        for _attempt in range(3):
+            item = s.get(MemoryItem, memory_id)
+            if item is None:
+                return dict(_NOT_FOUND)
+            if text == item.content:
+                return {"ok": False, "error": "content unchanged"}
+            if item.status == STATUS_RETRACTED:
+                return {"ok": False, "error": "retracted memory cannot be corrected"}
+            warnings: list[str] = []
+            prov = dict(item.provenance or {})
+            corrections = list(prov.get("corrections") or [])
+            corrections.append(
+                {
+                    "old_content": item.content,
+                    "reason": reason,
+                    "actor": actor,
+                    "at": iso_utc(utcnow()),
+                    "from_version": item.version,
+                }
+            )
+            # 更漏（票 08）：纠错可更正事件时间——I1 校验，旧值随 corrections 留痕
+            if event_time is not None or event_time_precision is not None:
+                from lantai.core.time_precision import validate_event_time_pair
+
+                new_etp = (
+                    event_time_precision
+                    if event_time_precision is not None
+                    else item.event_time_precision
+                )
+                parsed_et = event_time
+                if isinstance(parsed_et, str):
+                    from lantai.core.time import parse_iso_utc
+
+                    try:
+                        parsed_et = parse_iso_utc(parsed_et)
+                    except ValueError:
+                        return {"ok": False, "error": "invalid event_time format"}
+                if not validate_event_time_pair(parsed_et, new_etp):
+                    return {"ok": False, "error": "invalid event_time pair (I1)"}
+                corrections[-1]["old_event_time"] = iso_utc(item.event_time) or None
+                corrections[-1]["old_event_time_precision"] = item.event_time_precision
+                item.event_time = parsed_et
+                item.event_time_precision = new_etp
+            prov["corrections"] = corrections
+            old_content = item.content
+            old_version = item.version or 1
+            claimed = atomic_update(
+                s,
+                MemoryItem,
+                memory_id,
+                {"version": old_version + 1},
+                MemoryItem.version == old_version,
+            )
+            if not claimed:
+                s.rollback()
+                continue
+            item.provenance = prov
+            item.version = old_version + 1
+            item.content = text
+            item.updated_at = utcnow()
+            # FTS 同事务强一致（ADR-0008）：改文若索引失同步会留下可命中旧文的脏索引，
+            # 属「脏写」——直接抛出随事务回滚，不静默降级（与 PATCH 更新路由同策略）
+            sync_fts(s, memory_id, text)
+            vector_synced = sync_vector_upsert(memory_id, item)
+            if not vector_synced:
+                warnings.append("vector resync failed; content updated in SQL/FTS only")
+            audit_event(
+                s,
+                memory_id=memory_id,
+                action="correct",
+                actor=actor,
+                reason=reason,
+                content=old_content,
+                version_at=old_version,
+            )
+            s.commit()
+            return {
+                "ok": True,
+                "version": item.version,
+                "vector_synced": vector_synced,
+                "warnings": warnings,
             }
-        )
-        # 更漏（票 08）：纠错可更正事件时间——I1 校验，旧值随 corrections 留痕
-        if event_time is not None or event_time_precision is not None:
-            from lantai.core.time_precision import validate_event_time_pair
-
-            new_etp = (
-                event_time_precision
-                if event_time_precision is not None
-                else item.event_time_precision
-            )
-            parsed_et = event_time
-            if isinstance(parsed_et, str):
-                from lantai.core.time import parse_iso_utc
-
-                try:
-                    parsed_et = parse_iso_utc(parsed_et)
-                except ValueError:
-                    return {"ok": False, "error": "invalid event_time format"}
-            if not validate_event_time_pair(parsed_et, new_etp):
-                return {"ok": False, "error": "invalid event_time pair (I1)"}
-            corrections[-1]["old_event_time"] = (
-                item.event_time.isoformat() if item.event_time else None
-            )
-            corrections[-1]["old_event_time_precision"] = item.event_time_precision
-            item.event_time = parsed_et
-            item.event_time_precision = new_etp
-        prov["corrections"] = corrections
-        old_content = item.content
-        old_version = item.version or 1
-        item.provenance = prov
-        item.version = old_version + 1
-        item.content = text
-        item.updated_at = utcnow()
-        # FTS 同事务强一致（ADR-0008）：改文若索引失同步会留下可命中旧文的脏索引，
-        # 属「脏写」——直接抛出随事务回滚，不静默降级（与 PATCH 更新路由同策略）
-        sync_fts(s, memory_id, text)
-        vector_synced = sync_vector_upsert(memory_id, item)
-        if not vector_synced:
-            warnings.append("vector resync failed; content updated in SQL/FTS only")
-        audit_event(
-            s,
-            memory_id=memory_id,
-            action="correct",
-            actor=actor,
-            reason=reason,
-            content=old_content,
-            version_at=old_version,
-        )
-        s.commit()
-        return {
-            "ok": True,
-            "version": item.version,
-            "vector_synced": vector_synced,
-            "warnings": warnings,
-        }
+        return {"ok": False, "error": "concurrent modification; retry"}
 
     if session is not None:
         return _run(session)
@@ -516,14 +533,41 @@ def revive_consolidated(
         区别于普通 active 记忆与晚更正 supersedes 旧值）→ `already_active`。
     """
 
-    def _revive_one(s: Session, item: MemoryItem, warnings: list[str]) -> tuple[bool, bool]:
+    def _revive_one(s: Session, item: MemoryItem, warnings: list[str]) -> tuple[bool, bool] | None:
         """单条 consolidated → active：重同步索引 + checkpoint + 审计。
 
         返回 (fts_synced, vector_synced) 供碎片形态回执（与 unretract 同族）；
-        簇形态多碎片失败明细已在 warnings，聚合布尔说不清谁败（宁缺不糊），不取。
+        **None = 并发败方跳过**（票 78 自审补笔：调用方消费返回值区分三态——
+        胜方但索引双败也是 (False, False)，与败方不可混淆）。簇形态多碎片失败
+        明细已在 warnings，聚合布尔说不清谁败（宁缺不糊），不取。
+
+        票 78：认领式条件 UPDATE（`WHERE version=扫描值 AND status='consolidated'`）
+        ——裸 ORM 写在并发 correct_memory 交错下两迁移重号、checkpoint 链断。
+        rowcount=0 即并发败方：跳过该碎片（revive 幂等语义天然兼容），warnings
+        如实记。胜方 refresh 对齐 ORM 后再落 checkpoint/审计。
         """
         from lantai.evolution.promoter import _make_checkpoint
 
+        # before 快照在 CAS 之前采集（认领前状态语义：before=consolidated 现状，
+        # after=refresh 后的 active——票 78 测试实锚的契约顺序）
+        before = item.model_dump(mode="json")
+        scan_status = item.status
+        scan_version = item.version or 1
+        claimed = atomic_update(
+            s,
+            MemoryItem,
+            item.id,
+            {"status": STATUS_ACTIVE, "version": scan_version + 1, "updated_at": utcnow()},
+            MemoryItem.version == scan_version,
+            MemoryItem.status == scan_status,
+        )
+        if not claimed:
+            warnings.append(
+                f"fragment {item.id} changed concurrently (version={scan_version}); revive skipped"
+            )
+            return None
+
+        s.refresh(item)
         fts_synced, fts_warn = _sync_fts(s, item.id, item.content)
         if not fts_synced:
             warnings.extend(fts_warn)
@@ -534,11 +578,6 @@ def revive_consolidated(
                 if fts_synced
                 else "vector resync failed; memory active but not searchable until resync"
             )
-        before = item.model_dump(mode="json")
-        item.status = STATUS_ACTIVE
-        item.version = (item.version or 1) + 1
-        item.updated_at = utcnow()
-        s.add(item)
         _make_checkpoint(s, item, before, proposal_id="", trigger="revive")
         audit_event(
             s,
@@ -608,17 +647,50 @@ def revive_consolidated(
                     warnings.append("vector delete failed; SQL status filter remains authoritative")
                 warnings.append("master was already retracted; cluster cleanup completed")
             else:
+                # 票 78 自审补笔：认领先行（cas.py 方案 A——sync_vector_delete
+                # 是外部非事务副作用，rollback 撤不回；必须 CAS 胜方后才动
+                # FTS/向量，败方零副作用）。此前向量删除在 CAS 之前执行，败方
+                # rollback 后 active 主记忆静默丢向量索引、回执 vector_removed
+                # 硬编码 False 失实（红测 BUG-B 实锚）。
+                master_before = item.model_dump(mode="json")
+                scan_status = item.status
+                scan_version = item.version or 1
+                claimed = atomic_update(
+                    s,
+                    MemoryItem,
+                    memory_id,
+                    {
+                        "status": STATUS_RETRACTED,
+                        "version": scan_version + 1,
+                        "updated_at": utcnow(),
+                    },
+                    MemoryItem.version == scan_version,
+                    MemoryItem.status == scan_status,
+                )
+                if not claimed:
+                    s.rollback()
+                    warnings.append(
+                        f"master {memory_id} changed concurrently; retrans not reapplied"
+                    )
+                    return {
+                        "ok": True,
+                        "scope": "cluster",
+                        "master_id": memory_id,
+                        "fragments_revived": 0,
+                        "edges_removed": 0,
+                        "fts_removed": False,
+                        "vector_removed": None,
+                        "warnings": warnings,
+                    }
+                s.refresh(item)
+                # 胜方才动副作用（与 retract_memory 既有顺序同构：先清索引再落状态，
+                # 此处状态已认领，顺序反转无害且语义等价）
                 fts_removed, fts_warn = _sync_fts(s, memory_id, None)
                 if not fts_removed:
                     warnings.extend(fts_warn)
                 vector_removed = sync_vector_delete(memory_id)
                 if not vector_removed:
                     warnings.append("vector delete failed; SQL status filter remains authoritative")
-                master_before = item.model_dump(mode="json")
-                item.status = STATUS_RETRACTED
-                item.version = (item.version or 1) + 1
-                item.updated_at = utcnow()
-                s.add(item)
                 _make_checkpoint(s, item, master_before, proposal_id="", trigger="unconsolidate")
             audit_event(
                 s,
@@ -636,8 +708,10 @@ def revive_consolidated(
                     continue
                 s.delete(edge)
                 if frag.status == STATUS_CONSOLIDATED:
-                    _revive_one(s, frag, warnings)
-                    revived += 1
+                    # 票 78 自审补笔：None=败方跳过，不进 fragments_revived
+                    # （回执如实性——虚报的起复数会让调用方误判簇已完整恢复）
+                    if _revive_one(s, frag, warnings) is not None:
+                        revived += 1
             s.commit()
             return {
                 "ok": True,
@@ -653,7 +727,18 @@ def revive_consolidated(
         # ② 碎片形态：consolidated → active
         if item.status == STATUS_CONSOLIDATED:
             warnings = []
-            fts_synced, vector_synced = _revive_one(s, item, warnings)
+            revived_pair = _revive_one(s, item, warnings)
+            if revived_pair is None:
+                # 票 78 自审补笔：败方（并发修改认领落空）——不动库、如实失败
+                # （不冒充 already_active：那要求 trigger="revive" checkpoint 在场，
+                # 并发修改过行的起复历史不可假设）
+                s.rollback()
+                return {
+                    "ok": False,
+                    "error": "memory changed concurrently; revive skipped",
+                    "warnings": warnings,
+                }
+            fts_synced, vector_synced = revived_pair
             s.commit()
             return {
                 "ok": True,
@@ -754,7 +839,7 @@ def retract_fact_atomic(
 
         # 2. 事实主表置失效
         fact.confidence = 0.0
-        fact.valid_to = utcnow().isoformat()
+        fact.valid_to = iso_utc(utcnow())
         s.add(fact)
 
         audit_event(
@@ -908,7 +993,7 @@ def supersede_fact_atomic(
             if dt_anchor < dt_vf:
                 dt_anchor = dt_vf
 
-        anchor_iso = dt_anchor.isoformat()
+        anchor_iso = iso_utc(dt_anchor)
         f_old.valid_to = anchor_iso
         f_new.valid_from = anchor_iso
         s.add_all([f_old, f_new])

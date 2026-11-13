@@ -35,10 +35,14 @@ def backfill(req: BackfillReq, ctx=Depends(get_current_user)) -> dict:
 
 
 @router.get("/recall-report")
-def get_recall_report(days: int | None = None) -> dict:
-    """零召回率监控报告：最近 N 天检索事件聚合（排除系统噪音）。"""
+def get_recall_report(days: int | None = None, ctx=Depends(get_current_user)) -> dict:
+    """零召回率监控报告：最近 N 天检索事件聚合（排除系统噪音）。
+
+    归属（票 19 复查补刀）：此前零身份调 `recall_report(days)`——服务本就
+    按 viewer 收窄（readside-gaps/05），MCP 透传而 REST 丢弃＝服务收窄、
+    路由绕过（跨属主统计投毒面）。现透传 principal（与 MCP 同口径）。"""
     try:
-        return recall_report(days)
+        return recall_report(days, principal=ctx)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

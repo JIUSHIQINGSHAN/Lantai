@@ -92,17 +92,15 @@ class KnowledgeLifecycleManager:
         return item
 
     def scan_and_weaken(self, items: list[MemoryItem]) -> list[MemoryItem]:
-        """批量扫描：confidence < WEAKENED_THRESHOLD 且 Active 的记忆自动 weaken
-
-        置信度显式 None 判定（票 68 位点 3）：`x or 1.0` 会把合法零值 0.0 误当
-        缺省 1.0——低置信记忆反而永不衰减。None（老库未记录）保持缺省 1.0 语义。
-        """
+        """批量扫描：confidence < WEAKENED_THRESHOLD 且 Active 的记忆自动 weaken"""
         weakened = []
         for item in items:
-            confidence = 1.0 if item.confidence is None else item.confidence
             if (
                 item.lifecycle_status == LifecycleStatus.ACTIVE
-                and confidence < self.WEAKENED_THRESHOLD
+                # 票 68：`or 1.0` 吞 0.0（合法零置信）——零置信记忆永不过降级线；
+                # 显式 None 判定（票 14 falsy-or 家族新位点）
+                and (item.confidence if item.confidence is not None else 1.0)
+                < self.WEAKENED_THRESHOLD
             ):
                 self.weaken(item)
                 weakened.append(item)
@@ -111,16 +109,13 @@ class KnowledgeLifecycleManager:
     def scan_and_retire(
         self, items: list[MemoryItem], decay_threshold: float = RETIRED_DECAY_THRESHOLD
     ) -> list[MemoryItem]:
-        """批量扫描：Weakened/Superseded 且 decay_score 极低的记忆自动退役
-
-        衰减分同上（票 68 位点 3）：0.0（衰减到底）不许被 `or 1.0` 吞成缺省。
-        """
+        """批量扫描：Weakened/Superseded 且 decay_score 极低的记忆自动退役"""
         retired = []
         for item in items:
-            decay = 1.0 if item.decay_score is None else item.decay_score
             if (
                 item.lifecycle_status in (LifecycleStatus.WEAKENED, LifecycleStatus.SUPERSEDED)
-                and decay < decay_threshold
+                # 票 68：同上——decay_score=0.0 被 `or 1.0` 吞掉永不过退役线
+                and (item.decay_score if item.decay_score is not None else 1.0) < decay_threshold
             ):
                 self.retire(item)
                 retired.append(item)

@@ -19,7 +19,7 @@ from typing import Any
 from sqlmodel import Session
 
 from lantai.core.acl import viewer_of
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import SessionScratchpad
 from lantai.storage import db
@@ -48,7 +48,7 @@ class ZhajiItem:
             "key_findings": list(self.key_findings),
             "open_questions": list(self.open_questions),
             "notes": list(self.notes),
-            "updated_at": self.updated_at.isoformat(),
+            "updated_at": iso_utc(self.updated_at),
             "user_id": self.user_id,
             "tenant_id": self.tenant_id,
             "fenced_content": self.fenced_content if fenced else "",
@@ -308,10 +308,8 @@ class ZhajiEngine:
                 if row:
                     if not self._check_access(owner_id=row.user_id, tenant_id=row.tenant_id):
                         raise PermissionError(f"无权修改此会话札记便签（行级隔离）: {sid}")
-                    # 落库内容按入参 max_chars 截断（票 68 位点 9）：原先硬编码
-                    # DEFAULT_MAX_CHARS，调用方收窄到更小限额时持久层仍存全量
-                    # 1000 字，读回再截的行为与摘要面不一致——持久面与摘要面
-                    # 同一口径。
+                    # 票 68：落库上界用调用方 max_chars（原硬编码 DEFAULT_MAX_CHARS
+                    # 无视参数——digest 面与落库面上界分裂）
                     row.content = raw_text[:max_chars]
                     row.updated_at = utcnow()
                     if u_id:
@@ -322,6 +320,7 @@ class ZhajiEngine:
                 else:
                     new_row = SessionScratchpad(
                         session_id=sid,
+                        # 票 68：同上，与 digest 面同用 max_chars
                         content=raw_text[:max_chars],
                         user_id=u_id or "default",
                         tenant_id=t_id,

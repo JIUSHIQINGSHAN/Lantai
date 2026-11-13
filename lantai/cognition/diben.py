@@ -15,14 +15,19 @@ from datetime import datetime
 from typing import Any
 
 import jieba
-from sqlmodel import Session, select
+from sqlmodel import Session, delete, select
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import is_system_viewer, viewer_of
 from lantai.core.auth import Principal
-from lantai.core.time import utcnow
+from lantai.core.settings import settings
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import SessionCheckpoint
 from lantai.storage import db
+
+# 同 `checkpoint_service._BACKGROUND_LOG_PREFIX` 口径（分层禁 cognition→services
+# import，两处同值需同步维护——票 57 对齐受审计写方四保护时引入）。
+_BACKGROUND_LOG_PREFIX = "[IMPORTANT: Background process"
 
 
 @dataclass
@@ -62,7 +67,7 @@ class SessionAnchor:
             "open_notes": self.open_notes,
             "text_summary": text_summary,
             "fenced_content": fenced_c,
-            "updated_at": self.updated_at.isoformat(),
+            "updated_at": iso_utc(self.updated_at),
             "user_id": self.user_id,
             "tenant_id": self.tenant_id,
             "metadata": self.metadata,
@@ -89,7 +94,7 @@ class DriftAnalysis:
             "drift_level": self.drift_level,
             "drift_reason": self.drift_reason,
             "fenced_reason": self.fenced_reason,
-            "analyzed_at": self.analyzed_at.isoformat(),
+            "analyzed_at": iso_utc(self.analyzed_at),
         }
 
 
@@ -106,10 +111,8 @@ class DibenEngine:
         owner_id: str | None,
         tenant_id: str | None,
     ) -> bool:
-        """行级安全隔离校验（宁 miss 不脏写）。"""
-        if self.principal is None:
-            return True
-        if getattr(self.principal, "is_admin", False):
+        """行级安全隔离校验（宁 miss 不脏写；票 57：None 收敛 "default" 不再全放）。"""
+        if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
             return True
 
         viewer = viewer_of(self.principal)
@@ -118,7 +121,7 @@ class DibenEngine:
         if tenant_id and current_tenant and tenant_id != current_tenant:
             return False
 
-        return not (owner_id is not None and owner_id != viewer)
+        return owner_id is None or owner_id == viewer
 
     def synthesize_anchor(
         self,
@@ -137,7 +140,10 @@ class DibenEngine:
         session_id: str,
         blocks: dict[str, Any],
     ) -> dict[str, Any]:
-        viewer = viewer_of(self.principal) if self.principal else None
+        # 票 57：owner 一律 viewer_of 收敛（None→"default"），不再落 NULL 属主行——
+        # 读侧 OR-NULL 口径下 NULL 行人人可读，二写方绕开 checkpoint_service 的
+        # 审计保护等于把五段工作现场向任何用户公开。
+        viewer = viewer_of(self.principal)
         current_tenant = getattr(self.principal, "tenant_id", None) if self.principal else None
 
         active_intent = str(blocks.get("cp_active_intent") or "").strip()
@@ -170,19 +176,33 @@ class DibenEngine:
         ]
 
         t = utcnow()
+        # 票 57 对齐受审计写方（checkpoint_service 票 14 口径）四保护：
+        # 过短不落（宁 miss 不脏写）、超长截断、后台通知整块丢弃；
+        # 全部新块不合格 → 旧快照原样保留不碰库。
+        valid_blocks: list[tuple[str, str]] = []
         for k, v in block_items:
-            if not v:
+            text = (v or "").strip()
+            if not text or text.startswith(_BACKGROUND_LOG_PREFIX):
                 continue
-            cp = SessionCheckpoint(
-                session_id=session_id,
-                tenant_id=current_tenant,
-                user_id=viewer,
-                block_key=k,
-                content=v,
-                created_at=t,
-            )
-            s.add(cp)
-        s.commit()
+            if len(text) < settings.CHECKPOINT_MIN_CONTENT:
+                continue
+            valid_blocks.append((k, text[: settings.CHECKPOINT_MAX_CONTENT]))
+        if valid_blocks:
+            # upsert（票 57）：同 session 重写即替换（delete+insert 同事务），
+            # 块行不再累积。
+            s.exec(delete(SessionCheckpoint).where(SessionCheckpoint.session_id == session_id))
+            for k, text in valid_blocks:
+                s.add(
+                    SessionCheckpoint(
+                        session_id=session_id,
+                        tenant_id=current_tenant,
+                        user_id=viewer,
+                        block_key=k,
+                        content=text,
+                        created_at=t,
+                    )
+                )
+            s.commit()
 
         anchor = SessionAnchor(
             session_id=session_id,
@@ -204,51 +224,21 @@ class DibenEngine:
         with db.get_session() as s:
             return self._get_active_anchor(s, session_id)
 
-    def _read_scope(self):
-        """读面行级 ACL 的 SQL 谓词（票 68 位点 9）。
-
-        语义与 _check_access 逐条一致（admin / principal=None 不收窄）：
-        属主面「ownerless 或本人」、租户面「ownerless 或同租户（仅当当前
-        身份带租户时收窄）」。推到 WHERE 里避免全表捞回后 Python 过滤——
-        无会话锚点查询在多租户大表上是全表扫描。
-        """
-        if self.principal is None or getattr(self.principal, "is_admin", False):
-            return None
-        viewer = viewer_of(self.principal)
-        current_tenant = getattr(self.principal, "tenant_id", None)
-        scope = (SessionCheckpoint.user_id.is_(None)) | (SessionCheckpoint.user_id == viewer)
-        if current_tenant:
-            scope = scope & (
-                (SessionCheckpoint.tenant_id.is_(None))
-                | (SessionCheckpoint.tenant_id == current_tenant)
-            )
-        return scope
-
     def _get_active_anchor(self, s: Session, session_id: str | None) -> dict[str, Any] | None:
         stmt = select(SessionCheckpoint)
         if session_id:
             stmt = stmt.where(SessionCheckpoint.session_id == session_id)
-        scope = self._read_scope()
-        if scope is not None:
-            stmt = stmt.where(scope)
-        ordered = stmt.order_by(SessionCheckpoint.created_at.desc())
+        stmt = stmt.order_by(SessionCheckpoint.created_at.desc())
 
-        # 定靶只取最新可达一行（票 68 位点 9 的 limit 缺失半边）：无 session_id
-        # 时原实现全量 .all() 后 Python 过滤，是 O(全库) 加载；ACL 已下推，
-        # 最新可达行一条即定靶，再按 target_sid 精确取该会话全部块。
-        head = s.exec(ordered.limit(1)).first()
-        if head is None:
+        rows = s.exec(stmt).all()
+        accessible_rows = [
+            r for r in rows if self._check_access(owner_id=r.user_id, tenant_id=r.tenant_id)
+        ]
+        if not accessible_rows:
             return None
 
-        target_sid = head.session_id
-        fetch = select(SessionCheckpoint).where(SessionCheckpoint.session_id == target_sid)
-        if scope is not None:
-            fetch = fetch.where(scope)
-        session_rows = [
-            r
-            for r in s.exec(fetch.order_by(SessionCheckpoint.created_at.desc())).all()
-            if self._check_access(owner_id=r.user_id, tenant_id=r.tenant_id)
-        ]
+        target_sid = accessible_rows[0].session_id
+        session_rows = [r for r in accessible_rows if r.session_id == target_sid]
 
         blocks: dict[str, str] = {}
         for r in session_rows:

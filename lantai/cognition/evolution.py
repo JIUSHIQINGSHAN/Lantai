@@ -4,7 +4,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from lantai.core.ids import new_id
-from lantai.core.time import utcnow
+from lantai.core.text import normalize_for_index
+from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import CognitivePattern, CognitiveRole, MemoryItem
 
 
@@ -84,7 +85,9 @@ class EvolutionEngine:
         }
 
         def _get_signature(text: str) -> tuple[str, str]:
-            clean = re.sub(r"[^\w\s\u4e00-\u9fff]", " ", text.lower())
+            # \u7968 45\uff1a\u7b7e\u540d\u8fc7\u5f52\u4e00\u7f1d\u2014\u2014.lower() \u53ea\u6298\u5927\u5c0f\u5199\u4e0d\u6298\u5bbd\u5ea6\uff0c\u5168\u89d2\u53d8\u4f53
+            # \u6587\u672c\u4f1a\u5206\u8fdb\u4e0d\u540c\u6876\u751f\u6210\u91cd\u590d pattern\uff08\u767b\u8bb0\u9879\uff0c\u540c\u4fee\u6cd5\u987a\u5e26\uff09
+            clean = re.sub(r"[^\w\s\u4e00-\u9fff]", " ", normalize_for_index(text).lower())
             tokens = [w for w in clean.split() if w not in _STOPWORDS and len(w) > 1]
             # 取最显著的核心实词集合（排序保证语序扰动不变）
             core_tokens = sorted(set(tokens))
@@ -140,13 +143,13 @@ class EvolutionEngine:
                 updated_at=now,
             )
             if self.db is not None:
-                self.db.add(pat)
+                # 票 68：check-then-act 在并发下可双行落库——唯一索引（v42）
+                # 兜底，撞键方回退为更新在先行的 last_seen（宁 miss 不脏写：
+                # 不产生第二行，也不静默丢本轮归纳的 last_seen 信号）。
                 try:
+                    self.db.add(pat)
                     self.db.commit()
                 except IntegrityError:
-                    # 竞态兜底（票 68 位点 7）：check-then-act 与 DB 唯一索引
-                    # 之间仍有窗口，唯一索引拒绝时回滚并转为 touch 先落行——
-                    # 与同键命中分支同语义（宁 miss 不脏写）。
                     self.db.rollback()
                     existing = self.db.exec(
                         select(CognitivePattern).where(CognitivePattern.dedup_key == dedup_key)
@@ -182,8 +185,13 @@ class EvolutionEngine:
                 if self.db is not None and pat.source_ids:
                     from sqlmodel import select
 
+                    # 票 62：Evidence 读面 = status=="active"（对齐 zuozheng.py:148
+                    # 正确范式）——非 active 证据行（撤销/归档）不再参与认识论评分
                     rows = self.db.exec(
-                        select(Evidence).where(Evidence.source_memory_id.in_(pat.source_ids))
+                        select(Evidence).where(
+                            Evidence.source_memory_id.in_(pat.source_ids),
+                            Evidence.status == "active",
+                        )
                     ).all()
                     if rows:
                         evidence_quality = sum(r.reliability * r.independence for r in rows) / len(
@@ -208,7 +216,7 @@ class EvolutionEngine:
                         "recurrence": round(recurrence, 4),
                     },
                     "promoted_from": "pattern",
-                    "promoted_at": utcnow().isoformat(),
+                    "promoted_at": iso_utc(utcnow()),
                     "reason": f"{pat.occurrence_count} recurrences, evidence_quality={evidence_quality:.2f}",
                 }
                 belief = MemoryItem(
@@ -240,8 +248,12 @@ class EvolutionEngine:
             else:
                 # 动态根据支撑证据与反思用量计算稳定性与有效性
                 if self.db is not None and b.source_ids:
+                    # 票 62：同 propose_beliefs——Evidence 读面只认 active 行
                     rows = self.db.exec(
-                        select(Evidence).where(Evidence.source_memory_id.in_(b.source_ids))
+                        select(Evidence).where(
+                            Evidence.source_memory_id.in_(b.source_ids),
+                            Evidence.status == "active",
+                        )
                     ).all()
                     if rows:
                         evidence_quality = sum(r.reliability * r.independence for r in rows) / len(
@@ -268,7 +280,7 @@ class EvolutionEngine:
                         "usefulness": round(usefulness, 4),
                     },
                     "promoted_from": "belief",
-                    "promoted_at": utcnow().isoformat(),
+                    "promoted_at": iso_utc(utcnow()),
                     "reason": f"usefulness={usefulness:.2f}, evidence_quality={evidence_quality:.2f}",
                 }
                 rule = MemoryItem(
@@ -314,7 +326,7 @@ class EvolutionEngine:
                         "usefulness": round(usefulness, 4),
                     },
                     "promoted_from": "rule",
-                    "promoted_at": utcnow().isoformat(),
+                    "promoted_at": iso_utc(utcnow()),
                     "reason": f"usefulness={usefulness:.2f}, stable rule promoted to principle",
                 }
                 prin = MemoryItem(

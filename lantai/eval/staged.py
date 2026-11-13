@@ -36,7 +36,7 @@ from sqlmodel import select
 from lantai.core.acl import SYSTEM_VIEWER, Principal
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.eval.models import EvalRun
 from lantai.gate.dedup import find_similar
 from lantai.llm.fence import neutralize_fence_escapes, wrap_as_data
@@ -552,7 +552,7 @@ def run_staged_eval(*, extract_fn=None, top_k: int = 5) -> dict:
         "corpus_version": STAGED_CORPUS_VERSION,
         "corpus_hash": corpus_hash(),
         "param_snapshot": default_snapshot(),
-        "finished_at": utcnow().isoformat(),
+        "finished_at": iso_utc(utcnow()),
         "stages": [stages[k] for k in ("extract", "gate", "store", "index", "retrieve", "inject")],
         "anchors": anchors,
         "root_cause_chains": chains,

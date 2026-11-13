@@ -1,3 +1,5 @@
+from threading import Lock
+
 from sqlmodel import select
 
 from lantai.core import scheduler as scheduler_mod
@@ -8,7 +10,7 @@ from lantai.evolution.proposer import propose_from_candidate
 from lantai.gate.decision import decide
 from lantai.models.enums import ProposalStatus
 from lantai.models.tables import MemoryCandidate, MemoryProposal
-from lantai.services.candidate_service import enqueue_rejected
+from lantai.services.candidate_service import CandidateStateConflict, enqueue_rejected
 from lantai.storage import db
 
 
@@ -43,7 +45,24 @@ def _candidate_scope(principal):
     return (MemoryCandidate.user_id == viewer) | (MemoryCandidate.user_id.is_(None))
 
 
+# 票 22 放大器互斥：cron 定时任务 × /evolve/run 路由 × 控制台手动触发同进程
+# 并发进入时，整条演化流水线（decide → propose → apply）会被放大成双份写。
+# 非阻塞单飞：已在跑则直接拒绝（路由映射 409），不排队叠加。**非重入 Lock**：
+# 锁内无自递归路径，同线程重入也是真双跑（RLock 会放行）。跨进程（MCP 第二
+# 进程）不受进程内锁约束——与 W2/W4 同口径登记为 ADR 级残留竞态。
+_RUN_ONCE_LOCK = Lock()
+
+
 def run_evolve_once(principal=None):
+    if not _RUN_ONCE_LOCK.acquire(blocking=False):
+        raise RuntimeError("evolve is already running")
+    try:
+        return _run_evolve_once_locked(principal)
+    finally:
+        _RUN_ONCE_LOCK.release()
+
+
+def _run_evolve_once_locked(principal=None):
     with db.get_session() as s:
         q = select(MemoryCandidate).where(MemoryCandidate.status.in_(["new", "fastpath"]))
         scope = _candidate_scope(principal)
@@ -62,7 +81,13 @@ def run_evolve_once(principal=None):
         # 由 proposer 生成 deprecate/update 纠正现有记忆。
         # 落地实战教训：旧记忆是错误提取（1116GB），新信息正确（16GB）——
         # 系统必须能"以新纠旧"，而不是把正确的纠正当矛盾丢掉。
-        prop = propose_from_candidate(cand.id, result)
+        try:
+            prop = propose_from_candidate(cand.id, result)
+        except CandidateStateConflict:
+            # 票 22 S1：候选在 LLM 核验窗口内被并发裁决（proposer 认领失败已
+            # 弃用 LLM 结果），跳过继续下一候选——单候选竞态失败不中断整批。
+            logger.warning("候选 %s 提案认领失败（状态已被并发裁决改写），跳过", cand.id)
+            continue
         if prop is None:
             # 目标不可寻址（update/merge/deprecate 的 target_key 解析不到唯一
             # active 记忆）——proposer 已留痕丢弃，此处继续下一个候选即可。

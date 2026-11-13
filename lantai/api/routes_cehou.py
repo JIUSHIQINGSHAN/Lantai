@@ -31,18 +31,19 @@ class CreateWindowRequest(BaseModel):
 
 class InspectRequest(BaseModel):
     window_id: str = Field(..., description="目标视窗 ID")
-    # 票 42:负值修复前直写 row.days_observed(cehou.py:348 整列赋值)毒化视窗;
-    # 界 [0,365] 与票 66 MCP 臂(mock_days 上界 365)同一孪生契约
+    # 票 66：对齐引擎 [0, 36500]——10**9 一检即伪造毕业
     mock_days_observed: int | None = Field(
-        None, ge=0, le=365, description="模拟观察天数（测试/巡检指定）"
+        None, ge=0, le=36500, description="模拟观察天数（测试/巡检指定）"
     )
 
 
 class SampleRequest(BaseModel):
     window_id: str = Field(..., description="目标视窗 ID")
     success: bool = Field(..., description="本次运行是否成功")
-    latency_ms: float = Field(0.0, description="运行耗时 (ms)")
-    score_delta: float = Field(0.0, description="评分增量")
+    # 票 66：allow_inf_nan=False 拒 JSON Infinity/NaN（json.loads 默认放行），
+    # 非有限值落 REAL 累计列是永久毒化；耗时非负（score_delta 允许负=评分下降）
+    latency_ms: float = Field(0.0, ge=0.0, allow_inf_nan=False, description="运行耗时 (ms)")
+    score_delta: float = Field(0.0, allow_inf_nan=False, description="评分增量")
 
 
 @router.post("/cehou/windows")

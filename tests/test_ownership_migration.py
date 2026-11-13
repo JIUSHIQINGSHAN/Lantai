@@ -229,6 +229,17 @@ class TestOwnershipMigration:
         ORM 一写就炸。这条就是那道防线。
         """
         apply_v022_migrations(legacy_db)
+        # 票 49：生产启动是 v022 链 + 主链两段都跑（app.py:88 + init_db→
+        # apply_migrations）——夹具补主链步，ORM 模型与迁后表列保持同代
+        # （否则模型新增列在 INSERT 面炸 legacy 表，票 49 fts_terms_truncated 实证）
+        from lantai.storage.db import apply_migrations
+
+        conn = legacy_db.raw_connection()
+        try:
+            apply_migrations(conn)
+            conn.commit()
+        finally:
+            conn.close()
 
         from sqlmodel import Session
 

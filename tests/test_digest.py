@@ -532,6 +532,103 @@ class TestCalibrationStats:
         assert "[其他]×1" in md
 
 
+class TestConfBucketSourceOfTruth:
+    """置信桶归位与兜底标签同源 settings，不挂 label 字面量（v0.68 票 86）。
+
+    病灶：`_aggregate_reflection` 终桶收 1.0 的判定挂在标签字面量
+    `"0.9-1.0"` 上，兜底桶 `"其他"` 是 worker 侧 magic label——且桶定义
+    取 import 期模块快照，settings 改名/调阈值后 conf==1.0 静默落
+    「其他」桶（不 crash、不告警，日报/校准报告语义错无人知）。锁：
+    settings 改桶定义后真内存库直调 `_aggregate_reflection`（无 mock），
+    归位跟数值语义与 settings 声明走。
+    """
+
+    def _seed_one(self, session_factory, pid: str, conf: float) -> None:
+        now = _now_aware()
+        _seed(
+            session_factory,
+            [
+                MemoryProposal(
+                    id=pid,
+                    proposal_type="add",
+                    candidate_id=None,
+                    decided_by="reflect",
+                    evidence_ids=["e1"],
+                    proposed_patch={"key": pid},
+                    confidence=conf,
+                    status="applied",
+                    created_at=now,
+                ),
+            ],
+        )
+
+    def _reflect_window(self, session_factory):
+        from lantai.workers.digest_worker import _aggregate_reflection
+
+        now = _now_aware()
+        with session_factory() as s:
+            return _aggregate_reflection(s, now - timedelta(hours=1), now + timedelta(hours=1))
+
+    def test_conf_one_lands_in_renamed_terminal_bucket(self, digest_env, monkeypatch):
+        """验收 1（票 86）：settings 终桶改名（阈值不动）后 conf==1.0 仍落该桶。"""
+        monkeypatch.setattr(
+            settings,
+            "DIGEST_CONF_BUCKETS",
+            [
+                ("0.5-0.6", 0.5, 0.6),
+                ("0.6-0.7", 0.6, 0.7),
+                ("0.7-0.8", 0.7, 0.8),
+                ("0.8-0.9", 0.8, 0.9),
+                ("0.9-0.95", 0.9, 1.0),  # 仅改名，右端仍 1.0
+            ],
+        )
+        self._seed_one(digest_env, "p-renamed", 1.0)
+        rf = self._reflect_window(digest_env)
+        assert rf["conf_buckets"]["0.9-0.95"] == 1, (
+            f"conf=1.0 该落改名后的终桶，实际 {rf['conf_buckets']}"
+        )
+        assert "0.9-1.0" not in rf["conf_buckets"], "旧字面量桶不得残留"
+
+    def test_top_bucket_takes_right_edge_not_beyond(self, digest_env, monkeypatch):
+        """数值语义：最大 hi 桶按闭区间右端收边界值；域外 1.0 诚实落兜底桶。"""
+        monkeypatch.setattr(settings, "DIGEST_CONF_BUCKETS", [("0.5-0.95", 0.5, 0.95)])
+        self._seed_one(digest_env, "p-edge", 0.95)
+        self._seed_one(digest_env, "p-beyond", 1.0)
+        rf = self._reflect_window(digest_env)
+        assert rf["conf_buckets"]["0.5-0.95"] == 1, (
+            f"右端值 0.95 该落最大 hi 桶（闭区间右端），实际 {rf['conf_buckets']}"
+        )
+        assert rf["conf_buckets"][settings.DIGEST_CONF_FALLBACK_LABEL] == 1, (
+            f"域外 1.0 该落 settings 兜底桶（不冒名进不覆盖它的桶），实际 {rf['conf_buckets']}"
+        )
+
+    def test_fallback_label_follows_settings(self, digest_env, monkeypatch):
+        """兜底桶标签与桶定义同源声明（settings 常量），worker 不裸写字面量。"""
+        monkeypatch.setattr(settings, "DIGEST_CONF_FALLBACK_LABEL", "越界")
+        self._seed_one(digest_env, "p-fallback", 0.3)
+        rf = self._reflect_window(digest_env)
+        assert rf["conf_buckets"]["越界"] == 1, (
+            f"桶外置信该落 settings 兜底标签「越界」，实际 {rf['conf_buckets']}"
+        )
+        assert "其他" not in rf["conf_buckets"], "worker 侧 magic label 不得残留"
+
+    def test_default_buckets_conf_one_unchanged(self, digest_env):
+        """现状锁（票 86 验收 2）：默认桶定义下 conf==1.0 归位终桶不变。
+
+        既有反思家族种料全在 0.65–0.9、其余三臂全带 monkeypatch——默认桶
+        与 1.0 的组合此前零覆盖，`conf == top_hi` 改坏将无测试报警。
+        """
+        self._seed_one(digest_env, "p-default-one", 1.0)
+        rf = self._reflect_window(digest_env)
+        assert rf["conf_buckets"] == {
+            "0.5-0.6": 0,
+            "0.6-0.7": 0,
+            "0.7-0.8": 0,
+            "0.8-0.9": 0,
+            "0.9-1.0": 1,
+        }
+
+
 class TestCollectStats:
     """五项统计数字正确（真实 DB 查询）。"""
 

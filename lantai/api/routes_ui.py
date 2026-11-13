@@ -121,6 +121,7 @@ _UI_HTML = """<!DOCTYPE html>
       <input id="q" type="text" placeholder="输入查询，例如：上线部署怎么做">
       <input id="topk" type="number" value="5" min="1" max="50" title="top_k">
       <input id="apikey" type="password" placeholder="API Key（可选）" title="非回环部署时填写 X-API-Key">
+      <label class="chk"><input id="remember" type="checkbox"> 记住此设备</label>
       <label class="chk"><input id="rerank" type="checkbox" checked> 重排</label>
       <button onclick="runRecall()">追忆</button>
     </div>
@@ -147,7 +148,12 @@ async function runRecall() {
   const topK = parseInt(document.getElementById('topk').value, 10) || 5;
   const useRerank = document.getElementById('rerank').checked;
   const key = document.getElementById('apikey').value.trim();
-  if (key) localStorage.setItem('lantai_api_key', key);
+  // 票 70：与主控制台 api.js 同语义——默认 sessionStorage（关页即清），
+  // 显式勾选「记住此设备」才落 localStorage（对同源任意脚本可读且不过期）
+  if (key) {
+    if (document.getElementById('remember').checked) localStorage.setItem('lantai_api_key', key);
+    else sessionStorage.setItem('lantai-api-key-session', key);
+  }
   const headers = {'Content-Type': 'application/json'};
   if (key) headers['X-API-Key'] = key;
   try {
@@ -207,7 +213,9 @@ function render(data) {
     results.appendChild(item);
   });
 }
-document.getElementById('apikey').value = localStorage.getItem('lantai_api_key') || '';
+// 票 70：回显先看会话存储再看设备存储（与 api.js getApiKey 同顺序）
+document.getElementById('apikey').value =
+  sessionStorage.getItem('lantai-api-key-session') || localStorage.getItem('lantai_api_key') || '';
 document.getElementById('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') runRecall(); });
 // 支持 ?q= 预填（星图点击节点跳转检索）
 var preQ = new URLSearchParams(window.location.search).get('q');
@@ -504,111 +512,6 @@ load();
 </html>
 """
 
-_INDEX_HTML = """<!DOCTYPE html>
-<html lang="zh-CN">
-<head><meta charset="utf-8"><title>兰台 · 控制台</title>
-<style>
-  body { font:15px/1.7 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
-         background:#f8f4ed; color:#253d24; margin:0; }
-  main { max-width:640px; margin:60px auto; padding:0 20px; }
-  h1 { font-size:22px; }
-  p { color:#867e76; }
-  a.card { display:block; background:#fffef8; border:1px solid #e4dfd7; border-radius:12px;
-           padding:18px 20px; margin:14px 0; text-decoration:none; color:#253d24; }
-  a.card:hover { border-color:#1ba784; }
-  a.card b { font-size:16px; color:#1ba784; }
-  a.card span { display:block; color:#867e76; font-size:13px; }
-  /* ===== v0.14 双主题：吉金（默认，青铜铭文）/ 漏窗（园林借景） ===== */
-  :root { --bg:#1c2430; --card:#232c38; --card2:#2a3442; --ink:#e6dcc3; --muted:#8f9a9a;
-          --line:#3a4655; --accent:#b08a3e; --ok:#3e7a6b; --warn:#b08a3e; --bad:#a33b2e;
-          --soft:#2a3442; --btn-ink:#14181a;
-          --lane-fact:#e6dcc3; --lane-rule:#7a9aa8; --lane-exp:#3e7a6b; --lane-pref:#a33b2e;
-          --lane-chat:#b08a3e; --lane-gen:#8a7a9a;
-          --e-supports:#3e7a6b; --e-refines:#7a9aa8; --e-contradicts:#a33b2e; --e-supersedes:#b08a3e;
-          --title-font:"STKaiti","KaiTi",serif; --body-font:"Songti SC","STSong","SimSun",serif;
-          --strip-h:22px; --sig-a:#b08a3e; --sig-b:#4e8d7c; }
-  [data-theme="louchuang"] { --bg:#e9dfc6; --card:#f4ecda; --card2:#efe6cf; --ink:#2f4f4f; --muted:#7d8a72;
-          --line:#c9bc96; --accent:#4e8d7c; --ok:#6f9e8a; --warn:#b08a3e; --bad:#a05a4a;
-          --soft:#efe6cf; --btn-ink:#fff;
-          --lane-fact:#2f4f4f; --lane-rule:#4e8d7c; --lane-exp:#6f9e8a; --lane-pref:#a05a4a;
-          --lane-chat:#8a6a3a; --lane-gen:#6a5a7a;
-          --e-supports:#6f9e8a; --e-refines:#4e8d7c; --e-contradicts:#a05a4a; --e-supersedes:#8a6a2a;
-          --title-font:"STXingkai","STKaiti","KaiTi",serif; --body-font:"Songti SC","STSong","SimSun",serif;
-          --strip-h:26px; --sig-a:#4e8d7c; --sig-b:#8a6a3a; }
-  body { font-family:var(--body-font); }
-  main h1, header h1 { font-family:var(--title-font); letter-spacing:4px; }
-  header { border-bottom:2px solid var(--accent); }
-  .bar, .tag, .track, .bar-row .track { background:var(--soft); }
-  .bar i, .track i, .bar-row .track i { background:linear-gradient(90deg,var(--ok),var(--accent)); }
-  .result pre, .row .body { color:var(--ink); }
-  input[type=text], input[type=number], input[type=password], select { background:var(--card); color:var(--ink); border-color:var(--line); }
-  button { color:var(--btn-ink); }
-  button.ghost { background:var(--soft); color:var(--ink); }
-  .card { background:var(--card); }
-  a.card { background:var(--card); border-color:var(--line); color:var(--ink); }
-  a.card b { color:var(--accent); } a.card span { color:var(--muted); } a.card:hover { border-color:var(--accent); }
-  p { color:var(--muted); }
-  svg { background:var(--card); }
-  .node circle { stroke:var(--card); } .node text { fill:var(--ink); }
-  /* 签名元素：吉金=云雷纹饰带；漏窗=回纹画框 */
-  .sig { height:var(--strip-h); margin:10px 24px 0; opacity:.5; }
-  .sig svg { width:100%; height:100%; display:block; background:transparent; border:0; }
-  .sig-jijin { display:block; } .sig-louchuang { display:none; }
-  [data-theme="louchuang"] .sig-jijin { display:none; }
-  [data-theme="louchuang"] .sig-louchuang { display:block; }
-  /* 主题切换钮 */
-  .theme-ctl { float:right; margin-left:18px; }
-  .theme-ctl button { padding:4px 12px; font-size:12px; background:transparent; color:var(--accent);
-                      border:1px solid var(--accent); border-radius:999px; letter-spacing:2px; cursor:pointer; }
-  .theme-ctl button:hover { background:var(--accent); color:var(--bg); }
-  /* 漏窗：月洞门/画框卡片 */
-  [data-theme="louchuang"] .panel, [data-theme="louchuang"] .card, [data-theme="louchuang"] a.card {
-      position:relative; border-radius:16px 16px 6px 6px; }
-  [data-theme="louchuang"] .card::before, [data-theme="louchuang"] a.card::before {
-      content:""; position:absolute; left:50%; top:-9px; transform:translateX(-50%);
-      width:52px; height:18px; border:2px solid var(--line); border-bottom:none;
-      border-radius:26px 26px 0 0; background:var(--card); }
-</style></head>
-<body>
-  <span class="theme-ctl"><button type="button" onclick="toggleTheme()" id="themeBtn" title="吉金 / 漏窗 主题切换">式 · 吉金</button></span>
-<main>
-  <h1>兰台 · 控制台</h1>
-  <p>借鉴 aiduMEI v18.2 控制台：记忆如何被想起、检索质量如何——看得见、可追溯。</p>
-  <a class="card" href="/ui/recall"><b>追忆漏斗</b><span>候选池 → 意图 → 向量 → 衰减 → (重排) → 最终，每步耗时与命中数。</span></a>
-  <a class="card" href="/ui/evolve"><b>检索质量看板</b><span>最近 7 天零召回率、按 lane/意图分布、场景命中、token 成本、事件流。</span></a>
-  <a class="card" href="/ui/pulse"><b>脉搏</b><span>服务状态与存储分层：记忆存量、分布、写入水位、近 7 天新增、worker 运行时间。</span></a>
-  <a class="card" href="/ui/vault"><b>档案与锦囊</b><span>记忆档案浏览与过滤、锦囊待审裁决、衰减概览——存了什么、待裁什么。</span></a>
-  <a class="card" href="/ui/map"><b>记忆星图</b><span>谁和谁有关系——MemoryEdge 关系图：supports / refines / contradicts / supersedes，按 lane 分区的零依赖 SVG 放射布局。</span></a>
-</main>
-  <script>
-  (function () {
-    var KEY = 'lantai-theme';
-    function cur() {
-      return document.documentElement.getAttribute('data-theme') === 'louchuang' ? 'louchuang' : 'jijin';
-    }
-    function paint() {
-      var b = document.getElementById('themeBtn');
-      if (b) b.textContent = '式 · ' + (cur() === 'louchuang' ? '漏窗' : '吉金');
-    }
-    window.toggleTheme = function () {
-      var next = cur() === 'louchuang' ? 'jijin' : 'louchuang';
-      document.documentElement.setAttribute('data-theme', next);
-      try { localStorage.setItem(KEY, next); } catch (e) {}
-      paint();
-      if (document.getElementById('svg')) location.reload();  // 星图配色随主题重绘
-    };
-    try {
-      var s = localStorage.getItem(KEY);
-      var m = location.search.match(/[?&]theme=([a-z]+)/);
-      if (m) s = m[1];
-      if (s) document.documentElement.setAttribute('data-theme', s);
-    } catch (e) {}
-    paint();
-  })();
-  </script>
-</body>
-</html>
-"""
 
 _PULSE_HTML = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1501,7 +1404,7 @@ function draw() {
       });
       g.addEventListener('mouseleave', function () { info.textContent = ''; g.classList.remove('hot'); });
       g.addEventListener('click', function () {
-        if (n.url) window.open(n.url, '_blank'); else window.location.href = '/ui/vault';
+        if (n.url && /^https?:/i.test(n.url)) window.open(n.url, '_blank'); else window.location.href = '/ui/vault';
       });
     } else {
       g.addEventListener('mouseenter', function () {

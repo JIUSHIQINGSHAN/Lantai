@@ -8,7 +8,7 @@ from datetime import timedelta
 
 from sqlmodel import func, select
 
-from lantai.core.time import utcnow
+from lantai.core.time import ensure_aware, local_day_window_utc, utcnow
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
 
@@ -25,8 +25,12 @@ def collect_usage(days: int = 7, principal=None) -> dict:
     """
     if not isinstance(days, int) or isinstance(days, bool) or not (1 <= days <= 365):
         raise ValueError("days must be an int in [1, 365]")
-    base = utcnow().date() - timedelta(days=days - 1)
-    since = utcnow() - timedelta(days=days - 1)  # 与报告窗口一致（today-(days-1) .. today）
+    # 票 32：桶按本地墙钟日——库存 UTC、报表按使用者日界（与起居注纪事/
+    # 每日盘点同一裁决，共享 core/time.local_day_window_utc）；UTC 日桶把
+    # 北京 00:00–08:00 的写入错记到前一天。
+    local_today = utcnow().astimezone().date()
+    base = local_today - timedelta(days=days - 1)
+    window_start, _ = local_day_window_utc(base)  # 本地窗口起点（UTC）
     scope = None
     if principal is not None and not bool(getattr(principal, "is_admin", False)):
         from lantai.core.acl import viewer_of
@@ -36,15 +40,15 @@ def collect_usage(days: int = 7, principal=None) -> dict:
         # 判不可见等于报表归零，那是修废不是收窄
         scope = (MemoryItem.user_id == viewer_of(principal)) | MemoryItem.user_id.is_(None)
     with db.get_session() as s:
-        q = (
-            select(func.date(MemoryItem.created_at), func.count())
-            .where(MemoryItem.created_at >= since)
-            .group_by(func.date(MemoryItem.created_at))
-        )
+        q = select(MemoryItem.created_at).where(MemoryItem.created_at >= window_start)
         if scope is not None:
             q = q.where(scope)
         rows = s.exec(q).all()
-    daily = {str(d): c for d, c in rows}
+    daily: dict[str, int] = {}
+    for created_at in rows:
+        # 读回值 naive UTC（SQLite 无偏移后缀）——归一后按本地墙钟日归桶
+        key = str(ensure_aware(created_at).astimezone().date())
+        daily[key] = daily.get(key, 0) + 1
     return {
         "daily_new": {
             str(base + timedelta(days=i)): daily.get(str(base + timedelta(days=i)), 0)

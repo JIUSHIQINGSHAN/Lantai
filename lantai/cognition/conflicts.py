@@ -51,10 +51,10 @@ def _temporal_recency(item) -> tuple:
         return 0.5, axis
     if base.tzinfo is None:
         base = base.replace(tzinfo=UTC)
-    days_old = (datetime.now(UTC) - base).days
-    # 上钳 1.0(票 68 位点 1):event_time 为未来时 days_old 为负,裸 max(0.0,…) 会
-    # 放出巨值——3000 年时间戳可单行碾压仲裁 recency 权重。未来时间按「今日」
-    # 同权计(至多 1.0),不额外加奖(宁降权不奖励)。
+    # 票 68：未来时间（时钟偏斜/脏输入）视作零天龄并硬钳 [0,1]——原式
+    # max(0.0, 1.0 - days_old/30.0) 对负 days_old 无上钳，3000 年时间戳可
+    # 造出巨值 recency 碾压仲裁权重；宁按 1.0 收敛不奖励异常。
+    days_old = max((datetime.now(UTC) - base).days, 0)
     return min(1.0, max(0.0, 1.0 - days_old / 30.0)), axis
 
 
@@ -80,6 +80,10 @@ class ConflictEngine:
         evidence_strength = mean(reliability × independence) over all active Evidence rows.
         independence_mean = mean(independence) over same rows.
         Falls back to (0.5, 0.5) when no Evidence found or session is None.
+
+        票 62：docstring 此前自述「active」但查询无 status 过滤（名实不符）——
+        对齐 zuozheng.py:148 同仓正确范式，Evidence 读面 = status=="active"
+        （Evidence 表无 lifecycle 列，单键即可）。
         """
         if session is None:
             return 0.5, 0.5
@@ -88,7 +92,11 @@ class ConflictEngine:
 
         from lantai.models.tables import Evidence
 
-        rows = session.exec(select(Evidence).where(Evidence.source_memory_id == item.id)).all()
+        rows = session.exec(
+            select(Evidence).where(
+                Evidence.source_memory_id == item.id, Evidence.status == "active"
+            )
+        ).all()
 
         if not rows:
             return 0.5, 0.5

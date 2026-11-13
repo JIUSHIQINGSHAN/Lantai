@@ -41,7 +41,7 @@ from sqlmodel import func, select
 
 from lantai.core import scheduler as scheduler_module
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import (
     ApiKey,
     ConflictEvent,
@@ -59,6 +59,7 @@ from lantai.models.tables import (
 from lantai.observability import metrics as metrics_module
 from lantai.observability.metrics import PROCESS_STARTED_AT, process_stats
 from lantai.observability.recall_report import recall_report
+from lantai.observability.retention import retention_stats
 from lantai.observability.telemetry import get_writer
 from lantai.ops.overview import build_overview
 from lantai.services.work_item_service import worker_schedule_specs
@@ -373,7 +374,7 @@ def collect_pipeline_metrics(session, *, now: datetime | None = None, principal=
             {
                 "id": latest_ingest.id,
                 "status": latest_ingest.status,
-                "started_at": latest_ingest.started_at.isoformat()
+                "started_at": iso_utc(latest_ingest.started_at)
                 if latest_ingest.started_at
                 else None,
                 "error": (latest_ingest.error or "")[:200],
@@ -386,9 +387,7 @@ def collect_pipeline_metrics(session, *, now: datetime | None = None, principal=
                 "id": latest_param.id,
                 "status": latest_param.status,
                 "error_code": latest_param.error_code or "",
-                "created_at": latest_param.created_at.isoformat()
-                if latest_param.created_at
-                else None,
+                "created_at": iso_utc(latest_param.created_at) if latest_param.created_at else None,
             }
             if latest_param
             else None
@@ -396,7 +395,7 @@ def collect_pipeline_metrics(session, *, now: datetime | None = None, principal=
         "latest_reflect_run": (
             {
                 "id": latest_reflect.id,
-                "run_at": latest_reflect.run_at.isoformat() if latest_reflect.run_at else None,
+                "run_at": iso_utc(latest_reflect.run_at) or None,
                 "source": latest_reflect.source,
                 "skipped": latest_reflect.skipped,
                 "curate_failed": bool(latest_reflect.curate_failed),
@@ -464,7 +463,7 @@ def collect_scheduler_metrics(session, *, now: datetime | None = None) -> dict:
         "jobs": status["jobs"],
         "workers": workers,
         "overdue_count": sum(1 for w in workers if w["overdue"]),
-        "process_started_at": PROCESS_STARTED_AT.isoformat(),
+        "process_started_at": iso_utc(PROCESS_STARTED_AT),
     }
 
 
@@ -536,6 +535,9 @@ def collect_security_view(session, *, principal=None) -> dict:
             else None
         ),
         "telemetry": get_writer().stats(),
+        # 观测面保留状态（票 29）：两表行数 + 最近清理时间——局部清理没有
+        # 全局可见度 = 整体不可证（operation_logs 侧在 telemetry 块内）
+        "retention": retention_stats(),
     }
 
 
@@ -1008,7 +1010,7 @@ def build_monitor_snapshot(
         for field in ("pid", "open_fds", "cpu_seconds", "uptime_seconds"):
             process[field] = None
     snapshot = {
-        "generated_at": now.isoformat(timespec="seconds"),
+        "generated_at": iso_utc(now),
         "version": _app_version(),
         "process": process,
         "storage": collect_storage_metrics(session, principal=principal),
@@ -1120,7 +1122,7 @@ def list_operation_logs(
                 "status_code": row.status_code,
                 "latency_ms": round(float(row.latency_ms or 0.0), 3),
                 "problem": problem,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "created_at": iso_utc(row.created_at) or None,
             }
         )
     return items
@@ -1146,6 +1148,9 @@ _SETTING_GROUPS = {
         "RECEIPT_MISS_CRON_MINUTES",
         "DIGEST_CRON_HOUR",
         "REFLECT_CRON_HOUR",
+        "CONSOLIDATION_ENABLED",
+        "CONSOLIDATION_CRON_HOUR",
+        "CONSOLIDATION_CRON_MINUTE",
         "AUTODREAM_CRON_DAYS",
         "PARAM_ADVICE_CRON_MINUTES",
     ),

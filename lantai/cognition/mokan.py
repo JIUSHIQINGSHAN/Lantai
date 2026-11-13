@@ -19,8 +19,9 @@ from sqlmodel import Session, col, or_, select
 
 from lantai.core.acl import SYSTEM_VIEWER, Principal, is_system_viewer, viewer_of
 from lantai.core.logger import logger
+from lantai.core.text import query_norm_hash
 from lantai.core.time import utcnow
-from lantai.llm.fence import wrap_as_data
+from lantai.llm.fence import escape_attr, wrap_as_data
 from lantai.models.tables import MemoryEdge, MemoryItem
 from lantai.storage import db
 
@@ -80,6 +81,17 @@ class MokanAuditResult:
             "summary": self.summary,
             "fenced_content": self.fenced_content if fenced else "",
         }
+
+
+def _render_audit_marker(query: str, total: int, verified: int, disputed: int, items) -> str:
+    """磨勘审计包裹标记（票 51：query 属性位用户全可控——同票 54 走
+    fence.escape_attr 单一真源转义，防提前闭合审计标记）。"""
+    return (
+        f'<mokan_audit query="{escape_attr(query)}" total="{total}" '
+        f'verified="{verified}" disputed="{disputed}">\n'
+        + "\n".join(it.fenced_content for it in items)
+        + "\n</mokan_audit>"
+    )
 
 
 class MokanEngine:
@@ -311,16 +323,17 @@ class MokanEngine:
             f"交叉证实 {verified_count} 条，存在争议矛盾 {disputed_count} 条。"
         )
 
-        fenced_summary = (
-            f'<mokan_audit query="{query}" total="{len(verified_items)}" '
-            f'verified="{verified_count}" disputed="{disputed_count}">\n'
-            + "\n".join(it.fenced_content for it in verified_items)
-            + "\n</mokan_audit>"
+        fenced_summary = _render_audit_marker(
+            query, len(verified_items), verified_count, disputed_count, verified_items
         )
 
+        # 票 50：query 是用户全可控值（REST %0A 可伪造日志行）——原话不进
+        # 日志（不截窗：50 字窗内仍可携带伪造行前半），只记指纹（单真源
+        # core.text.query_norm_hash，同 retrieval_log._norm_hash 归一口径）
+        query_fp = query_norm_hash(query)[:16] if query else ""
         logger.info(
-            "磨勘：审计完成（query=%s，总计 %d，证实 %d，争议 %d）",
-            query,
+            "磨勘：审计完成（query_fp=%s，总计 %d，证实 %d，争议 %d）",
+            query_fp,
             len(verified_items),
             verified_count,
             disputed_count,

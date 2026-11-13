@@ -3,6 +3,8 @@
 import hashlib
 from datetime import datetime
 
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from lantai.core.ids import new_id
@@ -14,10 +16,12 @@ from lantai.core.provenance import (
     make_provenance,
 )
 from lantai.core.settings import settings
-from lantai.core.time import utcnow
+from lantai.core.text import normalize_for_index
+from lantai.core.time import iso_utc, utcnow
 from lantai.evolution.promoter import _make_checkpoint
 from lantai.gate.dedup import find_similar
 from lantai.ingestion.coalesce import get_coalesce_buffer
+from lantai.ingestion.safety import sanitize_source_url
 from lantai.llm.client import embed
 from lantai.memory.decay_class import DECAY_CLASS_HALFLIFE
 from lantai.models.enums import MemoryTier
@@ -34,6 +38,7 @@ from lantai.parsing.extractor import extract_candidate
 from lantai.parsing.fastpath import fastpath_check
 from lantai.retrieval.hybrid import index_memory_item
 from lantai.storage import db
+from lantai.storage.cas import atomic_update
 from lantai.storage.fts import sync_fts
 from lantai.storage.vector_store import get_vector_store
 
@@ -117,10 +122,24 @@ def _dedup_merge(s, target: MemoryItem, sim: float, principal=None) -> dict | No
     if not _owns(target, principal):
         logger.info("dedup merge: target %s 不归属当前主体，跳过（宁 miss 不脏写）", target.id)
         return None
-    target.last_used_at = utcnow()
-    target.importance = min(1.0, target.importance + 0.1)
-    s.add(target)
+    now = utcnow()
+    # 票 23：合并保活改原子 UPDATE（min(1.0, importance+0.1) 对当前已提交值
+    # 求值）——快照 RMW 会吃掉并发反馈的 +0.2（红测 F3）。refresh 让调用方
+    # 侧对象回到真值，避免 sync=False 的旧属性搭后续 commit 顺车写回。
+    atomic_update(
+        s,
+        MemoryItem,
+        target.id,
+        values={
+            "last_used_at": now,
+            "importance": func.min(1.0, MemoryItem.importance + 0.1),
+        },
+    )
     s.commit()
+    # refresh 要求 target persistent 于 s——生产调用方（_apply_dedup 链）恒同
+    # session 取行；detached 实例不再兼容：按旧实现 add() 复活提交会把陈旧
+    # 快照冲回库，恰是票 23 要消灭的 RMW，宁如实报错不复活。
+    s.refresh(target)
     return {"dedup_action": "merge", "target_memory_id": target.id, "similarity": round(sim, 4)}
 
 
@@ -154,15 +173,32 @@ def _create_update_proposal(
     }
 
 
+def build_dedup_user(old: str, new: str) -> str:
+    """校雠三态裁决 user 消息（票 55）：old/new 过樊篱数据位，模板指令面不动。
+
+    库内正文裸插 LLM 提示可被正文尾部语义级说辞操纵（「判定 merge」类），
+    獬豸的正则闸不在其射程——樊篱数据位是这一层的纵深防御。get_prompt
+    覆盖路径保留（DB 自定义模板照旧生效），只把数据槽位换成围栏包裹形态；
+    裁决契约（relation 取值）不经此处改动。
+    """
+    from lantai.llm.fence import wrap_as_data
+    from lantai.llm.prompts import DEDUP_RELATION_USER
+    from lantai.services.prompt_service import get_prompt
+
+    return get_prompt("DEDUP_RELATION_USER", DEDUP_RELATION_USER).format(
+        old=wrap_as_data(old), new=wrap_as_data(new)
+    )
+
+
 def _llm_judge(old: str, new: str) -> str:
     """中带 LLM 兜底：结构判别判不定的样本交 LLM 裁决。"""
     from lantai.llm.client import chat_json
-    from lantai.llm.prompts import DEDUP_RELATION_SYS, DEDUP_RELATION_USER
+    from lantai.llm.prompts import DEDUP_RELATION_SYS
     from lantai.services.prompt_service import get_prompt
 
     out = chat_json(
         get_prompt("DEDUP_RELATION_SYS", DEDUP_RELATION_SYS),
-        get_prompt("DEDUP_RELATION_USER", DEDUP_RELATION_USER).format(old=old, new=new),
+        build_dedup_user(old, new),
     )
     rel = (out or {}).get("relation")
     if rel not in ("merge", "update", "insert"):
@@ -333,11 +369,13 @@ def _create_candidate_direct(
         if existed:
             doc = existed
         else:
+            # 票 69：url 过 scheme 白名单（伪协议置空），source_id 同步回退 h[:12]
+            src_url = sanitize_source_url(req.url)
             doc = RawDocument(
                 id=new_id("doc"),
                 source_type=req.source_type,
-                source_id=req.url or h[:12],
-                url=req.url,
+                source_id=src_url or h[:12],
+                url=src_url,
                 title=req.title,
                 content=req.content,
                 content_hash=h,
@@ -412,11 +450,13 @@ def _create_candidate_with_extraction(
         if existed:
             doc = existed
         else:
+            # 票 69：提取路径写点同过 scheme 白名单（与 fastpath 直写点同口径）
+            src_url = sanitize_source_url(req.url)
             doc = RawDocument(
                 id=new_id("doc"),
                 source_type=req.source_type,
-                source_id=req.url or h[:12],
-                url=req.url,
+                source_id=src_url or h[:12],
+                url=src_url,
                 title=req.title,
                 content=req.content,
                 content_hash=h,
@@ -596,13 +636,20 @@ def put_core_memory(block: str, content: str, namespace: str = "default", princi
                 (CoreMemoryBlock.user_id == user_id) | (CoreMemoryBlock.user_id.is_(None))
             )
         row = s.exec(stmt).first()
+        # 票 23：版本号改库端自增——两路并发更新各 +1 都落账（红测 F5b 的
+        # 姊妹场景）；content 末写者胜，updated_at/归属补写同语句原子。
+        bump_values = {
+            "content": content,
+            "version": CoreMemoryBlock.version + 1,
+            "updated_at": utcnow(),
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+            "agent_id": agent_id,
+        }
         if row:
-            row.content = content
-            row.version += 1
-            # 归属列补写：老行可能是 NULL（迁移前写的），首次覆写即登记归属
-            row.user_id = user_id
-            row.tenant_id = tenant_id
-            row.agent_id = agent_id
+            atomic_update(s, CoreMemoryBlock, row.id, values=bump_values)
+            s.commit()
+            s.refresh(row)
         else:
             row = CoreMemoryBlock(
                 id=new_id("core"),
@@ -613,9 +660,21 @@ def put_core_memory(block: str, content: str, namespace: str = "default", princi
                 user_id=user_id,
                 agent_id=agent_id,
             )
-        s.add(row)
-        s.commit()
-        s.refresh(row)
+            s.add(row)
+            try:
+                s.commit()
+            except IntegrityError:
+                # 票 23：并发首写撞 (block, namespace, user_id) 唯一约束
+                # （红测 F5a）——败方重读既有行转更新路（末写者胜），不再双插双行。
+                s.rollback()
+                row = s.exec(stmt).first()
+                if row is None:
+                    raise
+                atomic_update(s, CoreMemoryBlock, row.id, values=bump_values)
+                s.commit()
+            # 两路汇合后统一刷新：提交即过期，不刷新时 SQLModel 的
+            # model_dump 走不到惰性加载，返回空 dict（e2e put_core_memory 回归）。
+            s.refresh(row)
         return row.model_dump(mode="json")
 
 
@@ -633,6 +692,12 @@ def build_verbatim_item(
 ) -> MemoryItem:
     """verbatim 直存项构造（纯函数）：sha256 幂等 key + 固定语义字段。
 
+    身份键过归一缝（票 46 / ADR-0085）：key = sha256(normalize_for_index(content))，
+    全角/NFD/零宽变体同归一键，不再分裂双份记忆；正文仍逐字节原样（归一派生键
+    ≠ 内容改写）。存量旧口径行（key=原文 sha）由 add_raw_memory /
+    _store_imported_memory 双键并查兜底；脏存量行 × 字节不同改写的残余缺口宁
+    miss 不脏写（收口需键列迁移，未立项）。
+
     add_raw_memory 与冷启动导入（services/import_service.py）共用，消除重复
     构造；created_at/updated_at 缺省取 utcnow，updated_at 缺省取 created_at
     （导入路径原样保留原始时间戳语义）。
@@ -641,7 +706,7 @@ def build_verbatim_item(
     不脏写，不猜归属；但调用方（尤其 HTTP 路由）必须把 principal 传下来，
     否则这条记忆在按属主过滤的检索里永久不可见。
     """
-    h = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    h = hashlib.sha256(normalize_for_index(content).encode("utf-8")).hexdigest()
     created = created_at or utcnow()
     return MemoryItem(
         id=new_id("mem"),
@@ -674,7 +739,8 @@ def add_raw_memory(
 ) -> dict:
     """原文直存（verbatim 记忆）：零 LLM、不走提取/闸门/演化，直接写 MemoryItem。
 
-    幂等：内容 sha256 作 key，重复内容返回已有记忆（不重复索引）。
+    幂等：内容 sha256 作 key（票 46：身份键过归一缝 + 存量原文 sha 双键并查），
+    重复内容返回已有记忆（不重复索引）。
 
     归属四元组（票 .scratch/ownership-gaps/03）：此前签名里没有这些参数，
     verbatim 是条数最多的一类（本机真实库 391/635 条），属主恒 NULL 让
@@ -694,7 +760,10 @@ def add_raw_memory(
     标注、不是身份判据。判「新建」会让每一条既有无主 verbatim 都无法去重，
     同一内容每 sync 一次就多存一份——把内容寻址退化成多份存储。
     """
-    h = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
+    # 票 46：身份键过归一缝——新行 key = sha256(归一后文本)；存量旧口径行
+    # （key=原文 sha）与脏内容字节级重写经原文 sha 双键并查兜底（ADR-0085）。
+    h_norm = hashlib.sha256(normalize_for_index(req.content).encode("utf-8")).hexdigest()
+    h_raw = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
     lane = req.lane or settings.RAW_MEMORY_DEFAULT_LANE
     # 獬豸（票据 .scratch/xiezhi-injection-guard/01）：verbatim 原样进 FTS+向量，
     # 是注入文本直达检索面的最短路径——sha256/去重之前先过写入侧注入检测
@@ -704,7 +773,7 @@ def add_raw_memory(
     with db.get_session() as s:
         q = select(MemoryItem).where(
             MemoryItem.memory_type == "verbatim",
-            MemoryItem.key == h,
+            MemoryItem.key.in_([h_norm, h_raw]),
             MemoryItem.status == "active",
         )
         # 去重归属（票 20）：admin / principal=None → 不过滤（worker/MCP 不能空转）；
@@ -734,7 +803,19 @@ def add_raw_memory(
         if (getattr(req, "session_id", "") or "").strip():
             mem.session_id = req.session_id.strip()
         s.add(mem)
-        s.flush()
+        try:
+            s.flush()
+        except IntegrityError:
+            # 票 24 子项 2：并发同文撞 (memory_type, key, user_id) 部分唯一索引
+            # ——败方回滚重读收敛到胜者那行（幂等回执形状与串行去重命中一致），
+            # 不再两行 verbatim + 双份向量/FTS，也不再 500。重读按原口径
+            # （owner 收窄 + status='active'）：胜者行必 active，恒可寻址；
+            # 寻址不到说明出现了超出索引口径的真异常，如实上抛不吞。
+            s.rollback()
+            existing = s.exec(q).first()
+            if existing is None:
+                raise
+            return {"memory_id": existing.id, "dedup": True, "verbatim": True}
         index_memory_item(
             mem.id,
             emb,
@@ -909,8 +990,8 @@ def build_memories_page(
             "decay_score": m.decay_score,
             "use_count": m.use_count,
             "scene_id": m.scene_id,
-            "created_at": m.created_at.isoformat(timespec="seconds") if m.created_at else None,
-            "updated_at": m.updated_at.isoformat(timespec="seconds") if m.updated_at else None,
+            "created_at": iso_utc(m.created_at) or None,
+            "updated_at": iso_utc(m.updated_at) or None,
             "content": content + ("…" if truncated else ""),
         }
 

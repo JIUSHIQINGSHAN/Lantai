@@ -24,7 +24,16 @@
 - ✅ 推荐说法：自然完整问句（「龙井茶冲泡水温是多少」——问句 ≥5 汉字已放行，
   不再被 15 字硬卡）或带「记得/上次」的回忆句
 - ⚠️ 孤立短查询（如「物业费在哪交」——单字「哪」不在疑问模式、无技术词）→ no_signal
-- 绕过闸门：`search` 传 `force: true` 显式直接检索（拾遗 ADR-0028）
+- 绕过闸门：`search` 传 `force: true` 显式直接检索（拾遗 ADR-0028）——只绕拾遗
+  relevance gate，**不绕更正闸**（见下）
+
+**更正闸随行（v0.68 票 02，`lantai/retrieval/supersede.py`）**：非时效查询（不带
+时效参数）的检索结果会对已被更正链取代的旧值做更正闸处理——问句无回看词
+（以前/之前/上次…）且取代它的新值也在本次结果里时，旧值直接丢弃；有回看词
+（在问历史）或新值不在场时，旧值保留但正文前加「[已更正：YYYY-MM-DD 起不再
+成立，仅作历史]」标记；`as_of` / `as_of_recorded` / `time_from` / `time_to`
+任一在场属历史查询面（时效视图），整段跳过、逐字旧行为。开关沿用
+`SHELL_HOOK_SUPERSEDED_GUARD`（false = 逐字旧行为）。`force: true` 不绕更正闸。
 
 想存记忆：
 ```
@@ -74,7 +83,7 @@ curl -X POST http://127.0.0.1:8767/search \
 
 | 工具 | 用途 | 关键参数 |
 |---|---|---|
-| `search` | 检索记忆 | `query`（必填；放行口径见 gate 规则）、`top_k`（默认5）、`force`（true 显式绕过闸门） |
+| `search` | 检索记忆 | `query`（必填；放行口径见 gate 规则）、`top_k`（默认5）、`force`（true 显式绕过闸门；不绕更正闸）、`as_of`/`as_of_recorded`/`time_from`/`time_to`（时效视图，ISO 8601，跳过更正闸） |
 | `add` | 写入记忆 | `title`（必填非空）、`content`（≥10 字）或 `media_url`（目识，二选一）、`lane`（默认 general） |
 | `feedback` | 反馈有用性 | `memory_id`（必填）、`helped`（bool） |
 

@@ -4,7 +4,7 @@
 为专用通道；POST /obsidian/sync 幂等（content_hash + 实体名去重）。
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from lantai.core.auth import get_current_user
 from lantai.models.schemas import ObsidianSyncReq
@@ -48,7 +48,12 @@ def obsidian_sync_route(req: ObsidianSyncReq, ctx=Depends(get_current_user)):
 
 
 @router.get("/verbatim/search")
-def verbatim_search_route(q: str, top_k: int = 5, ctx=Depends(get_current_user)):
+def verbatim_search_route(
+    q: str,
+    # 票 42：1..100——对齐 SearchReq.top_k 既有上界（同走 hybrid_search）
+    top_k: int = Query(5, ge=1, le=100),
+    ctx=Depends(get_current_user),
+):
     """verbatim 专用检索：原文直存默认不进混合召回，此通道可查（FTS+向量）。
 
     归属收窄（票 .scratch/readside-gaps/07）：此前不传 `principal`，

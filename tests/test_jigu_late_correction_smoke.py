@@ -115,8 +115,10 @@ def test_supersede_fact_atomic_smoke(jigu_test_db):
     with session_factory() as s:
         f1 = s.get(FactAtomic, fid_old)
         f2 = s.get(FactAtomic, fid_new)
-        assert f1.valid_to == anchor
-        assert f2.valid_from == anchor
+        # 票 53：str 列出口收敛 iso_utc 全精度形态（.000000 + +00:00）——
+        # 时刻数值不变，仅精度显式化
+        assert f1.valid_to == anchor.replace("00:00+00:00", "00:00.000000+00:00")
+        assert f2.valid_from == anchor.replace("00:00+00:00", "00:00.000000+00:00")
 
         # 验证双时间轴独立性：事务时间 created_at 仍为当前写入时间，事件时间 valid_to/from 为历史生效时刻
         assert f1.created_at is not None

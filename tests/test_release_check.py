@@ -180,6 +180,7 @@ def _stub_gate_producers(
     )
     monkeypatch.setattr(RC, "mcp_exposure_issues", lambda root: list(verdict))
     monkeypatch.setattr(RC, "schema_drift_issues", lambda root: list(verdict))
+    monkeypatch.setattr(RC, "retention_symmetry_issues", lambda root: list(verdict))
     monkeypatch.setattr(
         RC, "legacy_parity_probe", lambda root, **kw: {"anchors": [{"source_tag": "v0.0.1"}]}
     )
@@ -210,9 +211,10 @@ def test_gate_ledger_is_not_inherited_across_runs(monkeypatch, capsys):
         summaries.append(_last_summary(capsys.readouterr().out))
     assert codes == [0, 0], codes
     assert summaries[0] == summaries[1], f"两次运行汇总不同 = 账本跨运行累积：{summaries}"
-    # 票 04 起 11 项（新增「命名空间 provenance」）；新增检查项时同步这里的分母。
-    assert "12/12 通过" in summaries[0], summaries[0]
-    assert len(RC.results) == 12, f"账本残留上一轮判定：{RC.results}"
+    # 票 04 起 11 项（新增「命名空间 provenance」）；票 29 起 13 项
+    # （新增「观测面保留对称性」）。新增检查项时同步这里的分母。
+    assert "13/13 通过" in summaries[0], summaries[0]
+    assert len(RC.results) == 13, f"账本残留上一轮判定：{RC.results}"
 
 
 def test_lint_gate_missing_ruff_registers_skip(monkeypatch, tmp_path):
@@ -410,9 +412,9 @@ _ALIGNED_REFS = [
 
 
 def _stub_other_gate_producers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """把版本维度以外 9 项的生产者钉成「已取证且通过」，check_version_consistency
+    """把版本一致性以外全部检查项的生产者钉成「已取证且通过」，check_version_consistency
     与取文本/记账/汇总路径**保持真实**——比 _stub_gate_producers 更严：被追责的判据
-    不许被 stub（stub 它就是把病灶豁免写进测试）。"""
+    不许被 stub（stub 它就是把病灶豁免写进测试）。新增检查项时同步补桩。"""
     monkeypatch.setattr(RC, "lint_gate_issues", lambda root, skips=None: [])
     monkeypatch.setattr(RC, "ci_step_coverage_issues", lambda root: [])
     monkeypatch.setattr(RC, "gate_suite_flag_issues", lambda root: [])
@@ -422,6 +424,7 @@ def _stub_other_gate_producers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(RC, "git_issues", lambda root, v, ad, online=False, skips=None: [])
     monkeypatch.setattr(RC, "mcp_exposure_issues", lambda root: [])
     monkeypatch.setattr(RC, "schema_drift_issues", lambda root: [])
+    monkeypatch.setattr(RC, "retention_symmetry_issues", lambda root: [])
     monkeypatch.setattr(
         RC, "legacy_parity_probe", lambda root, **kw: {"anchors": [{"source_tag": "v0.0.1"}]}
     )

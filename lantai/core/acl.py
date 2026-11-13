@@ -27,6 +27,13 @@ class Principal:
 # Global fallback for unauthenticated requests / legacy codebase
 SYSTEM_PRINCIPAL = Principal(role="system")
 
+# 票 54：session_id 字符集立法。session_id 会写入围栏元数据属性
+# （diben anchor-{sid} / zhaji zhaji-{sid} 的 item_id）与底本/札记归属键：
+# fence.escape_attr 是结构主闸（属性位转义），此为写入口纵深第二层——
+# 非法字符（引号/尖括号/空白）在入口即拒，不静默截断（宁 miss 不脏写）。
+# MCP 面校验失败 ValueError → -32602；REST 面 pydantic pattern → 422。
+SESSION_ID_PATTERN = r"^[A-Za-z0-9_\-.]{3,128}$"
+
 
 def active_bindings() -> dict:
     return dict(settings.AGENT_LANE_BINDINGS or {})

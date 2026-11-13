@@ -203,7 +203,7 @@ def stats():
 
 @protected_router.get("/usage")
 def usage(ctx: Principal = Depends(get_current_user)):
-    """最近 7 天每日新增记忆数——单条 GROUP BY，不整表加载；缺日补零。"""
+    """最近 7 天每日新增记忆数——按本地日归桶（票 32），不整表加载；缺日补零。"""
     from lantai.ops.usage import collect_usage
 
     # 归属（票 .scratch/mcp-identity-gaps/01b）：service 层补了 principal

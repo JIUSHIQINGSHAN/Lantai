@@ -18,7 +18,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem, SkillCrystal
@@ -114,14 +114,16 @@ class FamenEngine:
         - shared_scope == 'swarm_shared' 全局公共共享放行；
         - 租户匹配且属主匹配放行。
         """
-        if self.principal is None:
-            return True
-        if getattr(self.principal, "is_admin", False):
+        if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
             return True
 
         # 公共结晶开放给集群伙伴
         if shared_scope == "swarm_shared":
             return True
+
+        # 票 57：无身份收敛 "default"（同 zhaji 口径），不再全放
+        if self.principal is None:
+            return owner_id in (None, "default")
 
         viewer = viewer_of(self.principal)
         current_tenant = getattr(self.principal, "tenant_id", None)
@@ -171,6 +173,10 @@ class FamenEngine:
         memories = s.exec(
             select(MemoryItem).where(
                 MemoryItem.status == "active",
+                # 票 62：lifecycle 过滤——supersede 只写 lifecycle_status=superseded
+                # （status 仍 active），只看 status 时已废除 SOP 照混进技能集。
+                # weakened 语义「仍参与检索但权重降低」放行。
+                MemoryItem.lifecycle_status.in_(("active", "weakened")),
                 (MemoryItem.decay_class == "procedural") | (MemoryItem.lane.in_(("rule", "skill"))),
             )
         ).all()
@@ -254,6 +260,12 @@ class FamenEngine:
             # 2. 尝试找 MemoryItem
             m = s.exec(select(MemoryItem).where(MemoryItem.id == skill_id)).first()
             if m:
+                # 票 62：superseded/retired 行不再作为技能详情直取（同列表口径）
+                if m.status != "active" or (m.lifecycle_status or "") not in (
+                    "active",
+                    "weakened",
+                ):
+                    return None
                 if not self._check_access(
                     owner_id=m.user_id,
                     tenant_id=m.tenant_id,
