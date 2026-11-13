@@ -128,10 +128,17 @@ class TelemetryWriter:
             from sqlalchemy import text
 
             days = max(1, int(settings.MONITOR_RETENTION_DAYS))
-            cutoff = (utcnow() - timedelta(days=days)).isoformat(sep=" ")
+            # 票 53 审查修正：cutoff 是 SQL 比较操作数、非 JSON 出口——
+            # created_at 列由 sqlite3 驱动以空格分隔形态落盘，旧码
+            # isoformat(sep=" ") 与之同形；若直接过 iso_utc（T 分隔），
+            # 同日历日行因 ' ' < 'T' 会被提前剪除（最多早 ~23h）。
+            # datetime() 归一两侧，与落盘分隔符形态解耦。
+            cutoff = (utcnow() - timedelta(days=days)).isoformat(sep=" ", timespec="microseconds")
             with db.get_session() as s:
                 result = s.exec(
-                    text("DELETE FROM operation_logs WHERE created_at < :cutoff"),
+                    text(
+                        "DELETE FROM operation_logs WHERE datetime(created_at) < datetime(:cutoff)"
+                    ),
                     params={"cutoff": cutoff},
                 )
                 s.commit()

@@ -6,7 +6,7 @@
 `ensure_can_delete`——A 不能替 B 批准一个技能结晶。
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from lantai.core.auth import get_current_user
 from lantai.evolution.crystal_promoter import promote_crystal
@@ -17,7 +17,12 @@ router = APIRouter()
 
 
 @router.get("/crystals")
-def crystals_list_route(status: str = "candidate", limit: int = 50, ctx=Depends(get_current_user)):
+def crystals_list_route(
+    # 票 42：1..200（候选态列表，对齐候选类上界）
+    status: str = "candidate",
+    limit: int = Query(50, ge=1, le=200),
+    ctx=Depends(get_current_user),
+):
     """结晶候选项列表（默认 candidate 待审）。"""
     return crystal_service.list_crystals(status, limit, principal=ctx)
 

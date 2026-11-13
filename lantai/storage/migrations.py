@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 37
+TARGET_SCHEMA_VERSION = 43
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -773,6 +773,293 @@ def _migrate_v37(conn) -> None:
     )
 
 
+def _migrate_v38(conn) -> None:
+    """v37 -> v38: corememoryblock (block, namespace, user_id) 唯一约束（票 23）。
+
+    并发首写曾按「SELECT 判空 → INSERT」双插平行行（红测 F5a）。建索引前先
+    去重：同 (block, namespace, user_id) 保留 version 最高（并列取 id 最大，
+    稳定确定）的一行——幽灵行从未被 .first() 口径稳定寻址，留新不留旧；
+    user_id IS NULL 的老行不参与去重（SQLite UNIQUE 对 NULL 视为互异，老库
+    多行 NULL 属主不受影响）。老 schema 无此表时静默早退（同 v37 守卫：
+    表由模型 create_all 建出，届时 __table_args__ 的唯一约束随表自带）。
+    """
+    if not _table_exists(conn, "corememoryblock"):
+        return
+    try:
+        cur = conn.execute(
+            """
+            DELETE FROM corememoryblock
+            WHERE user_id IS NOT NULL
+              AND id NOT IN (
+                SELECT id FROM (
+                  SELECT id, ROW_NUMBER() OVER (
+                    PARTITION BY block, namespace, user_id
+                    ORDER BY version DESC, id DESC
+                  ) AS rn
+                  FROM corememoryblock
+                  WHERE user_id IS NOT NULL
+                )
+                WHERE rn = 1
+              )
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_corememoryblock_block_ns_user
+            ON corememoryblock (block, namespace, user_id)
+            """
+        )
+        logger.info("Migrated v38: corememoryblock 唯一约束（票 23），去重 %s 行", cur.rowcount)
+    except Exception as exc:
+        logger.warning("迁移 v38 corememoryblock 唯一索引创建跳过: %s", exc)
+
+
+def _migrate_v39(conn) -> None:
+    """v38 -> v39: memoryitem (memory_type, key, user_id) 部分唯一索引（票 24）。
+
+    /memory/add/raw 与 mem create_skill 的去重是「SELECT(key=sha256) → embed
+    （网络往返）→ INSERT」，MemoryItem.key 无唯一约束兜底——并发同文两路都
+    判重落空即双行 verbatim + 双份向量/FTS。索引口径与去重 SELECT 逐字对齐
+    （`WHERE key != '' AND status = 'active'`）：default="" 的无键行、NULL 属主
+    老行（真实库 391 条 verbatim 全 NULL，SQLite 复合键含 NULL 互异）、归档/
+    撤回行都不受约束。
+
+    存量对账（票 23 v38 范式）：建索引前先去重——同 (memory_type, key,
+    user_id) 的 active 非空键组**留最早一行**（ORDER BY created_at ASC,
+    id ASC）：同键行内容逐字节相同（key 即正文 sha256），最早行是持有最长
+    引用史的原件，竞态败行是后来者、依赖最少——与 v38「留新」相反是有意
+    的（那边 .first() 寻址不稳、留新保最新内容；这边留旧保引用完整）。
+    NULL 属主同键组不参与去重（宁 miss 不脏写：无法判定属主归属，删错
+    即丢数据），只清点留痕，由写入路径的 SELECT 去重继续兜底。
+    老库缺列时静默早退（同 v37/v38 守卫：列由模型 create_all 建出，届时
+    __table_args__ 的部分唯一索引随表自带）。
+    """
+    if not _table_exists(conn, "memoryitem"):
+        return
+    if not _has_column(conn, "memoryitem", "key") or not _has_column(conn, "memoryitem", "status"):
+        return
+    guard = "key IS NOT NULL AND key != '' AND status = 'active' AND user_id IS NOT NULL"
+    cur = conn.execute(
+        f"""
+        DELETE FROM memoryitem
+        WHERE {guard}
+          AND id NOT IN (
+            SELECT id FROM (
+              SELECT id, ROW_NUMBER() OVER (
+                PARTITION BY memory_type, key, user_id
+                ORDER BY created_at ASC, id ASC
+              ) AS rn
+              FROM memoryitem
+              WHERE {guard}
+            )
+            WHERE rn = 1
+          )
+        """
+    )
+    removed = cur.rowcount if cur.rowcount is not None else -1
+    null_groups = conn.execute(
+        """
+        SELECT COUNT(*) FROM (
+          SELECT memory_type, key FROM memoryitem
+          WHERE key IS NOT NULL AND key != '' AND status = 'active' AND user_id IS NULL
+          GROUP BY memory_type, key HAVING COUNT(*) > 1
+        )
+        """
+    ).fetchone()[0]
+    try:
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_memoryitem_type_key_user_active
+            ON memoryitem (memory_type, key, user_id)
+            WHERE key != '' AND status = 'active'
+            """
+        )
+        logger.info(
+            "Migrated v39: memoryitem 内容键部分唯一索引（票 24），去重 %s 行；"
+            "NULL 属主同键组 %s 组保留（不脏写，SELECT 去重兜底）",
+            removed,
+            null_groups,
+        )
+    except Exception as exc:
+        logger.warning("迁移 v39 memoryitem 唯一索引创建跳过: %s", exc)
+
+
+def _migrate_v40(conn) -> None:
+    """v39 -> v40: 模型索引全量同步（幂等，单一真源 = SQLModel.metadata，票 25）。
+
+    病灶：索引只有两条出生路径——表首次创建时 create_all 随表落索引（SQLAlchemy
+    对已存在的表整体跳过，索引不补）、迁移链手写 CREATE INDEX。升级库
+    （remembrance.db 形态：身份时代之前的存量库）经迁移链 ALTER 补列后，身份列
+    以无索引形态进入每条检索的 WHERE 过滤，且无任何机制日后补上——模型声明
+    156 个索引、迁移链手写仅覆盖 27 组（立案探针 `.scratch/_v068_probe_r5_index_gap.py`
+    实跑 147/27/122，票 23/24 又各补一枚部分唯一索引）。
+
+    同步循环：遍历模型声明的全部索引，表存在才 CREATE INDEX；缺失补建
+    （logger.info 留痕——大表首次建索引持写锁，运维须可见首启变慢原因）、
+    已有跳过；单索引失败 warning 留痕不阻断链（同 v36 块内隔离口径，失败
+    索引下次启动重试）。此后迁移链不再手写新索引，索引增减只改模型。
+    边界如实声明：迁移链手写的 8 个链外索引名（含票 23 v38 的
+    uq_corememoryblock_block_ns_user 唯一索引——模型侧是 UniqueConstraint，
+    落 sqlite_autoindex，与本显式索引并存）保持原样不清退，除重属后续票。
+    """
+    # 惰性导入：本模块头注释明示模块级只依赖 logger（单向依赖铁律）；
+    # tables.py / trust_models 只依赖 sqlmodel 与枚举，运行期成环风险为零。
+    from sqlalchemy.dialects import sqlite as sa_sqlite
+    from sqlalchemy.schema import CreateIndex
+    from sqlmodel import SQLModel
+
+    import lantai.models.tables  # noqa: F401  注册全部表
+    import lantai.parameters.trust_models  # noqa: F401  参数信任面表同批注册
+
+    dialect = sa_sqlite.dialect()
+    existing = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+    }
+    total = created = failed = skipped_cols = 0
+    for table in sorted(SQLModel.metadata.tables.values(), key=lambda t: t.name):
+        if not _table_exists(conn, table.name):
+            continue
+        table_cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table.name})").fetchall()}
+        for ix in sorted(table.indexes, key=lambda i: i.name):
+            total += 1
+            if ix.name in existing:
+                continue
+            missing_cols = [c.name for c in ix.columns if c.name not in table_cols]
+            if missing_cols:
+                # 列维度的既有缺口（部分被索引列链上无对应 ADD COLUMN，如
+                # skillcrystal 身份列）——不是本同步步能修的，越权补列违反
+                # 「列迁移归 legacy_parity 对账」的分工。INFO 留痕不告警：
+                # 老库前向迁移必须安静（TestIndexCreationFailureIsLogged 契约），
+                # 真失败（同名冲突等）才走下方 warning 隔离路径。
+                skipped_cols += 1
+                logger.info(
+                    "迁移 v40 索引 %s 跳过（列缺失，列维度归 legacy_parity 对账）表 %s 缺 %s",
+                    ix.name,
+                    table.name,
+                    ",".join(missing_cols),
+                )
+                continue
+            try:
+                conn.execute(str(CreateIndex(ix).compile(dialect=dialect)))
+                existing.add(ix.name)
+                created += 1
+                logger.info(
+                    "迁移 v40 补建索引 %s（表 %s）",
+                    ix.name,
+                    table.name,
+                )
+            except Exception as exc:
+                failed += 1
+                logger.warning("迁移 v40 索引 %s 建立跳过: %s", ix.name, exc)
+    logger.info(
+        "Migrated v40: 模型索引同步（票 25）：声明 %s 个，补建 %s，"
+        "列缺失跳过 %s（列维度归 legacy_parity），失败隔离 %s",
+        total,
+        created,
+        skipped_cols,
+        failed,
+    )
+
+
+def _migrate_v41(conn) -> None:
+    """v40 -> v41（票 49 观测面）：retrieval_event 补 fts_terms_truncated。
+
+    FTS 关键词超 _GRAM_TERMS_MAX 的截断事实落列（is_system_noise 同款
+    BOOLEAN DEFAULT 0 先例）；索引同步：v40 的模型索引全量同步在旧库上会
+    因列未存在而跳过本列索引（v40 先于 v41），此处显式补建。幂等。
+    """
+    if not _has_column(conn, "retrieval_event", "fts_terms_truncated"):
+        conn.execute("ALTER TABLE retrieval_event ADD COLUMN fts_terms_truncated BOOLEAN DEFAULT 0")
+    # 建表归 create_all（_has_column 同款口径）——表不存在的库（迁移链夹具等）
+    # 跳过索引补建，否则本块炸链、版本停在 v40
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'retrieval_event'"
+    ).fetchone()
+    if has_table:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_retrieval_event_fts_terms_truncated"
+            " ON retrieval_event (fts_terms_truncated)"
+        )
+    logger.info("数据库增量迁移 v41 完成（FTS 截断观测列）")
+
+
+def _migrate_v42(conn) -> None:
+    """v41 -> v42（票 68）：cognitivepattern.dedup_key 升唯一索引。
+
+    应用层 check-then-act（先查后插）在并发下可双行落库，schema 层无兜底。
+    存量库先按 dedup_key 去重（同键保留最早 rowid——模式行是派生数据、同签名
+    语义等价，最早行观察窗最完整），再重建唯一索引；v29 落的旧同名索引是
+    非唯一的，必须先 DROP 才能升唯一。索引沿用 v29 名（ix_cognitivepattern_
+    dedup_key）——模型侧 index=True + unique=True 声明的同名索引在 create_all
+    新库上本就是唯一的，同名同唯一性迁移库与 create_all 库才对得齐（v40 索引
+    同步对账口径）。dedup_key NULL 行（v29 前存量）不参与唯一性（SQLite NULL
+    互不冲突），不追溯。幂等。建表归 create_all（v41 同款口径）。
+    表名为 SQLModel 默认小写 cognitivepattern（v29 同名，非下划线式）。
+    """
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cognitivepattern'"
+    ).fetchone()
+    if not has_table:
+        return
+    conn.execute(
+        "DELETE FROM cognitivepattern"
+        " WHERE dedup_key IS NOT NULL"
+        "   AND rowid NOT IN ("
+        "       SELECT MIN(rowid) FROM cognitivepattern"
+        "       WHERE dedup_key IS NOT NULL GROUP BY dedup_key)"
+    )
+    conn.execute("DROP INDEX IF EXISTS ix_cognitivepattern_dedup_key")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_cognitivepattern_dedup_key"
+        " ON cognitivepattern (dedup_key)"
+    )
+    logger.info("数据库增量迁移 v42 完成（dedup_key 唯一索引）")
+
+
+def _migrate_v43(conn) -> None:
+    """v42 -> v43（票 61）：failurerecord 补归属列 tenant_id/user_id。
+
+    FailureRecord 此前无归属列——三读面（润物摘要/反省/心斋切面）想过滤
+    都无从过滤。nullable 保存量兼容：旧行归属 NULL 不回填（ownerless 保
+    系统态 vs 全归 default 属 ready-for-human 决策点，票面回执列明两选项）；
+    读侧 OR IS NULL 口径下旧行人人可读（票 57 家族兼容口径）。幂等；
+    建表归 create_all（v41 同款口径）。
+    """
+    if not _has_column(conn, "failurerecord", "tenant_id"):
+        conn.execute("ALTER TABLE failurerecord ADD COLUMN tenant_id TEXT")
+    if not _has_column(conn, "failurerecord", "user_id"):
+        conn.execute("ALTER TABLE failurerecord ADD COLUMN user_id TEXT")
+    # 索引：create_all 新库自带；旧库 ALTER 后列存在，此处补建（v41 口径）
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'failurerecord'"
+    ).fetchone()
+    if has_table:
+        if not _has_index(conn, "ix_failurerecord_tenant_id"):
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_failurerecord_tenant_id ON failurerecord (tenant_id)"
+            )
+        if not _has_index(conn, "ix_failurerecord_user_id"):
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_failurerecord_user_id ON failurerecord (user_id)"
+            )
+    logger.info("数据库增量迁移 v43 完成（FailureRecord 归属列）")
+
+
+def _has_index(conn, index_name: str) -> bool:
+    """查询索引是否存在（v43 专用；表不存在视为 True，同 _has_column 口径）。"""
+    try:
+        return bool(
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+                (index_name,),
+            ).fetchone()
+        )
+    except Exception as exc:
+        logger.warning("索引检查跳过 %s: %s", index_name, exc)
+        return False
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -810,6 +1097,12 @@ MIGRATIONS = [
     (35, _migrate_v35),
     (36, _migrate_v36),
     (37, _migrate_v37),
+    (38, _migrate_v38),
+    (39, _migrate_v39),
+    (40, _migrate_v40),
+    (41, _migrate_v41),
+    (42, _migrate_v42),
+    (43, _migrate_v43),
 ]
 
 

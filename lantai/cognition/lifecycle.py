@@ -97,7 +97,10 @@ class KnowledgeLifecycleManager:
         for item in items:
             if (
                 item.lifecycle_status == LifecycleStatus.ACTIVE
-                and (item.confidence or 1.0) < self.WEAKENED_THRESHOLD
+                # 票 68：`or 1.0` 吞 0.0（合法零置信）——零置信记忆永不过降级线；
+                # 显式 None 判定（票 14 falsy-or 家族新位点）
+                and (item.confidence if item.confidence is not None else 1.0)
+                < self.WEAKENED_THRESHOLD
             ):
                 self.weaken(item)
                 weakened.append(item)
@@ -111,7 +114,8 @@ class KnowledgeLifecycleManager:
         for item in items:
             if (
                 item.lifecycle_status in (LifecycleStatus.WEAKENED, LifecycleStatus.SUPERSEDED)
-                and (item.decay_score or 1.0) < decay_threshold
+                # 票 68：同上——decay_score=0.0 被 `or 1.0` 吞掉永不过退役线
+                and (item.decay_score if item.decay_score is not None else 1.0) < decay_threshold
             ):
                 self.retire(item)
                 retired.append(item)

@@ -72,6 +72,17 @@ ADR-0049 的状态机从 `pending → {acked, missed}` 扩展为 `pending → {a
 - **配套如实代价**：`build_query_set` 样本池排除空 query（抹文后空行不掺 `sample_count` 口径）；recall 报告对空 query 显示「(已抹除)」占位——抹文是可观测的，不是隐身的。
 - **超时轮孤儿事件就地收尾（`mark_abandoned`，随行增补）**：`query` 通道撞硬墙超时时，主线程先把画像兜底帧回给宿主——**不带 event_id**；daemon worker 不可取消，跑完仍会 `log_retrieval` 落一条带原话的 pending 事件，宿主手里无 id、回执与 `retrieval_veto` 都发不出，原话只能滞留到上条 300s 扫描兜底。`lantai/observability/retrieval_log.py::mark_abandoned`（shell_hook 超时回调 `_query_abandoned` 消费）就地完成同一转移：pending→missed 并抹 `query_text`/`query_norm_hash`/`used_ids`，行保留可观测——与 300s 扫描殊途同归，只是不必等；只动 pending（已 vetoed/acked/missed 不改写），行为锁 `tests/test_hook_timeout_orphan_event.py`。
 
+### 2.7 检索事件 TTL 与证据留存的边界（v0.68 票 29 增补，2026-11-08）
+
+§2.5/§2.6 的抹文都是**对留存行的内容脱敏**（行保留）；票 29 补上另一半——**对超龄行的物理删除**（容量）：`retrieval_event` / `llm_call_event` 是全库最高频写入表，此前零行级清理无界增长（三条观测链只有 `operation_logs` 有 `MONITOR_RETENTION_DAYS` prune）。两者叠加后老行整体消失，互不冲突。
+
+增补决策（不改变 §2.1–2.6 的任何语义）：
+
+- **TTL 与观察窗绑死**：清扫运行时钳制 `max(配置天数, RECALL_MONITOR_WINDOW_DAYS)`（`RETRIEVAL_EVENT_RETENTION_DAYS`，默认 30 天；`lantai/observability/retention.py`）——TTL 短于观察窗会让 recall_report 的窗口计数（ADR-0027）静默失真，宁可钳制 + warning 留痕。回执对账窗（`RECEIPT_MISS_TIMEOUT_SECONDS=300s`）远小于天粒度 TTL，结构性满足；missed/pending 的抹文（§2.6）在行存续期内先行发生，TTL 删除只发生在其后再过 `RETRIEVAL_EVENT_RETENTION_DAYS` 天。
+- **证据留存 = TTL 内**：§2.2/§2.6 的「原话不再留库」与守门计数（vetoed 单列可观测）的**证据留存语义，以保留期 TTL 为边界**——vetoed/missed 行与其它行一样按 `RETRIEVAL_EVENT_RETENTION_DAYS` 过期物理删除，本 ADR 不为任何回执状态保留「永留」承诺（守门命中轮数的历史聚合由司天面 retention 块的时点可见性承担，不承诺跨 TTL 回溯）。
+- **挂载与对账**：清扫挂 scheduler `observability_purge`（每小时，镜像 kanhe_purge）；发布门禁 `retention_symmetry` 项以 `OBSERVABILITY_RETENTION_TABLES` 清单为真源逐表对账「旋钮 ↔ 清扫函数 ↔ 生产挂载」——后续新增观测追加表必须进清单，否则拒发。
+- **llm_call_event 同律**：外呼结局标量（零正文）保留 `LLM_CALL_EVENT_RETENTION_DAYS`（默认 30 天），司天 24h 降级率窗被天粒度 TTL 结构性覆盖。
+
 ## 3. 命名
 
 不引入新中文正名：`vetoed`/否决沿用 Hermes 已有词汇（PR #26 起），`retrieval_veto` 为协议动作英文名。ADR-0013 的登记义务只对**新的正式中文名**生效，本决策无新增。

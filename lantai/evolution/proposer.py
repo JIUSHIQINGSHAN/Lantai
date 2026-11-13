@@ -4,11 +4,13 @@ from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.evolution.promoter import VALID_PROPOSAL_TYPES
 from lantai.llm.client import chat_json
+from lantai.llm.fence import wrap_as_data
 from lantai.llm.prompts import PROPOSAL_SYS
 from lantai.models.enums import ProposalStatus
 from lantai.models.tables import MemoryCandidate, MemoryItem, MemoryProposal
 from lantai.services.prompt_service import get_prompt
 from lantai.storage import db
+from lantai.storage.cas import cas_update
 
 # 提案类型白名单：单一来源在 promoter.VALID_PROPOSAL_TYPES（apply 侧是最终
 # 执行者，类型合法性由它定义）。此处复用而非另立一份，避免两处漂移。
@@ -67,10 +69,16 @@ def propose_from_candidate(
                 (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
             )
         related = s.exec(related_q).all()
-        existing_snippets = "\n".join(f"- ({m.memory_type}) {m.key}: {m.content}" for m in related)
+        # 票 55：候选三段与 EXISTING 行都是不可信文本直入 LLM 提示——
+        # proposal_type 裁决可被正文语义级说辞操纵，全部走樊篱数据位
+        # （snippet 行整行包裹：type/key/content 同属记忆派生数据）；
+        # GATE 段是本服务结构化输出，不在包裹面（Answer 登记二次注入残余）。
+        existing_snippets = "\n".join(
+            f"- {wrap_as_data(f'({m.memory_type}) {m.key}: {m.content}')}" for m in related
+        )
         user = (
-            f"CANDIDATE SUMMARY:\n{cand.summary}\n"
-            f"CLAIMS:\n{cand.claims}\nACTIONS:\n{cand.actions}\n\n"
+            f"CANDIDATE SUMMARY:\n{wrap_as_data(cand.summary)}\n"
+            f"CLAIMS:\n{wrap_as_data(cand.claims)}\nACTIONS:\n{wrap_as_data(cand.actions)}\n\n"
             f"EXISTING:\n{existing_snippets or '(none)'}\n\n"
             f"GATE:\n{gate_result}"
         )
@@ -86,6 +94,30 @@ def propose_from_candidate(
             s.add(cand)
             s.commit()
             return None
+
+        # 票 22 S1：裁决认领锁——「new|fastpath|pending_review → gated」条件
+        # UPDATE 作为本流程写阶段第一条 DML（CAS 认领）。可认领集 = 三处调用方
+        # 的合法前置态（worker 演化的 new/fastpath + 待审队列的 pending_review）；
+        # gated/rejected 不在其中——此前 chat_json（秒级 LLM 往返）期间零隔离，
+        # 并发 reject 提交后这里无条件置 gated：拒绝决定被推翻（复活），且为已
+        # 拒候选生成 pending 提案。认领在 LLM 之后（方案 A：先无事务评估、后短
+        # 事务条件提交），rowcount=0 即并发败方：LLM 结果弃用、不落提案、不复活；
+        # 胜方回滚（含异常路径）认领一并撤销，无中间态残留。
+        from lantai.services.candidate_service import CandidateStateConflict
+
+        claimed = cas_update(
+            s,
+            MemoryCandidate,
+            candidate_id,
+            {"status": ["new", "fastpath", "pending_review"]},
+            {"status": "gated"},
+        )
+        if claimed != 1:
+            logger.warning(
+                "候选 %s 提案认领失败：状态已被并发裁决改写，放弃生成提案（宁 miss 不脏写）",
+                candidate_id,
+            )
+            raise CandidateStateConflict("candidate state changed; refresh and retry")
 
         # Skill 资产化：提取的 actions（步骤）沉淀为 structure，随提案落库
         # （proposer → promoter 全链路保留，否则步骤在提案应用后丢失）

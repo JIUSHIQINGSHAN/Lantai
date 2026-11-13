@@ -35,17 +35,18 @@ from lantai.storage import db
 
 # seam1 的证据作用域：本用例自带一个别的文件写不进去的租户。
 #
-# 为什么不能留在 `default`：`scan_redundancy` 的 `limit` 是「先扫到的 N 对」，不是
-# 「最相似的 N 对」——`lantai/cognition/jiaochou.py:200-203` 凑够 limit 就 break，
-# `:205` 才排序；而全量测试共用一个会话级 SQLite（`tests/conftest.py::_isolate_data_dir`）。
-# 撒进公共 `default` 租户后，「前面跑了哪些文件、撒进去多少对」决定了本用例的对进不进
-# 得了窗口：逆序全量与乱序全量（seed=20261103）各判红一条，正序绿只是运气（票 05 续20）。
+# 为什么不能留在 `default`：全量测试共用一个会话级 SQLite
+# （`tests/conftest.py::_isolate_data_dir`），撒进公共 `default` 租户后，「前面跑了哪些
+# 文件、撒进去多少对」决定了本用例的对进不进得了候选池窗口：逆序全量与乱序全量
+# （seed=20261103）各判红一条，正序绿只是运气（票 05 续20）。
 #
-# 为什么换租户是**隔离**而不是**绕过**：读侧 ACL（`jiaochou.py::_check_access`）只放行
-# 同属主行 + `user_id IS NULL` 行 + `swarm_shared` 行。实测逆序全量跑到本用例时共享库为
-# `active=46 / owner_null=0 / swarm_shared=0`——外来租户的可见集为空，竞争对手是被 ACL
-# 挡在门外，不是被断言视而不见；截断机制另有 `test_jiaochou_scan_limit_keeps_first_found_*`
-# 钉住，防止有人把「窗口里恰好有我」当成正确性证据。
+# 为什么换租户是**隔离**而不是**绕过**：读侧 ACL 现已下推 SQL where（票 59，None 收敛
+# `viewer_of`="default"，同票 57 口径）——只放行同属主行 + `user_id IS NULL` 行 +
+# `swarm_shared` 行，外来租户在 SQL 侧就不可见。实测逆序全量跑到本用例时共享库为
+# `active=46 / owner_null=0 / swarm_shared=0`——竞争对手是被 ACL 挡在门外，不是被断言
+# 视而不见；扫描口径（池=最近创建的 min(limit,100) 行，池内取最相似 limit 对）另有
+# `test_jiaochou_scan_limit_caps_pool_and_output` 钉住，防止有人把「窗口里恰好有我」
+# 当成正确性证据。
 SEAM1_USER = f"jc-seam1-{uuid.uuid4().hex[:8]}"
 
 pytestmark = pytest.mark.mcp_full_surface()
@@ -245,14 +246,14 @@ class TestJiaochouApiSmoke:
         assert "表述同义合并" in prompt
 
 
-def test_jiaochou_scan_limit_keeps_first_found_not_most_similar():
-    """机制锁（真库真引擎，不 mock）：`limit` 是「先扫到的 N 对」，不是「最相似的 N 对」。
+def test_jiaochou_scan_limit_caps_pool_and_output():
+    """机制锁（真库真引擎，不 mock）：`limit` 同时钳制候选池与输出（票 59 新口径）。
 
-    根因位置 `lantai/cognition/jiaochou.py:200-203`：凑够 limit 对就 break，`:205` 才按
-    相似度排序——排序作用在一个**已经被截断**的集合上，结果只取决于行的插入顺序。而
-    seam1 读写的是会话级共享库（`tests/conftest.py::_isolate_data_dir`），插入顺序又取决于
-    「前面跑了哪些文件」，于是「窗口里有没有我」变成一个跑测顺序的函数。这条锁用私有库
-    把截断机制本身钉住（本票不改校雠的返回契约），防止有人把「正序绿」当成正确性证据。
+    旧口径（票 05 续20 时代）是「先扫到的 N 对」——凑够 limit 就 break、排序作用在
+    已截断集合上，结果取决于插入顺序。票 59 收窄为池口径：候选池 = 最近创建的
+    min(limit, 100) 行，池内全对按相似度排序取最相似 limit 对。本锁用私有库确定性
+    钉住三个面：池上界（scanned_pool）、输出上界（total_pairs ≤ limit）、相似度优先
+    截断（同分 1.0 的簇对挤掉次相似的独立对——截断按相似度，不按插入序）。
     """
     t = utcnow()
     crowd = []
@@ -265,16 +266,22 @@ def test_jiaochou_scan_limit_keeps_first_found_not_most_similar():
         _mem("jc-crowd", "mine-b", "生产环境集群配置了两级本地与分布式缓存架构", t),
     ]
     with _private_store() as session:
-        for m in [*crowd, *mine]:  # 竞争对先进库 = 先被扫到
+        for m in [*crowd, *mine]:
             session.add(m)
         session.commit()
         res = JiaochouEngine(
             session=session, principal=Principal(user_id="jc-crowd")
         ).scan_redundancy(limit=10, similarity_threshold=0.5)
     mine_ids = {mine[0].id, mine[1].id}
+    # 池上界：只扫最近 limit 行（26 行在库里，池只装 10）
+    assert res["scanned_pool"] == 10, res.get("scanned_pool")
+    # 输出上界：池内 45+ 对达阈，只报最相似 limit 对
     assert res["total_pairs"] == 10, res["total_pairs"]
+    sims = [p["similarity"] for p in res["redundant_pairs"]]
+    assert sims == sorted(sims, reverse=True), "输出未按相似度降序"
+    # 相似度优先截断：簇对全同 1.0 占满窗口，相似度次之的 mine 对（<1.0）被挤出
     assert mine_ids not in [{p["memory_id_a"], p["memory_id_b"]} for p in res["redundant_pairs"]], (
-        "窗口居然装得下：这条锁没测到截断机制"
+        "相似度截断失效：次相似对竟挤进同分簇对占满的窗口"
     )
 
 

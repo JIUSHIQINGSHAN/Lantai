@@ -24,6 +24,7 @@ from lantai.models.tables import (
 from lantai.parameters.registry import default_snapshot, get_registry_version
 from lantai.parameters.validation import snapshot_hash
 from lantai.storage import db
+from lantai.storage.cas import cas_update
 
 
 def _ensure_aware(dt):
@@ -105,12 +106,28 @@ def claim_advice_batch() -> dict | None:
         run_id = run.id
         base_snapshot = dict(run.base_snapshot)
 
+        won: list[ParamAdvicePaper] = []
         for p in batch:
-            p.state = "processing"
-            p.claimed_at = now
-            p.run_id = run_id
-            p.updated_at = now
-            s.add(p)
+            # 票 22 W3：逐篇 CAS 认领——「new|retry → processing」条件 UPDATE。
+            # 此前扫描快照后整批无条件改写：定时作业 × ingest worker 结尾触发
+            # 并发领取，双 run 都指向同一批论文（双份 LLM 生成 + 双 run 账），
+            # 后提交者覆盖先提交者的 run_id。rowcount=0 = 该篇已被并发 run 认领，
+            # 落败不覆盖；全部落败则回滚撤销本 run（未提交，无孤儿 run）。
+            claimed = cas_update(
+                s,
+                ParamAdvicePaper,
+                p.id,
+                {"state": ["new", "retry"]},
+                {"state": "processing", "claimed_at": now, "run_id": run_id, "updated_at": now},
+            )
+            if claimed == 1:
+                won.append(p)
+        if not won:
+            s.rollback()
+            return None
+        run.source_document_ids = [p.raw_document_id for p in won]
+        ids = [p.id for p in won]
+        raw_ids = [p.raw_document_id for p in won]
         s.commit()
 
         # commit 后再取正文，避免长事务
@@ -147,12 +164,23 @@ def recover_stale_claims() -> int:
             claimed = _ensure_aware(p.claimed_at)
             if claimed >= stale_before:
                 continue
-            p.state = "retry"
-            p.attempt_count += 1
-            p.last_error_code = "stale_recovery"
-            p.updated_at = utcnow()
-            s.add(p)
-            recovered += 1
+            # 票 22 W3：恢复也走 CAS——「processing → retry」条件 UPDATE + 写时
+            # 重验 claimed_at < 截止：若该篇在此期间被新 run 重新认领
+            # （claimed_at=now > 截止），rowcount=0 跳过，不把新鲜认领打回
+            # retry；并发双 sweep 亦只成功一次（attempt_count 不重复膨胀）。
+            recovered += cas_update(
+                s,
+                ParamAdvicePaper,
+                p.id,
+                {"state": "processing"},
+                {
+                    "state": "retry",
+                    "attempt_count": p.attempt_count + 1,
+                    "last_error_code": "stale_recovery",
+                    "updated_at": utcnow(),
+                },
+                ParamAdvicePaper.claimed_at < stale_before,
+            )
         if stale:
             s.commit()
             logger.warning("recovered %d stale processing claims", recovered)

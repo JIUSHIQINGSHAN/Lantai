@@ -16,7 +16,7 @@ from typing import Any
 
 from lantai.core.idempotency import auto_key, claim, fingerprint_payload, settle
 from lantai.core.logger import logger
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 
 # 内存任务状态注册表
 _TASKS: dict[str, dict[str, Any]] = {}
@@ -35,7 +35,7 @@ def _execute_dialogue_task(
     """后台线程执行完整摄取流水线。"""
     try:
         _TASKS[task_id]["status"] = "processing"
-        _TASKS[task_id]["started_at"] = utcnow().isoformat()
+        _TASKS[task_id]["started_at"] = iso_utc(utcnow())
 
         # 调用同步核心摄取函数
         from lantai.ingestion.dialogue import ingest_dialogue
@@ -50,7 +50,7 @@ def _execute_dialogue_task(
 
         _TASKS[task_id]["status"] = "completed"
         _TASKS[task_id]["result"] = res
-        _TASKS[task_id]["completed_at"] = utcnow().isoformat()
+        _TASKS[task_id]["completed_at"] = iso_utc(utcnow())
         logger.info("潜移：异步对话摄取任务【%s】执行完成", task_id)
         # 勘合结算：显式键落 done 回执（TTL 内重放），自动键不落（到期自然失效）
         settle(binding, ok=True, result=res, task_id=task_id)
@@ -58,7 +58,7 @@ def _execute_dialogue_task(
         logger.error("潜移：异步对话摄取任务【%s】执行失败: %s", task_id, exc)
         _TASKS[task_id]["status"] = "failed"
         _TASKS[task_id]["error"] = str(exc)
-        _TASKS[task_id]["completed_at"] = utcnow().isoformat()
+        _TASKS[task_id]["completed_at"] = iso_utc(utcnow())
         # 勘合结算（上游 S-2/S-8 教训）：失败必须释放键，重试才能重新执行；
         # 失败的任务永远不得以 accepted/done 重放。
         settle(binding, ok=False)
@@ -79,6 +79,11 @@ def submit_async_dialogue(
     同键同文在回执 TTL 内重放原 task_id（响应多一个 replayed: true 标记），
     同键不同文 422；不传时以内容指纹为自动键，只护 LEASE_SECONDS 重试窗。
     """
+    # 票 43：通道开关在提交时 fail-fast——被拒请求不建任务、不占勘合键，
+    # 免得宿主拿着 task_id 轮询出一条 failed 假任务
+    from lantai.ingestion.dialogue import assert_dialogue_enabled
+
+    assert_dialogue_enabled()
     raw_text = (text or "").strip()
     if not raw_text:
         raise ValueError("text 不能为空")
@@ -121,7 +126,7 @@ def submit_async_dialogue(
         "user_id": user_id,
         "source": source,
         "session_id": session_id or None,
-        "submitted_at": utcnow().isoformat(),
+        "submitted_at": iso_utc(utcnow()),
         "result": None,
         "error": None,
     }

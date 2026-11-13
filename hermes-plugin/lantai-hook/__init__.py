@@ -16,12 +16,14 @@
 安全边界：
 - 子进程启动失败/失活 → 静默降级返回 None（Hermes 忽略 None）
 - 单次请求 5 秒硬超时（防卡死）；对话写入 30 秒超时（含 LLM 提取）
+  （票 73 落地：_exchange_line 看门狗，超时 kill 子进程走既有异常路径自愈）
 - 任何异常绝不抛出（插件不能拖慢/搞崩 Hermes）
 - 会话缓冲有界（条数/总字符上限，防长期会话内存膨胀）
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os

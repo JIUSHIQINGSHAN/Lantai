@@ -1,6 +1,10 @@
+import math
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from lantai.api import (
     routes_admin_router,
@@ -105,6 +109,31 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="兰台记忆（Lantai）", version="0.66.0", lifespan=lifespan)
 
+
+@app.exception_handler(RequestValidationError)
+async def sanitized_validation_exception_handler(request, exc: RequestValidationError):
+    """422 渲染消毒（票 58）：FastAPI 的 422 响应体以 allow_nan=False 渲染（票 35 红测
+    实测），RequestValidationError 的 error input 携带 NaN/inf（宽松 JSON 解析器产出
+    的非标准字面量）时 422 自身渲染炸 500——验证错误被吞成服务器错误。此处把
+    error 载荷里的非有限 float 替换为 repr 字符串后照常 422，仅影响坏输入的报错
+    形态，正常 422 逐字节不变。
+    """
+
+    def _replace_non_finite(obj):
+        if isinstance(obj, float):
+            return repr(obj) if not math.isfinite(obj) else obj
+        if isinstance(obj, dict):
+            return {k: _replace_non_finite(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_replace_non_finite(v) for v in obj]
+        return obj
+
+    return JSONResponse(
+        status_code=422,
+        content={"detail": _replace_non_finite(jsonable_encoder(exc.errors()))},
+    )
+
+
 # 润物（ADR-0060）：自适应认知中间件（检测 X-Task 请求头并自适应注入 Base64 认知摘要）
 from lantai.runtime.middleware import CognitiveMiddleware
 
@@ -112,6 +141,35 @@ app.add_middleware(CognitiveMiddleware)
 
 # 司天（ADR-0044）：请求级遥测（内存指标 + 采样落库）；关闭时中间件零开销直通
 app.add_middleware(TelemetryMiddleware)
+
+# 票 70（UI 出口防护）：统一安全头——nosniff 防嗅探改读、DENY 防点击劫持
+# （控制台有裁决/删除/回滚按钮，可被第三方页 iframe 叠加诱导层）、CSP 防外
+# 注脚本执行。CSP 宽严按实测内联用量白名单化：routes_ui 内联页 11 个
+# script、index.html 40 处内联样式，script/style 需 'unsafe-inline'——仍拦
+# 外部脚本注入这一真实威胁（远端 script 会被 default-src 'self' 拒载）；
+# 不开 'unsafe-eval'。
+_UI_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "connect-src 'self'; "
+    "font-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'; "
+    "object-src 'none'"
+)
+
+
+@app.middleware("http")
+async def _security_headers_middleware(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Content-Security-Policy", _UI_CSP)
+    return response
+
 
 # 公共端点（不需要鉴权）
 app.include_router(routes_health_router)

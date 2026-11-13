@@ -37,7 +37,7 @@ class AddMemoryReq(BaseModel):
         default="private"
     )  # 同袍（ADR-0058）：private（私有）/ swarm_shared（公共知识殿堂）
     session_id: str = Field(default="", max_length=128)  # 来源链显式透传（v022 票据 01）
-    metadata: dict = {}  # 附加元数据，落 RawDocument.meta（如 source=pre_compress）
+    metadata: dict = {}  # 附加元数据，落 RawDocument.meta（如 source=host_tool）
 
     @field_validator("metadata")
     @classmethod
@@ -144,7 +144,10 @@ class ObsidianSyncReq(BaseModel):
     """Obsidian 笔记同步请求（Ticket 02）：原文直存 + [[双链]] 实体/边沉淀。"""
 
     title: str = ""
-    content: str = Field(min_length=1, max_length=500_000)
+    # 票 41：与 verbatim 通道下游 RawMemoryReq.content（max_length=200_000）
+    # 及 obsidian_service._VERBATIM_MAX_CHARS 同值——此前 50 万放行而 service
+    # 20 万拒绝，两层阈值矛盾（可校验输入炸 500 的根）
+    content: str = Field(min_length=1, max_length=200_000)
     lane: str = Field(default="general")
     tags: list[str] = []
     metadata: dict = {}

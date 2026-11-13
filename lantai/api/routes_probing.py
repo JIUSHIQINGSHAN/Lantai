@@ -11,7 +11,7 @@
 """
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from lantai.core.auth import get_current_user
 from lantai.services.probing_service import (
@@ -31,7 +31,9 @@ class ProbeDetectReq(BaseModel):
 class ProbeResolveReq(BaseModel):
     conflict_id: str | None = None
     probe_id: str | None = None
-    user_reply: str
+    # 票 44：user_reply 无上界 + 分类器正则 O(n²) = 单请求卡死 threadpool
+    # 一线程——2000 字对齐自然语言答复合理上界，非法 422 不静默截断。
+    user_reply: str = Field(max_length=2000)
 
 
 @router.post("/probing/detect")

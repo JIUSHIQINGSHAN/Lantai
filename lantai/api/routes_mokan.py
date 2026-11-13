@@ -36,14 +36,18 @@ def mokan_verify_endpoint(
         )
     except PermissionError as pe:
         raise HTTPException(403, str(pe)) from pe
-    except Exception as e:
-        raise HTTPException(422, str(e)) from e
+    except ValueError as ve:
+        # 票 41：模板统一到 kaogong 版——ValueError（可校验输入）→422，
+        # 其余异常放给 500 全局 handler（服务器故障不得计入调用方滥用，
+        # str(e) 不得泄内部文本进响应体）
+        raise HTTPException(422, str(ve)) from ve
 
 
 @router.get("/audit")
 def mokan_audit_endpoint(
     query: str = Query(default="", description="检索过滤关键字（可选）"),  # noqa: B008
-    limit: int = Query(default=50, description="最大审计条数"),  # noqa: B008
+    # 票 42：1..500（只读 payload 面，负值 LIMIT -1 = 无上限）
+    limit: int = Query(default=50, ge=1, le=500, description="最大审计条数"),  # noqa: B008
     ctx=Depends(get_current_user),
 ) -> dict[str, Any]:
     """磨勘：存量事实矛盾冲突与证据链审计（ADR-0083）。"""
@@ -57,5 +61,8 @@ def mokan_audit_endpoint(
         )
     except PermissionError as pe:
         raise HTTPException(403, str(pe)) from pe
-    except Exception as e:
-        raise HTTPException(422, str(e)) from e
+    except ValueError as ve:
+        # 票 41：模板统一到 kaogong 版——ValueError（可校验输入）→422，
+        # 其余异常放给 500 全局 handler（服务器故障不得计入调用方滥用，
+        # str(e) 不得泄内部文本进响应体）
+        raise HTTPException(422, str(ve)) from ve

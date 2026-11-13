@@ -21,6 +21,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -28,6 +29,7 @@ import warnings
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from lantai.core.settings import settings as _settings
@@ -289,12 +291,35 @@ def handle_search(params: dict) -> dict:
         from lantai.runtime.middleware import build_cognitive_summary
 
         task_desc = params.get("task") or query
-        cog_summary = build_cognitive_summary(task_desc)
+        # 票 61：透传身份——此前不传，rules/failures 双轨在 build_cognitive_summary
+        # 内按 None 处理（rules 票 57 收敛 default；failures 票 61 同轨）。
+        # 宿主透传 user_id 时摘要按该身份收窄，不再跨用户泄漏。
+        _inj_principal = _principal_from_params(params)
+        cog_summary = build_cognitive_summary(
+            task_desc,
+            user_id=getattr(_inj_principal, "user_id", None) if _inj_principal else None,
+            tenant_id=getattr(_inj_principal, "tenant_id", None) if _inj_principal else None,
+        )
         if cog_summary:
             ret["cognitive_summary"] = cog_summary
     except Exception:
         pass
     return ret
+
+
+def _int_param(params: dict, key: str, default: int, lo: int, hi: int) -> int:
+    """票 66：int 参数先验后用——类型错/越界 ValueError（dispatch → -32602）。
+
+    双面同钳：界对齐 REST 既有 Query/Field（REST 为真源）；拒绝而非静默钳制
+    （宁 miss 不脏写）——负 limit 的 Python 切片语义（去尾部 N 条）与 SQLite
+    LIMIT -1（无上限）都是静默错形。bool 是 int 子类，显式排除防 true→1 混入。
+    """
+    v = params.get(key, default)
+    if isinstance(v, bool) or not isinstance(v, int):
+        raise ValueError(f"参数 {key} 须为整数，收到 {type(v).__name__}")
+    if not lo <= v <= hi:
+        raise ValueError(f"参数 {key} 越界：须在 [{lo}, {hi}]，收到 {v}")
+    return v
 
 
 def _principal_from_params(params: dict):
@@ -692,6 +717,10 @@ def handle_probe_resolve(params: dict) -> dict:
 
     cid = params.get("conflict_id") or params.get("probe_id") or ""
     reply = params.get("user_reply", "")
+    # 票 44：与 REST max_length=2000 同钳——超长回执进分类器前即拒
+    # （ValueError → -32602），不静默截断（宁 miss 不脏写）。
+    if isinstance(reply, str) and len(reply) > 2000:
+        raise ValueError("user_reply must be <= 2000 chars")
     # 归属（票 01a）：肯定分支会把 `incoming_ref` 写进别人的记忆正文——
     # 全轮最严重的一条
     return resolve_probe_response(
@@ -738,6 +767,11 @@ def handle_causal_counterfactual(params: dict) -> dict:
         raise ValueError("target_memory_id must be a non-empty string")
     if not isinstance(intervened_id, str) or not intervened_id.strip():
         raise ValueError("intervened_node_id must be a non-empty string")
+    # 票 39：与 REST max_depth ge/le 同钳——深度无界入口即拒（宁 miss 不脏写）
+    from lantai.cognition.causal import CAUSAL_DEPTH_MAX, CAUSAL_DEPTH_MIN
+
+    if not CAUSAL_DEPTH_MIN <= max_depth <= CAUSAL_DEPTH_MAX:
+        raise ValueError(f"max_depth must be between {CAUSAL_DEPTH_MIN} and {CAUSAL_DEPTH_MAX}")
 
     return evaluate_counterfactual_service(
         target_id=target_id,
@@ -756,6 +790,13 @@ def handle_causal_project_impact(params: dict) -> dict:
     min_confidence = float(params.get("min_confidence", 0.05))
     if not isinstance(memory_id, str) or not memory_id.strip():
         raise ValueError("memory_id must be a non-empty string")
+    # 票 39：与 REST 同面同钳
+    from lantai.cognition.causal import CAUSAL_DEPTH_MAX, CAUSAL_DEPTH_MIN
+
+    if not CAUSAL_DEPTH_MIN <= max_depth <= CAUSAL_DEPTH_MAX:
+        raise ValueError(f"max_depth must be between {CAUSAL_DEPTH_MIN} and {CAUSAL_DEPTH_MAX}")
+    if not 0.0 <= min_confidence <= 1.0:
+        raise ValueError("min_confidence must be between 0.0 and 1.0")
 
     return project_causal_impact_service(
         memory_id=memory_id,
@@ -782,7 +823,9 @@ def handle_memory_archived_search(params: dict) -> dict:
 
     query = params.get("query", "")
     lane = params.get("lane", "")
-    scene = params.get("scene", "") or params.get("scene_id", "")
+    # 票 26：未广告别名 scene_id 删除消费点——两名一参只文档一个（schema
+    # 只广告 scene），别名从未进广告面，不留暗门。
+    scene = params.get("scene", "")
     limit = int(params.get("limit", 50))
     offset = int(params.get("offset", 0))
     return search_archived_memories(
@@ -1402,6 +1445,13 @@ def handle_checkpoint_write(params: dict) -> dict:
     blocks = params.get("blocks")
     if not isinstance(session_id, str) or len(session_id.strip()) < 3:
         raise ValueError("session_id must be a string of >= 3 chars")
+    # 票 54：字符集收窄（纵深第二层）——session_id 进底本围栏 item_id
+    # 属性（anchor-{sid}），非法形态写入口即拒（ValueError → -32602），
+    # 不静默截断；与 REST 面 pydantic pattern 同钳（SESSION_ID_PATTERN 单一真源）。
+    from lantai.core.acl import SESSION_ID_PATTERN
+
+    if not re.fullmatch(SESSION_ID_PATTERN, session_id):
+        raise ValueError("session_id must match ^[A-Za-z0-9_\\-.]{3,128}$")
     if not isinstance(blocks, dict):
         raise ValueError("blocks must be an object")
     # 归属（票 .scratch/mcp-identity-gaps/01a）：快照含会话全文，落 principal 归属
@@ -1478,6 +1528,12 @@ def handle_scratchpad_get(params: dict) -> dict:
 def handle_scratchpad_write(params: dict) -> dict:
     """札记：更新/覆盖指定会话的工作区便签（ADR-0032）。"""
     session_id = str(params.get("session_id", "default") or "default")
+    # 票 54：字符集收窄（同 handle_checkpoint_write）——札记 session_id
+    # 进提炼链围栏 item_id 属性（zhaji-{sid}），写入口即拒非法形态。
+    from lantai.core.acl import SESSION_ID_PATTERN
+
+    if not re.fullmatch(SESSION_ID_PATTERN, session_id):
+        raise ValueError("session_id must match ^[A-Za-z0-9_\\-.]{3,128}$")
     content = str(params.get("content", "") or "")
     from lantai.services.scratchpad_service import write_scratchpad
 
@@ -1692,7 +1748,7 @@ def handle_dossier_focus(params: dict) -> dict:
     query = params.get("query")
     if query is not None and not isinstance(query, str):
         raise ValueError("query must be a string or null")
-    limit = int(params.get("limit", 20))
+    limit = _int_param(params, "limit", 20, 1, 100)  # 票 66：对齐 DossierFocusReq [1,100]
 
     from lantai.services.dossier_service import focus_dossier_service
 
@@ -1720,7 +1776,7 @@ def handle_muci_catalog(params: dict) -> dict:
     domain = params.get("domain")
     lane = params.get("lane")
     detail_level = params.get("detail_level", "compact")
-    max_entries = int(params.get("max_entries", 3))
+    max_entries = _int_param(params, "max_entries", 3, 1, 20)  # 票 66：对齐 REST [1,20]
 
     from lantai.services.muci_service import get_catalog_service
 
@@ -1736,9 +1792,17 @@ def handle_muci_catalog(params: dict) -> dict:
 def handle_qijuzhu_chronicle(params: dict) -> dict:
     """起居注：时序记忆脉络与每日全息纪事查询（v0.45 ADR-0066）。"""
     date_str = params.get("date")
-    days = int(params.get("days", 1))
+    # 票 66：对齐 REST Query [1,30]/[1,200]（MCP 面默认天数 1 与 REST 3 各承其面，界同钳）
+    days = _int_param(params, "days", 1, 1, 30)
     detail_level = params.get("detail_level", "summary")
-    limit = int(params.get("limit", 50))
+    limit = _int_param(params, "limit", 50, 1, 200)
+    if date_str is not None:
+        # 票 66：裸 strptime 的「time data does not match」调用方无从自查，
+        # 格式错带格式指引拒绝（宁 miss 不脏写）。
+        try:
+            time.strptime(str(date_str), "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"date 格式须为 YYYY-MM-DD，收到 {date_str!r}") from None
 
     from lantai.services.qijuzhu_service import (
         get_daily_chronicle_service,
@@ -1746,11 +1810,31 @@ def handle_qijuzhu_chronicle(params: dict) -> dict:
     )
 
     if days > 1:
-        return get_timeline_service(
+        res = get_timeline_service(
             days=days,
             limit=limit,
             principal=_principal_from_params(params),
         )
+        # 票 27 病灶 3：date/detail_level 仅单日分支消费，多日时间线分支此前
+        # 静默丢弃（票 07「假承诺」轻量版）——宁 visible 不静默：调用方显式
+        # 传了未消费参数时回执体如实标记。
+        unused = [
+            nm
+            for nm, given in (
+                ("date", "date" in params),
+                ("detail_level", "detail_level" in params),
+            )
+            if given
+        ]
+        if unused and isinstance(res, dict):
+            warnings = res.setdefault("warnings", [])
+            if isinstance(warnings, list):
+                warnings.append(
+                    "参数未适用："
+                    + "/".join(unused)
+                    + " 仅单日查询（days=1）生效，多日时间线分支不消费"
+                )
+        return res
     return get_daily_chronicle_service(
         date_str=date_str,
         detail_level=detail_level,
@@ -1762,7 +1846,9 @@ def handle_famen_skill(params: dict) -> dict:
     """法门：程序性技能匹配与标准 SOP 获取（v0.46 ADR-0067）。"""
     skill_id = params.get("skill_id")
     task = params.get("task")
-    limit = int(params.get("limit", 5))
+    # 票 66：单 limit 参数同伺 match/list 两面，钳到两 REST 面的并集 [1,200]
+    # （match 面自带上界 20 由 REST 路由自守；负值在引擎是切片语义反转）
+    limit = _int_param(params, "limit", 5, 1, 200)
 
     from lantai.services.famen_service import (
         get_skill_detail_service,
@@ -1787,8 +1873,8 @@ def handle_zuozheng_evidence(params: dict) -> dict:
     """佐证：证据链反查与断言可解释性验证（v0.47 ADR-0068）。"""
     memory_id = params.get("memory_id")
     claim = params.get("claim")
-    max_depth = int(params.get("max_depth", 2))
-    limit = int(params.get("limit", 5))
+    max_depth = _int_param(params, "max_depth", 2, 1, 5)  # 票 66：对齐 REST [1,5]，封 BFS 扩散面
+    limit = _int_param(params, "limit", 5, 1, 20)  # 票 66：对齐 REST [1,20]
 
     from lantai.services.zuozheng_service import (
         inspect_evidence_service,
@@ -1846,7 +1932,11 @@ def handle_shiyi_pipeline(params: dict) -> dict:
 
 
 def handle_jiaochou_collate(params: dict) -> dict:
-    """校雠：智能语义去重与知识对齐订误（v0.49 ADR-0070）。"""
+    """校雠：智能语义去重与知识对齐订误（v0.49 ADR-0070）。
+
+    scan 口径（票 59）：候选池 = 最近创建的 min(limit, 100) 行，池内两两取最相似
+    limit 对；threshold 合法区间 (0, 1]，越界由引擎拒绝（-32602 错误载荷，不炸宿主）。
+    """
     text_a = params.get("text_a")
     text_b = params.get("text_b")
     scan = bool(params.get("scan", False))
@@ -1923,7 +2013,11 @@ def handle_diben_anchor(params: dict) -> dict:
 
 
 def handle_cehou_observe(params: dict) -> dict:
-    """测候：影子观察期视窗巡检、视窗扫描与样本实测上报（v0.52 ADR-0073）。"""
+    """测候：影子观察期视窗巡检、视窗扫描与样本实测上报（v0.52 ADR-0073）。
+
+    票 60：视窗落库 CehouWindow 表，create 撞他人 window_id → 409 结构化回执
+    （HTTPException 回执化，同 chenfeng unarchive 先例），不落 -32603 兜底。
+    """
     scan = bool(params.get("scan", False))
     window_id = params.get("window_id")
     target_type = params.get("target_type")
@@ -1937,43 +2031,46 @@ def handle_cehou_observe(params: dict) -> dict:
     )
 
     p = _principal_from_params(params)
-    if scan:
-        return scan_cehou_windows_service(target_type=target_type, principal=p)
+    try:
+        if scan:
+            return scan_cehou_windows_service(target_type=target_type, principal=p)
 
-    if record_sample and window_id:
-        success = bool(params.get("success", True))
-        latency = float(params.get("latency_ms", 0.0))
-        score_delta = float(params.get("score_delta", 0.0))
-        return record_cehou_sample_service(
-            window_id=window_id,
-            success=success,
-            latency_ms=latency,
-            score_delta=score_delta,
-            principal=p,
-        )
+        if record_sample and window_id:
+            success = bool(params.get("success", True))
+            latency = float(params.get("latency_ms", 0.0))
+            score_delta = float(params.get("score_delta", 0.0))
+            return record_cehou_sample_service(
+                window_id=window_id,
+                success=success,
+                latency_ms=latency,
+                score_delta=score_delta,
+                principal=p,
+            )
 
-    create = bool(params.get("create", False))
-    if create and window_id and target_type and params.get("target_id"):
-        return create_cehou_window_service(
-            window_id=window_id,
-            target_type=target_type,
-            target_id=str(params.get("target_id")),
-            required_days=int(params.get("required_days", 7)),
-            min_samples=int(params.get("min_samples", 10)),
-            principal=p,
-        )
+        create = bool(params.get("create", False))
+        if create and window_id and target_type and params.get("target_id"):
+            return create_cehou_window_service(
+                window_id=window_id,
+                target_type=target_type,
+                target_id=str(params.get("target_id")),
+                required_days=int(params.get("required_days", 7)),
+                min_samples=int(params.get("min_samples", 10)),
+                principal=p,
+            )
 
-    if window_id:
-        res = inspect_cehou_window_service(
-            window_id=window_id,
-            mock_days_observed=params.get("mock_days_observed"),
-            principal=p,
-        )
-        if res:
-            return res
-        return {"error": f"Observation window {window_id} not found"}
+        if window_id:
+            res = inspect_cehou_window_service(
+                window_id=window_id,
+                mock_days_observed=params.get("mock_days_observed"),
+                principal=p,
+            )
+            if res:
+                return res
+            return {"error": f"Observation window {window_id} not found"}
 
-    return scan_cehou_windows_service(principal=p)
+        return scan_cehou_windows_service(principal=p)
+    except HTTPException as e:
+        return {"ok": False, "error": e.detail, "status_code": e.status_code}
 
 
 def handle_shishi_vault(params: dict) -> dict:
@@ -2017,7 +2114,7 @@ def handle_qingniao_messenger(params: dict) -> dict:
     content = params.get("content")
     priority = str(params.get("priority", "normal") or "normal")
     status = params.get("status")
-    limit = int(params.get("limit", 20))
+    limit = _int_param(params, "limit", 20, 1, 100)  # 票 66：对齐 REST [1,100]，负值=无限拉取
     namespace = str(params.get("namespace", "default") or "default")
 
     from lantai.services.qingniao_service import (
@@ -2097,12 +2194,20 @@ def handle_pisha_refine(params: dict) -> dict:
     )
 
 
+# 票 26：归属主体参数的单一声明源——66 个消费 user_id 的工具 schema 统一引用
+# 此常量（_principal_from_params 中心消费，宿主透传归属；不传留空）。
+_USER_ID_PARAM = {
+    "type": "string",
+    "description": "宿主透传的归属主体；不传留空（宁 miss 不脏写）",
+}
+
 TOOLS = {
     "search": {
         "description": "搜索记忆（支持辨域 domain 过滤）",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "query": {"type": "string", "description": "搜索查询"},
                 "top_k": {"type": "integer", "default": 5, "description": "返回条数 [1, 100]"},
                 "domain": {
@@ -2117,6 +2222,25 @@ TOOLS = {
                 "as_of_recorded": {"type": "string", "description": "事务轴近似 as-of（ISO 8601）"},
                 "time_from": {"type": "string", "description": "事件轴窗口起点（ISO 8601）"},
                 "time_to": {"type": "string", "description": "事件轴窗口终点（ISO 8601）"},
+                # 票 26：以下四参此前有行为、无广告（消费面私藏）——治理杠杆
+                # 与身份链必须在 tools/list 可见，宿主按 schema 开发不再漏配。
+                "force": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "评测/放行豁免：true 跳过相关性闸（relevance_check），常规调用禁止",
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "会话透传：落检索事件供写线活性判据与 backfill 归属（票 02）",
+                },
+                "shared_scope": {
+                    "type": "string",
+                    "description": "共享面过滤：swarm_shared 公共知识殿堂（ADR-0058）",
+                },
+                "task": {
+                    "type": "string",
+                    "description": "认知摘要注入选题（缺省用 query）",
+                },
             },
             "required": ["query"],
         },
@@ -2126,6 +2250,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "query": {"type": "string", "description": "检索查询文本"},
                 "top_k": {"type": "integer", "default": 5, "description": "初筛数量"},
                 "max_hops": {"type": "integer", "default": 2, "description": "图扩散跳数 [1, 3]"},
@@ -2144,6 +2269,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "title": {"type": "string"},
                 "content": {
                     "type": "string",
@@ -2162,6 +2288,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string"},
                 "query": {"type": "string"},
                 "helped": {"type": "boolean"},
@@ -2175,6 +2302,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "event_id": {"type": "string", "description": "search 返回的检索事件 id"},
                 "used_ids": {
                     "type": "array",
@@ -2218,6 +2346,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "task_id": {"type": "string", "description": "任务 ID"},
             },
             "required": ["task_id"],
@@ -2228,6 +2357,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 50, "description": "返回条数 [1, 500]"},
             },
         },
@@ -2237,6 +2367,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "candidate_id": {"type": "string"},
                 "approve": {"type": "boolean"},
                 "reason": {
@@ -2253,6 +2384,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "candidate_id": {"type": "string", "description": "候选记忆 ID"},
             },
             "required": ["candidate_id"],
@@ -2263,6 +2395,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 50, "description": "扫描候选条数 [1,500]"},
             },
         },
@@ -2272,6 +2405,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "actions": {
                     "type": "array",
                     "items": {
@@ -2297,17 +2431,28 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "min_approve_conf": {
                     "type": "number",
                     "default": 0.85,
+                    "minimum": 0.0,
+                    "maximum": 1.0,
                     "description": "自动批准的置信度门槛 [0.0, 1.0]",
                 },
                 "max_reject_conf": {
                     "type": "number",
                     "default": 0.25,
+                    "minimum": 0.0,
+                    "maximum": 1.0,
                     "description": "自动淘汰的置信度天花板 [0.0, 1.0]",
                 },
-                "limit": {"type": "integer", "default": 50, "description": "巡检候选条数 [1,500]"},
+                "limit": {
+                    "type": "integer",
+                    "default": 50,
+                    "minimum": 1,
+                    "maximum": 500,
+                    "description": "巡检候选条数 [1,500]",
+                },
                 "dry_run": {
                     "type": "boolean",
                     "default": False,
@@ -2321,6 +2466,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 100, "description": "最大考评条目上限"},
             },
         },
@@ -2330,6 +2476,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string", "description": "目标记忆 ID"},
                 "write": {
                     "type": "boolean",
@@ -2499,7 +2646,9 @@ TOOLS = {
         "description": "沉潜（折叠压缩）：扫描高密度碎片记忆聚类提纯为主记忆，并修剪极度衰减的边缘噪音（ADR-0036）",
         "inputSchema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
         },
     },
     "consolidation_report": {
@@ -2514,6 +2663,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "query": {"type": "string", "description": "用户当前查询或对话文本"},
                 "session_id": {"type": "string", "description": "会话 ID（可选）"},
             },
@@ -2525,6 +2675,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "conflict_id": {"type": "string", "description": "冲突事件 ID 或探针 probe_id"},
                 "probe_id": {"type": "string", "description": "探针 ID（可选，兼容 conflict_id）"},
                 "user_reply": {"type": "string", "description": "用户自然语言答复"},
@@ -2537,6 +2688,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "content": {"type": "string", "description": "原文内容（代码/日志/配置等）"},
                 "title": {"type": "string", "default": ""},
                 "lane": {"type": "string", "default": "general"},
@@ -2550,6 +2702,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "title": {"type": "string", "default": ""},
                 "content": {"type": "string", "description": "笔记正文"},
                 "lane": {"type": "string", "default": "general"},
@@ -2563,6 +2716,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string"},
             },
             "required": ["memory_id"],
@@ -2573,6 +2727,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string"},
                 "reason": {"type": "string"},
             },
@@ -2584,6 +2739,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 50, "description": "返回条数 [1, 500]"},
                 "status": {
                     "type": "string",
@@ -2599,6 +2755,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "event_id": {"type": "string"},
                 "decision": {"type": "string", "description": "resolved | dismissed"},
                 "note": {"type": "string", "default": ""},
@@ -2611,6 +2768,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "days": {
                     "type": "integer",
                     "default": 7,
@@ -2624,6 +2782,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "scene_id": {
                     "type": "string",
                     "description": "场景 id（导航块或 scenes_list 中可见）",
@@ -2637,13 +2796,19 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 50, "description": "返回条数 [1, 500]"},
             },
         },
     },
     "get_digest": {
         "description": "获取今日记忆盘点报告（摘要 + 五项统计）",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "mem_help": {
         "description": "mem:help——返回支持的 mem: 命令表与示例（命令式维护入口）",
@@ -2651,13 +2816,19 @@ TOOLS = {
     },
     "mem_sync": {
         "description": "mem:sync——刷新注入资产：场景增量聚类补跑 + 今日 digest 重算",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "mem_create_skill": {
         "description": "mem:create-skill——沉淀 Skill 资产（名称 + 描述 + 步骤，procedural 永不衰减）",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "name": {"type": "string", "description": "Skill 名称（必填）"},
                 "description": {"type": "string", "default": ""},
                 "steps": {
@@ -2675,6 +2846,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {
                     "type": "string",
                     "description": "记忆 id（卸载注入行或 evidence 中可见）",
@@ -2688,6 +2860,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "slug": {
                     "type": "string",
                     "description": "页面 slug（index.md 链接或 overview [[wikilink]] 中可见）",
@@ -2701,13 +2874,19 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 20, "description": "返回条数 [1,200]"},
             },
         },
     },
     "mem_stats": {
         "description": "记忆概览（只读聚合）：总数/按 lane/decay_class/待审候选积压/检查点/待审提案",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "mem_health": {
         "description": "深度健康检查：SQLite 可读 + 向量存储可用（不触发外部 LLM 调用）",
@@ -2718,6 +2897,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {
                     "type": "integer",
                     "description": "参与聚类的记忆上限 [1, 5000]；可选，不传不校验",
@@ -2727,19 +2907,26 @@ TOOLS = {
     },
     "autodream_trigger": {
         "description": "执行一轮蒸馏：聚类 → 规划 → 落 pending 提案（低置信度进 skipped，人工裁决后才应用）",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "proposals_list": {
         "description": "待审提案列表（蒸馏/反射产出，等人工裁决）",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "status": {
                     "type": "string",
                     "default": "pending",
+                    "enum": ["pending", "approved", "rejected", "applied", "rolled_back"],
                     "description": "pending|approved|rejected|applied|rolled_back",
                 },
-                "limit": {"type": "integer", "default": 50},
+                "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
             },
         },
     },
@@ -2748,6 +2935,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "proposal_id": {
                     "type": "string",
                     "description": "提案 id（proposals_list 中可见）",
@@ -2764,13 +2952,19 @@ TOOLS = {
     },
     "tree_view": {
         "description": "分类树视图（只读）：节点 + 每节点挂载计数",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "tree_add": {
         "description": "新增分类树节点（父缺失/重名/非法名 -> 校验失败，宁 miss 不脏写）",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "name": {"type": "string", "description": "节点名（不含路径分隔符）"},
                 "parent_path": {
                     "type": "string",
@@ -2787,6 +2981,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string", "description": "记忆 id"},
                 "node_path": {
                     "type": "string",
@@ -2801,12 +2996,14 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "status": {
                     "type": "string",
                     "default": "candidate",
+                    "enum": ["candidate", "approved", "archived"],
                     "description": "candidate|approved|archived",
                 },
-                "limit": {"type": "integer", "default": 50},
+                "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
             },
         },
     },
@@ -2815,6 +3012,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "dry_run": {"type": "boolean", "default": False, "description": "true=预演不写库"},
             },
         },
@@ -2824,6 +3022,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "crystal_id": {"type": "string", "description": "候选 id（crystals_list 中可见）"},
                 "approve": {
                     "type": "boolean",
@@ -2848,6 +3047,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "crystal_id": {"type": "string", "description": "技能结晶 ID"},
                 "steps": {
                     "type": "array",
@@ -2865,14 +3065,26 @@ TOOLS = {
     },
     "reflect_run": {
         "description": "执行一轮反思：健康扫描 -> 提案 -> 裁决（高置信 auto-apply，中风险落 pending，宁 miss 不脏写）",
-        "inputSchema": {"type": "object", "properties": {}},
-    },
-    "mem_usage": {
-        "description": "用量统计（只读）：最近 N 天每日新增记忆数（缺日补零）",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "days": {"type": "integer", "default": 7, "description": "统计天数 [1,365]"},
+                "user_id": _USER_ID_PARAM,
+            },
+        },
+    },
+    "mem_usage": {
+        "description": "用量统计（只读）：最近 N 天每日新增记忆数（缺日补零；每日桶按本地日切，票 32）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+                "days": {
+                    "type": "integer",
+                    "default": 7,
+                    "minimum": 1,
+                    "maximum": 365,
+                    "description": "统计天数 [1,365]",
+                },
             },
         },
     },
@@ -2881,6 +3093,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "namespace": {"type": "string", "default": "default"},
             },
         },
@@ -2890,6 +3103,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "query": {"type": "string", "description": "搜索查询"},
                 "top_k": {"type": "integer", "default": 5, "description": "返回条数 [1, 100]"},
             },
@@ -2901,6 +3115,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 150, "description": "节点上限 [1,500]"},
             },
         },
@@ -2910,6 +3125,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string", "description": "目标决策记忆 ID"},
                 "query": {"type": "string", "description": "自然语言描述/查询"},
                 "max_depth": {"type": "integer", "default": 10, "description": "最大溯源深度"},
@@ -2921,6 +3137,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string", "description": "起始事件或决策记忆 ID"},
                 "max_depth": {"type": "integer", "default": 10, "description": "最大遍历深度"},
             },
@@ -2932,6 +3149,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "q": {"type": "string", "description": "起点记忆/查询文本"},
                 "max_depth": {"type": "integer", "default": 3, "description": "链深度 [1,5]"},
                 "branch": {"type": "integer", "default": 3, "description": "每层分支数 [1,10]"},
@@ -2954,6 +3172,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 250, "description": "最大节点数 [1, 1000]"},
                 "scene_id": {"type": "string", "description": "限定场景 ID（可选）"},
                 "lane": {"type": "string", "description": "限定泳道（可选）"},
@@ -2970,6 +3189,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "query": {"type": "string", "description": "关键词查询"},
                 "lane": {"type": "string", "description": "限定泳道（可选）"},
                 "scene": {"type": "string", "description": "限定场景 ID（可选）"},
@@ -2983,6 +3203,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "memory_id": {"type": "string", "description": "待解封恢复的记忆 ID"},
                 "reason": {"type": "string", "description": "解封原由/说明"},
             },
@@ -2994,6 +3215,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "session_id": {"type": "string", "description": "会话标识（≥3 字符）"},
                 "blocks": {
                     "type": "object",
@@ -3005,17 +3227,28 @@ TOOLS = {
     },
     "checkpoint_latest": {
         "description": "底本：读取最近一次会话快照（只读）",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "persona_get": {
         "description": "器识：获取当前激活人格基座（L/G/E 三层与提示块，只读）",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": _USER_ID_PARAM,
+            },
+        },
     },
     "persona_set": {
         "description": "器识：设置/更新人格基座（L/G/E 三层认知模型）",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "name": {"type": "string", "description": "人格名称"},
                 "linguistic_style": {"type": "string", "description": "L: 言语与表达风格"},
                 "guidelines": {"type": "string", "description": "G: 行为准则与戒律"},
@@ -3030,6 +3263,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "session_id": {"type": "string", "default": "default", "description": "会话标识"},
             },
         },
@@ -3039,6 +3273,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "session_id": {"type": "string", "default": "default", "description": "会话标识"},
                 "content": {"type": "string", "description": "要记下的即时便签文本"},
             },
@@ -3050,6 +3285,7 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "user_id": _USER_ID_PARAM,
                 "task": {"type": "string", "default": "", "description": "当前任务描述或目标"},
                 "top_k": {
                     "type": "integer",
@@ -3384,12 +3620,12 @@ TOOLS = {
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "扫描返回最大对数",
+                    "description": "扫描候选池行数上界兼返回对数上界（1..100，池=最近创建优先）",
                     "default": 50,
                 },
                 "similarity_threshold": {
                     "type": "number",
-                    "description": "冗余聚类相似度阈值 [0.1, 1.0]",
+                    "description": "冗余聚类相似度阈值 (0, 1]，越界拒绝",
                     "default": 0.7,
                 },
                 "user_id": {"type": "string", "description": "操作租户/用户 ID"},
@@ -3489,6 +3725,12 @@ TOOLS = {
                 "target_id": {"type": "string", "description": "观察目标实体 ID"},
                 "required_days": {"type": "integer", "default": 7, "description": "达标观察天数"},
                 "min_samples": {"type": "integer", "default": 10, "description": "达标最小样本数"},
+                # 票 26：与 REST 面同参同语义（routes_cehou.py「模拟观察天数
+                # （测试/巡检指定）」）——治理杠杆必须 tools/list 可见，不得暗门。
+                "mock_days_observed": {
+                    "type": "integer",
+                    "description": "模拟观察天数（测试/巡检指定，覆盖实测观察窗天数）",
+                },
                 "user_id": {"type": "string", "description": "操作租户/用户 ID"},
             },
         },
@@ -3814,7 +4056,16 @@ def _get_active_tools() -> dict:
     return {k: v for k, v in TOOLS.items() if k in HERMES_CORE_TOOLS}
 
 
-def handle(msg: dict) -> dict | None:
+def handle(msg: object) -> dict | None:
+    if not isinstance(msg, dict):
+        # 票 52：非对象 JSON 帧（[1]/"str"/null）此前在 msg.get("id") 即
+        # AttributeError——serve 循环里一个畸形帧即打死进程。回 -32600
+        # （id 不可判定置 null，JSON-RPC 允许），服务必须活下去。
+        return {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32600, "message": "invalid request: frame must be an object"},
+        }
     mid = msg.get("id")
     method = msg.get("method", "")
     active_tools = _get_active_tools()
@@ -3899,14 +4150,29 @@ def handle(msg: dict) -> dict | None:
                 "id": mid,
                 "error": {"code": -32603, "message": f"internal error: {type(e).__name__}"},
             }
+        try:
+            # 票 52：响应组装必须同在守卫内——handler 成功但结果含裸 datetime
+            # （checkpoint_latest）时 dumps 的 TypeError 此前冲出 handle() 杀死
+            # 进程。allow_nan=False 把 NaN 静默非法 JSON（审计登记项）转成显式错。
+            # 计入 guard 失败：恒返不可序列化输出的工具也要能被熔断。
+            text = json.dumps(result, ensure_ascii=False, allow_nan=False)
+        except Exception as e:
+            if token is not None:
+                guard.finish(token, failed=True)
+            return {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {
+                    "code": -32603,
+                    "message": f"response serialization failed: {type(e).__name__}",
+                },
+            }
         if token is not None:
             guard.finish(token, failed=False)
         return {
             "jsonrpc": "2.0",
             "id": mid,
-            "result": {
-                "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]
-            },
+            "result": {"content": [{"type": "text", "text": text}]},
         }
     return {
         "jsonrpc": "2.0",
@@ -3931,6 +4197,18 @@ def _configure_stdio_utf8() -> None:
         os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 
+def _emit_error_frame(mid, type_name: str) -> None:
+    """兜底错误帧（票 52）：主循环存活契约的最后防线——单帧只值一条 -32603，
+    服务进程不得因任何一帧的异常退出。"""
+    frame = {
+        "jsonrpc": "2.0",
+        "id": mid,
+        "error": {"code": -32603, "message": f"internal error: {type_name}"},
+    }
+    sys.stdout.write(json.dumps(frame, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
 def main():
     _configure_stdio_utf8()
     for line in sys.stdin:
@@ -3943,9 +4221,22 @@ def main():
             msg = json.loads(line)
         except json.JSONDecodeError:
             continue
-        resp = handle(msg)
+        # 票 52：单帧只值一条错误响应——handle 或响应组装的任何异常都不得冲出
+        # 主循环（此前 checkpoint_latest 的裸 datetime 一帧即杀死整个 stdio
+        # 服务，全部工具失联）。mid 先取，兜底帧保住请求关联。
+        mid = msg.get("id") if isinstance(msg, dict) else None
+        try:
+            resp = handle(msg)
+        except Exception as e:
+            _emit_error_frame(mid, type(e).__name__)
+            continue
         if resp is not None:
-            sys.stdout.write(json.dumps(resp, ensure_ascii=False) + "\n")
+            try:
+                out = json.dumps(resp, ensure_ascii=False, allow_nan=False)
+            except Exception as e:
+                _emit_error_frame(mid, type(e).__name__)
+                continue
+            sys.stdout.write(out + "\n")
             sys.stdout.flush()
 
 

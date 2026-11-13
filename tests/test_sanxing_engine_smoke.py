@@ -42,12 +42,13 @@ def test_seam1_pure_remedy_generation(db_session: Session):
         valid_to=now - timedelta(days=1),
         decay_class="exponential",
     )
-    # 2. 制造一条被替代记忆
+    # 2. 制造一条被替代记忆（票 62：诊断改读 superseded_by 列——旧种子
+    # structure={"superseded_by"} 是死键（全仓零写点），必须走真实写列路径
+    # KnowledgeLifecycleManager.supersede）
     superseded_mem = MemoryItem(
         id="mem_sup_01",
         content="老版认证接口规范",
         status="active",
-        structure={"superseded_by": "mem_sup_new"},
     )
     # 3. 制造一条低帮助碎片
     unhelpful_mem = MemoryItem(
@@ -58,6 +59,13 @@ def test_seam1_pure_remedy_generation(db_session: Session):
         helpful_count=0,
     )
     db_session.add_all([expired_mem, superseded_mem, unhelpful_mem])
+    db_session.commit()
+    # 票 62：真实 supersede 写列路径（列：lifecycle_status + superseded_by）
+    from lantai.cognition.lifecycle import KnowledgeLifecycleManager
+
+    KnowledgeLifecycleManager(db_session).supersede(
+        superseded_mem, MemoryItem(id="mem_sup_new", content="新版认证接口规范")
+    )
     db_session.commit()
 
     engine = SanxingEngine(session=db_session)
@@ -94,6 +102,9 @@ def test_seam2_single_item_remediation_apply(db_session: Session):
     assert res.total_defects == 1
     assert res.applied_count == 1
 
+    # 票 67：注入会话提交权归调用方（引擎不再整体 commit 调用方会话——半边 2
+    # 病灶恰是旧行为），调用方履行提交义务后再验证持久化
+    db_session.commit()
     # 验证落库持久化：状态已流转为 archived
     refreshed = db_session.get(MemoryItem, "mem_to_expire")
     assert refreshed.status == "archived"
@@ -107,7 +118,6 @@ def test_seam3_batch_health_score_transition(db_session: Session):
         id="mem_stale_01",
         content="废弃 API 路由",
         status="active",
-        structure={"superseded_by": "mem_new_01"},
     )
     mem_low_help = MemoryItem(
         id="mem_low_01",
@@ -119,6 +129,13 @@ def test_seam3_batch_health_score_transition(db_session: Session):
     )
     db_session.add_all([mem_stale, mem_low_help])
     db_session.commit()
+    # 票 62：同 seam1——死键种子改真实写列路径
+    from lantai.cognition.lifecycle import KnowledgeLifecycleManager
+
+    KnowledgeLifecycleManager(db_session).supersede(
+        mem_stale, MemoryItem(id="mem_new_01", content="新版 API 路由")
+    )
+    db_session.commit()
 
     engine = SanxingEngine(session=db_session)
     res = engine.generate_remedies(auto_apply=True, now=now)
@@ -127,6 +144,8 @@ def test_seam3_batch_health_score_transition(db_session: Session):
     assert res.health_score_before == 90.0
     assert res.health_score_after == 100.0
     assert res.applied_count == 2
+    # 票 67：注入会话提交权归调用方（半边 2），调用方履行提交义务后再验证
+    db_session.commit()
     # 验证 low_help 重要度降权
     assert db_session.get(MemoryItem, "mem_low_01").importance <= 0.1
 

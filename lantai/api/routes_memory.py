@@ -22,6 +22,19 @@ class UnarchiveReq(BaseModel):
     reason: str = ""
 
 
+class PutCoreMemoryReq(BaseModel):
+    """票 71：核心记忆块写请求改 JSON body 接收——identity/task/policy 正文
+    （用户会放身份约束、政策口径、乃至密钥口令的地方）不得进 URL 查询串
+    （uvicorn 访问日志默认含 query string，任何记 URL 的遥测/代理/浏览器
+    历史同样带走；票 50 loggable 管日志插值管不到 URL 本身，须改契约）。
+    MCP 层无 put 工具（core_memory_get 只读面），活消费方仅 UI studio.js
+    一处——直接切换契约不留兼容层（普查臂锁定零残留）。"""
+
+    block: str
+    content: str
+    namespace: str = "default"
+
+
 @router.post("/add")
 def add_memory_route(
     req: AddMemoryReq, async_mode: bool = False, ctx: Principal = Depends(get_current_user)
@@ -52,11 +65,10 @@ def get_core_memory_route(namespace: str = "default", ctx: Principal = Depends(g
 
 
 @router.put("/core-memory")
-def put_core_memory_route(
-    block: str, content: str, namespace: str = "default", ctx: Principal = Depends(get_current_user)
-):
+def put_core_memory_route(req: PutCoreMemoryReq, ctx: Principal = Depends(get_current_user)):
+    # 票 71：block/content 改 body 接收（query 只留零参数），正文撤出 URL 面
     try:
-        return put_core_memory(block, content, namespace, principal=ctx)
+        return put_core_memory(req.block, req.content, req.namespace, principal=ctx)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

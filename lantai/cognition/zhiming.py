@@ -20,10 +20,11 @@ from typing import Any
 from sqlmodel import Session, select
 
 from lantai.core.acl import viewer_of
-from lantai.core.time import ensure_aware, utcnow
+from lantai.core.time import ensure_aware, iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import LifecycleStatus, MemoryItem
 from lantai.storage import db
+from lantai.storage.cas import cas_update
 
 DEFAULT_HALF_LIFE_DAYS = 30.0
 WEAKENED_THRESHOLD = 0.5
@@ -65,7 +66,7 @@ class ZhimingTransition:
             "reason": self.reason,
             "superseded_by": self.superseded_by,
             "applied": self.applied,
-            "updated_at": self.updated_at.isoformat(),
+            "updated_at": iso_utc(self.updated_at),
         }
 
 
@@ -302,26 +303,40 @@ class ZhimingEngine:
                 raise PermissionError(f"无权修改此记忆生命周期（行级隔离）: {transition.memory_id}")
 
             now = utcnow()
-            # 状态转移落地
-            mem.lifecycle_status = transition.to_phase.value
-            mem.updated_at = now
-
+            # 票 23：转移落地改 CAS（WHERE lifecycle_status=计划期前置态）——
+            # 陈旧计划不得覆写已推进的生命周期（retire 落地后随到的 weaken
+            # 会造出 retired_at 还在、status=archived 的矛盾中间态，红测 S7）。
+            # 败方如实抛状态冲突，不静默覆盖。
+            values: dict[str, Any] = {
+                "lifecycle_status": transition.to_phase.value,
+                "updated_at": now,
+            }
             if transition.to_phase == LifecyclePhase.ACTIVE:
                 # 晋升或复元：确保 status 也为 active
-                mem.status = "active"
+                values["status"] = "active"
             elif transition.to_phase == LifecyclePhase.WEAKENED:
-                mem.weakened_at = now
+                values["weakened_at"] = now
             elif transition.to_phase == LifecyclePhase.SUPERSEDED:
-                mem.superseded_at = now
+                values["superseded_at"] = now
                 if transition.superseded_by:
-                    mem.superseded_by = transition.superseded_by
+                    values["superseded_by"] = transition.superseded_by
             elif transition.to_phase == LifecyclePhase.RETIRED:
-                mem.retired_at = now
-                mem.status = "archived"
-
-            s.add(mem)
+                values["retired_at"] = now
+                values["status"] = "archived"
+            claimed = cas_update(
+                s,
+                MemoryItem,
+                transition.memory_id,
+                expected={"lifecycle_status": transition.from_phase.value},
+                values=values,
+            )
+            if not claimed:
+                s.rollback()
+                raise ValueError(
+                    f"记忆生命周期已变化（期望 {transition.from_phase.value}），转移未应用: "
+                    f"{transition.memory_id}"
+                )
             s.commit()
-            s.refresh(mem)
 
             transition.applied = True
             transition.updated_at = now

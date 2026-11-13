@@ -16,9 +16,10 @@
 
 from sqlmodel import select
 
-from lantai.core.time import utcnow
+from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import ConflictEvent, MemoryItem
 from lantai.storage import db
+from lantai.storage.cas import cas_update
 
 _ALLOWED_STATUSES = ("open", "resolved", "dismissed")
 
@@ -76,10 +77,14 @@ def list_conflict_events(limit: int = 50, status: str = "open", principal=None) 
         q = select(ConflictEvent).order_by(ConflictEvent.created_at.desc())
         if status != "all":
             q = q.where(ConflictEvent.status == status)
-        rows = s.exec(q).all()
+        # 票 42：可见性过滤与 limit 全部下推 SQL——原实现 .all() 全表捞回
+        # 内存过滤再 rows[:limit] 切片（limit 负值在 Python 切片语义是
+        # 「去掉末尾 N 条」，不是无上限；全表捞本身是性能债）。
+        # 空集 in_([]) 编译为恒假，无可见冲突时仍返回空列表。
         if visible is not None:
-            rows = [r for r in rows if r.id in visible]
-        return {"events": [r.model_dump(mode="json") for r in rows[:limit]]}
+            q = q.where(ConflictEvent.id.in_(visible))
+        rows = s.exec(q.limit(limit)).all()
+        return {"events": [r.model_dump(mode="json") for r in rows]}
 
 
 def resolve_conflict_event(event_id: str, decision: str, note: str = "", principal=None) -> dict:
@@ -114,12 +119,22 @@ def resolve_conflict_event(event_id: str, decision: str, note: str = "", princip
                 lane=item.lane if item else None,
             )
 
-        ev.status = decision
-        ev.resolved_by = note.strip()[:200]
-        ev.resolved_at = utcnow()
-        s.add(ev)
+        # 票 22 S6：裁决认领——「open → 终态」条件 UPDATE 原子翻转。此前
+        # SELECT-判态-UPDATE 无守护：两人并发裁同一冲突双双 200、后写覆盖先写
+        # （裁决审计被静默替换）。rowcount=0 即并发败方：刷新取最新状态后按
+        # 既有契约报错（错误信息与 :104 同款，路由保持 ValueError 映射）。
+        claimed = cas_update(
+            s,
+            ConflictEvent,
+            event_id,
+            {"status": "open"},
+            {"status": decision, "resolved_by": note.strip()[:200], "resolved_at": utcnow()},
+        )
+        if claimed != 1:
+            s.refresh(ev)
+            raise ValueError(f"conflict event not open (status={ev.status})")
         s.commit()
-        return {"ok": True, "event_id": ev.id, "status": ev.status}
+        return {"ok": True, "event_id": ev.id, "status": decision}
 
 
 def audit_consistency_service(
@@ -147,7 +162,7 @@ def audit_consistency_service(
             }
             for v in report.violations
         ],
-        "audited_at": report.audited_at.isoformat(),
+        "audited_at": iso_utc(report.audited_at),
         "entity_name": report.entity_name,
     }
 

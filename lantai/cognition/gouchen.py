@@ -17,8 +17,8 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from lantai.core.acl import viewer_of
-from lantai.core.time import ensure_aware, utcnow
+from lantai.core.acl import is_system_viewer, viewer_of
+from lantai.core.time import ensure_aware, iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
@@ -51,7 +51,7 @@ class GouchenItem:
             "age_days": round(self.age_days, 1),
             "status": self.status,
             "lifecycle_status": self.lifecycle_status,
-            "event_time": self.event_time.isoformat() if self.event_time else None,
+            "event_time": iso_utc(self.event_time) or None,
             "user_id": self.user_id,
             "tenant_id": self.tenant_id,
             "fenced_content": self.fenced_content if fenced else "",
@@ -70,7 +70,7 @@ class HistoricalContext:
 
     def to_dict(self, *, fenced: bool = True) -> dict[str, Any]:
         return {
-            "anchor_time": self.anchor_time.isoformat(),
+            "anchor_time": iso_utc(self.anchor_time),
             "memories": [m.to_dict(fenced=fenced) for m in self.memories],
             "total_count": self.total_count,
             "summary": self.summary,
@@ -105,20 +105,9 @@ class GouchenEngine:
         self.session = session
         self.principal = principal
 
-    def _check_access(self, *, owner_id: str | None, tenant_id: str | None) -> bool:
-        """行级租户与属主安全校验（宁漏不越权）。"""
-        if self.principal is None:
-            return owner_id in (None, "default")
-        if (
-            getattr(self.principal, "is_admin", False)
-            or getattr(self.principal, "role", None) == "admin"
-        ):
-            return True
-        viewer = viewer_of(self.principal)
-        current_tenant = getattr(self.principal, "tenant_id", None)
-        if tenant_id and current_tenant and tenant_id != current_tenant:
-            return False
-        return not (owner_id is not None and owner_id != viewer)
+    # 票 57 死代码处置：`_check_access` 无人消费（全仓 grep 仅此定义），且两个
+    # 读方法各自内联 SQL where——行级 ACL 单一真源即那两处过滤（本轮已修
+    # None 收敛），引擎内不再保留第二套判据。
 
     def compute_sunken_score(self, decay_score: float, age_days: float) -> float:
         """纯函数：计算记忆沉没度打分（Sunken Score）。
@@ -146,9 +135,15 @@ class GouchenEngine:
         ref_now = now or utcnow()
 
         def _run(s: Session) -> GouchenResult:
-            stmt = select(MemoryItem).where(MemoryItem.status != "deleted")
-            # 行级 ACL 过滤
-            if self.principal is not None and not getattr(self.principal, "is_admin", False):
+            # 票 62：retracted 是笔削裁定（ADR-0047，主张错误即全检索面禁用、
+            # 不可自动复活）——不只不在 is_sunken 判定里，候选集本身就排除，
+            # 防止高 sunken_score 的 retracted 行经「沉埋」通道回灌检索面。
+            stmt = select(MemoryItem).where(
+                MemoryItem.status != "deleted", MemoryItem.status != "retracted"
+            )
+            # 行级 ACL 过滤（票 57：None 收敛 viewer_of="default"，不再裸奔全库；
+            # 显式系统身份/admin 全表——acl.py 立法语义，同 kaogong 已写对范式）
+            if not (getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal)):
                 viewer = viewer_of(self.principal)
                 current_tenant = getattr(self.principal, "tenant_id", None)
                 if current_tenant:
@@ -238,9 +233,13 @@ class GouchenEngine:
         t_anchor = ensure_aware(anchor_time) or utcnow()
 
         def _run(s: Session) -> HistoricalContext:
-            stmt = select(MemoryItem).where(MemoryItem.status != "deleted")
-            # 行级 ACL 过滤
-            if self.principal is not None and not getattr(self.principal, "is_admin", False):
+            # 票 62：同 dredge——retracted 笔削内容不进历史语境快照
+            stmt = select(MemoryItem).where(
+                MemoryItem.status != "deleted", MemoryItem.status != "retracted"
+            )
+            # 行级 ACL 过滤（票 57：None 收敛 viewer_of="default"，不再裸奔全库；
+            # 显式系统身份/admin 全表——acl.py 立法语义，同 kaogong 已写对范式）
+            if not (getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal)):
                 viewer = viewer_of(self.principal)
                 current_tenant = getattr(self.principal, "tenant_id", None)
                 if current_tenant:
@@ -296,7 +295,7 @@ class GouchenEngine:
                 )
 
             historical_items = historical_items[:limit]
-            summary = f"历史语境重构：锚点【{t_anchor.isoformat()}】汇聚 {len(historical_items)} 条无污染记忆快照"
+            summary = f"历史语境重构：锚点【{iso_utc(t_anchor)}】汇聚 {len(historical_items)} 条无污染记忆快照"
             aggregated_body = "\n".join(f"- {it.fenced_content}" for it in historical_items)
             full_content = f"{summary}\n{aggregated_body}" if aggregated_body else summary
             fenced_summary = wrap_as_data(full_content, item_id="history-context", score=1.0)

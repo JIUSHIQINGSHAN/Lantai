@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     LLM_MAX_CONCURRENCY: int = 4
     LLM_ACQUIRE_TIMEOUT: float = 30.0
 
+    # LLM 出站时长预算（票 48）：SDK 默认 timeout=600s + max_retries=2 叠加
+    # tenacity 3 连击 → 单次 chat_json 最坏 ≈90 分钟，挂起的上游占死 ingest
+    # job 与许可并发闸。显式立法：单请求墙 LLM_TIMEOUT，SDK 层重试关闭
+    # （应用层 tenacity 已有界——双层重试是乘法放大）；ingest 提取链另给
+    # 单发预算 LLM_INGEST_TIMEOUT（预算模式一次机会即止，embed D-04 同范式）
+    LLM_TIMEOUT: float = 120.0
+    LLM_MAX_RETRIES: int = 0
+    LLM_INGEST_TIMEOUT: float = 60.0
+
     # MCP 工具循环守卫（票据 .scratch/mcp-loop-guard/01，上游 f0.3++ LoopGuard 同款）：
     # 同一工具+参数指纹在 window_s 秒内失败 threshold 次 → 熔断 cooldown_s 秒，
     # 冷却结束放单个探针请求恢复。宿主 LLM 陷「调工具→失败→再调」死循环时的止损。
@@ -84,7 +93,7 @@ class Settings(BaseSettings):
 
     # Daily Digest（Ticket 03）：每日盘点报告 docs/memory-digest/YYYY-MM-DD.md
     DIGEST_ENABLED: bool = True
-    DIGEST_CRON_HOUR: int = 22  # UTC 22:00 = 本地(Asia/Shanghai) 06:00 早晨
+    DIGEST_CRON_HOUR: int = 15  # UTC 15:55 = 本地(Asia/Shanghai) 23:55 日末（票 31：触发点须贴近所报告本地日的日界，早晨触发只覆盖当天前几小时）
     DIGEST_OUTPUT_DIR: str = (
         ""  # 为空时 = 数据目录(LANTAI_HOME,未设时仓库根) docs/memory-digest（票 85）
     )
@@ -363,6 +372,14 @@ class Settings(BaseSettings):
     SHELL_HOOK_MAX_CHARS_PER_SCENE: int = 400  # 单个场景导航块预算
     SCENE_MAX_MEMBERS_SHOWN: int = 8  # 导航块最多列出的成员 key 数
     RECALL_MONITOR_WINDOW_DAYS: int = 7  # 零召回率监控默认窗口（天）
+    # 观测面保留期（票 29，ADR-0002 零硬编码）：三条观测链此前只有 operation_logs
+    # 有 MONITOR_RETENTION_DAYS prune，retrieval_event / llm_call_event 无界增长。
+    # 不复用 MONITOR_RETENTION_DAYS（取证窗与观察窗语义不同源）；清扫运行时钳制
+    # max(config, RECALL_MONITOR_WINDOW_DAYS)——TTL 短于观察窗会让 recall_report
+    # 窗口计数静默失真（ADR-0027）。llm_call_event 的司天降级率窗 24h 低于任何
+    # 天粒度 TTL，结构性满足，无需单独下限旋钮。
+    RETRIEVAL_EVENT_RETENTION_DAYS: int = 30  # 检索事件保留天数（弱标注/评估数据面）
+    LLM_CALL_EVENT_RETENTION_DAYS: int = 30  # LLM 外呼结局保留天数（司天降级率数据源）
 
     # SSRF 防护
     SSRF_ALLOWED_SCHEMES: tuple = ("http", "https")
@@ -421,6 +438,13 @@ class Settings(BaseSettings):
     CONSOLIDATION_MIN_CLUSTER_SIZE: int = (
         3  # 聚类下限：同关键词命中记忆数 ≥ 此值才成簇（ADR-0002 零硬编码，原硬编码 3）
     )
+    # 沉潜调度（票 34）：与 digest/reflect 同形——cron 时刻 + ENABLED 开关。
+    # 原 hour=19/minute=30 硬编码（注释自证「北京时间凌晨 03:30」——只对
+    # 东八区宿主成立）破例 ADR-0002 零硬编码口径，此处收口；默认值即原
+    # 硬编码，默认行为零变化。
+    CONSOLIDATION_ENABLED: bool = True
+    CONSOLIDATION_CRON_HOUR: int = 19  # UTC 小时（UTC 19:30 = 北京 03:30，夜梦沉淀窗口）
+    CONSOLIDATION_CRON_MINUTE: int = 30
     CONSOLIDATION_PRUNE_THRESHOLD: float = (
         0.05  # 突触修剪阈值：decay_score < 此值即剪（ADR-0002 零硬编码，原硬编码 0.05）
     )
@@ -486,6 +510,11 @@ class Settings(BaseSettings):
     REFLECT_CRON_HOUR: int = 22  # UTC；与 digest 同小时错 1 分钟
     REFLECT_MAX_BATCH: int = 20  # 单次蒸馏候选上限（LLM 成本防护）
     # 察窗：观察期滑动窗口口径（ADR-0027）。从连续改为窗口内计数。
+    # 消费面（票 34 现状核对）：①scripts/reflect_observation_status.py
+    # --check（发布准备工具，standalone sqlite3 直读）；②reflect_worker
+    # 每次 scheduled 运行前真评察窗并在回执/日志透出（未毕业不跳过——
+    # 合格运行日由运行本身产生，自闸即死锁）。ADR-0027 影响段曾承诺
+    # release_check 接线，从未落地（实施现状见该 ADR 增补段）。
     REFLECT_OBSERVATION_WINDOW_DAYS: int = 14  # 滑动窗口大小（天）
     REFLECT_OBSERVATION_REQUIRED_RUNS: int = 7  # 窗口内合格运行天数门槛
     REFLECT_IMPORTANCE_POOL: float = (

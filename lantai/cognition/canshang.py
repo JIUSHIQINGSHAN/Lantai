@@ -20,9 +20,19 @@ from sqlmodel import Session, select
 
 from lantai.cognition.conflicts import ConflictEngine, _temporal_recency
 from lantai.core.auth import Principal
+from lantai.core.logger import logger
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryEdge, MemoryItem
 from lantai.storage import db
+
+
+def _content_tokens(text: str) -> set[str]:
+    """票 68：词级实词集合（jieba，len>1 过滤单字虚词）——佐证 verify_claim
+    与票 65 _relevant_tokens 同源口径。替换单字字符集交叉判主题相关（假矛盾源：
+    「系统管理员启用…」与「下班后管理员关闭…」共享 3 个高频单字即触发）。"""
+    import jieba
+
+    return {w.strip() for w in jieba.cut(text) if len(w.strip()) > 1}
 
 
 @dataclass
@@ -80,6 +90,17 @@ OPPOSITE_PAIRS = [
     ("yes", "no"),
 ]
 
+# 票 68：名词性状态反义子集。这两对的两词本身就是状态主张的本体（部署拓扑/
+# 节点形态），同现即同一对象的相斥状态断言——真矛盾（多主集群 vs 单机独立）
+# 两句间可以零实词交叉，主题交叉闸不适用。其余动词性开关对（启用/关闭作用于
+# 各自宾语）与否定衍生对（支持/不支持、active/inactive）从严：须词级主题
+# 交叉 ≥3 或同实体才判矛盾（否则「管理员启用备份」vs「管理员关闭照明」
+# 成假矛盾，红测锁）。
+_STATE_ANTONYM_PAIRS = {
+    frozenset(("单机", "集群")),
+    frozenset(("单节点", "多节点")),
+}
+
 
 class CanshangEngine:
     """参商·深度冲突检测与信念一致性仲裁引擎。"""
@@ -92,11 +113,6 @@ class CanshangEngine:
         self.session = session
         self.principal = principal
         self._conflict_engine = ConflictEngine()
-
-    def _get_session(self) -> Session:
-        if self.session is not None:
-            return self.session
-        return db.get_session()
 
     def _check_access(self, item: MemoryItem) -> bool:
         """行级租户与属主 ACL 隔离校验。"""
@@ -170,9 +186,21 @@ class CanshangEngine:
         # 文本中是否涉及共同关键词但结论相斥
         for w1, w2 in OPPOSITE_PAIRS:
             if (w1 in content_a and w2 in content_b) or (w2 in content_a and w1 in content_b):
-                # 检查是否存在主题交叉
-                words_a = set(content_a)
-                words_b = set(content_b)
+                # 票 68：两档判定。名词性状态反义（单机/集群）同现即判——两词
+                # 即状态本体，真矛盾可以零实词交叉。其余对（动词性开关/否定
+                # 衍生）改词级实词交叉——原单字字符集 `set(content)` 对自然
+                # 语言几乎恒 ≥3（的/是/在级高频字），互斥词对只要各自出现一次
+                # 就判「直接矛盾」，无关主题成片误报（假矛盾病灶）。
+                if frozenset((w1, w2)) in _STATE_ANTONYM_PAIRS:
+                    return ConsistencyViolation(
+                        conflicting_memory_ids=[item_a.id, item_b.id],
+                        violation_type="direct_contradiction",
+                        severity="high",
+                        description=f"检测到直接相反的主张（'{w1}' vs '{w2}'）：{wrap_as_data(content_a[:30])} 与 {wrap_as_data(content_b[:30])}",
+                        metadata={"opposite_pair": (w1, w2)},
+                    )
+                words_a = _content_tokens(content_a)
+                words_b = _content_tokens(content_b)
                 overlap = len(words_a & words_b)
                 if overlap >= 3 or is_same_entity:
                     return ConsistencyViolation(
@@ -192,16 +220,37 @@ class CanshangEngine:
         limit: int = 50,
     ) -> ConsistencyAuditReport:
         """全局、指定实体或候选列表的信念一致性审计矩阵。"""
-        s = self._get_session()
+        if self.session is not None:
+            return self._audit_consistency(self.session, memory_ids, entity_name, limit)
+        with db.get_session() as s:  # 票 67：with 语义，返回即关（对齐 diben 样板）
+            return self._audit_consistency(s, memory_ids, entity_name, limit)
+
+    def _audit_consistency(
+        self,
+        s: Session,
+        memory_ids: list[str] | None,
+        entity_name: str | None,
+        limit: int,
+    ) -> ConsistencyAuditReport:
+        """单轨实现（会话由调用方管理生命周期）。"""
 
         items: list[MemoryItem] = []
         if memory_ids:
             for mid in memory_ids:
                 item = s.get(MemoryItem, mid)
-                if item and self._check_access(item) and item.status == "active":
+                # 票 62：认识论态过滤——superseded 行（status 仍 active）退出审计
+                if (
+                    item
+                    and self._check_access(item)
+                    and item.status == "active"
+                    and (item.lifecycle_status or "") in ("active", "weakened")
+                ):
                     items.append(item)
         elif entity_name:
-            query = select(MemoryItem).where(MemoryItem.status == "active")
+            query = select(MemoryItem).where(
+                MemoryItem.status == "active",
+                MemoryItem.lifecycle_status.in_(("active", "weakened")),
+            )
             if (
                 self.principal is not None
                 and not self.principal.is_admin
@@ -223,7 +272,10 @@ class CanshangEngine:
                         if len(items) >= limit:
                             break
         else:
-            query = select(MemoryItem).where(MemoryItem.status == "active")
+            query = select(MemoryItem).where(
+                MemoryItem.status == "active",
+                MemoryItem.lifecycle_status.in_(("active", "weakened")),
+            )
             if (
                 self.principal is not None
                 and not self.principal.is_admin
@@ -261,7 +313,14 @@ class CanshangEngine:
             ).all()
             for e in edges:
                 target_node = s.get(MemoryItem, e.target_memory_id)
-                if not target_node or not self._check_access(target_node):
+                # 票 62：retracted/superseded target（s.get 主键直读双绕一切
+                # SQL scope）不参与多跳因果推演
+                if (
+                    not target_node
+                    or target_node.status != "active"
+                    or (target_node.lifecycle_status or "") not in ("active", "weakened")
+                    or not self._check_access(target_node)
+                ):
                     continue
                 # 检查 target_node 是否与集合中其他记忆直接矛盾
                 for other_item in items:
@@ -312,12 +371,36 @@ class CanshangEngine:
         conflicting_ids: list[str],
     ) -> DeepArbitrationResult:
         """基于更漏事件轴、置信度与证据链强度的深层多方冲突仲裁直断。"""
-        s = self._get_session()
+        if self.session is not None:
+            return self._arbitrate_deep_conflict(self.session, conflicting_ids)
+        with db.get_session() as s:  # 票 67
+            return self._arbitrate_deep_conflict(s, conflicting_ids)
+
+    def _arbitrate_deep_conflict(
+        self, s: Session, conflicting_ids: list[str]
+    ) -> DeepArbitrationResult:
+        """单轨实现（会话由调用方管理生命周期）。"""
         items: list[MemoryItem] = []
         for mid in conflicting_ids:
             it = s.get(MemoryItem, mid)
-            if it and self._check_access(it):
+            # 票 62：非生效侧拒绝参与仲裁（s.get 主键直读双绕一切 SQL scope）。
+            # 宁 miss 不脏写：retracted 是笔削裁定（主张错误全检索面禁用）、
+            # superseded 是已取代旧值，二者都不得凭高分翻案；跳过留痕供审计。
+            if (
+                it
+                and it.status == "active"
+                and (it.lifecycle_status or "") in ("active", "weakened")
+                and self._check_access(it)
+            ):
                 items.append(it)
+            elif it is not None:
+                logger.info(
+                    "参商仲裁：记忆 [%s] 处于非生效态（status=%s, lifecycle=%s），"
+                    "拒绝参与仲裁（宁 miss 不脏写）",
+                    mid,
+                    it.status,
+                    it.lifecycle_status,
+                )
 
         if not items:
             return DeepArbitrationResult(

@@ -75,7 +75,9 @@ class TestQijuzhuApiSmoke:
     def test_seam2_rest_endpoints(self):
         """Seam 2: REST 路由 GET /qijuzhu/today, /timeline, /dates/{date_str}。"""
         client = TestClient(app)
-        today_str = utcnow().strftime("%Y-%m-%d")
+        # 票 32：服务端按本地墙钟日聚合（local_day_window_utc），期望日期须取
+        # 本地日——UTC 日期在本地 00:00–07:59 与实现错位（v0.68 巡检终跑实测炸出）
+        today_str = utcnow().astimezone().strftime("%Y-%m-%d")
 
         # 1. GET /qijuzhu/today
         resp1 = client.get(

@@ -55,6 +55,10 @@ sys.path.insert(0, str(REPO_ROOT))
 
 EMBED_DIM = 128
 
+# 替身绑定还原的哨兵：区分「绑定原本不存在」与「存在但值为 None」——
+# 漏还/误建 None 幽灵绑定都算把脏留进生产单例（v0.68 票 12 P3 项）
+_BINDING_MISSING = object()
+
 
 def _apply_llm_env_guards() -> dict[str, str | None]:
     """LLM 直连三道闸（bench_env 进入时施加、离开时按原值还原）。
@@ -308,6 +312,13 @@ class BenchContext:
         self.shell_hook = None
         self.sanity = {}
         self.mcp_channel: dict | None = None
+        # 写场景唯一序号流（按场景名一条，_unique_call 消费）——timed 与
+        # profile 轮共用，profile 不重放（v0.68 票 12 缺口 1）
+        self.write_seq: dict[str, dict] = {}
+
+    def seq_state(self, scenario: str) -> dict:
+        """取指定写场景的唯一序号流持有位（无则开一条从 0 起）。"""
+        return self.write_seq.setdefault(scenario, {"n": 0})
 
 
 @contextmanager
@@ -401,7 +412,7 @@ def _bench_env_inner(n_rows: int, seed: int, workdir: Path | None):
         (gate_decision_mod, "embed"),
         (gate_scorer_mod, "embed"),
     ]:
-        saved_llm[(mod.__name__, attr)] = getattr(mod, attr, None)
+        saved_llm[(mod.__name__, attr)] = getattr(mod, attr, _BINDING_MISSING)
 
     def _fake_extraction(*args, **kwargs):
         return {
@@ -443,7 +454,13 @@ def _bench_env_inner(n_rows: int, seed: int, workdir: Path | None):
         db_module.FTS_OK = saved_db["FTS_OK"]
         for (mod_name, attr), value in saved_llm.items():
             mod = sys.modules.get(mod_name)
-            if mod is not None and value is not None:
+            if mod is None:
+                continue
+            if value is _BINDING_MISSING:
+                # 原本不存在的绑定还原为不存在，不留 None 幽灵
+                if hasattr(mod, attr):
+                    delattr(mod, attr)
+            else:
                 setattr(mod, attr, value)
         for k, v in saved.items():
             setattr(settings, k, v)
@@ -464,7 +481,6 @@ def _resolve_vector_backend(settings):
 def _seed_db(session_factory, vector_store, rows) -> None:
     """灌库：ORM 插入（吃到 SQLModel 的 Python 层默认值）+ FTS + 向量入库。"""
     from lantai.models.tables import MemoryItem
-    from lantai.storage.fts import sync_fts
 
     with session_factory() as s:
         items = [MemoryItem(**r) for r in rows]
@@ -563,13 +579,16 @@ def scen_build_context(ctx, i):
     ctx.shell_hook.build_context(q, session_id="perf-bench")
 
 
-def _unique_call(fn):
+def _unique_call(fn, state):
     """写场景用真实调用计数生成唯一内容：warmup 与正式轮共用一条序号流，
     不重放相同内容。基线要测的是「全新写入」的全成本路径（文档 INSERT +
     候选 INSERT 各一次）；重复内容自票 .scratch/v068-perf/02 修复后在产品
     代码里合法（在场复用文档、照建候选），但那是更便宜的另一条路径，混在
-    一起会把 P50 拉低失真。"""
-    state = {"n": 0}
+    一起会把 P50 拉低失真。
+    state 由调用方持有（BenchContext 按场景名一条流，见 seq_state）：
+    profile 轮复用 timed 轮的同一 state 续接新内容，不重放——曾因每次
+    新建闭包（计数器从 0 起）让 profile 重放已摄取内容，被 content_hash
+    在场复用分支吸收、热点表系统性失真（v0.68 票 12 缺口 1）。"""
 
     def call(_i):
         n = state["n"]
@@ -597,7 +616,7 @@ def _ingest_add_memory_once(n: int) -> None:
 
 
 def make_scen_ingest_add_memory(ctx, iterations: int = 0):
-    return _unique_call(_ingest_add_memory_once)
+    return _unique_call(_ingest_add_memory_once, ctx.seq_state("ingest_add_memory"))
 
 
 def make_scen_ingest_fastpath(ctx, iterations: int = 0):
@@ -619,7 +638,7 @@ def make_scen_ingest_fastpath(ctx, iterations: int = 0):
             user_id="default",
         )
 
-    return _unique_call(once)
+    return _unique_call(once, ctx.seq_state("ingest_fastpath"))
 
 
 _proposal_seq = {"n": 0}
@@ -946,6 +965,9 @@ def sanity_check(ctx) -> dict:
     from lantai.storage.fts import search_fts, search_fts_bm25
 
     load_shell_hook(ctx)
+    assert ctx.hit_queries, (
+        "hit 查询集为空——语料太小（无 ≥15 字 active 行），加大 --scale 或语料规模"
+    )
     q = ctx.hit_queries[0]
     with ctx.session_factory() as s:
         fts = search_fts(_raw_conn(s), q, top_k=10, principal=ctx.default_principal)
@@ -1130,11 +1152,15 @@ def run_scale(
     only: list[str] | None = None,
     profile: bool = False,
     profile_dump_dir: Path | None = None,
+    workdir: Path | None = None,
 ) -> dict:
-    """单档规模全场景基线。返回 {env, scenarios, profiles}。"""
-    with bench_env(n_rows, seed=seed) as ctx:
-        load_shell_hook(ctx)
-        sanity_check(ctx)
+    """单档规模全场景基线。返回 {env, scenarios, profiles}。
+
+    workdir 透传给 bench_env（测试缝：真库留点供回归锁断言，正常运行
+    保持 None 由 bench_env 建临时目录并在离开时清理）。
+    """
+    with bench_env(n_rows, seed=seed, workdir=workdir) as ctx:
+        sanity_check(ctx)  # 内部先 load_shell_hook——此处不再重复加载（票 12 P3）
         scenario_names = [n for n in SCENARIOS if (only is None or n in only)]
         scenarios = {}
         for name in scenario_names:
@@ -1142,7 +1168,15 @@ def run_scale(
             scenarios[name] = run_scenario(ctx, name, iters)
         profiles = {}
         if profile:
-            for name in ["hybrid_search", "build_context", "ingest_add_memory", "apply_proposal"]:
+            # ingest_fastpath 进 profile 列表的前提（票 12）：写场景 profile 轮
+            # 与 timed 轮共用唯一序号流、不重放（_unique_call + ctx.seq_state）
+            for name in [
+                "hybrid_search",
+                "build_context",
+                "ingest_add_memory",
+                "ingest_fastpath",
+                "apply_proposal",
+            ]:
                 if name in scenario_names:
                     dump = (
                         profile_dump_dir / f"{n_rows}-{name}.pstats"
@@ -1174,6 +1208,12 @@ def main(argv=None) -> int:
         help="产物目录（默认 .scratch/v068-perf/artifacts/run-<时间戳>）",
     )
     args = ap.parse_args(argv)
+
+    unknown = [n for n in (args.only or []) if n not in SCENARIOS]
+    if unknown:
+        # --only 拼错名曾静默跑零场景、exit 0、照常出「成功」报告（v0.68 票 12
+        # 缺口 2）——与「禁止假绿」直接冲突，必须在任何跑批前拒绝
+        ap.error(f"--only 含未知场景名 {unknown}，拒绝静默空跑；合法场景：{', '.join(SCENARIOS)}")
 
     out_dir = args.out or (
         REPO_ROOT

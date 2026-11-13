@@ -20,8 +20,10 @@ from lantai.storage.migrations import (
 # 静默失效——「宁 miss 不脏写」对重构同样成立，兼容导入路径是低成本保险。
 # 完整 `__all__` 见文件末尾（那里所有名字都已定义）。
 
-# busy_timeout=30s：pre_compress daemon 线程与请求线程并发写库时避免
-# 瞬时 "database is locked" 静默丢数据
+# busy_timeout=30s：worker/调度器/请求线程多写面并发时避免瞬时
+# "database is locked" 静默丢数据（票 77：原注释理由引用已删除的死接线模块
+# 「压缩前抢救 daemon 线程并发写库」，随删除案改写——参数本体对其余并发写
+# 路径仍有价值，删理由不删参数）
 engine = create_engine(settings.DATABASE_URL, echo=False, connect_args={"timeout": 30})
 
 # ── Schema 版本化（v0.6 Ticket 01，借鉴 aiduMEI v18.3 Fast-Update）──

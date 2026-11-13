@@ -3,6 +3,7 @@
 契约：stdin JSON → stdout {context} 或 {}；2s 硬超时；异常静默降级。"""
 
 import contextlib
+import json
 import os
 import sys
 
@@ -808,7 +809,16 @@ def main():
             if not line:
                 continue
             result = _handle_one(line)
-            sys.stdout.write(render_host_response(result) + "\n")
+            try:
+                rendered = render_host_response(result)
+            except Exception as exc:
+                # 票 52：render 守卫——开 allow_nan=False 后序列化病只值一行
+                # 错误帧，不得打死 serve 常驻循环（插件正逐字节等本帧响应）。
+                logger.warning("shell_hook: 响应渲染失败: %r", exc)
+                rendered = json.dumps(
+                    {"error": f"render failed: {type(exc).__name__}"}, ensure_ascii=False
+                )
+            sys.stdout.write(rendered + "\n")
             sys.stdout.flush()
         return
 

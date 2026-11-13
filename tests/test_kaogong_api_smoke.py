@@ -18,6 +18,7 @@ from lantai.api.app import app
 from lantai.cli.mcp import TOOL_HANDLERS, TOOLS, handle
 from lantai.cognition.context import CognitiveContext
 from lantai.core.auth import Principal
+from lantai.core.settings import settings
 from lantai.models.tables import MemoryItem
 from lantai.services.kaogong_service import kaogong_inspect_service, run_kaogong_cycle
 
@@ -73,6 +74,9 @@ def test_seam1_service_layer_kaogong(db_session: Session):
 
 def test_seam2_rest_endpoints(monkeypatch):
     """Seam 2: REST 端点 POST /kaogong/eval, GET /kaogong/report, POST /kaogong/inspect。"""
+    # 票 19：/kaogong/report 已收 admin 闸——monkeypatch 让既有 X-API-Key: "test"
+    # 头成为**真** env key（autouse fixture 清空 API_KEY 时该头是 no-op）
+    monkeypatch.setattr(settings, "API_KEY", "test", raising=False)
     client = TestClient(app)
 
     # 1. POST /kaogong/eval

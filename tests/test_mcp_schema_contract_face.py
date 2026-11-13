@@ -242,8 +242,10 @@ def test_qijuzhu_chronicle_multi_day_ignores_single_day_params_current_lock():
             "result"
         ]["content"][0]["text"]
     )
-    # 同库同窗下两次多日查询的键形态一致（date/detail_level 均不参与多日分支）
-    assert set(base) == set(noisy), (sorted(base), sorted(noisy))
+    # 同库同窗下两次多日查询的键形态一致（date/detail_level 均不参与多日分支）；
+    # 唯一差异是 v0.68 #43 票 27 病灶 3 的回执体 warnings 如实标记未消费参数
+    assert set(base) == set(noisy) - {"warnings"}, (sorted(base), sorted(noisy))
+    assert any("date" in w and "detail_level" in w for w in noisy["warnings"]), noisy
 
 
 @pytest.mark.parametrize(

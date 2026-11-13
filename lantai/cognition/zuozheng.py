@@ -20,7 +20,7 @@ import jieba
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import Evidence, MemoryEdge, MemoryItem
@@ -100,12 +100,14 @@ class ZuozhengEngine:
         shared_scope: str = "private",
     ) -> bool:
         """行级安全隔离校验（宁 miss 不脏写）。"""
-        if self.principal is None:
-            return True
-        if getattr(self.principal, "is_admin", False):
+        if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
             return True
         if shared_scope == "swarm_shared":
             return True
+
+        # 票 57：无身份收敛 "default"（同 zhaji 口径），不再全放
+        if self.principal is None:
+            return owner_id in (None, "default")
 
         viewer = viewer_of(self.principal)
         current_tenant = getattr(self.principal, "tenant_id", None)
@@ -127,7 +129,17 @@ class ZuozhengEngine:
 
     def _inspect_evidence(self, s: Session, memory_id: str, max_depth: int) -> dict[str, Any]:
         target = s.get(MemoryItem, memory_id)
-        if not target or target.status != "active":
+        # 票 62：认识论态过滤——supersede 只写 lifecycle_status=superseded
+        # （status 仍 active），只看 status 时被取代旧主张仍可作佐证目标。
+        if (
+            not target
+            or target.status != "active"
+            or (target.lifecycle_status or "")
+            not in (
+                "active",
+                "weakened",
+            )
+        ):
             return ProofChain(target_memory_id=None, target_content="").to_dict()
 
         if not self._check_access(
@@ -187,7 +199,12 @@ class ZuozhengEngine:
                     visited_ids.add(src_id)
 
                     src_mem = s.get(MemoryItem, src_id)
-                    if not src_mem or src_mem.status != "active":
+                    # 票 62：superseded 邻居（status 仍 active）不参与证据链扩散
+                    if (
+                        not src_mem
+                        or src_mem.status != "active"
+                        or (src_mem.lifecycle_status or "") not in ("active", "weakened")
+                    ):
                         continue
                     if not self._check_access(
                         owner_id=src_mem.user_id,
@@ -202,7 +219,12 @@ class ZuozhengEngine:
                             id=src_mem.id,
                             content=src_mem.content,
                             node_type="memory",
-                            confidence=min(edge.confidence, src_mem.confidence or 0.8),
+                            # 票 68：`or 0.8` 把合法零置信证据抬成 0.8 权重——
+                            # 显式 None 判定（票 14 falsy-or 家族新位点）
+                            confidence=min(
+                                edge.confidence,
+                                src_mem.confidence if src_mem.confidence is not None else 0.8,
+                            ),
                             support_direction=direction,
                             relation_reason=edge.reason or f"关联关系: {direction}",
                             user_id=src_mem.user_id,
@@ -253,7 +275,11 @@ class ZuozhengEngine:
         tokens = set(cut_words) if cut_words else set(re.findall(r"[\w一-龥]+", claim.lower()))
         meaningful_tokens = {t for t in tokens if len(t) > 1} or tokens
 
-        stmt = select(MemoryItem).where(MemoryItem.status == "active")
+        stmt = select(MemoryItem).where(
+            MemoryItem.status == "active",
+            # 票 62：断言佐证只认认识论生效行（同 inspect 口径）
+            MemoryItem.lifecycle_status.in_(("active", "weakened")),
+        )
         all_memories = s.exec(stmt).all()
 
         scored_nodes: list[tuple[float, EvidenceNode]] = []

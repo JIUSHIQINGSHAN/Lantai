@@ -237,8 +237,12 @@ class TestQingniaoApiSmoke:
         ]
         prompt = ctx.to_prompt()
         assert "## Multi-Agent Letters & Messenger (青鸟 · 2):" in prompt
-        assert "[青鸟·M1 (high) [发信方: agent_coordinator] [主题: 多体时序对齐通知]]" in prompt
-        assert "[青鸟·M2 (normal) [发信方: agent_worker] [主题: 日常心跳广播]]" in prompt
+        # 票 63 半边 4：subject/sender 与 content 同包樊篱（旧契约裸渲染字面量
+        # 是本票病灶——闭合标记可借 subject 裸奔进 LLM 可见面），断言随契约更新
+        assert "[发信方: <memory_data" in prompt
+        assert "[主题: <memory_data" in prompt
+        assert "agent_coordinator" in prompt
+        assert "多体时序对齐通知" in prompt
         assert '<memory_data id="qingniao-qnl_01J0001" score="1.0">' in prompt
         assert '<memory_data id="qingniao-qnl_01J0002" score="1.0">' in prompt
         assert "各智能体请同步起居注与起复记录" in prompt

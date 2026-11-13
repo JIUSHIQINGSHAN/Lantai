@@ -79,7 +79,9 @@ def test_seam1_service_layer_sanxing(db_session: Session):
     assert applied["applied_count"] == 1
     assert applied["health_score_before"] == 95.0
     assert applied["health_score_after"] == 100.0
-    # 验证真实写库
+    # 票 67：注入会话提交权归调用方（引擎不再整体 commit 调用方会话），调用方
+    # 履行提交义务后再验证真实写库
+    db_session.commit()
     m_updated = db_session.get(MemoryItem, "mem_sx_srv_01")
     assert m_updated.importance == 0.1
 
