@@ -4,11 +4,25 @@
 import {api} from './api.js';
 import {$, showToast} from './dom.js';
 
-export function setStudioTab(tab) {
-  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.studioTab === tab));
-  document.querySelectorAll('.studio-tab-panel').forEach(p => p.classList.remove('active'));
+export function setStudioTab(tab, {focus = false} = {}) {
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    const active = btn.dataset.studioTab === tab;
+    btn.classList.toggle('active', active);
+    btn.id = `studioTab${btn.dataset.studioTab}`;
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', String(active));
+    btn.setAttribute('aria-controls', `panel${btn.dataset.studioTab.charAt(0).toUpperCase() + btn.dataset.studioTab.slice(1)}`);
+    btn.tabIndex = active ? 0 : -1;
+    if (active && focus) btn.focus();
+  });
+  document.querySelectorAll('.studio-tab-panel').forEach(p => {
+    const active = p.id === `panel${tab.charAt(0).toUpperCase() + tab.slice(1)}`;
+    p.classList.toggle('active', active);
+    p.setAttribute('role', 'tabpanel');
+    p.setAttribute('aria-labelledby', `studioTab${p.id.slice(5).toLowerCase()}`);
+    p.hidden = !active;
+  });
   const target = $(`#panel${tab.charAt(0).toUpperCase() + tab.slice(1)}`);
-  if (target) target.classList.add('active');
   // 懒加载：切到对应 tab 才拉数据
   if (tab === 'recall') loadRecallReport();
   if (tab === 'prompts') loadPromptsPanel();
@@ -317,7 +331,20 @@ export function initStudio() {
   });
   $('#coreBlockSelect')?.addEventListener('change', e => fillCoreBlock(e.target.value));
   $('#coreMemoryForm')?.addEventListener('submit', saveCoreBlock);
-  document.querySelectorAll('[data-studio-tab]').forEach(btn => {
+  const tabs = [...document.querySelectorAll('[data-studio-tab]')];
+  tabs.forEach((btn, index) => {
     btn.addEventListener('click', () => setStudioTab(btn.dataset.studioTab));
+    btn.addEventListener('keydown', event => {
+      let nextIndex;
+      if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
+      if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length;
+      if (event.key === 'Home') nextIndex = 0;
+      if (event.key === 'End') nextIndex = tabs.length - 1;
+      if (nextIndex !== undefined) {
+        event.preventDefault();
+        setStudioTab(tabs[nextIndex].dataset.studioTab, {focus: true});
+      }
+    });
   });
+  setStudioTab('persona');
 }
