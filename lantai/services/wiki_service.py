@@ -1,6 +1,6 @@
 """记忆 Wiki 服务（借鉴 TencentDB Agent Memory LLM-Wiki ingest-v2 窄版落点）。
 
-场景/技能 → 持续维护的知识库 docs/memory-wiki/：
+场景/技能 → 持续维护的知识库 <数据目录>/docs/memory-wiki/（数据目录 = LANTAI_HOME，未设时仓库根，票 85）：
   - pages/{slug}.md  每场景/技能一页（frontmatter: type/title/description/timestamp）
   - index.md         全页索引（按类型分组，稳定输出，先看目录再钻取）
   - overview.md      全局综述（LLM 优先，失败/关闭 → 确定性综述）+ [[wikilink]] 下钻
@@ -22,9 +22,15 @@ from lantai.models.tables import MemoryItem, MemoryScene
 from lantai.services.scene_service import cosine_sim
 from lantai.storage import db
 
-# 仓库根 = lantai/services/ → lantai/ → 仓库根
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_DEFAULT_WIKI_DIR = _REPO_ROOT / "docs" / "memory-wiki"
+
+def wiki_dir() -> Path:
+    """Wiki 输出目录：WIKI_OUTPUT_DIR 显式优先；默认落数据目录（LANTAI_HOME，票 85）。"""
+    return (
+        Path(settings.WIKI_OUTPUT_DIR)
+        if settings.WIKI_OUTPUT_DIR
+        else settings.data_home / "docs" / "memory-wiki"
+    )
+
 
 _WIKI_OVERVIEW_SYS = (
     "你是知识库维护者。根据全部页面清单（标题 + 类型 + 描述），写一篇 2-5 段的全局综述，"
@@ -33,11 +39,6 @@ _WIKI_OVERVIEW_SYS = (
     "2) 用 [[页面标题]] wikilink 指向具体页（只用标题，不带路径后缀）；"
     '3) 只输出 JSON {"overview": "综述正文"}。'
 )
-
-
-def wiki_dir() -> Path:
-    """Wiki 输出目录：settings.WIKI_OUTPUT_DIR 为空时默认仓库 docs/memory-wiki。"""
-    return Path(settings.WIKI_OUTPUT_DIR) if settings.WIKI_OUTPUT_DIR else _DEFAULT_WIKI_DIR
 
 
 def slugify(name: str) -> str:
