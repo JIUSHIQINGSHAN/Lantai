@@ -134,7 +134,7 @@ def create_app() -> FastAPI:
     # `FastAPI\(title="...", version="..."`，拆行即版本一致性假红。行宽按
     # ruff 显示宽度口径（CJK 算 2 列）须 ≤100，局部名取短（docs_kw/app）
     # 即为压显示列数保单行，勿改名拉长。
-    app = FastAPI(title="兰台记忆（Lantai）", version="0.66.0", lifespan=lifespan, **docs_kw())
+    app = FastAPI(title="兰台记忆（Lantai）", version="0.68.0", lifespan=lifespan, **docs_kw())
 
     app.add_middleware(CognitiveMiddleware)
     # 司天（ADR-0044）：请求级遥测（内存指标 + 采样落库）；关闭时中间件零开销直通
