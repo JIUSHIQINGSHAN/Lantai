@@ -70,6 +70,7 @@ ADR-0049 的状态机从 `pending → {acked, missed}` 扩展为 `pending → {a
 - **存量一次性 scrub**：转移逻辑够不着已落库的存量 pending/missed 行；`scripts/scrub_retrieval_query_text.py`（缺省 dry-run、`--apply` 写库、幂等）按 `receipt_status in (pending, missed)` 一次性抹文，acked/vetoed 零接触。
 - **边界不变**：acked 行原话保留是弱标注源的设计前提（本票不扩展全表 TTL）；§2.4「REST/MCP 侧不设 veto 入口」不变——抹文不改变任何回执语义，只消灭原文留存。
 - **配套如实代价**：`build_query_set` 样本池排除空 query（抹文后空行不掺 `sample_count` 口径）；recall 报告对空 query 显示「(已抹除)」占位——抹文是可观测的，不是隐身的。
+- **超时轮孤儿事件就地收尾（`mark_abandoned`，随行增补）**：`query` 通道撞硬墙超时时，主线程先把画像兜底帧回给宿主——**不带 event_id**；daemon worker 不可取消，跑完仍会 `log_retrieval` 落一条带原话的 pending 事件，宿主手里无 id、回执与 `retrieval_veto` 都发不出，原话只能滞留到上条 300s 扫描兜底。`lantai/observability/retrieval_log.py::mark_abandoned`（shell_hook 超时回调 `_query_abandoned` 消费）就地完成同一转移：pending→missed 并抹 `query_text`/`query_norm_hash`/`used_ids`，行保留可观测——与 300s 扫描殊途同归，只是不必等；只动 pending（已 vetoed/acked/missed 不改写），行为锁 `tests/test_hook_timeout_orphan_event.py`。
 
 ### 2.7 检索事件 TTL 与证据留存的边界（v0.68 票 29 增补，2026-11-08）
 

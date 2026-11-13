@@ -168,7 +168,9 @@ def _format_offload_entry(item, score: float, max_chars: int) -> tuple[str, str]
         return build_offload_inject(
             item.content, score, max_chars, _OFFLOAD_SUFFIX, path, time_str=time_str
         )
-    except Exception:
+    except Exception as exc:
+        # 静默降级会掩盖容器内「全文永远写不出来」的持续故障（票 85）——降级照旧，但必须留痕。
+        logger.warning("offload 全文落盘失败，降级为截断注入: %s", exc)
         return _format_memory_entry(
             item.content, score, max_chars, _RECALL_TRUNCATION_SUFFIX, time_str=time_str
         )
