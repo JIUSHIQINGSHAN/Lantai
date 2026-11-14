@@ -16,6 +16,7 @@ import threading
 from collections.abc import Iterator
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
@@ -46,6 +47,22 @@ def _chromium_executable() -> str:
     pytest.fail("Chromium is required for the Studio layout regression; set LANTAI_TEST_CHROMIUM")
 
 
+# 探针页放进定宽 iframe 里量（巡检 2026-11-14）：完整版 Chrome 的新 headless
+# 把 --window-size 的宽度钳到 >= 500px（CI ubuntu-latest 的 google-chrome 即此，
+# 320 档实测 innerWidth=500），只有 chrome-headless-shell 认 320。iframe 的视口
+# 宽度就是 iframe 自身宽度，媒体查询按它求值，与浏览器窗口最小宽度无关。
+_OVERFLOW_STYLE = "<style>.studio-grid{min-width:480px}</style>"
+
+
+def _host_page(width: int, frame: str) -> bytes:
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<style>html,body{margin:0;padding:0}iframe{display:block;border:0}</style>"
+        f"</head><body><iframe id='probe' src='/ui/{frame}' width='{width}' height='900'"
+        f" style='width:{width}px;height:900px'></iframe></body></html>"
+    ).encode()
+
+
 @pytest.fixture()
 def studio_layout_server() -> Iterator[str]:
     """Serve real UI markup and styles without business API calls or user data."""
@@ -73,27 +90,47 @@ window.addEventListener('load', () => {
       cards: [...grid.children].map(card => card.getBoundingClientRect().width)
     };
   });
-  const result = document.createElement('pre');
+  // 结果写回宿主页：--dump-dom 只导出顶层文档。iframe 的 load 先于宿主页
+  // load 触发，宿主页 load 后导出时结果已在。
+  const target = window.parent !== window ? window.parent.document : document;
+  const result = target.createElement('pre');
   result.id = 'layout-result';
   result.hidden = true;
   result.textContent = JSON.stringify(measurements);
-  document.body.append(result);
+  target.body.append(result);
 });
 </script>
 """
-    payload = markup.replace("</body>", probe + "</body>").encode("utf-8")
+    frames = {
+        "frame": markup.replace("</body>", probe + "</body>").encode("utf-8"),
+        # 对照页：故意让网格在窄屏溢出，证明探针在 320 档真能抓到横向溢出。
+        "frame-overflow": markup.replace("</head>", _OVERFLOW_STYLE + "</head>")
+        .replace("</body>", probe + "</body>")
+        .encode("utf-8"),
+    }
 
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(_UI_DIR), **kwargs)
 
+        def _send_html(self, body: bytes) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self):
-            if self.path == "/ui":
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
+            parts = urlsplit(self.path)
+            if parts.path == "/ui/host":
+                query = parse_qs(parts.query)
+                frame = query.get("frame", ["frame"])[0]
+                if frame not in frames:
+                    self.send_error(404)
+                    return
+                self._send_html(_host_page(int(query["w"][0]), frame))
+            elif parts.path.removeprefix("/ui/") in frames:
+                self._send_html(frames[parts.path.removeprefix("/ui/")])
             else:
                 self.path = self.path.removeprefix("/ui/assets")
                 super().do_GET()
@@ -112,11 +149,7 @@ window.addEventListener('load', () => {
         worker.join(timeout=5)
 
 
-@pytest.mark.parametrize(("width", "columns"), [(320, 1), (1440, 2)])
-def test_studio_layout_in_real_chromium(
-    tmp_path: Path, studio_layout_server: str, width: int, columns: int
-) -> None:
-    """Real CSS layout must fit 320px and preserve the desktop grid."""
+def _measure_layout(tmp_path: Path, base_url: str, width: int, frame: str = "frame") -> list:
     proc = subprocess.run(
         [
             _chromium_executable(),
@@ -126,10 +159,10 @@ def test_studio_layout_in_real_chromium(
             "--no-proxy-server",
             "--disable-background-networking",
             "--force-device-scale-factor=1",
-            f"--window-size={width},900",
-            f"--user-data-dir={tmp_path / 'chromium-profile'}",
+            f"--window-size={width},1000",
+            f"--user-data-dir={tmp_path / f'chromium-profile-{frame}'}",
             "--dump-dom",
-            studio_layout_server,
+            f"{base_url}/host?w={width}&frame={frame}",
         ],
         capture_output=True,
         text=True,
@@ -142,11 +175,30 @@ def test_studio_layout_in_real_chromium(
     assert match, "Chromium did not produce real layout measurements"
     measurements = json.loads(html.unescape(match.group(1)))
     assert {row["panel"] for row in measurements} == {"panelRecall", "panelPrompts"}
+    return measurements
+
+
+@pytest.mark.parametrize(("width", "columns"), [(320, 1), (1440, 2)])
+def test_studio_layout_in_real_chromium(
+    tmp_path: Path, studio_layout_server: str, width: int, columns: int
+) -> None:
+    """Real CSS layout must fit 320px and preserve the desktop grid."""
+    measurements = _measure_layout(tmp_path, studio_layout_server, width)
     for row in measurements:
         assert row["viewport"] == width, row
         assert row["columns"] == columns, row
         assert row["scrollWidth"] <= width, row
         assert row["gridWidth"] > 0 and all(card > 0 for card in row["cards"]), row
+
+
+def test_studio_layout_probe_catches_overflow_at_320(
+    tmp_path: Path, studio_layout_server: str
+) -> None:
+    """对照组：网格被强行撑到 480px 时，320 档必须量出横向溢出（探针不是摆设）。"""
+    measurements = _measure_layout(tmp_path, studio_layout_server, 320, "frame-overflow")
+    for row in measurements:
+        assert row["viewport"] == 320, row
+        assert row["scrollWidth"] > 320, row
 
 
 class TestStudioUI:
