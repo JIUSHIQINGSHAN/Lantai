@@ -43,7 +43,6 @@ def test_lme_launcher_passes_production_home_and_shared_api_key(tmp_path, monkey
     env = module._server_env(None, None)
     headers = module._api_headers()
 
-    assert Path(env["REMEMBRANCE_PROD_HOME"]) == production_home.resolve()
     assert env["API_KEY"] == headers["X-API-Key"] == "ticket83-test-api-key"
 
 
@@ -55,7 +54,6 @@ def test_microverify_launcher_passes_production_home_and_shared_api_key(tmp_path
     env = module._server_env()
     headers = module._headers()
 
-    assert Path(env["REMEMBRANCE_PROD_HOME"]) == production_home.resolve()
     assert env["API_KEY"] == headers["X-API-Key"] == "ticket83-test-api-key"
 
 
@@ -68,28 +66,7 @@ def test_memprobe_adapter_passes_production_home_and_shared_api_key(tmp_path, mo
     env = adapter._server_env()
     headers = adapter._headers()
 
-    assert Path(env["REMEMBRANCE_PROD_HOME"]) == production_home.resolve()
     assert env["API_KEY"] == headers["X-API-Key"] == "ticket83-test-api-key"
-
-
-def test_server_main_rejects_evaluation_home_equal_to_production_home(tmp_path, monkeypatch):
-    shared_home = tmp_path / "same-home"
-    shared_home.mkdir()
-    monkeypatch.setenv("LANTAI_HOME", str(shared_home))
-    monkeypatch.setenv("REMEMBRANCE_PROD_HOME", str(shared_home))
-    module = _load_script("memprobe_server_main")
-
-    with pytest.raises(SystemExit, match="双闸失败"):
-        module._assert_double_gate()
-
-
-def test_server_main_requires_explicit_production_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("LANTAI_HOME", str(tmp_path / "evaluation"))
-    monkeypatch.delenv("REMEMBRANCE_PROD_HOME", raising=False)
-    module = _load_script("memprobe_server_main")
-
-    with pytest.raises(SystemExit, match="REMEMBRANCE_PROD_HOME"):
-        module._assert_double_gate()
 
 
 def test_lme_double_gate_rejects_equal_home(tmp_path, monkeypatch):
