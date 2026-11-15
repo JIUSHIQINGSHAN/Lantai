@@ -120,7 +120,9 @@ def test_candidate_and_memory_exits_same_form(param_env):
             summary="票53候选",
             status="pending_review",
             user_id="u53",
-            created_at=datetime(2026, 11, 7, 12, 30, 45, tzinfo=UTC),
+            # 相对「现在」：defer_candidate 拒绝把到期日推到 created_at + 30 天之后，
+            # 写死 2026-11-07 时本测自 2026-11-30 12:30 UTC 起恒红（时间炸弹）。
+            created_at=datetime.now(UTC).replace(microsecond=0) - timedelta(days=1),
         )
         s.add(cand)
         s.commit()

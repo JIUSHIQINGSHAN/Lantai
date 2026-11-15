@@ -9,7 +9,7 @@
 5. 租户行级 ACL 严格隔离防护：未授权租户/用户的数据不可探测、不可穿透推演。
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -212,8 +212,12 @@ def test_arbitrate_deep_conflict(param_env):
     判定主导记忆（dominant_memory_id），并给出详尽的决策理由与直断叙述。
     """
     # t_early vs t_late，晚近事实在事实更正中主导
-    t_early = datetime(2026, 9, 1, 10, 0, tzinfo=UTC)
-    t_late = datetime(2026, 10, 15, 10, 0, tzinfo=UTC)
+    # 时间锚相对「现在」：_temporal_recency 按 max(0, 1 - days_old/30) 算，原先写死的
+    # 2026-10-15 在 2026-11-14 10:00 UTC 起满 30 天，两条 recency 同归 0，
+    # 胜负退化成入参顺序，本测从那天起恒红（时间炸弹）。保留原 44 天间隔。
+    now = datetime.now(UTC)
+    t_late = now - timedelta(days=2)
+    t_early = t_late - timedelta(days=44)
 
     _seed_memories(
         param_env,
