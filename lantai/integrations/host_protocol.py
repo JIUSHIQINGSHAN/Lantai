@@ -48,6 +48,40 @@ class HostRequest:
     blocks: dict = field(default_factory=dict)
 
 
+def _hermes_shell_user_message(data: dict) -> str:
+    """Hermes shell hook 原生线格式里的本轮用户原话；不是该格式返回空串。
+
+    Hermes（v0.23.1 `agent/shell_hooks.py::_serialize_payload`；官方文档
+    `website/docs/user-guide/features/hooks.md` 「JSON wire protocol」）给 shell
+    hook 的 stdin 是 `{hook_event_name, tool_name, tool_input, session_id, cwd,
+    profile, extra}`：顶层**没有** `query`/`message`/`prompt`，`pre_llm_call` 的
+    `user_message` 等事件参数全在 `extra` 里。此前只认顶层三字段，CLI 模式
+    （config.yaml `hooks: pre_llm_call` → `scripts/shell_hook.py`）每轮都按空查询
+    处理，检索一次都没跑过（真 Hermes v0.23.1 端到端实测：4 轮 4 个 `{}`，
+    retrieval_event 0 行）。
+
+    只在 `hook_event_name == "pre_llm_call"` 时取：其余事件（含 Claude Code 的
+    SessionStart 等）保持原来的空查询语义，不改它们的行为。多模态轮的
+    `user_message` 是 content parts 列表，取其中的 text 段拼起来。
+    """
+    if data.get("hook_event_name") != "pre_llm_call":
+        return ""
+    extra = data.get("extra")
+    if not isinstance(extra, dict):
+        return ""
+    msg = extra.get("user_message")
+    if isinstance(msg, str):
+        return msg
+    if isinstance(msg, list):
+        texts = [
+            p.get("text")
+            for p in msg
+            if isinstance(p, dict) and p.get("type") == "text" and isinstance(p.get("text"), str)
+        ]
+        return "\n".join(t for t in texts if t.strip())
+    return ""
+
+
 def parse_host_request(raw: str) -> HostRequest | None:
     """把宿主输入帧归一化为 `HostRequest`；无效帧返回 `None`（调用方降级为 `{}`）。
 
@@ -123,7 +157,13 @@ def parse_host_request(raw: str) -> HostRequest | None:
 
     # 回落 query：无 type 或 type 未匹配（现状语义）。字段按 falsy 回退，
     # 非字符串（如 123）视为无效帧而非交由下游抛错。
-    query = data.get("query") or data.get("message") or data.get("prompt") or ""
+    # 顶层三字段都缺时，再认 Hermes shell hook 的原生线格式（extra.user_message）。
+    query = (
+        data.get("query")
+        or data.get("message")
+        or data.get("prompt")
+        or _hermes_shell_user_message(data)
+    )
     if not isinstance(query, str):
         return None
     return HostRequest(

@@ -80,20 +80,22 @@ mcp_servers:
 
 ## Step 3 · Shell Hook 注册（读通道）
 
-Hermes 的 shell hooks 从 cli-config.yaml 的 `hooks:` 块读取（若该文件不存在，创建它；若已存在，追加 `hooks:` 段）：
+Hermes 的 shell hooks 从**与 Step 2 同一个** `config.yaml` 的 `hooks:` 块读取（在该文件末尾追加 `hooks:` 段；已有 `hooks:` 段就合并进去）。不要写进 cli-config.yaml——Hermes v0.23.1 没有任何配置读取器读它（源码 `cli.py` 注释原话："no config reader loads it"），写在那里的 hook 永远不会注册：
 
 ```yaml
 hooks:
   pre_llm_call:
-    command: "C:/Users/Asus/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe C:/Users/Asus/Desktop/记忆/scripts/shell_hook.py"
-    timeout: 3
+    - command: "C:/Users/Asus/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe C:/Users/Asus/Desktop/记忆/scripts/shell_hook.py"
+      timeout: 3
 hooks_auto_accept: true
 ```
 
 **说明**：
+- `pre_llm_call:` 下面必须是**列表**（`- command: ...`）。写成映射（`command:` 直接挂在 `pre_llm_call:` 下）时，Hermes 只报一句 `hooks.pre_llm_call must be a list of hook definitions` 就跳过（v0.23.1 `agent/shell_hooks.py::_parse_hooks`）。
 - `command` 经 shlex 拆分，双引号防止路径歧义；两条路径均无空格，安全。
 - `hooks_auto_accept: true` 跳过首次使用同意弹窗（等价于 `HERMES_ACCEPT_HOOKS=1`）。
-- 协议：Hermes pre_llm_call 发 stdin JSON → shell_hook.py 返回 `{"context": "..."}` 注入相关记忆；与 Hermes 原生协议逐字兼容。
+- 协议：Hermes pre_llm_call 发 stdin JSON `{hook_event_name, session_id, ..., extra: {user_message, ...}}` → shell_hook.py 从 `extra.user_message` 取本轮原话检索，返回 `{"context": "..."}` 注入相关记忆（字段见 `docs/host-hook-protocol.md` §2.1）。
+- CLI 模式只有这一条读通道：不写对话、不写底本、不注入「上次在做」。要对话写入和底本，用 Hermes 插件（`hermes-plugin/lantai-hook`）；插件和这条 shell hook 只开一个，两个都开会每轮注入两遍。
 - 若 Hermes 实际读取的配置文件与上述不同，**停下来**，把实际配置文件名回传给人，不要猜测。
 
 ---

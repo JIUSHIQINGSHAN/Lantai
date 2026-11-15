@@ -56,6 +56,7 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `query` / `message` / `prompt` | str | 其一 | 查询串，按 `query` > `message` > `prompt` 回退 |
+| `extra.user_message` | str \| list | 否 | **Hermes shell hook 原生线格式**：顶层三字段都缺、且 `hook_event_name == "pre_llm_call"` 时按它取查询串（Hermes v0.23.1 把事件参数全放在 `extra` 里）；多模态轮是 content parts 列表，取其中 text 段拼接。其他 `hook_event_name` 不读 |
 | `session_id` | str | 否 | 会话标识，经归一化；非法 → 不落（宁 miss） |
 
 **响应**：
