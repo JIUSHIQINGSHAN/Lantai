@@ -27,7 +27,7 @@ REAL_PAYLOAD = {
     "tool_name": None,
     "tool_input": None,
     "session_id": "local-67e843eb",
-    "cwd": "/home/user/project",
+    "cwd": "/srv/project",
     "profile": "default",
     "extra": {
         "task_id": "local-67e843eb",
