@@ -189,6 +189,50 @@ _CHECKPOINT_INJECTED_MAX = 50  # 防会话集无限膨胀（只影响首轮注�
 # 被否决的一轮从未发给模型（多用于 DLP 拦截密码、密钥），兰台也不能把原话写进记忆。
 _PRE_LLM_BLOCK_EXIT_REASON = "blocked_by_plugin_pre_llm_call"
 
+# ── 非主会话只读（周报 2026-11-08 改进 1，巡检 2026-11-13 22:00 落地）──────────
+# Hermes 一个进程里跑三类会话：用户自己的主会话、Hermes 定时跑的 cron、主会话拆出去的
+# 子智能体。pre_llm_call / on_session_end 都带 `platform`（agent/turn_context.py
+# `platform=getattr(agent, "platform", None) or ""`；cron/scheduler.py 传 "cron"，
+# tools/delegate_tool.py 传 "subagent"）。Hermes 自己的 MemoryProvider 接口文档
+# （agent/memory_provider.py）写明 "skip writes for non-primary contexts"。
+# 注：memory_provider 的 agent_context 还有 "flush"，但它不进插件钩子的 platform，这里不列。
+# 修复前插件一视同仁：cron 的任务提示词进会话缓冲 → on_session_end 写成底本
+# 「上次在做」（get_latest_checkpoint 取全库最新一条，用户自己的那条被盖掉）、送进
+# 对话写通道、backfill 给注入的记忆刷 injection_count/last_used_at（保活，干扰遗忘）。
+# 现在这几类会话只读：照常注入（底本 + 检索），不缓冲、不写底本、不写对话、不回执。
+# 环境变量 / 仓库根 .env 的 LANTAI_HOOK_READONLY_PLATFORMS 可覆盖（逗号分隔；
+# 显式写成空值 = 关闭隔离，回到修复前行为）。
+_READONLY_PLATFORMS_DEFAULT = frozenset({"cron", "subagent"})
+
+
+def _readonly_platforms(hook_path: str | None = None) -> frozenset[str]:
+    """读只读会话类型集合：进程环境变量优先，其次仓库根 .env，都没有用默认值。"""
+    raw = os.environ.get("LANTAI_HOOK_READONLY_PLATFORMS")
+    if raw is None:
+        hp = _SHELL_HOOK if hook_path is None else hook_path
+        if hp:
+            raw = _dotenv_value(
+                Path(hp).resolve().parent.parent / ".env", "LANTAI_HOOK_READONLY_PLATFORMS"
+            )
+    if raw is None:
+        return _READONLY_PLATFORMS_DEFAULT
+    return frozenset(p.strip().lower() for p in str(raw).split(",") if p.strip())
+
+
+_READONLY_PLATFORMS = _readonly_platforms()
+
+
+def _is_readonly_turn(kwargs: dict) -> bool:
+    """这一轮是否来自非主会话（cron / 子智能体等）：是则只读不写。
+
+    旧版 Hermes 不传 platform → 空串 → 按主会话处理（与修复前一致）。
+    """
+    platform = kwargs.get("platform")
+    if not isinstance(platform, str):
+        return False
+    return platform.strip().lower() in _READONLY_PLATFORMS
+
+
 # 块来源规则前缀/句式（宁 miss：命中才填，拿不准留空）
 _NEXT_PREFIXES = ("接下来", "下一步", "然后", "待办")
 _DECISION_MARKERS = ("决定了", "就按", "采用", "改为")
@@ -590,9 +634,13 @@ def _on_pre_llm_call(**kwargs) -> dict | None:
     if not isinstance(query, str):
         return None
     q = query.strip()
+    readonly = _is_readonly_turn(kwargs)
     # v0.5：无论是否注入，都把用户消息累积为对话写通道原料
     # （这一轮若被别的插件否决，on_session_end 会按 turn_id 把它剔掉）
-    entry = _buffer_turn(session_id, q, turn_id=str(kwargs.get("turn_id") or ""))
+    # 非主会话（cron / 子智能体）只读：不进缓冲，于是也不进底本和对话写通道。
+    entry = (
+        None if readonly else _buffer_turn(session_id, q, turn_id=str(kwargs.get("turn_id") or ""))
+    )
     # ADR-0022：会话首轮先注入底本（与查询长度/触发词无关，每会话一次）
     ck = None
     if session_id and session_id not in _checkpoint_injected:
@@ -632,7 +680,10 @@ def _on_pre_llm_call(**kwargs) -> dict | None:
             entry["event_id"] = str(event_id)
             if used_ids:
                 entry["used_ids"] = list(used_ids)
-        elif used_ids:
+        elif used_ids and not readonly:
+            # 非主会话不回执：回执会刷 injection_count / last_used_at（保活），
+            # cron 每天跑几次就把同一批记忆续命几次。事件留 pending，
+            # 300s 后由服务端 mark_missed_receipts 如实置 missed 并抹原话。
             _call_backfill(str(event_id), used_ids)
     # 票 74：零命中帧无 context（且无底本）时不产出空注入——空 context 会在
     # 宿主侧留下无意义的空上下文条目；event_id 已挂载，否决链不受影响。
@@ -651,6 +702,9 @@ def _on_session_end(**kwargs) -> None:
     """on_session_end 回调：落底本五段块 + flush 会话缓冲 → 对话写通道。"""
     session_id = kwargs.get("session_id") or ""
     if not session_id:
+        return
+    if _is_readonly_turn(kwargs):
+        # 非主会话只读：不写底本五段块、不 flush 对话写通道（pre_llm_call 也没缓冲）。
         return
     if kwargs.get("turn_exit_reason") == _PRE_LLM_BLOCK_EXIT_REASON:
         # 被否决的一轮：不进对话写通道，也不进底本五段块（之前正常的轮次照常落）。

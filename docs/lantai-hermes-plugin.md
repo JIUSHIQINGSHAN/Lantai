@@ -36,6 +36,12 @@
   从环境变量或仓库根 `.env` 读取，与 serve 子进程同口径——服务端墙先到、回降级帧、
   后台写入照常落库；插件 watchdog 只兜「子进程真卡死」，不再与服务端等宽竞态
 - 会话缓冲有界：200 条 / 20 万字符，超出丢最旧
+- 非主会话只读：Hermes 每轮带 `platform`，`cron`（Hermes 定时任务）、`subagent`（委派出去的
+  子智能体）两类只注入、不写——不进会话缓冲、不写底本「上次在做」、不进对话写通道、
+  不回执（事件留 pending，300s 后由服务端如实置 missed 并抹原话）。与 Hermes 自家
+  MemoryProvider 接口「non-primary 上下文跳过写入」同口径。可用环境变量或仓库根 `.env` 的
+  `LANTAI_HOOK_READONLY_PLATFORMS` 覆盖（逗号分隔；写成空值即关闭隔离）。旧版 Hermes 不传
+  `platform` 时按主会话处理，与之前一致
 
 ## 部署
 
