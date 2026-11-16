@@ -89,7 +89,9 @@ def test_embed_budget_mode_is_single_attempt(failing_openai):
     with pytest.raises(_Boom):
         _real_embed(["x"], timeout=0.1)
     assert len(calls) == 1
-    assert time.perf_counter() - t < 0.5  # 改前：3 次请求、约 3.5s
+    # 改前：3 次请求、约 3.5s。墙钟只做粗兜底（次数和 max_retries=0 才是主断言）：
+    # 0.5s 在 CI 负载下量到过 1.03s（run 43605051114），放到 2s 仍能抓住改前的 3.5s
+    assert time.perf_counter() - t < 2.0
     fake.with_options.assert_called_once_with(timeout=0.1, max_retries=0)
 
 
