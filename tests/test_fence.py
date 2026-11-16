@@ -263,5 +263,6 @@ class TestFenceAtExits:
         ctx = out.get("context", "")
         # 正文里的闭合被中性化 → 围栏结构不被截断；闭合总数 = 围栏自身数量
         assert ctx.count("</memory_data>") == ctx.count(DATA_FENCE_OPEN)
-        # 恶意正文在【本次依据】与【相关记忆】各出现一次，各被中性化
-        assert ctx.count("<\\/memory_data>") == 2
+        # 恶意正文只在【相关记忆】出现一次并被中性化（依据段只列 id + 分数，
+        # 周报 2026-11-03 P2-4）
+        assert ctx.count("<\\/memory_data>") == 1
