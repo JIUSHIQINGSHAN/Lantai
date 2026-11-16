@@ -1,12 +1,11 @@
 from datetime import UTC, datetime, timedelta
 from functools import partial
 
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.jobstores.memory import MemoryJobStore
 
 from lantai.core.logger import logger
+from lantai.core.scheduler_loop import RecoveringScheduler as BackgroundScheduler
 from lantai.core.settings import settings
-from lantai.storage.db import engine
 
 _scheduler: BackgroundScheduler | None = None
 
@@ -67,47 +66,79 @@ def get_last_run(name: str) -> str | None:
     return _last_run_from_db(name) or WORKER_LAST_RUN.get(name)
 
 
+def scheduler_health() -> dict:
+    """只读内存快照；公开探针也可安全调用，不查库、不等调度锁。"""
+    current = _scheduler
+    configured = bool(settings.LANTAI_RUN_SCHEDULER)
+    if current is not None and hasattr(current, "loop_status"):
+        status = current.loop_status()
+    else:
+        thread = getattr(current, "_thread", None)
+        alive = bool(thread is not None and thread.is_alive())
+        status = {
+            "running": bool(current is not None and current.running and alive),
+            "thread_alive": alive,
+            "healthy": False,
+            "reason": "not_started" if current is None else "unobserved",
+            "last_tick_at": None,
+            "last_progress_at": None,
+            "progress_age_seconds": None,
+            "stale_after_seconds": BackgroundScheduler.LOOP_STALE_SECONDS
+            if hasattr(BackgroundScheduler, "LOOP_STALE_SECONDS")
+            else None,
+            "error_count": 0,
+            "consecutive_errors": 0,
+            "last_error": None,
+            "last_error_at": None,
+            "retry_delay_seconds": 0.0,
+        }
+    if not configured:
+        status = {**status, "healthy": True, "reason": "disabled"}
+    return {**status, "configured": configured}
+
+
 def is_running() -> bool:
-    """调度器是否已启动（司天监控面板用；测试进程通常为 False）。"""
-    return bool(_scheduler is not None and _scheduler.running)
+    """运行标志与实际线程均存活；完整循环进展另由 scheduler_health 判定。"""
+    return scheduler_health()["running"]
 
 
 def scheduler_status() -> dict:
-    """调度器运行态与作业清单（只读；未启动时 running=False、jobs=[]）。
-
-    司天（ADR-0044）监控面板的数据源之一：APScheduler 作业的真实下一次触发时间
-    只有调度器自己知道，DB 里的 `scheduler_run` 只回答「上次跑没跑」。
-    """
+    """调度活性与作业清单；拿不到调度锁时清单标为不可用，绝不阻塞探针。"""
     from lantai.core.time import iso_utc
 
-    if _scheduler is None:
-        return {
-            "running": False,
-            "configured": bool(settings.LANTAI_RUN_SCHEDULER),
-            "job_count": 0,
-            "jobs": [],
-        }
+    current = _scheduler
+    status = scheduler_health()
     jobs = []
+    available = True
     now = datetime.now(UTC)
+    lock = getattr(current, "_jobstores_lock", None)
+    acquired = lock is None or lock.acquire(blocking=False)
     try:
-        for job in _scheduler.get_jobs():
-            next_run = job.next_run_time
-            if next_run is not None and next_run.tzinfo is None:
-                next_run = next_run.replace(tzinfo=UTC)
-            jobs.append(
-                {
-                    "id": job.id,
-                    "name": getattr(job, "name", job.id),
-                    "trigger": str(job.trigger),
-                    "next_run_time": iso_utc(next_run) or None,
-                    "next_run_in_seconds": (
-                        round((next_run - now).total_seconds(), 1) if next_run else None
-                    ),
-                    "paused": next_run is None,
-                }
-            )
+        if not acquired:
+            available = False
+        elif current is not None:
+            for job in current.get_jobs():
+                next_run = job.next_run_time
+                if next_run is not None and next_run.tzinfo is None:
+                    next_run = next_run.replace(tzinfo=UTC)
+                jobs.append(
+                    {
+                        "id": job.id,
+                        "name": getattr(job, "name", job.id),
+                        "trigger": str(job.trigger),
+                        "next_run_time": iso_utc(next_run) or None,
+                        "next_run_in_seconds": (
+                            round((next_run - now).total_seconds(), 1) if next_run else None
+                        ),
+                        "paused": next_run is None,
+                    }
+                )
     except Exception:
-        logger.exception("读取调度器作业清单失败（降级为空清单）")
+        available = False
+        logger.exception("读取调度器作业清单失败（清单标为不可用）")
+    finally:
+        if lock is not None and acquired:
+            lock.release()
     jobs.sort(
         key=lambda row: (
             row["next_run_in_seconds"] is None,
@@ -116,8 +147,8 @@ def scheduler_status() -> dict:
         )
     )
     return {
-        "running": bool(_scheduler.running),
-        "configured": bool(settings.LANTAI_RUN_SCHEDULER),
+        **status,
+        "jobs_available": available,
         "job_count": len(jobs),
         "jobs": jobs,
     }
@@ -273,12 +304,13 @@ def start_scheduler():
     from lantai.workers.ingest_worker import run_ingest_once
 
     _scheduler = BackgroundScheduler(
-        jobstores={"default": SQLAlchemyJobStore(engine=engine, tablename="apscheduler_jobs")},
+        jobstores={"default": MemoryJobStore()},
         timezone="UTC",
+        job_defaults={"coalesce": True, "max_instances": 1},
     )
-    # replace_existing=True 是必需的：jobstore 是 SQLAlchemyJobStore（持久化在同一个
-    # SQLite 库里），第二次启动时旧作业仍在表中——缺这个参数会让 start() 抛
-    # ConflictingIdError，服务对已存在的库再也起不来（只能删库或手工清表）。
+    # 所有计划每次启动重注册；完成戳另存 scheduler_run，每日漏跑由 catchup 补齐。
+    # 持久 store 在提交任务后 update_job 被 SQLite 写锁打断，重试会重放已提交任务。
+    # 内存 store 撤掉这条非原子的持久化边界；旧 apscheduler_jobs 表保留、不再读取。
     _scheduler.add_job(
         run_ingest_once,
         "interval",

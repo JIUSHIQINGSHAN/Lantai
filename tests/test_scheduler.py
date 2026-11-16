@@ -242,21 +242,11 @@ class TestMigrationsV8ToV15:
 
 
 class TestSchedulerRestart:
-    """重启回归：jobstore 持久化在同一个库里，第二次启动必须替换旧作业而不是炸。
+    """真实调度线程重启：内存作业重注册，计划清单相同且不重复。"""
 
-    真实 BackgroundScheduler + 真实文件 SQLite jobstore（不 mock 调度器）——
-    这条正是为了防住 ingest/evolve/forget 三个 add_job 漏 replace_existing 时
-    `start()` 抛 ConflictingIdError、服务对已存在的库再也起不来的故障。
-    """
-
-    def test_start_twice_against_same_jobstore(self, monkeypatch, tmp_path):
-        from sqlmodel import create_engine
-
+    def test_start_twice_rebuilds_same_schedule(self, monkeypatch):
         from lantai.core.settings import settings
 
-        engine = create_engine(f"sqlite:///{tmp_path / 'jobs.db'}")
-        SQLModel.metadata.create_all(engine)
-        monkeypatch.setattr(scheduler_mod, "engine", engine)
         monkeypatch.setattr(scheduler_mod, "_scheduler", None)
         # 关掉会在启动后 2 秒补跑真 LLM 的每日任务，只验证作业注册幂等
         monkeypatch.setattr(settings, "DIGEST_ENABLED", False)
@@ -274,7 +264,7 @@ class TestSchedulerRestart:
             assert all(job["next_run_time"] for job in first["jobs"])
             scheduler_mod.stop_scheduler()
 
-            # 第二次启动：旧作业仍在 jobstore 表中
+            # 第二次启动：从代码重注册全部计划
             scheduler_mod.start_scheduler()
             second = scheduler_mod.scheduler_status()
             assert second["running"] is True
@@ -293,10 +283,10 @@ class TestSchedulerRestart:
     def test_scheduler_status_reports_not_running_when_idle(self, monkeypatch):
         monkeypatch.setattr(scheduler_mod, "_scheduler", None)
         status = scheduler_mod.scheduler_status()
-        assert status == {
-            "running": False,
-            "configured": bool(scheduler_mod.settings.LANTAI_RUN_SCHEDULER),
-            "job_count": 0,
-            "jobs": [],
-        }
+        assert status["running"] is False
+        assert status["thread_alive"] is False
+        assert status["configured"] is bool(scheduler_mod.settings.LANTAI_RUN_SCHEDULER)
+        assert status["job_count"] == 0
+        assert status["jobs"] == []
+        assert status["last_progress_at"] is None
         assert scheduler_mod.is_running() is False

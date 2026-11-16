@@ -5,7 +5,7 @@ v0.4 Knowledge Lifecycle 状态机冒烟测试（全不 mock）
 LC-01: Active → Weakened（confidence < threshold）
 LC-02: Weakened → Superseded（新 Belief 取代旧 Belief）
 LC-03: Superseded → Retired（decay_score 极低触发退役）
-LC-04: candidate → Active（promote，Candidate != Knowledge）
+LC-04: 裸 promote 拒绝，候选必须走受权 review service
 LC-05: lifecycle_status 过滤（Retired 不参与活跃检索）
 """
 
@@ -95,7 +95,7 @@ def test_superseded_to_retired(session: Session):
 
 
 def test_promotion_candidate_to_active(session: Session):
-    """LC-04: candidate 记忆经 promote() 晋升为 Active（Candidate != Knowledge）"""
+    """LC-04: candidate 不能靠裸状态修改绕过受权审核。"""
     candidate = _make_belief(
         "候选信念：持续集成比手动部署更可靠", confidence=0.7, status="candidate"
     )
@@ -103,11 +103,13 @@ def test_promotion_candidate_to_active(session: Session):
     session.commit()
 
     mgr = KnowledgeLifecycleManager(db=session)
-    mgr.promote(candidate)
+    with pytest.raises(LifecycleTransitionError, match="review"):
+        mgr.promote(candidate)
     session.commit()
 
     refreshed = session.get(MemoryItem, candidate.id)
-    assert refreshed.status == "active", "promote 后 status 应为 active"
+    assert refreshed.status == "candidate"
+    assert refreshed.version == 1
     assert refreshed.lifecycle_status == LifecycleStatus.ACTIVE
 
 

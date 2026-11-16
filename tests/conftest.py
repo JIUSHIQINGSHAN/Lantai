@@ -969,6 +969,8 @@ def _no_background_scheduler(monkeypatch):
     from lantai.api import app as api_server
 
     monkeypatch.setattr(api_server, "start_scheduler", lambda: None)
+    # 工装确实禁用了后台线程，健康检查须使用一致配置；线程健康回归在用例中显式开启。
+    monkeypatch.setattr(settings, "LANTAI_RUN_SCHEDULER", False)
     # 司天遥测（ADR-0044）落库线程同理不进测试：offer/flush 保持真实（测试可显式
     # flush_telemetry() 验证），只掐掉后台线程——它会跨线程复用同一个 SQLite 连接。
     import lantai.observability.telemetry as telemetry_module

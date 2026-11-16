@@ -39,7 +39,12 @@ def _dump_here() -> None:
     """在 worktree 里执行：用该版模型建库并打印 DDL 快照。"""
     import sqlite3
 
-    sys.path.insert(0, os.getcwd())
+    snapshot_root = os.environ.get("REMEMBRANCE_SNAPSHOT_REPO_ROOT")
+    if not snapshot_root or not (Path(snapshot_root) / "lantai" / "models" / "tables.py").is_file():
+        raise SystemExit(
+            "REMEMBRANCE_SNAPSHOT_REPO_ROOT must name the requested historical checkout"
+        )
+    sys.path.insert(0, str(Path(snapshot_root).resolve()))
     from sqlmodel import SQLModel, create_engine
 
     import lantai.models.tables  # noqa: F401
@@ -118,6 +123,7 @@ def build(tag: str) -> Path:
             {
                 "LANTAI_HOME": home,
                 "REMEMBRANCE_HOME": home,
+                "REMEMBRANCE_SNAPSHOT_REPO_ROOT": str(wt.resolve()),
                 "PYTHONIOENCODING": "utf-8",
                 "OPENAI_BASE_URL": "http://127.0.0.1:9/v1",
             }

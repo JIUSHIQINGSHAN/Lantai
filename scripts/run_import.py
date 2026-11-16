@@ -12,8 +12,9 @@ JSONL 每行一条消息（腾讯 L0 同款）：{"role": "user"|"assistant",
 import argparse
 import json
 import sys
+from pathlib import Path
 
-sys.path.insert(0, ".")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from lantai.ingestion.import_service import import_session_jsonl  # noqa: E402
 

@@ -36,6 +36,7 @@ from lantai.storage import db
 _PROCESS_STARTED_AT = utcnow()
 _TYPE_ORDER = {
     "candidate": 0,
+    "knowledge_candidate": 0,
     "conflict": 1,
     "proposal": 2,
     "parameter": 3,
@@ -210,6 +211,30 @@ def project_work_items(
                 ],
                 related_refs=[{"kind": "document", "id": row.get("document_id", "")}],
                 group_id=group_ids.get(str(row["id"])),
+            )
+        )
+
+    for row in snapshot.get("knowledge_candidates", []):
+        items.append(
+            WorkItem(
+                id=f"knowledge_candidate:{row['id']}",
+                kind="knowledge_candidate",
+                source_id=row["id"],
+                title=(row.get("content") or "待审普通候选")[:160],
+                summary=(row.get("content") or "")[:240],
+                section="pending_decisions",
+                priority="normal",
+                reason="等待核对来源与证据后裁决",
+                risk="medium",
+                status=row["status"],
+                created_at=row.get("created_at"),
+                updated_at=row.get("updated_at"),
+                allowed_actions=["approve", "reject"],
+                badges=[
+                    str(row.get("role", "")),
+                    row.get("lane", "general"),
+                    f"置信 {float(row.get('confidence') or 0):.2f}",
+                ],
             )
         )
 
@@ -564,6 +589,13 @@ def load_work_item_snapshot(principal=None) -> dict[str, Any]:
                 *([cand_scope] if cand_scope is not None else []),
             )
         ).all()
+        from lantai.services.knowledge_candidate_service import knowledge_candidate_scope
+
+        knowledge_candidates = s.exec(
+            select(MemoryItem).where(
+                MemoryItem.status == "candidate", *knowledge_candidate_scope(principal)
+            )
+        ).all()
         proposals = s.exec(
             select(MemoryProposal).where(
                 MemoryProposal.status == "pending",
@@ -592,6 +624,7 @@ def load_work_item_snapshot(principal=None) -> dict[str, Any]:
         latest_reflect = s.exec(select(ReflectRun).order_by(ReflectRun.run_at.desc())).first()
         return {
             "candidates": [row.model_dump() for row in candidates],
+            "knowledge_candidates": [row.model_dump() for row in knowledge_candidates],
             "proposals": [row.model_dump() for row in proposals],
             "conflicts": [row.model_dump() for row in conflicts],
             "parameters": [row.model_dump() for row in parameters],
@@ -674,7 +707,18 @@ def get_work_item_detail(kind: str, source_id: str, *, principal=None) -> WorkIt
     with db.get_session() as s:
         source: dict[str, Any]
         related: dict[str, Any] = {}
-        if kind == "candidate":
+        if kind == "knowledge_candidate":
+            from fastapi import HTTPException
+
+            from lantai.services.knowledge_candidate_service import knowledge_candidate_detail
+
+            try:
+                detail = knowledge_candidate_detail(source_id, principal=principal)
+            except HTTPException as exc:
+                raise ValueError("work item not found or no longer pending") from exc
+            source = detail["source"]
+            related = {"evidence": detail["evidence"], "review": detail["review"]}
+        elif kind == "candidate":
             row = s.get(MemoryCandidate, source_id)
             source = row.model_dump(mode="json")
             document = s.get(RawDocument, row.document_id)

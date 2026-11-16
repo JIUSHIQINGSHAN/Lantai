@@ -1307,7 +1307,7 @@ wheels = [
 
 [[package]]
 name = "lantai"
-version = "0.68.0"
+version = "0.68.1"
 source = { editable = "." }
 dependencies = [
     { name = "apscheduler" },
@@ -1361,7 +1361,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "apscheduler", specifier = ">=3.10" },
+    { name = "apscheduler", specifier = ">=3.10,<4" },
     { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "chromadb", specifier = ">=0.4,<1.0" },
     { name = "fastapi", specifier = ">=0.115" },

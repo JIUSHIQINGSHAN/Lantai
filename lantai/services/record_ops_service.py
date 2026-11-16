@@ -52,6 +52,45 @@ def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def is_candidate_origin(session: Session, item: MemoryItem) -> bool:
+    """A former candidate is not knowledge merely because it was archived/folded.
+
+    Review receipts are also copied onto the *new* knowledge record: compare the
+    candidate id rather than blocking all records carrying the review audit.
+    Checkpoints remain authoritative if a later content edit removed provenance.
+    """
+    from lantai.models.tables import MemoryCheckpoint
+
+    provenance = item.provenance or {}
+    review = provenance.get("knowledge_candidate_review") or {}
+    receipt = review.get("receipt") or {}
+    is_candidate = (
+        item.status == "candidate"
+        or "candidate_reconciliation" in provenance
+        or (bool(review) and receipt.get("candidate_id", item.id) == item.id)
+    )
+    if not is_candidate:
+        checkpoints = session.exec(
+            select(MemoryCheckpoint).where(MemoryCheckpoint.memory_id == item.id)
+        ).all()
+        is_candidate = any(
+            checkpoint.before.get("status") == "candidate"
+            or checkpoint.after.get("status") == "candidate"
+            for checkpoint in checkpoints
+        )
+    return is_candidate
+
+
+def _candidate_restore_refusal(session: Session, item: MemoryItem) -> dict | None:
+    if not is_candidate_origin(session, item):
+        return None
+    return {
+        "ok": False,
+        "code": "candidate_review_required",
+        "error": "former candidate cannot be restored as active knowledge; use the candidate review workflow",
+    }
+
+
 def audit_event(
     session: Session,
     *,
@@ -169,6 +208,7 @@ def retract_memory(
         if item.status == STATUS_RETRACTED:
             # 幂等重入：不假设首次撤回的索引同步结果，只认状态（如实，不造假 True）
             return {"ok": True, "already_retracted": True, "warnings": []}
+        candidate_before = item.model_dump(mode="json") if item.status == "candidate" else None
         warnings: list[str] = []
         fts_removed, fts_warn = _sync_fts(s, memory_id, None)
         warnings.extend(fts_warn)
@@ -177,6 +217,22 @@ def retract_memory(
             warnings.append("vector delete failed; SQL status filter remains authoritative")
         item.status = STATUS_RETRACTED
         item.updated_at = utcnow()
+        if candidate_before is not None:
+            # Preserve the origin even for pending candidates with no prior review
+            # provenance. Otherwise retract -> unretract would manufacture knowledge.
+            from lantai.models.tables import MemoryCheckpoint
+
+            item.version += 1
+            s.add(
+                MemoryCheckpoint(
+                    id=new_id("ckpt"),
+                    memory_id=item.id,
+                    version=item.version,
+                    before=candidate_before,
+                    after=item.model_dump(mode="json"),
+                    trigger="candidate_retract",
+                )
+            )
 
         # 完璧（ADR-0057）：撤回来源记忆时，联动撤回挂在该记忆下的所有 FactAtomic
         try:
@@ -238,6 +294,8 @@ def unretract_memory(
             return dict(_NOT_FOUND)
         if item.status != STATUS_RETRACTED:
             return {"ok": False, "error": f"memory is not retracted (status={item.status})"}
+        if refusal := _candidate_restore_refusal(s, item):
+            return refusal
         warnings: list[str] = []
         fts_synced, fts_warn = _sync_fts(s, memory_id, item.content)
         warnings.extend(fts_warn)
@@ -329,6 +387,8 @@ def unarchive_memory(
             return dict(_NOT_FOUND)
         if item.status != STATUS_ARCHIVED:
             return {"ok": False, "error": f"memory is not archived (status={item.status})"}
+        if refusal := _candidate_restore_refusal(s, item):
+            return refusal
         warnings: list[str] = []
         fts_present = _fts_row_present(s, memory_id)
         fts_resynced = False
@@ -614,6 +674,9 @@ def revive_consolidated(
                 lane=item.lane,
             )
 
+        if refusal := _candidate_restore_refusal(s, item):
+            return refusal
+
         # ① 主记忆形态：source_ids 非空即巩固产物（apply 时 promoter 落库的标记，
         #    不依赖边是否还在——边可能已被部分清理）
         if item.source_ids:
@@ -623,6 +686,14 @@ def revive_consolidated(
                     MemoryEdge.relation == "supersedes",
                 )
             ).all()
+            # Inspect every restoration target before retracting the master or
+            # touching indexes. A mixed cluster must fail without partial revival.
+            restoration_ids = set(item.source_ids) | {edge.target_memory_id for edge in edges}
+            for fragment_id in restoration_ids:
+                fragment = s.get(MemoryItem, fragment_id)
+                if fragment is not None and fragment.status == STATUS_CONSOLIDATED:
+                    if refusal := _candidate_restore_refusal(s, fragment):
+                        return refusal
             # 幂等：主记忆已撤回且无残留（边清零、无 consolidated 碎片）＝簇已撤销
             if (
                 item.status == STATUS_RETRACTED

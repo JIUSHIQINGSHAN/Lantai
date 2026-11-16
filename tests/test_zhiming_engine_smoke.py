@@ -97,23 +97,32 @@ def test_seam2_sqlite_persistence_transition(db_session: Session):
     db_session.add(mem)
     db_session.commit()
 
-    # 1. 将 candidate 晋升为 active
-    trans_promote = engine.transition_memory(
-        memory_id="mem_zm_01",
-        target_phase=LifecyclePhase.ACTIVE,
-        reason="审查闸门核准通过",
-        apply=True,
-    )
-    assert trans_promote.applied is True
-    assert trans_promote.to_phase == LifecyclePhase.ACTIVE
-
+    # 1. 裸生命周期入口不能代替候选审核；失败不改状态/版本。
+    with pytest.raises(ValueError, match="review"):
+        engine.transition_memory(
+            memory_id="mem_zm_01",
+            target_phase=LifecyclePhase.ACTIVE,
+            reason="声称核准也不能绕过证据审核",
+            apply=True,
+        )
     m_check = db_session.get(MemoryItem, "mem_zm_01")
-    assert m_check.status == "active"
-    assert m_check.lifecycle_status == LifecycleStatus.ACTIVE
+    assert m_check.status == "candidate"
+    assert m_check.version == 1
+    assert engine.inspect_lifecycle(m_check.id).phase == LifecyclePhase.CANDIDATE
 
+    # 独立已生效种子用于测试合法降级，真实审批链另有端到端测试。
+    m_check = MemoryItem(
+        id="mem_zm_active",
+        content="已审核合成知识",
+        status="active",
+        user_id="alice",
+        tenant_id="t_zhiming",
+    )
+    db_session.add(m_check)
+    db_session.commit()
     # 2. 将 active 降级弱化为 weakened
     trans_weaken = engine.transition_memory(
-        memory_id="mem_zm_01",
+        memory_id="mem_zm_active",
         target_phase=LifecyclePhase.WEAKENED,
         reason="半年未命中且存在负反馈",
         apply=True,

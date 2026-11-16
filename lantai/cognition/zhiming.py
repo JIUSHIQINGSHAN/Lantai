@@ -40,6 +40,25 @@ class LifecyclePhase(StrEnum):
     WEAKENED = "weakened"
     SUPERSEDED = "superseded"
     RETIRED = "retired"
+    ARCHIVED = "archived"
+    RETRACTED = "retracted"
+    CONSOLIDATED = "consolidated"
+    DELETED = "deleted"
+    REJECTED = "rejected"
+    UNKNOWN = "unknown"
+
+
+def _effective_phase(mem: MemoryItem) -> LifecyclePhase:
+    """Pipeline status dominates lifecycle metadata for non-active records."""
+    if mem.status != "active":
+        try:
+            return LifecyclePhase(mem.status)
+        except ValueError:
+            return LifecyclePhase.UNKNOWN
+    try:
+        return LifecyclePhase(mem.lifecycle_status or LifecycleStatus.ACTIVE)
+    except ValueError:
+        return LifecyclePhase.UNKNOWN
 
 
 @dataclass
@@ -85,10 +104,14 @@ class ZhimingItem:
     user_id: str | None = None
     tenant_id: str | None = None
     fenced_content: str = ""
+    status: str = "active"
+    lifecycle_status: str = "active"
 
     def to_dict(self, *, fenced: bool = True) -> dict[str, Any]:
         return {
             "memory_id": self.memory_id,
+            "status": self.status,
+            "lifecycle_status": self.lifecycle_status,
             "phase": self.phase.value,
             "base_confidence": round(self.base_confidence, 4),
             "effective_confidence": round(self.effective_confidence, 4),
@@ -252,12 +275,7 @@ class ZhimingEngine:
             if not self._check_access(owner_id=mem.user_id, tenant_id=mem.tenant_id):
                 raise PermissionError(f"无权查看此记忆生命周期（行级隔离）: {mid}")
 
-            # 换算当前生命周期 Phase
-            raw_phase = (mem.lifecycle_status or LifecycleStatus.ACTIVE).lower()
-            try:
-                phase = LifecyclePhase(raw_phase)
-            except ValueError:
-                phase = LifecyclePhase.ACTIVE
+            phase = _effective_phase(mem)
 
             # 计算年龄
             created = ensure_aware(mem.created_at) or ref_now
@@ -275,6 +293,8 @@ class ZhimingEngine:
             return ZhimingItem(
                 memory_id=mem.id,
                 phase=phase,
+                status=mem.status,
+                lifecycle_status=mem.lifecycle_status,
                 base_confidence=mem.confidence,
                 effective_confidence=eff_conf,
                 half_life_days=DEFAULT_HALF_LIFE_DAYS,
@@ -302,6 +322,32 @@ class ZhimingEngine:
             if not self._check_access(owner_id=mem.user_id, tenant_id=mem.tenant_id):
                 raise PermissionError(f"无权修改此记忆生命周期（行级隔离）: {transition.memory_id}")
 
+            if mem.status == "candidate":
+                raise ValueError("candidate activation requires knowledge_candidate_service review")
+            if mem.status != "active":
+                raise ValueError("inactive memory requires its dedicated restore service")
+            current = _effective_phase(mem)
+            allowed = {
+                LifecyclePhase.ACTIVE: {
+                    LifecyclePhase.ACTIVE,
+                    LifecyclePhase.WEAKENED,
+                    LifecyclePhase.SUPERSEDED,
+                    LifecyclePhase.RETIRED,
+                },
+                LifecyclePhase.WEAKENED: {
+                    LifecyclePhase.WEAKENED,
+                    LifecyclePhase.ACTIVE,
+                    LifecyclePhase.SUPERSEDED,
+                    LifecyclePhase.RETIRED,
+                },
+                LifecyclePhase.SUPERSEDED: {LifecyclePhase.SUPERSEDED, LifecyclePhase.RETIRED},
+                LifecyclePhase.RETIRED: {LifecyclePhase.RETIRED},
+            }
+            if current != transition.from_phase or transition.to_phase not in allowed.get(
+                current, set()
+            ):
+                raise ValueError("invalid or stale lifecycle transition")
+
             now = utcnow()
             # 票 23：转移落地改 CAS（WHERE lifecycle_status=计划期前置态）——
             # 陈旧计划不得覆写已推进的生命周期（retire 落地后随到的 weaken
@@ -311,10 +357,7 @@ class ZhimingEngine:
                 "lifecycle_status": transition.to_phase.value,
                 "updated_at": now,
             }
-            if transition.to_phase == LifecyclePhase.ACTIVE:
-                # 晋升或复元：确保 status 也为 active
-                values["status"] = "active"
-            elif transition.to_phase == LifecyclePhase.WEAKENED:
+            if transition.to_phase == LifecyclePhase.WEAKENED:
                 values["weakened_at"] = now
             elif transition.to_phase == LifecyclePhase.SUPERSEDED:
                 values["superseded_at"] = now
@@ -327,7 +370,11 @@ class ZhimingEngine:
                 s,
                 MemoryItem,
                 transition.memory_id,
-                expected={"lifecycle_status": transition.from_phase.value},
+                expected={
+                    "lifecycle_status": transition.from_phase.value,
+                    "status": "active",
+                    "version": mem.version,
+                },
                 values=values,
             )
             if not claimed:
@@ -405,13 +452,10 @@ class ZhimingEngine:
             distribution: dict[str, int] = {}
 
             for m in items:
-                raw_phase = (m.lifecycle_status or LifecycleStatus.ACTIVE).lower()
-                try:
-                    phase = LifecyclePhase(raw_phase)
-                except ValueError:
-                    phase = LifecyclePhase.ACTIVE
-
+                phase = _effective_phase(m)
                 distribution[phase.value] = distribution.get(phase.value, 0) + 1
+                if m.status != "active":
+                    continue
 
                 created = ensure_aware(m.created_at) or ref_now
                 age_days = max(0.0, (ref_now - created).total_seconds() / 86400.0)

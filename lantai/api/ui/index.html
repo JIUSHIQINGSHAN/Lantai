@@ -116,7 +116,8 @@
           </label>
           <select id="kindFilter" aria-label="按类型筛选">
             <option value="">全部类型</option>
-            <option value="candidate">候选</option>
+            <option value="candidate">摄取候选</option>
+            <option value="knowledge_candidate">知识候选</option>
             <option value="proposal">提案</option>
             <option value="conflict">冲突</option>
             <option value="parameter">参数</option>
@@ -139,6 +140,7 @@
           <button class="text-button" id="clearSelection">取消选择</button>
         </div>
 
+        <section id="knowledgeReviewReceipts" class="review-receipts" aria-label="知识候选审核请求与收据" aria-live="polite" hidden></section>
         <div class="queue" id="queue" aria-live="polite"></div>
       </section>
 
@@ -670,11 +672,11 @@
   </nav>
 
   <!-- 确认弹窗 -->
-  <dialog id="actionDialog">
+  <dialog id="actionDialog" aria-labelledby="dialogTitle">
     <form method="dialog" id="actionForm">
-      <header><h2 id="dialogTitle">确认操作</h2><button value="cancel" aria-label="关闭">×</button></header>
+      <header><h2 id="dialogTitle">确认操作</h2><button value="cancel" formnovalidate aria-label="关闭">×</button></header>
       <div id="dialogBody"></div>
-      <footer><button value="cancel" class="secondary-button">取消</button><button value="confirm" id="dialogConfirm">确认</button></footer>
+      <footer><button value="cancel" formnovalidate class="secondary-button">取消</button><button value="confirm" id="dialogConfirm">确认</button></footer>
     </form>
   </dialog>
 

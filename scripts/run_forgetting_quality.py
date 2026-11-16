@@ -13,7 +13,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, ".")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # 票 30 A2：报告面 stdout 钉 UTF-8——cp936 宿主 print GBK 外字符（emoji/U+2028/罕用字）直接崩
 if hasattr(sys.stdout, "reconfigure"):

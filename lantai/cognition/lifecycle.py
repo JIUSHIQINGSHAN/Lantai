@@ -24,7 +24,7 @@ class KnowledgeLifecycleManager:
     管理 MemoryItem 的知识生命周期状态转移。
 
     状态机：
-        candidate ──promote()──→ Active
+        candidate ──review service──→ new Active knowledge (source consolidated)
         Active ────weaken()────→ Weakened   (confidence < WEAKENED_THRESHOLD)
         Active/Weakened ─supersede()──→ Superseded
         Weakened/Superseded ─retire()─→ Retired
@@ -39,17 +39,11 @@ class KnowledgeLifecycleManager:
         self.db = db
 
     def promote(self, item: MemoryItem) -> MemoryItem:
-        """candidate → Active（Candidate ≠ Knowledge：必须经过审查闸门）"""
-        if item.status != "candidate":
-            raise LifecycleTransitionError(
-                f"promote() 只接受 status='candidate'，当前 status='{item.status}'。"
-                "Candidate != Knowledge：晋升必须经过审查闸门。"
-            )
-        item.status = "active"
-        item.lifecycle_status = LifecycleStatus.ACTIVE
-        item.updated_at = utcnow()
-        self.db.add(item)
-        return item
+        """拒绝裸晋升；受权 review service 才能维护质量、索引和审计。"""
+        raise LifecycleTransitionError(
+            "promote() cannot activate a memory; use knowledge_candidate_service.review_knowledge_candidate "
+            "for candidate review, or the dedicated restore service for inactive records"
+        )
 
     def weaken(self, item: MemoryItem) -> MemoryItem:
         """Active → Weakened（置信度下降信号，幂等）"""
@@ -96,7 +90,8 @@ class KnowledgeLifecycleManager:
         weakened = []
         for item in items:
             if (
-                item.lifecycle_status == LifecycleStatus.ACTIVE
+                item.status == "active"
+                and item.lifecycle_status == LifecycleStatus.ACTIVE
                 # 票 68：`or 1.0` 吞 0.0（合法零置信）——零置信记忆永不过降级线；
                 # 显式 None 判定（票 14 falsy-or 家族新位点）
                 and (item.confidence if item.confidence is not None else 1.0)
@@ -113,7 +108,8 @@ class KnowledgeLifecycleManager:
         retired = []
         for item in items:
             if (
-                item.lifecycle_status in (LifecycleStatus.WEAKENED, LifecycleStatus.SUPERSEDED)
+                item.status == "active"
+                and item.lifecycle_status in (LifecycleStatus.WEAKENED, LifecycleStatus.SUPERSEDED)
                 # 票 68：同上——decay_score=0.0 被 `or 1.0` 吞掉永不过退役线
                 and (item.decay_score if item.decay_score is not None else 1.0) < decay_threshold
             ):

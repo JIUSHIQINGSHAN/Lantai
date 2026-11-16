@@ -22,17 +22,15 @@ ROOT = Path(__file__).resolve().parent.parent
 # uvicorn.run 导入 lantai.api.app 失败（2026-10-28 seg0 首跑实测）
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-PROD_LANTAI_HOME = r"C:\Users\Asus\AppData\Local\remembrance-data"  # .env 实配生产库
+from scripts.eval_runtime import assert_separate_home, production_home
 
 
 def _assert_double_gate() -> None:
     home = os.environ.get("LANTAI_HOME", "")
     if not home:
         raise SystemExit("LANTAI_HOME 未设置，拒启")
-    prod = str(Path(PROD_LANTAI_HOME).resolve())
-    ev = str(Path(home).resolve())
-    if ev == prod or prod in ev or ev in prod:
-        raise SystemExit(f"双闸失败：评测目录 {ev} 与生产路径 {prod} 重叠，拒启")
+    prod = production_home(require_explicit=True)
+    ev = assert_separate_home(Path(home), prod)
     print(f"[双闸通过] 评测库: {ev}（≠ 生产 {prod}）", flush=True)
 
 

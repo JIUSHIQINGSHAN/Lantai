@@ -4076,7 +4076,7 @@ def handle(msg: object) -> dict | None:
             "result": {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "lantai", "version": "0.68.0"},
+                "serverInfo": {"name": "lantai", "version": "0.68.1"},
             },
         }
     if mid is None and method.startswith("notifications/"):
@@ -4190,11 +4190,11 @@ def _configure_stdio_utf8() -> None:
     写在模块顶部会波及一切 importer 的进程标准流（票 05 续15）。Python 3.7+ reconfigure；
     旧版靠 PYTHONIOENCODING 兜底。
     """
-    try:
-        sys.stdin.reconfigure(encoding="utf-8")
-        sys.stdout.reconfigure(encoding="utf-8")
-    except (AttributeError, ValueError):
-        os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 
 def _emit_error_frame(mid, type_name: str) -> None:

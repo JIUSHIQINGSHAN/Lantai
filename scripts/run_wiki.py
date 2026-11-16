@@ -9,8 +9,9 @@
 import argparse
 import json
 import sys
+from pathlib import Path
 
-sys.path.insert(0, ".")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from lantai.services.wiki_service import run_wiki_update_once  # noqa: E402
 

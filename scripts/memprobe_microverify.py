@@ -31,11 +31,15 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.eval_runtime import assert_separate_home, production_home, require_api_key
+
 OUT = ROOT / "docs/benchmarks/memprobe-2026-10"
 MV_HOME = ROOT / ".scratch/memprobe-suite/mv-home"
 PORT = 8792
 BASE = f"http://127.0.0.1:{PORT}"
-PROD_LANTAI_HOME = r"C:\Users\Asus\AppData\Local\remembrance-data"  # .env 实配生产库
 
 
 def _dotenv() -> dict[str, str]:
@@ -53,10 +57,8 @@ def _dotenv() -> dict[str, str]:
 
 
 def _assert_double_gate() -> Path:
-    prod = Path(PROD_LANTAI_HOME).resolve()
-    ev = MV_HOME.resolve()
-    if ev == prod or str(prod) in str(ev) or str(ev) in str(prod):
-        raise SystemExit(f"双闸失败：评测目录 {ev} 与生产路径 {prod} 重叠，拒跑")
+    prod = production_home(_dotenv(), repo_root=ROOT)
+    ev = assert_separate_home(MV_HOME, prod)
     print(f"[双闸通过] 评测库: {ev}（≠ 生产 {prod}）")
     return ev
 
@@ -76,8 +78,8 @@ def _server_env() -> dict:
         "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL") or _dotenv()["OPENAI_BASE_URL"],
         "LLM_MODEL": os.environ.get("LLM_MODEL") or _dotenv().get("LLM_MODEL", "Qwen/Qwen3-8B"),
         "EMBED_MODEL": os.environ.get("EMBED_MODEL") or _dotenv().get("EMBED_MODEL", "BAAI/bge-m3"),
-        "API_KEY": os.environ.get("API_KEY")
-        or _dotenv().get("API_KEY", "lantai-local-sync-secret-2026-10"),
+        "API_KEY": require_api_key(_dotenv()),
+        "REMEMBRANCE_PROD_HOME": str(production_home(_dotenv(), repo_root=ROOT)),
         "PORT": str(PORT),
         "LANTAI_HOME": str(MV_HOME),
         "LANTAI_INTENT_OFF": "1",
@@ -90,10 +92,7 @@ def _server_env() -> dict:
 
 
 def _headers():
-    return {
-        "X-API-Key": os.environ.get("API_KEY")
-        or _dotenv().get("API_KEY", "lantai-local-sync-secret-2026-10")
-    }
+    return {"X-API-Key": require_api_key(_dotenv())}
 
 
 def _start_server() -> subprocess.Popen:

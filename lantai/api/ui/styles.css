@@ -169,7 +169,8 @@ select, input, textarea { border: 1px solid var(--line); border-radius: 6px; bac
 .tool-list i { color: var(--accent); font-style: normal; font-size: 18px; }
 
 dialog { width: min(440px, calc(100vw - 28px)); padding: 0; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); box-shadow: 0 18px 60px var(--shadow); }
-dialog::backdrop { background: rgba(8, 13, 16, .68); }
+dialog:modal { overscroll-behavior: contain; }
+dialog::backdrop { background: rgba(8, 13, 16, .68); overflow: hidden; overscroll-behavior: contain; }
 dialog header, dialog footer { min-height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; }
 dialog header { border-bottom: 1px solid var(--line); }
 dialog footer { justify-content: flex-end; gap: 8px; border-top: 1px solid var(--line); }
@@ -179,7 +180,15 @@ dialog header button { width: 32px; height: 32px; border: 0; background: transpa
 .form-field span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; }
 .form-field input, .form-field textarea, .form-field select { width: 100%; min-height: 38px; padding: 8px 9px; }
 .check-field { display: flex; align-items: center; gap: 8px; }
-.dialog-note { color: var(--muted); line-height: 1.6; }
+.dialog-note { color: var(--muted); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-evidence { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.review-evidence input { width: 18px; height: 18px; accent-color: var(--accent); }
+.review-evidence p { margin-top: 6px; font-size: 12px; }
+.review-blocking { margin-top: 10px !important; color: var(--warn); }
+.review-receipts { margin: 12px 16px; display: grid; gap: 10px; }
+.review-receipt { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow-wrap: anywhere; }
+.review-receipt p { margin: 6px 0; white-space: pre-wrap; }
+.inspector-actions button:disabled { opacity: .5; }
 
 .toast { position: fixed; left: 50%; bottom: 24px; z-index: 50; transform: translateX(-50%); min-width: 220px; max-width: min(520px, calc(100vw - 24px)); padding: 11px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-strong); color: var(--ink); box-shadow: 0 10px 32px var(--shadow); text-align: center; }
 .toast button { margin-left: 10px; border: 0; background: transparent; color: var(--accent); font-weight: 650; }

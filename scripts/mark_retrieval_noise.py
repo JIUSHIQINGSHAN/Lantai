@@ -11,8 +11,9 @@
 
 import argparse
 import sys
+from pathlib import Path
 
-sys.path.insert(0, ".")  # 兼容任意 cwd 运行
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlmodel import select  # noqa: E402
 

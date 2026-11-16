@@ -59,6 +59,11 @@ DECLARED = Counter(
         ): 1,
         ("tests/test_wheel_ships_ui.py", "pytest.mark.skipif", "需要 uv 构建 wheel"): 1,
         (
+            "tests/test_knowledge_review_ui_browser.py",
+            "pytest.skip",
+            "Chrome/Chromium unavailable; set LANTAI_TEST_CHROMIUM for browser smoke",
+        ): 1,
+        (
             "tests/test_digest_window_anchor.py",
             "pytest.mark.skipif",
             (
@@ -79,7 +84,7 @@ DECLARED = Counter(
         ): 3,
     }
 )
-DECLARED_TOTAL = 11
+DECLARED_TOTAL = 12
 
 # 无守卫的运行时弃权（能力探测循环走空后统一 skip）单独按申报集合管——它不是
 # 「凭被测返回值弃权」，但同样必须逐条可查。新增一个这类点同样判红。

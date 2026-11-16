@@ -457,10 +457,7 @@ def collect_scheduler_metrics(session, *, now: datetime | None = None) -> dict:
     )
     status = scheduler_module.scheduler_status()
     return {
-        "running": status["running"],
-        "configured": status["configured"],
-        "job_count": status["job_count"],
-        "jobs": status["jobs"],
+        **status,
         "workers": workers,
         "overdue_count": sum(1 for w in workers if w["overdue"]),
         "process_started_at": iso_utc(PROCESS_STARTED_AT),
@@ -746,8 +743,24 @@ def evaluate_alerts(snapshot: dict) -> list[dict]:
                 "scheduler_not_running",
                 "critical",
                 "调度器未运行",
-                "LANTAI_RUN_SCHEDULER=true 但 APScheduler 未启动，定时摄取/演化/遗忘全部停摆。",
+                "LANTAI_RUN_SCHEDULER=true 但 APScheduler 未运行或线程已退出，定时任务停摆。",
                 "检查启动日志；确认单进程部署（--workers 1）后重启服务。",
+            )
+        )
+
+    elif scheduler_view.get("configured") and scheduler_view.get("healthy") is False:
+        alerts.append(
+            _alert(
+                "scheduler_unhealthy",
+                "critical",
+                "调度循环未正常推进",
+                f"线程仍存活，但调度状态为 {scheduler_view.get('reason')}；"
+                f"距最近完整循环 {scheduler_view.get('progress_age_seconds')}s。",
+                "检查调度异常日志与锁等待；持续不恢复时重启单进程服务。",
+                {
+                    "reason": scheduler_view.get("reason"),
+                    "consecutive_errors": scheduler_view.get("consecutive_errors"),
+                },
             )
         )
 
@@ -1372,9 +1385,18 @@ def render_prometheus(snapshot: dict) -> str:
     scheduler_view = snapshot.get("scheduler", {})
     gauge(
         "lantai_scheduler_running",
-        "1 = APScheduler running.",
+        "1 = APScheduler started and its thread is alive.",
         1 if scheduler_view.get("running") else 0,
     )
+    for field, help_text in (
+        ("thread_alive", "1 = scheduler thread alive."),
+        ("healthy", "1 = scheduler disabled or making timely progress."),
+        ("progress_age_seconds", "Seconds since the last complete scheduler loop."),
+        ("consecutive_errors", "Consecutive scheduler loop errors."),
+        ("error_count", "Scheduler loop errors since start."),
+        ("retry_delay_seconds", "Current scheduler loop retry delay."),
+    ):
+        gauge(f"lantai_scheduler_{field}", help_text, scheduler_view.get(field))
     gauge("lantai_scheduler_jobs", "Registered scheduler jobs.", scheduler_view.get("job_count"))
     series(
         "lantai_worker_overdue",

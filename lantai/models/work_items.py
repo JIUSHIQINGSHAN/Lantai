@@ -6,7 +6,14 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 WorkItemKind = Literal[
-    "candidate", "proposal", "conflict", "parameter", "crystal", "memory", "worker"
+    "candidate",
+    "knowledge_candidate",
+    "proposal",
+    "conflict",
+    "parameter",
+    "crystal",
+    "memory",
+    "worker",
 ]
 WorkItemSection = Literal[
     "immediate_action", "pending_decisions", "organization_needed", "runtime_status"

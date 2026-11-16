@@ -24,7 +24,7 @@ const SECTION_LABELS = {
   organization_needed: '待整理', runtime_status: '系统状态',
 };
 const KIND_LABELS = {
-  candidate: '候选', proposal: '提案', conflict: '冲突', parameter: '参数',
+  candidate: '摄取候选', knowledge_candidate: '知识候选', proposal: '提案', conflict: '冲突', parameter: '参数',
   crystal: '结晶', memory: '记忆', worker: 'Worker',
 };
 const RISK_LABELS = {critical: '严重', high: '高风险', medium: '中风险', low: '低风险'};
@@ -43,6 +43,66 @@ const inspector = $('#inspector');
 const VIEW_NAMES = new Set(['overview', 'tasks', 'vault', 'xuanjing', 'studio', 'playground', 'terminal', 'monitor', 'system']);
 let inspectorTrigger = null;
 let refreshTimer = null;
+const REVIEW_STORAGE_KEY = 'lantai-knowledge-reviews';
+const knowledgeReviews = new Map();
+let reviewDialogId = '';
+
+function pendingKnowledgeReview(id) {
+  return [...knowledgeReviews.values()].find(value => value.id === id && !value.receipt && !value.refused);
+}
+
+function saveKnowledgeReviews() {
+  try {
+    sessionStorage.setItem(REVIEW_STORAGE_KEY, JSON.stringify([...knowledgeReviews.values()]));
+  } catch (_) {
+    showToast('本页仍保留审核请求；浏览器未能保存，完成重试前请勿关闭或刷新页面');
+  }
+}
+
+function restoreKnowledgeReviews() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(REVIEW_STORAGE_KEY) || '[]');
+    for (const value of saved) {
+      if (!value?.payload?.request_id || !value.id || !value.sourceId) continue;
+      value.sending = false;
+      knowledgeReviews.set(value.payload.request_id, value);
+    }
+  } catch (_) { /* A broken local draft must not prevent the queue from loading. */ }
+  renderKnowledgeReceipts();
+}
+
+function newReviewRequestId() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes); // Also available on LAN HTTP, unlike randomUUID().
+  return `review_${Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function renderKnowledgeReceipts() {
+  const box = $('#knowledgeReviewReceipts');
+  box.replaceChildren(); box.hidden = knowledgeReviews.size === 0;
+  for (const review of knowledgeReviews.values()) {
+    const entry = node('div', 'review-receipt');
+    entry.append(node('strong', '', review.title));
+    const action = review.payload.decision === 'approve' ? '批准' : '拒绝';
+    const status = review.receipt ? '已完成' : review.refused ? '未通过' : review.sending ? '提交中' : '结果待确认';
+    entry.append(node('p', '', `${action} · ${status}\n请求编号：${review.payload.request_id}`));
+    if (review.error) entry.append(node('p', '', review.error));
+    if (review.receipt) {
+      const receipt = review.receipt;
+      entry.append(node('p', '', `候选状态：${receipt.candidate_status}\n知识记忆：${receipt.memory_id || '—'}\n收据：${receipt.checkpoint_id}${receipt.idempotent ? '（同次重试已核实）' : ''}`));
+    } else if (!review.refused) {
+      const retry = node('button', 'secondary-button', review.sending ? '正在提交…' : '重试同次审核');
+      retry.dataset.reviewRetry = review.payload.request_id;
+      retry.disabled = review.sending;
+      retry.addEventListener('click', () => submitKnowledgeReview(review));
+      entry.append(retry);
+    }
+    const payload = node('details', 'raw-details');
+    payload.append(node('summary', '', '查看本次审核请求'));
+    payload.append(node('pre', '', JSON.stringify(review.payload, null, 2)));
+    entry.append(payload); box.append(entry);
+  }
+}
 
 function updateConnection() {
   const hasKey = Boolean(getApiKey());
@@ -223,6 +283,7 @@ async function loadQueue({silent = false} = {}) {
   }
   renderQueue({force: true});
   if (state.activeId) {
+    if (reviewDialogId === state.activeId) return;
     if (state.detailDirty) markRefreshPending();
     else await openInspector(state.activeId, {silent: true});
   }
@@ -403,12 +464,14 @@ async function openInspector(id, {silent = false} = {}) {
   }
   try {
     const detail = await api(`/work-items/detail/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.source_id)}`);
+    if (state.activeId !== id || reviewDialogId === id) return;
     if (state.detailDirty && silent) { markRefreshPending(); return; }
     state.activeDetail = detail; state.detailDirty = false; state.refreshPending = false;
     renderDetail(detail);
     if (!silent && inspector.contains(document.activeElement)) $('#inspectorTitle').focus({preventScroll: true});
   } catch (error) {
-    if (error.status === 404) { showToast('该案牍已发生变化'); state.activeId = ''; await loadQueue(); return; }
+    if (state.activeId !== id) return;
+    if (error.status === 404) { showToast('该案牍已发生变化'); closeInspector(); await loadQueue(); return; }
     $('#inspectorBody').replaceChildren(node('div', 'inspector-empty', `读取失败：${error.message}`));
   }
 }
@@ -460,7 +523,11 @@ function rawSection(detail) {
 function renderDetail(detail) {
   const {item, source, related} = detail;
   const body = $('#inspectorBody'); body.replaceChildren();
-  if (item.kind === 'candidate') {
+  if (item.kind === 'knowledge_candidate') {
+    body.append(detailSection('候选正文', source.content));
+    body.append(detailSection('来源', `来源记录：${(source.source_ids || []).join('、') || '未记录'}\n版本：${related.review?.expected_version ?? source.version}\n来源信息：${stringifyValue(source.provenance)}`));
+    body.append(renderKnowledgeEvidence(detail));
+  } else if (item.kind === 'candidate') {
     const doc = related.document || {};
     body.append(detailSection('来源与提取内容', `${doc.title || source.summary}\n\n${doc.content || source.summary || '—'}`));
     const claims = [...(source.claims || []), ...(source.actions || [])].join('\n');
@@ -491,6 +558,128 @@ function renderDetail(detail) {
   if (related.duplicates?.length) body.append(detailSection('重复候选', related.duplicates.map(value => value.summary).join('\n')));
   body.append(rawSection(detail));
   renderInspectorActions(detail);
+}
+
+function renderKnowledgeEvidence(detail) {
+  const {review = {}, evidence = []} = detail.related;
+  const wrap = node('div');
+  wrap.append(node('p', '', `置信度：${review.confidence ?? '—'}（最低 ${review.min_confidence ?? '—'}）\n推荐证据质量：${review.evidence_quality ?? '—'}（最低 ${review.min_evidence_quality ?? '—'}）\n独立来源：${review.independent_sources ?? 0}（至少 ${review.min_sources ?? '—'}）`));
+  if (review.blocking_reasons?.length) {
+    wrap.append(node('p', 'review-blocking', `推荐证据预检阻断原因：\n${review.blocking_reasons.join('\n')}`));
+  }
+  wrap.append(node('p', 'muted', '请核对并选择本次审核采用的证据。默认勾选合格的推荐证据；最终条件由服务端复核。'));
+  const recommended = new Set(review.recommended_evidence_ids || review.evidence_ids || []);
+  const pending = pendingKnowledgeReview(detail.item.id);
+  const selected = new Set(pending ? pending.payload.evidence_ids : recommended);
+  for (const evidenceItem of evidence) {
+    const label = node('label', 'review-evidence');
+    const check = node('input'); check.type = 'checkbox'; check.value = evidenceItem.id;
+    check.dataset.evidenceId = evidenceItem.id;
+    check.checked = evidenceItem.eligible === true && selected.has(evidenceItem.id);
+    check.disabled = evidenceItem.eligible !== true || Boolean(pending);
+    check.addEventListener('change', () => { state.detailDirty = true; updateKnowledgeApproval(detail); });
+    const content = node('span');
+    content.append(node('strong', '', evidenceItem.id), node('p', '', evidenceItem.content));
+    content.append(node('p', 'muted', `来源：${evidenceItem.source_memory_id || '—'} · ${evidenceItem.source_memory_status || '—'} · 版本 ${evidenceItem.source_memory_version ?? '—'}\n证据类型：${evidenceItem.evidence_type || '—'} · 状态：${evidenceItem.status}\n可靠度：${evidenceItem.reliability} · 独立性：${evidenceItem.independence}`));
+    if (evidenceItem.blocking_reasons?.length) content.append(node('p', 'review-blocking', `不可选：${evidenceItem.blocking_reasons.join('；')}`));
+    label.append(check, content); wrap.append(label);
+  }
+  if (!evidence.length) wrap.append(node('p', '', '暂无可选证据。可以拒绝归档，批准前须补充可追溯证据。'));
+  const selection = node('p', 'review-blocking'); selection.id = 'knowledgeEvidenceStatus';
+  selection.setAttribute('role', 'status'); wrap.append(selection);
+  return detailSection('证据与审核条件', wrap);
+}
+
+function selectedKnowledgeEvidence(detail) {
+  const ids = new Set([...document.querySelectorAll('#inspectorBody [data-evidence-id]:checked')].map(input => input.value));
+  return (detail.related.evidence || []).filter(value => ids.has(value.id) && value.eligible === true);
+}
+
+function knowledgeApprovalBlock(detail) {
+  const review = detail.related.review || {};
+  const selected = selectedKnowledgeEvidence(detail);
+  if (!selected.length) return '请至少选择一条合格证据。';
+  if (!Number.isInteger(review.expected_version)) return '缺少审核版本，请刷新详情。';
+  const sources = new Set(selected.map(value => value.source_memory_id).filter(Boolean));
+  if (!Number.isFinite(review.min_sources) || sources.size < review.min_sources) return `所选证据独立来源不足（至少 ${review.min_sources ?? '—'} 个）。`;
+  if (!detail.source.content?.trim() || detail.source.valid_to) return '候选正文为空或有效期已结束，无法批准。';
+  if (!Number.isFinite(review.confidence) || !Number.isFinite(review.min_confidence) || review.confidence < review.min_confidence || review.confidence > 1) return '候选置信度未达到批准条件。';
+  // Preview the selected set using the server's published thresholds. The POST
+  // still owns the final quality/injection/authorization decision.
+  const quality = selected.reduce((total, value) => total + value.reliability * value.independence, 0) / selected.length;
+  if (!Number.isFinite(quality) || !Number.isFinite(review.min_evidence_quality) || quality < review.min_evidence_quality) return '所选证据质量未达到批准条件。';
+  return '';
+}
+
+function updateKnowledgeApproval(detail) {
+  const blocked = knowledgeApprovalBlock(detail);
+  const busy = Boolean(pendingKnowledgeReview(detail.item.id)) || reviewDialogId === detail.item.id;
+  const approve = $('#inspectorActions [data-review-decision="approve"]');
+  if (approve) { approve.disabled = busy || Boolean(blocked); approve.title = blocked; }
+  const reject = $('#inspectorActions [data-review-decision="reject"]');
+  if (reject) reject.disabled = busy;
+  const status = $('#knowledgeEvidenceStatus');
+  if (status) status.textContent = busy ? '本次审核已锁定证据与理由，请在审核请求区查看结果或重试。' : blocked || `已选 ${selectedKnowledgeEvidence(detail).length} 条合格证据。`;
+}
+
+async function reviewKnowledgeCandidate(detail, decision) {
+  if (reviewDialogId || pendingKnowledgeReview(detail.item.id) || state.activeDetail !== detail) return;
+  if (decision === 'approve' && knowledgeApprovalBlock(detail)) return;
+  const evidenceIds = selectedKnowledgeEvidence(detail).map(value => value.id).sort();
+  const expectedVersion = detail.related.review?.expected_version;
+  if (!Number.isInteger(expectedVersion)) { showToast('缺少审核版本，请刷新详情'); return; }
+  reviewDialogId = detail.item.id;
+  let answer;
+  try {
+    answer = await ask({
+      title: `${decision === 'approve' ? '批准' : '拒绝'}知识候选`,
+      note: `${decision === 'approve' ? '批准后另建活跃知识记忆，原候选标为已巩固。' : '拒绝后原候选归档，保留原文与来源。'}\n本次选择 ${evidenceIds.length} 条证据。`,
+      field: {label: '审核理由（必填）', type: 'textarea', required: true, maxLength: 500},
+      confirm: decision === 'approve' ? '确认批准' : '确认拒绝', danger: decision === 'reject',
+    });
+  } finally { reviewDialogId = ''; }
+  if (!answer.confirmed || !answer.value) return;
+  const review = {
+    id: detail.item.id, sourceId: detail.item.source_id, title: detail.item.title,
+    payload: {decision, reason: answer.value, expected_version: expectedVersion, request_id: newReviewRequestId(), evidence_ids: evidenceIds},
+  };
+  knowledgeReviews.set(review.payload.request_id, review);
+  saveKnowledgeReviews();
+  await submitKnowledgeReview(review);
+}
+
+async function submitKnowledgeReview(review) {
+  if (review.sending || review.receipt || review.refused) return;
+  review.sending = true; review.error = '';
+  saveKnowledgeReviews(); renderKnowledgeReceipts();
+  if (state.activeDetail?.item.id === review.id) {
+    document.querySelectorAll('#inspectorBody [data-evidence-id]').forEach(input => { input.disabled = true; });
+    updateKnowledgeApproval(state.activeDetail);
+  }
+  try {
+    const receipt = await api(`/knowledge-candidates/${encodeURIComponent(review.sourceId)}/review`, {method: 'POST', body: JSON.stringify(review.payload)});
+    if (!receipt?.ok || receipt.request_id !== review.payload.request_id || !receipt.checkpoint_id) throw new Error('未收到完整审核收据');
+    review.receipt = receipt;
+    showToast(review.payload.decision === 'approve' ? '知识候选已批准，收据已保留' : '知识候选已归档，收据已保留');
+  } catch (error) {
+    const detail = error.data?.detail;
+    const message = detail?.blocking_reasons?.join('；') || detail?.code || error.message;
+    review.refused = error.status === 409 || error.status === 422;
+    review.error = review.refused
+      ? `审核未通过：${message}。请根据最新详情重新审核。`
+      : `尚未取得审核结果：${message}。重试将使用原请求编号、理由、版本和证据。`;
+    showToast(review.error);
+  } finally {
+    review.sending = false;
+    saveKnowledgeReviews(); renderKnowledgeReceipts();
+  }
+  if (review.receipt || review.refused) {
+    if (state.activeId === review.id) {
+      state.detailDirty = false;
+      if (review.receipt) closeInspector();
+    }
+    await loadQueue({silent: true});
+  }
 }
 
 function renderDiff(patch, target) {
@@ -547,7 +736,14 @@ function renderInspectorActions(detail) {
   const {item} = detail;
   const add = (label, action, className = '') => {
     const button = node('button', className, label); button.addEventListener('click', action); footer.append(button);
+    return button;
   };
+  if (item.kind === 'knowledge_candidate') {
+    if (item.allowed_actions.includes('reject')) add('拒绝', () => reviewKnowledgeCandidate(detail, 'reject'), 'danger').dataset.reviewDecision = 'reject';
+    if (item.allowed_actions.includes('approve')) add('批准', () => reviewKnowledgeCandidate(detail, 'approve')).dataset.reviewDecision = 'approve';
+    updateKnowledgeApproval(detail);
+    return;
+  }
   if (item.kind === 'candidate') add('✨ AI 披沙提纯', () => refineCandidateItem(detail), 'secondary-button');
   if (item.allowed_actions.includes('defer')) add('延期', () => chooseDefer(detail), 'secondary-button');
   if (item.allowed_actions.includes('regenerate')) add('重新生成', () => regenerateParameter(detail), 'secondary-button');
@@ -560,7 +756,11 @@ function renderInspectorActions(detail) {
 }
 
 async function ask({title, note = '', field = null, confirm = '确认', danger = false}) {
-  const dialog = $('#actionDialog'); $('#dialogTitle').textContent = title; $('#dialogBody').replaceChildren();
+  const dialog = $('#actionDialog');
+  if (dialog.open) return {confirmed: false, value: ''};
+  dialog.returnValue = '';
+  $('#dialogTitle').textContent = title; $('#dialogBody').replaceChildren();
+  dialog.querySelectorAll('[autofocus]').forEach(value => value.removeAttribute('autofocus'));
   if (note) $('#dialogBody').append(node('p', 'dialog-note', note));
   let input = null;
   if (field) {
@@ -569,13 +769,28 @@ async function ask({title, note = '', field = null, confirm = '确认', danger =
     if (field.type === 'select') field.options.forEach(value => input.append(new Option(value.label, value.value)));
     if (field.value) input.value = field.value;
     if (field.required) input.required = true;
+    if (field.maxLength) input.maxLength = field.maxLength;
+    input.autofocus = true;
+    input.addEventListener('input', () => input.setCustomValidity(''));
     label.append(input); $('#dialogBody').append(label);
+  } else {
+    $(danger ? '#actionDialog footer [value="cancel"]' : '#dialogConfirm').autofocus = true;
   }
+  const validate = event => {
+    if (event.submitter?.value === 'confirm' && field?.required && !input.value.trim()) {
+      event.preventDefault(); input.setCustomValidity('请填写审核理由'); input.reportValidity();
+    }
+  };
+  $('#actionForm').addEventListener('submit', validate);
   $('#dialogConfirm').textContent = confirm; $('#dialogConfirm').classList.toggle('danger', danger);
-  dialog.showModal(); if (input) setTimeout(() => input.focus(), 0);
   return new Promise(resolve => {
-    dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'
-      ? {confirmed: true, value: input ? input.value.trim() : ''} : {confirmed: false, value: ''}), {once: true});
+    dialog.addEventListener('close', () => {
+      const confirmed = dialog.returnValue === 'confirm';
+      dialog.returnValue = '';
+      $('#actionForm').removeEventListener('submit', validate);
+      resolve({confirmed, value: confirmed && input ? input.value.trim() : ''});
+    }, {once: true});
+    dialog.showModal();
   });
 }
 
@@ -686,7 +901,7 @@ function updateBatchbar() {
   const values = [...state.selected.values()]; bar.hidden = values.length === 0;
   $('#selectionCount').textContent = `已选 ${values.length} 项`;
   if (!values.length) return;
-  if (values.every(item => item.allowed_actions.includes('reject'))) {
+  if (values.every(item => item.kind !== 'knowledge_candidate' && item.allowed_actions.includes('reject'))) {
     const button = node('button', 'danger', '批量拒绝'); button.addEventListener('click', batchReject); actions.append(button);
   }
   if (values.every(item => item.kind === 'memory')) {
@@ -777,6 +992,7 @@ async function batchApplyAiDecision(candidates, action) {
 
 async function batchReject() {
   const values = [...state.selected.values()];
+  if (values.some(item => item.kind === 'knowledge_candidate')) { showToast('知识候选需要逐条选择证据并审核'); return; }
   const grouped = values.reduce((acc, item) => ((acc[item.kind] ||= []).push(item), acc), {});
   const counts = Object.entries(grouped)
     .map(([kind, items]) => `${KIND_LABELS[kind]} ${items.length}`).join('，');
@@ -855,6 +1071,7 @@ function bindEvents() {
   });
 
   document.addEventListener('keydown', event => {
+    if (document.querySelector('dialog:modal')) return;
     if (event.key === 'Escape' && shell.classList.contains('inspector-open')) closeInspector();
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
       event.preventDefault(); setView('tasks'); $('#searchInput').focus();
@@ -898,7 +1115,7 @@ function initTheme() {
 
 async function init() {
   inspector.inert = true;
-  initTheme(); updateConnection(); bindEvents();
+  initTheme(); updateConnection(); bindEvents(); restoreKnowledgeReviews();
   if (location.hash && location.hash !== `#/${viewFromHash()}`) history.replaceState(null, '', `#/${viewFromHash()}`);
   window.addEventListener('popstate', () => setView(viewFromHash(), {updateHash: false, focusHeading: true}));
   setAfterUndo(loadQueue);

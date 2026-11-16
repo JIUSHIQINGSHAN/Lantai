@@ -3,7 +3,7 @@
 
 纪律（票 B）：
 - 灌库双闸：独立 LANTAI_DATA_DIR（环境变量指评测目录）+ 启动断言 ≠ 生产路径
-  （.env 的 LANTAI_HOME=C:\\Users\\Asus\\AppData\\Local\\remembrance-data）；
+  （REMEMBRANCE_PROD_HOME 显式传入或从启动前配置推导）；
   只走正式 API（/import/jsonl、/search）单通道，本脚本不 import
   chroma/Session/向量库（grep 可验）；API key 走环境最小集。
 - 逐题 checkpoint：题内每 chunk（本实现题=chunk，逐 session 由 API 内部落库）
@@ -33,6 +33,10 @@ from pathlib import Path
 
 import requests
 
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from lantai.eval.longmemeval import (
     aggregate_metrics,
     assert_prereg_subset,
@@ -44,18 +48,17 @@ from lantai.eval.longmemeval import (
     result_session_ids,
     session_recall_hit,
 )
+from scripts.eval_runtime import assert_separate_home, production_home, require_api_key
 
 # 票 30 A2：报告面 stdout 钉 UTF-8——cp936 宿主 print GBK 外字符（emoji/U+2028/罕用字）直接崩
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs/benchmarks/longmemeval-2026-10"
 DATA = ROOT / "data/longmemeval/longmemeval_s_cleaned.json"
 EVAL_DATA_DIR = OUT / "eval-data"
 PORT = 8791
 BASE = f"http://127.0.0.1:{PORT}"
-PROD_LANTAI_HOME = r"C:\Users\Asus\AppData\Local\remembrance-data"  # .env 实配生产库
 
 CONFIGS = {
     "vector-only": {
@@ -125,8 +128,8 @@ def _server_env(config: dict | None, qid: str | None) -> dict:
         "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL") or _dotenv()["OPENAI_BASE_URL"],
         "LLM_MODEL": os.environ.get("LLM_MODEL") or _dotenv().get("LLM_MODEL", "Qwen/Qwen3-8B"),
         "EMBED_MODEL": os.environ.get("EMBED_MODEL") or _dotenv().get("EMBED_MODEL", "BAAI/bge-m3"),
-        "API_KEY": os.environ.get("API_KEY")
-        or _dotenv().get("API_KEY", "lantai-local-sync-secret-2026-10"),
+        "API_KEY": require_api_key(_dotenv()),
+        "REMEMBRANCE_PROD_HOME": str(production_home(_dotenv(), repo_root=ROOT)),
         "PORT": str(PORT),
         "LANTAI_HOME": str(_q_dir(qid) if qid else EVAL_DATA_DIR),
         "LANTAI_INTENT_OFF": "1",  # 意图分类走 LLM；召回口径关掉（如实记录）
@@ -142,17 +145,13 @@ def _server_env(config: dict | None, qid: str | None) -> dict:
 def _q_dir(qid: str | None) -> Path:
     """题级专属评测库目录（q_<qid>）；无 qid 返回公共根（仅占位/日志）。"""
     d = EVAL_DATA_DIR / f"q_{qid}" if qid else EVAL_DATA_DIR
-    d.mkdir(parents=True, exist_ok=True)
-    (d / ".chromadb").mkdir(exist_ok=True)
-    return d
+    return assert_separate_home(d, production_home(_dotenv(), repo_root=ROOT))
 
 
 def _assert_double_gate(qid: str | None = None) -> Path:
     """闸：评测数据目录 ≠ 生产路径；目录解析后前缀比对（防相对路径绕过）。"""
-    prod = Path(PROD_LANTAI_HOME).resolve()
-    ev = _q_dir(qid).resolve()
-    if ev == prod or str(prod) in str(ev) or str(ev) in str(prod):
-        raise SystemExit(f"双闸失败：评测目录 {ev} 与生产路径 {prod} 重叠，拒跑")
+    prod = production_home(_dotenv(), repo_root=ROOT)
+    ev = assert_separate_home(EVAL_DATA_DIR / f"q_{qid}" if qid else EVAL_DATA_DIR, prod)
     print(f"[双闸通过] 评测库: {ev}（≠ 生产 {prod}）")
     return ev
 
@@ -160,6 +159,8 @@ def _assert_double_gate(qid: str | None = None) -> Path:
 def _start_server(config: dict | None, qid: str | None = None) -> subprocess.Popen:
     ev = _assert_double_gate(qid)
     env = _server_env(config, qid)
+    ev.mkdir(parents=True, exist_ok=True)
+    (ev / ".chromadb").mkdir(exist_ok=True)
     print(
         f"[横幅] 评测 API 启动：PORT={PORT} LANTAI_HOME={ev} config={config or 'ingest'} qid={qid}",
         flush=True,
@@ -187,10 +188,7 @@ def _start_server(config: dict | None, qid: str | None = None) -> subprocess.Pop
 def _api_headers():
     # 环境变量 API_KEY 的鉴权形态是 X-API-Key（lantai/core/auth.py:147-149），
     # Bearer 是库内 key 通道——评测库无库内 key，用 Bearer 会 401。
-    return {
-        "X-API-Key": os.environ.get("API_KEY")
-        or _dotenv().get("API_KEY", "lantai-local-sync-secret-2026-10")
-    }
+    return {"X-API-Key": require_api_key(_dotenv())}
 
 
 def _status(**kw):

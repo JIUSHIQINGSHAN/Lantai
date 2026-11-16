@@ -37,14 +37,11 @@ from pathlib import Path
 import requests
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-# 双闸保护对象：历史实配路径 + 本机当前用户默认库（2026-10-28 事故后补：
-# 8793 曾被一台lane收窄的兰台实例占用，health 探测撞上它导致 ingest 打错门；
-# 该实例拒收未绑定 lane、零落库——见票 03 Comments）
-# 保护性路径由运行时推导，不硬编码本机身份字面量（避免进入公开版本库）
-PROD_LANTAI_HOMES = (
-    r"C:\Users\Asus\AppData\Local\remembrance-data",
-    str(Path.home() / "AppData" / "Local" / "remembrance-data"),
-)
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.eval_runtime import assert_separate_home, production_home, require_api_key
+
 TS_BASE = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
 
 SPEAKER_PREFIX = {"user": "User", "assistant": "Assistant", "tool_output": "[tool]"}
@@ -153,11 +150,7 @@ class LantaiVerbatimAdapter:
         return self.store_root / f"q_{eid}"
 
     def _assert_double_gate(self, qdir: Path) -> None:
-        ev = str(qdir.resolve())
-        for p in PROD_LANTAI_HOMES:
-            prod = str(Path(p).resolve())
-            if ev == prod or prod in ev or ev in prod:
-                raise SystemExit(f"双闸失败：评测目录 {ev} 与生产路径 {prod} 重叠，拒跑")
+        assert_separate_home(qdir, production_home(_dotenv(), repo_root=REPO_ROOT))
 
     def _server_env(self) -> dict:
         d = _dotenv()
@@ -178,8 +171,8 @@ class LantaiVerbatimAdapter:
             "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL") or d["OPENAI_BASE_URL"],
             "LLM_MODEL": os.environ.get("LLM_MODEL") or d.get("LLM_MODEL", "Qwen/Qwen3-8B"),
             "EMBED_MODEL": os.environ.get("EMBED_MODEL") or d.get("EMBED_MODEL", "BAAI/bge-m3"),
-            "API_KEY": os.environ.get("API_KEY")
-            or d.get("API_KEY", "lantai-local-sync-secret-2026-10"),
+            "API_KEY": require_api_key(d),
+            "REMEMBRANCE_PROD_HOME": str(production_home(d, repo_root=REPO_ROOT)),
             # 检索权重钉板 = LongMemEval hybrid-default（0.6/0.25/0.05）
             "RETRIEVAL_W_VECTOR": "0.6",
             "RETRIEVAL_W_BM25": "0.25",
@@ -195,10 +188,7 @@ class LantaiVerbatimAdapter:
 
     def _headers(self) -> dict:
         d = _dotenv()
-        return {
-            "X-API-Key": os.environ.get("API_KEY")
-            or d.get("API_KEY", "lantai-local-sync-secret-2026-10")
-        }
+        return {"X-API-Key": require_api_key(d)}
 
     def _start_server(self, eid: str) -> subprocess.Popen:
         qdir = self._q_dir(eid)

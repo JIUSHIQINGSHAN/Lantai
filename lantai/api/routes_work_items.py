@@ -11,6 +11,10 @@ from lantai.models.work_items import (
     WorkItemDetailResponse,
     WorkItemListResponse,
 )
+from lantai.services.knowledge_candidate_service import (
+    KnowledgeCandidateReviewRequest,
+    review_knowledge_candidate,
+)
 from lantai.services.work_item_action_service import (
     batch_defer,
     batch_organize,
@@ -28,7 +32,8 @@ def list_work_items_route(
         "", pattern="^(|immediate_action|pending_decisions|organization_needed|runtime_status)$"
     ),
     kind: str = Query(
-        "", pattern="^(|candidate|proposal|conflict|parameter|crystal|memory|worker)$"
+        "",
+        pattern="^(|candidate|knowledge_candidate|proposal|conflict|parameter|crystal|memory|worker)$",
     ),
     risk: str = Query("", pattern="^(|critical|high|medium|low)$"),
     q: str = Query("", max_length=200),
@@ -56,6 +61,15 @@ def get_work_item_detail_route(kind: str, source_id: str, ctx=Depends(get_curren
         return get_work_item_detail(kind, source_id, principal=ctx)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/knowledge-candidates/{memory_id}/review")
+def review_knowledge_candidate_route(
+    memory_id: str,
+    req: KnowledgeCandidateReviewRequest,
+    principal: Principal = Depends(get_current_user),
+):
+    return review_knowledge_candidate(memory_id, **req.model_dump(), principal=principal)
 
 
 @router.post("/work-items/batch/reject", response_model=BatchActionResult)

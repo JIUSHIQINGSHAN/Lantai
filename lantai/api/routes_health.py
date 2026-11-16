@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlmodel import select
 
 from lantai.core import scheduler
@@ -70,25 +70,32 @@ def _current_git_sha() -> str | None:
 
 
 @router.get("/health")
-def health():
-    """简单存活探针——Docker HEALTHCHECK 用，公开；不暴露内部状态。
+def health(response: Response = None):
+    """公开健康探针：启用的调度线程必须存活且完整循环未逾期。
 
-    git_sha（票 J）：非敏感的构建定位信息，运维对表「跑的是哪个 commit」；
-    取不到时为 null（Docker 镜像内可能无 git），不影响 ok 判定。
+    只看内存活性快照，不读取作业/数据库，调度锁死也能返回 503。
+    git_sha 仅定位构建；取不到时为 null，不影响 ok 判定。
     """
-    return {"ok": True, "git_sha": _current_git_sha()}
+    ok = scheduler.scheduler_health()["healthy"]
+    if response is not None:
+        response.status_code = 200 if ok else 503
+    return {"ok": ok, "git_sha": _current_git_sha()}
 
 
 @router.get("/api/memory/health")
-def memory_health():
-    """旧兼容端点"""
-    return {"ok": True, "service": "lantai"}
+def memory_health(response: Response = None):
+    """旧兼容端点与主探针采用相同调度活性口径。"""
+    ok = scheduler.scheduler_health()["healthy"]
+    if response is not None:
+        response.status_code = 200 if ok else 503
+    return {"ok": ok, "service": "lantai"}
 
 
 @protected_router.get("/health/deep")
 def health_deep():
     """深度健康检查——检查 SQLite/ChromaDB/LLM 端点"""
-    checks = {}
+    state = scheduler.scheduler_health()
+    checks = {"scheduler": "ok" if state["healthy"] else f"fail: {state['reason']}"}
 
     # SQLite 可写
     try:
