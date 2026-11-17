@@ -230,16 +230,16 @@ def _retrieval_event(i, *, session_id, with_session=True, noise=False, now=None)
         lane="",
         session_id=session_id if with_session else None,
         param_snapshot_hash="snap",
-        created_at=now or utcnow(),
+        created_at=(now or utcnow()) - timedelta(microseconds=1),
         is_system_noise=noise,
     )
 
 
 class TestIngestLiveness:
-    """你在读，那你在写吗？——三态判据（上游教训逐条落实）。"""
+    """按阶段报告证据；单次检索不构成宿主承诺写入。"""
 
-    def test_broken_when_conv_reads_without_writes(self, monitor_env):
-        """有会话读而零写入 → broken → critical 告警。"""
+    def test_reads_without_writes_are_insufficient_evidence(self, monitor_env):
+        """有会话读而零写入只证明关联证据不足，不猜每轮都应写。"""
         session_factory, _, _ = monitor_env
         now = utcnow()
         with session_factory() as s:
@@ -250,40 +250,38 @@ class TestIngestLiveness:
             snap = build_monitor_snapshot(s, now=now, include_quality=False)
         live = snap["ingest_liveness"]
         assert live["ingest_conv_reads_24h"] == 3
-        assert live["judgment"] == "broken"
-        assert any(a["id"] == "ingest_wiring_broken" for a in snap["alerts"])
-        assert any(a["severity"] == "critical" for a in snap["alerts"])
+        assert live["judgment"] == "insufficient_evidence"
+        alert = next(a for a in snap["alerts"] if a["id"] == "ingest_attribution_incomplete")
+        assert alert["severity"] == "info"
 
     def test_ok_when_session_writes_present(self, monitor_env):
-        """有会话读 + 带 session 写入 → ok，无告警。"""
+        """同主体同会话有活跃记忆创建 → applied，不代表所有轮次。"""
         session_factory, _, _ = monitor_env
         now = utcnow()
         with session_factory() as s:
             s.add(_retrieval_event(1, session_id="sess_a", now=now))
-            s.add(_mem(10, session_id="sess_a"))
+            s.add(_mem(10, session_id="sess_a", created_at=now - timedelta(seconds=1)))
             s.commit()
         with session_factory() as s:
             snap = build_monitor_snapshot(s, now=now, include_quality=False)
-        assert snap["ingest_liveness"]["judgment"] == "ok"
+        assert snap["ingest_liveness"]["judgment"] == "applied"
         assert not any(a["id"].startswith("ingest_") for a in snap["alerts"])
 
     def test_background_only_judged_not_ok(self, monitor_env):
-        """只有后台（cron/反思，session 为空）在写 → background_only → high 告警。
-
-        分子分母分列：后台写入不算「有人在用写线」。"""
+        """NULL 来源记忆不能当作后台证明，缺少会话关联只提示证据不足。"""
         session_factory, _, _ = monitor_env
         now = utcnow()
         with session_factory() as s:
             s.add(_retrieval_event(1, session_id="sess_a", now=now))
-            s.add(_mem(10, session_id=None))  # 反思/蒸馏类后台写入
+            s.add(_mem(10, session_id=None, created_at=now - timedelta(seconds=1)))
             s.commit()
         with session_factory() as s:
             snap = build_monitor_snapshot(s, now=now, include_quality=False)
         live = snap["ingest_liveness"]
-        assert live["judgment"] == "background_only"
+        assert live["judgment"] == "insufficient_evidence"
         assert live["writes_background_24h"] == 1
         assert live["writes_session_24h"] == 0
-        assert any(a["id"] == "ingest_background_only" for a in snap["alerts"])
+        assert any(a["id"] == "ingest_attribution_incomplete" for a in snap["alerts"])
 
     def test_no_evidence_third_state(self, monitor_env):
         """零会话检索 = 样本不足 = 无判据：不判红不判绿（上游 --require-judgment 三态）。"""

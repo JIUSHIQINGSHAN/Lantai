@@ -688,6 +688,33 @@ class RetrievalEvent(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class IngestEvent(SQLModel, table=True):
+    """One logical inbound write, with scalar attribution and committed outcomes only.
+
+    No body, content hash or exception message is retained. An event may support an
+    older memory without changing that memory's origin. Historical NULLs stay NULL.
+    """
+
+    __tablename__ = "ingest_event"
+
+    id: str = Field(primary_key=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow)
+    user_id: str = Field(default="default", index=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
+    session_id: str | None = Field(default=None, index=True)
+    request_session_id: str | None = Field(default=None, index=True)
+    request_id: str | None = Field(default=None, index=True)
+    channel: str = Field(index=True)
+    attribution_state: str = Field(default="missing", index=True)
+    outcome: str = Field(default="processing", index=True)
+    candidate_id: str | None = Field(default=None, index=True)
+    proposal_id: str | None = Field(default=None, index=True)
+    memory_id: str | None = Field(default=None, index=True)
+    reason_code: str | None = None
+
+
 class LLMCallEvent(SQLModel, table=True):
     """LLM 外呼结局计数（票 J：司天 24h 降级率一级指标的数据源）。
 

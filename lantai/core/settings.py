@@ -376,6 +376,9 @@ class Settings(BaseSettings):
     # 天粒度 TTL，结构性满足，无需单独下限旋钮。
     RETRIEVAL_EVENT_RETENTION_DAYS: int = 30  # 检索事件保留天数（弱标注/评估数据面）
     LLM_CALL_EVENT_RETENTION_DAYS: int = 30  # LLM 外呼结局保留天数（司天降级率数据源）
+    INGEST_EVENT_RETENTION_DAYS: int = (
+        30  # Completed ingest outcomes; unresolved events are retained.
+    )
 
     # SSRF 防护
     SSRF_ALLOWED_SCHEMES: tuple = ("http", "https")

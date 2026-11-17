@@ -35,12 +35,17 @@ from sqlalchemy import delete as sa_delete
 from lantai.core.logger import logger
 from lantai.core.settings import settings
 from lantai.core.time import iso_utc, utcnow
-from lantai.models.tables import LLMCallEvent, RetrievalEvent
+from lantai.models.tables import IngestEvent, LLMCallEvent, RetrievalEvent
 
 # 观测面保留清单（门禁对账真源）：表 → 保留旋钮 / 清扫函数 / 定义模块。
 # operation_logs 的清扫是 telemetry.TelemetryWriter.prune（flush 后自调），
 # 行为以现状锁（tests/test_observability_retention.py 对照臂）钉死，不搬家。
 OBSERVABILITY_RETENTION_TABLES: dict[str, dict[str, str]] = {
+    "ingest_event": {
+        "knob": "INGEST_EVENT_RETENTION_DAYS",
+        "module": "lantai/observability/retention.py",
+        "sweep": "prune_ingest_events",
+    },
     "operation_logs": {
         "knob": "MONITOR_RETENTION_DAYS",
         "module": "lantai/observability/telemetry.py",
@@ -139,11 +144,49 @@ def prune_llm_call_events(now: datetime | None = None) -> int:
     )
 
 
+def prune_ingest_events(now: datetime | None = None) -> int:
+    """Prune terminal outcomes by last change; keep unresolved work and its links."""
+    moment = now or utcnow()
+    days = _effective_days(settings.INGEST_EVENT_RETENTION_DAYS, 1, "ingest_event")
+    cutoff = moment - timedelta(days=days)
+    try:
+        from lantai.storage import db
+
+        with db.get_session() as s:
+            result = s.exec(
+                sa_delete(IngestEvent)
+                .where(
+                    IngestEvent.updated_at < cutoff,
+                    IngestEvent.outcome.in_(
+                        [
+                            "created",
+                            "reinforced",
+                            "merged",
+                            "updated",
+                            "deprecated",
+                            "applied",
+                            "rejected",
+                            "failed",
+                        ]
+                    ),
+                )
+                .execution_options(synchronize_session=False)
+            )
+            deleted = int(result.rowcount or 0)
+            s.commit()
+        _LAST_SWEEPS["ingest_event"] = {"rows_deleted": deleted, "pruned_at": iso_utc(moment)}
+        return deleted
+    except Exception:
+        logger.exception("观测面清扫失败（非致命）：ingest_event")
+        return 0
+
+
 def prune_all(now: datetime | None = None) -> dict[str, int]:
     """scheduler 挂载入口（observability_purge，每小时）：逐表清扫，返回删除数。"""
     return {
         "retrieval_event": prune_retrieval_events(now=now),
         "llm_call_event": prune_llm_call_events(now=now),
+        "ingest_event": prune_ingest_events(now=now),
     }
 
 
@@ -158,6 +201,7 @@ def retention_stats() -> dict:
             settings.RECALL_MONITOR_WINDOW_DAYS,
         ),
         ("llm_call_event", LLMCallEvent, settings.LLM_CALL_EVENT_RETENTION_DAYS, 1),
+        ("ingest_event", IngestEvent, settings.INGEST_EVENT_RETENTION_DAYS, 1),
     )
     out: dict = {}
     from sqlmodel import func, select

@@ -21,6 +21,7 @@ from lantai.models.tables import (
     MemoryItem,
     MemoryProposal,
 )
+from lantai.observability.ingest_events import record_ingest_outcome
 from lantai.retrieval.hybrid import delete_memory_item, index_memory_item
 from lantai.security.injection_guard import check_prompt_injection
 from lantai.storage import db
@@ -88,6 +89,14 @@ def _reject_proposal(prop: MemoryProposal, reason: str, detail: dict | None = No
     prop.decision_reason = reason
     prop.decided_at = utcnow()
     return {"ok": False, "reason": reason, "detail": detail or {}}
+
+
+def _commit_rejection(session, prop: MemoryProposal) -> None:
+    session.add(prop)
+    record_ingest_outcome(
+        session, proposal_id=prop.id, outcome="rejected", reason_code="proposal_rejected"
+    )
+    session.commit()
 
 
 def _resolve_update_target(s, prop: MemoryProposal, key: str | None) -> tuple[object, str]:
@@ -265,8 +274,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                 prop.proposal_type,
             )
             out = _reject_proposal(prop, refusal)
-            s.add(prop)
-            s.commit()
+            _commit_rejection(s, prop)
             return out
 
         patch = prop.proposed_patch
@@ -289,8 +297,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                 sorted(VALID_PROPOSAL_TYPES),
             )
             out = _reject_proposal(prop, reason)
-            s.add(prop)
-            s.commit()
+            _commit_rejection(s, prop)
             return out
 
         # ── 目标寻址硬门（update / merge / deprecate）──────────────────
@@ -317,8 +324,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     prop.proposal_type,
                 )
                 out = _reject_proposal(prop, refusal, detail)
-                s.add(prop)
-                s.commit()
+                _commit_rejection(s, prop)
                 return out
         else:
             # add / consolidation 保持原有寻址（target 命中或 key 回退，取首个）
@@ -336,8 +342,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     "add 的 key 已有 active 记忆,待人工复核(宁 miss 不脏写,不新建平行记忆)",
                     {"existing_id": existing.id},
                 )
-                s.add(prop)
-                s.commit()
+                _commit_rejection(s, prop)
                 return out
 
         # ── 獬豸二阶闸（v0.68 票 14）────────────────────────────────
@@ -348,8 +353,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
         # 度量下游围栏中性化）显式传 True——生产调用方禁用。
         out = None if xiezhi_bypass else _xiezhi_reject_if_injection(prop, content)
         if out is not None:
-            s.add(prop)
-            s.commit()
+            _commit_rejection(s, prop)
             return out
 
         emb = embed([content])[0] if content else []
@@ -502,8 +506,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                 )
                 # decided_at（ADR-0053）：stale 硬门即系统裁决时刻，与人工 reject 同口径落值
                 prop.decided_at = utcnow()
-                s.add(prop)
-                s.commit()
+                _commit_rejection(s, prop)
                 return {
                     "ok": False,
                     "reason": "stale: evidence already consolidated",
@@ -524,8 +527,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                 out = _reject_proposal(
                     prop, "importance_not_finite", {"importance": raw_importance}
                 )
-                s.add(prop)
-                s.commit()
+                _commit_rejection(s, prop)
                 return out
             importance = max(0.0, min(1.0, raw_importance))
             if importance != raw_importance:
@@ -667,6 +669,8 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     mem_kwargs["session_id"] = src_cand.session_id
                 if src_cand.user_id:
                     mem_kwargs["user_id"] = src_cand.user_id
+                if src_cand.tenant_id:
+                    mem_kwargs["tenant_id"] = src_cand.tenant_id
                 if getattr(src_cand, "agent_id", None):
                     mem_kwargs["agent_id"] = src_cand.agent_id
                 if getattr(src_cand, "shared_scope", None):
@@ -694,8 +698,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                             "invalid event_time pair (I1)",
                             {"event_time": et, "event_time_precision": etp},
                         )
-                        s.add(prop)
-                        s.commit()
+                        _commit_rejection(s, prop)
                         return out
                 if not validate_event_time_pair(et, etp):
                     out = _reject_proposal(
@@ -703,8 +706,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                         "invalid event_time pair (I1)",
                         {"event_time": str(et), "event_time_precision": etp},
                     )
-                    s.add(prop)
-                    s.commit()
+                    _commit_rejection(s, prop)
                     return out
                 mem_kwargs["event_time"] = et
                 mem_kwargs["event_time_precision"] = etp
@@ -788,8 +790,25 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
         prop.status = ProposalStatus.APPLIED
         prop.applied_at = utcnow()
         s.add(prop)
+        if prop.proposal_type == "consolidation":
+            memory_id, outcome = master.id, "created"
+        elif prop.proposal_type == "add":
+            memory_id, outcome = mem.id, "created"
+        else:
+            memory_id = existing.id
+            outcome = {"merge": "merged", "update": "updated", "deprecate": "deprecated"}[
+                prop.proposal_type
+            ]
+        record_ingest_outcome(
+            s,
+            proposal_id=prop.id,
+            memory_id=memory_id,
+            outcome=outcome,
+            reason_code="proposal_applied",
+        )
+        result = {"ok": True, "proposal_id": prop.id, "memory_id": memory_id, **apply_extra}
         s.commit()
-        return {"ok": True, "proposal_id": prop.id, **apply_extra}
+        return result
 
 
 def rollback(memory_id: str, principal=None) -> dict:

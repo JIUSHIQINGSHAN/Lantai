@@ -7,6 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
+from lantai.core.attribution import Attribution, resolve_attribution
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
 from lantai.core.provenance import (
@@ -29,10 +30,16 @@ from lantai.models.schemas import AddMemoryReq, RawMemoryReq
 from lantai.models.tables import (
     CoreMemoryBlock,
     Evidence,
+    IngestEvent,
     MemoryCandidate,
     MemoryItem,
     MemoryProposal,
     RawDocument,
+)
+from lantai.observability.ingest_events import (
+    ingest_attempt,
+    record_ingest_outcome,
+    start_ingest_event,
 )
 from lantai.parsing.extractor import extract_candidate
 from lantai.parsing.fastpath import fastpath_check
@@ -112,7 +119,9 @@ def _apply_dedup(
         return "insert", None, 0.0
 
 
-def _dedup_merge(s, target: MemoryItem, sim: float, principal=None) -> dict | None:
+def _dedup_merge(
+    s, target: MemoryItem, sim: float, principal=None, *, ingest_event_ids: list[str] | None = None
+) -> dict | None:
     """merge 直合：仅 bump，不吞新文本（新文本已在更高相似带被排除）。
 
     归属（票 `.scratch/readside-gaps/15`）：这里改的是**别人的行**
@@ -135,6 +144,13 @@ def _dedup_merge(s, target: MemoryItem, sim: float, principal=None) -> dict | No
             "importance": func.min(1.0, MemoryItem.importance + 0.1),
         },
     )
+    record_ingest_outcome(
+        s,
+        event_ids=ingest_event_ids,
+        memory_id=target.id,
+        outcome="merged",
+        reason_code="deduplicated",
+    )
     s.commit()
     # refresh 要求 target persistent 于 s——生产调用方（_apply_dedup 链）恒同
     # session 取行；detached 实例不再兼容：按旧实现 add() 复活提交会把陈旧
@@ -144,7 +160,16 @@ def _dedup_merge(s, target: MemoryItem, sim: float, principal=None) -> dict | No
 
 
 def _create_update_proposal(
-    s, target: MemoryItem, title: str, content: str, lane: str, sim: float, principal=None
+    s,
+    target: MemoryItem,
+    title: str,
+    content: str,
+    lane: str,
+    sim: float,
+    principal=None,
+    *,
+    ingest_event_ids: list[str] | None = None,
+    session_id: str | None = None,
 ) -> dict | None:
     """update 提案：待审，可批可拒（知识写入有刹车）。
 
@@ -157,12 +182,24 @@ def _create_update_proposal(
     prop = MemoryProposal(
         id=new_id("prop"),
         target_memory_id=target.id,
+        user_id=getattr(target, "user_id", None) or "default",
+        tenant_id=getattr(target, "tenant_id", None),
+        agent_id=getattr(target, "agent_id", None),
+        session_id=session_id,
         proposal_type="update",
         proposed_patch={"title": title, "content": content, "lane": lane},
         confidence=round(sim, 4),
         status="pending",
     )
     s.add(prop)
+    record_ingest_outcome(
+        s,
+        event_ids=ingest_event_ids,
+        proposal_id=prop.id,
+        memory_id=target.id,
+        outcome="pending",
+        reason_code="proposal_pending",
+    )
     s.commit()
     s.refresh(prop)
     return {
@@ -207,7 +244,16 @@ def _llm_judge(old: str, new: str) -> str:
 
 
 def _dedup_structural(
-    s, target_id: str, title: str, content: str, lane: str, sim: float, principal=None
+    s,
+    target_id: str,
+    title: str,
+    content: str,
+    lane: str,
+    sim: float,
+    principal=None,
+    *,
+    ingest_event_ids: list[str] | None = None,
+    session_id: str | None = None,
 ) -> dict | None:
     """结构判别（ADR-0019 第二相位）：提取后对中带样本判类。
 
@@ -230,15 +276,35 @@ def _dedup_structural(
         return None
     if not settings.DEDUP_STRUCTURAL_ENABLED:
         # 关掉结构判别 → 保守走 update 提案（有刹车，不吞内容）
-        return _create_update_proposal(s, target, title, content, lane, sim, principal)
+        return _create_update_proposal(
+            s,
+            target,
+            title,
+            content,
+            lane,
+            sim,
+            principal,
+            ingest_event_ids=ingest_event_ids,
+            session_id=session_id,
+        )
     from lantai.gate.relation import classify_relation
 
     judge = _llm_judge if settings.DEDUP_STRUCTURAL_LLM_ENABLED else None
     rel = classify_relation(target.content, content, llm_judge=judge)
     if rel == "merge":
-        return _dedup_merge(s, target, sim, principal)
+        return _dedup_merge(s, target, sim, principal, ingest_event_ids=ingest_event_ids)
     if rel == "update":
-        return _create_update_proposal(s, target, title, content, lane, sim, principal)
+        return _create_update_proposal(
+            s,
+            target,
+            title,
+            content,
+            lane,
+            sim,
+            principal,
+            ingest_event_ids=ingest_event_ids,
+            session_id=session_id,
+        )
     return None  # insert
 
 
@@ -248,6 +314,43 @@ def add_memory(
     *,
     tenant_id: str | None = None,
     principal=None,
+    attribution: dict | Attribution | None = None,
+    _ingest_event_ids: list[str] | None = None,
+) -> dict:
+    """Create/reuse one attributed add event, then run the candidate funnel."""
+    context_value = attribution if attribution is not None else req.attribution
+    context = resolve_attribution(req.session_id, context_value)
+    event_ids = list(_ingest_event_ids or [])
+    if not event_ids:
+        event_ids = [
+            start_ingest_event(
+                channel="add",
+                user_id=user_id,
+                tenant_id=tenant_id,
+                agent_id=getattr(principal, "agent_id", None),
+                session_id=req.session_id,
+                attribution=context_value,
+            )
+        ]
+    request = req.model_copy(update={"session_id": context["session_id"] or ""})
+    with ingest_attempt(event_ids):
+        result = _add_memory(
+            request,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            ingest_event_ids=event_ids,
+        )
+    return {**result, "ingest_event_id": event_ids[0] if len(event_ids) == 1 else None}
+
+
+def _add_memory(
+    req: AddMemoryReq,
+    user_id: str = "default",
+    *,
+    tenant_id: str | None = None,
+    principal=None,
+    ingest_event_ids: list[str] | None = None,
 ) -> dict:
     """创建 RawDocument + MemoryCandidate。
 
@@ -292,6 +395,7 @@ def add_memory(
                 provenance_prompt=PROVENANCE_PROMPT_VISION,
                 provenance_extra=vision_provenance_extra(req),
                 principal=principal,
+                ingest_event_ids=ingest_event_ids,
             )
         )
     # Fastpath 白名单直写——缓冲前判断
@@ -299,7 +403,12 @@ def add_memory(
     if fp:
         return _route_secret(
             _create_candidate_direct(
-                req, fp, user_id=user_id, tenant_id=tenant_id, principal=principal
+                req,
+                fp,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                principal=principal,
+                ingest_event_ids=ingest_event_ids,
             )
         )
 
@@ -314,6 +423,9 @@ def add_memory(
             # 会话分键（票据 .scratch/coalesce-session-key/01）：同 user 多
             # 会话不混并；出身随键透传，冲刷端不再被迫留空
             session_id=(getattr(req, "session_id", "") or ""),
+            event_id=(ingest_event_ids or [None])[0],
+            tenant_id=tenant_id,
+            agent_id=getattr(principal, "agent_id", None),
         )
         if result.get("buffered"):
             return {"buffered": True, "count": result.get("count", 0)}
@@ -325,14 +437,22 @@ def add_memory(
             req_copy.session_id = result.get("session_id") or req.session_id or ""
             return _route_secret(
                 _create_candidate_with_extraction(
-                    req_copy, user_id=user_id, tenant_id=tenant_id, principal=principal
+                    req_copy,
+                    user_id=user_id,
+                    tenant_id=tenant_id,
+                    principal=principal,
+                    ingest_event_ids=result.get("ingest_event_ids") or ingest_event_ids,
                 )
             )
 
     # 默认同步路径
     return _route_secret(
         _create_candidate_with_extraction(
-            req, user_id=user_id, tenant_id=tenant_id, principal=principal
+            req,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            ingest_event_ids=ingest_event_ids,
         )
     )
 
@@ -344,6 +464,7 @@ def _create_candidate_direct(
     user_id: str = "default",
     tenant_id: str | None = None,
     principal=None,
+    ingest_event_ids: list[str] | None = None,
 ) -> dict:
     """fastpath 命中——直接创建 RawDocument + MemoryCandidate，不走 LLM
 
@@ -355,11 +476,21 @@ def _create_candidate_direct(
     with db.get_session() as s:
         action, target, sim = _apply_dedup(s, req.content, fastpath=True, principal=p)
         if action == "merge" and target is not None:
-            out = _dedup_merge(s, target, sim, p)
+            out = _dedup_merge(s, target, sim, p, ingest_event_ids=ingest_event_ids)
             if out is not None:
                 return out
         elif action == "update" and target is not None:
-            out = _create_update_proposal(s, target, req.title, req.content, req.lane, sim, p)
+            out = _create_update_proposal(
+                s,
+                target,
+                req.title,
+                req.content,
+                req.lane,
+                sim,
+                p,
+                ingest_event_ids=ingest_event_ids,
+                session_id=req.session_id,
+            )
             if out is not None:
                 return out
         # content_hash 在场检查（票 .scratch/v068-perf/02，与提取路径同口径）：
@@ -382,8 +513,7 @@ def _create_candidate_direct(
                 meta=req.metadata,
             )
             s.add(doc)
-            s.commit()
-            s.refresh(doc)
+            s.flush()
 
         agent_id = getattr(principal, "agent_id", None) if principal else None
         cand = MemoryCandidate(
@@ -408,6 +538,9 @@ def _create_candidate_direct(
             status="fastpath",
         )
         s.add(cand)
+        record_ingest_outcome(
+            s, event_ids=ingest_event_ids, candidate_id=cand.id, outcome="candidate"
+        )
         s.commit()
         s.refresh(cand)
         return {"document_id": doc.id, "candidate_id": cand.id, "fastpath": True}
@@ -421,6 +554,7 @@ def _create_candidate_with_extraction(
     provenance_prompt: str | None = None,
     provenance_extra: dict | None = None,
     principal=None,
+    ingest_event_ids: list[str] | None = None,
 ) -> dict:
     """LLM 提取路径；provenance_prompt 覆盖默认 extract-v1（如 vision-caption）。
 
@@ -431,7 +565,7 @@ def _create_candidate_with_extraction(
     with db.get_session() as s:
         action, target, sim = _apply_dedup(s, req.content, fastpath=False, principal=p)
         if action == "merge" and target is not None:
-            out = _dedup_merge(s, target, sim, p)
+            out = _dedup_merge(s, target, sim, p, ingest_event_ids=ingest_event_ids)
             if out is not None:
                 return out
         # undecided：提取后交结构判别；insert：正常建候选（仍提取）
@@ -442,7 +576,15 @@ def _create_candidate_with_extraction(
     with db.get_session() as s:
         if undecided_target_id is not None:
             structural = _dedup_structural(
-                s, undecided_target_id, req.title, req.content, req.lane, sim, p
+                s,
+                undecided_target_id,
+                req.title,
+                req.content,
+                req.lane,
+                sim,
+                p,
+                ingest_event_ids=ingest_event_ids,
+                session_id=req.session_id,
             )
             if structural is not None:
                 return structural
@@ -463,8 +605,7 @@ def _create_candidate_with_extraction(
                 meta=req.metadata,
             )
             s.add(doc)
-            s.commit()
-            s.refresh(doc)
+            s.flush()
 
         # errsig 写侧登记（票据 03，与检索侧共用单一真源正则）：
         # 报错签名记入 provenance，供审计与优先级参考
@@ -499,6 +640,9 @@ def _create_candidate_with_extraction(
             lane=req.lane,
         )
         s.add(cand)
+        record_ingest_outcome(
+            s, event_ids=ingest_event_ids, candidate_id=cand.id, outcome="candidate"
+        )
         s.commit()
         s.refresh(cand)
         return {"document_id": doc.id, "candidate_id": cand.id}
@@ -510,6 +654,7 @@ def add_memory_async(
     *,
     tenant_id: str | None = None,
     principal=None,
+    attribution: dict | Attribution | None = None,
 ) -> dict:
     """异步批量写入（幂等）：COALESCE_ENABLED=false 时降级同步，不丢数据。
 
@@ -529,37 +674,76 @@ def add_memory_async(
 
     secret_hits = detect_secret_shapes(req.content)
     buffer = get_coalesce_buffer()
+    context_value = attribution if attribution is not None else req.attribution
+    context = resolve_attribution(req.session_id, context_value)
+    origin = req.session_id
+    req = req.model_copy(update={"session_id": context["session_id"] or ""})
     if not settings.COALESCE_ENABLED:
-        result = add_memory(req, user_id=user_id, tenant_id=tenant_id, principal=principal)
+        result = add_memory(
+            req.model_copy(update={"session_id": origin}),
+            user_id=user_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            **({"attribution": context_value} if context_value is not None else {}),
+        )
         return {
             "status": "synced",
             "job_id": buffer.job_id(user_id, req.lane, req.content, req.session_id),
             **result,
         }
-    result = buffer.add_async(user_id, req.lane, req.content, req.title, session_id=req.session_id)
-    if result.get("status") == "flushed":
-        detail = result.get("detail") or {}
-        req_copy = req.model_copy()
-        req_copy.content = detail.get("combined_content", req.content)
-        # 会话分键（票据 .scratch/coalesce-session-key/01）：出身随键透传
-        req_copy.session_id = detail.get("session_id") or req.session_id or ""
-        try:
-            from lantai.security.secret_guard import route_secret_hits
 
-            persisted = route_secret_hits(
-                _create_candidate_with_extraction(
-                    req_copy, user_id=user_id, tenant_id=tenant_id, principal=principal
-                ),
-                secret_hits,
-            )
-        except Exception:
-            buffer.forget_fingerprint(result["job_id"])
-            # 该批其他消息已被 _flush 弹出：锁内恢复，避免静默丢失
-            if detail.get("key"):
-                buffer.requeue(detail["key"], detail.get("items", []))
-            raise
-        return {"status": "flushed", "job_id": result["job_id"], **persisted}
-    return result
+    # The buffer calls this only for the retry-window winner, under its lock.
+    # A duplicate retry neither creates a new event nor reassigns its provenance.
+    def create_event():
+        return start_ingest_event(
+            channel="add",
+            user_id=user_id,
+            tenant_id=tenant_id,
+            agent_id=getattr(principal, "agent_id", None),
+            session_id=origin,
+            attribution=context_value,
+        )
+
+    result = buffer.add_async(
+        user_id,
+        req.lane,
+        req.content,
+        req.title,
+        session_id=req.session_id,
+        event_factory=create_event,
+        content_safety={"secret_hits": secret_hits},
+        tenant_id=tenant_id,
+        agent_id=getattr(principal, "agent_id", None),
+    )
+    if result.get("duplicate") or result.get("status") != "flushed":
+        return result
+    detail = result.get("detail") or {}
+    event_ids = detail.get("ingest_event_ids") or []
+    req_copy = req.model_copy(update={"content": detail.get("combined_content", req.content)})
+    try:
+        from lantai.security.secret_guard import route_secret_hits
+
+        persisted = route_secret_hits(
+            _create_candidate_with_extraction(
+                req_copy,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                principal=principal,
+                ingest_event_ids=event_ids,
+            ),
+            (detail.get("safety") or {}).get("secret_hits") or secret_hits,
+        )
+    except Exception:
+        buffer.forget_fingerprint(result["job_id"])
+        if detail.get("key"):
+            buffer.requeue(detail["key"], detail.get("items", []))
+        raise
+    return {
+        "status": "flushed",
+        "job_id": result["job_id"],
+        "ingest_event_id": result.get("ingest_event_id"),
+        **persisted,
+    }
 
 
 def set_decay_class(memory_id: str, decay_class: str) -> dict:
@@ -737,6 +921,40 @@ def add_raw_memory(
     tenant_id: str | None = None,
     agent_id: str | None = None,
     principal=None,
+    attribution: dict | Attribution | None = None,
+) -> dict:
+    """Record the new invocation even when verbatim dedup reuses an old item."""
+    envelope = attribution if attribution is not None else req.attribution
+    context = resolve_attribution(req.session_id, envelope)
+    event_id = start_ingest_event(
+        channel="raw",
+        user_id=user_id,
+        tenant_id=tenant_id,
+        agent_id=agent_id or getattr(principal, "agent_id", None),
+        session_id=req.session_id,
+        attribution=envelope,
+    )
+    request = req.model_copy(update={"session_id": context["session_id"] or ""})
+    with ingest_attempt([event_id]):
+        result = _add_raw_memory(
+            request,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            principal=principal,
+            ingest_event_ids=[event_id],
+        )
+    return {**result, "ingest_event_id": event_id}
+
+
+def _add_raw_memory(
+    req: RawMemoryReq,
+    *,
+    user_id: str = "default",
+    tenant_id: str | None = None,
+    agent_id: str | None = None,
+    principal=None,
+    ingest_event_ids: list[str] | None = None,
 ) -> dict:
     """原文直存（verbatim 记忆）：零 LLM、不走提取/闸门/演化，直接写 MemoryItem。
 
@@ -787,6 +1005,14 @@ def add_raw_memory(
             )
         existing = s.exec(q).first()
         if existing:
+            record_ingest_outcome(
+                s,
+                event_ids=ingest_event_ids,
+                memory_id=existing.id,
+                outcome="reinforced",
+                reason_code="deduplicated",
+            )
+            s.commit()
             return {"memory_id": existing.id, "dedup": True, "verbatim": True}
         emb = embed([req.content])[0]
         if agent_id is None and principal is not None:
@@ -816,6 +1042,14 @@ def add_raw_memory(
             existing = s.exec(q).first()
             if existing is None:
                 raise
+            record_ingest_outcome(
+                s,
+                event_ids=ingest_event_ids,
+                memory_id=existing.id,
+                outcome="reinforced",
+                reason_code="deduplicated",
+            )
+            s.commit()
             return {"memory_id": existing.id, "dedup": True, "verbatim": True}
         index_memory_item(
             mem.id,
@@ -849,6 +1083,7 @@ def add_raw_memory(
                 created_at=utcnow(),
             )
         )
+        record_ingest_outcome(s, event_ids=ingest_event_ids, memory_id=mem.id, outcome="created")
         s.commit()
         return {"memory_id": mem.id, "dedup": False, "verbatim": True}
 

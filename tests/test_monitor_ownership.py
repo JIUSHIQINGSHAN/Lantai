@@ -529,7 +529,7 @@ class TestCountsNarrowedByOwnership:
             f"A 的会话写该是 2（A 自己 + NULL 老行），实际 {live['writes_session_24h']}"
         )
         assert live["writes_background_24h"] == 0
-        assert live["judgment"] == "ok", f"A 有读有写，判据该是 ok，实际 {live['judgment']}"
+        assert live["judgment"] == "applied", f"A 的同会话有应用证据，实际 {live['judgment']}"
         # 反向确认夹具非平凡：admin 视角 B 的行全在
         snap_admin = _snapshot(monitor_owned_env, ADMIN)
         live_admin = snap_admin["ingest_liveness"]

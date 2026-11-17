@@ -3,6 +3,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from lantai.core.attribution import Attribution
+
 
 def _validate_metadata_dict(v):
     """有界校验：扁平、小键、值仅标量，防认证客户端耗尽 DB/磁盘（Add/Raw 共用）。"""
@@ -37,6 +39,7 @@ class AddMemoryReq(BaseModel):
         default="private"
     )  # 同袍（ADR-0058）：private（私有）/ swarm_shared（公共知识殿堂）
     session_id: str = Field(default="", max_length=128)  # 来源链显式透传（v022 票据 01）
+    attribution: Attribution | None = None  # Per-call labels; never used as ACL/scope.
     metadata: dict = {}  # 附加元数据，落 RawDocument.meta（如 source=host_tool）
 
     @field_validator("metadata")
@@ -75,6 +78,7 @@ class SearchReq(BaseModel):
     as_of_recorded: str | None = None  # 事务轴近似（created_at <= 该时刻）
     time_from: str | None = None  # 事件轴窗口 [from, to)
     time_to: str | None = None
+    attribution: Attribution | None = None  # Retrieval-event attribution only, not scope.
 
 
 class GateReq(BaseModel):
@@ -132,6 +136,7 @@ class RawMemoryReq(BaseModel):
     )  # 同袍（ADR-0058）：private（私有）/ swarm_shared（公共知识殿堂）
     tags: list[str] = []
     session_id: str = Field(default="", max_length=128)  # 来源链显式透传（v022 票据 01）
+    attribution: Attribution | None = None  # Per-call labels; never used as ACL/scope.
     metadata: dict = {}
 
     @field_validator("metadata")

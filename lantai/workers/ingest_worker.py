@@ -189,7 +189,27 @@ def run_coalesce_idle():
             req = AddMemoryReq(
                 title="coalesced", content=combined, lane=lane, session_id=session_id
             )
-            ms._create_candidate_with_extraction(req)
+            from lantai.core.auth import Principal
+
+            # Idle flush is a second write boundary: re-run the same input and
+            # secret gates before creating a candidate, then route the complete
+            # batch result. A buffer item is not trusted merely because it came
+            # from an in-process queue.
+            gate_text = f"{req.title}\n{combined}"
+            assert_no_prompt_injection(gate_text)
+            secret_hits = detect_secret_shapes(gate_text)
+            owner = result.get("user_id") or key.rsplit(":", 2)[0] or "default"
+            tenant_id = result.get("tenant_id")
+            agent_id = result.get("agent_id")
+            principal = Principal(user_id=owner, tenant_id=tenant_id, agent_id=agent_id)
+            persisted = ms._create_candidate_with_extraction(
+                req,
+                user_id=owner,
+                tenant_id=tenant_id,
+                principal=principal,
+                ingest_event_ids=result.get("ingest_event_ids") or [],
+            )
+            route_secret_hits(persisted, secret_hits)
         except Exception:
             # 票 50：coalesce key 内嵌 session_id（宿主透传）——单行化+截断
             logger.exception("coalesce flush persist failed for key=%s", loggable(key, limit=128))

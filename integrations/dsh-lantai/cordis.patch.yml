@@ -1,0 +1,18 @@
+- insert:
+    - id: lantai-attribution
+      name: '@local/dsh-lantai-attribution'
+      disabled: true
+      config:
+        serverName: lantai
+        transport: streamable-http
+        url: http://127.0.0.1:3000/mcp
+        expandTemplates: false
+        failOnStartupError: true
+        startupTimeoutMs: 15000
+        toolCallTimeoutMs: 60000
+        closeTimeoutMs: 5000
+        reconnect:
+          enabled: true
+          initialDelayMs: 500
+          maxDelayMs: 30000
+          maxAttempts: 10

@@ -7,6 +7,7 @@
 from lantai.core.settings import Settings
 
 FROZEN_DEFAULTS = {
+    "INGEST_EVENT_RETENTION_DAYS": 30,
     "LANTAI_HOME": "",
     "REMEMBRANCE_HOME": "",
     "HOST": "127.0.0.1",

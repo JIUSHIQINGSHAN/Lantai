@@ -1,0 +1,17 @@
+{
+  "name": "@local/dsh-lantai-attribution",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP tool bridge with per-call DSH session attribution. Disabled until explicitly configured and enabled.",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": ["index.js", "bridge.js", "config.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "tests"],
+  "engines": { "dsh": "0.2.2-rc.3", "node": ">=24.9.0" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "scripts": { "test": "node --test tests/smoke.test.js", "test:installed": "node tests/run-installed.cjs" }
+}

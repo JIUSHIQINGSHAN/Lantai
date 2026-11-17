@@ -6,6 +6,7 @@ POST /dialogue   对话文本写入（fastpath 直通 / 提取建候选 / 闲聊
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from lantai.core.attribution import Attribution, attribution_dict
 from lantai.core.auth import Principal, get_current_user
 from lantai.ingestion.dialogue import DialogueDisabledError, ingest_dialogue
 
@@ -22,6 +23,7 @@ class DialogueIngestReq(BaseModel):
     # 勘合幂等键（票据 .scratch/kanhe-idempotency/01）：可选。同键同文在回执
     # TTL 内重放原 task_id，同键不同文 422；不传用内容指纹自动键（只护租约窗）
     idempotency_key: str = Field(default="", max_length=200)
+    attribution: Attribution | None = None
 
 
 @router.post("/dialogue")
@@ -34,6 +36,9 @@ def dialogue_route(req: DialogueIngestReq, ctx: Principal = Depends(get_current_
             source=req.source,
             session_id=req.session_id,
             turn=req.turn,
+            attribution=attribution_dict(req.attribution),
+            tenant_id=ctx.tenant_id,
+            agent_id=ctx.agent_id,
         )
     except DialogueDisabledError as e:
         # 票 43：通道被 DIALOGUE_ENABLED=false 关闭是服务端配置拒绝（409），
@@ -56,8 +61,10 @@ def dialogue_async_route(req: DialogueIngestReq, ctx: Principal = Depends(get_cu
             source=req.source,
             session_id=req.session_id,
             turn=req.turn,
+            attribution=attribution_dict(req.attribution),
             idempotency_key=req.idempotency_key,
             tenant_id=ctx.tenant_id or "",
+            agent_id=ctx.agent_id,
         )
     except DialogueDisabledError as e:
         # 票 43：同 /dialogue 主路——配置拒绝译 409，不入 422 滥用口径

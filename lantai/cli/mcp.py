@@ -32,6 +32,12 @@ from dataclasses import dataclass, field
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from lantai.core.attribution import (
+    ATTRIBUTION_META_KEY,
+    attribution_dict,
+    parse_mcp_attribution,
+    resolve_attribution,
+)
 from lantai.core.settings import settings as _settings
 from lantai.gate.prefilter import relevance_check
 from lantai.models.schemas import AddMemoryReq, FeedbackReq
@@ -53,12 +59,19 @@ _VOLATILE_ARGUMENT_KEYS = frozenset({"request_id", "trace_id", "tracking_id", "c
 
 
 def _canonicalize_args(value: dict) -> dict:
-    """剥掉顶层易变键；嵌套业务参数保持原义不折叠。"""
-    return {
+    """剥掉传输易变键；保留业务 session 与其他嵌套参数原义。"""
+    canonical = {
         str(k): v
         for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))
         if str(k).lower() not in _VOLATILE_ARGUMENT_KEYS
     }
+    # Host callId changes on every retry. Only this envelope's correlation ID
+    # is volatile; origin/session and nested business request_id remain distinct.
+    if isinstance(canonical.get("attribution"), dict):
+        canonical["attribution"] = {
+            k: v for k, v in canonical["attribution"].items() if k != "request_id"
+        }
+    return canonical
 
 
 def _fingerprint(tool: str, arguments: dict) -> str:
@@ -184,6 +197,16 @@ def _get_guard() -> LoopGuard:
 
 _guard_instance: LoopGuard | None = None
 
+_ATTRIBUTION_TOOLS = frozenset({"add", "raw_add", "search", "add_dialogue", "dialogue_add_async"})
+
+
+def _validated_attribution(value) -> dict | None:
+    """Direct handlers share the strict wire validator without echoing its input."""
+    try:
+        return attribution_dict(value)
+    except (ValueError, TypeError):
+        raise ValueError("invalid attribution") from None
+
 
 def handle_search(params: dict) -> dict:
     query = params.get("query", "")
@@ -193,11 +216,11 @@ def handle_search(params: dict) -> dict:
     if not isinstance(top_k, int) or isinstance(top_k, bool) or not (1 <= top_k <= 100):
         raise ValueError("top_k must be an int in [1, 100]")
     force = bool(params.get("force", False))
-    # 来源链（P0 票02）：宿主可选透传 session_id，落检索事件供写线活性判据；
-    # 不传留空（宁 miss 不脏写）；校验单一真源 normalize_session_id
-    from lantai.core.text import normalize_session_id
-
-    session_id = normalize_session_id(params.get("session_id"), default=None)
+    # Per-call labels affect only retrieval events, never Principal/read scope.
+    attribution = _validated_attribution(params.get("attribution"))
+    context = resolve_attribution(params.get("session_id"), attribution)
+    session_id = context["session_id"]
+    log_kwargs = {"request_id": context["request_id"]} if context["request_id"] else {}
     # 归属（票 .scratch/readside-gaps/10）：MCP 没有 HTTP 鉴权层，宿主若透传
     # `user_id` 就据此构造 principal 落进检索事件；不透传留 NULL（与改动前逐字
     # 一致）——宁 miss 不脏写，不拿环境变量或进程名猜一个身份。
@@ -207,7 +230,14 @@ def handle_search(params: dict) -> dict:
         # 拦截轮也落事件（zero_result 遥测），但原话写入即脱（v0.68 票 11，
         # ADR-0084 §2.5 增补）——is_system_noise/estimated_tokens 仍以原查询照算。
         event_id = _try_log(
-            query, [], 0, gate, session_id=session_id, principal=principal, persist_query=False
+            query,
+            [],
+            0,
+            gate,
+            session_id=session_id,
+            principal=principal,
+            persist_query=False,
+            **log_kwargs,
         )
         return {"results": [], "gate": gate, "event_id": event_id}
     domain = params.get("domain")
@@ -256,7 +286,7 @@ def handle_search(params: dict) -> dict:
         results = _apply_supersede_guard(results, query)
     latency_ms = int((time.perf_counter() - t0) * 1000)
     event_id = _try_log(
-        query, results, latency_ms, gate, session_id=session_id, principal=principal
+        query, results, latency_ms, gate, session_id=session_id, principal=principal, **log_kwargs
     )
     # Ticket 04: 检索透明——命中来源说明（id + 摘要 + 分数）
     from lantai.retrieval.evidence import build_evidence
@@ -358,6 +388,7 @@ def _try_log(
     session_id: str | None = None,
     principal=None,
     persist_query: bool = True,
+    request_id: str | None = None,
 ) -> str | None:
     """检索事件埋点（方向二）：失败零侵入。返回 event_id 供生成侧回填 used_ids。"""
     try:
@@ -371,6 +402,7 @@ def _try_log(
             session_id=session_id,
             principal=principal,
             persist_query=persist_query,
+            **({"request_id": request_id} if request_id else {}),
         )
     except Exception:
         return None
@@ -406,6 +438,8 @@ def handle_add(params: dict) -> dict:
         # 此前 handler 不读它，传了即静默丢弃（广告即假承诺）。二选一校验
         # 在 AddMemoryReq 模型层，与 REST 面同语义。
         media_url=params.get("media_url") or "",
+        session_id=params.get("session_id") or "",
+        attribution=_validated_attribution(params.get("attribution")),
     )
     return add_memory(req, user_id=params.get("user_id") or "default", principal=principal)
 
@@ -425,7 +459,15 @@ def handle_add_dialogue(params: dict) -> dict:
     # "default"（与改动前逐字一致），传了就用透传值。
     # 不能改成 `params.get("user_id") or "default"` 之外的形式：那会让
     # `_principal_from_params` 的 None 与本函数的 "default" 分叉。
-    return ingest_dialogue(text, user_id=user_id, source=source)
+    attribution = _validated_attribution(params.get("attribution"))
+    return ingest_dialogue(
+        text,
+        user_id=user_id,
+        source=source,
+        session_id=params.get("session_id") or "",
+        turn=params.get("turn"),
+        **({"attribution": attribution} if attribution is not None else {}),
+    )
 
 
 def handle_candidates_pending(params: dict) -> dict:
@@ -875,6 +917,8 @@ def handle_raw_add(params: dict) -> dict:
         content=content,
         lane=params.get("lane", "general"),
         tags=params.get("tags", []) or [],
+        session_id=params.get("session_id") or "",
+        attribution=_validated_attribution(params.get("attribution")),
     )
     # 归属（票 .scratch/mcp-identity-gaps/01a）：去重范围按 viewer 收窄
     # （票 readside-gaps/20：此前去重不带归属过滤，A 提交与 B 的 verbatim
@@ -1555,8 +1599,15 @@ def handle_dialogue_add_async(params: dict) -> dict:
     # 的任务记录，`get_task_status` 据此比对——所以这里的缺省值与
     # `_principal_from_params` 的 None 是同一个身份口径：宿主不透传
     # 时任务归 "default"，状态查询收敛到 "default" viewer
+    attribution = _validated_attribution(params.get("attribution"))
     return submit_async_dialogue(
-        text=text, user_id=user_id, source=source, idempotency_key=idempotency_key
+        text=text,
+        user_id=user_id,
+        source=source,
+        idempotency_key=idempotency_key,
+        session_id=params.get("session_id") or "",
+        turn=params.get("turn"),
+        **({"attribution": attribution} if attribution is not None else {}),
     )
 
 
@@ -2207,6 +2258,16 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "attribution": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "description": "Optional untrusted call labels; never identity or read scope. Host protocol metadata takes precedence.",
+                    "properties": {
+                        "version": {"type": "integer", "const": 1},
+                        "request_session_id": {"type": ["string", "null"], "maxLength": 128},
+                        "request_id": {"type": ["string", "null"], "maxLength": 200},
+                    },
+                },
                 "user_id": _USER_ID_PARAM,
                 "query": {"type": "string", "description": "搜索查询"},
                 "top_k": {"type": "integer", "default": 5, "description": "返回条数 [1, 100]"},
@@ -2269,6 +2330,16 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "attribution": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "description": "Optional untrusted call labels; never identity or read scope. Host protocol metadata takes precedence.",
+                    "properties": {
+                        "version": {"type": "integer", "const": 1},
+                        "request_session_id": {"type": ["string", "null"], "maxLength": 128},
+                        "request_id": {"type": ["string", "null"], "maxLength": 200},
+                    },
+                },
                 "user_id": _USER_ID_PARAM,
                 "title": {"type": "string"},
                 "content": {
@@ -2280,6 +2351,11 @@ TOOLS = {
                     "description": "目识（vision）：图片地址（http/https）或 data URI；提供时 content 必须为空",
                 },
                 "lane": {"type": "string", "default": "general"},
+                "session_id": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "description": "原始会话来源；显式值优先于调用归因",
+                },
             },
         },
     },
@@ -2318,9 +2394,25 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "attribution": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "description": "Optional untrusted call labels; never identity or read scope. Host protocol metadata takes precedence.",
+                    "properties": {
+                        "version": {"type": "integer", "const": 1},
+                        "request_session_id": {"type": ["string", "null"], "maxLength": 128},
+                        "request_id": {"type": ["string", "null"], "maxLength": 200},
+                    },
+                },
                 "text": {"type": "string", "description": "对话文本"},
-                "user_id": {"type": "string", "default": "default"},
+                "user_id": _USER_ID_PARAM,
                 "source": {"type": "string", "default": "dialogue"},
+                "session_id": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "description": "原始会话来源；显式值优先于调用归因",
+                },
+                "turn": {"type": "integer", "minimum": 0, "description": "原始对话轮次"},
             },
             "required": ["text"],
         },
@@ -2330,9 +2422,25 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "attribution": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "description": "Optional untrusted call labels; never identity or read scope. Host protocol metadata takes precedence.",
+                    "properties": {
+                        "version": {"type": "integer", "const": 1},
+                        "request_session_id": {"type": ["string", "null"], "maxLength": 128},
+                        "request_id": {"type": ["string", "null"], "maxLength": 200},
+                    },
+                },
                 "text": {"type": "string", "description": "对话文本"},
-                "user_id": {"type": "string", "default": "default"},
+                "user_id": _USER_ID_PARAM,
                 "source": {"type": "string", "default": "dialogue"},
+                "session_id": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "description": "原始会话来源；显式值优先于调用归因",
+                },
+                "turn": {"type": "integer", "minimum": 0, "description": "原始对话轮次"},
                 "idempotency_key": {
                     "type": "string",
                     "description": "勘合幂等键（可选）：同键同文在回执 TTL 内重放原任务，同键不同文拒收；不传则按内容指纹只防短窗重试",
@@ -2688,8 +2796,23 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {
+                "attribution": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "description": "Optional untrusted call labels; never identity or read scope. Host protocol metadata takes precedence.",
+                    "properties": {
+                        "version": {"type": "integer", "const": 1},
+                        "request_session_id": {"type": ["string", "null"], "maxLength": 128},
+                        "request_id": {"type": ["string", "null"], "maxLength": 200},
+                    },
+                },
                 "user_id": _USER_ID_PARAM,
                 "content": {"type": "string", "description": "原文内容（代码/日志/配置等）"},
+                "session_id": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "description": "原始会话来源；显式值优先于调用归因",
+                },
                 "title": {"type": "string", "default": ""},
                 "lane": {"type": "string", "default": "general"},
                 "tags": {"type": "array", "items": {"type": "string"}},
@@ -4105,7 +4228,7 @@ def handle(msg: object) -> dict | None:
                 "id": mid,
                 "error": {"code": -32602, "message": "params/arguments must be objects"},
             }
-        if name not in active_tools:
+        if not isinstance(name, str) or name not in active_tools:
             return {
                 "jsonrpc": "2.0",
                 "id": mid,
@@ -4122,6 +4245,24 @@ def handle(msg: object) -> dict | None:
                     "code": -32603,
                     "message": f"tool {name} is advertised but has no registered handler",
                 },
+            }
+        # Parse attribution only for the supported five; unrelated tools keep
+        # their legacy argument behavior. Host metadata wins over model labels,
+        # not explicit origin.
+        try:
+            if name in _ATTRIBUTION_TOOLS:
+                meta = params.get("_meta")
+                context = parse_mcp_attribution(meta)
+                args = dict(args)
+                if isinstance(meta, dict) and ATTRIBUTION_META_KEY in meta:
+                    args["attribution"] = context
+                elif "attribution" in args:
+                    args["attribution"] = _validated_attribution(args["attribution"])
+        except (ValueError, TypeError):
+            return {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32602, "message": "invalid attribution metadata"},
             }
         # 循环守卫（票据 .scratch/mcp-loop-guard/01）：同工具+参数指纹窗口内
         # 失败达阈值即熔断；拒绝时 handler 不执行，宿主收到带 retry_after 的

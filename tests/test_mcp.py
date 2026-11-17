@@ -306,7 +306,9 @@ def test_add_dialogue_ok():
     assert "error" not in resp
     text = resp["result"]["content"][0]["text"]
     assert json.loads(text)["ingested"] is True
-    m.assert_called_once_with("记住：明天开会", user_id="default", source="dialogue")
+    m.assert_called_once_with(
+        "记住：明天开会", user_id="default", source="dialogue", session_id="", turn=None
+    )
 
 
 def test_add_dialogue_validation():

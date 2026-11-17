@@ -7,7 +7,8 @@ from lantai.llm.client import chat_json
 from lantai.llm.fence import wrap_as_data
 from lantai.llm.prompts import PROPOSAL_SYS
 from lantai.models.enums import ProposalStatus
-from lantai.models.tables import MemoryCandidate, MemoryItem, MemoryProposal
+from lantai.models.tables import IngestEvent, MemoryCandidate, MemoryItem, MemoryProposal
+from lantai.observability.ingest_events import record_ingest_outcome
 from lantai.services.prompt_service import get_prompt
 from lantai.storage import db
 from lantai.storage.cas import cas_update
@@ -90,8 +91,28 @@ def propose_from_candidate(
                 candidate_id,
                 exc_info=True,
             )
-            cand.status = "pending_review"
-            s.add(cand)
+            from datetime import timedelta
+
+            from lantai.core.settings import settings
+            from lantai.core.time import utcnow
+
+            changed = cas_update(
+                s,
+                MemoryCandidate,
+                candidate_id,
+                {"status": ["new", "fastpath", "pending_review"]},
+                {
+                    "status": "pending_review",
+                    "review_due_at": utcnow() + timedelta(days=settings.CANDIDATE_TTL_DAYS),
+                },
+            )
+            if changed:
+                record_ingest_outcome(
+                    s,
+                    candidate_id=candidate_id,
+                    outcome="pending",
+                    reason_code="proposal_unavailable",
+                )
             s.commit()
             return None
 
@@ -144,6 +165,9 @@ def propose_from_candidate(
             )
             cand.status = "gated"
             s.add(cand)
+            record_ingest_outcome(
+                s, candidate_id=candidate_id, outcome="rejected", reason_code="proposal_discarded"
+            )
             s.commit()
             return None
         # 目标寻址（票据 `.scratch/proposal-target-gap/issues/01-*.md`）：LLM 按
@@ -167,6 +191,12 @@ def propose_from_candidate(
                 )
                 cand.status = "gated"
                 s.add(cand)
+                record_ingest_outcome(
+                    s,
+                    candidate_id=candidate_id,
+                    outcome="rejected",
+                    reason_code="proposal_discarded",
+                )
                 s.commit()
                 return None
         prop = MemoryProposal(
@@ -177,6 +207,8 @@ def propose_from_candidate(
             evidence_ids=[cand.document_id],
             # 来源链继承（v022 票据 01）：出身随候选显式流动，不靠隐式通道
             user_id=getattr(cand, "user_id", None),
+            tenant_id=getattr(cand, "tenant_id", None),
+            agent_id=getattr(cand, "agent_id", None),
             session_id=getattr(cand, "session_id", None),
             reason=data.get("reason", ""),
             proposed_patch={
@@ -204,6 +236,17 @@ def propose_from_candidate(
         s.add(prop)
         cand.status = "gated"
         s.add(cand)
+        event_ids = list(
+            s.exec(select(IngestEvent.id).where(IngestEvent.candidate_id == candidate_id)).all()
+        )
+        record_ingest_outcome(
+            s,
+            event_ids=event_ids,
+            candidate_id=candidate_id,
+            proposal_id=prop.id,
+            outcome="pending",
+            reason_code="proposal_pending",
+        )
         s.commit()
         s.refresh(prop)
         return prop

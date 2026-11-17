@@ -102,6 +102,7 @@ def log_retrieval(
                     id=event_id,
                     user_id=getattr(principal, "user_id", None),
                     tenant_id=getattr(principal, "tenant_id", None),
+                    agent_id=getattr(principal, "agent_id", None),
                     trace_id=trace_id or "",
                     query_text=query if persist_query else "",
                     query_norm_hash=_norm_hash(query) if persist_query else "",

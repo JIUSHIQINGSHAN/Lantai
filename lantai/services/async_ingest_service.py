@@ -14,9 +14,11 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from lantai.core.attribution import Attribution, attribution_dict, resolve_attribution
 from lantai.core.idempotency import auto_key, claim, fingerprint_payload, settle
 from lantai.core.logger import logger
 from lantai.core.time import iso_utc, utcnow
+from lantai.observability.ingest_events import record_ingest_exception, start_ingest_event
 
 # 内存任务状态注册表
 _TASKS: dict[str, dict[str, Any]] = {}
@@ -31,6 +33,11 @@ def _execute_dialogue_task(
     session_id: str = "",
     turn: int | None = None,
     binding: dict | None = None,
+    *,
+    attribution: dict | Attribution | None = None,
+    tenant_id: str | None = None,
+    agent_id: str | None = None,
+    ingest_event_id: str,
 ) -> None:
     """后台线程执行完整摄取流水线。"""
     try:
@@ -46,6 +53,10 @@ def _execute_dialogue_task(
             source=source,
             session_id=session_id,
             turn=turn,
+            attribution=attribution,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            _ingest_event_id=ingest_event_id,
         )
 
         _TASKS[task_id]["status"] = "completed"
@@ -55,13 +66,20 @@ def _execute_dialogue_task(
         # 勘合结算：显式键落 done 回执（TTL 内重放），自动键不落（到期自然失效）
         settle(binding, ok=True, result=res, task_id=task_id)
     except Exception as exc:
-        logger.error("潜移：异步对话摄取任务【%s】执行失败: %s", task_id, exc)
+        logger.error("潜移：异步对话摄取任务【%s】执行失败: %s", task_id, type(exc).__name__)
         _TASKS[task_id]["status"] = "failed"
-        _TASKS[task_id]["error"] = str(exc)
+        _TASKS[task_id]["error"] = type(exc).__name__
         _TASKS[task_id]["completed_at"] = iso_utc(utcnow())
-        # 勘合结算（上游 S-2/S-8 教训）：失败必须释放键，重试才能重新执行；
-        # 失败的任务永远不得以 accepted/done 重放。
-        settle(binding, ok=False)
+        # Preserve a committed candidate on a post-commit exception; releasing
+        # its idempotency claim would duplicate the already received dialogue.
+        committed = bool(_TASKS[task_id].get("result"))
+        try:
+            committed = (
+                record_ingest_exception([ingest_event_id], rejected=isinstance(exc, ValueError))
+                or committed
+            )
+        finally:
+            settle(binding, ok=committed, result=_TASKS[task_id].get("result"), task_id=task_id)
 
 
 def submit_async_dialogue(
@@ -72,6 +90,8 @@ def submit_async_dialogue(
     turn: int | None = None,
     idempotency_key: str = "",
     tenant_id: str = "",
+    agent_id: str | None = None,
+    attribution: dict | Attribution | None = None,
 ) -> dict:
     """提交对话文本进行异步提纯摄取（毫秒级非阻塞返回）。
 
@@ -88,7 +108,10 @@ def submit_async_dialogue(
     if not raw_text:
         raise ValueError("text 不能为空")
 
-    fingerprint = fingerprint_payload(raw_text, user_id, source, session_id, turn)
+    envelope = attribution_dict(attribution)
+    context = resolve_attribution(session_id, envelope)
+    effective_session_id = context["session_id"] or ""
+    fingerprint = fingerprint_payload(raw_text, user_id, source, effective_session_id, turn)
     explicit = bool((idempotency_key or "").strip())
     key = (idempotency_key or "").strip() or auto_key(fingerprint)
     # task_id 先于抢占生成（纯 uuid 无副作用）：抢到即随回执落库，重试方
@@ -102,7 +125,12 @@ def submit_async_dialogue(
     elif verdict["action"] == "replay":
         original = verdict.get("task_id") or ""
         if original:
-            return {"task_id": original, "status": "queued", "replayed": True}
+            return {
+                "task_id": original,
+                "status": "queued",
+                "replayed": True,
+                "ingest_event_id": (_TASKS.get(original) or {}).get("ingest_event_id"),
+            }
         # 回执无任务号（理论不可达，防御）：按待处理让宿主稍后重试
         return {"task_id": "", "status": "pending", "replayed": True}
     elif verdict["action"] == "pending":
@@ -121,12 +149,28 @@ def submit_async_dialogue(
             "explicit": explicit,
         }
 
+    try:
+        ingest_event_id = start_ingest_event(
+            channel="dialogue",
+            user_id=user_id,
+            tenant_id=tenant_id or None,
+            agent_id=agent_id,
+            session_id=session_id,
+            attribution=envelope,
+        )
+    except Exception:
+        # Nothing was submitted; this owner must release its claim for retry.
+        settle(binding, ok=False)
+        raise
     task_info = {
         "task_id": task_id,
+        "ingest_event_id": ingest_event_id,
         "status": "queued",
         "user_id": user_id,
         "source": source,
-        "session_id": session_id or None,
+        "session_id": effective_session_id or None,
+        "request_session_id": context.get("request_session_id"),
+        "request_id": context.get("request_id"),
         "submitted_at": iso_utc(utcnow()),
         "result": None,
         "error": None,
@@ -134,11 +178,31 @@ def submit_async_dialogue(
     _TASKS[task_id] = task_info
 
     # 提交至后台线程池
-    _EXECUTOR.submit(
-        _execute_dialogue_task, task_id, raw_text, user_id, source, session_id, turn, binding
-    )
+    try:
+        _EXECUTOR.submit(
+            _execute_dialogue_task,
+            task_id,
+            raw_text,
+            user_id,
+            source,
+            session_id,
+            turn,
+            binding,
+            attribution=envelope,
+            tenant_id=tenant_id or None,
+            agent_id=agent_id,
+            ingest_event_id=ingest_event_id,
+        )
+    except Exception:
+        task_info["status"] = "failed"
+        task_info["error"] = "dispatch_error"
+        try:
+            record_ingest_exception([ingest_event_id], reason_code="dispatch_error")
+        finally:
+            settle(binding, ok=False)
+        raise
     logger.info("潜移：已分发异步对话摄取任务【%s】", task_id)
-    return {"task_id": task_id, "status": "queued"}
+    return {"task_id": task_id, "status": "queued", "ingest_event_id": ingest_event_id}
 
 
 def get_task_status(task_id: str, principal=None) -> dict:

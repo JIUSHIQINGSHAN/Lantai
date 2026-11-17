@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Lantai session attribution",
+    "description": "Adds the calling DSH session and tool-call ID to each Lantai MCP request. In Plugins, configure the disabled connection, disable the existing include:mcp-lantai entry, then enable this plugin. Uses static transport settings; credential templates, MCP resources, and server instructions are unsupported. Turning it off closes its connection and removes its tools. Attribution labels never grant access."
+  }
+}

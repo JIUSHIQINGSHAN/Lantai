@@ -8,6 +8,7 @@ from lantai.evolution.reflector import record_feedback
 from lantai.models.enums import ProposalStatus
 from lantai.models.schemas import FeedbackReq, ProposalDecisionReq
 from lantai.models.tables import MemoryCheckpoint, MemoryItem, MemoryProposal
+from lantai.observability.ingest_events import record_ingest_outcome
 from lantai.storage import db
 from lantai.storage.cas import cas_update
 from lantai.workers.evolve_worker import run_evolve_once
@@ -149,6 +150,12 @@ def decide_proposal(proposal_id: str, req: ProposalDecisionReq, *, principal=Non
         )
         if claimed != 1:
             raise RuntimeError("proposal state changed; refresh and retry")
+        record_ingest_outcome(
+            s,
+            proposal_id=proposal_id,
+            outcome="pending" if req.approve else "rejected",
+            reason_code="proposal_pending" if req.approve else "proposal_rejected",
+        )
         s.commit()
         if req.approve:
             # principal 下传到 apply（票 .scratch/proposal-apply-gaps/issues/16）：

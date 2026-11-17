@@ -16,6 +16,7 @@ from datetime import timedelta
 
 from sqlmodel import select
 
+from lantai.core.attribution import Attribution, resolve_attribution
 from lantai.core.ids import new_id
 from lantai.core.provenance import (
     PROVENANCE_PROMPT_DIALOGUE_CHITCHAT,
@@ -29,6 +30,12 @@ from lantai.core.text import truncate_codepoints
 from lantai.core.time import ensure_aware, iso_utc, utcnow
 from lantai.gate.prefilter import NO_MEMORY_PATTERNS
 from lantai.models.tables import MemoryCandidate, RawDocument
+from lantai.observability.ingest_events import (
+    candidate_outcome,
+    ingest_attempt,
+    record_ingest_outcome,
+    start_ingest_event,
+)
 from lantai.parsing.extractor import extract_candidate
 from lantai.parsing.fastpath import fastpath_check
 from lantai.services.candidate_service import enqueue_rejected
@@ -86,6 +93,48 @@ def ingest_dialogue(
     created_at=None,
     session_id: str = "",
     turn: int | None = None,
+    attribution: dict | Attribution | None = None,
+    tenant_id: str | None = None,
+    agent_id: str | None = None,
+    _ingest_event_id: str | None = None,
+) -> dict:
+    """Receive one logical dialogue and keep its event through all later stages."""
+    context = resolve_attribution(session_id, attribution)
+    event_id = start_ingest_event(
+        channel="dialogue",
+        user_id=user_id,
+        tenant_id=tenant_id,
+        agent_id=agent_id,
+        session_id=session_id,
+        attribution=attribution,
+        event_id=_ingest_event_id,
+    )
+    with ingest_attempt([event_id]):
+        result = _ingest_dialogue(
+            text,
+            user_id=user_id,
+            source=source,
+            created_at=created_at,
+            session_id=context["session_id"] or "",
+            turn=turn,
+            ingest_event_ids=[event_id],
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+        )
+    return {**result, "ingest_event_id": event_id}
+
+
+def _ingest_dialogue(
+    text: str,
+    *,
+    user_id: str = "default",
+    source: str = "dialogue",
+    created_at=None,
+    session_id: str = "",
+    turn: int | None = None,
+    ingest_event_ids: list[str] | None = None,
+    tenant_id: str | None = None,
+    agent_id: str | None = None,
 ) -> dict:
     """对话文本 → 现有提取链。
 
@@ -132,6 +181,9 @@ def ingest_dialogue(
             created_at=created_at,
             session_id=session_id,
             turn=turn,
+            ingest_event_ids=ingest_event_ids,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
         )
         return _secret_guard_route(result, secret_hits)
 
@@ -147,6 +199,9 @@ def ingest_dialogue(
             created_at=created_at,
             session_id=session_id,
             turn=turn,
+            ingest_event_ids=ingest_event_ids,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
         )
 
     # 3) LLM 提取（extract_candidate 自带降级 fallback）→ 走现有 gate 分层
@@ -162,6 +217,9 @@ def ingest_dialogue(
         created_at=created_at,
         session_id=session_id,
         turn=turn,
+        ingest_event_ids=ingest_event_ids,
+        tenant_id=tenant_id,
+        agent_id=agent_id,
     )
     # 密钥三态路由单一真源（X-06，票 17-4）：调用方不复制 mode 判据——
     # off 由 detect_secret_shapes 内部处理（恒空），shadow/enforce 由
@@ -179,6 +237,9 @@ def ingest_dialogue(
                 if c:
                     c.status = "rejected"
                     s.add(c)
+                    record_ingest_outcome(
+                        s, candidate_id=c.id, outcome="rejected", reason_code="candidate_rejected"
+                    )
                     s.commit()
             result["status"] = "rejected"
         else:
@@ -206,6 +267,9 @@ def _create_candidate(
     created_at=None,
     session_id: str = "",
     turn: int | None = None,
+    ingest_event_ids: list[str] | None = None,
+    tenant_id: str | None = None,
+    agent_id: str | None = None,
 ) -> dict:
     """建 rawdocument（content_hash 去重复用）→ memorycandidate。
 
@@ -264,12 +328,13 @@ def _create_candidate(
                 doc_kwargs["fetched_at"] = created_at
             doc = RawDocument(**doc_kwargs)
             s.add(doc)
-            s.commit()
-            s.refresh(doc)
+            s.flush()
 
         cand_kwargs = dict(
             id=new_id("cand"),
-            user_id=user_id or None,
+            user_id=user_id or "default",
+            tenant_id=tenant_id,
+            agent_id=agent_id,
             session_id=(session_id or "").strip() or None,
             document_id=doc.id,
             topic=fp_data.get("topic") if fp_data else [],
@@ -290,6 +355,12 @@ def _create_candidate(
         if status == "pending_review":
             cand.review_due_at = utcnow() + timedelta(days=settings.CANDIDATE_TTL_DAYS)
         s.add(cand)
+        record_ingest_outcome(
+            s,
+            event_ids=ingest_event_ids,
+            candidate_id=cand.id,
+            outcome=candidate_outcome(cand.status),
+        )
         s.commit()
         s.refresh(cand)
         return {

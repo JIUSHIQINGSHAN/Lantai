@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 45
+TARGET_SCHEMA_VERSION = 46
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -1133,6 +1133,23 @@ def _migrate_v45(conn) -> None:
         )
 
 
+def _migrate_v46(conn) -> None:
+    """v45 -> v46: zero-body ingestion attribution ledger; no history backfill."""
+    from sqlalchemy.dialects import sqlite as sa_sqlite
+    from sqlalchemy.schema import CreateIndex, CreateTable
+
+    from lantai.models.tables import IngestEvent
+
+    # Compile the actual model so new and migrated databases have identical
+    # nullable/type/index contracts. Only this new table is touched.
+    table = IngestEvent.__table__
+    dialect = sa_sqlite.dialect()
+    conn.execute(str(CreateTable(table, if_not_exists=True).compile(dialect=dialect)))
+    for index in sorted(table.indexes, key=lambda value: value.name):
+        conn.execute(str(CreateIndex(index, if_not_exists=True).compile(dialect=dialect)))
+    logger.info("Migrated v46: ingest_event attribution ledger")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -1178,6 +1195,7 @@ MIGRATIONS = [
     (43, _migrate_v43),
     (44, _migrate_v44),
     (45, _migrate_v45),
+    (46, _migrate_v46),
 ]
 
 

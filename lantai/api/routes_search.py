@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from lantai.core.acl import filter_results_by_lanes
+from lantai.core.attribution import attribution_dict
 from lantai.core.auth import Principal, get_current_user
 from lantai.gate.prefilter import relevance_check
 from lantai.models.schemas import SearchReq
@@ -17,6 +18,10 @@ def search(
     explain: bool = False,
     ctx: Principal = Depends(get_current_user),
 ):
+    # Dedicated body attribution labels only this retrieval event. Never mutate
+    # Principal/session scope or change cross-session recall through this field.
+    request_context = attribution_dict(req.attribution) or {}
+    event_session_id = request_context.get("request_session_id") or ctx.session_id
     # Step 1: 启发式闸门预过滤（拾遗 ADR-0028：支持 req.force 透传放行）
     gate = relevance_check(req.query, user_id=ctx.user_id)
     if not req.force and not gate["needs_memory"]:
@@ -24,7 +29,14 @@ def search(
         # 检索、无 eval/弱标注价值，原话写入即脱（v0.68 票 11，ADR-0084 §2.5
         # 增补）——is_system_noise/estimated_tokens 等标记仍以原查询照算。
         event_id = _try_log(
-            req, [], 0, gate, session_id=ctx.session_id, principal=ctx, persist_query=False
+            req,
+            [],
+            0,
+            gate,
+            session_id=event_session_id,
+            principal=ctx,
+            persist_query=False,
+            request_id=request_context.get("request_id"),
         )
         return {"results": [], "gate": gate, "event_id": event_id}
 
@@ -73,7 +85,15 @@ def search(
         from lantai.retrieval.supersede import _apply_supersede_guard
 
         results = _apply_supersede_guard(results, req.query)
-    event_id = _try_log(req, results, latency_ms, gate, session_id=ctx.session_id, principal=ctx)
+    event_id = _try_log(
+        req,
+        results,
+        latency_ms,
+        gate,
+        session_id=event_session_id,
+        principal=ctx,
+        request_id=request_context.get("request_id"),
+    )
     from lantai.retrieval.evidence import build_evidence
 
     evidence = build_evidence(results, principal=ctx)
@@ -126,6 +146,7 @@ def _try_log(
     gate: dict,
     *,
     session_id: str | None = None,
+    request_id: str | None = None,
     principal=None,
     persist_query: bool = True,
 ) -> str | None:
@@ -147,6 +168,7 @@ def _try_log(
             gate=gate,
             lanes=req.lanes,
             session_id=session_id,
+            request_id=request_id,
             principal=principal,
             persist_query=persist_query,
         )

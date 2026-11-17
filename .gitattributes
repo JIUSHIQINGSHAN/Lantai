@@ -1,0 +1,2 @@
+# Migration bundles are byte-hashed; Windows checkout must preserve LF bytes.
+tests/fixtures/chroma-0.6.3/*.jsonl text eol=lf

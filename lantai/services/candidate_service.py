@@ -12,6 +12,7 @@ from sqlmodel import select
 from lantai.core.settings import settings
 from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import MemoryCandidate
+from lantai.observability.ingest_events import record_ingest_outcome
 from lantai.storage import db
 from lantai.storage.cas import atomic_update, cas_update
 
@@ -28,6 +29,9 @@ def enqueue_rejected(candidate_id: str) -> None:
         c.status = "pending_review"
         c.review_due_at = utcnow() + timedelta(days=settings.CANDIDATE_TTL_DAYS)
         s.add(c)
+        record_ingest_outcome(
+            s, candidate_id=c.id, outcome="pending", reason_code="candidate_pending"
+        )
         s.commit()
 
 
@@ -146,6 +150,9 @@ def review_candidate(candidate_id: str, approve: bool, reason: str = "", *, prin
             c.status = "rejected"
             _clear_defer_state(c)
             s.add(c)
+            record_ingest_outcome(
+                s, candidate_id=c.id, outcome="rejected", reason_code="candidate_rejected"
+            )
             s.commit()
             return {"ok": True, "candidate_status": "rejected", "reason": reason.strip()}
 
@@ -314,7 +321,7 @@ def run_candidate_ttl_once() -> dict:
                 # rowcount=0 = 该候选已被并发 defer / 裁决，跳过不覆盖（宁 miss
                 # 不脏写）；归档与 defer 清空在同一语句原子完成（语义同
                 # _clear_defer_state，仅对真超龄生效）。
-                archived += cas_update(
+                changed = cas_update(
                     s,
                     MemoryCandidate,
                     c.id,
@@ -329,5 +336,10 @@ def run_candidate_ttl_once() -> dict:
                     MemoryCandidate.review_due_at.is_not(None),
                     MemoryCandidate.review_due_at <= now,
                 )
+                if changed:
+                    archived += changed
+                    record_ingest_outcome(
+                        s, candidate_id=c.id, outcome="rejected", reason_code="candidate_expired"
+                    )
         s.commit()
         return {"ok": True, "archived": archived}
