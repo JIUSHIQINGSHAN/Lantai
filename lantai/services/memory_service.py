@@ -17,7 +17,7 @@ from lantai.core.provenance import (
 )
 from lantai.core.settings import settings
 from lantai.core.text import normalize_for_index
-from lantai.core.time import iso_utc, utcnow
+from lantai.core.time import ensure_aware, iso_utc, utcnow
 from lantai.evolution.promoter import _make_checkpoint
 from lantai.gate.dedup import find_similar
 from lantai.ingestion.coalesce import get_coalesce_buffer
@@ -700,14 +700,15 @@ def build_verbatim_item(
 
     add_raw_memory 与冷启动导入（services/import_service.py）共用，消除重复
     构造；created_at/updated_at 缺省取 utcnow，updated_at 缺省取 created_at
-    （导入路径原样保留原始时间戳语义）。
+    （导入路径保留原始时刻）；无偏移输入按项目约定解释为 UTC，带偏移输入
+    归一 UTC，确保内存项和 UTCDateTime 绑定参数都满足 aware UTC 契约。
 
     归属四元组（票 .scratch/ownership-gaps/03）：不传即如实 NULL——宁 miss
     不脏写，不猜归属；但调用方（尤其 HTTP 路由）必须把 principal 传下来，
     否则这条记忆在按属主过滤的检索里永久不可见。
     """
     h = hashlib.sha256(normalize_for_index(content).encode("utf-8")).hexdigest()
-    created = created_at or utcnow()
+    created = ensure_aware(created_at) or utcnow()
     return MemoryItem(
         id=new_id("mem"),
         memory_type="verbatim",
@@ -725,7 +726,7 @@ def build_verbatim_item(
         shared_scope=shared_scope or "private",
         valid_from=created,  # 主张自落库起生效（票 08：模型层默认 None，写入点显式声明）
         created_at=created,
-        updated_at=updated_at or created,
+        updated_at=ensure_aware(updated_at) or created,
     )
 
 

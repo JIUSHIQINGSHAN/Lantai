@@ -42,7 +42,9 @@ class ChromaVectorStore(VectorStore):
         coll_name = "remembrance_vectors" if "remembrance_vectors" in existing else "lantai_vectors"
         self._collection = self._client.get_or_create_collection(
             name=coll_name,
-            metadata={"hnsw:space": "cosine"},
+            configuration={"hnsw": {"space": "cosine"}},
+            # Embeddings come from Lantai. Never fall back to Chroma's default model.
+            embedding_function=None,
         )
 
     def add(self, ids: list[str], embeddings: list[list[float]], metadatas: list[dict]):
@@ -53,7 +55,11 @@ class ChromaVectorStore(VectorStore):
     def search(
         self, query_embedding: list[float], top_k: int, filters: dict | None = None
     ) -> list[dict]:
-        kwargs = {"query_embeddings": [query_embedding], "n_results": top_k}
+        kwargs = {
+            "query_embeddings": [query_embedding],
+            "n_results": top_k,
+            "include": ["distances", "metadatas"],
+        }
         if filters:
             kwargs["where"] = filters
         result = self._collection.query(**kwargs)
@@ -62,8 +68,8 @@ class ChromaVectorStore(VectorStore):
         return [
             {
                 "id": result["ids"][0][i],
-                "distance": result["distances"][0][i],
-                "metadata": result["metadatas"][0][i] if result["metadatas"] else {},
+                "distance": float(result["distances"][0][i]),
+                "metadata": (result["metadatas"][0][i] or {}) if result["metadatas"] else {},
             }
             for i in range(len(result["ids"][0]))
         ]
@@ -73,7 +79,7 @@ class ChromaVectorStore(VectorStore):
             self._collection.delete(ids=ids)
 
     def has(self, id: str) -> bool:
-        found = self._collection.get(ids=[id])
+        found = self._collection.get(ids=[id], include=[])
         return bool(found and found.get("ids"))
 
 

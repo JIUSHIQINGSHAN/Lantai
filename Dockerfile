@@ -1,49 +1,30 @@
-# Dockerfile — 兰台记忆（Lantai）
-# python:3.11-slim 多阶段构建
-
-# ---- builder ----
-FROM python:3.11-slim AS builder
-
+# syntax=docker/dockerfile:1
+# Locked, multi-stage runtime. Build with docker buildx build --load.
+ARG PYTHON_IMAGE=python:3.14.10-slim-bookworm
+FROM ${PYTHON_IMAGE} AS builder
 WORKDIR /build
-
-ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
-
-# 编译依赖 + 源码（必须 COPY lantai/ 否则 wheel 为空）
-COPY pyproject.toml ./
+RUN python -m pip install --no-cache-dir uv==0.13.8
+ENV UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_COMPILE_BYTECODE=1 UV_PROJECT_ENVIRONMENT=/opt/venv UV_CACHE_DIR=/cache/uv
+COPY pyproject.toml uv.lock ./
+# Exact runtime versions from uv.lock; no resolver drift during production builds.
+RUN --mount=type=cache,target=/cache/uv \
+    uv sync --frozen --no-dev --no-install-project
 COPY lantai/ ./lantai/
-RUN pip install --upgrade pip build && python -m build --wheel --outdir /wheels
+RUN --mount=type=cache,target=/cache/uv \
+    uv sync --frozen --no-dev --no-editable
 
-# ---- runtime ----
-FROM python:3.11-slim AS runtime
-
+FROM ${PYTHON_IMAGE} AS runtime
 WORKDIR /app
-
-# 安装运行时依赖（wheel 内含 lantai 包，无需 COPY 源码）
-COPY --from=builder /wheels /wheels
-RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
-
-# 复制入口与脚本
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" \
+    LANTAI_HOME=/data PORT=8767 HOST=0.0.0.0 \
+    PYTHONIOENCODING=utf-8 PYTHONDONTWRITEBYTECODE=1
 COPY api_server.py ./
 COPY scripts/ ./scripts/
-
-# 数据卷
-VOLUME ["/data"]
-
-# 环境变量
-ENV LANTAI_HOME=/data
-ENV PORT=8767
-# 容器需对外可达故绑 0.0.0.0——必须同时注入 API_KEY，否则 assert_secure_binding 拒绝启动
-ENV HOST=0.0.0.0
-
-# 非 root 运行（审计 M6）：最小权限
-RUN useradd -m -u 1001 appuser && mkdir -p /data && chown -R appuser:appuser /data
+RUN useradd -m -u 1001 appuser && mkdir -p /data && chown appuser:appuser /data
 USER appuser
-
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8767/health')" || exit 1
-
+VOLUME ["/data"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8767/health')" || exit 1
 EXPOSE 8767
-
-# console script 与 api_server.py 等价；优先 lantai-server（wheel 已声明 entry point）
 CMD ["lantai-server"]

@@ -62,7 +62,7 @@ def _count_fts(engine, memory_id: str) -> int:
 
 def test_build_verbatim_item_smoke():
     """构造纯函数不 mock：sha256 幂等 key + 固定语义字段 + 时间戳显式/缺省。"""
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     from lantai.services.memory_service import build_verbatim_item
 
@@ -77,7 +77,8 @@ def test_build_verbatim_item_smoke():
     assert item.tags == ["旧"]
     assert item.tier == "long_term"
     assert item.confidence == 1.0
-    assert item.created_at == datetime(2026, 1, 2, 3, 4, 5)
+    assert item.created_at == datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    assert item.created_at.tzinfo is UTC
     assert item.updated_at == item.created_at  # updated_at 缺省取 created_at
     # 内容 sha256 幂等 key：同内容两次构造 key 一致
     assert build_verbatim_item("配置备份脚本 backup.sh", "fact").key == item.key

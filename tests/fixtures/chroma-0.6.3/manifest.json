@@ -1,0 +1,796 @@
+{
+  "collections": [
+    {
+      "configuration": {
+        "hnsw": {
+          "space": "l2"
+        }
+      },
+      "count": 0,
+      "dimension": null,
+      "file": "collection-0000.jsonl",
+      "metadata": null,
+      "name": "empty-new",
+      "probes": [
+        {
+          "allowed_ids": [],
+          "distances": {},
+          "embedding": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "top_k": 10,
+          "where": null
+        },
+        {
+          "allowed_ids": [],
+          "distances": {},
+          "embedding": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$or": [
+              {
+                "user_id": "__lantai_migration_absent_owner__"
+              },
+              {
+                "user_id": ""
+              }
+            ]
+          }
+        }
+      ],
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_metadata": null
+    },
+    {
+      "configuration": {
+        "hnsw": {
+          "space": "l2"
+        }
+      },
+      "count": 0,
+      "dimension": 3,
+      "file": "collection-0001.jsonl",
+      "metadata": null,
+      "name": "empty-used",
+      "probes": [
+        {
+          "allowed_ids": [],
+          "distances": {},
+          "embedding": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "top_k": 10,
+          "where": null
+        },
+        {
+          "allowed_ids": [],
+          "distances": {},
+          "embedding": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$or": [
+              {
+                "user_id": "__lantai_migration_absent_owner__"
+              },
+              {
+                "user_id": ""
+              }
+            ]
+          }
+        }
+      ],
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_metadata": null
+    },
+    {
+      "configuration": {
+        "hnsw": {
+          "max_neighbors": 24,
+          "space": "cosine"
+        }
+      },
+      "count": 4,
+      "dimension": 3,
+      "file": "collection-0002.jsonl",
+      "metadata": {
+        "fixture": "cross-version"
+      },
+      "name": "remembrance_vectors",
+      "probes": [
+        {
+          "allowed_ids": [
+            "a",
+            "b",
+            "missing-meta",
+            "shared"
+          ],
+          "distances": {
+            "a": 1.4682205784488644e-08,
+            "b": 1.0,
+            "missing-meta": 0.552786411066124,
+            "shared": 1.5999999911906766
+          },
+          "embedding": [
+            2.0,
+            0.0,
+            1.0
+          ],
+          "top_k": 10,
+          "where": null
+        },
+        {
+          "allowed_ids": [
+            "a",
+            "b",
+            "missing-meta",
+            "shared"
+          ],
+          "distances": {
+            "a": 1.0,
+            "b": 0.0,
+            "missing-meta": 1.0,
+            "shared": 1.0
+          },
+          "embedding": [
+            0.0,
+            3.0,
+            0.0
+          ],
+          "top_k": 10,
+          "where": null
+        },
+        {
+          "allowed_ids": [
+            "a",
+            "b",
+            "missing-meta",
+            "shared"
+          ],
+          "distances": {
+            "a": 0.5527864045000421,
+            "b": 1.0,
+            "missing-meta": 0.0,
+            "shared": 0.5527864045000421
+          },
+          "embedding": [
+            0.0,
+            0.0,
+            4.0
+          ],
+          "top_k": 10,
+          "where": null
+        },
+        {
+          "allowed_ids": [
+            "shared"
+          ],
+          "distances": {
+            "shared": 1.5999999911906766
+          },
+          "embedding": [
+            2.0,
+            0.0,
+            1.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$or": [
+              {
+                "user_id": ""
+              },
+              {
+                "user_id": ""
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "shared"
+          ],
+          "distances": {
+            "shared": 1.0
+          },
+          "embedding": [
+            0.0,
+            3.0,
+            0.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$or": [
+              {
+                "user_id": ""
+              },
+              {
+                "user_id": ""
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "shared"
+          ],
+          "distances": {
+            "shared": 0.5527864045000421
+          },
+          "embedding": [
+            0.0,
+            0.0,
+            4.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$or": [
+              {
+                "user_id": ""
+              },
+              {
+                "user_id": ""
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "shared"
+          ],
+          "distances": {
+            "shared": 1.5999999911906766
+          },
+          "embedding": [
+            2.0,
+            0.0,
+            1.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$or": [
+              {
+                "user_id": "__lantai_migration_absent_owner__"
+              },
+              {
+                "user_id": ""
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "shared"
+          ],
+          "distances": {
+            "shared": 1.0
+          },
+          "embedding": [
+            0.0,
+            3.0,
+            0.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$or": [
+              {
+                "user_id": "__lantai_migration_absent_owner__"
+              },
+              {
+                "user_id": ""
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "shared"
+          ],
+          "distances": {
+            "shared": 0.5527864045000421
+          },
+          "embedding": [
+            0.0,
+            0.0,
+            4.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$or": [
+              {
+                "user_id": "__lantai_migration_absent_owner__"
+              },
+              {
+                "user_id": ""
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "a",
+            "shared"
+          ],
+          "distances": {
+            "a": 1.4682205784488644e-08,
+            "shared": 1.5999999911906766
+          },
+          "embedding": [
+            2.0,
+            0.0,
+            1.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$or": [
+              {
+                "user_id": "alice"
+              },
+              {
+                "user_id": ""
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "a",
+            "shared"
+          ],
+          "distances": {
+            "a": 1.0,
+            "shared": 1.0
+          },
+          "embedding": [
+            0.0,
+            3.0,
+            0.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$or": [
+              {
+                "user_id": "alice"
+              },
+              {
+                "user_id": ""
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "a",
+            "shared"
+          ],
+          "distances": {
+            "a": 0.5527864045000421,
+            "shared": 0.5527864045000421
+          },
+          "embedding": [
+            0.0,
+            0.0,
+            4.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$or": [
+              {
+                "user_id": "alice"
+              },
+              {
+                "user_id": ""
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "b",
+            "shared"
+          ],
+          "distances": {
+            "b": 1.0,
+            "shared": 1.5999999911906766
+          },
+          "embedding": [
+            2.0,
+            0.0,
+            1.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$or": [
+              {
+                "user_id": "bob"
+              },
+              {
+                "user_id": ""
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "b",
+            "shared"
+          ],
+          "distances": {
+            "b": 0.0,
+            "shared": 1.0
+          },
+          "embedding": [
+            0.0,
+            3.0,
+            0.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$or": [
+              {
+                "user_id": "bob"
+              },
+              {
+                "user_id": ""
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "b",
+            "shared"
+          ],
+          "distances": {
+            "b": 1.0,
+            "shared": 0.5527864045000421
+          },
+          "embedding": [
+            0.0,
+            0.0,
+            4.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$or": [
+              {
+                "user_id": "bob"
+              },
+              {
+                "user_id": ""
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "a"
+          ],
+          "distances": {
+            "a": 1.4682205784488644e-08
+          },
+          "embedding": [
+            2.0,
+            0.0,
+            1.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$and": [
+              {
+                "$or": [
+                  {
+                    "user_id": "alice"
+                  },
+                  {
+                    "user_id": ""
+                  }
+                ]
+              },
+              {
+                "lane": "fact"
+              },
+              {
+                "domain": "user"
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "a"
+          ],
+          "distances": {
+            "a": 1.0
+          },
+          "embedding": [
+            0.0,
+            3.0,
+            0.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$and": [
+              {
+                "$or": [
+                  {
+                    "user_id": "alice"
+                  },
+                  {
+                    "user_id": ""
+                  }
+                ]
+              },
+              {
+                "lane": "fact"
+              },
+              {
+                "domain": "user"
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "a"
+          ],
+          "distances": {
+            "a": 0.5527864045000421
+          },
+          "embedding": [
+            0.0,
+            0.0,
+            4.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$and": [
+              {
+                "$or": [
+                  {
+                    "user_id": "alice"
+                  },
+                  {
+                    "user_id": ""
+                  }
+                ]
+              },
+              {
+                "lane": "fact"
+              },
+              {
+                "domain": "user"
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "b"
+          ],
+          "distances": {
+            "b": 1.0
+          },
+          "embedding": [
+            2.0,
+            0.0,
+            1.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$and": [
+              {
+                "$or": [
+                  {
+                    "user_id": "bob"
+                  },
+                  {
+                    "user_id": ""
+                  }
+                ]
+              },
+              {
+                "lane": "fact"
+              },
+              {
+                "domain": "user"
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "b"
+          ],
+          "distances": {
+            "b": 0.0
+          },
+          "embedding": [
+            0.0,
+            3.0,
+            0.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$and": [
+              {
+                "$or": [
+                  {
+                    "user_id": "bob"
+                  },
+                  {
+                    "user_id": ""
+                  }
+                ]
+              },
+              {
+                "lane": "fact"
+              },
+              {
+                "domain": "user"
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "b"
+          ],
+          "distances": {
+            "b": 1.0
+          },
+          "embedding": [
+            0.0,
+            0.0,
+            4.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$and": [
+              {
+                "$or": [
+                  {
+                    "user_id": "bob"
+                  },
+                  {
+                    "user_id": ""
+                  }
+                ]
+              },
+              {
+                "lane": "fact"
+              },
+              {
+                "domain": "user"
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "shared"
+          ],
+          "distances": {
+            "shared": 1.5999999911906766
+          },
+          "embedding": [
+            2.0,
+            0.0,
+            1.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$and": [
+              {
+                "$or": [
+                  {
+                    "user_id": ""
+                  },
+                  {
+                    "user_id": ""
+                  }
+                ]
+              },
+              {
+                "lane": "rule"
+              },
+              {
+                "domain": "user"
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "shared"
+          ],
+          "distances": {
+            "shared": 1.0
+          },
+          "embedding": [
+            0.0,
+            3.0,
+            0.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$and": [
+              {
+                "$or": [
+                  {
+                    "user_id": ""
+                  },
+                  {
+                    "user_id": ""
+                  }
+                ]
+              },
+              {
+                "lane": "rule"
+              },
+              {
+                "domain": "user"
+              }
+            ]
+          }
+        },
+        {
+          "allowed_ids": [
+            "shared"
+          ],
+          "distances": {
+            "shared": 0.5527864045000421
+          },
+          "embedding": [
+            0.0,
+            0.0,
+            4.0
+          ],
+          "top_k": 10,
+          "where": {
+            "$and": [
+              {
+                "$or": [
+                  {
+                    "user_id": ""
+                  },
+                  {
+                    "user_id": ""
+                  }
+                ]
+              },
+              {
+                "lane": "rule"
+              },
+              {
+                "domain": "user"
+              }
+            ]
+          }
+        }
+      ],
+      "sha256": "f04e28d1166610c36e36ceb1c5bc76c0c0933f7e8a24fbe238c48739625e4410",
+      "source_metadata": {
+        "fixture": "cross-version",
+        "hnsw:M": 24,
+        "hnsw:space": "cosine"
+      }
+    }
+  ],
+  "created_at": "2026-11-17T00:13:23.684695+00:00",
+  "format": "lantai-chroma-export-v1",
+  "source_files": {},
+  "source_path": "tests/fixtures/chroma-0.6.3-cold-source",
+  "source_version": "0.6.3",
+  "target_version": "1.5.9"
+}

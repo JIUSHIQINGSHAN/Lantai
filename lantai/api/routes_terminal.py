@@ -253,23 +253,10 @@ def get_single_memory(memory_id: str, principal=Depends(get_current_user)):
     `principal=Depends(get_current_user)` 就会打勾。路线普查 193 个入口里
     它是唯一一条"签名有、函数体不用"的形状。
     """
-    session, conn = get_db_conn()
+    session = get_session()
     try:
-        row = conn.execute("SELECT * FROM memoryitem WHERE id = ?", (memory_id,)).fetchone()
-        if not row:
-            raise HTTPException(404, "memory not found")
-        # Sqlite3 row may not be directly serializable, convert to dict using cursor description if needed
-        # Or simpler for SQLModel, query via session
-        from lantai.models.tables import MemoryItem
-
-        m = session.query(MemoryItem).filter(MemoryItem.id == memory_id).first()
-        if not m:
-            raise HTTPException(404, "memory not found")
-        # 归属校验（票 24）：复用笔削四操作的口径，不发明第二份判据。
-        # `_check_ownership` 内部自己会 `_memory_or_404`，所以上下两处
-        # 404 判据可以合并——但**上面那个裸 SQL 查询保留不动**：它不是安全
-        # 问题，改它有回归风险。
-        _check_ownership(session, memory_id, principal)
+        # 同一次主键读取完成 404 与归属校验，只序列化已校验的行。
+        m = _check_ownership(session, memory_id, principal)
         return m.model_dump()
     finally:
         session.close()
@@ -283,7 +270,7 @@ def update_memory(memory_id: str, req: MemoryUpdateReq, principal=Depends(get_cu
         from lantai.core.acl import ensure_can_delete
         from lantai.models.tables import MemoryItem
 
-        m = session.query(MemoryItem).filter(MemoryItem.id == memory_id).first()
+        m = session.get(MemoryItem, memory_id)
         if not m:
             raise HTTPException(404, "memory not found")
         # 与 DELETE 同一真源同一口径（P0 票04）：无归属/泳道越权一律 403
@@ -359,7 +346,7 @@ def delete_memory(memory_id: str, principal=Depends(get_current_user)):
         from lantai.services import record_ops_service
         from lantai.storage.fts import sync_fts
 
-        m = session.query(MemoryItem).filter(MemoryItem.id == memory_id).first()
+        m = session.get(MemoryItem, memory_id)
         if not m:
             raise HTTPException(404, "memory not found")
         ensure_can_delete(
@@ -393,14 +380,18 @@ def delete_memory(memory_id: str, principal=Depends(get_current_user)):
             # 票 38：该记忆为任一端的全部 MemoryEdge 同事务清理——边表无外键
             # 约束，清理靠应用层；悬空边对 admin/内部读面永久可见。双端范式
             # 照抄 eval/forgetting_quality.py（边+行+FTS 同事务删）。
-            from sqlalchemy import or_
+            from sqlmodel import delete, or_
 
-            session.query(MemoryEdge).filter(
-                or_(
-                    MemoryEdge.source_memory_id == memory_id,
-                    MemoryEdge.target_memory_id == memory_id,
+            session.exec(
+                delete(MemoryEdge)
+                .where(
+                    or_(
+                        MemoryEdge.source_memory_id == memory_id,
+                        MemoryEdge.target_memory_id == memory_id,
+                    )
                 )
-            ).delete(synchronize_session=False)
+                .execution_options(synchronize_session=False)
+            )
             session.delete(m)
             session.commit()
         except Exception as exc:
@@ -428,7 +419,7 @@ def delete_memory(memory_id: str, principal=Depends(get_current_user)):
 def _memory_or_404(session, memory_id: str):
     from lantai.models.tables import MemoryItem
 
-    m = session.query(MemoryItem).filter(MemoryItem.id == memory_id).first()
+    m = session.get(MemoryItem, memory_id)
     if not m:
         raise HTTPException(404, "memory not found")
     return m
@@ -449,6 +440,7 @@ def _check_ownership(session, memory_id: str, principal):
     ensure_can_delete(
         principal, resource_user_id=m.user_id, resource_tenant_id=m.tenant_id, lane=m.lane
     )
+    return m
 
 
 @router.post("/terminal/memory/{memory_id}/retract")
@@ -587,8 +579,8 @@ def merge_memories(req: MergeReq, principal=Depends(get_current_user)):
         from lantai.core.acl import ensure_can_delete
         from lantai.models.tables import MemoryItem
 
-        src = session.query(MemoryItem).filter(MemoryItem.id == req.source_id).first()
-        tgt = session.query(MemoryItem).filter(MemoryItem.id == req.target_id).first()
+        src = session.get(MemoryItem, req.source_id)
+        tgt = session.get(MemoryItem, req.target_id)
         if not src:
             raise HTTPException(404, f"source memory {req.source_id} not found")
         if not tgt:

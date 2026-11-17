@@ -26,7 +26,7 @@ from lantai.core.provenance import (
 )
 from lantai.core.settings import settings
 from lantai.core.text import truncate_codepoints
-from lantai.core.time import iso_utc, utcnow
+from lantai.core.time import ensure_aware, iso_utc, utcnow
 from lantai.gate.prefilter import NO_MEMORY_PATTERNS
 from lantai.models.tables import MemoryCandidate, RawDocument
 from lantai.parsing.extractor import extract_candidate
@@ -89,9 +89,9 @@ def ingest_dialogue(
 ) -> dict:
     """对话文本 → 现有提取链。
 
-    created_at：冷启动导入时传原始消息时间戳（naive UTC）——RawDocument/
-    MemoryCandidate 用该时间，provenance.prompt=dialogue-session-import，
-    随演化链继承到 MemoryItem（时间线不压平）。
+    created_at：冷启动导入时传原始消息时间戳——无偏移按 UTC 解释、带偏移
+    归一 UTC；RawDocument/MemoryCandidate 用该时刻，provenance.prompt=
+    dialogue-session-import，随演化链继承到 MemoryItem（时间线不压平）。
 
     session_id / turn：来源链显式透传（v022 票据 01，上游 aiduMEI v21.2
     教训：隐式通道靠不住，出身必须由写入方显式落列）——落
@@ -215,6 +215,7 @@ def _create_candidate(
     session_id / turn 非空：cand.session_id 落列 + provenance.origin_*
     落 dict，随 proposal → MemoryItem 全链继承（票据 01）。
     """
+    created_at = ensure_aware(created_at)
     h = hashlib.sha256(text.encode("utf-8")).hexdigest()
     provenance_prompt = {
         "fastpath": PROVENANCE_PROMPT_DIALOGUE_FASTPATH,

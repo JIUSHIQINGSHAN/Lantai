@@ -390,11 +390,10 @@ class TestF4DeferCount:
             c = s.get(MemoryCandidate, "cand_f4")
             assert c.defer_count == 1, f"defer_count={c.defer_count}：A 的延期已如实拒绝，不应计 2"
             assert c.review_due_at is not None
-            # SQLite DateTime 回读 naive（UTC 墙钟），b_result 是 aware——按时刻比较
+            # UTCDateTime 回读必须 aware；按同一时刻比较，保留完整微秒精度。
             b_due = datetime.fromisoformat(b_result["review_due_at"])
-            assert c.review_due_at == b_due.replace(tzinfo=None), (
-                "A 的陈旧延期写回不得覆盖 B 已提交的 due"
-            )
+            assert c.review_due_at.utcoffset() == timedelta(0)
+            assert c.review_due_at == b_due, "A 的陈旧延期写回不得覆盖 B 已提交的 due"
 
     def test_undo_must_not_erase_concurrent_defer(self, param_env):
         """F4b：撤销延期 × 并发新延期——现状 undo 按扫描期旧值把 B 的延期整体抹掉。

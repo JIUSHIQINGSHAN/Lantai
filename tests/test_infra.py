@@ -90,7 +90,7 @@ class TestChromaVectorStoreCompatibility:
         assert fake_client.created_name == "remembrance_vectors"
 
     def test_collection_resolution_with_object_collections(self, monkeypatch, tmp_path):
-        """当 list_collections 返回 Collection 实体对象时（如 Chroma < 0.6.0），能通过 .name 正确识别"""
+        """当 list_collections 返回 Collection 实体对象时（Chroma 1.x），能通过 .name 正确识别"""
         import chromadb
 
         from lantai.storage.vector_store import ChromaVectorStore

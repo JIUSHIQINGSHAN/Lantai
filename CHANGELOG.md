@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.68.2] - 2026-11-17
+
+### Changed
+
+- 运行镜像升级Python3.14.10，采用BuildKit/buildx和uv.lock冻结依赖；SQLModel0.0.50、SQLAlchemy2.1、Chroma1.5.9及相关稳定依赖升级。Python3.15受ONNX Runtime发行轮子限制暂不采用；APScheduler3.11.3仍为当前最新稳定版。
+- SQLModel日期字段采用UTCDateTime，明确旧UTC输入边界，修正查询窗口和回读断言；历史SQLite UTC文本不平移。
+- 终端路由移除7处旧Query API，使用get/select/delete并复用已校验对象，保留归属和事务语义。
+- 增加Chroma冷副本导出/新目录导入工具，保留真实索引距离与全部向量/元数据，逐项校验并支持明确记录的1 ULP cosine舍入边界。
+- schema45仅规范摄取候选角色的已知旧小写枚举表示；未知值保留告警，不改正文、时间或归属。修复旧版与新版均无法读取的历史角色记录。
+- 流式下载改用BytesIO并在写入块前检查限长，消除成功响应的整份缓冲复制，真实HTTP断流与峰值内存回归通过。
+
 ## [0.68.1] - 2026-11-17
 
 ### Fixed

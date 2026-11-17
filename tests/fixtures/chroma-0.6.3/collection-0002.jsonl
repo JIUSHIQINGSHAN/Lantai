@@ -1,0 +1,4 @@
+{"document":"first","embedding":[2.0,0.0,1.0],"id":"a","metadata":{"domain":"user","flag":true,"lane":"fact","n":1,"user_id":"alice"},"uri":null}
+{"document":"second","embedding":[0.0,3.0,0.0],"id":"b","metadata":{"domain":"user","lane":"fact","n":2,"user_id":"bob"},"uri":null}
+{"document":"shared","embedding":[-2.0,0.0,1.0],"id":"shared","metadata":{"domain":"user","lane":"rule","user_id":""},"uri":null}
+{"document":null,"embedding":[0.0,0.0,4.0],"id":"missing-meta","metadata":null,"uri":null}

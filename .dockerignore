@@ -1,5 +1,9 @@
 # Docker build context 排除项（审计 M6）：防止运行数据/虚拟环境/测试进入镜像上下文
 .env
+.scratch/
+.worktrees/
+outputs/
+lantai.egg-info/
 *.db
 .chromadb/
 .venv*/

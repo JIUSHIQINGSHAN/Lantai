@@ -13,12 +13,12 @@ def utcnow() -> datetime:
 def ensure_aware(value: datetime | None) -> datetime | None:
     """补时区：naive 按 UTC 解释，aware 归一为 UTC；None 原样返回。
 
-    锁定的 sqlmodel 0.0.42 没有库级时区防护（datetime 字段映射裸
-    DateTime，naive 也静默落库）——产品链路凡是要落到 datetime 列的值
-    （含从字符串/provenance 解析回来的）都须过这道，aware UTC 全靠本
-    模块约定，而非库强制。升级 sqlmodel（0.0.47 起 UTCDateTime 才对
-    naive 直接 raise、读回值变 aware）之前必须先清 naive 写入面。
-    时刻数值不变——只补 tzinfo / 换算到 UTC，不改墙上时钟读数。
+    SQLModel 0.0.45 起 datetime 默认使用 UTCDateTime：拒绝 naive 写入及
+    查询参数，带偏移输入换算 UTC，读回 aware UTC（包括 SQLite）。本函数
+    保留项目导入约定：明确表示 UTC 的旧 naive 值先补时区再进入数据库；
+    字符串/provenance 则经 parse_iso_utc。历史 SQLite 已存 naive UTC，
+    升级不需要转换数据。此处只归一时刻，不修改字段的业务语义：naive 补
+    UTC 时墙钟不变，aware 换算 UTC 时墙钟随偏移变化。
     """
     if value is None:
         return None
@@ -32,8 +32,8 @@ def parse_iso_utc(value: str) -> datetime:
 
     与 `ensure_aware` 同语义：带偏移的输入换算到 UTC，无偏移的串按 UTC 解释
     （兰台约定：全部时间戳归一到 UTC）。用于 provenance/请求体里的时间字符串
-    要写回 datetime 列的场景——写库值恒 aware UTC 是本仓纪律（锁定 0.0.42
-    无库级防护，naive 也静默落库，见 `ensure_aware` 注记）。
+    要写回 datetime 列的场景——先恢复 aware UTC，再交给 UTCDateTime 绑定；
+    旧 JSON 快照的无偏移 UTC 字符串也沿用此约定（见 `ensure_aware`）。
     """
     text = value.strip()
     if not text:
@@ -49,7 +49,7 @@ def iso_utc(dt: datetime | None) -> str:
     naive 无后缀、部分叠 timespec 截秒），JS `new Date()` 对无后缀串按本地
     时区解释——悬镜面板两类字段同屏差 8 小时。
 
-    - naive（DB 列读回）：按「naive=UTC」约定 ``replace(tzinfo=UTC)`` 补
+    - naive（旧快照/原始 SQL）：按「naive=UTC」约定 ``replace(tzinfo=UTC)`` 补
       后缀，**墙钟数字不变**——绝不可走 astimezone（naive 调 astimezone
       会按本地时区 Asia/Shanghai 解释平移 +8h）；
     - aware：``astimezone(UTC)`` 折算（时刻不变、墙钟变 UTC 读数）；
@@ -67,10 +67,9 @@ def local_day_window_utc(day: date | None = None) -> tuple[datetime, datetime]:
     """本地日历日 → (start_utc, end_utc)，aware UTC。
 
     先把本地日界换算成 UTC，再与库值比较（避免 Chronos 时区类 bug）。
-    aware：锁定的 sqlmodel 0.0.42 无库级防护（datetime 字段映射裸
-    DateTime，naive 查询绑定参数也静默落库）——绑定参数恒 aware UTC
-    靠约定与读侧 _ensure_utc 归一，非库强制；落盘文本形态与 naive 版
-    逐条一致（SQLite 按分量格式化、无偏移后缀）。
+    UTCDateTime 要求查询绑定参数 aware；共享入口直接产出 aware UTC，
+    查询窗与历史 SQLite 的 UTC 文本保持同一时刻。数据库落盘仍使用
+    无偏移 UTC 文本，ORM 读回则带 UTC 时区。
 
     票 32 起为读侧本地日语义的共享真源：qijuzhu 起居注/usage 每日桶
     直调本函数；票 84 起 digest_worker 的兼容入口也委托本函数。

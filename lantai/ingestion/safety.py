@@ -2,6 +2,7 @@
 
 import ipaddress
 import socket
+from io import BytesIO
 from urllib.parse import urlparse
 
 import httpx
@@ -173,10 +174,16 @@ def fetch_with_safety(
                     current = validate_fetch_url(str(httpx.URL(current).join(loc)))
                     continue
                 r.raise_for_status()
-                buf = bytearray()
-                for chunk in r.iter_bytes(chunk_size=_FETCH_CHUNK_BYTES):
-                    buf.extend(chunk)
-                    if len(buf) > max_bytes:
-                        raise ValueError(f"response too large: >{max_bytes} bytes (stream aborted)")
-                return bytes(buf)
+                # BytesIO.getvalue() 可交出 bytes 缓冲，避免 bytes(bytearray) 在
+                # 成功返回时同时保留两份完整响应；超限块在写入前拒绝。
+                with BytesIO() as buf:
+                    size = 0
+                    for chunk in r.iter_bytes(chunk_size=_FETCH_CHUNK_BYTES):
+                        size += len(chunk)
+                        if size > max_bytes:
+                            raise ValueError(
+                                f"response too large: >{max_bytes} bytes (stream aborted)"
+                            )
+                        buf.write(chunk)
+                    return buf.getvalue()
     raise ValueError("too many redirects")

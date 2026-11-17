@@ -384,7 +384,11 @@ class TestVectorOwnerFilter:
             path=str(tmp_path / "chroma"),
             settings=ChromaSettings(anonymized_telemetry=False),
         )
-        coll = client.create_collection("lantai_vectors", metadata={"hnsw:space": "cosine"})
+        coll = client.create_collection(
+            "lantai_vectors",
+            configuration={"hnsw": {"space": "cosine"}},
+            embedding_function=None,
+        )
         coll.add(
             ids=["m-A", "m-B", "m-legacy"],
             embeddings=[[0.5] * 4] * 3,
@@ -485,7 +489,11 @@ class TestApplyDedupPassesFilters:
         client = chromadb.PersistentClient(
             path=path, settings=ChromaSettings(anonymized_telemetry=False)
         )
-        coll = client.create_collection("lantai_vectors", metadata={"hnsw:space": "cosine"})
+        coll = client.create_collection(
+            "lantai_vectors",
+            configuration={"hnsw": {"space": "cosine"}},
+            embedding_function=None,
+        )
         # 三条同向量的记忆：A 自己的、B 的、NULL 属主的老行
         coll.add(
             ids=["m-A", "m-B", "m-legacy"],

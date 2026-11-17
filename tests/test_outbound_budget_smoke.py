@@ -22,10 +22,12 @@ wrapper、`httpx.get` 替身 = 观测边界（票面 TDD 1 明示允许面）；
 
 from __future__ import annotations
 
+import gc
 import socket
 import threading
 import time
 import tracemalloc
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import feedparser
@@ -198,73 +200,123 @@ class TestLlmBudget:
         )
 
 
-class TestFetchStreamingCap:
-    """病灶 3：限长从事后检查改流式断连——峰值内存必须有界。"""
+@contextmanager
+def _stream_server(body_bytes: int, *, content_length: bool = True):
+    """真实限速 HTTP，记录服务端成功写出的字节和客户端提前断连。"""
+    chunk = b"x" * 65536
+    state = {"bytes_sent": 0, "disconnected": False}
+    finished = threading.Event()
 
-    def test_stream_cap_aborts_and_peak_memory_bounded(self, monkeypatch):
+    class _Stream(BaseHTTPRequestHandler):
+        def do_GET(self):
+            warmup = self.path == "/warmup"
+            total = 1 if warmup else body_bytes
+            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, len(chunk))
+            self.send_response(200)
+            if warmup or content_length:
+                self.send_header("Content-Length", str(total))
+            self.end_headers()
+            try:
+                for offset in range(0, total, len(chunk)):
+                    part = chunk[: min(len(chunk), total - offset)]
+                    self.wfile.write(part)
+                    if not warmup:
+                        state["bytes_sent"] += len(part)
+                        time.sleep(0.002)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                if not warmup:
+                    state["disconnected"] = True
+            finally:
+                if not warmup:
+                    finished.set()
+
+        def log_message(self, *a):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _Stream)
+    # server_close 等待 handler 退出，不能把写线程带入下一个内存测量。
+    srv.daemon_threads = False
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{srv.server_address[1]}", state, finished
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        thread.join(2)
+        assert not thread.is_alive()
+
+
+class TestFetchStreamingCap:
+    """流式超限拒绝和上限内返回都不得复制整份响应。"""
+
+    @pytest.fixture(autouse=True)
+    def local_network(self, monkeypatch):
         from lantai.ingestion import safety as safety_mod
+        from tests.support.harness_state import env_context
 
         monkeypatch.setattr(safety_mod, "validate_fetch_url", lambda url: url)
+        # 只隔离外部代理配置；HTTP 连接、响应读取与限长计算全部真实执行。
+        with env_context("NO_PROXY", "*"):
+            yield
 
-        class _SlowDrip(BaseHTTPRequestHandler):
-            def do_GET(self):
-                self.send_response(200)
-                self.send_header("Content-Length", str(10 * 1024 * 1024))
-                self.end_headers()
-                chunk = b"x" * 65536
-                for _ in range(160):
-                    try:
-                        self.wfile.write(chunk)
-                    except Exception:
-                        return
-                    time.sleep(0.01)
+    @pytest.mark.parametrize("content_length", [True, False], ids=["known-length", "eof-length"])
+    def test_stream_cap_aborts_and_peak_memory_bounded(self, content_length):
+        from lantai.ingestion import safety as safety_mod
 
-            def log_message(self, *a):
-                pass
-
-        srv = ThreadingHTTPServer(("127.0.0.1", 0), _SlowDrip)
-        thread = threading.Thread(target=srv.serve_forever, daemon=True)
-        thread.start()
-        try:
+        limit = settings.SSRF_MAX_BYTES
+        with _stream_server(2 * limit, content_length=content_length) as (url, state, finished):
+            # 冷 import/coverage 首次执行和连接初始化不属于响应体占用；预热同一
+            # 真实函数后回收短命对象，测量仍包含新的 Client/连接及完整流式读取。
+            assert safety_mod.fetch_with_safety(url + "/warmup") == b"x"
+            gc.collect()
             tracemalloc.start()
             try:
                 with pytest.raises(ValueError, match="too large"):
-                    safety_mod.fetch_with_safety(f"http://127.0.0.1:{srv.server_address[1]}/big")
+                    safety_mod.fetch_with_safety(url + "/body")
             finally:
                 _, peak = tracemalloc.get_traced_memory()
                 tracemalloc.stop()
-            # 修复前：非流式全量入内存 → peak ≥10MB（红）；修复后：超限即断，
-            # 峰值 ≈ 上限 + 块缓冲
-            assert peak < settings.SSRF_MAX_BYTES + 2 * 1024 * 1024, (
-                f"限长仍是事后检查：峰值 {peak / 1048576:.1f}MB（10MB 响应全量入内存实锤）"
-            )
-        finally:
-            srv.shutdown()
-            srv.server_close()
+            assert finished.wait(3), "HTTP sender did not finish after the client aborted"
+            assert state["disconnected"], state
+            # 允许内核已接收的少量在途数据，但不能下载完整 10MiB 再拒绝。
+            assert limit < state["bytes_sent"] <= limit + 8 * 65536, state
+            assert peak < limit + 2 * 1024 * 1024, f"stream abort peak={peak}, sent={state}"
 
-    def test_small_body_passthrough_unchanged(self, monkeypatch):
-        """对照锁：上限内响应体逐字返回，流式化不改语义。"""
+    def test_exact_limit_body_returns_without_full_buffer_copy(self):
         from lantai.ingestion import safety as safety_mod
 
-        monkeypatch.setattr(safety_mod, "validate_fetch_url", lambda url: url)
+        limit = settings.SSRF_MAX_BYTES
+        with _stream_server(limit) as (url, state, finished):
+            assert safety_mod.fetch_with_safety(url + "/warmup") == b"x"
+            gc.collect()
+            tracemalloc.start()
+            try:
+                body = safety_mod.fetch_with_safety(url + "/body", max_bytes=limit)
+            finally:
+                _, peak = tracemalloc.get_traced_memory()
+                tracemalloc.stop()
+            assert finished.wait(3)
+            assert isinstance(body, bytes) and len(body) == limit
+            assert body.count(b"x") == limit
+            assert state == {"bytes_sent": limit, "disconnected": False}
+            assert peak < limit + 2 * 1024 * 1024, f"successful response peak={peak}"
 
-        body = b"<rss><channel><title>ok</title></channel></rss>"
+    @pytest.mark.parametrize("size", [0, 1, 65535, 65536, 65537])
+    def test_small_body_passthrough_unchanged(self, size):
+        """对照锁：空响应、块边界与尾块逐字返回。"""
+        from lantai.ingestion import safety as safety_mod
 
-        class _Small(BaseHTTPRequestHandler):
-            def do_GET(self):
-                self.send_response(200)
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+        with _stream_server(size) as (url, state, finished):
+            out = safety_mod.fetch_with_safety(url + "/body", max_bytes=max(1, size))
+            assert out == b"x" * size
+            assert finished.wait(3)
+            assert state == {"bytes_sent": size, "disconnected": False}
 
-            def log_message(self, *a):
-                pass
+    def test_one_byte_over_limit_rejected(self):
+        from lantai.ingestion import safety as safety_mod
 
-        srv = ThreadingHTTPServer(("127.0.0.1", 0), _Small)
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
-        try:
-            out = safety_mod.fetch_with_safety(f"http://127.0.0.1:{srv.server_address[1]}/small")
-            assert out == body
-        finally:
-            srv.shutdown()
-            srv.server_close()
+        with _stream_server(65537, content_length=False) as (url, _, finished):
+            with pytest.raises(ValueError, match="too large"):
+                safety_mod.fetch_with_safety(url + "/body", max_bytes=65536)
+            assert finished.wait(3)

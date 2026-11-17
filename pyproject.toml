@@ -1,36 +1,29 @@
 [project]
 name = "lantai"
-version = "0.68.1"
+version = "0.68.2"
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi>=0.115",
-  "uvicorn[standard]>=0.30",
-  # sqlmodel 0.0.42 是锁定基线：datetime 字段映射裸 DateTime，无 UTCDateTime
-  # 库级时区防护（naive 写库静默落库）——aware UTC 纪律全靠约定
-  # （lantai/core/time.py 单点 + 读侧 _ensure_utc 归一），守护测试
-  # tests/test_sqlmodel_datetime_contract.py 钉死该契约。
-  # 历史教训（v0.22.1，票据 .scratch/naive-datetime-gate/issues/01）：上界不锁时
-  # CI 装 0.0.47、本地装 0.0.42，同一次代码在两边一红一绿——v0.22.1 后 CI 全量
-  # 测试第一次真正跑起来就红 37 例，全部源于此漂移。
-  # 0.0.47 起 UTCDateTime 对 naive 直接 raise、读回值变 aware——升级前必须
-  # 先清 naive 写入面与 naive 读取假设（另票评测），故上界钉死 <0.0.43。
-  "sqlmodel>=0.0.42,<0.0.43",
-  "pydantic>=2.7",
-  "pydantic-settings>=2.4",
+  "fastapi>=0.163.1,<0.164",
+  "uvicorn[standard]>=0.54,<0.55",
+  "SQLAlchemy>=2.1.9,<2.2",
+  # SQLModel UTCDateTime: aware UTC writes/queries and timezone-aware reads.
+  # Legacy SQLite values already represent UTC; real-copy replay verifies compatibility.
+  "sqlmodel>=0.0.50,<0.0.51",
+  "pydantic>=2.14.3,<3",
+  "pydantic-settings>=2.16.3,<3",
   "httpx>=0.27",
   "feedparser>=6.0",
-  "apscheduler>=3.10,<4",  # 调度循环和线程活性契约针对 APScheduler 3.x
-  "python-ulid>=2.7",
-  "numpy>=1.26",
-  "scikit-learn>=1.5",
+  "apscheduler>=3.11.3,<4",  # 调度循环和线程活性契约针对 APScheduler 3.x
+  "python-ulid>=4.1,<5",
+  "numpy>=2.4.6,<3",
+  "scikit-learn>=1.9.1,<2",
   "beautifulsoup4>=4.12",
   "lxml>=5.2",
-  "openai>=1.40",
+  "openai>=3.52,<4",
   "tenacity>=8.5",
-  # chromadb 0.6.3 为 0.x 末版；PYSEC-2026-3813/3814/3815 的修复只在 1.x（重大重写）。
-  # 缓解：兰台仅用内嵌 PersistentClient（无服务端/RBAC 面、单用户本地部署）。
-  # 1.x 迁移为独立专项（见 .scratch/p0-reliability-host-loop/issues/07-advisory-audit.md）。
-  "chromadb>=0.4,<1.0",
+  # Rust-backed embedded Chroma; old collections migrate via verified export/import.
+  # Exact resolved builds are pinned in uv.lock and the container consumes that lock.
+  "chromadb>=1.5.9,<2.0",
   "requests>=2.31",
   "jieba>=0.42",
   "psutil>=7.2.2",

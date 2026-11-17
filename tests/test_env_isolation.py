@@ -11,6 +11,11 @@ SQLite/ChromaDB。CI 是干净目录，本地不是，这个差异正是「本�
 mock 掉就什么都验证不了了。
 """
 
+from pathlib import Path
+from urllib.parse import unquote
+
+from sqlalchemy.engine import make_url
+
 import lantai.storage.db as db_module
 from lantai.core.settings import settings
 from lantai.core.time import utcnow
@@ -18,24 +23,36 @@ from lantai.models.tables import MemoryItem
 from tests.conftest import _FAKE_EMBED_DIM
 
 
-def _is_isolated(path: str) -> bool:
-    """落在 pytest 临时目录即视为隔离（pytest 的 tmp 根目录名固定为 pytest-of-*）。"""
-    return "pytest-of-" in path and "remembrance-data" not in path
+def _is_isolated(path: str, base: Path) -> bool:
+    """验证实际 pytest 根目录归属，兼容显式 --basetemp 和编码后的 SQLAlchemy URL。"""
+    value = make_url(path).database if path.startswith("sqlite:") else path
+    return bool(value) and Path(unquote(value)).resolve().is_relative_to(base.resolve())
 
 
-def test_engine_points_to_isolated_dir():
+def test_engine_points_to_isolated_dir(tmp_path_factory):
     """db.engine 不指向宿主真实库。"""
     url = str(db_module.engine.url)
     assert "remembrance-data" not in url, f"engine 仍绑真实库：{url}"
-    assert _is_isolated(url), f"engine 未落 pytest 临时目录：{url}"
+    assert _is_isolated(url, tmp_path_factory.getbasetemp()), f"engine 未落 pytest 临时目录：{url}"
 
 
-def test_settings_paths_are_isolated():
+def test_settings_paths_are_isolated(tmp_path_factory):
     """settings 的三个路径项（DATABASE_URL / CHROMADB_PATH / LANTAI_HOME）全部隔离。"""
     for name in ("DATABASE_URL", "CHROMADB_PATH", "LANTAI_HOME"):
         value = str(getattr(settings, name))
         assert "remembrance-data" not in value, f"{name} 仍指真实库：{value}"
-        assert _is_isolated(value), f"{name} 未落 pytest 临时目录：{value}"
+        assert _is_isolated(value, tmp_path_factory.getbasetemp()), (
+            f"{name} 未落 pytest 临时目录：{value}"
+        )
+
+
+def test_isolation_check_rejects_sibling_and_handles_encoded_url(tmp_path):
+    base = tmp_path / "private-test-root"
+    inside = base / "data.db"
+    outside = tmp_path / "private-test-root-other" / "data.db"
+    assert _is_isolated(str(inside), base)
+    assert _is_isolated(str(make_url("sqlite:///" + str(inside))), base)
+    assert not _is_isolated(str(outside), base)
 
 
 def test_isolated_db_is_writable_and_queryable():

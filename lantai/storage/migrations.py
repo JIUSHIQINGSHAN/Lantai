@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 44
+TARGET_SCHEMA_VERSION = 45
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -343,9 +343,9 @@ def _migrate_v18(conn) -> None:
 def _migrate_v19(conn) -> None:
     """v18 -> v19: 认知底层字段 (memorycandidate.role, memoryitem.role, memoryitem.promotion_trace)"""
     if not _has_column(conn, "memorycandidate", "role"):
-        conn.execute("ALTER TABLE memorycandidate ADD COLUMN role TEXT DEFAULT 'observation'")
+        conn.execute("ALTER TABLE memorycandidate ADD COLUMN role TEXT DEFAULT 'OBSERVATION'")
     if not _has_column(conn, "memoryitem", "role"):
-        conn.execute("ALTER TABLE memoryitem ADD COLUMN role TEXT DEFAULT 'observation'")
+        conn.execute("ALTER TABLE memoryitem ADD COLUMN role TEXT DEFAULT 'OBSERVATION'")
     if not _has_column(conn, "memoryitem", "promotion_trace"):
         conn.execute("ALTER TABLE memoryitem ADD COLUMN promotion_trace TEXT DEFAULT '{}'")
     logger.info("Migrated v19: Cognitive fields (role, promotion_trace)")
@@ -636,7 +636,7 @@ def _migrate_v33(conn) -> None:
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memoryitem'"
     ).fetchone():
         if not _has_column(conn, "memoryitem", "role"):
-            conn.execute("ALTER TABLE memoryitem ADD COLUMN role TEXT DEFAULT 'observation'")
+            conn.execute("ALTER TABLE memoryitem ADD COLUMN role TEXT DEFAULT 'OBSERVATION'")
         try:
             conn.execute("CREATE INDEX IF NOT EXISTS ix_memoryitem_role ON memoryitem (role)")
         except Exception as exc:
@@ -1079,6 +1079,60 @@ def _migrate_v44(conn) -> None:
     logger.info("Migrated v44: idempotency_keys.token 所有权令牌列（票 80，原 74）")
 
 
+def _migrate_v45(conn) -> None:
+    """v44 -> v45：候选角色的已知小写值恢复为 ORM 枚举成员名。
+
+    v19 曾以 DEFAULT 'observation' 补列，而 SQLAlchemy Enum 存储成员名
+    OBSERVATION；真实旧库 118 行因此在 0.0.42/0.0.50 下均无法 ORM 读取。
+    只修已实证的 memorycandidate.role，六种已知 value 精确映射到 name；
+    不做 upper/strip 猜测，不变更正文、时间、归属或其它表。未知值与 NULL
+    保留并按原值计数告警，禁止借枚举兼容回填业务语义。重复执行幂等。
+    """
+    if not _table_exists(conn, "memorycandidate") or not _has_column(
+        conn, "memorycandidate", "role"
+    ):
+        return
+    role_names = {
+        "observation": "OBSERVATION",
+        "experience": "EXPERIENCE",
+        "belief": "BELIEF",
+        "rule": "RULE",
+        "principle": "PRINCIPLE",
+        "skill": "SKILL",
+    }
+    normalized = 0
+    for value, name in role_names.items():
+        # 显式 BINARY：历史列即使声明 NOCASE，也只能命中已证实的逐字值。
+        changed = conn.execute(
+            "UPDATE memorycandidate SET role = ? WHERE role COLLATE BINARY = ?", (name, value)
+        ).rowcount
+        normalized += changed
+        if changed:
+            logger.info("迁移 v45 memorycandidate.role: %r -> %s，%d 行", value, name, changed)
+    counts = conn.execute(
+        "SELECT role, COUNT(*) FROM memorycandidate GROUP BY role COLLATE BINARY"
+    ).fetchall()
+    unknown = [
+        (value, count)
+        for value, count in counts
+        if value is not None and value not in role_names.values()
+    ]
+    null_count = sum(count for value, count in counts if value is None)
+    unknown_count = sum(count for _, count in unknown)
+    logger.info(
+        "Migrated v45: memorycandidate.role normalized=%d unknown=%d null=%d",
+        normalized,
+        unknown_count,
+        null_count,
+    )
+    if unknown or null_count:
+        logger.warning(
+            "迁移 v45 保留 memorycandidate.role 未知值/NULL，需人工核验：unknown=%r null=%d",
+            unknown,
+            null_count,
+        )
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -1123,6 +1177,7 @@ MIGRATIONS = [
     (42, _migrate_v42),
     (43, _migrate_v43),
     (44, _migrate_v44),
+    (45, _migrate_v45),
 ]
 
 
