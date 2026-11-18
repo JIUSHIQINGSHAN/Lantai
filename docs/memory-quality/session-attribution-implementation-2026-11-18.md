@@ -43,6 +43,10 @@
 
 整链覆盖两个会话并发发起调用（stdio 桥顺序处理 HTTP）、agentless 不虚构 session、显式历史来源优先且记录 conflict、请求正文伪造 user_id 不替换认证主体、两次同文摄取形成不同事件并关联同一旧记忆、检索 request_id 落库且读取 scope 不变、REST 校验失败与摄取拒绝如实传播到 DSH。前者在接收前拒绝无 event，后者保留 rejected event；两者不可混计。
 
-验证：安装版 DSH 5 组 smoke 通过（包含分页全部失败形态与总超时），整链单独运行 1 passed，前期归因定向回归 109 passed，Ruff check/format 通过，遗忘质量门禁 PASS。最后全量与宿主目录绊线结果待本次运行完成后登记。
+验证：安装版 DSH 5 组 smoke 通过（包含分页全部失败形态与总超时），整链单独运行 1 passed，前期归因定向回归 109 passed，Ruff check/format 通过，遗忘质量门禁 PASS。
+
+最后完整回归：`4212 passed, 5 skipped, 2143 warnings, 92% coverage`，1176.06s，退出码 0；日志 `.scratch/session-attribution/followup-final.log`。`followup-final-tripwire.txt` 中宿主真实库绊线已 armed，零 `[HIT]`。本次配置了安装变量，DSH 整链用例实际执行，未跳过。未配置变量时另行实测为 6 passed / 1 skipped，带明确原因且未启动后端服务。
+
+前一轮全量为 4210 passed / 5 skipped / 2 failed，失败均来自新环境跳过点漏登 `tests/test_skip_mask_inventory.py`。已按原门禁要求登记新增环境前置条件，并将守卫直接表达为安装环境变量检查；保持扫描判据不变。最终全量两项均通过。实现已由 `ae8cd9e3` 收录，随后提交测试门禁修复与本验收结果；没有修改业务实现以消除该测试门禁失败。
 
 本次仍未安装/启用插件、修改生产或读取真实 conf/profile。自动采集所有对话轮次不在此适配包的实现范围；真实 GUI ToolRuntime 与真实认证服务的验收继续保留为未执行。客户端取消等待不保证服务端已接收的写入撤销。

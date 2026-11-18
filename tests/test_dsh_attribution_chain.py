@@ -92,12 +92,11 @@ def chain_backend(tmp_path, monkeypatch):
 
 
 def test_installed_dsh_stdio_rest_sqlite_chain(tmp_path, request):
-    electron = os.environ.get("DSH_NODE_EXECUTABLE")
-    install = os.environ.get("DSH_INSTALL_DIR")
-    if not electron or not install:
+    if not os.environ.get("DSH_NODE_EXECUTABLE") or not os.environ.get("DSH_INSTALL_DIR"):
         pytest.skip(
             "select DSH_NODE_EXECUTABLE and DSH_INSTALL_DIR for installed chain verification"
         )
+    electron = os.environ["DSH_NODE_EXECUTABLE"]
     # Request the backend only after checking prerequisites; a skipped test starts no services.
     engine, port, principal, scope_headers = request.getfixturevalue("chain_backend")
     root = Path(__file__).resolve().parents[1]

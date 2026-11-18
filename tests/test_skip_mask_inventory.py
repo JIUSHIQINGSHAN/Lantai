@@ -64,6 +64,11 @@ DECLARED = Counter(
             "Chrome/Chromium unavailable; set LANTAI_TEST_CHROMIUM for browser smoke",
         ): 1,
         (
+            "tests/test_dsh_attribution_chain.py",
+            "pytest.skip",
+            "select DSH_NODE_EXECUTABLE and DSH_INSTALL_DIR for installed chain verification",
+        ): 1,
+        (
             "tests/test_digest_window_anchor.py",
             "pytest.mark.skipif",
             (
@@ -84,7 +89,7 @@ DECLARED = Counter(
         ): 3,
     }
 )
-DECLARED_TOTAL = 12
+DECLARED_TOTAL = 13
 
 # 无守卫的运行时弃权（能力探测循环走空后统一 skip）单独按申报集合管——它不是
 # 「凭被测返回值弃权」，但同样必须逐条可查。新增一个这类点同样判红。
