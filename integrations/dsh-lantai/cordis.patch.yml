@@ -1,0 +1,6 @@
+- insert:
+    - id: lantai-recall
+      name: '@local/lantai-dsh-recall'
+      config:
+        enabled: false
+        workspaces: []
