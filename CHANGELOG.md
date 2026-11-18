@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.69.0] - 2026-11-18
+## [0.69.0] - 2026-11-19
 
 v0.69.0 代号「良史」：逐次记录会话来源与摄取结果。自上一公开标签 v0.68.0 起的调度修复和运行时升级见下方 0.68.1 / 0.68.2 记录。
 
@@ -15,6 +15,8 @@ v0.69.0 代号「良史」：逐次记录会话来源与摄取结果。自上一
 
 - 增加可选会话归因 envelope 与 schema v46 零正文摄取事件，关联候选、提案、写入及旧记忆去重结果；显式历史来源优先，冲突留痕，不改认证、读取范围或历史 NULL。
 - 提供默认禁用的 DSH MCP 适配包和独立 REST 桥，逐调用传递当前会话与请求标记；新增安装版 SDK→stdio→REST→真实 SQLite 的隔离验收。
+- 增加默认关闭的 DSH 真人轮次召回 bundle，与手动 MCP 工具归因相互独立；新增 HTTPS-only 的 `lantai-mcp-bridge` stdio 客户端，并为 workspace、敏感输入、超时和远端错误设置边界（ADR-0089）。
+- 增加另一个彼此独立、默认关闭的 DSH 真人轮次召回 bundle，以及不加载本地库的 `lantai-mcp-bridge` HTTPS stdio 客户端；二者权限、数据发送与回滚边界见 ADR-0089。
 
 ### Fixed
 

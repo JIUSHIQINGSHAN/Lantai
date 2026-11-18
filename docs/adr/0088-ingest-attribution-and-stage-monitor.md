@@ -20,6 +20,8 @@ The installed DSH MCP adapter also receives `ToolExecution` but its default call
 
 ## Compatibility and rollback
 
+DSH human-turn recall and the standalone remote MCP client use independent integrations with separate opt-in controls (ADR-0089); neither changes attribution persistence or auto-enables dialogue ingestion.
+
 All wire attribution fields are optional. Old clients retain their origin/NULL behavior; requests gain an additive ingest_event_id result. No history backfill is performed. New ingestion requires schema v46 and fail-loud event persistence; there is no runtime switch that silently bypasses its accounting. Legacy monitor readers can inspect candidate/proposal stages if the event table is missing, and explicitly report event-stage availability. For code rollback retain the additive event table; never drop it or rewrite old memory rows. The Host bundle can be disabled and the previous MCP entry re-enabled without changing stored data.
 
 Completed event outcomes have configurable retention (default 30 days, minimum one day), based on updated_at. Unresolved processing/candidate/pending events are retained so later decisions can attach. This is a bounded-retention diagnostic association, not a permanent audit ledger or event-sourced history; each event holds its latest outcome. Memory origin remains unchanged when the association expires.
