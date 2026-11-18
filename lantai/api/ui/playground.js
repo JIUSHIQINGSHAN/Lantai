@@ -189,7 +189,10 @@ function metaSpan(text) {
 export function initPlayground() {
   $('#playgroundSearchBtn')?.addEventListener('click', runPlaygroundSearch);
   $('#playgroundQuery')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); runPlaygroundSearch(); }
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
+      e.preventDefault();
+      runPlaygroundSearch();
+    }
   });
   // 贯珠开关：按钮文案同步，提示当前检索模式
   $('#playgroundGraphExpand')?.addEventListener('change', e => {

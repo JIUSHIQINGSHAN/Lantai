@@ -774,7 +774,7 @@ async function ask({title, note = '', field = null, confirm = '确认', danger =
     input.addEventListener('input', () => input.setCustomValidity(''));
     label.append(input); $('#dialogBody').append(label);
   } else {
-    $(danger ? '#actionDialog footer [value="cancel"]' : '#dialogConfirm').autofocus = true;
+    $('#actionDialog footer [value="cancel"]').autofocus = true;
   }
   const validate = event => {
     if (event.submitter?.value === 'confirm' && field?.required && !input.value.trim()) {
@@ -1049,10 +1049,12 @@ function bindEvents() {
   });
   $('#connectionDialog').addEventListener('close', async event => {
     // P1-8：只在真正改动了连接配置时才全量刷新；取消不应触发队列重建
-    if (event.target.returnValue === 'save') {
+    const returnValue = event.target.returnValue;
+    event.target.returnValue = '';
+    if (returnValue === 'save') {
       saveApiKey($('#apiKeyInput').value, $('#rememberKey').checked);
       updateConnection(); await loadQueue();
-    } else if (event.target.returnValue === 'clear') {
+    } else if (returnValue === 'clear') {
       clearApiKey();
       updateConnection(); await loadQueue();
     }

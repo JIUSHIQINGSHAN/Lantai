@@ -7,7 +7,10 @@ let chatAbort = null;
 export function initTerminal() {
   $('#terminalSendBtn')?.addEventListener('click', sendTerminalChat);
   $('#terminalInput')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') sendTerminalChat();
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
+      e.preventDefault();
+      sendTerminalChat();
+    }
   });
   $('#graphLoadAllBtn')?.addEventListener('click', loadFullGraph);
 }

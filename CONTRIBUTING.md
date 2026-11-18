@@ -161,6 +161,15 @@ pytest tests/test_features.py tests/test_prefilter.py -q
 pytest tests/ --cov=lantai --cov-report=html
 ```
 
+全量测试包含真实 Chromium UI 回归，需要已安装的 Chrome/Chromium。测试会查找 PATH、Windows Chrome 和现有浏览器缓存；也可通过 `LANTAI_TEST_CHROMIUM` 指定可执行文件。缺失时报错，不跳过，也不在测试中下载浏览器。CI 两个测试 job 使用 ubuntu-latest 自带的 `/usr/bin/google-chrome`；该路径失效时需先修复环境准备。
+
+```powershell
+$env:LANTAI_TEST_CHROMIUM = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+python -m pytest tests/test_ui_ime_browser.py tests/test_ui_dialog_browser.py -q
+```
+
+Linux/macOS 可用 `LANTAI_TEST_CHROMIUM=/path/to/chrome python -m pytest tests/test_ui_ime_browser.py tests/test_ui_dialog_browser.py -q`。这些测试使用临时 profile、合成数据和本机测试服务；合成组合事件不代表已验证 OS 原生输入法，Chromium 通过不代表 Firefox/Safari 或屏幕阅读器验收。
+
 ### 测试要求
 
 - 新增功能必须包含对应测试

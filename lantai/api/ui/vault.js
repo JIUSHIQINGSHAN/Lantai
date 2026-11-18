@@ -266,7 +266,10 @@ async function loadLatestCheckpoint() {
 export function initVault() {
   $('#vaultSearchBtn')?.addEventListener('click', () => loadVault());
   $('#vaultSearchInput')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); loadVault(); }
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
+      e.preventDefault();
+      loadVault();
+    }
   });
   $('#vaultDomainFilter')?.addEventListener('change', () => loadVault());
   $('#limboRefreshBtn')?.addEventListener('click', () => loadLimbo());

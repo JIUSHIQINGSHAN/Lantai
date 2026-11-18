@@ -681,10 +681,10 @@
   </dialog>
 
   <!-- 连接设置弹窗 -->
-  <dialog id="connectionDialog">
+  <dialog id="connectionDialog" aria-labelledby="connectionDialogTitle">
     <form method="dialog" id="connectionForm">
-      <header><h2>连接设置</h2><button value="cancel" aria-label="关闭">×</button></header>
-      <label class="form-field"><span>API Key</span><input id="apiKeyInput" type="password" autocomplete="off"></label>
+      <header><h2 id="connectionDialogTitle">连接设置</h2><button value="cancel" formnovalidate aria-label="关闭">×</button></header>
+      <label class="form-field"><span>API Key</span><input id="apiKeyInput" type="password" autocomplete="off" autofocus></label>
       <label class="check-field"><input id="rememberKey" type="checkbox"><span>记住此设备</span></label>
       <footer><button value="clear" class="secondary-button">清除</button><button value="save">保存</button></footer>
     </form>

@@ -38,6 +38,8 @@ jobs:
         env:
           # shell hook 子进程测试要求非空 API_KEY(禁止 DEV MODE 回退);CI 无 .env
           API_KEY: test-key
+          # ubuntu-latest 自带 Chrome；缺失时浏览器测试响亮失败。
+          LANTAI_TEST_CHROMIUM: /usr/bin/google-chrome
         run: pytest tests/ -q --cov=lantai --cov-report=term-missing
       - name: Forgetting quality gate (chinese-memory-v2)
         env:

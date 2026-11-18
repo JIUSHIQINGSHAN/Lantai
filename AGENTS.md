@@ -6,6 +6,10 @@
 
 Issues 以本地 markdown 文件形式存放在 `.scratch/<feature>/` 目录下。参见 `docs/agents/issue-tracker.md`。
 
+### PR autopilot
+
+用户要求检查或自动处理 PR 时，先读 `docs/agents/pr-autopilot.md`；该流程负责 PR 发现、隔离、验证与外发闸门。
+
 ### Triage labels
 
 使用五个标准分诊标签：`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`。参见 `docs/agents/triage-labels.md`。
@@ -13,6 +17,10 @@ Issues 以本地 markdown 文件形式存放在 `.scratch/<feature>/` 目录下�
 ### Domain docs
 
 单上下文布局：一个根目录 `CONTEXT.md` + `docs/adr/`。参见 `docs/agents/domain.md`。
+
+### Web guidance
+
+修改 HTML/CSS、DOM、浏览器 API 或客户端交互前，读 `docs/agents/web-guidance.md`；纯后端、CI 和工具配置沿用原流程。
 
 ### Naming discipline（命名纪律）
 

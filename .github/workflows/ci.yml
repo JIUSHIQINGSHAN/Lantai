@@ -39,6 +39,8 @@ jobs:
         env:
           # shell hook 子进程测试要求非空 API_KEY(禁止 DEV MODE 回退);CI 无 .env
           API_KEY: test-key
+          # 与常态测试使用同一宿主 Chrome，不在测试中下载浏览器。
+          LANTAI_TEST_CHROMIUM: /usr/bin/google-chrome
         run: pytest tests/ -q
 
   build:
