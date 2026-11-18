@@ -44,6 +44,7 @@ all = ["lantai[vision,obsidian,wiki]"]
 
 [project.scripts]
 lantai-mcp = "lantai.cli.mcp:main"
+lantai-mcp-bridge = "lantai.cli.mcp_bridge:main"
 lantai-server = "lantai.api.app:main"
 
 [build-system]

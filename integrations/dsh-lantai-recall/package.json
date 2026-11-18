@@ -1,0 +1,28 @@
+﻿{
+    "name":  "@local/lantai-dsh-recall",
+    "version":  "0.1.0",
+    "private":  true,
+    "description":  "Opt-in workspace-scoped recall from Lantai for DeepSeek Harness",
+    "type":  "module",
+    "license":  "MIT",
+    "exports":  {
+                    ".":  "./index.js",
+                    "./locale/*.json":  "./locale/*.json",
+                    "./icon":  "./icon.svg"
+                },
+    "files":  [
+                  "index.js",
+                  "cordis.patch.yml",
+                  "locale/*.json",
+                  "icon.svg",
+                  "README.md"
+              ],
+    "dsh":  {
+                "bundle":  {
+                               "patch":  "./cordis.patch.yml"
+                           }
+            },
+    "scripts":  {
+                    "test":  "node --test"
+                }
+}
