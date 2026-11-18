@@ -61,8 +61,13 @@ def _events(sf):
         return list(s.exec(select(RetrievalEvent)).all())
 
 
-def _wait_for_event(sf, timeout: float = 5.0):
-    """等 worker 线程把事件落库并（修复后）收尾。"""
+def _wait_for_event(sf, timeout: float = 20.0):
+    """等 worker 线程把事件落库并（修复后）收尾。
+
+    收尾一到就提前返回，上限只在 CI 负载下才用得上：原来 5s 在 CI 上等不到 worker
+    （检索 1.4s + 落库 + 收尾），返回还是 pending 的行，断言原话已抹就红了
+    （run 43768407953）。修复前事件永远停在 pending，放宽上限不会把红态等绿。
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
         rows = _events(sf)

@@ -280,6 +280,24 @@ def _kill_wedged_proc(proc: subprocess.Popen) -> None:
     logger.warning("lantai-hook: serve 子进程超时未应答，已 kill (pid=%s)", proc.pid)
 
 
+# 超墙 kill 后收尸的上限：SIGKILL 下内核先关 fd（read(1) 已 EOF 返回）、后转僵尸，
+# 两步之间有窗口；等它真退出再返回，「超时返回 ⇒ 子进程已退出」才是确定的后置条件。
+# 正常路径不走这里；D 状态卡死的极端情形最多多等这一秒，不无限挂住宿主。
+_REAP_TIMEOUT = 1.0
+
+
+def _reap_after_kill(proc: subprocess.Popen) -> None:
+    """watchdog 已开火时收尸：wait 设好 returncode，_ensure_proc 下次判 poll() 不再赌竞态。"""
+    try:
+        proc.wait(timeout=_REAP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "lantai-hook: kill 后 %.1fs 子进程仍未退出 (pid=%s)", _REAP_TIMEOUT, proc.pid
+        )
+    except OSError:
+        pass
+
+
 def _request_line(proc: subprocess.Popen, line: bytes, timeout: float) -> bytearray:
     """写一行请求 + 读一行响应（调用方须持 _lock），整体受硬超时墙保护。
 
@@ -289,8 +307,15 @@ def _request_line(proc: subprocess.Popen, line: bytes, timeout: float) -> bytear
     逃生用）。正常应答远快于墙，watchdog 到点前即被 cancel，路径零漂移。
     """
     watchdog = None
+    fired = threading.Event()
+
+    def _on_wall() -> None:
+        # 先立旗再 kill：read(1) 因 kill 而 EOF 返回时，finally 必能看到旗
+        fired.set()
+        _kill_wedged_proc(proc)
+
     if timeout is not None and timeout > 0:
-        watchdog = threading.Timer(timeout, _kill_wedged_proc, args=(proc,))
+        watchdog = threading.Timer(timeout, _on_wall)
         watchdog.daemon = True
         watchdog.start()
     try:
@@ -307,6 +332,8 @@ def _request_line(proc: subprocess.Popen, line: bytes, timeout: float) -> bytear
     finally:
         if watchdog is not None:
             watchdog.cancel()
+            if fired.is_set():
+                _reap_after_kill(proc)
 
 
 def _wait_ready(timeout: float = 15.0) -> bool:
