@@ -94,7 +94,7 @@ DECLARED = Counter(
         ): 3,
     }
 )
-DECLARED_TOTAL = 13
+DECLARED_TOTAL = 14
 
 # 无守卫的运行时弃权（能力探测循环走空后统一 skip）单独按申报集合管——它不是
 # 「凭被测返回值弃权」，但同样必须逐条可查。新增一个这类点同样判红。
