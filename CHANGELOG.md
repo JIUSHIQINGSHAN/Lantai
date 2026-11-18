@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-11-18
+
+v0.69.0 代号「良史」：逐次记录会话来源与摄取结果。自上一公开标签 v0.68.0 起的调度修复和运行时升级见下方 0.68.1 / 0.68.2 记录。
+
 ### Added
 
 - 增加可选会话归因 envelope 与 schema v46 零正文摄取事件，关联候选、提案、写入及旧记忆去重结果；显式历史来源优先，冲突留痕，不改认证、读取范围或历史 NULL。
@@ -16,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 摄取监控按 UTC 半开窗口分别展示候选、提案、事件与记忆阶段；未知 session 不再推断为后台，其他会话的写入不掩盖当前会话证据缺失。
 - DSH 工具发现拒绝重复分页游标，失败刷新保留原工具集；Python 桥将 HTTP 失败标记为 MCP 工具失败，取消/进度通知不再产生多余响应帧。
+
+- Hermes CLI 的 Shell Hook 读取原生事件中的用户消息，恢复检索及会话回执。
+- 控制台三处搜索/终端输入在输入法组合态保留原文；确认与连接弹窗支持标题、焦点、取消和结果清理。Chromium 回归覆盖实际脚本与 DOM。
+
+### Upgrade notes
+
+- 首次从 v0.68.0 升级前备份 SQLite 与 Chroma 向量目录；按 [Chroma 迁移指南](docs/chroma-migration.md) 用新目录验证迁移。已有 v0.68.2 部署先升级后端至 schema v46，再更新 Python 桥，最后按需启用 [DSH 适配包](integrations/dsh-lantai/README.md)。
 
 ## [0.68.2] - 2026-11-17
 
