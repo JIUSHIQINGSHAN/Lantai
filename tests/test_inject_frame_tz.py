@@ -179,7 +179,7 @@ def test_shell_hook_frame_uses_display_tz(tz_setting, expected, unexpected):
         out = mod.build_context("我最近一次复查是什么时候")
 
     ctx = out.get("context", "")
-    # 【相关记忆】段的注入行（【本次依据】段是不带时间的 evidence 行）
+    # 【相关记忆】段的注入行（【本次依据】段只列 id + 分数，不含正文）
     line = next((ln for ln in ctx.splitlines() if "血常规" in ln and "| score" in ln), "")
     assert expected in line, f"注入行日期不对: {line!r}"
     assert unexpected not in line

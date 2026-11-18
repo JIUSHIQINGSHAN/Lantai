@@ -97,6 +97,10 @@ _RECALL_TOOLS_GUIDE_RULES = (
 _RECALL_TOOLS_GUIDE_WRITE = "对话中确认的新事实，可调用记忆 MCP 工具 add 保存为长期记忆。"
 
 
+# 依据段标题：id + 分数按顺序对应【相关记忆】里的记忆条目（场景导航行除外）
+_EVIDENCE_HEADER = "【本次依据】（id 与分数，按顺序对应下方相关记忆里的条目）"
+
+
 def _build_tools_guide(truncated: bool) -> str:
     """记忆使用指南：告诉 Agent 何时深挖、最多几次、如何回写。"""
     parts = ["【记忆使用指南】"]
@@ -473,12 +477,16 @@ def build_context(query: str, session_id: str | None = None) -> dict:
             memory_block = wrap_as_data("\n".join(lines))
             out["context"] = memory_block
             if evidence:
+                # 依据段只列 id + 分数（周报 2026-11-03 P2-4）：正文此前在【本次依据】
+                # 与【相关记忆】各出现一次，同一条记忆注入两遍，且依据段不受
+                # SHELL_HOOK_MAX_TOTAL_CHARS 管，实际注入最多近 2 倍。回执与审计
+                # 走结构化的 out["evidence"]（插件按它取 used_ids），不读这段文本，
+                # 所以 evidence 字段原样保留；文本里正文只在【相关记忆】出现一次。
                 out["context"] = (
-                    "【本次依据】\n"
+                    _EVIDENCE_HEADER
+                    + "\n"
                     + wrap_as_data(
-                        "\n".join(
-                            f"- ({e['id']}, score {e['score']}) {e['content']}" for e in evidence
-                        )
+                        "\n".join(f"- ({e['id']}, score {e['score']})" for e in evidence)
                     )
                     + "\n\n【相关记忆】\n"
                     + memory_block
