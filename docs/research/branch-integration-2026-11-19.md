@@ -15,6 +15,8 @@ The maintainer requested integration of all local and remote branches into `mast
 | `origin/arena/01a07697-lantai` (`84f86930`) | Its monitor backend, routes, JS, metrics, telemetry, tests and ops runbook are byte-identical to their counterparts in accepted mainline commit `315f3b87`. Keep later security, retention and scheduler fixes. The old ADR-0044 monitor text differs only in its title from current ADR-0045; do not add a second ADR-0044 beside the existing cognition ADR. |
 | `origin/arena/01a07693-lantai` (`03ccfeff`) | Alternative monitor design merged against the maintained ADR-0045 interface. Existing domain counts, Chroma collection compatibility and restart-safe scheduler behavior cover its fixes. Keep authenticated `/monitor/overview`, shared worker policy and current front end rather than reintroducing the obsolete global `/monitor/snapshot` contract. Port its useful aggregate/queue/worker/HTTP tests to current contracts in `tests/test_monitor_panel.py`. |
 | `merge-master/master` (`b044b637`) | Already a mainline ancestor. |
+| Fork PR #58 (`d52df0b4`) | Merge subprocess reaping after the hook timeout watchdog fires; retain process-exit assertions and real child-process tests. |
+| Fork PR #59 (`51e592ce`) | Merge evidence-text deduplication: the rendered evidence list contains IDs/scores while structured evidence retains content for receipts. |
 
 ## Conflict decisions
 
