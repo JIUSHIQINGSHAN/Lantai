@@ -1,7 +1,7 @@
 # Session Attribution 实施验收
 
-日期：2026-11-18  
-分支：`fix/session-attribution-20261118`  
+日期：2026-11-18
+分支：`fix/session-attribution-20261118`
 基线：生产升级提交 `f9999a23`（Lantai 0.68.2）
 
 ## 已实现
