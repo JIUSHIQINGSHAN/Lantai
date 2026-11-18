@@ -66,6 +66,11 @@ DECLARED = Counter(
         (
             "tests/test_dsh_attribution_chain.py",
             "pytest.skip",
+            "set LANTAI_TEST_DSH_CHAIN=1 to run against the installed DSH Electron runtime",
+        ): 1,
+        (
+            "tests/test_dsh_attribution_chain.py",
+            "pytest.skip",
             "select DSH_NODE_EXECUTABLE and DSH_INSTALL_DIR for installed chain verification",
         ): 1,
         (

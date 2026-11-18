@@ -50,3 +50,5 @@
 前一轮全量为 4210 passed / 5 skipped / 2 failed，失败均来自新环境跳过点漏登 `tests/test_skip_mask_inventory.py`。已按原门禁要求登记新增环境前置条件，并将守卫直接表达为安装环境变量检查；保持扫描判据不变。最终全量两项均通过。实现已由 `ae8cd9e3` 收录，随后提交测试门禁修复与本验收结果；没有修改业务实现以消除该测试门禁失败。
 
 本次仍未安装/启用插件、修改生产或读取真实 conf/profile。自动采集所有对话轮次不在此适配包的实现范围；真实 GUI ToolRuntime 与真实认证服务的验收继续保留为未执行。客户端取消等待不保证服务端已接收的写入撤销。
+
+集成验收补充：installed DSH bridge-chain 测试需要 Electron 运行时作为 Node 和 Python 子进程协作。若当前用户桌面版 DSH 正在占用单实例 Host，测试子进程可能只转交启动而不运行 smoke runner；因此全量发布门禁默认不自动打开 GUI Host。仅在关闭 DSH 桌面 Host 后显式设置 `LANTAI_TEST_DSH_CHAIN=1` 并配置 `DSH_NODE_EXECUTABLE`/`DSH_INSTALL_DIR`，独立运行该测试。独立 Node SDK 与 Python bridge loopback smoke 无需 GUI，另行运行；已执行 5 项 Node、5 项 Python 测试通过。Linux CI 无 DSH 安装时，整链用例作为明示环境 skip。

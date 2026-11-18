@@ -92,6 +92,8 @@ def chain_backend(tmp_path, monkeypatch):
 
 
 def test_installed_dsh_stdio_rest_sqlite_chain(tmp_path, request):
+    if os.environ.get("LANTAI_TEST_DSH_CHAIN") != "1":
+        pytest.skip("set LANTAI_TEST_DSH_CHAIN=1 to run against the installed DSH Electron runtime")
     if not os.environ.get("DSH_NODE_EXECUTABLE") or not os.environ.get("DSH_INSTALL_DIR"):
         pytest.skip(
             "select DSH_NODE_EXECUTABLE and DSH_INSTALL_DIR for installed chain verification"

@@ -45,7 +45,7 @@ The tests use the Electron runtime selected by `DSH_NODE_EXECUTABLE` and resolve
 
 Use the installed Electron executable rather than `node` from `PATH` when reading the ASAR installation. The real local HTTP JSON-RPC fixture exercises the SDK transport, DSH registry, concurrent calls, attribution fields, immutable arguments, schema validation, cancellation, timeout, redaction, atomic discovery refresh, duplicate-list rollback, and teardown.
 
-`tests/test_dsh_attribution_chain.py` additionally runs this adapter through the installed SDK, a real stdio Python bridge, actual FastAPI routes, and isolated SQLite/FTS/Chroma storage. Set both installation variables and run from the repository's test environment. To disable dotenv loading before importing the application:
+`tests/test_dsh_attribution_chain.py` additionally runs this adapter through the installed SDK, a real stdio Python bridge, actual FastAPI routes, and isolated SQLite/FTS/Chroma storage. This crosses the installed Electron runtime and is opt-in: close the DSH desktop Host, set `LANTAI_TEST_DSH_CHAIN=1`, `DSH_NODE_EXECUTABLE`, and `DSH_INSTALL_DIR`, then run from the repository's test environment. Without the opt-in, the test reports an environment skip and starts no service. To disable dotenv loading before importing the application:
 
 ```powershell
 python -c "import pydantic_settings.sources as s; s.DotEnvSettingsSource._read_env_files=lambda self:{}; import pytest; raise SystemExit(pytest.main(['tests/test_dsh_attribution_chain.py','-q']))"
