@@ -734,6 +734,10 @@ def suite_gate_issues(
         env["TMPDIR"] = work_dir
         env.setdefault("API_KEY", _PROBE_KEY)
         cmd = suite_pytest_command(py=py)
+        # Pytest otherwise appends pytest-of-<OS username> even when TEMP is
+        # ASCII, recreating the Windows HNSW failure for Unicode profiles.
+        # The path is owned by this TemporaryDirectory and removed with it.
+        cmd.extend(["--basetemp", os.path.join(work_dir, "pytest")])
         try:
             proc = subprocess.run(  # noqa: S603
                 cmd,

@@ -192,8 +192,6 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 - **MCP server**（写，标准协议）：入口 `lantai-mcp`（`python -m lantai.cli.mcp`），标准 JSON-RPC 2.0，输入校验 + 异常隔离。默认档只暴露核心 6 工具（`search` / `add` / `feedback` / `offload_read` / `mem_recent` / `core_memory_get`，fail-closed）；`LANTAI_MCP_PROFILE=full` 显式放开全量 96 项
 - **远程 MCP bridge**：入口 `lantai-mcp-bridge`，通过 HTTPS 将 stdio 工具调用转发至远程 Lantai；无本地 DB、`.env` 或代理发现，配置与安全约束见 [说明](docs/mcp-bridge.md)。
 - **DSH 可选召回**：独立的 `lantai-recall` Host bundle 默认关闭；只对显式授权工作区的真人主会话尝试检索，不会自动摄取对话。安装、发送内容与历史留存说明见 [bundle 文档](integrations/dsh-lantai-recall/README.md)。
-- **远程 MCP client**（可选）：`lantai-mcp-bridge` 通过 HTTPS 连接独立 Lantai 服务；凭据从环境变量/宿主密钥管理器注入，不读取本地 `.env`。配置与明文环回测试限制见 [远程桥接说明](docs/mcp-bridge.md)。
-- **DSH 召回 bundle**（默认关闭）：只对显式允许工作区内的真人主会话尝试单次检索，不写对话或检查点；发送正文和会话记录影响说明见 [安装与回滚说明](integrations/dsh-lantai-recall/README.md)。
 
 ### 🛡️ 护盾（安全基线）
 

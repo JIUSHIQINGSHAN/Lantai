@@ -51,4 +51,4 @@
 
 本次仍未安装/启用插件、修改生产或读取真实 conf/profile。自动采集所有对话轮次不在此适配包的实现范围；真实 GUI ToolRuntime 与真实认证服务的验收继续保留为未执行。客户端取消等待不保证服务端已接收的写入撤销。
 
-集成验收补充：installed DSH bridge-chain 测试需要 Electron 运行时作为 Node 和 Python 子进程协作。若当前用户桌面版 DSH 正在占用单实例 Host，测试子进程可能只转交启动而不运行 smoke runner；因此全量发布门禁默认不自动打开 GUI Host。仅在关闭 DSH 桌面 Host 后显式设置 `LANTAI_TEST_DSH_CHAIN=1` 并配置 `DSH_NODE_EXECUTABLE`/`DSH_INSTALL_DIR`，独立运行该测试。独立 Node SDK 与 Python bridge loopback smoke 无需 GUI，另行运行；已执行 5 项 Node、5 项 Python 测试通过。Linux CI 无 DSH 安装时，整链用例作为明示环境 skip。
+集成验收补充：installed DSH bridge-chain 测试需要外部 Electron 运行时作为 Node 和 Python 子进程协作，设置 `LANTAI_TEST_DSH_CHAIN=1`、`DSH_NODE_EXECUTABLE` 和 `DSH_INSTALL_DIR` 后执行。若未选择外部运行时，测试按明示环境 skip；超时则按失败处理，不自动跳过。集成期间出现过子进程在 runner 启动前无输出的超时；此前“桌面单实例占用”的解释未被证实，不能作为根因结论。随后同安装 Electron 的最小 Node 表达式及完整整链均通过（2026-11-19，1 passed，9.28s），最终发布门禁需显式启用该测试重新验证。独立 Python bridge loopback smoke 不依赖 GUI。

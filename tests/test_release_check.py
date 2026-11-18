@@ -571,6 +571,7 @@ def test_suite_gate_uses_ascii_temp_root_for_native_chroma(monkeypatch, tmp_path
 
     def fake_pytest(command, *, cwd, env, **_kwargs):
         observed.update(env)
+        observed["suite_command"] = command
         Path(env["LANTAI_GATE_REPORT"]).write_text(
             f"[TRIPEWIRE-ARMED] {env['LANTAI_GATE_REAL_HOME']}\n", encoding="utf-8"
         )
@@ -583,6 +584,10 @@ def test_suite_gate_uses_ascii_temp_root_for_native_chroma(monkeypatch, tmp_path
     assert work_dir.startswith(str(RC.REPO_ROOT.parent))
     assert work_dir.isascii()
     assert observed["TMP"] == observed["TEMP"] == observed["TMPDIR"] == work_dir
+    command = observed["suite_command"]
+    base = command[command.index("--basetemp") + 1]
+    assert base == os.path.join(work_dir, "pytest")
+    assert base.isascii()
 
 
 def test_suite_gate_catches_real_home_pollution(tmp_path):

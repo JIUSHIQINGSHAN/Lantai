@@ -16,14 +16,12 @@ v0.69.0 代号「良史」：逐次记录会话来源与摄取结果。自上一
 - 增加可选会话归因 envelope 与 schema v46 零正文摄取事件，关联候选、提案、写入及旧记忆去重结果；显式历史来源优先，冲突留痕，不改认证、读取范围或历史 NULL。
 - 提供默认禁用的 DSH MCP 适配包和独立 REST 桥，逐调用传递当前会话与请求标记；新增安装版 SDK→stdio→REST→真实 SQLite 的隔离验收。
 - 增加默认关闭的 DSH 真人轮次召回 bundle，与手动 MCP 工具归因相互独立；新增 HTTPS-only 的 `lantai-mcp-bridge` stdio 客户端，并为 workspace、敏感输入、超时和远端错误设置边界（ADR-0089）。
-- 增加另一个彼此独立、默认关闭的 DSH 真人轮次召回 bundle，以及不加载本地库的 `lantai-mcp-bridge` HTTPS stdio 客户端；二者权限、数据发送与回滚边界见 ADR-0089。
 
 ### Fixed
 
 - 摄取监控按 UTC 半开窗口分别展示候选、提案、事件与记忆阶段；未知 session 不再推断为后台，其他会话的写入不掩盖当前会话证据缺失。
 - DSH 工具发现拒绝重复分页游标，失败刷新保留原工具集；Python 桥将 HTTP 失败标记为 MCP 工具失败，取消/进度通知不再产生多余响应帧。
-- Windows 发布门禁将 pytest 临时数据库与 Chroma/HNSW 目标放入 ASCII 临时路径，避免本机 Unicode 用户目录导致迁移用例假红；整链 DSH smoke 超时预算覆盖加载中的 Electron。
-
+- Windows 发布门禁显式设置 pytest 基目录，避免 pytest 在 ASCII TEMP 下追加 Unicode 用户名，再次触发 Chroma/HNSW 路径限制。
 - Hermes CLI 的 Shell Hook 读取原生事件中的用户消息，恢复检索及会话回执。
 - 控制台三处搜索/终端输入在输入法组合态保留原文；确认与连接弹窗支持标题、焦点、取消和结果清理。Chromium 回归覆盖实际脚本与 DOM。
 
