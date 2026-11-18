@@ -17,6 +17,8 @@ async function localServer() {
   const waiters = new Map();
   const sockets = new Set();
   let toolNames = ['echo', 'wait', 'fail', 'invalid'];
+  let pages;
+  const listRequests = [];
   const schema = { type: 'object', properties: { label: { type: 'string' } }, required: ['label'], additionalProperties: true };
   const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST') { res.writeHead(405).end(); return; }
@@ -39,8 +41,20 @@ async function localServer() {
     if (message.method === 'initialize') {
       reply({ protocolVersion: '2025-03-26', capabilities: { tools: { listChanged: true } }, serverInfo: { name: 'local-attribution-smoke', version: '1' } });
     } else if (message.method === 'tools/list') {
-      reply({ tools: toolNames.map(name => ({ name, description: name, inputSchema: schema,
-        ...(name === 'invalid' ? { outputSchema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false } } : {}) })) });
+      listRequests.push(message.params?.cursor);
+      const pageIndex = Number(message.params?.cursor ?? 0);
+      const page = pages?.[pageIndex];
+      if (page?.delayMs) await new Promise(resolve => setTimeout(resolve, page.delayMs));
+      if (page?.error) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'discovery failed' } }));
+      } else {
+        const names = page?.names ?? toolNames;
+        const nextCursor = page?.nextCursor ?? (pages && pageIndex + 1 < pages.length ? String(pageIndex + 1) : undefined);
+        reply({ tools: names.map(name => ({ name, description: name, inputSchema: schema,
+          ...(name === 'invalid' ? { outputSchema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false } } : {}) })),
+          ...(nextCursor === undefined ? {} : { nextCursor }) });
+      }
     } else if (message.method === 'tools/call') {
       calls.push(message);
       const { name, arguments: args } = message.params;
@@ -62,9 +76,10 @@ async function localServer() {
   server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   return {
-    calls, cancellations, waiters,
+    calls, cancellations, waiters, listRequests,
     url: `http://127.0.0.1:${server.address().port}/mcp`,
-    setTools(names) { toolNames = names; },
+    setTools(names) { toolNames = names; pages = undefined; },
+    setPages(value) { pages = value; },
     async close() {
       for (const finish of waiters.values()) finish();
       for (const socket of sockets) socket.destroy();
@@ -118,6 +133,45 @@ test('static existing config shape, validation, and stable public names', () => 
   assert.throws(() => normalizeConfig({ ...config, reconnect: { initialDelayMs: 30, maxDelayMs: 1 } }), /initialDelayMs/);
   assert.equal(publicToolName('lantai', 'add_dialogue'), 'mcp__lantai__add_dialogue');
   assert.equal(publicToolName('lantai', 'bad.name'), 'mcp__lantai__bad_name_db0cb3a60c89');
+});
+
+test('paginated discovery registers the whole list and preserves it on incomplete refresh', { timeout: 10000 }, async () => {
+  const server = await localServer();
+  const ctx = await registry();
+  let bridge;
+  try {
+    server.setPages([{ names: ['echo'] }, { names: ['wait'] }, { names: ['fail'] }]);
+    bridge = startBridge(ctx, { serverName: 'lantai', transport: 'streamable-http', url: server.url,
+      toolCallTimeoutMs: 1000, startupTimeoutMs: 2000, closeTimeoutMs: 2000, reconnect: { enabled: false } });
+    await bridge.ready;
+    assert.deepEqual(server.listRequests, [undefined, '1', '2']);
+    const echo = ctx.tools.get('mcp__lantai__echo');
+    const wait = ctx.tools.get('mcp__lantai__wait');
+    assert.ok(echo);
+    assert.ok(wait);
+    assert.ok(ctx.tools.get('mcp__lantai__fail'));
+    for (const [pages, expected] of [
+      [[{ names: ['replacement'] }, { names: ['echo'], error: true }], /discovery failed/i],
+      [[{ names: ['replacement'] }, { names: ['replacement'] }], /duplicate/i],
+      [[{ names: ['replacement'], nextCursor: '0' }], /cursor|pagination/i],
+      [Array.from({ length: 101 }, () => ({ names: [] })), /limit|pagination/i],
+      [Array.from({ length: 10 }, (_, i) => ({ names: [`slow-${i}`], delayMs: 150 })), /timeout|timed out/i],
+    ]) {
+      server.setPages(pages);
+      await assert.rejects(bridge.sync(), expected);
+      assert.equal(ctx.tools.get('mcp__lantai__echo'), echo);
+      assert.equal(ctx.tools.get('mcp__lantai__wait'), wait);
+      assert.equal(ctx.tools.get('mcp__lantai__replacement'), undefined);
+    }
+    server.setPages([{ names: ['replacement'] }, { names: ['echo'] }]);
+    await bridge.sync();
+    assert.ok(ctx.tools.get('mcp__lantai__replacement'));
+    assert.equal(ctx.tools.get('mcp__lantai__wait'), undefined);
+  } finally {
+    await bridge?.dispose();
+    await ctx.fiber.dispose();
+    await server.close();
+  }
 });
 
 test('real SDK HTTP + DSH registry: concurrent A/B, agentless, errors, schemas, cancellation, timeout and teardown', { timeout: 10000 }, async t => {

@@ -61,6 +61,28 @@ function transportFor(config) {
 
 class RegistrationError extends Error {}
 
+/** Preserve SDK pagination, cache and schema handling, but reject incomplete lists.
+ * SDK 2.2.0 silently ends an aggregate on an identical page/repeated cursor.
+ * Observing its public request boundary catches that before it publishes a list.
+ * Discovery is serialized per connection by syncChain; tool calls use no state here.
+ */
+class DiscoveryClient extends Client {
+  async request(request, options) {
+    const result = await super.request(request, options);
+    if (request.method === 'tools/list' && this.discoveryCursors && result.nextCursor !== undefined) {
+      if (this.discoveryCursors.has(result.nextCursor)) throw new Error('MCP tool discovery repeated a pagination cursor');
+      this.discoveryCursors.add(result.nextCursor);
+    }
+    return result;
+  }
+
+  async discoverTools(options) {
+    this.discoveryCursors = new Set();
+    try { return await this.listTools(undefined, options); }
+    finally { this.discoveryCursors = undefined; }
+  }
+}
+
 /**
  * Own one MCP connection supervisor and its registry effects. No profile, DSH event
  * mutation, agent state, or real bridge config is read. Tests can explicitly sync
@@ -122,7 +144,7 @@ export function startBridge(ctx, input) {
       if (!active(record)) throw new Error('MCP connection is unavailable');
       const response = await track(record, signal => record.client.getServerCapabilities()?.tools === undefined
         ? { tools: [] }
-        : record.client.listTools(undefined, { cacheMode: 'refresh', signal, timeout: config.toolCallTimeoutMs }));
+        : record.client.discoverTools({ cacheMode: 'refresh', signal: AbortSignal.any([signal, AbortSignal.timeout(config.toolCallTimeoutMs)]), timeout: config.toolCallTimeoutMs }));
       const definitions = new Map();
       for (const tool of response.tools) {
         const name = publicToolName(config.serverName, tool.name);
@@ -201,7 +223,7 @@ export function startBridge(ctx, input) {
     if (disposed || cleanupFailure) return;
     let record;
     try {
-      const client = new Client({ name: 'dsh-lantai-attribution', version: '0.1.0' }, {
+      const client = new DiscoveryClient({ name: 'dsh-lantai-attribution', version: '0.1.0' }, {
         capabilities: {}, versionNegotiation: { mode: 'auto' },
         listChanged: { tools: { autoRefresh: false, debounceMs: 0, onChanged: () => {
           if (!active(record)) return;

@@ -20,6 +20,8 @@ The bundle is **disabled by default** and this worktree does not install or acti
 
 ## Install and switch
 
+Before switching, deploy the backend implementation with schema v46 and the reviewed `scripts/lantai_mcp_bridge.py` to the existing bridge location, retaining its original adjacent `lantai_remote.conf` and a rollback copy. This repository does not copy or read that config. Merely reusing the old bridge command without updating its script silently discards protocol `_meta`; metadata support in the Host alone cannot repair that hop. Confirm the new bridge/backend chain in isolation first. These are deployment prerequisites; this worktree has not performed them.
+
 1. Install this directory from **Plugins > Add plugin** (or use the plugin manager with the absolute workspace directory). Do not enable the row yet.
 2. In the profile, disable the shipped row whose id is `include:mcp-lantai`.
 3. Configure the inserted `lantai-attribution` row with the same server transport settings, then enable it. The inserted row remains disabled until explicitly enabled.
@@ -28,6 +30,10 @@ The bundle is **disabled by default** and this worktree does not install or acti
 The default patch points at `http://127.0.0.1:3000/mcp` as a harmless loopback placeholder and uses `failOnStartupError: true`. Change it to the actual local loopback endpoint or a static stdio command. `${credential:...}` templates and `expandTemplates: true` are intentionally rejected: this bundle does not read the profile, credentials, or ambient DSH configuration. Do not put secrets in the package or patch. HTTP headers are sent to the configured endpoint and are redacted from error text.
 
 Turning off or unloading the row closes the MCP transport, waits within `closeTimeoutMs`, unregisters its tools, and cancels pending calls. If cleanup cannot be confirmed, the bridge stops reconnecting and reports that the Host should be restarted before replacement. Discovery failures and duplicate tool lists preserve the last registered generation; registration conflicts fail without publishing a partial set.
+
+Discovery retains the installed SDK's pagination, schema/header checks, cache handling and 64-page limit. Repeated continuation cursors fail the entire refresh instead of allowing the SDK's repeated-page shortcut to publish an incomplete tool set. One timeout covers all discovery pages, and a failed refresh keeps the previously registered tools.
+
+The Python REST bridge reports HTTP/domain failures with MCP `isError`, while keeping HTTP error bodies and credentials out of responses. Notifications produce no response frame. Its HTTP dispatch is synchronous: cancelling the SDK wait does **not** prove an already accepted write was undone; check the persisted result before retrying. Attribution is attached to explicit tool calls; this bundle does not automatically capture every dialogue turn.
 
 ## Verification
 
@@ -38,3 +44,11 @@ The tests use the Electron runtime selected by `DSH_NODE_EXECUTABLE` and resolve
 ```
 
 Use the installed Electron executable rather than `node` from `PATH` when reading the ASAR installation. The real local HTTP JSON-RPC fixture exercises the SDK transport, DSH registry, concurrent calls, attribution fields, immutable arguments, schema validation, cancellation, timeout, redaction, atomic discovery refresh, duplicate-list rollback, and teardown.
+
+`tests/test_dsh_attribution_chain.py` additionally runs this adapter through the installed SDK, a real stdio Python bridge, actual FastAPI routes, and isolated SQLite/FTS/Chroma storage. Set both installation variables and run from the repository's test environment. To disable dotenv loading before importing the application:
+
+```powershell
+python -c "import pydantic_settings.sources as s; s.DotEnvSettingsSource._read_env_files=lambda self:{}; import pytest; raise SystemExit(pytest.main(['tests/test_dsh_attribution_chain.py','-q']))"
+```
+
+The chain test skips explicitly when installation variables are absent. It uses synthetic Host execution objects and a synthetic authenticated Principal; it verifies the adapter and storage chain, not a real GUI turn or live authentication. Concurrent A/B calls share a stdio bridge whose REST requests are processed serially. The test also covers historical-origin conflicts, agentless calls, dedup into an existing item, preserved read scope, rejected input, and failure propagation. The child receives only in-memory synthetic server settings and restricts connections to loopback; deployed conf/profile files are not opened.

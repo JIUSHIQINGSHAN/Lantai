@@ -5,6 +5,8 @@
 **决策沿革**：[ADR-0006](adr/0006-shell-hook-contract.md)（Shell Hook 注入契约，时点决策快照）
 **回执链**：[ADR-0049](adr/0049-receipt-chain.md)
 
+DSH 的 MCP 工具调用适配另见 [DSH 归因适配包](../integrations/dsh-lantai/README.md) 与 [ADR-0088](adr/0088-ingest-attribution-and-stage-monitor.md)：其逐调用 metadata 通过 Python bridge 映射到 REST body，不依赖本文件的 Shell Hook 帧。工具调用归因不表示自动采集每轮对话，也不赋予读取权限。
+
 > 本文件与 ADR-0006 分工：ADR 记录**当时为何这样定**（时点决策），本文件记录**现在长什么样**（当前契约）。实现变更须同步本文件；ADR 不追溯改写。
 
 ---

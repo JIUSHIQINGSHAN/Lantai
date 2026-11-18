@@ -60,6 +60,8 @@ docs/memory-quality/*.md
 !docs/memory-quality/test-honesty-audit-2026-11.md
 # 票 84：部署时区与日报窗口裁决诊断（按 development-workflow 归档要求）
 !docs/memory-quality/digest-boundaries-diagnosis-2026-11-13.md
+# DSH 会话归因实施验收：工程报告，仅协议/聚合事实，无用户记忆正文。
+!docs/memory-quality/session-attribution-implementation-2026-11-18.md
 
 .uv-cache/
 .mimosa/

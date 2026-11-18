@@ -511,6 +511,10 @@ def handle(msg):
         }
     mid = msg.get("id")
     method = msg.get("method", "")
+    if "id" not in msg and isinstance(method, str) and method.startswith("notifications/"):
+        # Cancellation/progress are notifications, never requests for an id:null reply.
+        # This synchronous bridge cannot undo an HTTP write already accepted by REST.
+        return None
     if method == "initialize":
         return {
             "jsonrpc": "2.0",
@@ -521,8 +525,6 @@ def handle(msg):
                 "serverInfo": {"name": "lantai-remote", "version": "0.4.0"},
             },
         }
-    if method in ("notifications/initialized",):
-        return None
     if method == "ping":
         return {"jsonrpc": "2.0", "id": mid, "result": {}}
     if method == "tools/list":
@@ -579,7 +581,8 @@ def handle(msg):
             "jsonrpc": "2.0",
             "id": mid,
             "result": {
-                "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]
+                **({"isError": True} if isinstance(result, dict) and "error" in result else {}),
+                "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
             },
         }
     return {

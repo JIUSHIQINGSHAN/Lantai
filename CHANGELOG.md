@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- 增加可选会话归因 envelope 与 schema v46 零正文摄取事件，关联候选、提案、写入及旧记忆去重结果；显式历史来源优先，冲突留痕，不改认证、读取范围或历史 NULL。
+- 提供默认禁用的 DSH MCP 适配包和独立 REST 桥，逐调用传递当前会话与请求标记；新增安装版 SDK→stdio→REST→真实 SQLite 的隔离验收。
+
+### Fixed
+
+- 摄取监控按 UTC 半开窗口分别展示候选、提案、事件与记忆阶段；未知 session 不再推断为后台，其他会话的写入不掩盖当前会话证据缺失。
+- DSH 工具发现拒绝重复分页游标，失败刷新保留原工具集；Python 桥将 HTTP 失败标记为 MCP 工具失败，取消/进度通知不再产生多余响应帧。
+
 ## [0.68.2] - 2026-11-17
 
 ### Changed

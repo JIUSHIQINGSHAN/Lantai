@@ -163,10 +163,17 @@ def test_standalone_validator_matches_core(bridge, value):
 
 def test_http_errors_never_echo_server_body_or_key(bridge, loopback):
     result = call(bridge, "raw_add", {"content": "http-error", "title": "private-body"})
+    assert result["result"].get("isError") is True
     text = json.dumps(result)
     assert "HTTP 422" in text
     assert "private-body" not in text
     assert "synthetic-test-key" not in text
+
+
+def test_successful_http_is_not_a_tool_failure(bridge, loopback):
+    result = call(bridge, "raw_add", {"content": "successful synthetic input"})
+    assert result["result"].get("isError", False) is False
+    assert json.loads(result["result"]["content"][0]["text"]) == {"ok": True}
 
 
 def test_direct_handler_validates_attribution(bridge, loopback):
@@ -188,3 +195,11 @@ def test_origin_schema_and_import_do_not_read_conf(bridge):
 def test_non_object_params_returns_invalid_params(bridge, params):
     result = bridge.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params})
     assert result["error"]["code"] == -32602
+
+
+@pytest.mark.parametrize("method", ["notifications/cancelled", "notifications/progress"])
+def test_stdio_notifications_never_produce_response_frames(bridge, method):
+    assert bridge.handle({"jsonrpc": "2.0", "method": method, "params": {}}) is None
+    request = bridge.handle({"jsonrpc": "2.0", "id": 9, "method": method, "params": {}})
+    assert request["id"] == 9
+    assert request["error"]["code"] == -32601

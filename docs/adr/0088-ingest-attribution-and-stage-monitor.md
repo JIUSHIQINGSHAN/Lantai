@@ -16,6 +16,7 @@ The installed DSH MCP adapter also receives `ToolExecution` but its default call
 4. Keep valid background jobs sessionless. Candidate pending/rejected is a received outcome, not an applied knowledge success and not a wiring failure.
 5. Monitor the half-open UTC window `[start,end)`, with `end <= sample_now`, explicit state/source/owner scopes, bounded aggregates, and exact/partial session correlations. Missing stage tables are explicitly unavailable, never silently green. Legacy item counts remain for compatibility but NULL is labeled unknown, not background.
 6. DSH attribution is delivered by an explicit per-call Host adapter envelope under `io.lantai/attribution`; the existing bridge must explicitly whitelist and map it. It is not delivered by global mutable context, a universal REST header, or model-authored arguments.
+7. Tool discovery must complete before replacing registrations. Preserve SDK pagination/validation but reject repeated continuation cursors and retain the previous set on discovery failure. REST failures become MCP tool failures (`isError`), with status-only HTTP diagnostics; a cancelled client wait does not imply rollback of an accepted write. No response is emitted for protocol notifications.
 
 ## Compatibility and rollback
 

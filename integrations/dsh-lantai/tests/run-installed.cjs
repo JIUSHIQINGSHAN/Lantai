@@ -19,7 +19,7 @@ registerHooks({
 // Bound fixtures even when an assertion fails before their cleanup is installed.
 const watchdog = setTimeout(() => { console.error('Installed smoke exceeded its 20-second budget'); process.exit(1); }, 20000);
 watchdog.unref();
-import(pathToFileURL(path.join(__dirname, 'smoke.test.js')).href).catch(error => {
+import(pathToFileURL(path.resolve(__dirname, process.argv[2] ?? 'smoke.test.js')).href).catch(error => {
   console.error(error);
   process.exitCode = 1;
 });
