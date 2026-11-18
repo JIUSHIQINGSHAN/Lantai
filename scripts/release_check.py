@@ -713,7 +713,13 @@ def suite_gate_issues(
     # 子进程 pytest_configure 再以写模式把同名文件重建出来，父进程从此不管——每跑
     # 一次门禁就在 %TEMP% 留一个文件（票 05 续10 实测已积到 200 个）。COVERAGE_FILE 不
     # 指走则把 .coverage 落在被测仓库工作区。两条都是「门禁污染文件状态」，一并堵住。
-    with tempfile.TemporaryDirectory(prefix="lantai_gate_suite_") as work_dir:
+    # Keep the suite's OS temp root ASCII-only. Windows native Chroma/HNSW
+    # refuses to reopen an index under a non-ASCII user profile path; using the
+    # repository's ASCII parent also makes this gate exercise the same path
+    # shape as the CI runner instead of masking the migration test.
+    with tempfile.TemporaryDirectory(
+        prefix="lantai_gate_suite_", dir=str(repo_root.parent)
+    ) as work_dir:
         report_path = os.path.join(work_dir, "tripwire_report.txt")
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
@@ -723,6 +729,9 @@ def suite_gate_issues(
         env["LANTAI_GATE_REAL_HOME"] = watch
         env["LANTAI_GATE_REPORT"] = report_path
         env["COVERAGE_FILE"] = os.path.join(work_dir, "coverage.dat")
+        env["TMP"] = work_dir
+        env["TEMP"] = work_dir
+        env["TMPDIR"] = work_dir
         env.setdefault("API_KEY", _PROBE_KEY)
         cmd = suite_pytest_command(py=py)
         try:

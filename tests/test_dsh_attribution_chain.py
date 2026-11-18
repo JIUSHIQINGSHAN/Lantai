@@ -101,6 +101,7 @@ def test_installed_dsh_stdio_rest_sqlite_chain(tmp_path, request):
     engine, port, principal, scope_headers = request.getfixturevalue("chain_backend")
     root = Path(__file__).resolve().parents[1]
     result_path = tmp_path / "result.json"
+    trace_path = tmp_path / "trace.txt"
     fixture_path = tmp_path / "fixture.json"
     fixture_path.write_text(
         json.dumps(
@@ -110,25 +111,46 @@ def test_installed_dsh_stdio_rest_sqlite_chain(tmp_path, request):
                 "bridge": str(root / "scripts/lantai_mcp_bridge.py"),
                 "port": port,
                 "result": str(result_path),
+                "trace": str(trace_path),
             }
         ),
         encoding="utf-8",
     )
     env = dict(os.environ, ELECTRON_RUN_AS_NODE="1")
-    process = subprocess.run(
-        [
-            electron,
-            str(root / "integrations/dsh-lantai/tests/run-installed.cjs"),
-            "chain-client.js",
-            str(fixture_path),
-        ],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=30,
-    )
+    try:
+        process = subprocess.run(
+            [
+                electron,
+                str(root / "integrations/dsh-lantai/tests/run-installed.cjs"),
+                "chain-client.js",
+                str(fixture_path),
+            ],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            # Electron cold start plus real SQLite/FTS/Chroma setup can exceed
+            # 30s on a loaded Windows host; timeout still bounds the smoke.
+            timeout=90,
+        )
+    except subprocess.TimeoutExpired as exc:
+        trace = trace_path.read_text(encoding="utf-8") if trace_path.exists() else "<no stage>"
+        stdout = (
+            (exc.stdout or b"").decode("utf-8", "replace")
+            if isinstance(exc.stdout, bytes)
+            else (exc.stdout or "")
+        )
+        stderr = (
+            (exc.stderr or b"").decode("utf-8", "replace")
+            if isinstance(exc.stderr, bytes)
+            else (exc.stderr or "")
+        )
+        pytest.fail(
+            f"installed DSH chain timed out after {exc.timeout}s; stage={trace}; "
+            f"stdout={stdout[-1000:]!r}; stderr={stderr[-1000:]!r}",
+            pytrace=False,
+        )
     assert process.returncode == 0, process.stdout + process.stderr
     result = json.loads(result_path.read_text(encoding="utf-8"))
     with Session(engine) as session:

@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -562,6 +563,26 @@ def test_suite_gate_passes_on_green_suite(tmp_path):
         "def test_green():\n    assert True\n", encoding="utf-8"
     )
     assert RC.suite_gate_issues(tmp_path, timeout=180, real_home=str(tmp_path / "nohome")) == []
+
+
+def test_suite_gate_uses_ascii_temp_root_for_native_chroma(monkeypatch, tmp_path):
+    """The gate gives Windows native HNSW an ASCII temp path, even under Unicode profiles."""
+    observed = {}
+
+    def fake_pytest(command, *, cwd, env, **_kwargs):
+        observed.update(env)
+        Path(env["LANTAI_GATE_REPORT"]).write_text(
+            f"[TRIPEWIRE-ARMED] {env['LANTAI_GATE_REAL_HOME']}\n", encoding="utf-8"
+        )
+        return SimpleNamespace(returncode=0, stdout="1 passed in 0.01s\n", stderr="")
+
+    monkeypatch.setattr(RC.subprocess, "run", fake_pytest)
+    issues = RC.suite_gate_issues(RC.REPO_ROOT, timeout=1, real_home=str(tmp_path))
+    assert issues == []
+    work_dir = observed["COVERAGE_FILE"].rsplit(os.sep, 1)[0]
+    assert work_dir.startswith(str(RC.REPO_ROOT.parent))
+    assert work_dir.isascii()
+    assert observed["TMP"] == observed["TEMP"] == observed["TMPDIR"] == work_dir
 
 
 def test_suite_gate_catches_real_home_pollution(tmp_path):
