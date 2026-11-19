@@ -1228,7 +1228,7 @@ wheels = [
 
 [[package]]
 name = "lantai"
-version = "0.69.0"
+version = "0.69.1"
 source = { editable = "." }
 dependencies = [
     { name = "apscheduler" },
