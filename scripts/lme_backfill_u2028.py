@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
                 "latency_s": round(time.time() - t0, 1),
             }
         finally:
-            proc.kill()
+            lme_run._stop_owned_process(proc)
         report.append(record)
         print(json.dumps(record, ensure_ascii=False), flush=True)
     out_path = OUT / "backfill_report.json"

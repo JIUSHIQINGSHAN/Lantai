@@ -48,7 +48,13 @@ from lantai.eval.longmemeval import (
     result_session_ids,
     session_recall_hit,
 )
-from scripts.eval_runtime import assert_separate_home, production_home, require_api_key
+from scripts.memprobe_server_main import (  # noqa: E402
+    _assert_isolated_home,
+    _launch_owned_server,
+    _production_home,
+    _required_setting,
+    _stop_owned_process,
+)
 
 # 票 30 A2：报告面 stdout 钉 UTF-8——cp936 宿主 print GBK 外字符（emoji/U+2028/罕用字）直接崩
 if hasattr(sys.stdout, "reconfigure"):
@@ -74,6 +80,20 @@ CONFIGS = {
     },
 }
 COMMON_ENV = {"VERBATIM_IN_RECALL": "true", "RERANKER_ENABLED": "false"}
+RETRIEVAL_OVERRIDE_WHITELIST = frozenset(
+    {"RETRIEVAL_W_VECTOR", "RETRIEVAL_W_BM25", "RETRIEVAL_W_FTS"}
+)
+STARTUP_TIMEOUT = 120.0
+
+
+def _checked_retrieval_overrides(config: dict | None) -> dict[str, str]:
+    """Accept only canonical retrieval weights, never deployment/security settings."""
+    if config is None:
+        return {}
+    unexpected = set(config) - RETRIEVAL_OVERRIDE_WHITELIST
+    if unexpected:
+        raise ValueError(f"retrieval overrides not allowed: {sorted(unexpected)}")
+    return {key: str(value) for key, value in config.items()}
 
 
 def _load_all(n: int):
@@ -124,12 +144,12 @@ def _server_env(config: dict | None, qid: str | None) -> dict:
         "TEMP": os.environ.get("TEMP", ""),
         "TMP": os.environ.get("TMP", ""),
         # 真 embed/chat 凭据（生产 .env 同源三件）
-        "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY") or _dotenv()["OPENAI_API_KEY"],
-        "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL") or _dotenv()["OPENAI_BASE_URL"],
+        "OPENAI_API_KEY": _required_setting("OPENAI_API_KEY", _dotenv()),
+        "OPENAI_BASE_URL": _required_setting("OPENAI_BASE_URL", _dotenv()),
         "LLM_MODEL": os.environ.get("LLM_MODEL") or _dotenv().get("LLM_MODEL", "Qwen/Qwen3-8B"),
         "EMBED_MODEL": os.environ.get("EMBED_MODEL") or _dotenv().get("EMBED_MODEL", "BAAI/bge-m3"),
-        "API_KEY": require_api_key(_dotenv()),
-        "REMEMBRANCE_PROD_HOME": str(production_home(_dotenv(), repo_root=ROOT)),
+        "API_KEY": _required_setting("API_KEY", _dotenv()),
+        "REMEMBRANCE_PROD_HOME": str(_production_home()),
         "PORT": str(PORT),
         "LANTAI_HOME": str(_q_dir(qid) if qid else EVAL_DATA_DIR),
         "LANTAI_INTENT_OFF": "1",  # 意图分类走 LLM；召回口径关掉（如实记录）
@@ -137,22 +157,24 @@ def _server_env(config: dict | None, qid: str | None) -> dict:
         "MONITOR_ENABLED": "false",
         **{k: str(v) for k, v in COMMON_ENV.items()},
     }
-    if config:
-        env.update({k: str(v) for k, v in config.items()})
+    env.update(_checked_retrieval_overrides(config))
+    home = Path(env["LANTAI_HOME"]).expanduser().resolve()
+    env["LANTAI_HOME"] = str(home)
+    env["DATABASE_URL"] = f"sqlite:///{(home / 'remembrance.db').as_posix()}"
+    env["CHROMADB_PATH"] = str(home / ".chromadb")
     return env
 
 
 def _q_dir(qid: str | None) -> Path:
     """题级专属评测库目录（q_<qid>）；无 qid 返回公共根（仅占位/日志）。"""
     d = EVAL_DATA_DIR / f"q_{qid}" if qid else EVAL_DATA_DIR
-    return assert_separate_home(d, production_home(_dotenv(), repo_root=ROOT))
+    return _assert_isolated_home(d)
 
 
 def _assert_double_gate(qid: str | None = None) -> Path:
     """闸：评测数据目录 ≠ 生产路径；目录解析后前缀比对（防相对路径绕过）。"""
-    prod = production_home(_dotenv(), repo_root=ROOT)
-    ev = assert_separate_home(EVAL_DATA_DIR / f"q_{qid}" if qid else EVAL_DATA_DIR, prod)
-    print(f"[双闸通过] 评测库: {ev}（≠ 生产 {prod}）")
+    ev = _assert_isolated_home(EVAL_DATA_DIR / f"q_{qid}" if qid else EVAL_DATA_DIR)
+    print("[双闸通过] 评测目录已与受保护生产目录隔离")
     return ev
 
 
@@ -165,30 +187,29 @@ def _start_server(config: dict | None, qid: str | None = None) -> subprocess.Pop
         f"[横幅] 评测 API 启动：PORT={PORT} LANTAI_HOME={ev} config={config or 'ingest'} qid={qid}",
         flush=True,
     )
-    log_fh = open(OUT / "server.log", "ab")  # noqa: SIM115 — 生命周期=子进程，随 proc.kill() 由 OS 回收
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "lantai.api.app:app", "--port", str(PORT)],
-        cwd=str(ROOT),
-        env=env,
-        stdout=log_fh,
-        stderr=subprocess.STDOUT,
-    )
-    for _ in range(120):
-        try:
-            if requests.get(f"{BASE}/health", timeout=3).ok:
-                print("[横幅] /health 就绪", flush=True)
-                return proc
-        except requests.RequestException:
-            pass
-        time.sleep(1)
-    proc.kill()
-    raise SystemExit("评测 API 120s 未就绪（见 server.log），拒跑")
+    log_fh = open(OUT / "server.log", "ab")  # noqa: SIM115 — 进程输出句柄
+    try:
+        proc = _launch_owned_server(
+            [sys.executable, str(ROOT / "scripts/memprobe_server_main.py")],
+            cwd=str(ROOT),
+            env=env,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            timeout=STARTUP_TIMEOUT,
+            expected_port=PORT,
+        )
+    except RuntimeError as exc:
+        raise SystemExit(f"评测 API 未通过子进程就绪校验（见 server.log），拒跑: {exc}") from exc
+    finally:
+        log_fh.close()
+    print("[横幅] owned child readiness confirmed", flush=True)
+    return proc
 
 
 def _api_headers():
     # 环境变量 API_KEY 的鉴权形态是 X-API-Key（lantai/core/auth.py:147-149），
     # Bearer 是库内 key 通道——评测库无库内 key，用 Bearer 会 401。
-    return {"X-API-Key": require_api_key(_dotenv())}
+    return {"X-API-Key": _required_setting("API_KEY", _dotenv())}
 
 
 def _status(**kw):
@@ -303,7 +324,7 @@ def cmd_pilot(args) -> int:
         _status(pilot_done=True, pilot_question=q["question_id"], pilot_latency_s=per_q)
         return 0
     finally:
-        proc.kill()
+        _stop_owned_process(proc)
 
 
 def cmd_ingest(args) -> int:
@@ -336,7 +357,7 @@ def cmd_ingest(args) -> int:
             try:
                 rec = _ingest_one(proc, q, {})
             finally:
-                proc.kill()
+                _stop_owned_process(proc)
             rec["config_hash"] = chash
             f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
             f.flush()
@@ -462,7 +483,7 @@ def cmd_query(args) -> int:
                 records.append(rec)
                 print(f"[{i + 1}/{len(qs)}] {qid} hit5={rec.get('hit_at_5')}", flush=True)
             finally:
-                proc.kill()
+                _stop_owned_process(proc)
     _status(stage=f"query:{args.config}", finished=True, config_hash=chash)
     return 0
 
