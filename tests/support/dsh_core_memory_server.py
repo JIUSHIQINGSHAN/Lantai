@@ -19,8 +19,10 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import TracebackType
 from typing import Self
 from urllib.parse import urlsplit, urlunsplit
 
@@ -66,7 +68,8 @@ def _fixture_environment(home: Path) -> dict[str, str]:
 class IsolatedCoreMemoryServer:
     """Context-managed real HTTP process, temp DB, and synthetic control surface."""
 
-    def __init__(self, startup_timeout: float = 30.0):
+    def __init__(self, startup_timeout: float = 30.0) -> None:
+        """Start a synthetic loopback API and wait at most startup_timeout seconds."""
         self._temporary = tempfile.TemporaryDirectory(prefix="lantai-core-memory-fixture-")
         self.home = Path(self._temporary.name).resolve()
         self.token = FIXTURE_TOKEN
@@ -172,6 +175,7 @@ class IsolatedCoreMemoryServer:
         return self._control_post("update", {"block": block, "content": content})
 
     def stop(self) -> None:
+        """Request graceful shutdown, then release the child and temporary storage."""
         if self._closed:
             return
         try:
@@ -182,6 +186,7 @@ class IsolatedCoreMemoryServer:
         self.close()
 
     def close(self) -> None:
+        """Idempotently reap the bounded child process and remove its owned temp home."""
         if self._closed:
             return
         self._closed = True
@@ -210,13 +215,21 @@ class IsolatedCoreMemoryServer:
                 time.sleep(0.1)
 
     def __enter__(self) -> Self:
+        """Return the ready synthetic server for use inside a with block."""
         return self
 
-    def __exit__(self, _exc_type, _exc, _tb) -> None:
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc: BaseException | None,
+        _tb: TracebackType | None,
+    ) -> None:
+        """Stop the owned server without suppressing exceptions from the with block."""
         self.stop()
 
 
 def isolated_core_memory_server(startup_timeout: float = 30.0) -> IsolatedCoreMemoryServer:
+    """Create a ready, context-managed server with disposable synthetic-only storage."""
     return IsolatedCoreMemoryServer(startup_timeout=startup_timeout)
 
 
@@ -270,7 +283,8 @@ def _serve_child(home_arg: str, control_token: str) -> int:
     port = 0
 
     @asynccontextmanager
-    async def lifespan(_app):
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        """Seed the disposable database before announcing this loopback API as ready."""
         db_module.init_db()
         with db_module.get_session() as session:
             session.add(
@@ -308,13 +322,15 @@ def _serve_child(home_arg: str, control_token: str) -> int:
     app.include_router(memory_router)
 
     def authorize_control(request: Request) -> None:
+        """Require a loopback peer and the parent-owned synthetic control token."""
         peer = request.client.host if request.client else ""
         supplied = request.headers.get("X-Fixture-Control", "")
         if peer not in {"127.0.0.1", "::1"} or not secrets.compare_digest(supplied, control_token):
             raise HTTPException(status_code=401, detail="fixture control authorization failed")
 
     @app.post("/__fixture__/update")
-    async def update_fixture(request: Request):
+    async def update_fixture(request: Request) -> dict:
+        """Validate a synthetic block update and persist it through the real service."""
         authorize_control(request)
         raw = await request.body()
         if len(raw) > MAX_FIXTURE_CONTENT_BYTES + 256:
@@ -338,7 +354,8 @@ def _serve_child(home_arg: str, control_token: str) -> int:
             ) from exc
 
     @app.post("/__fixture__/stop")
-    async def stop_fixture(request: Request):
+    async def stop_fixture(request: Request) -> JSONResponse:
+        """Schedule loopback server shutdown after acknowledging its parent request."""
         authorize_control(request)
         threading.Timer(0.05, lambda: setattr(server, "should_exit", True)).start()
         return JSONResponse({"ok": True})

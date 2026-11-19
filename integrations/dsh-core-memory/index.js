@@ -98,10 +98,12 @@ export function apply(ctx, input = {}) {
 
   ctx.on('agent/created', attach)
   ctx.on('working-directory/access', async (request, next) => {
-    // A requested change invalidates before asynchronous validation. Even a failed change
-    // requires explicit refresh; a transient leave-and-return never revives an old snapshot.
-    if (request.path !== null) agents.get(request.agent)?.memory.invalidate('scope_changed')
-    return next()
+    const beforeKey = workspaceKey(ctx.workingDirectory.get(request.agent.session))
+    const directory = await next()
+    // Only a committed scope change ends the stable snapshot. Compare this access's
+    // result, not a later cwd: leaving and returning still requires explicit refresh.
+    if (workspaceKey(directory) !== beforeKey) agents.get(request.agent)?.memory.invalidate('scope_changed')
+    return directory
   })
   ctx.effect(() => async () => {
     unloaded = true

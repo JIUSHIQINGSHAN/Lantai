@@ -14,7 +14,7 @@ CoreMemoryBlock 与按轮搜索解决不同问题。用户希望新会话自动�
 2. 明确配置 workspace/namespace/userId/tenantId 绑定，默认 policy/identity，task 只能显式启用。所有被选择的行必须归属精确匹配且同类型唯一；不替服务端修复或补填归属。
 3. 在 agent.ctx 注册 systemPrompt.context，数据用固定说明和 JSON 编码围栏承载，设置 interpolate:false；不把数据库正文升级为系统提示指令，不重写system-prompt/assemble，不发送用户原文。
 4. endpoint 仅 HTTPS 或显式启用的环回 HTTP；拒绝认证URL、query、fragment、重定向。读取凭据使用 DSH credentials 引用，每次操作重新解析。响应和上下文 UTF-8 字节、总等待有上限，整包超限失败不截断。
-5. 会话内快照稳定，恢复重新读取，宿主负责压缩后的 runtime reminder 重建。工作区更换使快照失效；子代理默认无记忆注册；普通fork重新走绑定。内存缓存不跨代理/身份复用。
+5. 会话内快照稳定，恢复重新读取，宿主负责压缩后的 runtime reminder 重建。仅成功提交的实际工作目录变化使快照失效；同目录、切换失败或验证取消保留适用快照，真正离开再返回仍需显式刷新。子代理默认无记忆注册；普通fork重新走绑定。内存缓存不跨代理/身份复用。
 6. 提供显式刷新及无正文状态工具。刷新失败清除旧快照并报告固定原因码；并发、取消、卸载用 generation 与 AbortSignal 防迟到写回。插件与agent均拥有注册清理责任。
 7. 独立工作树开发，在真实 Cordis/AgentLoop/Session 和环回 fixture 上验证；不改运行中的profile、不连接生产库、不自动发布。
 

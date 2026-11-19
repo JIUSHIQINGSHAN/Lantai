@@ -56,8 +56,34 @@ function assertScalarStatus(value) {
   }
 }
 
+async function within(operation, message, timeoutMs = 2000) {
+  let timer;
+  try {
+    return await Promise.race([operation, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function startFixture() {
   const fixture = { requests: [], content: INITIAL, version: 1, status: 200 };
+  const queued = [];
+  const pending = new Set();
+  fixture.holdNextResponse = () => {
+    const started = Promise.withResolvers();
+    const released = Promise.withResolvers();
+    const completed = Promise.withResolvers();
+    const closed = Promise.withResolvers();
+    const hold = { started, released, completed, closed };
+    queued.push(hold);
+    pending.add(hold);
+    return {
+      started: started.promise, closed: closed.promise, completed: completed.promise,
+      release: () => released.resolve(),
+    };
+  };
   fixture.server = http.createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
@@ -72,17 +98,32 @@ async function startFixture() {
       response.writeHead(404).end();
       return;
     }
-    response.writeHead(fixture.status, { 'content-type': 'application/json' });
-    response.end(JSON.stringify(fixture.status === 200 ? { blocks: [{
+    const body = JSON.stringify(fixture.status === 200 ? { blocks: [{
       id: 'core-1', block: 'policy', namespace: 'fixture',
       user_id: 'fixture-user', tenant_id: null, content: fixture.content,
       version: fixture.version, updated_at: '2026-11-19T00:00:00Z',
-    }] } : { error: 'fixture-only-failure' }));
+    }] } : { error: 'fixture-only-failure' });
+    response.writeHead(fixture.status, { 'content-type': 'application/json' });
+    const hold = queued.shift();
+    if (hold) {
+      response.once('close', () => hold.closed.resolve());
+      // Flush real headers and an incomplete JSON body: fetch's body reader is
+      // pending while the public Host cancellation/disposal boundary runs.
+      response.write(body.slice(0, 1));
+      hold.started.resolve();
+      await hold.released.promise;
+      response.end(body.slice(1));
+      pending.delete(hold);
+      hold.completed.resolve();
+    } else {
+      response.end(body);
+    }
   });
   fixture.server.listen(0, '127.0.0.1');
   await once(fixture.server, 'listening');
   fixture.baseUrl = `http://127.0.0.1:${fixture.server.address().port}`;
   fixture.close = async () => {
+    for (const hold of pending) hold.released.resolve();
     fixture.server.closeAllConnections();
     await new Promise((resolve, reject) => fixture.server.close(error => error ? reject(error) : resolve()));
   };
@@ -317,6 +358,66 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
     assert.ok((await send(fork.agent, 'fork-prompt')).messages.some(message => messageText(message).includes('sentinel-initial')));
   });
 
+  await t.test('setting the same real working directory preserves the stable snapshot', async () => {
+    const unchanged = await create('core-memory-directory-unchanged');
+    await send(unchanged.agent, 'before-same-directory');
+    const count = fixture.requests.length;
+    const changes = unchanged.agent.session.snapshotEvents().filter(event => event.type === 'working-directory/change').length;
+    assert.equal(await root.workingDirectory.set(unchanged.agent, path.join(WORKSPACE, '.')), WORKSPACE);
+    assert.equal(unchanged.agent.session.snapshotEvents().filter(event => event.type === 'working-directory/change').length, changes);
+    assert.equal((await tool(unchanged.agent, 'lantai_core_status')).state, 'ready');
+    const request = await send(unchanged.agent, 'after-same-directory');
+    assert.ok(request.messages.some(message => messageText(message).includes('sentinel-initial')));
+    assert.equal(memorySnapshots(unchanged.agent.session).length, 1);
+    assert.equal(fixture.requests.length, count, 'a no-op directory request must not need a reload');
+  });
+
+  await t.test('a failed real directory change preserves the stable snapshot', async () => {
+    const unchanged = await create('core-memory-directory-failed');
+    await send(unchanged.agent, 'before-invalid-directory');
+    const count = fixture.requests.length;
+    await assert.rejects(root.workingDirectory.set(unchanged.agent, path.join(temporaryRoot, 'does-not-exist')),
+      error => error.code === 'WORKING_DIRECTORY_NOT_FOUND');
+    assert.equal(root.workingDirectory.get(unchanged.agent.session), WORKSPACE);
+    assert.equal((await tool(unchanged.agent, 'lantai_core_status')).state, 'ready');
+    const request = await send(unchanged.agent, 'after-invalid-directory');
+    assert.ok(request.messages.some(message => messageText(message).includes('sentinel-initial')));
+    assert.equal(memorySnapshots(unchanged.agent.session).length, 1);
+    assert.equal(fixture.requests.length, count);
+  });
+
+  await t.test('cancelling real directory validation preserves the stable snapshot', async () => {
+    const unchanged = await create('core-memory-directory-cancelled');
+    await send(unchanged.agent, 'before-cancelled-directory');
+    const count = fixture.requests.length;
+    const validating = Promise.withResolvers();
+    const control = new AbortController();
+    // A real cooperative Host listener gates the real validation/commit callback.
+    const stopWaiting = root.on('working-directory/access', async (request, next) => {
+      if (request.agent === unchanged.agent && request.path === otherWorkspace) {
+        validating.resolve();
+        await once(request.signal, 'abort');
+      }
+      return next();
+    });
+    try {
+      const changed = root.workingDirectory.set(unchanged.agent, otherWorkspace, control.signal);
+      const rejected = assert.rejects(changed);
+      await within(validating.promise, 'directory validation must begin');
+      control.abort(new Error('fixture directory validation cancelled'));
+      await within(rejected, 'cancelled directory validation must settle');
+      assert.equal(root.workingDirectory.get(unchanged.agent.session), WORKSPACE);
+      assert.equal((await tool(unchanged.agent, 'lantai_core_status')).state, 'ready');
+      const request = await send(unchanged.agent, 'after-cancelled-directory');
+      assert.ok(request.messages.some(message => messageText(message).includes('sentinel-initial')));
+      assert.equal(memorySnapshots(unchanged.agent.session).length, 1);
+      assert.equal(fixture.requests.length, count);
+    } finally {
+      control.abort();
+      stopWaiting();
+    }
+  });
+
   await t.test('real working-directory changes invalidate context until explicit refresh', async () => {
     const changing = await create('core-memory-directory-change');
     await send(changing.agent, 'before-working-directory-change');
@@ -335,6 +436,29 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
     assert.equal(fixture.requests.length, count, 'directory changes must not silently fetch memory');
     await tool(changing.agent, 'lantai_core_refresh');
     request = await send(changing.agent, 'after-directory-explicit-refresh');
+    latest = [...request.messages].reverse().find(message => message.source?.form === 'snapshot');
+    assert.ok(latest.source.sections.some(section => section.name === 'lantai:core-memory' && section.text.includes('sentinel-initial')));
+    assert.equal(fixture.requests.length, count + 1);
+  });
+
+  await t.test('a real directory round trip without a model step still requires explicit refresh', async () => {
+    const changing = await create('core-memory-directory-round-trip');
+    await send(changing.agent, 'before-unobserved-directory-round-trip');
+    const count = fixture.requests.length;
+    const changed = await Promise.all([
+      root.workingDirectory.set(changing.agent, otherWorkspace),
+      root.workingDirectory.set(changing.agent, WORKSPACE),
+    ]);
+    assert.deepEqual(changed, [otherWorkspace, WORKSPACE]);
+    assert.equal(root.workingDirectory.get(changing.agent.session), WORKSPACE);
+    assert.equal((await tool(changing.agent, 'lantai_core_status')).reason, 'scope_changed');
+    let request = await send(changing.agent, 'after-unobserved-directory-round-trip');
+    let latest = [...request.messages].reverse().find(message => message.source?.form === 'snapshot');
+    assert.ok(latest);
+    assert.ok(!latest.source.sections.some(section => section.name === 'lantai:core-memory' && section.text.includes('sentinel')));
+    assert.equal(fixture.requests.length, count);
+    await tool(changing.agent, 'lantai_core_refresh');
+    request = await send(changing.agent, 'after-round-trip-explicit-refresh');
     latest = [...request.messages].reverse().find(message => message.source?.form === 'snapshot');
     assert.ok(latest.source.sections.some(section => section.name === 'lantai:core-memory' && section.text.includes('sentinel-initial')));
     assert.equal(fixture.requests.length, count + 1);
@@ -441,6 +565,136 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
     assert.ok(!messageText(latestContext).includes(UPDATED));
     assert.ok(!latestContext.source.sections.some(section => section.name === 'lantai:core-memory'));
   });
+
+  async function assertUnregistered(agent) {
+    for (const name of ['lantai_core_status', 'lantai_core_refresh']) {
+      assert.equal(root.tools.get(name, agent), undefined, `${name} must leave the real scoped registry`);
+    }
+    // Inspect public provider assembly without driving a disposed agent.
+    const assembly = await root.systemPrompt.assemble({ scope: agent });
+    assert.ok(!assembly.contexts.some(section => section.name === 'lantai:core-memory'));
+  }
+
+  await t.test('cancelling creation during a real HTTP body read drains initialization and scoped registrations', async () => {
+    const fiber = await root.plugin(plugin, { ...config, timeoutMs: 10000 });
+    const held = fixture.holdNextResponse();
+    const control = new AbortController();
+    const id = 'core-memory-initial-read-cancelled';
+    const modelCount = requests.length;
+    const creating = create(id, {}, { signal: control.signal }).then(handle => ({ handle }), error => ({ error }));
+    try {
+      await within(held.started, 'initial HTTP body read must start');
+      const agent = root.agents.get(id);
+      assert.ok(agent, 'the real factory has entered its initialization announcement');
+      assert.ok(root.tools.get('lantai_core_refresh', agent));
+      control.abort(new Error('fixture creation cancelled during body read'));
+      const result = await within(creating, 'cancelled creation must drain before the remote body is released');
+      assert.ok(result.error, 'public agent creation must reject cancellation');
+      assert.equal(root.agents.get(id), undefined);
+      assert.equal(root.sessions.get(id), undefined);
+      await within(held.closed, 'creation cancellation must abort the HTTP body');
+      await assertUnregistered(agent);
+      held.release();
+      await within(held.completed, 'late cancelled response must settle');
+      await assertUnregistered(agent);
+      assert.equal(memorySnapshots(agent.session).length, 0);
+      assert.equal(requests.length, modelCount, 'cancelled initialization must not dispatch a model request');
+    } finally {
+      control.abort();
+      held.release();
+      await within(fiber.dispose(), 'cancelled-creation plugin cleanup must settle');
+    }
+  });
+
+  await t.test('unloading during a real initial HTTP read finishes initialization without late context or tools', async () => {
+    const fiber = await root.plugin(plugin, { ...config, timeoutMs: 10000 });
+    const held = fixture.holdNextResponse();
+    const id = 'core-memory-initial-read-unloaded';
+    const creating = create(id);
+    try {
+      await within(held.started, 'initial HTTP read must start before plugin unload');
+      const agent = root.agents.get(id);
+      assert.ok(agent);
+      assert.ok(root.tools.get('lantai_core_refresh', agent));
+      await within(fiber.dispose(), 'plugin unload must cancel and drain its initial HTTP read');
+      const handle = await within(creating, 'agent initialization must finish after plugin unload');
+      assert.equal(handle.agent, agent);
+      await within(held.closed, 'plugin unload must abort the HTTP body');
+      await assertUnregistered(agent);
+      held.release();
+      await within(held.completed, 'late unloaded response must settle');
+      const request = await send(agent, 'after-initial-read-plugin-unload');
+      assert.ok(!request.messages.some(message => messageText(message).includes('sentinel')));
+      assert.equal(memorySnapshots(agent.session).length, 0);
+      await assertUnregistered(agent);
+    } finally {
+      held.release();
+      await within(fiber.dispose(), 'initial-read unload cleanup must be idempotent');
+    }
+  });
+
+  await t.test('a stalled real initial HTTP body read reaches its configured budget without blocking the first step', async () => {
+    const fiber = await root.plugin(plugin, { ...config, timeoutMs: 100 });
+    const held = fixture.holdNextResponse();
+    const creating = create('core-memory-initial-read-timeout');
+    try {
+      await within(held.started, 'budgeted initial HTTP body read must start');
+      const handle = await within(creating, 'initial HTTP timeout must release agent initialization');
+      await within(held.closed, 'initial timeout must abort the HTTP body');
+      const status = await tool(handle.agent, 'lantai_core_status');
+      assert.equal(status.state, 'unavailable');
+      assert.equal(status.reason, 'timeout');
+      assert.equal(status.blockCount, 0);
+      held.release();
+      await within(held.completed, 'late timed-out response must settle');
+      const request = await send(handle.agent, 'after-initial-read-timeout');
+      assert.ok(!request.messages.some(message => messageText(message).includes('sentinel')));
+      assert.equal((await tool(handle.agent, 'lantai_core_status')).reason, 'timeout');
+    } finally {
+      held.release();
+      await within(fiber.dispose(), 'initial-timeout plugin cleanup must settle');
+    }
+  });
+
+  for (const owners of ['agent', 'agent-and-plugin']) {
+    await t.test(`${owners} release during a real refresh drains both owners without late registrations`, async () => {
+      const fiber = await root.plugin(plugin, { ...config, timeoutMs: 10000 });
+      let held;
+      try {
+        const handle = await create(`core-memory-refresh-release-${owners}`);
+        await send(handle.agent, `before-refresh-release-${owners}`);
+        const count = fixture.requests.length;
+        const modelCount = requests.length;
+        const snapshots = memorySnapshots(handle.agent.session).length;
+        held = fixture.holdNextResponse();
+        const refreshing = tool(handle.agent, 'lantai_core_refresh');
+        await within(held.started, 'refresh HTTP body read must start before release');
+        const releases = [handle.dispose()];
+        if (owners === 'agent-and-plugin') releases.push(fiber.dispose());
+        await within(Promise.all(releases), 'owner release must drain before the remote body is released');
+        const status = await within(refreshing, 'disposed refresh execution must settle');
+        assert.equal(status.state, 'disposed');
+        assert.equal(status.outcome, 'disposed');
+        assert.equal(status.blockCount, 0);
+        handles.delete(handle);
+        assert.equal(root.agents.get(handle.agent.session.id), undefined);
+        assert.equal(root.sessions.get(handle.agent.session.id), undefined);
+        await within(held.closed, 'owner release must abort the refresh HTTP body');
+        await assertUnregistered(handle.agent);
+        held.release();
+        await within(held.completed, 'late refresh response must settle');
+        await assertUnregistered(handle.agent);
+        assert.equal(memorySnapshots(handle.agent.session).length, snapshots);
+        assert.equal(requests.length, modelCount, 'release must not dispatch a late model request');
+        assert.equal(fixture.requests.length, count + 1, 'release must not retry the HTTP request');
+        // The second owner and repeated owner disposal must share settled cleanup.
+        await within(Promise.all([handle.dispose(), fiber.dispose()]), 'both owner cleanups must remain idempotent');
+      } finally {
+        held?.release();
+        await within(fiber.dispose(), 'refresh-release plugin cleanup must settle');
+      }
+    });
+  }
 
   // Optional bridge to the separately owned real-Lantai fixture. It remains
   // disabled without explicit synthetic fixture environment variables.

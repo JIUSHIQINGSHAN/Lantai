@@ -722,6 +722,8 @@ def suite_gate_issues(
     ) as work_dir:
         report_path = os.path.join(work_dir, "tripwire_report.txt")
         env = os.environ.copy()
+        # The release suite owns the CI Node check; missing or incompatible Node must fail, not skip.
+        env["LANTAI_TEST_NODE"] = env.get("LANTAI_TEST_NODE") or shutil.which("node") or "node"
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONPATH"] = os.pathsep.join([str(support), env.get("PYTHONPATH", "")]).strip(
             os.pathsep
@@ -1278,8 +1280,8 @@ CI_STEP_OWNERS: dict[str, str] = {
     "ruff format --check lantai/ tests/ scripts/": "CI lint 门禁",
     "pytest tests/ -q": "全量测试 + 宿主目录绊线",
     "pytest tests/ -q --cov=lantai --cov-report=term-missing": "全量测试 + 宿主目录绊线",
-    # test_dsh_core_memory_contract.py 实际执行同一 Node 测试命令；缺能力时明确 skip，
-    # 全量发布门禁的零 skipped 判据不会把未运行的 JS 测试当成已通过。
+    # test_dsh_core_memory_contract.py 实际执行同一 Node 测试命令；发布门禁始终显式设置
+    # LANTAI_TEST_NODE，缺少兼容 Node 时契约测试直接失败，不走普通开发跑测的 skip 分支。
     "node --test integrations/dsh-core-memory/test/core.test.mjs integrations/dsh-core-memory/test/session.test.mjs integrations/dsh-core-memory/test/package.test.mjs": "全量测试 + 宿主目录绊线",
     "python scripts/run_forgetting_quality.py --check": "遗忘质量离线门禁",
     "python -m build --wheel": "构建产物（wheel）",

@@ -12,11 +12,14 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy.engine import Engine
+from sqlmodel import Session
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_CORE = ROOT / "integrations" / "dsh-core-memory" / "lib" / "core.js"
@@ -45,27 +48,21 @@ try {
 
 @pytest.fixture(scope="module", autouse=True)
 def node_runtime() -> str:
+    """Select Node >=24.9.0; reject explicit errors and skip absent ambient support."""
     configured = os.environ.get("LANTAI_TEST_NODE")
-    if configured:
-        executable = shutil.which(configured) or configured
+    executable = shutil.which(configured or "node") or configured
+    version = ""
+    if executable:
         try:
-            version = subprocess.run(
-                [executable, "--version"],
-                check=True,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=10,
-            ).stdout.strip()
+            version = _probe_node_version(executable)
         except (OSError, subprocess.SubprocessError) as exc:
-            pytest.fail(f"configured LANTAI_TEST_NODE could not run: {exc}")
-        if not version.startswith("v24."):
-            pytest.fail(f"LANTAI_TEST_NODE must be Node 24, found {version}")
-        return executable
-
-    executable = shutil.which("node")
-    if not os.environ.get("LANTAI_TEST_NODE") and not _supported_node_on_path():
+            if configured:
+                pytest.fail(f"configured LANTAI_TEST_NODE could not run: {exc}")
+    parsed = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", version)
+    supported = parsed is not None and tuple(map(int, parsed.groups())) >= (24, 9, 0)
+    if configured and not supported:
+        pytest.fail(f"LANTAI_TEST_NODE must be Node >=24.9.0, found {version}")
+    if not os.environ.get("LANTAI_TEST_NODE") and not supported:
         pytest.skip(
             "Node 24 is unavailable; set LANTAI_TEST_NODE for DSH core-memory contract tests"
         )
@@ -73,23 +70,17 @@ def node_runtime() -> str:
     return executable
 
 
-def _supported_node_on_path() -> bool:
-    executable = shutil.which("node")
-    if executable is None:
-        return False
-    try:
-        version = subprocess.run(
-            [executable, "--version"],
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=10,
-        ).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return version.startswith("v24.")
+def _probe_node_version(executable: str) -> str:
+    """Read the selected executable's version once with a bounded real process."""
+    return subprocess.run(
+        [executable, "--version"],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    ).stdout.strip()
 
 
 def _node(executable: str, operation: str, **values):
@@ -107,7 +98,7 @@ def _node(executable: str, operation: str, **values):
     return json.loads(completed.stdout)
 
 
-def test_node_core_memory_suite_smoke(node_runtime):
+def test_node_core_memory_suite_smoke(node_runtime: str) -> None:
     """The Python gate executes the actual Node package suite, not only a bridge snippet."""
     test_files = [
         ROOT / "integrations" / "dsh-core-memory" / "test" / filename
@@ -141,7 +132,9 @@ def _real_route_client(principal):
     return TestClient(app)
 
 
-def test_real_service_and_core_memory_route_match_node_snapshot_contract(node_runtime, param_env):
+def test_real_service_and_core_memory_route_match_node_snapshot_contract(
+    node_runtime: str, param_env: tuple[Callable[[], Session], Engine]
+) -> None:
     """Real SQLite writes, version bump, route JSON, then the actual Node selector."""
     from lantai.core.auth import Principal
     from lantai.services.memory_service import put_core_memory
@@ -195,7 +188,9 @@ def test_real_service_and_core_memory_route_match_node_snapshot_contract(node_ru
     assert "Updated fixture policy stays data." in selected["result"]["text"]
 
 
-def test_real_route_legacy_null_owner_and_duplicate_candidate_fail_closed(node_runtime, param_env):
+def test_real_route_legacy_null_owner_and_duplicate_candidate_fail_closed(
+    node_runtime: str, param_env: tuple[Callable[[], Session], Engine]
+) -> None:
     """A legacy NULL owner is rejected, and duplicate real candidates stay ambiguous."""
     from lantai.core.auth import Principal
     from lantai.models.tables import CoreMemoryBlock
@@ -242,7 +237,7 @@ def test_real_route_legacy_null_owner_and_duplicate_candidate_fail_closed(node_r
     assert rejected_duplicate == {"ok": False, "code": "ambiguous_blocks"}
 
 
-def test_isolated_real_lantai_http_fixture_flows_through_node_adapter(node_runtime):
+def test_isolated_real_lantai_http_fixture_flows_through_node_adapter(node_runtime: str) -> None:
     """A child process runs the real authenticated route against a disposable DB."""
     from tests.support.dsh_core_memory_server import isolated_core_memory_server
 
@@ -338,6 +333,6 @@ def test_isolated_real_lantai_http_fixture_flows_through_node_adapter(node_runti
             runtime_output = completed.stdout + completed.stderr
             assert completed.returncode == 0, runtime_output[-16000:]
             assert "realBackend=fixture" in runtime_output, runtime_output[-16000:]
-            assert re.search(r"(?m)^ℹ tests 15\s*$", runtime_output), runtime_output[-16000:]
-            assert re.search(r"(?m)^ℹ pass 15\s*$", runtime_output), runtime_output[-16000:]
+            assert re.search(r"(?m)^ℹ tests 24\s*$", runtime_output), runtime_output[-16000:]
+            assert re.search(r"(?m)^ℹ pass 24\s*$", runtime_output), runtime_output[-16000:]
             assert re.search(r"(?m)^ℹ fail 0\s*$", runtime_output), runtime_output[-16000:]
