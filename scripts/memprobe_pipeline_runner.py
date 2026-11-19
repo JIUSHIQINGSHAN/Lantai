@@ -12,7 +12,7 @@ import sys
 import time
 from pathlib import Path
 
-REPO_ROOT = Path("D:/Projects/记忆")
+REPO_ROOT = Path(__file__).resolve().parent.parent
 EVID_DIR = REPO_ROOT / "docs/benchmarks/memprobe-2026-10"
 REPORT_PATH = EVID_DIR / "report.json"
 FORMAL_SH = REPO_ROOT / "scripts/memprobe_run_formal.sh"

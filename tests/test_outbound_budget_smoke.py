@@ -135,6 +135,8 @@ class TestLlmBudget:
     """病灶 2：SDK 默认 600s×2 重试 × tenacity 3 连击 ≈90 分钟 → 显式立法。"""
 
     def test_get_client_explicit_timeout_and_retries(self, monkeypatch):
+        # This tests SDK budgets, independently of the host's proxy discovery.
+        monkeypatch.setenv("NO_PROXY", "*")
         from lantai.core.settings import settings as _settings
         from lantai.llm import client as client_mod
 

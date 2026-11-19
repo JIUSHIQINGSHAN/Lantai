@@ -34,12 +34,19 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.eval_runtime import assert_separate_home, production_home, require_api_key
+from scripts.memprobe_server_main import (  # noqa: E402
+    _assert_isolated_home,
+    _launch_owned_server,
+    _production_home,
+    _required_setting,
+    _stop_owned_process,
+)
 
 OUT = ROOT / "docs/benchmarks/memprobe-2026-10"
 MV_HOME = ROOT / ".scratch/memprobe-suite/mv-home"
 PORT = 8792
 BASE = f"http://127.0.0.1:{PORT}"
+STARTUP_TIMEOUT = 120.0
 
 
 def _dotenv() -> dict[str, str]:
@@ -57,13 +64,14 @@ def _dotenv() -> dict[str, str]:
 
 
 def _assert_double_gate() -> Path:
-    prod = production_home(_dotenv(), repo_root=ROOT)
-    ev = assert_separate_home(MV_HOME, prod)
-    print(f"[双闸通过] 评测库: {ev}（≠ 生产 {prod}）")
+    ev = _assert_isolated_home(MV_HOME)
+    print("[双闸通过] 评测目录已与受保护生产目录隔离")
     return ev
 
 
 def _server_env() -> dict:
+    production = _production_home()
+    dotenv = _dotenv()
     env = {
         "PATH": os.environ.get("PATH", ""),
         # 子进程 stdio/日志句柄钉 UTF-8（票 30 A3）：不钉则中文日志按 cp936 落 server.log
@@ -74,14 +82,16 @@ def _server_env() -> dict:
         "HOMEPATH": os.environ.get("HOMEPATH", ""),
         "TEMP": os.environ.get("TEMP", ""),
         "TMP": os.environ.get("TMP", ""),
-        "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY") or _dotenv()["OPENAI_API_KEY"],
-        "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL") or _dotenv()["OPENAI_BASE_URL"],
+        "OPENAI_API_KEY": _required_setting("OPENAI_API_KEY", dotenv),
+        "OPENAI_BASE_URL": _required_setting("OPENAI_BASE_URL", dotenv),
         "LLM_MODEL": os.environ.get("LLM_MODEL") or _dotenv().get("LLM_MODEL", "Qwen/Qwen3-8B"),
         "EMBED_MODEL": os.environ.get("EMBED_MODEL") or _dotenv().get("EMBED_MODEL", "BAAI/bge-m3"),
-        "API_KEY": require_api_key(_dotenv()),
-        "REMEMBRANCE_PROD_HOME": str(production_home(_dotenv(), repo_root=ROOT)),
+        "API_KEY": _required_setting("API_KEY", dotenv),
+        "REMEMBRANCE_PROD_HOME": str(production),
         "PORT": str(PORT),
-        "LANTAI_HOME": str(MV_HOME),
+        "LANTAI_HOME": str(MV_HOME.resolve()),
+        "DATABASE_URL": f"sqlite:///{(MV_HOME.resolve() / 'remembrance.db').as_posix()}",
+        "CHROMADB_PATH": str(MV_HOME.resolve() / ".chromadb"),
         "LANTAI_INTENT_OFF": "1",
         "LANTAI_RUN_SCHEDULER": "false",
         "MONITOR_ENABLED": "false",
@@ -92,30 +102,29 @@ def _server_env() -> dict:
 
 
 def _headers():
-    return {"X-API-Key": require_api_key(_dotenv())}
+    return {"X-API-Key": _required_setting("API_KEY", _dotenv())}
 
 
 def _start_server() -> subprocess.Popen:
-    _assert_double_gate()
+    env = _server_env()
     MV_HOME.mkdir(parents=True, exist_ok=True)
-    log_fh = open(MV_HOME / "server.log", "ab")  # noqa: SIM115 — 生命周期=子进程
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "lantai.api.app:app", "--port", str(PORT)],
-        cwd=str(ROOT),
-        env=_server_env(),
-        stdout=log_fh,
-        stderr=subprocess.STDOUT,
-    )
-    for _ in range(120):
-        try:
-            if requests.get(f"{BASE}/health", timeout=3).ok:
-                print("[横幅] /health 就绪", flush=True)
-                return proc
-        except requests.RequestException:
-            pass
-        time.sleep(1)
-    proc.kill()
-    raise SystemExit("评测 API 120s 未就绪（见 server.log），拒跑")
+    log_fh = open(MV_HOME / "server.log", "ab")  # noqa: SIM115 — 进程输出句柄
+    try:
+        proc = _launch_owned_server(
+            [sys.executable, str(ROOT / "scripts/memprobe_server_main.py")],
+            cwd=str(ROOT),
+            env=env,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            timeout=STARTUP_TIMEOUT,
+            expected_port=PORT,
+        )
+    except RuntimeError as exc:
+        raise SystemExit(f"评测 API 未通过子进程就绪校验（见 server.log），拒跑: {exc}") from exc
+    finally:
+        log_fh.close()
+    print("[横幅] owned child readiness confirmed", flush=True)
+    return proc
 
 
 def _search(query: str, top_k: int = 8) -> dict:
@@ -145,7 +154,12 @@ def _fmt_results(sj: dict) -> list[dict]:
     return out
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    import argparse
+
+    argparse.ArgumentParser(description=__doc__).parse_args(argv)
+    _assert_double_gate()
+    server_env = _server_env()
     OUT.mkdir(parents=True, exist_ok=True)
     if MV_HOME.exists():
         import shutil
@@ -154,7 +168,7 @@ def main() -> int:
     evidence: dict = {
         "purpose": "票 03 决策一微验证：assistant/tool 行在对话链 vs 逐字通道下的保真",
         "date": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "env": {"llm_model": _server_env()["LLM_MODEL"], "port": PORT, "home": str(MV_HOME)},
+        "env": {"llm_model": server_env["LLM_MODEL"], "port": PORT, "home": str(MV_HOME)},
         "steps": [],
     }
     proc = _start_server()
@@ -264,7 +278,7 @@ def main() -> int:
         )
         return 0
     finally:
-        proc.kill()
+        _stop_owned_process(proc)
 
 
 if __name__ == "__main__":

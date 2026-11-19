@@ -11,7 +11,7 @@
 让 AI 在对的时间，找到对的回忆。
 ```
 
-[![Version](https://img.shields.io/badge/version-0.69.0-blue.svg)](https://github.com/JIUSHIQINGSHAN/Lantai)
+[![Version](https://img.shields.io/badge/version-0.69.1-blue.svg)](https://github.com/JIUSHIQINGSHAN/Lantai)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-yellow.svg)](https://www.python.org/)
 [![Tests](https://github.com/JIUSHIQINGSHAN/Lantai/actions/workflows/tests.yml/badge.svg)](https://github.com/JIUSHIQINGSHAN/Lantai/actions/workflows/tests.yml)
 [![改编自](https://img.shields.io/badge/based%20on-aiduMEM-orange.svg)](https://github.com/monkey2jack/aiduMEM)
@@ -94,12 +94,12 @@ lantai-server
 ### 方式二：Docker 容器运行
 
 ```bash
-docker build -t lantai:0.69.0 .
+docker build -t lantai:0.69.1 .
 docker run -d -p 8767:8767 \
   -e API_KEY=your-admin-key \
   -e OPENAI_API_KEY=sk-xxx \
   -v /your/data:/data \
-  lantai:0.69.0
+  lantai:0.69.1
 ```
 
 > 容器默认 `HOST=0.0.0.0` 对外暴露，**必须注入 `API_KEY`**——启动守卫（`assert_secure_binding`）会在非回环地址且无密钥时拒绝运行；请求路径也会校验 `X-API-Key`（或库内 Bearer key），非回环不再回退 DEV MODE。
@@ -191,7 +191,7 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 - **Shell Hook**（读，零依赖）：stdin 收 JSON，2s 硬超时返回 Markdown 上下文，≤3 字符不注入
 - **MCP server**（写，标准协议）：入口 `lantai-mcp`（`python -m lantai.cli.mcp`），标准 JSON-RPC 2.0，输入校验 + 异常隔离。默认档只暴露核心 6 工具（`search` / `add` / `feedback` / `offload_read` / `mem_recent` / `core_memory_get`，fail-closed）；`LANTAI_MCP_PROFILE=full` 显式放开全量 96 项
 - **远程 MCP bridge**：入口 `lantai-mcp-bridge`，通过 HTTPS 将 stdio 工具调用转发至远程 Lantai；无本地 DB、`.env` 或代理发现，配置与安全约束见 [说明](docs/mcp-bridge.md)。
-- **DSH 可选召回**：独立的 `lantai-recall` Host bundle 默认关闭；只对显式授权工作区的真人主会话尝试检索，不会自动摄取对话。安装、发送内容与历史留存说明见 [bundle 文档](integrations/dsh-lantai-recall/README.md)。
+- **DSH 召回研究**：独立 `lantai-recall` 包已暂停启用，在副作用前拒绝自动召回；现有 MCP 逐调用归因适配器保持独立。原因与重新验收条件见 [bundle 文档](integrations/dsh-lantai-recall/README.md)。
 
 ### 🛡️ 护盾（安全基线）
 

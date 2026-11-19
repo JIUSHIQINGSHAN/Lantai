@@ -1,15 +1,22 @@
 """Real product scripts: keyboard, drawer, layout and motion preference regressions."""
 
+import json
+import threading
 from pathlib import Path
 
 import pytest
 
-from tests.support.ui_browser import chromium, product_server
+from tests.support.ui_browser import RECALL_REPORT, chromium, product_server
+
+_RECALL_READY = "document.querySelector('#rrRaw').textContent === " + json.dumps(
+    json.dumps(RECALL_REPORT, indent=2)
+)
 
 
 @pytest.mark.asyncio
 async def test_studio_tabs_keyboard_matches_selected_panel(tmp_path: Path) -> None:
-    with product_server() as (url, _requests, unexpected):
+    recall_gate = threading.Event()
+    with product_server(recall_gate=recall_gate) as (url, requests, unexpected):
         async with chromium(tmp_path, url) as browser:
             await browser.evaluate(
                 "document.querySelector('.primary-nav [data-view=studio]').click()"
@@ -47,6 +54,36 @@ async def test_studio_tabs_keyboard_matches_selected_panel(tmp_path: Path) -> No
             await browser.wait(
                 "!document.querySelector('#rrRaw').textContent.includes('读取召回报告异常')"
             )
+            assert not await browser.evaluate(_RECALL_READY)
+            assert (
+                await browser.evaluate("document.querySelector('#rrRaw').textContent")
+                == "正在读取报告..."
+            )
+            recall_gate.set()
+            await browser.wait(_RECALL_READY)
+            assert [row for row in requests if row[1] == "/retrieval/recall-report"]
+            assert (
+                await browser.evaluate("document.querySelector('#rrRate').textContent") == "25.0%"
+            )
+        assert unexpected == []
+
+
+@pytest.mark.asyncio
+async def test_studio_recall_failure_cannot_satisfy_success_wait(tmp_path: Path) -> None:
+    recall_gate = threading.Event()
+    with product_server(recall_gate=recall_gate, recall_status=503) as (url, requests, unexpected):
+        async with chromium(tmp_path, url) as browser:
+            await browser.evaluate(
+                "document.querySelector('.primary-nav [data-view=studio]').click(); "
+                "document.querySelector('[data-studio-tab=recall]').click()"
+            )
+            assert not await browser.evaluate(_RECALL_READY)
+            recall_gate.set()
+            await browser.wait(
+                "document.querySelector('#rrRaw').textContent.includes('synthetic recall failure')"
+            )
+            assert not await browser.evaluate(_RECALL_READY)
+            assert len([row for row in requests if row[1] == "/retrieval/recall-report"]) == 1
         assert unexpected == []
 
 

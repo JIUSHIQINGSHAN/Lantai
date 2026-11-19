@@ -9,6 +9,8 @@ DSH integration has separate jobs: per-call attribution for tools already expose
 
 ## Decision
 
+Update (2026-11-19): the recall activation clause in item 2 is suspended by [ADR-0090](0090-mainline-workspace-safety-contracts.md). The separate MCP attribution adapter and explicit bridge remain supported; the recall research bundle rejects activation before side effects.
+
 1. Keep the existing `lantai-attribution` tool adapter separate. It forwards bounded per-call attribution; the label is not authentication or an ACL.
 2. Ship `lantai-recall` as a separate disabled-by-default Host bundle. It only runs after admission of a human main-session turn, requires an exact workspace allowlist, bounds text/output/time, blocks common credential-like material, and leaves normal session admission untouched. It does not register MCP tools, write dialogue, or checkpoint data.
 3. Document that selected user text is sent to the configured Lantai service and returned excerpts become persisted conversation content. Disabling or revoking later does not erase those transcripts. Test with synthetic data and a dedicated service credential.

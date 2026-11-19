@@ -1,40 +1,17 @@
-# 兰台召回 / Lantai recall
+# 兰台召回研究草案 / Lantai recall research draft
 
-这是默认关闭的 DeepSeek Harness Host bundle。启用后，它只在允许的工作区为主代理的真人文本尝试一次自动召回。它不注册 MCP 工具，不自动写入对话、记忆或检查点。兰台 `/search` 仍会产生正常的检索事件。自动召回、手动 MCP 工具和 DSH 自身会话恢复彼此独立。
+**自动召回暂停启用。** 此包保留标识与显示资源，默认无操作。配置 `enabled: true` 会在访问凭据、工作目录、事件或网络之前报错。不要安装此草案来启用自动召回。
 
-## 启用前先确认
+这只影响本目录的 `lantai-recall`。独立的 [MCP 逐调用归因适配器](../dsh-lantai/README.md) 和显式的 `lantai-mcp-bridge` 调用保持各自契约，本次没有修改 DSH profile 或部署配置。
 
-- 运行环境：DeepSeek Harness `0.2.2-rc.3` 的 Host。先使用测试兰台实例和隔离 DSH 会话；不要把个人旧库用作验收数据。通过 DSH 的 **插件 → 添加插件** 安装此本地目录；安装后仍为关闭，需显式配置才会发送查询。此仓库不会修改已运行的 DSH profile。
-- 使用 HTTPS 与专门的兰台 Bearer key。凭据仅通过 `credentialRef` 引用，不把值放入配置和文档。进程内存在 DSH 凭据服务时，由该服务解析；没有时才读取同名启动环境变量。环回 HTTP 仅可显式用于本机测试，不能用于旧公网明文端点。
-- 自动召回会**向配置的兰台端点发送选中的真人文本**。返回的相关历史摘录会写入 DSH 已提交的会话记录，并可能传给该会话使用的模型服务；关闭插件或在兰台撤回记忆不会清除已写入的 DSH 历史。敏感字样拦截只是保守辅助，不能代替工作区、库和凭据隔离。
+## 原因
 
-## 配置
+已核对 DSH `0.2.2-rc.3` 的 inbox 与 waterfall 实现。首步消息可包含 steer 与注入内容，`source.kind: user` 不足以证明是所有者的新排队输入；外层监听器还可在内层返回后否决。同一凭据也不按调用工作区隔离服务端结果。原型无法仅靠这几个字段保证最终准入、输入来源和结果范围。
 
-在 DSH 的配置界面或管理员批准的部署层覆盖 `lantai-recall` 行的完整配置。示例中的域名和目录是占位符；不要贴真实密钥。
+通用 `/search` 可按服务端策略保存查询原文及会话标记；返回内容进入 DSH 消息后也可能随会话保存、同步和送至模型。暂停或取消不能撤回已发送的数据。详见 [ADR-0090](../../docs/adr/0090-mainline-workspace-safety-contracts.md)。
 
-```yaml
-- id: lantai-recall
-  config:
-    enabled: true
-    baseUrl: https://lantai.example.invalid
-    workspaces: ['D:/Projects/example']
-    credentialRef: LANTAI_RECALL_BEARER_TOKEN
-    timeoutMs: 500
-```
+## 后续研究条件
 
-| 配置 | 意义 |
-|---|---|
-| `enabled` | 默认 `false`；显式 `true` 才安装轮次监听器 |
-| `baseUrl` | 兰台 REST 根地址，不是 MCP URL；插件追加 `/search` |
-| `workspaces` | 明确允许的绝对工作区；原始与当前工作目录必须指向同一个已允许的真实目录；不会自动授权整个子树 |
-| `credentialRef` | Bearer key 的 DSH 凭据引用或启动环境变量名，默认 `LANTAI_RECALL_BEARER_TOKEN` |
-| `timeoutMs` | 默认 500，可配 50–2000；覆盖路径校验、取凭据、请求和读取响应 |
-| `allowLoopbackHttp` | 默认 `false`；仅显式 `true` 时允许 `127.0.0.1`/`::1` 明文 HTTP |
+重新启用前须具备可信宿主提供的最终准入、实际 `next-turn` 输入归属、明确的后端数据范围与留存规则。使用真实 Cordis/AgentLoop/Session 和隔离后端覆盖非 owner、steer、混合注入、外层否决、取消、目录变更和回放；不能用最小监听器 stub 作为这些保证的证据。
 
-## 验收与回滚
-
-1. 在测试端点准备无敏感信息的唯一记忆。打开允许的工作区，在新会话问与该记忆相关的问题，不要求调用记忆工具。对照模型输入或会话记录，应出现标明来源的历史摘录。普通 问候、无命中、超时、401 或 503 不应生成额外消息，也不应打断对话。
-2. 在另一工作区或关闭开关后复测，不应有自动请求。主代理通过现有 MCP 主动检索的能力不受插件开关影响。
-3. 停用此 bundle 或将 `enabled` 改回 `false`。不需要删库、清理日志、重启兰台或改变现有 MCP 配置。
-
-首版每轮只取最多 3 条可归因的摘录，不使用全文/画像、不重排、不复用旧查询、不监听自动写入事件。有新请求但缺少可信会话标识、无效配置或缺凭据时宁可不召回。测试：`node --test test/recall.test.js`（Node 22+）。
+当前只验收停用边界：`node --test test/recall.test.js`。通过表示默认无副作用、显式启用先拒绝，不代表自动召回功能已经验收。

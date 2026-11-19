@@ -216,3 +216,136 @@ def test_backfill_module_import_from_external_cwd_has_no_execution_side_effects(
     assert proc.returncode == 0, (
         f"backfill import failed from external cwd (exit={proc.returncode})"
     )
+
+
+def test_lme_override_rejects_non_whitelisted_settings(tmp_path, monkeypatch):
+    _isolated_env(monkeypatch, tmp_path / "production")
+    module = _load_script("lme_run")
+
+    with pytest.raises(ValueError, match="not allowed"):
+        module._server_env({"LANTAI_HOME": str(tmp_path / "override")}, None)
+
+
+def test_server_env_requires_process_declared_production_home(tmp_path, monkeypatch):
+    _isolated_env(monkeypatch, tmp_path / "production")
+    monkeypatch.delenv("REMEMBRANCE_PROD_HOME")
+    module = _load_script("memprobe_microverify")
+    _point_dotenv_to_empty_temp(module, tmp_path)
+    (tmp_path / ".env").write_text(
+        f"REMEMBRANCE_PROD_HOME={tmp_path / 'production'}\n", encoding="utf-8"
+    )
+
+    with pytest.raises(SystemExit, match="REMEMBRANCE_PROD_HOME"):
+        module._server_env()
+
+
+def test_server_main_rejects_canonical_casefold_home_overlap(tmp_path, monkeypatch):
+    production = tmp_path / "Production"
+    production.mkdir()
+    monkeypatch.setenv("REMEMBRANCE_PROD_HOME", str(production))
+    module = _load_script("memprobe_server_main")
+
+    with pytest.raises(SystemExit, match="双闸失败"):
+        module._assert_isolated_home(tmp_path / "PRODUCTION" / "evaluation")
+
+
+def test_server_main_rejects_unrelated_pid_readiness(tmp_path):
+    import json
+
+    module = _load_script("memprobe_server_main")
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    ready_file = tmp_path / "ready.json"
+    ready_file.write_text(
+        json.dumps({"nonce": "synthetic-nonce", "pid": os.getpid(), "port": 12345}),
+        encoding="utf-8",
+    )
+    try:
+        with pytest.raises(RuntimeError, match="readiness timed out"):
+            module._await_child_ready(child, ready_file, "synthetic-nonce", timeout=0.2)
+    finally:
+        module._stop_owned_process(child)
+
+
+def test_adapter_cleanup_stops_only_its_owned_child(tmp_path):
+    module = _load_script("memprobe_lantai_adapter")
+    adapter = module.LantaiVerbatimAdapter(work_dir=str(tmp_path / "stores"))
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    adapter._proc = child
+
+    adapter._kill_server()
+
+    assert child.poll() is not None
+    assert adapter._proc is None
+
+
+def test_module_import_does_not_start_server_or_touch_paths(tmp_path):
+    env = os.environ.copy()
+    for key in ("PYTHONPATH", "API_KEY", "OPENAI_API_KEY", "REMEMBRANCE_PROD_HOME"):
+        env.pop(key, None)
+    code = f"""
+import importlib.util
+import sys
+
+def audit(event, args):
+    if event in {{'os.mkdir', 'os.remove', 'os.rmdir', 'shutil.rmtree', 'subprocess.Popen', 'socket.connect'}}:
+        raise AssertionError('import side effect: ' + event)
+
+sys.addaudithook(audit)
+stdout = sys.stdout
+encoding = stdout.encoding
+errors = stdout.errors
+spec = importlib.util.spec_from_file_location('ticket83_import', {str(SCRIPTS)!r} + '/memprobe_server_main.py')
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+assert sys.stdout is stdout
+assert (sys.stdout.encoding, sys.stdout.errors) == (encoding, errors)
+"""
+    proc = subprocess.run(
+        [sys.executable, "-B", "-c", code],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert not proc.stdout
+
+
+def test_parent_launcher_accepts_owned_server_and_reaps_interpreter(tmp_path):
+    import psutil
+
+    module = _load_script("memprobe_server_main")
+    home = tmp_path / "evaluation"
+    home.mkdir()
+    env = os.environ.copy()
+    env.update(
+        PORT="0",
+        LANTAI_HOME=str(home),
+        REMEMBRANCE_PROD_HOME=str(tmp_path / "production"),
+        API_KEY="synthetic-api-key",
+        OPENAI_API_KEY="synthetic-provider-key",
+        OPENAI_BASE_URL="http://127.0.0.1:9/v1",
+        DATABASE_URL=f"sqlite:///{(home / 'test.db').as_posix()}",
+        CHROMADB_PATH=str(home / ".chromadb"),
+        LANTAI_RUN_SCHEDULER="false",
+        MONITOR_ENABLED="false",
+    )
+    proc = module._launch_owned_server(
+        [sys.executable, str(SCRIPTS / "memprobe_server_main.py")],
+        cwd=str(REPO_ROOT),
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+    )
+    children = psutil.Process(proc.pid).children(recursive=True)
+
+    module._stop_owned_process(proc)
+
+    assert proc.poll() is not None
+    _, alive = psutil.wait_procs(children, timeout=5)
+    assert not alive, "evaluation interpreter survived owned launcher cleanup"

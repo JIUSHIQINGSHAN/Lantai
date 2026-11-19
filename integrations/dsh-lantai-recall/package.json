@@ -2,7 +2,7 @@
     "name":  "@local/lantai-dsh-recall",
     "version":  "0.1.0",
     "private":  true,
-    "description":  "Opt-in workspace-scoped recall from Lantai for DeepSeek Harness",
+    "description":  "Disabled recall research draft; activation is blocked pending trusted admission and data boundaries",
     "type":  "module",
     "license":  "MIT",
     "exports":  {
