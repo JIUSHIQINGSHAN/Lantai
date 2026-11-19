@@ -34,6 +34,11 @@ def test_built_wheel_contains_ui_static_files(tmp_path):
 
     with zipfile.ZipFile(wheels[0]) as z:
         names = set(z.namelist())
+        manifests = [name for name in names if name.endswith(".dist-info/entry_points.txt")]
+        assert len(manifests) == 1
+        entry_points = z.read(manifests[0]).decode("utf-8")
+        assert "lantai-mcp-bridge = lantai.cli.mcp_bridge:main" in entry_points.splitlines()
+        assert "lantai/cli/mcp_bridge.py" in names
 
     shipped = [n for n in names if n.startswith("lantai/api/ui/")]
     assert "lantai/api/ui/index.html" in names, "wheel 缺少 index.html,/ui/ 会 500"

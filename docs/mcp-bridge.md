@@ -22,4 +22,6 @@ Example MCP server entry (provide the token through your host's secret manager):
 
 Plain HTTP is rejected. For local development only, use a literal `127.0.0.1` or `[::1]` base URL and explicitly set `LANTAI_BRIDGE_ALLOW_LOOPBACK_HTTP=1`; DNS names, redirects, URL credentials, query strings and fragments remain rejected. `X-Session-Id` is an attribution/echo label on supported calls, never an authorization boundary.
 
+`conflict_resolve` requires a nonblank `note` and a `decision` of `resolved` or `dismissed`; invalid arguments are rejected before HTTP. Use `list_memory_checkpoints(memory_id, limit)` for a stable `{checkpoints: [...]}` history response. Existing `latest_checkpoint` arguments remain compatible, including legacy memory-ID history lookup; no-argument and session-ID lookups still return a session checkpoint or null.
+
 The standalone bridge intentionally has its own allowlisted tool mapping. After changing exposed tools, schemas or routes, run `tests/test_mcp_bridge.py`; it starts a real stdio subprocess and a loopback HTTP peer without external network access.

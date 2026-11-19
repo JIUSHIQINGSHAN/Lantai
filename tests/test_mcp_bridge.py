@@ -9,6 +9,7 @@ import time
 from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -35,6 +36,7 @@ TOOLS = {
     "recall_report",
     "write_checkpoint",
     "latest_checkpoint",
+    "list_memory_checkpoints",
 }
 TOKEN = "isolated-bridge-test-token"
 
@@ -53,6 +55,14 @@ def peer():
             requests.append((self.command, self.path, dict(self.headers.items()), body))
             query = body.get("query") if isinstance(body, dict) else None
             status, data = 200, {"sample": "中文", "ok": True}
+            parsed = urlsplit(self.path)
+            params = parse_qs(parsed.query)
+            if parsed.path == "/checkpoint/latest":
+                data = {"session_id": "latest-session", "blocks": {"now": "demo"}}
+            elif parsed.path == "/checkpoint" and "session_id" in params:
+                data = {"session_id": params["session_id"][0], "blocks": {"now": "demo"}}
+            elif parsed.path == "/checkpoint" and "memory_id" in params:
+                data = {"checkpoints": [{"memory_id": params["memory_id"][0], "version": 2}]}
             if self.path == "/dialogue/async":
                 data = {"status": "queued", "task_id": "task_demo"}
             if query in ("401", "503"):
@@ -153,6 +163,57 @@ def test_discovery_and_session_attribution(peer):
         "target_memory_id": "mem_b",
         "relation": "supports",
     }
+
+
+def test_conflict_resolution_rejects_invalid_input_before_http(peer):
+    url, requests = peer
+    invalid = [
+        {"event_id": "event-1", "decision": "resolved"},
+        {"event_id": "event-1", "decision": "resolved", "note": ""},
+        {"event_id": "event-1", "decision": "dismissed", "note": " \t\n"},
+        {"event_id": "event-1", "decision": "resolved", "note": "\u3000\u00a0"},
+        {"event_id": "event-1", "decision": "unknown", "note": "reason"},
+        {"event_id": "event-1", "decision": 1, "note": "reason"},
+    ]
+    replies = read_replies(
+        run_bridge(
+            url,
+            *(call(i, "conflict_resolve", **args) for i, args in enumerate(invalid, 1)),
+            call(7, "conflict_resolve", event_id="event-1", decision="resolved", note="reason"),
+            call(8, "conflict_resolve", event_id="event-2", decision="dismissed", note="理由"),
+        )
+    )
+    for request_id in range(1, 7):
+        assert replies[request_id]["error"]["code"] == -32602
+    assert len(requests) == 2
+    assert requests[0][3] == {"decision": "resolved", "note": "reason"}
+    assert requests[1][3] == {"decision": "dismissed", "note": "理由"}
+
+
+def test_checkpoint_history_tool_preserves_legacy_latest_arguments(peer):
+    url, requests = peer
+    replies = read_replies(
+        run_bridge(
+            url,
+            call(1, "latest_checkpoint"),
+            call(2, "latest_checkpoint", session_id="session-example"),
+            call(3, "list_memory_checkpoints", memory_id="mem-A", limit=2),
+            call(4, "latest_checkpoint", memory_id="mem-A", limit=2),
+            call(5, "list_memory_checkpoints"),
+            call(6, "latest_checkpoint", memory_id="mem-A", session_id="session-example"),
+        )
+    )
+
+    def value(request_id):
+        return json.loads(replies[request_id]["result"]["content"][0]["text"])
+
+    assert value(1)["session_id"] == "latest-session"
+    assert value(2)["session_id"] == "session-example"
+    assert value(3) == value(4) == {"checkpoints": [{"memory_id": "mem-A", "version": 2}]}
+    assert replies[5]["error"]["code"] == replies[6]["error"]["code"] == -32602
+    assert len(requests) == 4
+    for request in requests[2:]:
+        assert parse_qs(urlsplit(request[1]).query) == {"memory_id": ["mem-A"], "limit": ["2"]}
 
 
 def test_failures_are_tools_errors_and_never_follow_redirect(peer):
