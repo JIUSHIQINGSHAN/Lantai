@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import shutil
+import sys
 import threading
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -29,16 +30,40 @@ def chromium_executable() -> str:
         executable = shutil.which(name)
         if executable:
             return executable
-    local = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / ".cache")))
-    candidates = [
-        Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
-        *sorted(
-            local.glob(
-                "ms-playwright/chromium_headless_shell-*/chrome-headless-shell-win64/chrome-headless-shell.exe"
-            )
-        ),
-    ]
-    for candidate in candidates:
+    if sys.platform == "win32":
+        cache = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local")))
+        default_cache = cache / "ms-playwright"
+        system = [Path("C:/Program Files/Google/Chrome/Application/chrome.exe")]
+        patterns = (
+            "chromium_headless_shell-*/chrome-headless-shell-win*/chrome-headless-shell.exe",
+            "chromium-*/chrome-win*/chrome.exe",
+        )
+    elif sys.platform == "darwin":
+        default_cache = Path.home() / "Library/Caches/ms-playwright"
+        system = [Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")]
+        patterns = (
+            "chromium_headless_shell-*/chrome-headless-shell-mac-*/chrome-headless-shell",
+            "chromium-*/chrome-mac-*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+            "chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+        )
+    else:
+        cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache")))
+        default_cache = cache / "ms-playwright"
+        system = []
+        patterns = (
+            "chromium_headless_shell-*/chrome-headless-shell-linux*/chrome-headless-shell",
+            "chromium-*/chrome-linux*/chrome",
+        )
+    configured_cache = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    # Playwright's special value 0 is package-local, not a filesystem cache path.
+    caches = [Path(configured_cache)] if configured_cache and configured_cache != "0" else []
+    caches.append(default_cache)
+    for root in caches:
+        for pattern in patterns:
+            for candidate in sorted(root.glob(pattern), reverse=True):
+                if candidate.is_file():
+                    return str(candidate)
+    for candidate in system:
         if candidate.is_file():
             return str(candidate)
     raise RuntimeError("Chromium required: install Chrome/Chromium or set LANTAI_TEST_CHROMIUM")
@@ -58,8 +83,13 @@ ITEM = {
 }
 
 
+RECALL_REPORT = {"window_days": 7, "real": 4, "zero": 1, "zero_recall_rate": 0.25}
+
+
 @contextmanager
-def product_server() -> Iterator[tuple[str, list[tuple], list[tuple]]]:
+def product_server(
+    *, recall_gate: threading.Event | None = None, recall_status: int = 200
+) -> Iterator[tuple[str, list[tuple], list[tuple]]]:
     """Serve real UI assets with an explicit, synthetic API allowlist."""
     requests = []
     unexpected = []
@@ -119,7 +149,15 @@ def product_server() -> Iterator[tuple[str, list[tuple], list[tuple]]]:
             elif path == "/evolution/consolidate/report":
                 self.respond({"status": "idle"})
             elif path == "/retrieval/recall-report":
-                self.respond({})
+                if recall_gate is not None and not recall_gate.wait(timeout=10):
+                    self.respond({"detail": "Test did not release recall response"}, status=500)
+                    return
+                payload = (
+                    RECALL_REPORT
+                    if recall_status == 200
+                    else {"detail": "synthetic recall failure"}
+                )
+                self.respond(payload, status=recall_status)
             elif path == "/prompts":
                 self.respond({"prompts": []})
             elif path == "/core-memory":
@@ -147,6 +185,8 @@ def product_server() -> Iterator[tuple[str, list[tuple], list[tuple]]]:
     try:
         yield f"http://127.0.0.1:{server.server_port}/ui", requests, unexpected
     finally:
+        if recall_gate is not None:
+            recall_gate.set()
         server.shutdown()
         server.server_close()
         worker.join(timeout=5)
@@ -206,12 +246,19 @@ class CDP:
     async def key(self, key: str, code: str, number: int, modifiers: int = 0) -> None:
         """Send a real browser key press and release."""
         params = {"key": key, "code": code, "windowsVirtualKeyCode": number, "modifiers": modifiers}
-        await self.send("Input.dispatchKeyEvent", {"type": "keyDown", **params})
+        text = {"text": "\r"} if key == "Enter" else {}
+        await self.send("Input.dispatchKeyEvent", {"type": "keyDown", **params, **text})
         await self.send("Input.dispatchKeyEvent", {"type": "keyUp", **params})
 
 
 @asynccontextmanager
-async def chromium(tmp_path: Path, url: str, width: int = 1440) -> AsyncIterator[CDP]:
+async def chromium(
+    tmp_path: Path,
+    url: str,
+    width: int = 1440,
+    *,
+    ready: str = "document.querySelector('.work-row')",
+) -> AsyncIterator[CDP]:
     """Launch a fresh browser profile and load product scripts without user data."""
     process = await asyncio.create_subprocess_exec(
         chromium_executable(),
@@ -251,7 +298,7 @@ async def chromium(tmp_path: Path, url: str, width: int = 1440) -> AsyncIterator
                 {"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": False},
             )
             await cdp.send("Page.navigate", {"url": url})
-            await cdp.wait("document.querySelector('.work-row')")
+            await cdp.wait(ready)
             yield cdp
             await cdp.send("Runtime.evaluate", {"expression": "0"})
             assert cdp.script_errors == [], cdp.script_errors

@@ -2,42 +2,17 @@
 
 from __future__ import annotations
 
-import html
-import json
-import os
-import re
-import shutil
-import subprocess
 import threading
 from collections.abc import Iterator
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 import pytest
 
+from tests.support.ui_browser import chromium
+
 _UI_DIR = Path(__file__).resolve().parents[1] / "lantai" / "api" / "ui"
-
-
-def _chromium_executable() -> str:
-    configured = os.environ.get("LANTAI_TEST_CHROMIUM")
-    if configured:
-        assert Path(configured).is_file(), "LANTAI_TEST_CHROMIUM must name a browser executable"
-        return configured
-    for name in ("chromium", "chromium-browser", "google-chrome", "chrome"):
-        executable = shutil.which(name)
-        if executable:
-            return executable
-    local = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / ".cache")))
-    cached = sorted(
-        (local / "ms-playwright").glob(
-            "chromium_headless_shell-*/chrome-headless-shell-win64/chrome-headless-shell.exe"
-        )
-    )
-    for executable in [*cached, Path("C:/Program Files/Google/Chrome/Application/chrome.exe")]:
-        if executable.is_file():
-            return str(executable)
-    pytest.fail("Chromium is required; set LANTAI_TEST_CHROMIUM")
 
 
 _HARNESS = """
@@ -60,6 +35,8 @@ _HARNESS = """
 window.__requests = [];
 window.__events = [];
 window.__errors = [];
+window.__releaseResponses = null;
+const responsesReady = new Promise(resolve => { window.__releaseResponses = resolve; });
 window.addEventListener('error', e => window.__errors.push(e.message));
 window.addEventListener('unhandledrejection', e => window.__errors.push(String(e.reason)));
 const mode = new URLSearchParams(location.search).get('mode') || 'composing';
@@ -84,6 +61,7 @@ window.fetch = async (path, options = {}) => {
   if (!['/terminal/chat', '/search', '/probing/detect'].includes(path)) {
     throw new Error('Unexpected endpoint: ' + path);
   }
+  await responsesReady;
   if (path === '/terminal/chat') return new Response('', {status: 200, headers: {'Content-Type': 'text/event-stream'}});
   return new Response(JSON.stringify({results: [], memories: [], probes: []}), {
     status: 200,
@@ -92,14 +70,8 @@ window.fetch = async (path, options = {}) => {
 };
 window.sessionStorage.clear();
 window.localStorage.clear();
-const report = async () => {
-  await new Promise(resolve => setTimeout(resolve, 250));
-  const out = document.createElement('pre');
-  out.id = 'ime-result';
-  out.textContent = JSON.stringify({requests: window.__requests, events: window.__events, errors: window.__errors,
-    values: ['#terminalInput', '#playgroundQuery', '#vaultSearchInput'].map(id => document.querySelector(id).value)});
-  document.body.append(out);
-};
+window.__result = () => ({requests: window.__requests, events: window.__events, errors: window.__errors,
+  values: ['#terminalInput', '#playgroundQuery', '#vaultSearchInput'].map(id => document.querySelector(id).value)});
 Promise.all([
   import('/ui/assets/terminal.js').then(({initTerminal}) => {
     initTerminal();
@@ -113,7 +85,10 @@ Promise.all([
     initVault();
     trigger('#vaultSearchInput');
   })
-]).then(report);
+]).then(() => { window.__triggered = true; }).catch(error => {
+  window.__errors.push(String(error));
+  window.__triggered = true;
+});
 </script>
 """
 
@@ -150,55 +125,53 @@ def ime_harness_server() -> Iterator[str]:
         worker.join(timeout=5)
 
 
-def _run_harness(tmp_path: Path, url: str) -> dict:
-    proc = subprocess.run(
-        [
-            _chromium_executable(),
-            "--headless",
-            "--disable-gpu",
-            "--no-sandbox",
-            "--no-proxy-server",
-            "--disable-background-networking",
-            "--force-device-scale-factor=1",
-            "--virtual-time-budget=1500",
-            f"--user-data-dir={tmp_path / 'chromium-profile'}",
-            "--dump-dom",
-            url,
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=60,
+async def _completed_result(browser) -> dict:
+    await browser.wait(
+        "!document.querySelector('#terminalSendBtn').disabled && "
+        "document.querySelector('#chatFeed .agent') && "
+        "!document.querySelector('#playgroundSearchBtn').disabled && "
+        "document.querySelector('#playgroundResults').textContent.includes('零召回') && "
+        "document.querySelector('#vaultList').textContent.includes('档案库暂无匹配记录')"
     )
-    assert proc.returncode == 0, proc.stderr[-2000:]
-    match = re.search(r'<pre id="ime-result">(.*?)</pre>', proc.stdout, flags=re.S)
-    assert match, html.escape(proc.stdout[-4000:])
-    return json.loads(html.unescape(match.group(1)))
+    return await browser.evaluate("window.__result()")
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["composing", "fallback", "other"])
-def test_composing_enter_does_not_dispatch_any_console_action(
+async def test_composing_enter_does_not_dispatch_any_console_action(
     tmp_path: Path, ime_harness_server: str, mode: str
 ) -> None:
-    result = _run_harness(tmp_path, ime_harness_server + "?mode=" + mode)
-    assert result["errors"] == [], result
-    assert result["requests"] == [], result
-    assert result["values"] == ["中文候选"] * 3
-    assert not any(row["prevented"] for row in result["events"])
+    async with chromium(
+        tmp_path, ime_harness_server + "?mode=" + mode, ready="window.__triggered === true"
+    ) as browser:
+        result = await browser.evaluate("window.__result()")
+        assert result["errors"] == [], result
+        assert result["requests"] == [], result
+        assert result["values"] == ["中文候选"] * 3
+        assert not any(row["prevented"] for row in result["events"])
+        await browser.evaluate("window.__releaseResponses()")
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["normal", "button"])
-def test_confirmed_text_submits_once_per_action(
+async def test_confirmed_text_submits_once_per_action(
     tmp_path: Path, ime_harness_server: str, mode: str
 ) -> None:
-    result = _run_harness(tmp_path, ime_harness_server + "?mode=" + mode)
-    assert result["errors"] == [], result
-    assert sorted(row["path"] for row in result["requests"]) == [
-        "/probing/detect",
-        "/search",
-        "/search",
-        "/terminal/chat",
-    ]
-    assert all(row["query"] == "中文候选" for row in result["requests"])
-    assert result["values"] == ["", "中文候选", "中文候选"]
+    async with chromium(
+        tmp_path, ime_harness_server + "?mode=" + mode, ready="window.__triggered === true"
+    ) as browser:
+        assert await browser.evaluate(
+            "document.querySelector('#terminalSendBtn').disabled && "
+            "document.querySelector('#playgroundSearchBtn').disabled"
+        )
+        await browser.evaluate("window.__releaseResponses()")
+        result = await _completed_result(browser)
+        assert result["errors"] == [], result
+        assert sorted(row["path"] for row in result["requests"]) == [
+            "/probing/detect",
+            "/search",
+            "/search",
+            "/terminal/chat",
+        ]
+        assert all(row["query"] == "中文候选" for row in result["requests"])
+        assert result["values"] == ["", "中文候选", "中文候选"]

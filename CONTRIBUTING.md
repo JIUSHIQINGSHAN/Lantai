@@ -161,7 +161,9 @@ pytest tests/test_features.py tests/test_prefilter.py -q
 pytest tests/ --cov=lantai --cov-report=html
 ```
 
-全量测试包含真实 Chromium UI 回归，需要已安装的 Chrome/Chromium。测试会查找 PATH、Windows Chrome 和现有浏览器缓存；也可通过 `LANTAI_TEST_CHROMIUM` 指定可执行文件。缺失时报错，不跳过，也不在测试中下载浏览器。CI 两个测试 job 使用 ubuntu-latest 自带的 `/usr/bin/google-chrome`；该路径失效时需先修复环境准备。
+全量测试包含真实 Chromium UI 回归，需要已安装的 Chrome/Chromium。所有浏览器测试共用 `tests/support/ui_browser.py` 的发现函数，依次检查 `LANTAI_TEST_CHROMIUM`（显式路径无效时直接报错）、PATH、`PLAYWRIGHT_BROWSERS_PATH` 指定目录、当前平台默认 Playwright 缓存，最后检查 Windows/macOS 标准 Chrome 安装位置。默认缓存为 Windows 的 `%LOCALAPPDATA%/ms-playwright`、Linux 的 `${XDG_CACHE_HOME:-~/.cache}/ms-playwright`、macOS 的 `~/Library/Caches/ms-playwright`；支持这些目录内常见的 `chromium-*` 与 `chromium_headless_shell-*` 布局。特殊值 `PLAYWRIGHT_BROWSERS_PATH=0` 的包内安装、自定义/未来布局及其他安装位置请用 `LANTAI_TEST_CHROMIUM` 指向实际可执行文件。这里仅发现已有文件，不依赖 Playwright Python 包，不下载浏览器；缺失时报错，不跳过。跨平台缓存路径有合成文件树测试，实际浏览器执行覆盖以本次测试环境为准。
+
+CI 两个测试 job 显式使用 ubuntu-latest 的 `/usr/bin/google-chrome`；本地 Windows 验证不代表该 runner 已实际运行。CI 路径失效时测试会直接报错，需修复环境准备，不能靠跳过浏览器测试继续。
 
 ```powershell
 $env:LANTAI_TEST_CHROMIUM = "C:\Program Files\Google\Chrome\Application\chrome.exe"
