@@ -1,0 +1,75 @@
+name: Release image smoke
+on:
+  push:
+    branches: ['verify/v0.69.1-container-smoke-20261119']
+permissions:
+  contents: read
+  packages: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Authenticate scoped package pull
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify immutable image without network or host data
+        env:
+          IMAGE: ghcr.io/jiushiqingshan/lantai@sha256:980070f5f8f9dbee53888dabd22e2827396da6b5680119b670215cf77b99bd64
+        run: |
+          set -euo pipefail
+          container="lantai-release-smoke-${GITHUB_RUN_ID}"
+          cleanup() {
+            docker logs "$container" 2>/dev/null || true
+            docker rm -fv "$container" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker pull "$IMAGE"
+          docker run -d --network none --name "$container" \
+            -e API_KEY=synthetic-container-api-key \
+            -e OPENAI_API_KEY=synthetic-provider-key \
+            -e OPENAI_BASE_URL=http://127.0.0.1:9/v1 \
+            -e HOST=127.0.0.1 -e LANTAI_RUN_SCHEDULER=false \
+            -e MONITOR_ENABLED=false -e ANONYMIZED_TELEMETRY=false \
+            -e HF_HUB_OFFLINE=1 "$IMAGE"
+          docker exec -i "$container" python - <<'PY'
+          import importlib.metadata,json,os,subprocess,sys,time,urllib.error,urllib.request
+          assert importlib.metadata.version('lantai')=='0.69.1'
+          base='http://127.0.0.1:8767'
+          ready=False
+          for _ in range(60):
+              try:
+                  with urllib.request.urlopen(base+'/health',timeout=2) as response:
+                      ready=response.status==200
+              except (OSError,urllib.error.URLError):
+                  time.sleep(1)
+                  continue
+              if ready:
+                  break
+          assert ready,'Container did not become healthy'
+          try:
+              urllib.request.urlopen(base+'/stats',timeout=5)
+          except urllib.error.HTTPError as error:
+              assert error.code==401
+          else:
+              raise AssertionError('Missing API key was accepted')
+          request=urllib.request.Request(base+'/stats',headers={'X-API-Key':'synthetic-container-api-key'})
+          with urllib.request.urlopen(request,timeout=10) as response:
+              assert response.status==200
+          with urllib.request.urlopen(base+'/ui',timeout=10) as response:
+              assert b'connectionDialog' in response.read()
+          frames=[{'jsonrpc':'2.0','id':1,'method':'initialize'},{'jsonrpc':'2.0','id':2,'method':'tools/list'},{'jsonrpc':'2.0','id':3,'method':'ping'}]
+          env={**os.environ,'LANTAI_BRIDGE_BASE_URL':'http://127.0.0.1:9','LANTAI_BRIDGE_ALLOW_LOOPBACK_HTTP':'1','LANTAI_BRIDGE_BEARER_TOKEN':'synthetic-container-bridge-key'}
+          result=subprocess.run([sys.executable,'-m','lantai.cli.mcp_bridge'],input=('\n'.join(json.dumps(frame) for frame in frames)+'\n').encode(),env=env,capture_output=True,timeout=30)
+          assert result.returncode==0
+          assert env['LANTAI_BRIDGE_BEARER_TOKEN'].encode() not in result.stdout+result.stderr
+          replies={reply['id']:reply for reply in map(json.loads,result.stdout.splitlines())}
+          assert replies[1]['result']['serverInfo']['name']=='lantai-remote' and replies[3]['result']=={}
+          tools={tool['name']:tool for tool in replies[2]['result']['tools']}
+          assert 'list_memory_checkpoints' in tools and 'memory_id' in tools['latest_checkpoint']['inputSchema']['properties']
+          assert 'note' in tools['conflict_resolve']['inputSchema']['required']
+          print('OCI_CONTAINER_SMOKE '+json.dumps({'version':True,'default_startup':True,'health':True,'missing_auth_rejected':True,'synthetic_auth_accepted':True,'packaged_ui':True,'bridge_stdio':True,'checkpoint_compatibility':True,'conflict_contract':True,'network':'none','production_data':False}))
+          PY
