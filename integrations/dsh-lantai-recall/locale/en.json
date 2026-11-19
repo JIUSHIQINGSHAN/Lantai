@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Lantai recall",
-    "description": "Find related Lantai memories before a human turn in explicitly allowed workspaces. Disabled by default; does not automatically save conversations. Injected excerpts are part of the session history."
+    "description": "Disabled recall research draft. Explicit activation is rejected before side effects. Per-call MCP attribution remains separate and unchanged."
   }
 }
