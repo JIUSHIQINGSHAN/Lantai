@@ -1,0 +1,20 @@
+{
+  "name": "@lantai/dsh-core-memory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Load scoped Lantai core memory when a DeepSeek Harness session starts.",
+  "engines": { "node": ">=24.9.0", "dsh": "0.2.2-rc.3" },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "~3.19.0",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.3"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": ["index.js", "lib", "cordis.patch.yml", "locale", "icon.svg", "README.md"],
+  "scripts": { "test": "node --test test/core.test.mjs test/session.test.mjs test/package.test.mjs" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

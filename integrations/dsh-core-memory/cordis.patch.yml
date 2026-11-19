@@ -1,0 +1,5 @@
+- insert:
+    - id: lantai-core-memory
+      name: '@lantai/dsh-core-memory'
+      config:
+        enabled: false

@@ -39,7 +39,7 @@
 10. **迁移与列约束漂移**：临时 `LANTAI_HOME` 内 `init_db()` 全链通过，metadata 与实表列/NULL 约束一致。
 11. **观测面保留对称性**（票 29，`scripts/release_check.py::retention_symmetry_issues`）：三条观测追加表（`operation_logs` / `retrieval_event` / `llm_call_event`）逐表对账「settings 保留旋钮 ↔ 清扫函数本体 ↔ 生产挂载（scheduler `observability_purge` 或 telemetry flush 自扫）」，判据真源是 `lantai/observability/retention.py` 的 `OBSERVABILITY_RETENTION_TABLES` 清单。**后续新增观测追加表必须进清单并配齐三件套**，否则本项判红拒发——防止「局部测试通过」冒充「整体可观测性成立」（无保留期的追加表会无界增长，TTL 短于观察窗还会让窗口计数静默失真）。
 12. **老库升级回放与列对齐**（门禁自动执行，票 06）：`tests/fixtures/legacy-schema/*.json`里每个锚点（上一发布标签的真实 DDL 快照，**不含任何行数据**）经当前迁移链升到目标版本后，必须与模型完全对齐——缺表 / 缺列 / 主键 / 索引一律为零，NULL 方向差异只能落在`scripts/schema_parity.py` 的书面清单内。锚点为空、迁移链没跑到目标版本、清单里出现复现不出来的死条目，都判红。**每次发布后补一份上一个标签的快照**：`python scripts/legacy_schema_snapshot.py --tag v<上一版>`。
-13. **全量测试 + 宿主目录绊线**：门禁自己以 **CI 同口径**跑 `pytest tests/ -q --cov=lantai --cov-report=term-missing -o addopts= -p no:cacheprovider -p <绊线插件>`，退出码 0 且**至少一条真实通过用例**（空跑/skip 不算测试通过），全程未连接宿主真实 `LANTAI_HOME`。发布者自查请用同参数命令——裸 `pytest tests/ -q` 口径窄于门禁（缺覆盖率插桩与绊线），不作为放行依据。
+13. **全量测试 + 宿主目录绊线**：门禁自己以 **CI 同口径**跑 `pytest tests/ -q --cov=lantai --cov-report=term-missing -o addopts= -p no:cacheprovider -p <绊线插件>`，退出码 0 且**至少一条真实通过用例**（空跑/skip 不算测试通过），全程未连接宿主真实 `LANTAI_HOME`。发布者自查请用同参数命令——裸 `pytest tests/ -q` 口径窄于门禁（缺覆盖率插桩与绊线），不作为放行依据。DSH 核心记忆 bundle 的同套 Node 测试由 `tests/test_dsh_core_memory_contract.py` 在全量 pytest 中真实执行，因此发布环境需提供 Node.js 24.9+；可用 `LANTAI_TEST_NODE` 指定普通 Node 可执行文件。未显式指定且宿主缺少兼容 Node 时测试明确申报 skip，发布门禁的零 skipped 判据不会把它当作通过；显式配置错误则直接失败。
 14. **遗忘质量离线门禁**：`python scripts/run_forgetting_quality.py --check` 通过（CI tests.yml 的同一条步骤）。
 
 配套人工项（门禁不判、缺一不可）：

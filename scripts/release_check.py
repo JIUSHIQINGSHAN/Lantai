@@ -1278,6 +1278,9 @@ CI_STEP_OWNERS: dict[str, str] = {
     "ruff format --check lantai/ tests/ scripts/": "CI lint 门禁",
     "pytest tests/ -q": "全量测试 + 宿主目录绊线",
     "pytest tests/ -q --cov=lantai --cov-report=term-missing": "全量测试 + 宿主目录绊线",
+    # test_dsh_core_memory_contract.py 实际执行同一 Node 测试命令；缺能力时明确 skip，
+    # 全量发布门禁的零 skipped 判据不会把未运行的 JS 测试当成已通过。
+    "node --test integrations/dsh-core-memory/test/core.test.mjs integrations/dsh-core-memory/test/session.test.mjs integrations/dsh-core-memory/test/package.test.mjs": "全量测试 + 宿主目录绊线",
     "python scripts/run_forgetting_quality.py --check": "遗忘质量离线门禁",
     "python -m build --wheel": "构建产物（wheel）",
 }

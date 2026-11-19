@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Lantai core memory",
+    "description": "Load scoped Lantai core memory for explicitly bound DSH main sessions. Disabled by default. Configure the endpoint, credential reference and workspace/identity/namespace bindings; new or resumed sessions load policy and identity, with optional task memory. Includes explicit refresh and metadata-only status tools. Memory enters model requests and persisted session history; disabling does not delete prior history."
+  }
+}
