@@ -795,6 +795,38 @@ def _reset_gate_hot_cache():
 
 
 @pytest.fixture(autouse=True)
+def _pin_process_started_at(monkeypatch):
+    """进程启动时间每例钉到「现在」（巡检 2026-11-18）。
+
+    worker 逾期口径（`scheduler.worker_staleness`）在没有 SchedulerRun 时退到
+    进程启动时间当基线。三处模块级常量在 import 时取一次 `utcnow()`：
+    `work_item_service._PROCESS_STARTED_AT`、`observability.metrics.PROCESS_STARTED_AT`
+    和 `ops.monitor` 引入的同名绑定。测试进程活得越久，基线越旧，于是：
+
+    - pytest 跑满 25 分钟（receipt_miss 周期 10 分钟 + 宽限 15 分钟）后，
+      `/work-items` 多出一条「receipt_miss 未按计划运行」，
+      `test_work_items_read_ownership` 的 `total == len(memory_items)` 变成 2 == 1；
+    - 跑满 75 分钟（ingest 3600s + 15 分钟）后，监控告警文案带上「周期 3600s」，
+      撞上 `test_pid_scan_does_not_flag_legit_numeric_constants` 钉的 pid 3600；
+    - 跑满一天后 digest 从 never 变 critical。
+
+    Linux CI 全量约 8 分钟碰不到；windows-latest 全量 30 分钟以上，必现第一条。
+    需要旧基线的用例照旧显式传 `process_started_at`（如 test_monitor）。
+    """
+    from lantai.core.time import utcnow
+
+    now = utcnow()
+    import lantai.observability.metrics as metrics
+    import lantai.ops.monitor as monitor
+    import lantai.services.work_item_service as work_item_service
+
+    monkeypatch.setattr(work_item_service, "_PROCESS_STARTED_AT", now)
+    monkeypatch.setattr(metrics, "PROCESS_STARTED_AT", now)
+    monkeypatch.setattr(monitor, "PROCESS_STARTED_AT", now)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_module_state(request):
     """模块级生产状态每例冷启动 + 撕卸回滚（票 05 续22）。
 
