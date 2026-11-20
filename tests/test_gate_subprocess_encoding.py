@@ -176,11 +176,36 @@ def test_health_git_sha_is_real_smoke_and_uses_explicit_utf8_decode():
     assert any(keyword.arg == "errors" for keyword in calls[0].keywords)
 
 
-def test_setx_native_oem_stderr_decodes_cjk_diagnostic():
+def _load_migrate_home():
     spec = importlib.util.spec_from_file_location("ticket82_migrate_home", _MIGRATE_HOME)
     assert spec and spec.loader
     migrate_home = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migrate_home)
+    return migrate_home
+
+
+_CJK_DIAGNOSTIC = "需要管理员权限"
+
+
+def _oem_native_sample(encoding: str) -> str:
+    """setx 诊断在该 OEM 代码页下能出现的文字。
+
+    中文 Windows（cp936）就是中文诊断本身；英文 OEM（cp437，GitHub windows-latest 即此）
+    编不出中文，setx 也不会输出中文——改用该代码页高半区（0x80-0xFF）里的可打印字符，
+    它们同样不是 ASCII、用 UTF-8 或 ANSI 解会走样，足以证明走的是 OEM 解码。
+    """
+    try:
+        _CJK_DIAGNOSTIC.encode(encoding)
+        return _CJK_DIAGNOSTIC
+    except UnicodeEncodeError:
+        high = bytes(range(0x80, 0x100)).decode(encoding, errors="ignore")
+        native = "".join(ch for ch in high if ch.isprintable() and not ch.isspace())
+        assert native, f"{encoding} 高半区没有可打印字符"
+        return "Access denied: " + native[:16]
+
+
+def test_setx_native_oem_stderr_decodes_cjk_diagnostic():
+    migrate_home = _load_migrate_home()
 
     if sys.platform == "win32":
         import ctypes
@@ -188,5 +213,32 @@ def test_setx_native_oem_stderr_decodes_cjk_diagnostic():
         encoding = f"cp{ctypes.windll.kernel32.GetOEMCP()}"
     else:
         encoding = "utf-8"
-    raw_stderr = "需要管理员权限".encode(encoding)
-    assert migrate_home._decode_setx_stderr(raw_stderr) == "需要管理员权限"
+    sample = _oem_native_sample(encoding)
+    raw_stderr = sample.encode(encoding)
+    assert migrate_home._decode_setx_stderr(raw_stderr) == sample
+
+
+@pytest.mark.parametrize("oem_cp", [936, 437, 850])
+def test_setx_stderr_decodes_with_oem_codepage_on_any_host(monkeypatch, oem_cp):
+    """在 Linux CI 上也覆盖 Windows 分支：伪造 GetOEMCP，确认按 OEM 代码页解码。
+
+    以前这条只在真 Windows 上走 OEM 分支，且英文 OEM（cp437）下测试本身编不出中文而报错，
+    Linux CI 恒绿，所以没人发现。
+    """
+    import types
+
+    migrate_home = _load_migrate_home()
+    fake_kernel32 = types.SimpleNamespace(GetOEMCP=lambda: oem_cp)
+    monkeypatch.setattr(
+        migrate_home.ctypes,
+        "windll",
+        types.SimpleNamespace(kernel32=fake_kernel32),
+        raising=False,
+    )
+    monkeypatch.setattr(migrate_home, "sys", types.SimpleNamespace(platform="win32"))
+
+    encoding = f"cp{oem_cp}"
+    sample = _oem_native_sample(encoding)
+    raw_stderr = sample.encode(encoding)
+    assert raw_stderr != sample.encode("utf-8"), "样本必须能区分 OEM 与 UTF-8 解码"
+    assert migrate_home._decode_setx_stderr(raw_stderr) == sample
