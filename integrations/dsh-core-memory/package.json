@@ -1,6 +1,6 @@
 {
   "name": "@lantai/dsh-core-memory",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "description": "Load scoped Lantai core memory when a DeepSeek Harness session starts.",

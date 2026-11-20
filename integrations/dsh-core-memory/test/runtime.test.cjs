@@ -550,6 +550,28 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
     assert.equal(fixture.requests.length, count + 1);
   });
 
+  await t.test('an existing session can be authorized after entering a configured folder', async () => {
+    const handle = await createNative('core-memory-enter-bound-folder', { cwd: otherWorkspace });
+    const count = fixture.requests.length;
+    const credentials = credentialResolutions;
+    const outside = await authorize(handle);
+    assert.equal(outside.authorized, false);
+    assert.equal(outside.reason, 'workspace_not_configured');
+    assert.equal(await root.workingDirectory.set(handle.agent, WORKSPACE), WORKSPACE);
+    const beforeConsent = await control('status', handle.agent.id);
+    assert.equal(beforeConsent.authorized, false);
+    assert.notEqual(beforeConsent.state, 'not_bound');
+    assert.equal((await tool(handle.agent, 'lantai_core_refresh')).blockCount, 0);
+    assert.equal(fixture.requests.length, count, 'moving into a configured folder must not grant access');
+    assert.equal(credentialResolutions, credentials);
+    const allowed = await authorize(handle);
+    assert.equal(allowed.authorized, true);
+    assert.equal(allowed.state, 'ready');
+    assert.equal(fixture.requests.length, count + 1);
+    const request = await send(handle.agent, 'after-owner-consent-in-entered-folder');
+    assert.ok(latestSnapshot(request).source.sections.some(section => section.name === 'lantai:core-memory' && section.text.includes('sentinel-initial')));
+  });
+
   await t.test('a directory round trip without a model step still revokes the grant', async () => {
     const changing = await create('core-memory-directory-round-trip');
     await send(changing.agent, 'before-unobserved-directory-round-trip');
@@ -572,6 +594,41 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
     const request = await send(changing.agent, 'after-round-trip-owner-reauthorization');
     assert.ok(latestSnapshot(request).source.sections.some(section => section.name === 'lantai:core-memory' && section.text.includes('sentinel-initial')));
     assert.equal(fixture.requests.length, count + 1);
+  });
+
+  await t.test('a pending read from the old folder cannot replace or revoke a fresh grant', async () => {
+    const handle = await createNative('core-memory-folder-change-during-read');
+    const held = fixture.holdNextResponse();
+    const count = fixture.requests.length;
+    fixture.content = 'stale-memory-from-the-previous-folder';
+    const oldRead = authorize(handle).then(status => ({ status }), error => ({ error }));
+    try {
+      await within(held.started, 'the old authorized request must have started');
+      fixture.content = INITIAL;
+      await root.workingDirectory.set(handle.agent, otherWorkspace);
+      assert.equal((await control('status', handle.agent.id)).authorized, false);
+      const outcome = await within(oldRead, 'directory change must settle the old authorization');
+      assert.equal(outcome.status?.authorized ?? false, false);
+      await within(held.closed, 'directory change must close the old response');
+      await root.workingDirectory.set(handle.agent, WORKSPACE);
+      assert.equal((await control('status', handle.agent.id)).authorized, false);
+      assert.equal((await tool(handle.agent, 'lantai_core_refresh')).blockCount, 0);
+      assert.equal(fixture.requests.length, count + 1);
+      const allowed = await authorize(handle);
+      assert.equal(allowed.authorized, true);
+      assert.equal(allowed.state, 'ready');
+      assert.equal(fixture.requests.length, count + 2);
+      held.release();
+      await within(held.completed, 'the old response must finish safely');
+      assert.equal((await control('status', handle.agent.id)).authorized, true);
+      const request = await send(handle.agent, 'after-replacing-folder-grant');
+      const section = latestSnapshot(request).source.sections.find(item => item.name === 'lantai:core-memory');
+      assert.ok(section?.text.includes('sentinel-initial'));
+      assert.ok(!section.text.includes('stale-memory-from-the-previous-folder'));
+    } finally {
+      fixture.content = INITIAL;
+      held.release();
+    }
   });
 
   await t.test('explicit refresh returns only scalar status and affects the next admitted step', async () => {

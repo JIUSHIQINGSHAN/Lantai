@@ -342,6 +342,6 @@ def test_isolated_real_lantai_http_fixture_flows_through_node_adapter(node_runti
             runtime_output = completed.stdout + completed.stderr
             assert completed.returncode == 0, runtime_output[-16000:]
             assert "realBackend=fixture" in runtime_output, runtime_output[-16000:]
-            assert re.search(r"(?m)^ℹ tests 29\s*$", runtime_output), runtime_output[-16000:]
-            assert re.search(r"(?m)^ℹ pass 29\s*$", runtime_output), runtime_output[-16000:]
+            assert re.search(r"(?m)^ℹ tests 31\s*$", runtime_output), runtime_output[-16000:]
+            assert re.search(r"(?m)^ℹ pass 31\s*$", runtime_output), runtime_output[-16000:]
             assert re.search(r"(?m)^ℹ fail 0\s*$", runtime_output), runtime_output[-16000:]

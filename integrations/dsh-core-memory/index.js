@@ -66,9 +66,10 @@ export function apply(ctx, input = {}) {
       record.memory.invalidate(reason)
     },
   })
-  const inScope = record => {
-    try { return workspaceKey(ctx.workingDirectory.get(record.agent.session)) === record.binding?.workspaceKey } catch { return false }
+  const currentFolder = agent => {
+    try { return workspaceKey(ctx.workingDirectory.get(agent.session)) } catch { return null }
   }
+  const inScope = record => record.binding !== undefined && currentFolder(record.agent) === record.binding.workspaceKey
   const permitted = record => {
     if (!record?.binding || unloaded || record.ended) return false
     if (!inScope(record)) { access.revoke(record.agent, 'scope_changed'); return false }
@@ -82,23 +83,43 @@ export function apply(ctx, input = {}) {
     return { ...metadata, reason, authorized: grant.authorized, ...(grant.authorized ? { expiresAt: grant.expiresAt } : {}) }
   }
 
-  function attach({ agent }) {
-    if (unloaded || agent.session.header.origin === 'subagent') return null
-    if (records.has(agent)) return records.get(agent)
-    let key
-    try { key = workspaceKey(ctx.workingDirectory.get(agent.session)) } catch { key = null }
-    const binding = config.bindings.find(item => item.workspaceKey === key)
-    const record = { agent, binding, ended: false, uiReason: '', transientCredential: null, authorizationGeneration: 0, authorizationAbort: null, contributions: [] }
-    record.memory = createSessionMemory({
-      config, binding, getWorkspace: () => ctx.workingDirectory.get(agent.session),
-      authorize: () => permitted(record), resolveCredential: async ref => {
-        if (!permitted(record)) throw new CoreMemoryError('authorization_required')
+  const bindingFor = folder => config.bindings.find(binding => binding.workspaceKey === folder)
+
+  function createMemory(record, binding) {
+    const ownsPermission = () => record.memory === memory && permitted(record)
+    const memory = createSessionMemory({
+      config, binding, getWorkspace: () => ctx.workingDirectory.get(record.agent.session),
+      authorize: ownsPermission,
+      resolveCredential: async ref => {
+        if (!ownsPermission()) throw new CoreMemoryError('authorization_required')
         const existing = await ctx.credentials.resolve(ref)
-        if (!permitted(record)) throw new CoreMemoryError('authorization_required')
+        if (!ownsPermission()) throw new CoreMemoryError('authorization_required')
         return existing?.value ? existing : record.transientCredential
       },
       readCore: (options, scope, token, signal) => sshReader ? sshReader.read(scope, token, signal) : fetchCoreMemory(options, scope, token, signal),
     })
+    return memory
+  }
+
+  function replaceBinding(record, binding) {
+    if (unloaded || record.ended) return
+    record.authorizationGeneration++
+    access.revoke(record.agent, 'scope_changed')
+    record.authorizationAbort?.abort()
+    record.authorizationAbort = null
+    record.transientCredential = null
+    void record.memory.dispose()
+    record.binding = binding
+    record.memory = createMemory(record, binding)
+    record.uiReason = 'scope_changed'
+  }
+
+  function attach({ agent }) {
+    if (unloaded || agent.session.header.origin === 'subagent') return null
+    if (records.has(agent)) return records.get(agent)
+    const binding = bindingFor(currentFolder(agent))
+    const record = { agent, binding, ended: false, uiReason: '', transientCredential: null, authorizationGeneration: 0, authorizationAbort: null, contributions: [] }
+    record.memory = createMemory(record, binding)
     record.cleanup = async () => {
       if (record.ended) return
       record.ended = true
@@ -122,8 +143,12 @@ export function apply(ctx, input = {}) {
         output: { schema: statusSchema, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
         execute: async (_args, exec) => {
           if (exec.agent !== agent) return { state: 'not_bound', reason: 'agent_mismatch', blockCount: 0, contextBytes: 0, versions: [], outcome: 'not_bound' }
-          const result = await record.memory.load(exec.signal)
-          if (identityFailures.has(result.reason)) access.revoke(agent, 'memory_identity_rejected')
+          const memory = record.memory
+          const generation = record.authorizationGeneration
+          const result = await memory.load(exec.signal)
+          if (record.memory === memory && record.authorizationGeneration === generation && identityFailures.has(result.reason)) {
+            access.revoke(agent, 'memory_identity_rejected')
+          }
           return result
         },
       })))
@@ -144,8 +169,12 @@ export function apply(ctx, input = {}) {
     if (unloaded) return empty('unavailable', 'disposed')
     const record = findRecord(sessionId, true)
     if (!record) return empty('session_not_active', 'open_session_first')
-    if (!record.binding) return empty('not_bound', 'workspace_not_configured')
+    // Recheck the current committed folder before issuing the owner's grant.
+    const binding = bindingFor(currentFolder(record.agent))
+    if (binding !== record.binding) replaceBinding(record, binding)
+    if (!binding) return empty('not_bound', 'workspace_not_configured')
     if (!inScope(record)) return empty('unavailable', 'scope_changed')
+    const memory = record.memory
     const generation = ++record.authorizationGeneration
     record.authorizationAbort?.abort()
     record.authorizationAbort = null
@@ -165,9 +194,9 @@ export function apply(ctx, input = {}) {
     const timer = setTimeout(() => { timedOut = true; cancel() }, config.timeoutMs)
     try {
       controller.signal.throwIfAborted()
-      access.grant(invocation, record.agent, record.binding, config.sourceKey)
+      access.grant(invocation, record.agent, binding, config.sourceKey)
       record.authorizationAbort = controller
-      const stillAllowed = () => permitted(record) && inScope(record) && !controller.signal.aborted && generation === record.authorizationGeneration
+      const stillAllowed = () => generation === record.authorizationGeneration && record.memory === memory && !controller.signal.aborted && permitted(record)
       const check = () => { if (!stillAllowed()) throw new CoreMemoryError('authorization_required') }
       const task = async () => {
         check()
@@ -180,7 +209,7 @@ export function apply(ctx, input = {}) {
           record.transientCredential = { value: token }
           check()
         }
-        return record.memory.load(controller.signal)
+        return memory.load(controller.signal)
       }
       const loaded = await abortable(task(), controller.signal)
       check()
@@ -223,13 +252,12 @@ export function apply(ctx, input = {}) {
   })
   ctx.on('agent/created', payload => { attach(payload) })
   ctx.on('working-directory/access', async (request, next) => {
-    const beforeKey = workspaceKey(ctx.workingDirectory.get(request.agent.session))
+    const beforeKey = currentFolder(request.agent)
     const directory = await next()
-    if (workspaceKey(directory) !== beforeKey) {
-      access.revoke(request.agent, 'scope_changed')
+    const afterKey = workspaceKey(directory)
+    if (afterKey !== beforeKey) {
       const record = records.get(request.agent)
-      record?.memory.invalidate('scope_changed')
-      if (record) record.uiReason = 'scope_changed'
+      if (record) replaceBinding(record, bindingFor(afterKey))
     }
     return directory
   })
