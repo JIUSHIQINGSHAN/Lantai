@@ -33,9 +33,19 @@ function memorySnapshots(session) {
       .map(section => ({ event, text: section.text })));
 }
 
+function latestSnapshot(request) {
+  return [...request.messages].reverse().find(message => message.role === 'user' && message.source?.form === 'snapshot');
+}
+
+function assertNoCoreSnapshot(request) {
+  const latest = latestSnapshot(request);
+  assert.ok(latest, 'the loop must publish a superseding runtime snapshot');
+  assert.ok(!latest.source.sections.some(section => section.name === 'lantai:core-memory'), 'no diagnostic or core data frame is allowed');
+}
+
 function assertScalarStatus(value) {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value));
-  const allowed = new Set(['state', 'reason', 'blockCount', 'contextBytes', 'versions', 'outcome']);
+  const allowed = new Set(['state', 'reason', 'authorized', 'expiresAt', 'blockCount', 'contextBytes', 'versions', 'outcome']);
   for (const [key, field] of Object.entries(value)) {
     assert.ok(allowed.has(key), `unexpected status field ${key}`);
     if (key === 'versions') {
@@ -136,7 +146,7 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
   const installationRequire = createRequire(path.join(process.env.DSH_INSTALL_DIR, 'package.json'));
   const manifest = installationRequire('./package.json');
   assert.equal(manifest.name, '@deepseek-ai/dsh');
-  assert.equal(manifest.version, '0.2.2-rc.3', 'recheck APIs explicitly before testing a different DSH version');
+  assert.equal(manifest.version, '0.2.2-rc.5', 'recheck the installed DSH surface when its version changes');
   const load = name => import(pathToFileURL(installationRequire.resolve(`@deepseek-ai/${name}`)).href);
 
   const cleanups = [];
@@ -197,7 +207,14 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
       linkedRoots: [{ name: pluginManifest.name, realPath: path.dirname(PLUGIN_FILE) }],
     },
   });
-  // The initial TDD red run failed at this import before index.js existed.
+  await root.plugin((await load('dsh-typert-registry')).default);
+  await root.plugin((await load('dsh-api-remote-access')).default);
+  const { HostConnectionService } = await load('dsh-client-connection');
+  await root.plugin(ctx => { new HostConnectionService(ctx, [], undefined); });
+  const { TypertGatewayService } = await load('dsh-api-gateway');
+  await root.plugin(TypertGatewayService, {});
+  const owner = root.connection.createPeer({ principal: { kind: 'owner' } });
+
   const plugin = await import(pathToFileURL(PLUGIN_FILE).href);
   assert.equal(typeof plugin.apply, 'function');
   const pluginParent = pathToFileURL(PLUGIN_FILE).href;
@@ -255,12 +272,28 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
   };
   let pluginFiber;
 
-  async function create(id, meta = {}, extra = {}) {
+  async function control(method, sessionId, { peer = owner, signal, args = { sessionId } } = {}) {
+    const result = await root.typertGateway.invoke({ namespace: 'lantaiCoreMemory', method, args, peer, signal });
+    assertScalarStatus(result);
+    assert.equal(typeof result.authorized, 'boolean');
+    if (result.authorized) assert.ok(Number.isSafeInteger(result.expiresAt));
+    else assert.ok(!Object.hasOwn(result, 'expiresAt'));
+    return result;
+  }
+  const authorize = (handle, options) => control('authorize', handle.agent.id, options);
+  async function createNative(id, meta = {}, extra = {}) {
     const handle = await root.agents.create({
       sessionId: id, meta: { cwd: WORKSPACE, ...meta },
       agentOptions: { provider: 'fixture', model: 'capture' }, ...extra,
     });
     handles.add(handle);
+    return handle;
+  }
+  async function create(id) {
+    const handle = await createNative(id);
+    const status = await authorize(handle);
+    assert.equal(status.authorized, true);
+    assert.equal(status.state, 'ready');
     return handle;
   }
   async function send(agent, text) {
@@ -291,7 +324,8 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
       const credentialCount = credentialResolutions;
       const disabledFiber = await root.plugin(plugin, disabledConfig);
       try {
-        const disabledAgent = await create(`core-memory-disabled-${mode}`);
+        const disabledAgent = await createNative(`core-memory-disabled-${mode}`);
+        await assert.rejects(control('status', disabledAgent.agent.id), { code: 'gateway/invocation-unavailable' });
         const request = await send(disabledAgent.agent, `disabled-${mode}-private-input`);
         assert.equal(fixture.requests.length, httpCount);
         assert.equal(credentialResolutions, credentialCount);
@@ -305,10 +339,68 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
   }
 
   pluginFiber = await root.plugin(plugin, config);
+  await t.test('native create and an ungranted first model step read no memory', async () => {
+    const httpCount = fixture.requests.length;
+    const credentialCount = credentialResolutions;
+    const handle = await within(createNative('core-memory-ungranted'), 'native creation must settle without owner authorization');
+    assert.equal(credentialResolutions, credentialCount, 'native creation must not resolve credentials');
+    assert.equal(fixture.requests.length, httpCount, 'native creation must not fetch core memory');
+    assert.equal((await control('status', handle.agent.id)).authorized, false);
+    const denied = await tool(handle.agent, 'lantai_core_refresh');
+    assert.equal(denied.reason, 'authorization_required');
+    assert.equal(denied.blockCount, 0);
+    const request = await send(handle.agent, 'ungranted-first-model-step');
+    assert.equal(credentialResolutions, credentialCount);
+    assert.equal(fixture.requests.length, httpCount);
+    assert.equal(memorySnapshots(handle.agent.session).length, 0);
+    assert.ok(!request.messages.some(message => messageText(message).includes('sentinel')));
+    assert.deepEqual(request.tools.filter(schema => schema.name.startsWith('lantai_')).map(schema => schema.name).sort(),
+      ['lantai_core_refresh', 'lantai_core_status']);
+  });
+
+  await t.test('unknown session, nonowner, and wire impersonation cannot admit a read', async () => {
+    const handle = await createNative('core-memory-owner-only');
+    const httpCount = fixture.requests.length;
+    const credentialCount = credentialResolutions;
+    const actions = ['authorize', 'revoke', 'status'].map(method => `lantaiCoreMemory/${method}`);
+    root.remoteAccess.registerPolicy('fixture-viewer', {
+      bindings: () => [{ role: { name: 'fixture-allowed', resource: 'global', actions }, resource: { kind: 'global' } }],
+    });
+    const peer = root.connection.createPeer({ principal: { kind: 'fixture-viewer' } });
+    assert.deepEqual(root.remoteAccess.decide({ principal: peer.principal, action: actions[0], resources: [{ kind: 'global' }] }), { kind: 'allow' });
+    try {
+      const missing = await control('authorize', 'core-memory-never-created');
+      assert.equal(missing.authorized, false);
+      assert.equal(missing.state, 'session_not_active');
+      for (const method of ['authorize', 'revoke', 'status']) {
+        await assert.rejects(control(method, handle.agent.id, { peer }), { code: 'lantai-memory/owner-required' });
+      }
+      await assert.rejects(authorize(handle, { peer, args: {
+        sessionId: handle.agent.id, principal: { kind: 'owner' },
+      } }), error => ['gateway/arguments-invalid', 'gateway/input-invalid'].includes(error.code));
+      assert.equal((await control('status', handle.agent.id)).authorized, false);
+      assert.equal((await tool(handle.agent, 'lantai_core_refresh')).reason, 'authorization_required');
+      const request = await send(handle.agent, 'after-refused-authorization');
+      assert.ok(!request.messages.some(message => messageText(message).includes('sentinel')));
+      assert.equal(memorySnapshots(handle.agent.session).length, 0);
+      assert.equal(credentialResolutions, credentialCount);
+      assert.equal(fixture.requests.length, httpCount);
+    } finally {
+      await peer.dispose();
+    }
+  });
+
   let main;
-  await t.test('first request contains escaped memory only in a logged user reminder', async () => {
-    main = await create('core-memory-main');
-    assert.equal(fixture.requests.length, 1, 'agent/created must await the initial load');
+  await t.test('first request after owner authorization contains escaped memory only in a logged user reminder', async () => {
+    const count = fixture.requests.length;
+    const modelCount = requests.length;
+    main = await createNative('core-memory-main');
+    assert.equal(fixture.requests.length, count, 'native create must not fetch before explicit owner authorization');
+    const status = await authorize(main);
+    assert.equal(status.authorized, true);
+    assert.equal(status.state, 'ready');
+    assert.equal(fixture.requests.length, count + 1, 'owner authorization must admit the initial load');
+    assert.equal(requests.length, modelCount, 'owner authorization must not wake the model');
     const request = await send(main.agent, 'private-conversation-must-not-be-uploaded');
     const memoryMessages = request.messages.filter(message => messageText(message).includes('sentinel-initial'));
     assert.equal(memoryMessages.length, 1);
@@ -334,28 +426,44 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
 
   await t.test('subagents and unbound workspaces do not load or receive memory', async () => {
     const count = fixture.requests.length;
-    const child = await create('core-memory-child', {
+    const credentials = credentialResolutions;
+    const child = await createNative('core-memory-child', {
       origin: 'subagent', parentSession: main.agent.session.id, delegationDepth: 1,
     });
+    assert.equal((await authorize(child)).authorized, false);
     const childRequest = await send(child.agent, 'child-prompt');
-    const unbound = await create('core-memory-unbound', { cwd: otherWorkspace });
+    const unbound = await createNative('core-memory-unbound', { cwd: otherWorkspace });
+    assert.equal((await authorize(unbound)).authorized, false);
     const unboundRequest = await send(unbound.agent, 'unbound-prompt');
     assert.equal(fixture.requests.length, count);
+    assert.equal(credentialResolutions, credentials);
+    assert.equal(memorySnapshots(child.agent.session).length, 0);
+    assert.equal(memorySnapshots(unbound.agent.session).length, 0);
     for (const request of [childRequest, unboundRequest]) {
       assert.ok(!request.messages.some(message => messageText(message).includes('sentinel-initial')));
     }
   });
 
-  await t.test('ordinary seeded fork is not misclassified by parentSession', async () => {
+  await t.test('ordinary seeded fork does not inherit a grant but can be independently authorized', async () => {
     const events = main.agent.session.snapshotEvents();
     const count = fixture.requests.length;
-    const fork = await create('core-memory-fork', {
+    const credentials = credentialResolutions;
+    const fork = await createNative('core-memory-fork', {
       isSeeded: true, parentSession: main.agent.session.id,
     }, {
       seed: buildForkSeed(events, events.length - 1), inheritedEventCount: events.length,
     });
+    const inherited = memorySnapshots(fork.agent.session).length;
+    assert.equal((await control('status', fork.agent.id)).authorized, false);
+    assert.equal((await tool(fork.agent, 'lantai_core_refresh')).reason, 'authorization_required');
+    await send(fork.agent, 'fork-before-authorization');
+    assert.equal(memorySnapshots(fork.agent.session).length, inherited, 'history may survive but no new core frame is admitted');
+    assert.equal(credentialResolutions, credentials);
+    assert.equal(fixture.requests.length, count);
+    assert.equal((await authorize(fork)).authorized, true);
     assert.equal(fixture.requests.length, count + 1);
-    assert.ok((await send(fork.agent, 'fork-prompt')).messages.some(message => messageText(message).includes('sentinel-initial')));
+    assert.ok((await send(fork.agent, 'fork-after-authorization')).messages.some(message => messageText(message).includes('sentinel-initial')));
+    assert.equal(memorySnapshots(fork.agent.session).length, inherited + 1);
   });
 
   await t.test('setting the same real working directory preserves the stable snapshot', async () => {
@@ -418,49 +526,51 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
     }
   });
 
-  await t.test('real working-directory changes invalidate context until explicit refresh', async () => {
+  await t.test('real working-directory changes revoke access until an owner reauthorizes', async () => {
     const changing = await create('core-memory-directory-change');
     await send(changing.agent, 'before-working-directory-change');
     const count = fixture.requests.length;
+    const credentials = credentialResolutions;
+    const snapshots = memorySnapshots(changing.agent.session).length;
     const modelCount = requests.length;
     await root.workingDirectory.set(changing.agent, otherWorkspace);
     assert.equal(requests.length, modelCount, 'directory notices must not wake the model');
-    let request = await send(changing.agent, 'after-leaving-bound-workspace');
-    let latest = [...request.messages].reverse().find(message => message.source?.form === 'snapshot');
-    assert.ok(latest);
-    assert.ok(!latest.source.sections.some(section => section.name === 'lantai:core-memory' && section.text.includes('sentinel')));
+    assert.equal((await authorize(changing)).authorized, false, 'owner cannot authorize outside the bound workspace');
+    assertNoCoreSnapshot(await send(changing.agent, 'after-leaving-bound-workspace'));
     await root.workingDirectory.set(changing.agent, WORKSPACE);
-    request = await send(changing.agent, 'after-returning-without-refresh');
-    latest = [...request.messages].reverse().find(message => message.source?.form === 'snapshot');
-    assert.ok(!latest.source.sections.some(section => section.name === 'lantai:core-memory' && section.text.includes('sentinel')));
-    assert.equal(fixture.requests.length, count, 'directory changes must not silently fetch memory');
-    await tool(changing.agent, 'lantai_core_refresh');
-    request = await send(changing.agent, 'after-directory-explicit-refresh');
-    latest = [...request.messages].reverse().find(message => message.source?.form === 'snapshot');
-    assert.ok(latest.source.sections.some(section => section.name === 'lantai:core-memory' && section.text.includes('sentinel-initial')));
+    assert.equal((await control('status', changing.agent.id)).authorized, false);
+    assert.equal((await tool(changing.agent, 'lantai_core_refresh')).reason, 'authorization_required');
+    assertNoCoreSnapshot(await send(changing.agent, 'after-returning-without-owner-authorization'));
+    assert.equal(memorySnapshots(changing.agent.session).length, snapshots);
+    assert.equal(credentialResolutions, credentials);
+    assert.equal(fixture.requests.length, count, 'directory changes and denied refresh must not fetch memory');
+    assert.equal((await authorize(changing)).authorized, true);
+    const request = await send(changing.agent, 'after-directory-owner-reauthorization');
+    assert.ok(latestSnapshot(request).source.sections.some(section => section.name === 'lantai:core-memory' && section.text.includes('sentinel-initial')));
     assert.equal(fixture.requests.length, count + 1);
   });
 
-  await t.test('a real directory round trip without a model step still requires explicit refresh', async () => {
+  await t.test('a directory round trip without a model step still revokes the grant', async () => {
     const changing = await create('core-memory-directory-round-trip');
     await send(changing.agent, 'before-unobserved-directory-round-trip');
     const count = fixture.requests.length;
+    const credentials = credentialResolutions;
     const changed = await Promise.all([
       root.workingDirectory.set(changing.agent, otherWorkspace),
       root.workingDirectory.set(changing.agent, WORKSPACE),
     ]);
     assert.deepEqual(changed, [otherWorkspace, WORKSPACE]);
     assert.equal(root.workingDirectory.get(changing.agent.session), WORKSPACE);
-    assert.equal((await tool(changing.agent, 'lantai_core_status')).reason, 'scope_changed');
-    let request = await send(changing.agent, 'after-unobserved-directory-round-trip');
-    let latest = [...request.messages].reverse().find(message => message.source?.form === 'snapshot');
-    assert.ok(latest);
-    assert.ok(!latest.source.sections.some(section => section.name === 'lantai:core-memory' && section.text.includes('sentinel')));
+    const status = await control('status', changing.agent.id);
+    assert.equal(status.reason, 'scope_changed');
+    assert.equal(status.authorized, false);
+    assert.equal((await tool(changing.agent, 'lantai_core_refresh')).reason, 'authorization_required');
+    assertNoCoreSnapshot(await send(changing.agent, 'after-unobserved-directory-round-trip'));
     assert.equal(fixture.requests.length, count);
-    await tool(changing.agent, 'lantai_core_refresh');
-    request = await send(changing.agent, 'after-round-trip-explicit-refresh');
-    latest = [...request.messages].reverse().find(message => message.source?.form === 'snapshot');
-    assert.ok(latest.source.sections.some(section => section.name === 'lantai:core-memory' && section.text.includes('sentinel-initial')));
+    assert.equal(credentialResolutions, credentials);
+    assert.equal((await authorize(changing)).authorized, true);
+    const request = await send(changing.agent, 'after-round-trip-owner-reauthorization');
+    assert.ok(latestSnapshot(request).source.sections.some(section => section.name === 'lantai:core-memory' && section.text.includes('sentinel-initial')));
     assert.equal(fixture.requests.length, count + 1);
   });
 
@@ -500,6 +610,27 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
     }
   });
 
+  await t.test('explicit owner revocation removes current memory and cannot be undone by model refresh', async () => {
+    const handle = await create('core-memory-explicit-revoke');
+    await send(handle.agent, 'before-explicit-revoke');
+    const reads = fixture.requests.length;
+    const credentials = credentialResolutions;
+    const snapshots = memorySnapshots(handle.agent.session).length;
+    const revoked = await control('revoke', handle.agent.id);
+    assert.equal(revoked.authorized, false);
+    assert.equal(revoked.blockCount, 0);
+    const denied = await tool(handle.agent, 'lantai_core_refresh');
+    assert.equal(denied.reason, 'authorization_required');
+    assert.equal(denied.blockCount, 0);
+    assert.equal(fixture.requests.length, reads);
+    assert.equal(credentialResolutions, credentials);
+    const request = await send(handle.agent, 'after-explicit-revoke');
+    assert.equal(memorySnapshots(handle.agent.session).length, snapshots);
+    const latest = [...request.messages].reverse().find(message => message.role === 'user' && message.source?.form === 'snapshot');
+    assert.ok(latest);
+    assert.ok(!latest.source.sections.some(section => section.name === 'lantai:core-memory'));
+  });
+
   await t.test('surface compaction restores a missing reminder without refetching', async () => {
     const surfaceEvents = main.agent.session.snapshotEvents().filter(event =>
       ['user/message', 'assistant/message', 'developer/message', 'tool/result'].includes(event.type));
@@ -533,10 +664,15 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
     await main.dispose();
     handles.delete(main);
     const count = fixture.requests.length;
-    main = await root.agents.resume({ resumeSessionId: id });
-    handles.add(main);
+    const handle = await root.agents.resume({ resumeSessionId: id });
+    handles.add(handle);
+    assert.equal(fixture.requests.length, count, 'resume alone cannot reuse the disposed Agent grant');
+    assert.equal((await control('status', handle.agent.id)).authorized, false);
+    const allowed = await authorize(handle);
+    assert.equal(allowed.authorized, true);
     assert.equal(fixture.requests.length, count + 1);
-    const request = await send(main.agent, 'after-real-jsonl-resume');
+    main = handle;
+    const request = await send(handle.agent, 'after-real-jsonl-resume');
     assert.ok(request.messages.some(message => messageText(message).includes(UPDATED)));
     assert.ok(createdSources.includes('resume'));
   });
@@ -575,84 +711,129 @@ test('installed DSH core-memory lifecycle and real model-request boundary', { ti
     assert.ok(!assembly.contexts.some(section => section.name === 'lantai:core-memory'));
   }
 
-  await t.test('cancelling creation during a real HTTP body read drains initialization and scoped registrations', async () => {
+  await t.test('cancelled native creation never reads memory or retains a live Agent', async () => {
     const fiber = await root.plugin(plugin, { ...config, timeoutMs: 10000 });
-    const held = fixture.holdNextResponse();
-    const control = new AbortController();
-    const id = 'core-memory-initial-read-cancelled';
+    const cancel = new AbortController();
+    const id = 'core-memory-native-cancelled';
+    const count = fixture.requests.length;
+    const credentials = credentialResolutions;
     const modelCount = requests.length;
-    const creating = create(id, {}, { signal: control.signal }).then(handle => ({ handle }), error => ({ error }));
+    const creating = createNative(id, {}, { signal: cancel.signal }).then(handle => ({ handle }), error => ({ error }));
+    cancel.abort(new Error('fixture cancelled native creation'));
     try {
-      await within(held.started, 'initial HTTP body read must start');
-      const agent = root.agents.get(id);
-      assert.ok(agent, 'the real factory has entered its initialization announcement');
-      assert.ok(root.tools.get('lantai_core_refresh', agent));
-      control.abort(new Error('fixture creation cancelled during body read'));
-      const result = await within(creating, 'cancelled creation must drain before the remote body is released');
-      assert.ok(result.error, 'public agent creation must reject cancellation');
+      const result = await within(creating, 'native creation cancellation must settle without an HTTP operation');
+      assert.ok(result.error);
       assert.equal(root.agents.get(id), undefined);
       assert.equal(root.sessions.get(id), undefined);
-      await within(held.closed, 'creation cancellation must abort the HTTP body');
-      await assertUnregistered(agent);
+      assert.equal(fixture.requests.length, count);
+      assert.equal(credentialResolutions, credentials);
+      assert.equal(requests.length, modelCount);
+    } finally { await within(fiber.dispose(), 'native cancellation cleanup must settle'); }
+  });
+
+  await t.test('cancelling owner authorization during a real HTTP body read revokes its grant without late data', async () => {
+    const fiber = await root.plugin(plugin, { ...config, timeoutMs: 10000 });
+    const handle = await createNative('core-memory-owner-read-cancelled');
+    const held = fixture.holdNextResponse();
+    const cancel = new AbortController();
+    const modelCount = requests.length;
+    const reading = authorize(handle, { signal: cancel.signal }).then(value => ({ value }), error => ({ error }));
+    try {
+      await within(held.started, 'authorized HTTP body read must start');
+      assert.equal(root.agents.get(handle.agent.id), handle.agent);
+      cancel.abort(new Error('fixture owner cancelled authorization'));
+      const result = await within(reading, 'owner cancellation must not wait for the remote body');
+      assert.equal(result.error?.code, 'gateway/cancelled');
+      await within(held.closed, 'owner cancellation must abort the real HTTP transport');
+      const status = await control('status', handle.agent.id);
+      assert.equal(status.authorized, false);
+      assert.equal(status.blockCount, 0);
+      assert.equal(memorySnapshots(handle.agent.session).length, 0);
+      assert.equal(requests.length, modelCount);
       held.release();
-      await within(held.completed, 'late cancelled response must settle');
-      await assertUnregistered(agent);
-      assert.equal(memorySnapshots(agent.session).length, 0);
-      assert.equal(requests.length, modelCount, 'cancelled initialization must not dispatch a model request');
+      await within(held.completed, 'late owner-cancelled response must settle');
+      assert.equal((await control('status', handle.agent.id)).authorized, false);
+      const request = await send(handle.agent, 'after-owner-read-cancellation');
+      assert.ok(!request.messages.some(message => messageText(message).includes('sentinel')));
+      assert.equal(memorySnapshots(handle.agent.session).length, 0);
     } finally {
-      control.abort();
-      held.release();
-      await within(fiber.dispose(), 'cancelled-creation plugin cleanup must settle');
+      cancel.abort(); held.release();
+      await within(fiber.dispose(), 'cancelled owner-read cleanup must settle');
     }
   });
 
-  await t.test('unloading during a real initial HTTP read finishes initialization without late context or tools', async () => {
+  await t.test('owner revocation while a body is pending cancels transport and suppresses late data', async () => {
     const fiber = await root.plugin(plugin, { ...config, timeoutMs: 10000 });
+    const handle = await createNative('core-memory-owner-revoked-pending');
     const held = fixture.holdNextResponse();
-    const id = 'core-memory-initial-read-unloaded';
-    const creating = create(id);
+    const reading = authorize(handle).then(value => ({ value }), error => ({ error }));
     try {
-      await within(held.started, 'initial HTTP read must start before plugin unload');
-      const agent = root.agents.get(id);
-      assert.ok(agent);
-      assert.ok(root.tools.get('lantai_core_refresh', agent));
-      await within(fiber.dispose(), 'plugin unload must cancel and drain its initial HTTP read');
-      const handle = await within(creating, 'agent initialization must finish after plugin unload');
-      assert.equal(handle.agent, agent);
-      await within(held.closed, 'plugin unload must abort the HTTP body');
-      await assertUnregistered(agent);
+      await within(held.started, 'owner read must enter its pending body');
+      const revoked = await control('revoke', handle.agent.id);
+      assert.equal(revoked.authorized, false);
+      assert.equal(revoked.blockCount, 0);
+      await within(reading, 'revoked owner read must settle without more remote bytes');
+      await within(held.closed, 'revocation must close the real HTTP transport');
+      assert.equal((await control('status', handle.agent.id)).authorized, false);
+      assert.equal(memorySnapshots(handle.agent.session).length, 0);
+      held.release();
+      await within(held.completed, 'late revoked body must settle');
+      assert.equal((await control('status', handle.agent.id)).authorized, false);
+      assert.equal(memorySnapshots(handle.agent.session).length, 0);
+    } finally {
+      held.release();
+      await within(fiber.dispose(), 'pending revocation cleanup must settle');
+    }
+  });
+
+  await t.test('unloading during an authorized HTTP body read cancels the control request and all scoped registrations', async () => {
+    const fiber = await root.plugin(plugin, { ...config, timeoutMs: 10000 });
+    const handle = await createNative('core-memory-owner-read-unloaded');
+    const held = fixture.holdNextResponse();
+    const reading = authorize(handle).then(value => ({ value }), error => ({ error }));
+    try {
+      await within(held.started, 'authorized read must start before plugin unload');
+      await within(fiber.dispose(), 'unload must cancel and drain the authorized read');
+      const result = await within(reading, 'withdrawn owner operation must settle');
+      assert.equal(result.error?.code, 'gateway/cancelled');
+      await within(held.closed, 'unload must abort the HTTP body');
+      await assertUnregistered(handle.agent);
       held.release();
       await within(held.completed, 'late unloaded response must settle');
-      const request = await send(agent, 'after-initial-read-plugin-unload');
+      const request = await send(handle.agent, 'after-owner-read-plugin-unload');
       assert.ok(!request.messages.some(message => messageText(message).includes('sentinel')));
-      assert.equal(memorySnapshots(agent.session).length, 0);
-      await assertUnregistered(agent);
+      assert.equal(memorySnapshots(handle.agent.session).length, 0);
+      await assertUnregistered(handle.agent);
     } finally {
       held.release();
-      await within(fiber.dispose(), 'initial-read unload cleanup must be idempotent');
+      await within(fiber.dispose(), 'owner-read unload must remain idempotent');
     }
   });
 
-  await t.test('a stalled real initial HTTP body read reaches its configured budget without blocking the first step', async () => {
+  await t.test('a stalled authorized HTTP body reaches the complete owner-operation budget and leaves no grant', async () => {
     const fiber = await root.plugin(plugin, { ...config, timeoutMs: 100 });
+    const handle = await createNative('core-memory-owner-read-timeout');
     const held = fixture.holdNextResponse();
-    const creating = create('core-memory-initial-read-timeout');
+    const reading = authorize(handle);
     try {
-      await within(held.started, 'budgeted initial HTTP body read must start');
-      const handle = await within(creating, 'initial HTTP timeout must release agent initialization');
-      await within(held.closed, 'initial timeout must abort the HTTP body');
-      const status = await tool(handle.agent, 'lantai_core_status');
-      assert.equal(status.state, 'unavailable');
+      await within(held.started, 'budgeted owner HTTP body read must start');
+      const status = await within(reading, 'owner timeout must settle without the remote body');
+      assert.equal(status.authorized, false);
       assert.equal(status.reason, 'timeout');
       assert.equal(status.blockCount, 0);
+      await within(held.closed, 'owner timeout must abort the body');
+      assert.equal((await control('status', handle.agent.id)).authorized, false);
+      const denied = await tool(handle.agent, 'lantai_core_refresh');
+      assert.equal(denied.reason, 'authorization_required');
+      assert.equal(denied.blockCount, 0);
       held.release();
       await within(held.completed, 'late timed-out response must settle');
-      const request = await send(handle.agent, 'after-initial-read-timeout');
+      const request = await send(handle.agent, 'after-owner-read-timeout');
       assert.ok(!request.messages.some(message => messageText(message).includes('sentinel')));
-      assert.equal((await tool(handle.agent, 'lantai_core_status')).reason, 'timeout');
+      assert.equal(memorySnapshots(handle.agent.session).length, 0);
     } finally {
       held.release();
-      await within(fiber.dispose(), 'initial-timeout plugin cleanup must settle');
+      await within(fiber.dispose(), 'owner timeout cleanup must settle');
     }
   });
 

@@ -56,6 +56,27 @@ for (const change of [{ timeoutMs: 0 }, { timeoutMs: NaN }, { maxResponseBytes: 
   test('reject malformed configuration', () => assert.throws(() => config(change), reason('invalid_config')))
 }
 
+const sshInput = extra => input({ baseUrl: undefined, transport: 'ssh', ssh: { executable: process.execPath, alias: 'fixture-ssh', expectedHost: 'memory.example', user: 'root', sshPort: 22, remotePort: 18767, credentialFile: path.join(cwd, 'credential-source.conf'), ...extra } })
+
+test('SSH configuration names its encrypted destination without a fake HTTP fallback', () => {
+  const value = normalizeConfig(sshInput())
+  assert.equal(value.transport, 'ssh')
+  assert.equal(value.baseUrl, undefined)
+  assert.equal(value.authMode, 'api-key')
+  assert.equal(value.ssh.remotePort, 18767)
+  assert.match(value.sourceKey, /^[a-f0-9]{64}$/u)
+  assert.notEqual(value.sourceKey, normalizeConfig(sshInput({ remotePort: 18768 })).sourceKey)
+})
+
+for (const change of [{ alias: '-oDanger' }, { executable: 'relative' }, { expectedHost: 'bad host' }, { remotePort: 0 }, { credentialFile: 'relative.conf' }]) {
+  test('malformed SSH settings are rejected before a connection can start', () => assert.throws(() => normalizeConfig(sshInput(change)), reason('invalid_config')))
+}
+
+test('SSH configuration cannot be passed through the direct HTTP reader', async () => {
+  const value = normalizeConfig(sshInput())
+  await assert.rejects(fetchCoreMemory(value, value.bindings[0], 'fixture-token'), reason('invalid_config'))
+})
+
 test('snapshot selects stable policy then identity, excluding task', () => {
   const result = snapshot([row('task', { content: 'TASK_PRIVATE' }), row('identity'), row('policy')])
   assert.equal(result.blockCount, 2)

@@ -1282,7 +1282,7 @@ CI_STEP_OWNERS: dict[str, str] = {
     "pytest tests/ -q --cov=lantai --cov-report=term-missing": "全量测试 + 宿主目录绊线",
     # test_dsh_core_memory_contract.py 实际执行同一 Node 测试命令；发布门禁始终显式设置
     # LANTAI_TEST_NODE，缺少兼容 Node 时契约测试直接失败，不走普通开发跑测的 skip 分支。
-    "node --test integrations/dsh-core-memory/test/core.test.mjs integrations/dsh-core-memory/test/session.test.mjs integrations/dsh-core-memory/test/package.test.mjs": "全量测试 + 宿主目录绊线",
+    'node --test "integrations/dsh-core-memory/test/*.test.mjs"': "全量测试 + 宿主目录绊线",
     "python scripts/run_forgetting_quality.py --check": "遗忘质量离线门禁",
     "python -m build --wheel": "构建产物（wheel）",
 }

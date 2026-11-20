@@ -6,7 +6,7 @@ import path from 'node:path'
 import { normalizeConfig } from '../lib/core.js'
 import { createSessionMemory } from '../lib/session.js'
 
-async function fixture(t, { handler, credential, timeoutMs = 1000 } = {}) {
+async function fixture(t, { handler, credential, authorize = () => true, readCore, timeoutMs = 1000 } = {}) {
   let count = 0
   let version = 1
   const server = createServer((req, res) => {
@@ -20,9 +20,26 @@ async function fixture(t, { handler, credential, timeoutMs = 1000 } = {}) {
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })
   const config = normalizeConfig({ enabled: true, baseUrl: `http://127.0.0.1:${server.address().port}`, allowLoopbackHttp: true, apiKeyEnv: 'TEST_CORE_TOKEN', timeoutMs, bindings: [{ workspace: process.cwd(), namespace: 'fixture', userId: 'fixture-user' }] })
   let workspace = process.cwd()
-  const memory = createSessionMemory({ config, binding: config.bindings[0], getWorkspace: () => workspace, resolveCredential: credential ?? (async () => ({ value: 'fixture-token' })) })
+  const memory = createSessionMemory({ config, binding: config.bindings[0], getWorkspace: () => workspace, authorize, readCore, resolveCredential: credential ?? (async () => ({ value: 'fixture-token' })) })
   t.after(() => memory.dispose())
   return { memory, config, count: () => count, version: value => { version = value }, workspace: value => { workspace = value } }
+}
+
+for (const authorize of [undefined, () => false, () => { throw Error('untrusted authorization source') }]) {
+  test('unavailable authorization denies before credentials and transport with no injected text', async t => {
+    const f = await fixture(t)
+    let credentials = 0
+    let reads = 0
+    const memory = createSessionMemory({ config: f.config, binding: f.config.bindings[0], getWorkspace: () => process.cwd(), authorize, resolveCredential: async () => { credentials++; return { value: 'fixture-token' } }, readCore: async () => { reads++; return { blocks: [] } } })
+    t.after(() => memory.dispose())
+    const result = await memory.load()
+    assert.equal(result.reason, 'authorization_required')
+    assert.equal(result.outcome, 'denied')
+    assert.equal(credentials, 0)
+    assert.equal(reads, 0)
+    assert.equal(f.count(), 0)
+    assert.equal(memory.text(), '')
+  })
 }
 
 test('load obtains a stable bounded snapshot once until explicit refresh', async t => {
@@ -170,7 +187,7 @@ test('already cancelled operations do not even resolve credentials', async t => 
 
 test('workspace observation failure degrades instead of breaking context assembly', async t => {
   const f = await fixture(t)
-  const memory = createSessionMemory({ config: f.config, binding: f.config.bindings[0], getWorkspace: () => { throw Error('PRIVATE_PATH') }, resolveCredential: async () => ({ value: 'fixture-token' }) })
+  const memory = createSessionMemory({ config: f.config, binding: f.config.bindings[0], getWorkspace: () => { throw Error('PRIVATE_PATH') }, authorize: () => true, resolveCredential: async () => ({ value: 'fixture-token' }) })
   t.after(() => memory.dispose())
   assert.equal((await memory.load()).reason, 'scope_changed')
   assert.doesNotThrow(() => memory.text())
@@ -179,7 +196,7 @@ test('workspace observation failure degrades instead of breaking context assembl
 
 test('session caches are independent even within the same workspace', async t => {
   const f = await fixture(t)
-  const other = createSessionMemory({ config: f.config, binding: f.config.bindings[0], getWorkspace: () => process.cwd(), resolveCredential: async () => undefined })
+  const other = createSessionMemory({ config: f.config, binding: f.config.bindings[0], getWorkspace: () => process.cwd(), authorize: () => true, resolveCredential: async () => undefined })
   t.after(() => other.dispose())
   await f.memory.load()
   assert.equal(other.status().state, 'idle')

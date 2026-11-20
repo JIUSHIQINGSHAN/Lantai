@@ -100,10 +100,19 @@ def _node(executable: str, operation: str, **values):
 
 def test_node_core_memory_suite_smoke(node_runtime: str) -> None:
     """The Python gate executes the actual Node package suite, not only a bridge snippet."""
-    test_files = [
-        ROOT / "integrations" / "dsh-core-memory" / "test" / filename
-        for filename in ("core.test.mjs", "session.test.mjs", "package.test.mjs")
-    ]
+    directory = ROOT / "integrations" / "dsh-core-memory" / "test"
+    test_files = sorted(directory.glob("*.test.mjs"))
+    required = {
+        "core.test.mjs",
+        "session.test.mjs",
+        "package.test.mjs",
+        "access.test.mjs",
+        "ssh.test.mjs",
+        "source.test.mjs",
+        "control.test.mjs",
+        "client.test.mjs",
+    }
+    assert required <= {path.name for path in test_files}, "required security tests are missing"
     completed = subprocess.run(
         [node_runtime, "--test", *(str(path) for path in test_files)],
         cwd=ROOT,
@@ -333,6 +342,6 @@ def test_isolated_real_lantai_http_fixture_flows_through_node_adapter(node_runti
             runtime_output = completed.stdout + completed.stderr
             assert completed.returncode == 0, runtime_output[-16000:]
             assert "realBackend=fixture" in runtime_output, runtime_output[-16000:]
-            assert re.search(r"(?m)^ℹ tests 24\s*$", runtime_output), runtime_output[-16000:]
-            assert re.search(r"(?m)^ℹ pass 24\s*$", runtime_output), runtime_output[-16000:]
+            assert re.search(r"(?m)^ℹ tests 29\s*$", runtime_output), runtime_output[-16000:]
+            assert re.search(r"(?m)^ℹ pass 29\s*$", runtime_output), runtime_output[-16000:]
             assert re.search(r"(?m)^ℹ fail 0\s*$", runtime_output), runtime_output[-16000:]

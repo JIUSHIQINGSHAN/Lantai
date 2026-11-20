@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 
 /** Safe public diagnostics never contain remote content, endpoint or credentials. */
 export class CoreMemoryError extends Error {
@@ -25,13 +26,29 @@ export function workspaceKey(directory) {
   return process.platform === 'win32' ? result.toLowerCase() : result
 }
 
-/** Validate independently of the host schema, including direct programmatic plugin use. */
+/** Validate independently of the Host schema without resolving secrets or starting I/O. */
 export function normalizeConfig(input = {}) {
   if (input?.enabled !== true) return { enabled: false }
-  let endpoint
-  try { endpoint = new URL(input.baseUrl) } catch { fail('invalid_config') }
-  const httpLoopback = input.allowLoopbackHttp === true && endpoint.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(endpoint.hostname)
-  if ((endpoint.protocol !== 'https:' && !httpLoopback) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) fail('invalid_config')
+  const transport = input.transport ?? 'direct'
+  if (!['direct', 'ssh'].includes(transport)) fail('invalid_config')
+  let baseUrl
+  let ssh
+  if (transport === 'direct') {
+    let endpoint
+    try { endpoint = new URL(input.baseUrl) } catch { fail('invalid_config') }
+    const httpLoopback = input.allowLoopbackHttp === true && endpoint.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(endpoint.hostname)
+    if ((endpoint.protocol !== 'https:' && !httpLoopback) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) fail('invalid_config')
+    if (!endpoint.pathname.endsWith('/')) endpoint.pathname += '/'
+    baseUrl = endpoint.href
+  } else {
+    const raw = input.ssh
+    const localPath = value => typeof value === 'string' && value.length <= 4096 && path.isAbsolute(value) && !/[\u0000-\u001f\u007f]/u.test(value) && !value.startsWith('\\\\')
+    if (!object(raw) || !localPath(raw.executable) || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(raw.alias ?? '') || !/^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$/u.test(raw.expectedHost ?? '') || !/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/u.test(raw.user ?? '')) fail('invalid_config')
+    if (raw.credentialFile != null && !localPath(raw.credentialFile)) fail('invalid_config')
+    ssh = Object.freeze({ executable: raw.executable, alias: raw.alias, expectedHost: raw.expectedHost, user: raw.user, sshPort: limit(raw.sshPort, 22, 1, 65535), remotePort: limit(raw.remotePort, undefined, 1, 65535), credentialFile: raw.credentialFile ?? null })
+  }
+  const authMode = input.authMode ?? (transport === 'ssh' ? 'api-key' : 'bearer')
+  if (!['api-key', 'bearer'].includes(authMode)) fail('invalid_config')
   if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(input.apiKeyEnv ?? '')) fail('invalid_config')
   if (!Array.isArray(input.bindings) || input.bindings.length === 0 || input.bindings.length > 32) fail('invalid_config')
   const seen = new Set()
@@ -43,23 +60,16 @@ export function normalizeConfig(input = {}) {
     if (!identifier(binding.namespace ?? 'default') || !identifier(binding.userId)) fail('invalid_config')
     if (binding.tenantId != null && !identifier(binding.tenantId)) fail('invalid_config')
     if (binding.includeTask !== undefined && typeof binding.includeTask !== 'boolean') fail('invalid_config')
-    return Object.freeze({
-      workspace: path.resolve(binding.workspace),
-      workspaceKey: key,
-      namespace: binding.namespace ?? 'default',
-      userId: binding.userId,
-      tenantId: binding.tenantId ?? null,
-      includeTask: binding.includeTask === true,
-    })
+    return Object.freeze({ workspace: path.resolve(binding.workspace), workspaceKey: key, namespace: binding.namespace ?? 'default', userId: binding.userId, tenantId: binding.tenantId ?? null, includeTask: binding.includeTask === true })
   })
-  if (!endpoint.pathname.endsWith('/')) endpoint.pathname += '/'
+  const sourceKey = createHash('sha256').update(JSON.stringify({ transport, baseUrl, ssh, authMode, credentialRef: input.apiKeyEnv })).digest('hex')
   return Object.freeze({
-    enabled: true,
-    baseUrl: endpoint.href,
+    enabled: true, transport, baseUrl, ssh, authMode, sourceKey,
     apiKeyEnv: input.apiKeyEnv,
     allowLoopbackHttp: input.allowLoopbackHttp === true,
     bindings: Object.freeze(bindings),
-    timeoutMs: limit(input.timeoutMs, 1000, 50, 10000),
+    grantTtlMs: limit(input.grantTtlMs, 28800000, 60000, 86400000),
+    timeoutMs: limit(input.timeoutMs, transport === 'ssh' ? 5000 : 1000, 50, 10000),
     maxResponseBytes: limit(input.maxResponseBytes, 131072, 1024, 1048576),
     maxContextBytes: limit(input.maxContextBytes, 16384, 256, 65536),
   })
@@ -92,6 +102,7 @@ export function selectSnapshot(payload, binding, maxContextBytes) {
 
 /** Bounded authenticated GET. It never sends session text or follows a redirect. */
 export async function fetchCoreMemory(config, binding, token, signal) {
+  if (config.transport !== undefined && config.transport !== 'direct') fail('invalid_config')
   if (typeof token !== 'string' || !/^[\x21-\x7e]{1,8192}$/u.test(token)) fail('missing_credentials')
   const url = new URL('core-memory', config.baseUrl)
   url.searchParams.set('namespace', binding.namespace)
@@ -101,7 +112,7 @@ export async function fetchCoreMemory(config, binding, token, signal) {
     signal?.throwIfAborted()
     response = await fetch(url, {
       method: 'GET',
-      headers: { accept: 'application/json', authorization: `Bearer ${token}` },
+      headers: { accept: 'application/json', ...(config.authMode === 'api-key' ? { 'X-API-Key': token } : { authorization: `Bearer ${token}` }) },
       redirect: 'error', cache: 'no-store', signal,
     })
     if (response.status === 401 || response.status === 403) fail('authentication_failed')

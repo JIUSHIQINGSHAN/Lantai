@@ -1,20 +1,33 @@
 {
   "name": "@lantai/dsh-core-memory",
-  "version": "0.1.1",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "Load scoped Lantai core memory when a DeepSeek Harness session starts.",
-  "engines": { "node": ">=24.9.0", "dsh": "0.2.2-rc.3" },
+  "engines": { "node": ">=24.9.0", "dsh": "0.2.2-rc.5" },
   "peerDependencies": {
     "@deepseek-ai/schemastery": "~3.19.0",
-    "@deepseek-ai/dsh-tools": "0.2.2-rc.3"
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-api-gateway": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-api-remote-access": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-client-locale": "0.2.2-rc.5"
   },
   "exports": {
     ".": "./index.js",
+    "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "lib", "cordis.patch.yml", "locale", "icon.svg", "README.md"],
-  "scripts": { "test": "node --test test/core.test.mjs test/session.test.mjs test/package.test.mjs" },
-  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+  "files": ["index.js", "client.js", "lib", "cordis.patch.yml", "locale", "icon.svg", "README.md"],
+  "scripts": { "test": "node --test test/*.test.mjs", "build:client": "node ../../scripts/build_dsh_core_memory_client.mjs" },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": ["@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-api-gateway", "@deepseek-ai/dsh-api-remote-access", "@deepseek-ai/dsh-client-locale"]
+    }
+  }
 }

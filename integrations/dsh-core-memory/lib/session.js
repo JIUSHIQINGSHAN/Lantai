@@ -1,6 +1,6 @@
 import { CoreMemoryError, fetchCoreMemory, selectSnapshot, workspaceKey } from './core.js'
 
-/** Await an external resolver without letting its failure to settle block cancellation. */
+/** Await an external adapter without letting it defeat operation cancellation. */
 function abortable(value, signal) {
   if (signal.aborted) return Promise.reject(new CoreMemoryError('aborted'))
   return new Promise((resolve, reject) => {
@@ -10,8 +10,8 @@ function abortable(value, signal) {
   })
 }
 
-/** One agent owns one immutable snapshot; no global or on-disk content cache. */
-export function createSessionMemory({ config, binding, getWorkspace, resolveCredential }) {
+/** One Agent owns one authorized snapshot. Missing policy is denial, not owner inference. */
+export function createSessionMemory({ config, binding, getWorkspace, resolveCredential, authorize = () => false, readCore = fetchCoreMemory }) {
   let state = binding ? 'idle' : 'not_bound'
   let reason = binding ? '' : 'not_bound'
   let snapshot = null
@@ -25,8 +25,7 @@ export function createSessionMemory({ config, binding, getWorkspace, resolveCred
     catch { return false }
   }
   const metadata = () => ({
-    state,
-    reason,
+    state, reason,
     blockCount: snapshot?.blockCount ?? 0,
     contextBytes: snapshot?.bytes ?? 0,
     versions: snapshot?.versions.map(item => ({ ...item })) ?? [],
@@ -42,30 +41,38 @@ export function createSessionMemory({ config, binding, getWorkspace, resolveCred
     reason = code
   }
 
+  function ensureAuthorization() {
+    if (disposed || !binding) return false
+    let permitted = false
+    try { permitted = typeof authorize === 'function' && authorize() === true } catch { /* Unknown authority is denial. */ }
+    if (!permitted && (reason !== 'authorization_required' || active || snapshot)) invalidate('authorization_required')
+    return permitted
+  }
+
   function ensureScope() {
-    if (!disposed && binding && !inScope() && reason !== 'scope_changed') invalidate('scope_changed')
+    if (disposed || !binding || !inScope()) {
+      if (!disposed && binding && reason !== 'scope_changed') invalidate('scope_changed')
+      return false
+    }
+    return true
   }
 
   function status() {
-    ensureScope()
+    if (ensureAuthorization()) ensureScope()
     return metadata()
   }
 
   function text() {
-    ensureScope()
-    if (disposed || !binding) return ''
-    if (snapshot) return snapshot.text
-    // A fixed diagnostic prevents a missing startup from being presented as loaded memory.
-    return state === 'idle' ? '' : `Lantai core memory is not loaded (${reason || state}). Earlier Lantai core-memory data is not current.`
+    if (!ensureAuthorization() || !ensureScope()) return ''
+    // Operational failures remain in metadata, not in an unauthorized model context.
+    return snapshot?.text ?? ''
   }
 
   async function execute(signal) {
     if (disposed) return { ...metadata(), outcome: 'disposed' }
     if (!binding) return { ...metadata(), outcome: 'not_bound' }
-    if (!inScope()) {
-      invalidate('scope_changed')
-      return { ...metadata(), outcome: 'failed' }
-    }
+    if (!ensureAuthorization()) return { ...metadata(), outcome: 'denied' }
+    if (!ensureScope()) return { ...metadata(), outcome: 'failed' }
     const current = ++generation
     active?.abort()
     const controller = new AbortController()
@@ -81,27 +88,25 @@ export function createSessionMemory({ config, binding, getWorkspace, resolveCred
     let outcome = 'failed'
     try {
       controller.signal.throwIfAborted()
+      // Recheck immediately before any credential adapter can be invoked.
+      if (!ensureAuthorization()) return { ...metadata(), outcome: 'denied' }
       let credential
-      try {
-        credential = await abortable(resolveCredential(config.apiKeyEnv), controller.signal)
-      } catch (error) {
+      try { credential = await abortable(resolveCredential(config.apiKeyEnv), controller.signal) }
+      catch (error) {
         if (controller.signal.aborted) throw error
         throw new CoreMemoryError('credential_error')
       }
       controller.signal.throwIfAborted()
       if (current !== generation || disposed) return { ...metadata(), outcome: 'superseded' }
-      if (!inScope()) {
-        invalidate('scope_changed')
-        return { ...metadata(), outcome: 'failed' }
-      }
-      const payload = await fetchCoreMemory(config, binding, credential?.value, controller.signal)
-      const candidate = selectSnapshot(payload, binding, config.maxContextBytes)
+      if (!ensureAuthorization()) return { ...metadata(), outcome: 'denied' }
+      if (!ensureScope()) return { ...metadata(), outcome: 'failed' }
+      const payload = await abortable(readCore(config, binding, credential?.value, controller.signal), controller.signal)
       controller.signal.throwIfAborted()
       if (current !== generation || disposed) return { ...metadata(), outcome: 'superseded' }
-      if (!inScope()) {
-        invalidate('scope_changed')
-        return { ...metadata(), outcome: 'failed' }
-      }
+      if (!ensureAuthorization()) return { ...metadata(), outcome: 'denied' }
+      if (!ensureScope()) return { ...metadata(), outcome: 'failed' }
+      const candidate = selectSnapshot(payload, binding, config.maxContextBytes)
+      if (!ensureAuthorization()) return { ...metadata(), outcome: 'denied' }
       snapshot = candidate
       state = candidate.blockCount === 0 ? 'empty' : 'ready'
       reason = ''
@@ -112,9 +117,7 @@ export function createSessionMemory({ config, binding, getWorkspace, resolveCred
         state = 'unavailable'
         reason = controller.signal.aborted ? (timedOut ? 'timeout' : 'cancelled') : (error instanceof CoreMemoryError ? error.code : 'internal_error')
         outcome = controller.signal.aborted && !timedOut ? 'cancelled' : 'failed'
-      } else {
-        outcome = disposed ? 'disposed' : 'superseded'
-      }
+      } else outcome = disposed ? 'disposed' : 'superseded'
     } finally {
       clearTimeout(timer)
       signal?.removeEventListener('abort', cancel)
