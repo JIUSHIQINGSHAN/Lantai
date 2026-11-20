@@ -156,7 +156,7 @@ _WHITELIST: set[tuple[str, int]] = {
     # 票 53 审查修正：SQL cutoff 比较操作数（operation_logs.created_at 落盘为
     # 空格分隔形态，isoformat(sep=" ") 与之同形；走 iso_utc 的 T 分隔会让
     # 同日历日行提前 ~23h 被剪）。SQL 操作数非 datetime JSON 出口。
-    ("observability/telemetry.py", 136),
+    ("observability/telemetry.py", 137),
 }
 
 # 白名单按 (file, 行号) 精确登记；AST 扫描取 Call.func.value 为 Attribute

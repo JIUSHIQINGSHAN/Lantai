@@ -15,6 +15,7 @@ from lantai.api import (
     routes_checkpoint_router,
     routes_cognitive_router,
     routes_conflicts_router,
+    routes_conversation_router,
     routes_crystals_router,
     routes_dialogue_router,
     routes_diben_router,
@@ -136,9 +137,16 @@ def create_app() -> FastAPI:
     # 即为压显示列数保单行，勿改名拉长。
     app = FastAPI(title="兰台记忆（Lantai）", version="0.69.1", lifespan=lifespan, **docs_kw())
 
-    app.add_middleware(CognitiveMiddleware)
+    app.add_middleware(CognitiveMiddleware, excluded_prefix=routes_conversation_router.prefix)
+
     # 司天（ADR-0044）：请求级遥测（内存指标 + 采样落库）；关闭时中间件零开销直通
-    app.add_middleware(TelemetryMiddleware)
+    # Keep telemetry for enabled endpoints. A disabled capture leaves no request row.
+    def skip_disabled_capture(scope: dict) -> bool:
+        return not settings.FEATURE_CONVERSATION_CAPTURE and path_within(
+            scope, routes_conversation_router.prefix
+        )
+
+    app.add_middleware(TelemetryMiddleware, skip_request=skip_disabled_capture)
 
     # 票 70（UI 出口防护）：统一安全头——nosniff 防嗅探改读、DENY 防点击劫持
     # （控制台有裁决/删除/回滚按钮，可被第三方页 iframe 叠加诱导层）、CSP 防外
@@ -193,6 +201,8 @@ def create_app() -> FastAPI:
     app.include_router(routes_ui_router)
     app.include_router(routes_admin_router)
 
+    app.include_router(routes_conversation_router)
+
     AUTH = [Depends(get_current_user)]
     for r in CORE_ROUTERS:
         app.include_router(r, dependencies=AUTH)
@@ -204,7 +214,7 @@ def create_app() -> FastAPI:
 
 
 # 润物（ADR-0060）认知中间件 import 置于工厂定义前（工厂体内引用）
-from lantai.runtime.middleware import CognitiveMiddleware  # noqa: E402
+from lantai.runtime.middleware import CognitiveMiddleware, path_within  # noqa: E402
 
 # 业务端点（需要 API Key 鉴权）——工厂装配表（调用 create_app() 时求值）
 CORE_ROUTERS = [
