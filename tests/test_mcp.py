@@ -575,12 +575,71 @@ def test_conflict_resolve_ok():
                 "method": "tools/call",
                 "params": {
                     "name": "conflict_resolve",
-                    "arguments": {"event_id": "cfev_1", "decision": "resolved"},
+                    "arguments": {
+                        "event_id": "cfev_1",
+                        "decision": "resolved",
+                        "note": "确认是同一件事的两种说法",
+                    },
                 },
             }
         )
     assert "error" not in resp
-    m.assert_called_once_with("cfev_1", "resolved", "", principal=None)
+    m.assert_called_once_with("cfev_1", "resolved", "确认是同一件事的两种说法", principal=None)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"event_id": "cfev_1", "decision": "resolved"},
+        {"event_id": "cfev_1", "decision": "dismissed", "note": ""},
+        {"event_id": "cfev_1", "decision": "dismissed", "note": " \n\t　"},
+    ],
+    ids=["missing", "empty", "blank"],
+)
+def test_conflict_resolve_requires_nonblank_note_before_service(arguments):
+    """service 自 v0.15.2 起要求非空白理由；MCP 边界须在进 service 前以 -32602 拒绝，
+    而不是宣告 note 可选、再让 service 抛错（与 lantai-mcp-bridge / ADR-0090 同口径）。"""
+    mod = _load_mcp()
+    with patch("lantai.services.conflict_service.resolve_conflict_event") as m:
+        resp = mod.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 28,
+                "method": "tools/call",
+                "params": {"name": "conflict_resolve", "arguments": arguments},
+            }
+        )
+    assert resp["error"]["code"] == -32602
+    m.assert_not_called()
+
+
+def test_conflict_resolve_schema_matches_service_contract():
+    """宣告的 schema 与 service 契约一致：note 必填、非空；decision 只有两个取值。
+    三处面（进程内 MCP、lantai-mcp-bridge、scripts/lantai_mcp_bridge.py）一并锁住。"""
+    import importlib.util as _ilu
+
+    from lantai.cli import mcp_bridge
+
+    mod = _load_mcp()
+    schema = mod.TOOLS["conflict_resolve"]["inputSchema"]
+    assert set(schema["required"]) == {"event_id", "decision", "note"}
+    assert schema["properties"]["decision"]["enum"] == ["resolved", "dismissed"]
+    assert schema["properties"]["note"].get("minLength", 0) >= 1
+    assert "default" not in schema["properties"]["note"]
+
+    bridge_tool = mcp_bridge.TOOLS["conflict_resolve"]
+    assert set(bridge_tool.required) == {"event_id", "decision", "note"}
+
+    spec = _ilu.spec_from_file_location(
+        "dsh_bridge_script",
+        Path(__file__).resolve().parent.parent / "scripts" / "lantai_mcp_bridge.py",
+    )
+    script = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    s_schema = script.TOOLS["conflict_resolve"]["inputSchema"]
+    assert set(s_schema["required"]) == {"event_id", "decision", "note"}
+    assert s_schema["properties"]["decision"]["enum"] == ["resolved", "dismissed"]
+    assert "default" not in s_schema["properties"]["note"]
 
 
 def test_conflict_resolve_validation():
