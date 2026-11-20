@@ -1,55 +1,48 @@
 'use strict'
 
-// Shared by Host ESM and the Client lazy factory. Keep this file dependency-free.
+const REASONS = ['ready', 'scope_changed', 'unavailable']
+
+function plainObject(value) {
+  if (value === null || typeof value !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  return Reflect.ownKeys(descriptors).every(key => typeof key === 'string' && Object.hasOwn(descriptors[key], 'value') && descriptors[key].enumerable)
+}
+
 function createControlContribution() {
-  const sessionId = {
-    mode: 'strict', typeSymbol: '@lantai/dsh-core-memory.control.sessionId.string',
+  const enabledInput = {
+    mode: 'strict', typeSymbol: '@lantai/dsh-core-memory.profilePreference.enabled',
     create: () => ({ parse(value) {
-      if (typeof value !== 'string' || value.length < 1 || value.length > 1024 || /[\u0000-\u001f\u007f-\u009f]/u.test(value)) {
-        throw new TypeError('Invalid sessionId')
-      }
+      if (typeof value !== 'boolean') throw new TypeError('Invalid enabled value')
       return value
     } }),
   }
   const metadata = {
-    mode: 'strict', typeSymbol: '@lantai/dsh-core-memory.control.metadata',
+    mode: 'strict', typeSymbol: '@lantai/dsh-core-memory.profilePreference.status',
     create: () => ({ parse(value) {
-      const invalid = () => { throw new TypeError('Invalid control metadata') }
-      const object = (input, required, optional = []) => {
-        if (input === null || typeof input !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(input))) invalid()
-        const fields = Object.getOwnPropertyDescriptors(input)
-        if (Reflect.ownKeys(fields).some(key => typeof key !== 'string' || ![...required, ...optional].includes(key) || !Object.hasOwn(fields[key], 'value') || !fields[key].enumerable)) invalid()
-        if (required.some(key => !Object.hasOwn(fields, key))) invalid()
-        return Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, field.value]))
-      }
-      const result = object(value, ['state', 'reason', 'authorized', 'blockCount', 'contextBytes', 'versions'], ['expiresAt', 'outcome'])
-      if (typeof result.state !== 'string' || typeof result.reason !== 'string' || typeof result.authorized !== 'boolean') invalid()
-      if (![result.blockCount, result.contextBytes].every(count => Number.isSafeInteger(count) && count >= 0)) invalid()
-      if (Object.hasOwn(result, 'expiresAt') && !Number.isSafeInteger(result.expiresAt)) invalid()
-      if (Object.hasOwn(result, 'outcome') && typeof result.outcome !== 'string') invalid()
-      if (!Array.isArray(result.versions)) invalid()
-      const entries = Object.getOwnPropertyDescriptors(result.versions)
-      if (Reflect.ownKeys(entries).length !== result.versions.length + 1) invalid()
-      result.versions = Array.from({ length: result.versions.length }, (_, index) => {
-        const entry = entries[index]
-        if (!entry || !Object.hasOwn(entry, 'value') || !entry.enumerable) invalid()
-        const version = object(entry.value, ['block', 'version'])
-        if (!['policy', 'identity', 'task'].includes(version.block) || !Number.isSafeInteger(version.version) || version.version < 1) invalid()
-        return version
-      })
-      return result
+      if (!plainObject(value)) throw new TypeError('Invalid preference status')
+      const fields = Object.getOwnPropertyDescriptors(value)
+      const allowed = ['enabled', 'writable', 'reason', 'folderCount', 'includesTask']
+      if (Reflect.ownKeys(fields).some(key => !allowed.includes(key)) || allowed.some(key => !Object.hasOwn(fields, key))) throw new TypeError('Invalid preference status')
+      const result = Object.fromEntries(Object.entries(fields).map(([key, descriptor]) => [key, descriptor.value]))
+      if (typeof result.enabled !== 'boolean' || typeof result.writable !== 'boolean' || !REASONS.includes(result.reason) || !Number.isSafeInteger(result.folderCount) || result.folderCount < 0 || typeof result.includesTask !== 'boolean') throw new TypeError('Invalid preference status')
+      return { enabled: result.enabled, writable: result.writable, reason: result.reason, folderCount: result.folderCount, includesTask: result.includesTask }
     } }),
   }
+  const makeDescriptor = (method, parameters) => ({
+    id: `@lantai/dsh-core-memory#lantaiCoreMemory/${method}`,
+    service: 'lantaiCoreMemory', namespace: 'lantaiCoreMemory', method,
+    invocation: { kind: 'direct' }, parameters,
+    cancellation: { parameter: 'signal' }, result: metadata,
+  })
   return {
     package: '@lantai/dsh-core-memory',
-    descriptors: ['authorize', 'revoke', 'status'].map(method => ({
-      id: `@lantai/dsh-core-memory#lantaiCoreMemory/${method}`,
-      service: 'lantaiCoreMemory', namespace: 'lantaiCoreMemory', method,
-      invocation: { kind: 'direct' },
-      parameters: [{ name: 'sessionId', wire: 'sessionId', source: 'json', codec: sessionId }],
-      cancellation: { parameter: 'signal' }, result: metadata,
-    })),
+    descriptors: [
+      makeDescriptor('status', []),
+      makeDescriptor('setEnabled', [{ name: 'enabled', wire: 'enabled', source: 'json', codec: enabledInput }]),
+    ],
   }
 }
 
+exports.REASONS = Object.freeze(REASONS.slice())
 exports.createControlContribution = createControlContribution
+exports.parsePreferenceStatus = value => createControlContribution().descriptors[0].result.create().parse(value)

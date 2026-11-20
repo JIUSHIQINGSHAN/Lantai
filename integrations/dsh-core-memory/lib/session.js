@@ -91,9 +91,9 @@ export function createSessionMemory({ config, binding, getWorkspace, resolveCred
       // Recheck immediately before any credential adapter can be invoked.
       if (!ensureAuthorization()) return { ...metadata(), outcome: 'denied' }
       let credential
-      try { credential = await abortable(resolveCredential(config.apiKeyEnv), controller.signal) }
+      try { credential = await abortable(resolveCredential(config.apiKeyEnv, controller.signal), controller.signal) }
       catch (error) {
-        if (controller.signal.aborted) throw error
+        if (controller.signal.aborted || error instanceof CoreMemoryError) throw error
         throw new CoreMemoryError('credential_error')
       }
       controller.signal.throwIfAborted()

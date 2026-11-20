@@ -63,12 +63,14 @@ export function normalizeConfig(input = {}) {
     return Object.freeze({ workspace: path.resolve(binding.workspace), workspaceKey: key, namespace: binding.namespace ?? 'default', userId: binding.userId, tenantId: binding.tenantId ?? null, includeTask: binding.includeTask === true })
   })
   const sourceKey = createHash('sha256').update(JSON.stringify({ transport, baseUrl, ssh, authMode, credentialRef: input.apiKeyEnv })).digest('hex')
+  const configuredScopes = bindings.map(({ workspaceKey, namespace, userId, tenantId, includeTask }) =>
+    JSON.stringify([workspaceKey, namespace, userId, tenantId, includeTask])).sort()
+  const scopeKey = createHash('sha256').update(JSON.stringify([1, sourceKey, configuredScopes])).digest('hex')
   return Object.freeze({
-    enabled: true, transport, baseUrl, ssh, authMode, sourceKey,
+    enabled: true, transport, baseUrl, ssh, authMode, sourceKey, scopeKey,
     apiKeyEnv: input.apiKeyEnv,
     allowLoopbackHttp: input.allowLoopbackHttp === true,
     bindings: Object.freeze(bindings),
-    grantTtlMs: limit(input.grantTtlMs, 28800000, 60000, 86400000),
     timeoutMs: limit(input.timeoutMs, transport === 'ssh' ? 5000 : 1000, 50, 10000),
     maxResponseBytes: limit(input.maxResponseBytes, 131072, 1024, 1048576),
     maxContextBytes: limit(input.maxContextBytes, 16384, 256, 65536),

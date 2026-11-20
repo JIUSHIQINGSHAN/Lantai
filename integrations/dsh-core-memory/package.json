@@ -1,18 +1,20 @@
 {
   "name": "@lantai/dsh-core-memory",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Load scoped Lantai core memory when a DeepSeek Harness session starts.",
+  "description": "Automatically load scoped Lantai core memory when enabled in DeepSeek Harness Settings.",
   "engines": { "node": ">=24.9.0", "dsh": "0.2.2-rc.5" },
   "peerDependencies": {
     "@deepseek-ai/schemastery": "~3.19.0",
     "@deepseek-ai/dsh-tools": "0.2.2-rc.5",
     "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.5",
-    "@deepseek-ai/dsh-client-ui-conversation": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-storage-domain": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-client-ui-settings-general": "0.2.2-rc.5",
     "@deepseek-ai/dsh-api-gateway": "0.2.2-rc.5",
     "@deepseek-ai/dsh-api-remote-access": "0.2.2-rc.5",
-    "@deepseek-ai/dsh-client-locale": "0.2.2-rc.5"
+    "@deepseek-ai/dsh-client-locale": "0.2.2-rc.5",
+    "zod": "^4.6.6"
   },
   "exports": {
     ".": "./index.js",
@@ -27,7 +29,7 @@
     "client": {
       "platform": "web",
       "immediately": true,
-      "inject": ["@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-api-gateway", "@deepseek-ai/dsh-api-remote-access", "@deepseek-ai/dsh-client-locale"]
+      "inject": ["@deepseek-ai/dsh-client-ui-settings-general", "@deepseek-ai/dsh-api-gateway", "@deepseek-ai/dsh-api-remote-access", "@deepseek-ai/dsh-client-locale"]
     }
   }
 }

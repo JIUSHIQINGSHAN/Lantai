@@ -5,85 +5,160 @@ window.__ModuleLoader__.load({
     const h = React.createElement
     /*__DSH_CORE_MEMORY_INLINE_SOURCES__*/
     const namespace = 'lantai-core-memory.client'
-    const slotName = 'conversation.input.right'
-    const authorizeAction = 'lantaiCoreMemory/authorize'
-    const validId = value => typeof value === 'string' && value.length > 0
-
-    function messageKey(snapshot) {
-      if (!snapshot) return 'unknown'
-      if (snapshot.state === 'session_not_active' || snapshot.reason === 'open_session_first') return 'noAgent'
-      if (snapshot.state === 'not_bound' || snapshot.reason === 'workspace_not_configured') return 'notBound'
-      if (snapshot.authorized) return snapshot.state === 'empty' ? 'empty' : snapshot.state === 'ready' ? 'loaded' : 'authorized'
-      const reasons = {
-        authorization_required: 'notAuthorized', authorization_revoked: 'stopped', cancelled: 'cancelled',
-        scope_changed: 'scopeChanged', timeout: 'timeout', missing_credentials: 'needsSetup',
-        credential_source_invalid: 'needsSetup', credential_source_unavailable: 'needsSetup',
-        authentication_failed: 'needsSetup', ownership_mismatch: 'identityMismatch',
-        ambiguous_blocks: 'identityMismatch', invalid_response: 'identityMismatch',
+    const slotName = 'settings.general.item'
+    const writeAction = 'lantaiCoreMemory/setEnabled'
+    const initialView = { snapshot: null, busy: 'status', feedback: null, retry: null }
+    const styles = `
+      .lantai-memory-setting {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 8px clamp(12px, 4%, 24px);
+        padding: 16px 0;
+        border-block-end: .5px solid var(--dsw-alias-border-l2);
       }
-      return reasons[snapshot.reason] || 'unavailable'
+      .lantai-memory-setting__title { font-size: 14px; line-height: 20px; }
+      .lantai-memory-setting__detail {
+        margin: 4px 0 0;
+        color: var(--dsw-alias-label-secondary);
+        font-size: 12px;
+        line-height: 18px;
+        overflow-wrap: anywhere;
+      }
+      .lantai-memory-setting__switch {
+        position: relative;
+        inline-size: 44px;
+        block-size: 44px;
+        padding: 0;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        cursor: pointer;
+      }
+      .lantai-memory-setting__track {
+        position: absolute;
+        inset-block-start: 6px;
+        inset-inline-start: 2px;
+        box-sizing: border-box;
+        inline-size: 40px;
+        block-size: 20px;
+        border: 1px solid var(--dsw-alias-label-tertiary);
+        border-radius: 12px;
+        background: var(--dsw-alias-state-idle-primary);
+      }
+      .lantai-memory-setting__track::before {
+        content: '';
+        position: absolute;
+        inset-block-start: 1px;
+        inset-inline-start: 1px;
+        box-sizing: border-box;
+        inline-size: 16px;
+        block-size: 16px;
+        border: 1px solid var(--dsw-alias-border-l2);
+        border-radius: 50%;
+        background: var(--dsw-alias-switch-thumb);
+      }
+      .lantai-memory-setting__switch[aria-checked='true'] .lantai-memory-setting__track {
+        background: var(--dsw-alias-state-business-primary);
+        border-color: var(--dsw-alias-state-business-primary);
+      }
+      .lantai-memory-setting__switch[aria-checked='true'] .lantai-memory-setting__track::before {
+        inset-inline-start: auto;
+        inset-inline-end: 1px;
+      }
+      .lantai-memory-setting__retry {
+        align-self: start;
+        min-block-size: 24px;
+        max-inline-size: 100%;
+        margin-block-start: 4px;
+        padding: 0;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--dsw-alias-link);
+        font: inherit;
+        font-size: 12px;
+        text-align: start;
+        text-decoration: underline;
+        overflow-wrap: anywhere;
+        cursor: pointer;
+      }
+      .lantai-memory-setting [role='status']:empty { margin: 0; }
+      .lantai-memory-setting button[aria-disabled='true'] { cursor: default; opacity: .65; }
+      .lantai-memory-setting button:focus-visible {
+        outline: 2px solid var(--dsw-alias-state-business-primary);
+        outline-offset: 2px;
+      }
+    `
+
+    async function invoke(operation, controller) {
+      try {
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(8000)])
+        return await operation(signal)
+      } catch { return { ok: false } }
     }
 
-    function ConsentControl({ sessionId, t, remote }) {
-      const [stored, setStored] = React.useState(() => ({ sessionId, snapshot: null, busy: 'status', uncertain: false, error: null }))
+    function MemorySetting({ t, remote }) {
+      const titleId = React.useId()
+      const detailsId = React.useId()
       const request = React.useRef(null)
-      const mounted = React.useRef(false)
-      const view = stored.sessionId === sessionId ? stored : { sessionId, snapshot: null, busy: 'status', uncertain: false, error: null }
-      React.useEffect(() => {
-        if (!validId(sessionId)) return undefined
-        mounted.current = true
+      const control = React.useRef(null)
+      const retryButton = React.useRef(null)
+      const [view, setView] = React.useState(initialView)
+      const run = React.useCallback(async action => {
+        if (request.current !== null || !['status', true, false].includes(action)) return
         const controller = new AbortController()
-        request.current?.abort()
         request.current = controller
-        setStored({ sessionId, snapshot: null, busy: 'status', uncertain: false, error: null })
-        Promise.resolve().then(() => remote.status(sessionId, controller.signal)).then(result => {
-          if (!mounted.current || controller.signal.aborted || request.current !== controller) return
-          setStored(previous => settleControlResult(previous, sessionId, 'status', result))
-        }).catch(() => {
-          if (mounted.current && !controller.signal.aborted && request.current === controller) setStored({ sessionId, snapshot: null, busy: null, error: 'unavailable' })
-        }).finally(() => { if (request.current === controller) request.current = null })
-        return () => {
-          mounted.current = false
-          const pending = request.current
-          request.current = null
-          pending?.abort()
-          controller.abort()
-        }
-      }, [sessionId, remote])
-
-      async function run(method) {
-        if (!mounted.current || view.busy !== null || !validId(sessionId)) return
-        const controller = new AbortController()
-        request.current?.abort()
-        request.current = controller
-        setStored(previous => ({ sessionId, snapshot: previous.sessionId === sessionId ? previous.snapshot : null, uncertain: previous.sessionId === sessionId && previous.uncertain, busy: method, error: null }))
+        setView(previous => ({ ...previous, busy: action }))
         try {
-          const result = await remote[method](sessionId, controller.signal)
-          if (!mounted.current || controller.signal.aborted || request.current !== controller) return
-          setStored(previous => settleControlResult(previous, sessionId, method, result))
-        } catch {
-          if (mounted.current && !controller.signal.aborted && request.current === controller) setStored(previous => settleControlResult(previous, sessionId, method, { ok: false }))
-        } finally { if (request.current === controller) request.current = null }
-      }
+          const result = await invoke(signal => action === 'status'
+            ? remote.status(signal)
+            : remote.setEnabled(action, signal), controller)
+          if (controller.signal.aborted || request.current !== controller) return
+          let next = settleControlResult(action, result)
+          if (typeof action === 'boolean' && next.retry !== null) {
+            const observed = await invoke(signal => remote.status(signal), controller)
+            if (controller.signal.aborted || request.current !== controller) return
+            next = settleControlResult(action, result, observed)
+          }
+          if (next.retry === null && retryButton.current?.matches(':focus')) control.current?.focus()
+          setView({ ...next, busy: null })
+        } finally {
+          if (request.current === controller) request.current = null
+        }
+      }, [remote])
 
-      if (!validId(sessionId)) return null
-      const snapshot = view.snapshot
-      const label = view.error || (view.busy ? 'busy' : messageKey(snapshot))
-      const buttonStyle = { color: 'inherit', background: 'transparent', border: '1px solid currentColor', borderRadius: '0.3rem', padding: '0.2rem 0.4rem', font: 'inherit' }
-      return h('span', {
-        role: 'group', 'aria-label': t('groupLabel'), 'aria-busy': view.busy !== null,
-        title: t('hint'),
-        style: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', maxWidth: '100%', color: 'inherit', flexWrap: 'wrap' },
-      },
-      h('span', { role: view.error ? 'alert' : 'status', 'aria-live': 'polite' }, t(label)),
-      h('button', {
-        type: 'button', disabled: view.busy !== null, title: t('allowDetail'),
-        onClick: () => { void run('authorize') }, style: buttonStyle,
-      }, t(snapshot?.authorized ? 'reload' : 'allow')),
-      (snapshot?.authorized || view.uncertain) && h('button', {
-        type: 'button', disabled: view.busy !== null, title: t('stopDetail'),
-        onClick: () => { void run('revoke') }, style: buttonStyle,
-      }, t('stop')))
+      React.useEffect(() => {
+        setView(initialView)
+        void run('status')
+        return () => {
+          request.current?.abort()
+          request.current = null
+        }
+      }, [run])
+
+      const busy = view.busy !== null
+      const blocked = busy || view.snapshot?.writable !== true || view.snapshot.reason === 'unavailable' || view.retry === false
+      const feedback = busy ? (view.busy === 'status' ? 'reading' : 'saving') : view.feedback ||
+        (view.snapshot?.reason === 'scope_changed' ? 'scopeChanged' : view.snapshot?.writable === false ? 'readOnly' : null)
+      return h('div', { className: 'lantai-memory-setting' },
+        h('style', null, styles),
+        h('div', null,
+          h('div', { id: titleId, className: 'lantai-memory-setting__title' }, t('title')),
+          h('div', { id: detailsId },
+            h('p', { className: 'lantai-memory-setting__detail' }, t('description')),
+            view.snapshot && h('p', { className: 'lantai-memory-setting__detail' }, t(view.snapshot.includesTask ? 'scopeWithTask' : 'scopeCore'))),
+          h('div', { className: 'lantai-memory-setting__detail', role: 'status', 'aria-atomic': 'true' }, feedback && t(feedback)),
+          view.retry !== null && h('button', {
+            ref: retryButton, type: 'button', className: 'lantai-memory-setting__retry', 'aria-disabled': busy,
+            onClick: () => { if (!busy) void run(view.retry) },
+          }, t(view.retry === false ? 'retryStop' : 'retryRead'))),
+        h('button', {
+          ref: control, type: 'button', role: 'switch', className: 'lantai-memory-setting__switch',
+          'aria-labelledby': titleId, 'aria-describedby': detailsId,
+          'aria-checked': view.snapshot?.enabled === true, 'aria-disabled': blocked,
+          onClick: () => { if (!blocked) void run(!view.snapshot?.enabled) },
+        }, h('span', { className: 'lantai-memory-setting__track', 'aria-hidden': 'true' })))
     }
 
     return {
@@ -93,13 +168,11 @@ window.__ModuleLoader__.load({
         const unmount = await ctx.remote.$mount(createControlContribution())
         ctx.effect(() => async () => { await unmount() }, 'lantai-core-memory.client.remote')
         ctx.inject(['remote.lantaiCoreMemory'], remoteCtx => {
-          remoteCtx.effect(() => remoteCtx.remoteAccess.whenAccess(authorizeAction, () =>
+          remoteCtx.effect(() => remoteCtx.remoteAccess.whenAccess(writeAction, () =>
             remoteCtx.slots.inject(slotName, () => remoteCtx.slots.register({
-              name: slotName, id: 'lantai-core-memory-consent', order: 0, locale: namespace,
-            }, props => validId(props.sessionId) ? h(ConsentControl, {
-              key: props.sessionId, sessionId: props.sessionId, t: props.t, remote: remoteCtx.remote.lantaiCoreMemory,
-            }) : null)),
-          ), 'lantai-core-memory.client.owner-consent')
+              name: slotName, id: 'lantai-core-memory-setting', order: 20, locale: namespace,
+            }, ({ t }) => h(MemorySetting, { t, remote: remoteCtx.remote.lantaiCoreMemory }))),
+          ), 'lantai-core-memory.client.settings')
         })
       },
     }

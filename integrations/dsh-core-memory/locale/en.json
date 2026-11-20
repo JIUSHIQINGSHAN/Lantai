@@ -1,31 +1,24 @@
 {
   "meta": {
     "title": "Lantai core memory",
-    "description": "Load Lantai core memory for explicitly bound DSH conversations authorized by the Host owner. Disabled by default. Read policy and identity, with optional task memory, over HTTPS, explicitly allowed loopback HTTP, or strictly verified SSH. Models cannot grant access. Each conversation needs the user's interface action. Data enters model requests and chat history; stopping access does not delete existing history."
+    "description": "Manage automatic loading in DSH General settings. Off by default. Conversations in configured folders use an encrypted connection to load rules (policy), personal information (identity), and any explicitly configured task progress. Memory is sent to the model and recorded in chat history. Turning it off keeps existing history."
   },
   "client": {
-    "groupLabel": "Lantai memory access for this conversation",
-    "unknown": "Status unconfirmed",
-    "authorized": "Access allowed",
-    "notAuthorized": "Not allowed yet",
-    "loaded": "Memory loaded",
-    "empty": "No readable memory",
-    "allow": "Allow memory",
-    "reload": "Reload memory",
-    "stop": "Stop",
-    "allowDetail": "Allow this conversation to read the configured Lantai user policies and profile",
-    "stopDetail": "Stop further reads; content already in chat history remains",
-    "busy": "Working…",
-    "unavailable": "The connection needs checking. Ask the assistant to continue setup.",
-    "noAgent": "Send one message in this conversation, then allow memory.",
-    "notBound": "Memory is not configured for this folder.",
-    "needsSetup": "Connection settings need checking",
-    "identityMismatch": "Memory ownership needs checking; nothing was loaded.",
-    "scopeChanged": "Folder changed; allow access again.",
-    "stopped": "Further reads stopped",
-    "stopUnconfirmed": "Stopping is not confirmed. Press Stop to retry.",
-    "cancelled": "This read was cancelled",
-    "timeout": "Read timed out; try again.",
-    "hint": "Permission applies only to this conversation. The configured user policies and profile will be sent to its model. Stopping access does not delete chat history."
+    "title": "Load Lantai memory automatically",
+    "description": "Applies to conversations in configured folders. Memory is sent to the model and may be visible to anyone who can view the conversation. Turning it off keeps existing history.",
+    "scopeCore": "Rules and personal information",
+    "scopeWithTask": "Rules, personal information, and configured task progress",
+    "reading": "Reading setting…",
+    "saving": "Saving…",
+    "savedOn": "Enabled and saved.",
+    "savedOff": "Disabled and saved.",
+    "scopeChanged": "The memory scope changed. Automatic loading is off.",
+    "readOnly": "This setting cannot be changed right now.",
+    "readFailed": "Could not read the setting.",
+    "storageUnavailable": "The setting could not be confirmed. Memory reads are paused.",
+    "enableUnconfirmed": "Could not confirm that memory was enabled.",
+    "stopUnconfirmed": "Turning memory off could not be confirmed.",
+    "retryRead": "Check again",
+    "retryStop": "Retry turning off"
   }
 }

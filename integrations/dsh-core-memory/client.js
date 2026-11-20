@@ -7,59 +7,52 @@ window.__ModuleLoader__.load({
 ;(function(module, exports) {
 'use strict'
 
-// Shared by Host ESM and the Client lazy factory. Keep this file dependency-free.
+const REASONS = ['ready', 'scope_changed', 'unavailable']
+
+function plainObject(value) {
+  if (value === null || typeof value !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  return Reflect.ownKeys(descriptors).every(key => typeof key === 'string' && Object.hasOwn(descriptors[key], 'value') && descriptors[key].enumerable)
+}
+
 function createControlContribution() {
-  const sessionId = {
-    mode: 'strict', typeSymbol: '@lantai/dsh-core-memory.control.sessionId.string',
+  const enabledInput = {
+    mode: 'strict', typeSymbol: '@lantai/dsh-core-memory.profilePreference.enabled',
     create: () => ({ parse(value) {
-      if (typeof value !== 'string' || value.length < 1 || value.length > 1024 || /[\u0000-\u001f\u007f-\u009f]/u.test(value)) {
-        throw new TypeError('Invalid sessionId')
-      }
+      if (typeof value !== 'boolean') throw new TypeError('Invalid enabled value')
       return value
     } }),
   }
   const metadata = {
-    mode: 'strict', typeSymbol: '@lantai/dsh-core-memory.control.metadata',
+    mode: 'strict', typeSymbol: '@lantai/dsh-core-memory.profilePreference.status',
     create: () => ({ parse(value) {
-      const invalid = () => { throw new TypeError('Invalid control metadata') }
-      const object = (input, required, optional = []) => {
-        if (input === null || typeof input !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(input))) invalid()
-        const fields = Object.getOwnPropertyDescriptors(input)
-        if (Reflect.ownKeys(fields).some(key => typeof key !== 'string' || ![...required, ...optional].includes(key) || !Object.hasOwn(fields[key], 'value') || !fields[key].enumerable)) invalid()
-        if (required.some(key => !Object.hasOwn(fields, key))) invalid()
-        return Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, field.value]))
-      }
-      const result = object(value, ['state', 'reason', 'authorized', 'blockCount', 'contextBytes', 'versions'], ['expiresAt', 'outcome'])
-      if (typeof result.state !== 'string' || typeof result.reason !== 'string' || typeof result.authorized !== 'boolean') invalid()
-      if (![result.blockCount, result.contextBytes].every(count => Number.isSafeInteger(count) && count >= 0)) invalid()
-      if (Object.hasOwn(result, 'expiresAt') && !Number.isSafeInteger(result.expiresAt)) invalid()
-      if (Object.hasOwn(result, 'outcome') && typeof result.outcome !== 'string') invalid()
-      if (!Array.isArray(result.versions)) invalid()
-      const entries = Object.getOwnPropertyDescriptors(result.versions)
-      if (Reflect.ownKeys(entries).length !== result.versions.length + 1) invalid()
-      result.versions = Array.from({ length: result.versions.length }, (_, index) => {
-        const entry = entries[index]
-        if (!entry || !Object.hasOwn(entry, 'value') || !entry.enumerable) invalid()
-        const version = object(entry.value, ['block', 'version'])
-        if (!['policy', 'identity', 'task'].includes(version.block) || !Number.isSafeInteger(version.version) || version.version < 1) invalid()
-        return version
-      })
-      return result
+      if (!plainObject(value)) throw new TypeError('Invalid preference status')
+      const fields = Object.getOwnPropertyDescriptors(value)
+      const allowed = ['enabled', 'writable', 'reason', 'folderCount', 'includesTask']
+      if (Reflect.ownKeys(fields).some(key => !allowed.includes(key)) || allowed.some(key => !Object.hasOwn(fields, key))) throw new TypeError('Invalid preference status')
+      const result = Object.fromEntries(Object.entries(fields).map(([key, descriptor]) => [key, descriptor.value]))
+      if (typeof result.enabled !== 'boolean' || typeof result.writable !== 'boolean' || !REASONS.includes(result.reason) || !Number.isSafeInteger(result.folderCount) || result.folderCount < 0 || typeof result.includesTask !== 'boolean') throw new TypeError('Invalid preference status')
+      return { enabled: result.enabled, writable: result.writable, reason: result.reason, folderCount: result.folderCount, includesTask: result.includesTask }
     } }),
   }
+  const makeDescriptor = (method, parameters) => ({
+    id: `@lantai/dsh-core-memory#lantaiCoreMemory/${method}`,
+    service: 'lantaiCoreMemory', namespace: 'lantaiCoreMemory', method,
+    invocation: { kind: 'direct' }, parameters,
+    cancellation: { parameter: 'signal' }, result: metadata,
+  })
   return {
     package: '@lantai/dsh-core-memory',
-    descriptors: ['authorize', 'revoke', 'status'].map(method => ({
-      id: `@lantai/dsh-core-memory#lantaiCoreMemory/${method}`,
-      service: 'lantaiCoreMemory', namespace: 'lantaiCoreMemory', method,
-      invocation: { kind: 'direct' },
-      parameters: [{ name: 'sessionId', wire: 'sessionId', source: 'json', codec: sessionId }],
-      cancellation: { parameter: 'signal' }, result: metadata,
-    })),
+    descriptors: [
+      makeDescriptor('status', []),
+      makeDescriptor('setEnabled', [{ name: 'enabled', wire: 'enabled', source: 'json', codec: enabledInput }]),
+    ],
   }
 }
 
+exports.REASONS = Object.freeze(REASONS.slice())
 exports.createControlContribution = createControlContribution
+exports.parsePreferenceStatus = value => createControlContribution().descriptors[0].result.create().parse(value)
 
 })(contractModule, contractModule.exports)
 const { createControlContribution } = contractModule.exports
@@ -67,15 +60,23 @@ const stateModule = { exports: {} }
 ;(function(module, exports) {
 'use strict'
 
-/** Settle a user control operation without mistaking a lost reply for revoked access. */
-function settleControlResult(previous, sessionId, method, result) {
-  if (result && result.ok === true) {
-    return { sessionId, snapshot: result.value, busy: null, uncertain: false, error: null }
+/** A status reread can resolve the effective choice, but cannot acknowledge a write. */
+function settleControlResult(action, result, observed) {
+  const acknowledged = result?.ok === true ? result.value : null
+  const snapshot = observed?.ok === true ? observed.value : acknowledged
+  if (action === 'status') {
+    if (!snapshot) return { snapshot: null, feedback: 'readFailed', retry: 'status' }
+    if (snapshot.reason === 'unavailable') return {
+      snapshot, feedback: 'storageUnavailable', retry: snapshot.writable ? false : 'status',
+    }
+    return { snapshot, feedback: null, retry: null }
   }
-  const same = previous?.sessionId === sessionId
-  const snapshot = same ? previous.snapshot : null
-  const uncertain = Boolean((same && previous.uncertain) || snapshot?.authorized || method === 'authorize' || method === 'revoke')
-  return { sessionId, snapshot, busy: null, uncertain, error: method === 'revoke' ? 'stopUnconfirmed' : 'unavailable' }
+  if (acknowledged?.reason === 'ready' && acknowledged.enabled === action) {
+    return { snapshot: acknowledged, feedback: action ? 'savedOn' : 'savedOff', retry: null }
+  }
+  return action
+    ? { snapshot, feedback: 'enableUnconfirmed', retry: 'status' }
+    : { snapshot, feedback: 'stopUnconfirmed', retry: snapshot?.writable === false ? 'status' : false }
 }
 
 exports.settleControlResult = settleControlResult
@@ -84,136 +85,197 @@ exports.settleControlResult = settleControlResult
 const { settleControlResult } = stateModule.exports
 const clientDictionaries = {
   "zh": {
-    "groupLabel": "当前对话的兰台记忆权限",
-    "unknown": "状态待确认",
-    "authorized": "已允许读取",
-    "notAuthorized": "尚未允许",
-    "loaded": "记忆已载入",
-    "empty": "暂无可读资料",
-    "allow": "允许记忆",
-    "reload": "更新记忆",
-    "stop": "停止",
-    "allowDetail": "允许当前对话读取已配置的兰台长期规则和个人资料",
-    "stopDetail": "停止后续读取；已经出现的聊天内容仍会保留",
-    "busy": "正在处理…",
-    "unavailable": "连接需要检查，请让助手继续核对",
-    "noAgent": "请先在此对话发一条消息，再点允许",
-    "notBound": "当前文件夹尚未配置记忆连接",
-    "needsSetup": "连接信息需要核对",
-    "identityMismatch": "资料归属需要核对，暂未载入",
-    "scopeChanged": "已换文件夹，请重新允许",
-    "stopped": "已停止读取",
-    "stopUnconfirmed": "停止尚未确认，请再点停止重试",
-    "cancelled": "本次读取已取消",
-    "timeout": "读取超时，可重试",
-    "hint": "权限只作用于当前对话。允许后，指定的长期规则和个人资料会交给此对话所用的模型；停止读取不会删除聊天历史。"
+    "title": "自动载入兰台记忆",
+    "description": "仅用于已配置文件夹中的对话。资料会发给对话所用的模型，能查看聊天记录的人也可能看到。关闭后保留已有记录。",
+    "scopeCore": "长期规则、个人资料",
+    "scopeWithTask": "长期规则、个人资料、已配置的任务进度",
+    "reading": "正在读取设置…",
+    "saving": "正在保存…",
+    "savedOn": "已开启并保存。",
+    "savedOff": "已关闭并保存。",
+    "scopeChanged": "读取范围已更改，自动载入已关闭。",
+    "readOnly": "当前设置不可更改。",
+    "readFailed": "未能读取设置。",
+    "storageUnavailable": "暂时无法确认设置，记忆读取已暂停。",
+    "enableUnconfirmed": "未能确认开启结果。",
+    "stopUnconfirmed": "关闭尚未确认。",
+    "retryRead": "重新查询",
+    "retryStop": "重试关闭"
   },
   "en": {
-    "groupLabel": "Lantai memory access for this conversation",
-    "unknown": "Status unconfirmed",
-    "authorized": "Access allowed",
-    "notAuthorized": "Not allowed yet",
-    "loaded": "Memory loaded",
-    "empty": "No readable memory",
-    "allow": "Allow memory",
-    "reload": "Reload memory",
-    "stop": "Stop",
-    "allowDetail": "Allow this conversation to read the configured Lantai user policies and profile",
-    "stopDetail": "Stop further reads; content already in chat history remains",
-    "busy": "Working…",
-    "unavailable": "The connection needs checking. Ask the assistant to continue setup.",
-    "noAgent": "Send one message in this conversation, then allow memory.",
-    "notBound": "Memory is not configured for this folder.",
-    "needsSetup": "Connection settings need checking",
-    "identityMismatch": "Memory ownership needs checking; nothing was loaded.",
-    "scopeChanged": "Folder changed; allow access again.",
-    "stopped": "Further reads stopped",
-    "stopUnconfirmed": "Stopping is not confirmed. Press Stop to retry.",
-    "cancelled": "This read was cancelled",
-    "timeout": "Read timed out; try again.",
-    "hint": "Permission applies only to this conversation. The configured user policies and profile will be sent to its model. Stopping access does not delete chat history."
+    "title": "Load Lantai memory automatically",
+    "description": "Applies to conversations in configured folders. Memory is sent to the model and may be visible to anyone who can view the conversation. Turning it off keeps existing history.",
+    "scopeCore": "Rules and personal information",
+    "scopeWithTask": "Rules, personal information, and configured task progress",
+    "reading": "Reading setting…",
+    "saving": "Saving…",
+    "savedOn": "Enabled and saved.",
+    "savedOff": "Disabled and saved.",
+    "scopeChanged": "The memory scope changed. Automatic loading is off.",
+    "readOnly": "This setting cannot be changed right now.",
+    "readFailed": "Could not read the setting.",
+    "storageUnavailable": "The setting could not be confirmed. Memory reads are paused.",
+    "enableUnconfirmed": "Could not confirm that memory was enabled.",
+    "stopUnconfirmed": "Turning memory off could not be confirmed.",
+    "retryRead": "Check again",
+    "retryStop": "Retry turning off"
   }
 }
     const namespace = 'lantai-core-memory.client'
-    const slotName = 'conversation.input.right'
-    const authorizeAction = 'lantaiCoreMemory/authorize'
-    const validId = value => typeof value === 'string' && value.length > 0
-
-    function messageKey(snapshot) {
-      if (!snapshot) return 'unknown'
-      if (snapshot.state === 'session_not_active' || snapshot.reason === 'open_session_first') return 'noAgent'
-      if (snapshot.state === 'not_bound' || snapshot.reason === 'workspace_not_configured') return 'notBound'
-      if (snapshot.authorized) return snapshot.state === 'empty' ? 'empty' : snapshot.state === 'ready' ? 'loaded' : 'authorized'
-      const reasons = {
-        authorization_required: 'notAuthorized', authorization_revoked: 'stopped', cancelled: 'cancelled',
-        scope_changed: 'scopeChanged', timeout: 'timeout', missing_credentials: 'needsSetup',
-        credential_source_invalid: 'needsSetup', credential_source_unavailable: 'needsSetup',
-        authentication_failed: 'needsSetup', ownership_mismatch: 'identityMismatch',
-        ambiguous_blocks: 'identityMismatch', invalid_response: 'identityMismatch',
+    const slotName = 'settings.general.item'
+    const writeAction = 'lantaiCoreMemory/setEnabled'
+    const initialView = { snapshot: null, busy: 'status', feedback: null, retry: null }
+    const styles = `
+      .lantai-memory-setting {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 8px clamp(12px, 4%, 24px);
+        padding: 16px 0;
+        border-block-end: .5px solid var(--dsw-alias-border-l2);
       }
-      return reasons[snapshot.reason] || 'unavailable'
+      .lantai-memory-setting__title { font-size: 14px; line-height: 20px; }
+      .lantai-memory-setting__detail {
+        margin: 4px 0 0;
+        color: var(--dsw-alias-label-secondary);
+        font-size: 12px;
+        line-height: 18px;
+        overflow-wrap: anywhere;
+      }
+      .lantai-memory-setting__switch {
+        position: relative;
+        inline-size: 44px;
+        block-size: 44px;
+        padding: 0;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        cursor: pointer;
+      }
+      .lantai-memory-setting__track {
+        position: absolute;
+        inset-block-start: 6px;
+        inset-inline-start: 2px;
+        box-sizing: border-box;
+        inline-size: 40px;
+        block-size: 20px;
+        border: 1px solid var(--dsw-alias-label-tertiary);
+        border-radius: 12px;
+        background: var(--dsw-alias-state-idle-primary);
+      }
+      .lantai-memory-setting__track::before {
+        content: '';
+        position: absolute;
+        inset-block-start: 1px;
+        inset-inline-start: 1px;
+        box-sizing: border-box;
+        inline-size: 16px;
+        block-size: 16px;
+        border: 1px solid var(--dsw-alias-border-l2);
+        border-radius: 50%;
+        background: var(--dsw-alias-switch-thumb);
+      }
+      .lantai-memory-setting__switch[aria-checked='true'] .lantai-memory-setting__track {
+        background: var(--dsw-alias-state-business-primary);
+        border-color: var(--dsw-alias-state-business-primary);
+      }
+      .lantai-memory-setting__switch[aria-checked='true'] .lantai-memory-setting__track::before {
+        inset-inline-start: auto;
+        inset-inline-end: 1px;
+      }
+      .lantai-memory-setting__retry {
+        align-self: start;
+        min-block-size: 24px;
+        max-inline-size: 100%;
+        margin-block-start: 4px;
+        padding: 0;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--dsw-alias-link);
+        font: inherit;
+        font-size: 12px;
+        text-align: start;
+        text-decoration: underline;
+        overflow-wrap: anywhere;
+        cursor: pointer;
+      }
+      .lantai-memory-setting [role='status']:empty { margin: 0; }
+      .lantai-memory-setting button[aria-disabled='true'] { cursor: default; opacity: .65; }
+      .lantai-memory-setting button:focus-visible {
+        outline: 2px solid var(--dsw-alias-state-business-primary);
+        outline-offset: 2px;
+      }
+    `
+
+    async function invoke(operation, controller) {
+      try {
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(8000)])
+        return await operation(signal)
+      } catch { return { ok: false } }
     }
 
-    function ConsentControl({ sessionId, t, remote }) {
-      const [stored, setStored] = React.useState(() => ({ sessionId, snapshot: null, busy: 'status', uncertain: false, error: null }))
+    function MemorySetting({ t, remote }) {
+      const titleId = React.useId()
+      const detailsId = React.useId()
       const request = React.useRef(null)
-      const mounted = React.useRef(false)
-      const view = stored.sessionId === sessionId ? stored : { sessionId, snapshot: null, busy: 'status', uncertain: false, error: null }
-      React.useEffect(() => {
-        if (!validId(sessionId)) return undefined
-        mounted.current = true
+      const control = React.useRef(null)
+      const retryButton = React.useRef(null)
+      const [view, setView] = React.useState(initialView)
+      const run = React.useCallback(async action => {
+        if (request.current !== null || !['status', true, false].includes(action)) return
         const controller = new AbortController()
-        request.current?.abort()
         request.current = controller
-        setStored({ sessionId, snapshot: null, busy: 'status', uncertain: false, error: null })
-        Promise.resolve().then(() => remote.status(sessionId, controller.signal)).then(result => {
-          if (!mounted.current || controller.signal.aborted || request.current !== controller) return
-          setStored(previous => settleControlResult(previous, sessionId, 'status', result))
-        }).catch(() => {
-          if (mounted.current && !controller.signal.aborted && request.current === controller) setStored({ sessionId, snapshot: null, busy: null, error: 'unavailable' })
-        }).finally(() => { if (request.current === controller) request.current = null })
-        return () => {
-          mounted.current = false
-          const pending = request.current
-          request.current = null
-          pending?.abort()
-          controller.abort()
-        }
-      }, [sessionId, remote])
-
-      async function run(method) {
-        if (!mounted.current || view.busy !== null || !validId(sessionId)) return
-        const controller = new AbortController()
-        request.current?.abort()
-        request.current = controller
-        setStored(previous => ({ sessionId, snapshot: previous.sessionId === sessionId ? previous.snapshot : null, uncertain: previous.sessionId === sessionId && previous.uncertain, busy: method, error: null }))
+        setView(previous => ({ ...previous, busy: action }))
         try {
-          const result = await remote[method](sessionId, controller.signal)
-          if (!mounted.current || controller.signal.aborted || request.current !== controller) return
-          setStored(previous => settleControlResult(previous, sessionId, method, result))
-        } catch {
-          if (mounted.current && !controller.signal.aborted && request.current === controller) setStored(previous => settleControlResult(previous, sessionId, method, { ok: false }))
-        } finally { if (request.current === controller) request.current = null }
-      }
+          const result = await invoke(signal => action === 'status'
+            ? remote.status(signal)
+            : remote.setEnabled(action, signal), controller)
+          if (controller.signal.aborted || request.current !== controller) return
+          let next = settleControlResult(action, result)
+          if (typeof action === 'boolean' && next.retry !== null) {
+            const observed = await invoke(signal => remote.status(signal), controller)
+            if (controller.signal.aborted || request.current !== controller) return
+            next = settleControlResult(action, result, observed)
+          }
+          if (next.retry === null && retryButton.current?.matches(':focus')) control.current?.focus()
+          setView({ ...next, busy: null })
+        } finally {
+          if (request.current === controller) request.current = null
+        }
+      }, [remote])
 
-      if (!validId(sessionId)) return null
-      const snapshot = view.snapshot
-      const label = view.error || (view.busy ? 'busy' : messageKey(snapshot))
-      const buttonStyle = { color: 'inherit', background: 'transparent', border: '1px solid currentColor', borderRadius: '0.3rem', padding: '0.2rem 0.4rem', font: 'inherit' }
-      return h('span', {
-        role: 'group', 'aria-label': t('groupLabel'), 'aria-busy': view.busy !== null,
-        title: t('hint'),
-        style: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', maxWidth: '100%', color: 'inherit', flexWrap: 'wrap' },
-      },
-      h('span', { role: view.error ? 'alert' : 'status', 'aria-live': 'polite' }, t(label)),
-      h('button', {
-        type: 'button', disabled: view.busy !== null, title: t('allowDetail'),
-        onClick: () => { void run('authorize') }, style: buttonStyle,
-      }, t(snapshot?.authorized ? 'reload' : 'allow')),
-      (snapshot?.authorized || view.uncertain) && h('button', {
-        type: 'button', disabled: view.busy !== null, title: t('stopDetail'),
-        onClick: () => { void run('revoke') }, style: buttonStyle,
-      }, t('stop')))
+      React.useEffect(() => {
+        setView(initialView)
+        void run('status')
+        return () => {
+          request.current?.abort()
+          request.current = null
+        }
+      }, [run])
+
+      const busy = view.busy !== null
+      const blocked = busy || view.snapshot?.writable !== true || view.snapshot.reason === 'unavailable' || view.retry === false
+      const feedback = busy ? (view.busy === 'status' ? 'reading' : 'saving') : view.feedback ||
+        (view.snapshot?.reason === 'scope_changed' ? 'scopeChanged' : view.snapshot?.writable === false ? 'readOnly' : null)
+      return h('div', { className: 'lantai-memory-setting' },
+        h('style', null, styles),
+        h('div', null,
+          h('div', { id: titleId, className: 'lantai-memory-setting__title' }, t('title')),
+          h('div', { id: detailsId },
+            h('p', { className: 'lantai-memory-setting__detail' }, t('description')),
+            view.snapshot && h('p', { className: 'lantai-memory-setting__detail' }, t(view.snapshot.includesTask ? 'scopeWithTask' : 'scopeCore'))),
+          h('div', { className: 'lantai-memory-setting__detail', role: 'status', 'aria-atomic': 'true' }, feedback && t(feedback)),
+          view.retry !== null && h('button', {
+            ref: retryButton, type: 'button', className: 'lantai-memory-setting__retry', 'aria-disabled': busy,
+            onClick: () => { if (!busy) void run(view.retry) },
+          }, t(view.retry === false ? 'retryStop' : 'retryRead'))),
+        h('button', {
+          ref: control, type: 'button', role: 'switch', className: 'lantai-memory-setting__switch',
+          'aria-labelledby': titleId, 'aria-describedby': detailsId,
+          'aria-checked': view.snapshot?.enabled === true, 'aria-disabled': blocked,
+          onClick: () => { if (!blocked) void run(!view.snapshot?.enabled) },
+        }, h('span', { className: 'lantai-memory-setting__track', 'aria-hidden': 'true' })))
     }
 
     return {
@@ -223,13 +285,11 @@ const clientDictionaries = {
         const unmount = await ctx.remote.$mount(createControlContribution())
         ctx.effect(() => async () => { await unmount() }, 'lantai-core-memory.client.remote')
         ctx.inject(['remote.lantaiCoreMemory'], remoteCtx => {
-          remoteCtx.effect(() => remoteCtx.remoteAccess.whenAccess(authorizeAction, () =>
+          remoteCtx.effect(() => remoteCtx.remoteAccess.whenAccess(writeAction, () =>
             remoteCtx.slots.inject(slotName, () => remoteCtx.slots.register({
-              name: slotName, id: 'lantai-core-memory-consent', order: 0, locale: namespace,
-            }, props => validId(props.sessionId) ? h(ConsentControl, {
-              key: props.sessionId, sessionId: props.sessionId, t: props.t, remote: remoteCtx.remote.lantaiCoreMemory,
-            }) : null)),
-          ), 'lantai-core-memory.client.owner-consent')
+              name: slotName, id: 'lantai-core-memory-setting', order: 20, locale: namespace,
+            }, ({ t }) => h(MemorySetting, { t, remote: remoteCtx.remote.lantaiCoreMemory }))),
+          ), 'lantai-core-memory.client.settings')
         })
       },
     }

@@ -6,30 +6,22 @@ const ownerRequired = () => new RemoteError('lantai-memory/owner-required', 'Own
 const controlFailed = () => new RemoteError('lantai-memory/control-failed', 'Owner control failed', {})
 const invalidResult = () => new RemoteError('lantai-memory/invalid-result', 'Invalid control metadata', {})
 const cancelled = () => new RemoteError('gateway/cancelled', 'Owner control cancelled', {})
+const checkOwner = invocation => { try { return requireOwnerInvocation(invocation) } catch { throw ownerRequired() } }
 
-function ownerInvocation(invocation) {
-  try { return requireOwnerInvocation(invocation) } catch { throw ownerRequired() }
-}
-
-/** Host-only control interface. Authority always comes from the bound Context;
- * operations own Agent selection, scope, grants and credential handling.
- */
+/** The owner-only settings surface, returning no connection or memory body. */
 export function registerOwnerControl(ctx, operations) {
   const contribution = contract.createControlContribution()
-  const descriptor = contribution.descriptors[0]
-  const parseSessionId = descriptor.parameters[0].codec.create().parse
-  const parseMetadata = descriptor.result.create().parse
+  const parseResult = contribution.descriptors[0].result.create().parse
+  const parseEnabled = contribution.descriptors[1].parameters[0].codec.create().parse
   const lifetime = new AbortController()
   let disposed = false
 
-  async function dispatch(method, sessionId, invocation) {
+  async function dispatch(method, value, invocation) {
     if (disposed) throw cancelled()
     const signal = AbortSignal.any([invocation.signal, invocation.peer.signal, lifetime.signal])
     if (signal.aborted) throw cancelled()
-    let id
-    try { id = parseSessionId(sessionId) } catch { throw controlFailed() }
-    let result
     let onAbort
+    let result
     try {
       const interrupted = new Promise((resolve, reject) => {
         onAbort = () => reject(cancelled())
@@ -37,9 +29,9 @@ export function registerOwnerControl(ctx, operations) {
         if (signal.aborted) onAbort()
       })
       const operation = Promise.resolve().then(() => {
-        // Recheck after the microtask handoff and before operation lookup.
         if (signal.aborted) throw cancelled()
-        return operations[method](id, invocation, signal)
+        checkOwner(invocation)
+        return method === 'status' ? operations.status() : operations.setEnabled(parseEnabled(value), signal)
       })
       result = await Promise.race([operation, interrupted])
     } catch {
@@ -49,29 +41,15 @@ export function registerOwnerControl(ctx, operations) {
       if (onAbort) signal.removeEventListener('abort', onAbort)
     }
     if (signal.aborted || disposed) throw cancelled()
-    ownerInvocation(invocation)
-    try { return parseMetadata(result) } catch { throw invalidResult() }
+    checkOwner(invocation)
+    try { return parseResult(result) } catch { throw invalidResult() }
   }
 
   class OwnerControl extends TypertRemoteService {
     constructor(context) { super(context, 'lantaiCoreMemory', { namespace: 'lantaiCoreMemory' }) }
-    async authorize(sessionId, signal) {
-      let invocation
-      try { invocation = requireOwnerInvocation(this.ctx.invocation) } catch { throw ownerRequired() }
-      return dispatch('authorize', sessionId, invocation)
-    }
-    async revoke(sessionId, signal) {
-      let invocation
-      try { invocation = requireOwnerInvocation(this.ctx.invocation) } catch { throw ownerRequired() }
-      return dispatch('revoke', sessionId, invocation)
-    }
-    async status(sessionId, signal) {
-      let invocation
-      try { invocation = requireOwnerInvocation(this.ctx.invocation) } catch { throw ownerRequired() }
-      return dispatch('status', sessionId, invocation)
-    }
+    async status(signal) { return dispatch('status', undefined, checkOwner(this.ctx.invocation)) }
+    async setEnabled(enabled, signal) { return dispatch('setEnabled', enabled, checkOwner(this.ctx.invocation)) }
   }
-
   new OwnerControl(ctx)
   const unregister = ctx.typert.register({
     package: contribution.package, face: 'host', schemas: [],

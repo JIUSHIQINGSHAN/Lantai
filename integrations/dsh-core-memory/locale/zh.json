@@ -1,31 +1,24 @@
 {
   "meta": {
     "title": "兰台核心记忆",
-    "description": "为明确绑定并经软件主人授权的 DSH 对话加载兰台核心记忆，默认关闭。只通过 HTTPS、明确允许的本机接口或严格验证的 SSH 加密通道读取 policy 和 identity，可选 task。模型不能自行授予权限；每个对话需由用户在界面允许。资料会进入模型请求和聊天历史，停止读取不删除既有历史。"
+    "description": "在 DSH 的通用设置中集中管理自动载入，默认关闭。仅在已配置文件夹的对话中，通过加密连接使用长期规则（policy）、个人资料（identity），以及明确配置的任务进度（task）。资料会进入模型请求和聊天历史，关闭后保留已有记录。"
   },
   "client": {
-    "groupLabel": "当前对话的兰台记忆权限",
-    "unknown": "状态待确认",
-    "authorized": "已允许读取",
-    "notAuthorized": "尚未允许",
-    "loaded": "记忆已载入",
-    "empty": "暂无可读资料",
-    "allow": "允许记忆",
-    "reload": "更新记忆",
-    "stop": "停止",
-    "allowDetail": "允许当前对话读取已配置的兰台长期规则和个人资料",
-    "stopDetail": "停止后续读取；已经出现的聊天内容仍会保留",
-    "busy": "正在处理…",
-    "unavailable": "连接需要检查，请让助手继续核对",
-    "noAgent": "请先在此对话发一条消息，再点允许",
-    "notBound": "当前文件夹尚未配置记忆连接",
-    "needsSetup": "连接信息需要核对",
-    "identityMismatch": "资料归属需要核对，暂未载入",
-    "scopeChanged": "已换文件夹，请重新允许",
-    "stopped": "已停止读取",
-    "stopUnconfirmed": "停止尚未确认，请再点停止重试",
-    "cancelled": "本次读取已取消",
-    "timeout": "读取超时，可重试",
-    "hint": "权限只作用于当前对话。允许后，指定的长期规则和个人资料会交给此对话所用的模型；停止读取不会删除聊天历史。"
+    "title": "自动载入兰台记忆",
+    "description": "仅用于已配置文件夹中的对话。资料会发给对话所用的模型，能查看聊天记录的人也可能看到。关闭后保留已有记录。",
+    "scopeCore": "长期规则、个人资料",
+    "scopeWithTask": "长期规则、个人资料、已配置的任务进度",
+    "reading": "正在读取设置…",
+    "saving": "正在保存…",
+    "savedOn": "已开启并保存。",
+    "savedOff": "已关闭并保存。",
+    "scopeChanged": "读取范围已更改，自动载入已关闭。",
+    "readOnly": "当前设置不可更改。",
+    "readFailed": "未能读取设置。",
+    "storageUnavailable": "暂时无法确认设置，记忆读取已暂停。",
+    "enableUnconfirmed": "未能确认开启结果。",
+    "stopUnconfirmed": "关闭尚未确认。",
+    "retryRead": "重新查询",
+    "retryStop": "重试关闭"
   }
 }

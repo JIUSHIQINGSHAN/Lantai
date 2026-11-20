@@ -46,6 +46,17 @@ for (const baseUrl of ['http://memory.example/', 'ftp://memory.example/', 'https
   test(`reject unsafe endpoint ${new URL(baseUrl).protocol} shape`, () => assert.throws(() => config({ baseUrl }), reason('invalid_config')))
 }
 
+test('the saved permission follows the configured connection and full folder scope', () => {
+  const alternate = { ...binding, workspace: path.join(cwd, 'other'), userId: 'other-owner' }
+  const first = config({ bindings: [binding, alternate] }).scopeKey
+  assert.match(first, /^[a-f0-9]{64}$/u)
+  assert.equal(config({ bindings: [alternate, binding] }).scopeKey, first)
+  assert.notEqual(config({ bindings: [binding] }).scopeKey, first)
+  assert.notEqual(config({ bindings: [{ ...binding, includeTask: true }, alternate] }).scopeKey, first)
+  assert.notEqual(config({ bindings: [{ ...binding, userId: 'different-owner' }, alternate] }).scopeKey, first)
+  assert.notEqual(config({ bindings: [binding, alternate], apiKeyEnv: 'OTHER_CORE_TOKEN' }).scopeKey, first)
+})
+
 test('HTTP requires explicit literal-loopback allowance', () => {
   assert.throws(() => config({ baseUrl: 'http://127.0.0.1/' }), reason('invalid_config'))
   assert.equal(config({ baseUrl: 'http://127.0.0.1/', allowLoopbackHttp: true }).baseUrl, 'http://127.0.0.1/')

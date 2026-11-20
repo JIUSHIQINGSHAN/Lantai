@@ -1,14 +1,22 @@
 'use strict'
 
-/** Settle a user control operation without mistaking a lost reply for revoked access. */
-function settleControlResult(previous, sessionId, method, result) {
-  if (result && result.ok === true) {
-    return { sessionId, snapshot: result.value, busy: null, uncertain: false, error: null }
+/** A status reread can resolve the effective choice, but cannot acknowledge a write. */
+function settleControlResult(action, result, observed) {
+  const acknowledged = result?.ok === true ? result.value : null
+  const snapshot = observed?.ok === true ? observed.value : acknowledged
+  if (action === 'status') {
+    if (!snapshot) return { snapshot: null, feedback: 'readFailed', retry: 'status' }
+    if (snapshot.reason === 'unavailable') return {
+      snapshot, feedback: 'storageUnavailable', retry: snapshot.writable ? false : 'status',
+    }
+    return { snapshot, feedback: null, retry: null }
   }
-  const same = previous?.sessionId === sessionId
-  const snapshot = same ? previous.snapshot : null
-  const uncertain = Boolean((same && previous.uncertain) || snapshot?.authorized || method === 'authorize' || method === 'revoke')
-  return { sessionId, snapshot, busy: null, uncertain, error: method === 'revoke' ? 'stopUnconfirmed' : 'unavailable' }
+  if (acknowledged?.reason === 'ready' && acknowledged.enabled === action) {
+    return { snapshot: acknowledged, feedback: action ? 'savedOn' : 'savedOff', retry: null }
+  }
+  return action
+    ? { snapshot, feedback: 'enableUnconfirmed', retry: 'status' }
+    : { snapshot, feedback: 'stopUnconfirmed', retry: snapshot?.writable === false ? 'status' : false }
 }
 
 exports.settleControlResult = settleControlResult

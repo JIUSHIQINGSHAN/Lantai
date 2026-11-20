@@ -5,9 +5,6 @@ import os from 'node:os'
 import path from 'node:path'
 import { readAuthorizedCredentialSource } from '../lib/source.js'
 
-function proof(kind = 'owner') {
-  return { peer: { principal: { kind }, signal: new AbortController().signal }, signal: new AbortController().signal }
-}
 async function source(t, value) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'lantai-credential-source-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
@@ -15,15 +12,34 @@ async function source(t, value) {
   await writeFile(file, typeof value === 'string' ? value : JSON.stringify(value))
   return file
 }
-const options = file => ({ file, expectedHost: 'memory.example', remotePort: 18767, invocation: proof(), authorize: () => true })
+const options = file => ({ file, expectedHost: 'memory.example', remotePort: 18767, authorize: () => true })
 const code = expected => error => error.code === expected && error.message === expected
 
-test('credential source is unreadable without owner authority and an exact grant', async () => {
-  for (const override of [{ invocation: undefined }, { invocation: proof('viewer') }, { authorize: () => false }, { authorize: () => { throw Error('unknown policy') } }]) {
+test('the credential source is unreadable unless the Host authorizes this exact read', async () => {
+  for (const authorize of [undefined, () => false, () => 'yes', () => { throw Error('unknown policy') }]) {
     let reads = 0
-    await assert.rejects(readAuthorizedCredentialSource({ ...options('not-even-a-file'), ...override }, { open: async () => { reads++; throw Error('filesystem must not be touched') } }), code('authorization_required'))
+    await assert.rejects(readAuthorizedCredentialSource({ ...options('not-even-a-file'), authorize }, { open: async () => { reads++; throw Error('filesystem must not be touched') } }), code('authorization_required'))
     assert.equal(reads, 0)
   }
+})
+
+test('turning memory off before the source closes prevents returning the key', async t => {
+  const file = await source(t, { host: 'memory.example', port: 18767, api_key: 'fixture-api-key' })
+  let permitted = true
+  let opened = false
+  const { open } = await import('node:fs/promises')
+  await assert.rejects(readAuthorizedCredentialSource({ ...options(file), authorize: () => permitted }, {
+    async open(...args) {
+      const handle = await open(...args)
+      opened = true
+      return {
+        stat: handle.stat.bind(handle),
+        read: handle.read.bind(handle),
+        async close() { await handle.close(); permitted = false },
+      }
+    },
+  }), code('authorization_required'))
+  assert.equal(opened, true)
 })
 
 test('approved local source returns only the intended key for the pinned server', async t => {
