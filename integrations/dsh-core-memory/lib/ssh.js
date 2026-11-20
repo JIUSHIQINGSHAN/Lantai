@@ -72,6 +72,8 @@ export function createSshCoreReader(input, deps = {}) {
     if (signal?.aborted) fail('aborted')
     const childEnv = Object.create(null)
     for (const key of envNames) if (process.env[key] !== undefined) childEnv[key] = process.env[key]
+    // Windows OpenSSH needs ProgramData to locate its system configuration.
+    if (process.platform === 'win32' && process.env.ProgramData) childEnv.ProgramData = process.env.ProgramData
     const argv = ['-T', '-W', `127.0.0.1:${options.remotePort}`, '-o', `HostName=${options.expectedHost}`, '-o', `HostKeyAlias=${options.expectedHost}`, '-o', `User=${options.user}`, '-o', `Port=${options.sshPort}`, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'UpdateHostKeys=no', '-o', `ConnectTimeout=${Math.max(1, Math.ceil(options.timeoutMs / 1000))}`, '-o', 'ConnectionAttempts=1', '-o', 'PermitLocalCommand=no', '-o', 'ClearAllForwardings=yes', '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no', '-o', 'ProxyCommand=none', '-o', 'ProxyJump=none', '--', options.alias]
     let child
     try { child = spawn(options.executable, argv, { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'], env: childEnv }) } catch { fail('transport_error') }

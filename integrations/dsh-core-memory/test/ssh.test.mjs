@@ -25,6 +25,7 @@ process.stdin.on('data', part => {
 function respond() {
   const mode = process.argv[2]
   if (mode === 'hang') return
+  if (mode === 'windows-config' && process.platform === 'win32' && !process.env.ProgramData) process.exit(255)
   const status = mode === 'unauthorized' ? '401 Unauthorized' : mode === 'redirect' ? '302 Found' : mode === 'server-error' ? '500 Error' : '200 OK'
   const body = mode === 'invalid-utf8' ? Buffer.from([0xc3, 0x28]) : Buffer.from(mode === 'bad-json' ? '{' : JSON.stringify({ blocks: [{ block: 'policy' }] }))
   const headers = mode === 'length' ? 'Content-Type: application/json\\r\\nContent-Length: 99999\\r\\n' : 'Content-Type: application/json\\r\\n'
@@ -60,6 +61,13 @@ test('uses a bounded SSH process and returns parsed JSON over HTTP stdin', async
   assert(argv.includes('HostName=memory.example') && argv.includes('User=root') && argv.includes('Port=22'))
   assert(!JSON.stringify([argv, config.env]).includes('top-secret'))
   assert.equal(config.env.DSH_TOKEN, undefined)
+})
+
+test('passes the system configuration directory required by Windows OpenSSH', async t => {
+  const f = await fixture(t, 'windows-config')
+  const result = await f.reader.read({ namespace: 'valid' }, 'fixture-secret')
+  assert.deepEqual(result, { blocks: [{ block: 'policy' }] })
+  if (process.platform === 'win32') assert.equal(f.launches[0][2].env.ProgramData, process.env.ProgramData)
 })
 
 test('rejects invalid input before starting SSH and closes after dispose', async t => {
