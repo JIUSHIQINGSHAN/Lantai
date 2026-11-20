@@ -1003,6 +1003,10 @@ def handle_conflict_resolve(params: dict) -> dict:
         raise ValueError("decision must be 'resolved' or 'dismissed'")
     if not isinstance(note, str):
         raise ValueError("note must be a string")
+    # 与 service（conflict_service.resolve_conflict_event，v0.15.2 起要求非空白理由）
+    # 及 ADR-0090 第 3 条的桥接口径一致：空白理由在边界以参数错误拒绝，不进 service。
+    if not note.strip():
+        raise ValueError("note (decision reason) must be a non-blank string")
     from lantai.services.conflict_service import resolve_conflict_event
 
     # 归属（票 01a）
@@ -2880,10 +2884,18 @@ TOOLS = {
             "properties": {
                 "user_id": _USER_ID_PARAM,
                 "event_id": {"type": "string"},
-                "decision": {"type": "string", "description": "resolved | dismissed"},
-                "note": {"type": "string", "default": ""},
+                "decision": {
+                    "type": "string",
+                    "enum": ["resolved", "dismissed"],
+                    "description": "resolved | dismissed",
+                },
+                "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "裁决理由，必填且不能全是空白",
+                },
             },
-            "required": ["event_id", "decision"],
+            "required": ["event_id", "decision", "note"],
         },
     },
     "recall_report": {
