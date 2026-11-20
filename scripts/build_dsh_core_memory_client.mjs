@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const directory = path.join(root, 'integrations', 'dsh-core-memory')
 const marker = '/*__DSH_CORE_MEMORY_INLINE_SOURCES__*/'
+const normalizeLineEndings = text => text.replace(/\r\n/gu, '\n')
 
 export function renderClient(template, contract, dictionaries, state) {
   const positions = template.split(marker)
@@ -22,7 +23,7 @@ export function renderClient(template, contract, dictionaries, state) {
     'const { settleControlResult } = stateModule.exports',
     `const clientDictionaries = ${JSON.stringify(dictionaries, null, 2)}`,
   ].join('\n')
-  return `${positions[0]}${inlineSources}${positions[1]}`
+  return normalizeLineEndings(`${positions[0]}${inlineSources}${positions[1]}`)
 }
 
 async function build(check = false) {
@@ -38,7 +39,7 @@ async function build(check = false) {
   const target = path.join(directory, 'client.js')
   if (check) {
     const current = await readFile(target, 'utf8')
-    if (current !== generated) throw new Error('Client artifact is stale; run the explicit client build before testing')
+    if (normalizeLineEndings(current) !== generated) throw new Error('Client artifact is stale; run the explicit client build before testing')
   } else await writeFile(target, generated, 'utf8')
 }
 

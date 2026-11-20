@@ -14,6 +14,17 @@ const generatedPath = path.join(directory, 'client.js')
 const contractPath = path.join(directory, 'lib', 'control-contract.cjs')
 const buildScript = path.join(root, 'scripts', 'build_dsh_core_memory_client.mjs')
 
+test('Client rendering is identical with Windows and Unix checkout line endings', () => {
+  const template = 'before\n/*__DSH_CORE_MEMORY_INLINE_SOURCES__*/\nafter\n'
+  const contract = 'exports.createControlContribution = () => {}\n'
+  const state = 'exports.settleControlResult = () => {}\n'
+  const dictionaries = { zh: {}, en: {} }
+  const toWindows = text => text.replace(/\n/gu, '\r\n')
+  const expected = renderClient(template, contract, dictionaries, state)
+  assert.equal(renderClient(toWindows(template), toWindows(contract), dictionaries, toWindows(state)), expected)
+  assert.doesNotMatch(expected, /\r/u)
+})
+
 test('generated Client stays synchronized with the shared contract and both locale dictionaries', async () => {
   const [template, contract, enText, zhText, state] = await Promise.all([
     read('client.template.js'), readFile(contractPath, 'utf8'),
@@ -21,7 +32,7 @@ test('generated Client stays synchronized with the shared contract and both loca
   ])
   const dictionaries = { zh: JSON.parse(zhText).client, en: JSON.parse(enText).client }
   const generated = await readFile(generatedPath, 'utf8')
-  assert.equal(generated, renderClient(template, contract, dictionaries, state))
+  assert.equal(generated.replace(/\r\n/gu, '\n'), renderClient(template, contract, dictionaries, state))
 
   execFileSync(process.execPath, [buildScript, '--check'], { cwd: root, stdio: 'pipe' })
   assert.equal(await readFile(generatedPath, 'utf8'), generated)
