@@ -4199,7 +4199,7 @@ def handle(msg: object) -> dict | None:
             "result": {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "lantai", "version": "0.69.0"},
+                "serverInfo": {"name": "lantai", "version": "0.69.1"},
             },
         }
     if mid is None and method.startswith("notifications/"):

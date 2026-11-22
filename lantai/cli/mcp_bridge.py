@@ -167,10 +167,10 @@ TOOLS = {
         "/conflicts/{event_id}/resolve",
         {
             "event_id": _ID,
-            "decision": string(100, 1),
-            "note": string(5000),
+            "decision": {**string(100, 1), "enum": ["resolved", "dismissed"]},
+            "note": string(5000, 1, pattern=r"[\s\S]*\S[\s\S]*"),
         },
-        ("event_id", "decision"),
+        ("event_id", "decision", "note"),
     ),
     "get_digest": Tool("今日记忆盘点", "GET", "/digest/today"),
     "list_memories": Tool(
@@ -237,7 +237,7 @@ TOOLS = {
         ("session_id", "blocks"),
     ),
     "latest_checkpoint": Tool(
-        "读最近会话检查点，或按会话/记忆 ID 查询检查点",
+        "读最近/指定会话检查点（对象/null）；兼容 memory_id 历史查询，新增调用请用 list_memory_checkpoints",
         "GET",
         "/checkpoint/latest",
         {
@@ -245,6 +245,13 @@ TOOLS = {
             "session_id": _SESSION,
             "limit": integer(1, 100, 1),
         },
+    ),
+    "list_memory_checkpoints": Tool(
+        "按记忆 ID 列出变更检查点历史，返回 {checkpoints: [...]}；latest_checkpoint 的旧参数仍兼容",
+        "GET",
+        "/checkpoint",
+        {"memory_id": _ID, "limit": integer(1, 100, 20)},
+        ("memory_id",),
     ),
 }
 
@@ -385,6 +392,7 @@ def _valid(value, schema):
                 isinstance(value, str)
                 and schema.get("minLength", 0) <= len(value) <= schema["maxLength"]
                 and ("pattern" not in schema or re.fullmatch(schema["pattern"], value) is not None)
+                and ("enum" not in schema or value in schema["enum"])
             )
         case "integer":
             return type(value) is int and schema["minimum"] <= value <= schema["maximum"]

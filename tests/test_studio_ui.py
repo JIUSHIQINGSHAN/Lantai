@@ -8,9 +8,7 @@ r"""悬镜（ADR-0038）：兰台可视化管理控制台（Lantai Studio）测�
 
 import html
 import json
-import os
 import re
-import shutil
 import subprocess
 import threading
 from collections.abc import Iterator
@@ -22,29 +20,90 @@ import pytest
 from fastapi.testclient import TestClient
 
 from lantai.api.app import app
+from tests.support.ui_browser import chromium_executable
+
+
+@pytest.mark.parametrize(
+    ("platform", "relative"),
+    [
+        (
+            "win32",
+            "chromium_headless_shell-1243/chrome-headless-shell-win64/chrome-headless-shell.exe",
+        ),
+        ("win32", "chromium-1243/chrome-win64/chrome.exe"),
+        (
+            "linux",
+            "chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+        ),
+        ("linux", "chromium-1243/chrome-linux64/chrome"),
+        (
+            "darwin",
+            "chromium_headless_shell-1243/chrome-headless-shell-mac-arm64/chrome-headless-shell",
+        ),
+        (
+            "darwin",
+            "chromium-1243/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+        ),
+    ],
+)
+def test_chromium_discovers_explicit_playwright_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str, relative: str
+) -> None:
+    monkeypatch.delenv("LANTAI_TEST_CHROMIUM", raising=False)
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+    monkeypatch.setattr("tests.support.ui_browser.sys.platform", platform)
+    monkeypatch.setattr("tests.support.ui_browser.shutil.which", lambda _name: None)
+    executable = tmp_path / relative
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    assert chromium_executable() == str(executable)
+
+
+def test_chromium_explicit_configuration_is_authoritative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "configured-chrome"
+    executable.touch()
+    monkeypatch.setenv("LANTAI_TEST_CHROMIUM", str(executable))
+    assert chromium_executable() == str(executable)
+    monkeypatch.setenv("LANTAI_TEST_CHROMIUM", str(tmp_path / "missing"))
+    with pytest.raises(RuntimeError, match="LANTAI_TEST_CHROMIUM"):
+        chromium_executable()
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux", "darwin"])
+def test_chromium_discovers_platform_default_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str
+) -> None:
+    monkeypatch.delenv("LANTAI_TEST_CHROMIUM", raising=False)
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.setattr("tests.support.ui_browser.sys.platform", platform)
+    monkeypatch.setattr("tests.support.ui_browser.shutil.which", lambda _name: None)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    relative = {
+        "win32": "local/ms-playwright/chromium-1243/chrome-win64/chrome.exe",
+        "linux": "xdg/ms-playwright/chromium-1243/chrome-linux64/chrome",
+        "darwin": "Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-mac-x64/chrome-headless-shell",
+    }[platform]
+    executable = tmp_path / relative
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    assert chromium_executable() == str(executable)
+
+
+def test_chromium_discovers_path_before_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("LANTAI_TEST_CHROMIUM", raising=False)
+    executable = tmp_path / "chrome-from-path"
+    executable.touch()
+    monkeypatch.setattr("tests.support.ui_browser.shutil.which", lambda _name: str(executable))
+    assert chromium_executable() == str(executable)
+
 
 _UI_DIR = Path(__file__).resolve().parents[1] / "lantai" / "api" / "ui"
-
-
-def _chromium_executable() -> str:
-    configured = os.environ.get("LANTAI_TEST_CHROMIUM")
-    if configured:
-        assert Path(configured).is_file(), "LANTAI_TEST_CHROMIUM must name a browser executable"
-        return configured
-    for name in ("chromium", "chromium-browser", "google-chrome", "chrome"):
-        executable = shutil.which(name)
-        if executable:
-            return executable
-    local = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / ".cache")))
-    cached = sorted(
-        (local / "ms-playwright").glob(
-            "chromium_headless_shell-*/chrome-headless-shell-win64/chrome-headless-shell.exe"
-        )
-    )
-    for executable in [*cached, Path("C:/Program Files/Google/Chrome/Application/chrome.exe")]:
-        if executable.is_file():
-            return str(executable)
-    pytest.fail("Chromium is required for the Studio layout regression; set LANTAI_TEST_CHROMIUM")
 
 
 # 探针页放进定宽 iframe 里量（巡检 2026-11-14）：完整版 Chrome 的新 headless
@@ -152,7 +211,7 @@ window.addEventListener('load', () => {
 def _measure_layout(tmp_path: Path, base_url: str, width: int, frame: str = "frame") -> list:
     proc = subprocess.run(
         [
-            _chromium_executable(),
+            chromium_executable(),
             "--headless",
             "--disable-gpu",
             "--no-sandbox",

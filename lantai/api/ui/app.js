@@ -1047,6 +1047,9 @@ function bindEvents() {
     $('#apiKeyInput').value = getApiKey(); $('#rememberKey').checked = Boolean(localStorage.getItem('lantai_api_key'));
     $('#connectionDialog').showModal();
   });
+  $('#connectionForm').querySelectorAll('button[type="button"]').forEach(button => {
+    button.addEventListener('click', () => $('#connectionDialog').close(button.value));
+  });
   $('#connectionDialog').addEventListener('close', async event => {
     // P1-8：只在真正改动了连接配置时才全量刷新；取消不应触发队列重建
     const returnValue = event.target.returnValue;

@@ -127,6 +127,74 @@ async def test_required_reason_blocks_confirm_but_allows_cancel(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("remember", [False, True])
+async def test_connection_enter_saves_and_dismissals_preserve_key(
+    tmp_path: Path, remember: bool
+) -> None:
+    with product_server() as (url, requests, unexpected):
+        async with chromium(tmp_path, url) as browser:
+            await browser.evaluate(
+                "document.querySelector('#connectionButton').focus(); "
+                "document.querySelector('#connectionButton').click(); "
+                "document.querySelector('#apiKeyInput').value = 'synthetic-enter-key'; "
+                f"document.querySelector('#rememberKey').checked = {str(remember).lower()}; "
+                "window.__submits = []; window.__pendingQueueDone = 0; "
+                "const originalFetch = window.fetch.bind(window); "
+                "window.fetch = async (...args) => { const response = await originalFetch(...args); "
+                "if (String(args[0]).includes('/work-items?section=pending_decisions&')) "
+                "window.__pendingQueueDone += 1; return response; }; "
+                "document.querySelector('#connectionForm').addEventListener('submit', "
+                "event => window.__submits.push(event.submitter?.value))"
+            )
+            before = len(
+                [
+                    row
+                    for row in requests
+                    if row[1].startswith("/work-items?section=pending_decisions&")
+                ]
+            )
+            await browser.key("Enter", "Enter", 13)
+            await browser.wait("!document.querySelector('#connectionDialog').open")
+            assert await browser.evaluate("window.__submits") == ["save"]
+            storage = "localStorage" if remember else "sessionStorage"
+            key = "lantai_api_key" if remember else "lantai-api-key-session"
+            await browser.wait(f"{storage}.getItem('{key}') === 'synthetic-enter-key'")
+            await browser.wait("window.__pendingQueueDone === 1")
+            assert (
+                len(
+                    [
+                        row
+                        for row in requests
+                        if row[1].startswith("/work-items?section=pending_decisions&")
+                    ]
+                )
+                == before + 1
+            )
+            for dismissal in ("escape", "close"):
+                await browser.evaluate(
+                    "document.querySelector('#connectionButton').click(); "
+                    "document.querySelector('#apiKeyInput').value = 'unsaved-key'"
+                )
+                if dismissal == "escape":
+                    await browser.key("Escape", "Escape", 27)
+                else:
+                    await browser.evaluate(
+                        "document.querySelector('#connectionForm header [value=cancel]').click()"
+                    )
+                await browser.wait("!document.querySelector('#connectionDialog').open")
+                assert (
+                    await browser.evaluate(f"{storage}.getItem('{key}')") == "synthetic-enter-key"
+                )
+                assert await browser.evaluate("document.activeElement.id") == "connectionButton"
+            await browser.evaluate(
+                "document.querySelector('#connectionButton').click(); "
+                "document.querySelector('#connectionForm [value=clear]').click()"
+            )
+            await browser.wait("sessionStorage.length + localStorage.length === 0")
+        assert unexpected == []
+
+
+@pytest.mark.asyncio
 async def test_connection_save_cancel_and_clear_use_only_current_choice(tmp_path: Path) -> None:
     with product_server() as (url, _requests, unexpected):
         async with chromium(tmp_path, url) as browser:

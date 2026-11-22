@@ -40,9 +40,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.eval_runtime import assert_separate_home, production_home, require_api_key
+from scripts.memprobe_server_main import (  # noqa: E402
+    _assert_isolated_home,
+    _launch_owned_server,
+    _production_home,
+    _required_setting,
+    _stop_owned_process,
+)
 
 TS_BASE = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+STARTUP_TIMEOUT = 120.0
 
 SPEAKER_PREFIX = {"user": "User", "assistant": "Assistant", "tool_output": "[tool]"}
 
@@ -150,9 +157,10 @@ class LantaiVerbatimAdapter:
         return self.store_root / f"q_{eid}"
 
     def _assert_double_gate(self, qdir: Path) -> None:
-        assert_separate_home(qdir, production_home(_dotenv(), repo_root=REPO_ROOT))
+        _assert_isolated_home(qdir)
 
     def _server_env(self) -> dict:
+        production = _production_home()
         d = _dotenv()
         env = {
             "PATH": os.environ.get("PATH", ""),
@@ -167,12 +175,12 @@ class LantaiVerbatimAdapter:
             "HOMEPATH": os.environ.get("HOMEPATH", ""),
             "TEMP": os.environ.get("TEMP", ""),
             "TMP": os.environ.get("TMP", ""),
-            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY") or d["OPENAI_API_KEY"],
-            "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL") or d["OPENAI_BASE_URL"],
+            "OPENAI_API_KEY": _required_setting("OPENAI_API_KEY", d),
+            "OPENAI_BASE_URL": _required_setting("OPENAI_BASE_URL", d),
             "LLM_MODEL": os.environ.get("LLM_MODEL") or d.get("LLM_MODEL", "Qwen/Qwen3-8B"),
             "EMBED_MODEL": os.environ.get("EMBED_MODEL") or d.get("EMBED_MODEL", "BAAI/bge-m3"),
-            "API_KEY": require_api_key(d),
-            "REMEMBRANCE_PROD_HOME": str(production_home(d, repo_root=REPO_ROOT)),
+            "API_KEY": _required_setting("API_KEY", d),
+            "REMEMBRANCE_PROD_HOME": str(production),
             # 检索权重钉板 = LongMemEval hybrid-default（0.6/0.25/0.05）
             "RETRIEVAL_W_VECTOR": "0.6",
             "RETRIEVAL_W_BM25": "0.25",
@@ -188,91 +196,57 @@ class LantaiVerbatimAdapter:
 
     def _headers(self) -> dict:
         d = _dotenv()
-        return {"X-API-Key": require_api_key(d)}
+        return {"X-API-Key": _required_setting("API_KEY", d)}
 
     def _start_server(self, eid: str) -> subprocess.Popen:
         qdir = self._q_dir(eid)
         self._assert_double_gate(qdir)
-        log_fh = open(qdir / "server.log", "ab")  # noqa: SIM115 — 生命周期=子进程
         env = self._server_env()
-        env["LANTAI_HOME"] = str(qdir)
-        proc = subprocess.Popen(
-            [self.server_python, str(REPO_ROOT / "scripts/memprobe_server_main.py")],
-            cwd=str(REPO_ROOT),
-            env=env,
-            stdout=log_fh,
-            stderr=subprocess.STDOUT,
+        qdir.mkdir(parents=True, exist_ok=True)
+        log_fh = open(qdir / "server.log", "ab")  # noqa: SIM115 — 进程输出句柄
+        env.update(
+            {
+                "LANTAI_HOME": str(qdir),
+                "DATABASE_URL": f"sqlite:///{(qdir / 'remembrance.db').as_posix()}",
+                "CHROMADB_PATH": str(qdir / ".chromadb"),
+            }
         )
-        for _ in range(120):
-            try:
-                if requests.get(f"{self.base}/health", timeout=3).ok:
-                    if proc.poll() is not None:
-                        # health 有响应但我们的进程已退出 ⇒ 端口被外来服务器占答
-                        # （2026-10-28 事故形态），宁拒跑不打错门
-                        raise SystemExit(
-                            f"health 来自外来进程（我们的服务器已退出，见 {qdir / 'server.log'}），拒跑 episode {eid}"
-                        )
-                    return proc
-            except requests.RequestException:
-                pass
-            time.sleep(1)
-        proc.kill()
-        raise RuntimeError(f"评测 API 120s 未就绪（{qdir / 'server.log'}），拒跑 episode {eid}")
+        try:
+            proc = _launch_owned_server(
+                [self.server_python, str(REPO_ROOT / "scripts/memprobe_server_main.py")],
+                cwd=str(REPO_ROOT),
+                env=env,
+                stdout=log_fh,
+                stderr=subprocess.STDOUT,
+                timeout=STARTUP_TIMEOUT,
+                expected_port=self.port,
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"评测 API 未通过子进程就绪校验（{qdir / 'server.log'}），拒跑 episode {eid}: {exc}"
+            ) from exc
+        finally:
+            log_fh.close()
+        return proc
 
     def _kill_server(self) -> None:
-        if self._proc is not None:
-            with contextlib.suppress(Exception):
-                subprocess.run(
-                    f"taskkill /F /T /PID {self._proc.pid}",
-                    shell=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            self._proc = None
-        # 兜底清理占用该端口的孤儿监听进程
-        try:
-            out = subprocess.check_output(
-                f"netstat -ano | findstr :{self.port}",
-                shell=True,
-                text=True,
-                errors="ignore",
-            )
-            for line in out.splitlines():
-                parts = line.strip().split()
-                if (
-                    len(parts) >= 5
-                    and parts[1].endswith(f":{self.port}")
-                    and parts[3] == "LISTENING"
-                ):
-                    subprocess.run(
-                        f"taskkill /F /PID {parts[4]}",
-                        shell=True,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-        except Exception:
-            pass
+        proc, self._proc = self._proc, None
+        _stop_owned_process(proc)
+
+    def _await_owned_server(self, proc, qdir: Path) -> None:
+        if proc.poll() is not None:
+            proc.wait()
+            if self._proc is proc:
+                self._proc = None
+            raise RuntimeError(f"evaluation child exited after readiness ({qdir / 'server.log'})")
 
     # ---------- MemProbe protocol ----------
 
     def reset(self, episode_id: str, episode=None, spec=None) -> None:
-        self._kill_server()
-        # 端口残活检查（宁 miss 不脏写）：前轮崩溃残留的服务器占着端口时，
-        # _start_server 的 health 探活会打到**旧库**（新 uvicorn 绑定失败但
-        # 请求命中旧进程）——跨题串库。显式拒跑，先清理再重跑。
-        # 给子进程退出释放端口最多 5 秒宽限期（Windows 异步回收）
-        for _ in range(10):
-            try:
-                if not requests.get(f"{self.base}/health", timeout=1).ok:
-                    break
-            except requests.RequestException:
-                break
-            time.sleep(0.5)
-        else:
-            raise SystemExit(
-                f"端口 {self.port} 已有活服务器（前轮残活且5s未退出），拒跑 episode {episode_id}；先清理后重跑"
-            )
         qdir = self._q_dir(episode_id)
+        self._assert_double_gate(qdir)
+        self._server_env()  # validate credentials before side effects
+        self._kill_server()
         shutil.rmtree(qdir, ignore_errors=True)
         qdir.mkdir(parents=True, exist_ok=True)
         self._ep = episode_id
@@ -287,6 +261,7 @@ class LantaiVerbatimAdapter:
         self._proc = self._start_server(episode_id)
 
     def ingest(self, session: dict) -> None:
+        self._await_owned_server(self._proc, self._q_dir(self._ep))
         lines = build_session_lines(self._ep, session, self._n_sessions)
         if not lines:
             return
@@ -344,6 +319,7 @@ class LantaiVerbatimAdapter:
         self._append_receipt(rec)
 
     def retrieve(self, question: str) -> str:
+        self._await_owned_server(self._proc, self._q_dir(self._ep))
         t0 = time.time()
         r = requests.post(
             f"{self.base}/search",
