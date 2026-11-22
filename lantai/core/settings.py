@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     CANDIDATE_MIN_CONFIDENCE: float = 0.15
 
     # 对话写通道（Ticket 01）：分 lane 自动提取 vs 闲聊入队
+    # 显式会话原文接收（ADR-0091）；不启用宿主采集或模型处理。
+    FEATURE_CONVERSATION_CAPTURE: bool = False
     DIALOGUE_ENABLED: bool = True
     DIALOGUE_MIN_CHARS: int = 8
     # 对话通道专用提取置信度门槛：低于此值（含提取失败兜底 0.3）进待审队列

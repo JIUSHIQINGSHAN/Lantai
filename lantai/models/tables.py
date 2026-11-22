@@ -32,7 +32,7 @@ class LifecycleStatus(StrEnum):
 
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, UniqueConstraint, text
 from sqlmodel import JSON, Column, Field, SQLModel
 
 from lantai.core.time import utcnow
@@ -1040,3 +1040,88 @@ class CehouWindow(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
     tenant_id: str | None = Field(default=None, index=True)
     user_id: str | None = Field(default=None, index=True)
+
+
+class ConversationMessage(SQLModel, table=True):
+    """One authenticated message occurrence; deletion retains only its replay identity."""
+
+    __tablename__ = "conversation_message"
+
+    id: str = Field(primary_key=True)
+    user_id: str
+    tenant_id: str = ""
+    agent_id: str = ""
+    workspace_id: str = ""
+    host_id: str
+    conversation_id: str
+    source_message_id: str
+    role: str
+    completion: str = "completed"
+    content: str
+    content_hash: str | None = None
+    occurred_at: datetime | None = None
+    received_at: datetime = Field(default_factory=utcnow)
+    status: str = "stored"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "tenant_id",
+            "agent_id",
+            "workspace_id",
+            "host_id",
+            "conversation_id",
+            "source_message_id",
+            name="uq_conversation_message_source",
+        ),
+        CheckConstraint("user_id != ''", name="ck_conversation_message_owner"),
+        CheckConstraint("role IN ('user', 'assistant')", name="ck_conversation_message_role"),
+        CheckConstraint(
+            "completion IN ('completed', 'failed', 'cancelled', 'partial')",
+            name="ck_conversation_message_completion",
+        ),
+        CheckConstraint(
+            "status IN ('stored', 'quarantined', 'deleted')",
+            name="ck_conversation_message_status",
+        ),
+        CheckConstraint(
+            "status != 'deleted' OR (content = '' AND content_hash IS NULL)",
+            name="ck_conversation_message_deleted_body",
+        ),
+        Index(
+            "ix_conversation_message_scope_time",
+            "user_id",
+            "tenant_id",
+            "agent_id",
+            "workspace_id",
+            "host_id",
+            "conversation_id",
+            "received_at",
+            "id",
+        ),
+    )
+
+
+class ConversationJob(SQLModel, table=True):
+    """Durable processing intent, without a second copy of the message body."""
+
+    __tablename__ = "conversation_job"
+
+    id: str = Field(primary_key=True)
+    message_id: str = Field(foreign_key="conversation_message.id", unique=True)
+    status: str = "pending"
+    attempts: int = 0
+    available_at: float = 0.0
+    lease_until: float | None = None
+    token: str | None = None
+    reason_code: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'processing', 'held', 'completed', 'cancelled')",
+            name="ck_conversation_job_status",
+        ),
+        CheckConstraint("attempts >= 0", name="ck_conversation_job_attempts"),
+        Index("ix_conversation_job_due", "status", "available_at", "lease_until", "created_at"),
+    )

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- 新增默认关闭的会话原文接收、查询、删除和 Markdown 下载接口。原文与待处理作业在同一 SQLite 事务提交。作业支持重启恢复和有期限的认领，模型提取与宿主接入留待后续阶段。
+
 ## [0.69.1] - 2026-11-19
 
 ### Fixed

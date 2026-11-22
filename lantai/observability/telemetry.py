@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 
 from lantai.core.ids import new_id
 from lantai.core.logger import logger
@@ -213,11 +214,16 @@ class TelemetryMiddleware:
     纯 ASGI 包装只做一次计时与一次 `record()`，开销可忽略。
     """
 
-    def __init__(self, app):
+    def __init__(self, app, *, skip_request: Callable[[dict], bool] | None = None):
         self.app = app
+        self.skip_request = skip_request
 
     async def __call__(self, scope, receive, send):
-        if scope.get("type") != "http" or not settings.MONITOR_ENABLED:
+        if (
+            scope.get("type") != "http"
+            or not settings.MONITOR_ENABLED
+            or (self.skip_request is not None and self.skip_request(scope))
+        ):
             await self.app(scope, receive, send)
             return
 
