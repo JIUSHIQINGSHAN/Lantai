@@ -1113,3 +1113,25 @@ def test_docs_reference_gate_ignores_placeholders(tmp_path):
         encoding="utf-8",
     )
     assert RC.docs_reference_issues(tmp_path) == []
+
+
+def test_docs_reference_gate_ignores_scripts_inside_external_url(tmp_path):
+    """外链样：`https://…/scripts/x.py` 指向别人的仓库，不是本仓死链（票 02）。"""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "u.md").write_text(
+        "[安装器](https://github.com/other/repo/blob/abc123/scripts/connect_host.py)\n",
+        encoding="utf-8",
+    )
+    assert RC.docs_reference_issues(tmp_path) == []
+
+
+def test_docs_reference_gate_still_flags_local_script_on_url_line(tmp_path):
+    """反样：同一行既有外链又有本仓死链时，整行豁免会漏判——只豁免 URL 跨度。"""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "m.md").write_text(
+        "见[上游](https://github.com/other/repo/scripts/connect_host.py)，本仓跑 `scripts/ghost.py`。\n",
+        encoding="utf-8",
+    )
+    issues = RC.docs_reference_issues(tmp_path)
+    assert any("scripts/ghost.py" in i for i in issues), f"本仓死链被外链豁免连带放过：{issues}"
+    assert not any("connect_host.py" in i for i in issues), f"外链被误判为本仓死链：{issues}"
