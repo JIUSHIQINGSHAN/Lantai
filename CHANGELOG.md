@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- 新增默认关闭的 DSH 核心记忆插件（`integrations/dsh-core-memory`，0.3.0）：经 HTTPS 或严格主机验证的 OpenSSH 通道，按已登记文件夹的主对话按需载入指定核心记忆；读取前核对身份、格式、版本与大小，密钥仅用于当次请求。设置页总开关默认关闭，关闭即停读并中止在途读取，聊天历史与已发送请求按 DSH 规则保留。该插件不自动提取、不写入兰台，既有逐对话授权不迁移。
+
 ## [0.69.1] - 2026-11-19
 
 ### Fixed
