@@ -70,6 +70,15 @@ def encode_cognitive_header(summary: str) -> str:
     return base64.b64encode(summary.encode("utf-8")).decode("ascii")
 
 
+def path_within(scope: dict, prefix: str) -> bool:
+    """Match one route prefix after accounting for the ASGI root path."""
+    path = scope.get("path", "")
+    root = scope.get("root_path", "").rstrip("/")
+    if root and (path == root or path.startswith(root + "/")):
+        path = path[len(root) :]
+    return bool(prefix) and (path == prefix or path.startswith(prefix + "/"))
+
+
 class CognitiveMiddleware:
     """
     ASGI 中间件（v0.4 轻量版）：
@@ -80,11 +89,15 @@ class CognitiveMiddleware:
     注意：轻量版仅在有 X-Task header 时触发，避免对每个请求都查询 DB。
     """
 
-    def __init__(self, app):
+    def __init__(self, app, *, excluded_prefix: str = ""):
         self.app = app
+        self.excluded_prefix = excluded_prefix
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
+            if path_within(scope, self.excluded_prefix):
+                await self.app(scope, receive, send)
+                return
             # 提取 X-Task header（支持 URL 解码或原始文本）
             headers = dict(scope.get("headers", []))
             raw_task = headers.get(b"x-task", b"").decode("utf-8", errors="ignore").strip()

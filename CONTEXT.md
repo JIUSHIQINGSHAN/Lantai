@@ -11,6 +11,8 @@ AI Agent 长期记忆管理系统——摄取、闸门、演化、检索、遗�
 | 术语 | 通俗解释 | 来源 |
 |------|----------|------|
 | **兰台（Lantai）** | 项目主系统名；为 AI Agent 保存、检索、演化与安全遗忘长期记忆的档案库。 | 命名：汉代皇家档案馆「兰台」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md) |
+| **会话原文记录**（conversation message，描述性术语） | 某次对话中实际出现的一条获准保存的发言；不同时间说出相同文字仍是不同记录，网络重试不算新增发言。 | 描述性术语，无新正式中文名；设计：[ADR-0091](docs/adr/0091-conversation-message-capture.md) |
+| **持久处理作业**（conversation job，描述性术语） | 原文已可靠保存后等待处理的工作；进程重启后仍能找到，尚未处理不表示已经形成知识。 | 描述性术语，无新正式中文名；设计：[ADR-0091](docs/adr/0091-conversation-message-capture.md) |
 | **良史**（Liangshi，版本代号） | v0.69.0 发行版本代号；一笔记忆写入始于哪次会话、走到哪一步，皆如实留痕。 | 命名：《左传·宣公二年》称董狐为「古之良史」，「书法不隐」；设计：见 [ADR-0088](docs/adr/0088-ingest-attribution-and-stage-monitor.md) |
 | **锦囊（Jinnang）** | 待审候选队列；当系统提取出的事实置信度不足或存在潜在冲突时，暂存此处等待人工或特权 Agent 裁决。 | 命名：成语「锦囊妙计」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)、[ADR-0026](docs/adr/0026-candidate-admission-triage.md)（代码 `pending_review` 队列） |
 | **案牍（Andu）** | 控制台统一待办工作台；把待审候选、演化提案、冲突事件、参数建议等散落事项汇总为一张可排序、可处置的只读清单。 | 命名：刘禹锡《陋室铭》「无案牍之劳形」；设计：见 [ADR-0013](docs/adr/0013-naming-system.md)（控制台 `work_item_service`） |

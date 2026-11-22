@@ -157,3 +157,19 @@ def test_middleware_x_task_header_injection(client_and_db):
     decoded_text = base64.b64decode(cognitive_header.encode("ascii")).decode("utf-8")
     assert len(decoded_text) > 0
     assert "相关规则:" in decoded_text
+
+
+def test_conversation_responses_skip_ambient_cognitive_context(client_and_db, monkeypatch):
+    """The capture route cannot include unrelated memory in its response headers."""
+    import urllib.parse
+
+    from lantai.core.settings import settings
+
+    client, _ = client_and_db
+    monkeypatch.setattr(settings, "FEATURE_CONVERSATION_CAPTURE", False)
+    headers = {"X-Task": urllib.parse.quote("修改配置并执行数据库操作")}
+    assert "x-cognitive-context" in client.get("/health", headers=headers).headers
+    response = client.get("/conversation/messages/unknown", headers=headers)
+    assert response.status_code == 404
+    assert response.headers["cache-control"] == "no-store"
+    assert "x-cognitive-context" not in response.headers

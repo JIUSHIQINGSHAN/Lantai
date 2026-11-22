@@ -17,7 +17,6 @@ import re
 import unicodedata
 
 from lantai.core.logger import logger
-from lantai.core.settings import settings
 
 _SECRET_PATTERNS: dict[str, re.Pattern[str]] = {
     "openai_key": re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
@@ -35,6 +34,8 @@ def find_secret_shapes(content: str) -> list[str]:
 
 def detect_secret_shapes(content: str) -> list[str]:
     """按 SECRET_GUARD_MODE 检测并记录（off 直通不检测；shadow/enforce 命中记 warning）。"""
+    from lantai.core.settings import settings
+
     if settings.SECRET_GUARD_MODE == "off":
         return []
     hits = find_secret_shapes(content)
@@ -49,6 +50,8 @@ def route_secret_hits(result: dict, secret_hits: list[str]) -> dict:
     `result` 须含 `candidate_id`；dedup merge/update 等无新建候选的分支
     返回原样（候选面没新建内容，既有待审语义不变）。
     """
+    from lantai.core.settings import settings
+
     if not secret_hits or settings.SECRET_GUARD_MODE != "enforce":
         return result
     candidate_id = result.get("candidate_id")

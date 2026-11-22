@@ -24,8 +24,6 @@ import logging
 import re
 import unicodedata
 
-from lantai.core.settings import settings
-
 logger = logging.getLogger("lantai.security")
 
 # 预算边界：入库内容超过此长度不再逐层扫描，直接按超限拒收。与最宽松的
@@ -142,6 +140,8 @@ def is_blocked_by_injection_guard(content: str | None) -> bool:
     典型调用方是探颐：未决冲突的 `incoming_ref` 来自候选摘要，
     没有经过记忆写入闸，却会被渲染成问句注入 Agent 上下文。
     """
+    from lantai.core.settings import settings
+
     if not settings.INJECTION_GUARD_ENABLED:
         return False
     hit, layer = check_prompt_injection(content or "")
@@ -156,6 +156,8 @@ def assert_no_prompt_injection(content: str) -> None:
     INJECTION_GUARD_ENABLED=False 时直通（关 = 行为退回无检测）。拒绝信息
     只给层名不给命中模式全文——不给探测反馈。
     """
+    from lantai.core.settings import settings
+
     if not settings.INJECTION_GUARD_ENABLED:
         return
     hit, layer = check_prompt_injection(content)
