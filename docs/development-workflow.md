@@ -75,7 +75,7 @@ flowchart LR
    - **每个被路由、worker、service 调用的核心函数，必须有至少一个真实构造输入、内部逻辑不 mock 的冒烟测试**。
    - mock 仅允许用于外部不可控依赖（外部网络 LLM / Embedding / Rerank API、硬件与外部文件系统），**严禁 mock 掉被测函数内部的任何分支与计算逻辑**。
 3. **环境与运行纪律**：
-   - 使用仓库根 `.venv`；pyproject 已配 `pythonpath=["."]`，pytest 直跑即可。宿主 `PYTHONPATH` 有污染（如 Hermes 宿主拉起的 shell）时先清空再跑——口径见 `docs/release-process.md` 第 10 条（命名空间 provenance）。
+   - 按 [开发测试环境](project/development-environment.md) 选择与 `uv.lock` 同步的独立解释器；保留正在供服务使用的旧环境。pyproject 已配 `pythonpath=["."]`。宿主 `PYTHONPATH` 有污染时先清空；Windows Chroma 迁移测试采用新的 ASCII 临时目录。完整验收以 [发布流程](release-process.md) 的覆盖率与宿主库绊线口径为准。
 
 ---
 

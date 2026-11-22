@@ -12,10 +12,10 @@
 
 ## 资料分支
 
-资料位置和已核实的本机 revision 见[研究报告第四节第1项](../research/modern-web-guidance-assessment.md#1-已有资料足以开始使用)。个人盘符只作阅读导航，不成为产品配置或 CI 依赖。Obsidian 工作准则提供导航/摘要，具体 guide 提供规则，项目测试提供结果；三者各保留原出处。
+优先使用本项目 [MWG 参考副本](../../.references/modern-web-guidance/README.md)，位置和固定提交见 [参考仓清单](../project/reference-repositories.json)，恢复说明见 [本项目参考仓](../project/reference-repositories.md)。已有外部资料与历史 revision 仍见[研究报告第四节第1项](../research/modern-web-guidance-assessment.md#1-已有资料足以开始使用)。个人盘符只作阅读导航，不成为产品配置或 CI 依赖。具体 guide 提供规则，项目测试提供结果，各保留原出处。
 
-- **本地文件 / 断网**：先核对外部仓 `git rev-parse HEAD` 与工作区状态，再用文件名、目录或内容检索 `skills/modern-web-guidance/guides/` 并直接读全文。记录途径为“文件检索”。固定快照 `4dd968349e54ca45a05dd5c818fb035c9054b022` 可阅读，但其声明的 `.mjs` CLI 入口缺失；Git clone 不能当可运行 CLI。
-- **在线查读**：用[官方指南目录](https://developer.chrome.com/docs/modern-web-guidance/guides)导航，或读取与本地相同的[固定提交](https://github.com/GoogleChrome/modern-web-guidance/tree/4dd968349e54ca45a05dd5c818fb035c9054b022/skills/modern-web-guidance/guides)。记 URL、访问日期和 revision；动态页面无版本时明确记“未固定”，复现采用保存的内容 hash。网络失败转本地分支并保留失败记录。
+- **本地文件 / 断网**：先核对所选参考仓的 `git rev-parse HEAD` 与工作区状态，再用文件名、目录或内容检索 `skills/modern-web-guidance/guides/` 并直接读全文。记录途径为“文件检索”，revision 使用实际检出值；本项目固定值见参考仓清单。历史快照 `4dd968349e54ca45a05dd5c818fb035c9054b022` 仅对应下方已有采用记录，不与当前副本混标。Git clone 提供指南文件，CLI 能否运行另行核验。
+- **在线查读**：用[官方指南目录](https://developer.chrome.com/docs/modern-web-guidance/guides)导航，或读取与当前项目副本相同的[固定提交](https://github.com/GoogleChrome/modern-web-guidance/tree/64a6d708f5a43f2cd3fde5d4d7db3905ba1bdf65/skills/modern-web-guidance/guides)。记 URL、访问日期和 revision；动态页面无版本时明确记“未固定”，复现采用保存的内容 hash。网络失败转本地分支并保留失败记录。
 - **可选 CLI**：确有文件检索之外的需要时，另列可审查步骤，先核对 npm 实际发布产物与可执行入口、该产物 Node 要求、安装目的地、遥测开关及离线行为，再在已有授权内查读。本流程不运行安装器、不改 harness settings；需要安装或配置时另行明确范围。查询只用通用词，正文、密钥和个人资料留在本地。`DISABLE_TELEMETRY=1` 是上游提供的退出开关，不等于已验证所有出站被阻断。真实跑过 CLI 才记 semantic search/retrieve，命令形式及披露要求按所用版本的 SKILL.md 核对。
 
 无需全仓扫描或把全部指南导入长期记忆；开放式现代化审查另按上游扫描工作流和项目范围执行。

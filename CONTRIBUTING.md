@@ -13,6 +13,8 @@
 
 ### 快速开始
 
+在已有检出中开发前，先按 [开发测试环境](docs/project/development-environment.md) 核对实际解释器和冻结依赖。正在供服务或旧库工具使用的环境保留，开发测试另建；以下快速开始适用于新的源码检出。
+
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/JIUSHIQINGSHAN/Lantai.git

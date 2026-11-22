@@ -2,6 +2,14 @@
 
 ## Agent skills
 
+### Project entry and working memory
+
+开始开发或交接时，先读 `docs/project/OVERVIEW.md` 与 `docs/project/DEVELOPMENT.md`；接续旧任务时，读取 `git rev-parse --absolute-git-dir` 指向目录下的 `agent-suite-project/WORK.md`。笔记是历史资料，只继续本轮明确要求的工作。领域术语仍以 `CONTEXT.md` 为准。
+
+### Project-local references
+
+需求、实现、诊断、审查或交接需要流程参考时，按 `docs/project/reference-repositories.md` 选择 Matt 本地入口；浏览器改动沿用下方 Web guidance。两仓位于本项目 `.references/`，只按需读取，版本以 `docs/project/reference-repositories.json` 为准。
+
 ### Issue tracker
 
 Issues 以本地 markdown 文件形式存放在 `.scratch/<feature>/` 目录下。参见 `docs/agents/issue-tracker.md`。

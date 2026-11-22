@@ -67,6 +67,8 @@ docs/memory-quality/*.md
 .mimosa/
 
 # 工具缓存 / 本地工作区（release 门禁需工作区干净）
+# 便携开发套件的项目内参考仓（来源与固定提交见 docs/project/reference-repositories.json）
+/.references/
 .ruff_cache/
 .worktrees/
 .mirasim/
