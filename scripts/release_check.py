@@ -1465,6 +1465,15 @@ DOCS_REFERENCE_WHITELIST: frozenset[str] = frozenset(
 
 _DOCS_REF_RE = re.compile(r"scripts/[\w][\w-]*\.py")
 
+# 外链目标区间：`https://.../scripts/x.py` 指向的是别的仓库，不是本仓入口。
+# 只跳过 URL 跨度内的命中，不整行豁免——同一行里的本仓 `scripts/*.py` 仍要判红。
+_EXTERNAL_URL_SPAN_RE = re.compile(r"https?://[^\s<>()\[\]\"'`]+")
+
+
+def _external_url_spans(line: str) -> list[tuple[int, int]]:
+    """返回本行内所有 http(s) 外链的字符区间。"""
+    return [m.span() for m in _EXTERNAL_URL_SPAN_RE.finditer(line)]
+
 
 def docs_reference_issues(repo_root: Path) -> list[str]:
     """现役文档引用的 scripts/*.py 必须真实存在（工单 09 防复发哨兵）。
@@ -1474,6 +1483,9 @@ def docs_reference_issues(repo_root: Path) -> list[str]:
     只读扫描（不联网、不改文件）；v1 只认 `scripts/` 前缀引用——裸名/伪码/
     占位符（`<name>.py`、`probe_*.py`）误报面不可控，不入扫描面（Standards 轴
     评审裁定）；新历史文档的豁免走显式白名单登记（fail-closed），不做横幅解析。
+    `https://.../scripts/x.py` 指向别的仓库，按外链豁免；豁免只覆盖 URL 跨度内
+    的命中，同一行里本仓的 `scripts/*.py` 死链照旧判红（票据
+    `.scratch/chroma-diagnosis/issues/02-external-url-doc-gate.md`）。
     """
     root = Path(repo_root)
     targets = [root / "README.md", root / "CONTRIBUTING.md"]
@@ -1490,7 +1502,12 @@ def docs_reference_issues(repo_root: Path) -> list[str]:
             issues.append(f"{path.name} 读取失败（{exc}）——引用对账无法取证，不放行")
             continue
         for lineno, line in enumerate(text.splitlines(), 1):
-            for token in _DOCS_REF_RE.findall(line):
+            url_spans = _external_url_spans(line)
+            for match in _DOCS_REF_RE.finditer(line):
+                start, end = match.span()
+                if any(s <= start and end <= e for s, e in url_spans):
+                    continue  # 外链目标属于别的仓库，不是本仓入口
+                token = match.group(0)
                 if any(ch in token for ch in "<>*"):
                     continue  # 占位符/通配示例
                 rel = token.replace("\\", "/")
