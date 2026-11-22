@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "scope": "current-project-checkout",
+  "mode": "local-reference-repositories",
+  "source": {
+    "suite": "dev-suite",
+    "version": "1.2.0",
+    "delivery_mode": "repository-references",
+    "repository": "https://github.com/JIUSHIQINGSHAN/dev-suite",
+    "manifest": "repositories.json"
+  },
+  "automatic_update": false,
+  "native_skill_registration": false,
+  "repositories": [
+    {
+      "id": "matt",
+      "name": "Matt Pocock Skills",
+      "path": ".references/mattpocock-skills",
+      "url": "https://github.com/JIUSHIQINGSHAN/mattpocock-skills",
+      "upstream_url": "https://github.com/mattpocock/skills",
+      "commit": "abeeaf95660ba9e8b7c753eb38f441ca707a8823",
+      "version_at_commit": "1.3.2",
+      "license": "MIT",
+      "license_file": "LICENSE",
+      "readme": "README.md",
+      "skill_entrypoints": [
+        { "name": "ask-matt", "path": "skills/engineering/ask-matt/SKILL.md" },
+        { "name": "diagnosing-bugs", "path": "skills/engineering/diagnosing-bugs/SKILL.md" },
+        { "name": "grill-with-docs", "path": "skills/engineering/grill-with-docs/SKILL.md" },
+        { "name": "triage", "path": "skills/engineering/triage/SKILL.md" },
+        { "name": "improve-codebase-architecture", "path": "skills/engineering/improve-codebase-architecture/SKILL.md" },
+        { "name": "setup-matt-pocock-skills", "path": "skills/engineering/setup-matt-pocock-skills/SKILL.md" },
+        { "name": "tdd", "path": "skills/engineering/tdd/SKILL.md" },
+        { "name": "to-spec", "path": "skills/engineering/to-spec/SKILL.md" },
+        { "name": "to-tickets", "path": "skills/engineering/to-tickets/SKILL.md" },
+        { "name": "wayfinder", "path": "skills/engineering/wayfinder/SKILL.md" },
+        { "name": "implement", "path": "skills/engineering/implement/SKILL.md" },
+        { "name": "implement-spec", "path": "skills/engineering/implement-spec/SKILL.md" },
+        { "name": "prototype", "path": "skills/engineering/prototype/SKILL.md" },
+        { "name": "research", "path": "skills/engineering/research/SKILL.md" },
+        { "name": "domain-modeling", "path": "skills/engineering/domain-modeling/SKILL.md" },
+        { "name": "codebase-design", "path": "skills/engineering/codebase-design/SKILL.md" },
+        { "name": "code-review", "path": "skills/engineering/code-review/SKILL.md" },
+        { "name": "pr", "path": "skills/engineering/pr/SKILL.md" },
+        { "name": "retro", "path": "skills/engineering/retro/SKILL.md" },
+        { "name": "wizard", "path": "skills/engineering/wizard/SKILL.md" },
+        { "name": "grill-me", "path": "skills/productivity/grill-me/SKILL.md" },
+        { "name": "grilling", "path": "skills/productivity/grilling/SKILL.md" },
+        { "name": "handoff", "path": "skills/productivity/handoff/SKILL.md" },
+        { "name": "teach", "path": "skills/productivity/teach/SKILL.md" },
+        { "name": "to-questionnaire", "path": "skills/productivity/to-questionnaire/SKILL.md" },
+        { "name": "wait-what", "path": "skills/productivity/wait-what/SKILL.md" },
+        { "name": "writing-for-agents", "path": "skills/productivity/writing-for-agents/SKILL.md" }
+      ]
+    },
+    {
+      "id": "mwg",
+      "name": "Modern Web Guidance",
+      "path": ".references/modern-web-guidance",
+      "url": "https://github.com/JIUSHIQINGSHAN/modern-web-guidance",
+      "upstream_url": "https://github.com/GoogleChrome/modern-web-guidance",
+      "commit": "64a6d708f5a43f2cd3fde5d4d7db3905ba1bdf65",
+      "version_at_commit": "1.0.1",
+      "license": "Apache-2.0",
+      "license_file": "LICENSE",
+      "readme": "README.md",
+      "guides": "skills/modern-web-guidance/guides",
+      "skill_entrypoints": [
+        { "name": "modern-web-guidance", "path": "skills/modern-web-guidance/SKILL.md" },
+        { "name": "chrome-extensions", "path": "skills/chrome-extensions/SKILL.md" }
+      ]
+    }
+  ]
+}
