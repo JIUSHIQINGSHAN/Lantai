@@ -46,6 +46,8 @@ function createControlContribution() {
     descriptors: [
       makeDescriptor('status', []),
       makeDescriptor('setEnabled', [{ name: 'enabled', wire: 'enabled', source: 'json', codec: enabledInput }]),
+      makeDescriptor('extractionStatus', []),
+      makeDescriptor('setExtractionEnabled', [{ name: 'enabled', wire: 'enabled', source: 'json', codec: enabledInput }]),
     ],
   }
 }
@@ -87,6 +89,9 @@ const clientDictionaries = {
   "zh": {
     "title": "自动载入兰台记忆",
     "description": "仅用于已配置文件夹中的对话。资料会发给对话所用的模型，能查看聊天记录的人也可能看到。关闭后保留已有记录。",
+    "extractionTitle": "自动提取并写入兰台",
+    "extractionDescription": "仅处理此后已配置文件夹内主对话的用户文字；不补传历史。用户文字会发送到兰台处理。关闭后停止提交新任务，但兰台已接受的任务仍可能完成并产生写入；不会删除已有记忆。",
+    "extractionScope": "仅处理此后主对话中的用户文字；不补传历史。",
     "scopeCore": "长期规则、个人资料",
     "scopeWithTask": "长期规则、个人资料、已配置的任务进度",
     "reading": "正在读取设置…",
@@ -94,9 +99,11 @@ const clientDictionaries = {
     "savedOn": "已开启并保存。",
     "savedOff": "已关闭并保存。",
     "scopeChanged": "读取范围已更改，自动载入已关闭。",
+    "extractionScopeChanged": "写入范围已更改，自动提取已关闭。",
     "readOnly": "当前设置不可更改。",
     "readFailed": "未能读取设置。",
     "storageUnavailable": "暂时无法确认设置，记忆读取已暂停。",
+    "extractionUnavailable": "暂时无法确认设置，自动提交已暂停；已接收的任务仍可能继续处理。",
     "enableUnconfirmed": "未能确认开启结果。",
     "stopUnconfirmed": "关闭尚未确认。",
     "retryRead": "重新查询",
@@ -105,6 +112,9 @@ const clientDictionaries = {
   "en": {
     "title": "Load Lantai memory automatically",
     "description": "Applies to conversations in configured folders. Memory is sent to the model and may be visible to anyone who can view the conversation. Turning it off keeps existing history.",
+    "extractionTitle": "Automatically extract and save to Lantai",
+    "extractionDescription": "Processes only user text in main conversations in configured folders from this point forward; it does not backfill history. User text is sent to Lantai for processing. Turning this off stops new task submissions, but tasks already accepted by Lantai may still finish and write memories. Existing memories are not deleted.",
+    "extractionScope": "Only future user text in main conversations is processed; no history backfill.",
     "scopeCore": "Rules and personal information",
     "scopeWithTask": "Rules, personal information, and configured task progress",
     "reading": "Reading setting…",
@@ -112,9 +122,11 @@ const clientDictionaries = {
     "savedOn": "Enabled and saved.",
     "savedOff": "Disabled and saved.",
     "scopeChanged": "The memory scope changed. Automatic loading is off.",
+    "extractionScopeChanged": "The write scope changed. Automatic extraction is off.",
     "readOnly": "This setting cannot be changed right now.",
     "readFailed": "Could not read the setting.",
     "storageUnavailable": "The setting could not be confirmed. Memory reads are paused.",
+    "extractionUnavailable": "The setting could not be confirmed. Automatic submissions are paused; accepted tasks may still be processed.",
     "enableUnconfirmed": "Could not confirm that memory was enabled.",
     "stopUnconfirmed": "Turning memory off could not be confirmed.",
     "retryRead": "Check again",
@@ -124,6 +136,7 @@ const clientDictionaries = {
     const namespace = 'lantai-core-memory.client'
     const slotName = 'settings.general.item'
     const writeAction = 'lantaiCoreMemory/setEnabled'
+    const extractionAction = 'lantaiCoreMemory/setExtractionEnabled'
     const initialView = { snapshot: null, busy: 'status', feedback: null, retry: null }
     const styles = `
       .lantai-memory-setting {
@@ -215,13 +228,25 @@ const clientDictionaries = {
       } catch { return { ok: false } }
     }
 
-    function MemorySetting({ t, remote }) {
+    function MemorySetting({ t, remote, extraction = false }) {
       const titleId = React.useId()
       const detailsId = React.useId()
+      const retryId = React.useId()
+      const feedbackId = React.useId()
       const request = React.useRef(null)
       const control = React.useRef(null)
       const retryButton = React.useRef(null)
       const [view, setView] = React.useState(initialView)
+      const status = signal => extraction ? remote.extractionStatus(signal) : remote.status(signal)
+      const setEnabled = (enabled, signal) => extraction
+        ? remote.setExtractionEnabled(enabled, signal)
+        : remote.setEnabled(enabled, signal)
+      const settle = (...args) => {
+        const result = settleControlResult(...args)
+        return extraction && result.feedback === 'storageUnavailable'
+          ? { ...result, feedback: 'extractionUnavailable' }
+          : result
+      }
       const run = React.useCallback(async action => {
         if (request.current !== null || !['status', true, false].includes(action)) return
         const controller = new AbortController()
@@ -229,21 +254,21 @@ const clientDictionaries = {
         setView(previous => ({ ...previous, busy: action }))
         try {
           const result = await invoke(signal => action === 'status'
-            ? remote.status(signal)
-            : remote.setEnabled(action, signal), controller)
+            ? status(signal)
+            : setEnabled(action, signal), controller)
           if (controller.signal.aborted || request.current !== controller) return
-          let next = settleControlResult(action, result)
+          let next = settle(action, result)
           if (typeof action === 'boolean' && next.retry !== null) {
-            const observed = await invoke(signal => remote.status(signal), controller)
+            const observed = await invoke(signal => status(signal), controller)
             if (controller.signal.aborted || request.current !== controller) return
-            next = settleControlResult(action, result, observed)
+            next = settle(action, result, observed)
           }
           if (next.retry === null && retryButton.current?.matches(':focus')) control.current?.focus()
           setView({ ...next, busy: null })
         } finally {
           if (request.current === controller) request.current = null
         }
-      }, [remote])
+      }, [remote, extraction])
 
       React.useEffect(() => {
         setView(initialView)
@@ -257,22 +282,23 @@ const clientDictionaries = {
       const busy = view.busy !== null
       const blocked = busy || view.snapshot?.writable !== true || view.snapshot.reason === 'unavailable' || view.retry === false
       const feedback = busy ? (view.busy === 'status' ? 'reading' : 'saving') : view.feedback ||
-        (view.snapshot?.reason === 'scope_changed' ? 'scopeChanged' : view.snapshot?.writable === false ? 'readOnly' : null)
+        (view.snapshot?.reason === 'scope_changed' ? (extraction ? 'extractionScopeChanged' : 'scopeChanged') : view.snapshot?.writable === false ? 'readOnly' : null)
       return h('div', { className: 'lantai-memory-setting' },
         h('style', null, styles),
         h('div', null,
-          h('div', { id: titleId, className: 'lantai-memory-setting__title' }, t('title')),
+          h('div', { id: titleId, className: 'lantai-memory-setting__title' }, t(extraction ? 'extractionTitle' : 'title')),
           h('div', { id: detailsId },
-            h('p', { className: 'lantai-memory-setting__detail' }, t('description')),
-            view.snapshot && h('p', { className: 'lantai-memory-setting__detail' }, t(view.snapshot.includesTask ? 'scopeWithTask' : 'scopeCore'))),
-          h('div', { className: 'lantai-memory-setting__detail', role: 'status', 'aria-atomic': 'true' }, feedback && t(feedback)),
+            h('p', { className: 'lantai-memory-setting__detail' }, t(extraction ? 'extractionDescription' : 'description')),
+            view.snapshot && h('p', { className: 'lantai-memory-setting__detail' }, t(extraction ? 'extractionScope' : view.snapshot.includesTask ? 'scopeWithTask' : 'scopeCore'))),
+          h('div', { id: feedbackId, className: 'lantai-memory-setting__detail', role: 'status', 'aria-atomic': 'true' }, feedback && t(feedback)),
           view.retry !== null && h('button', {
-            ref: retryButton, type: 'button', className: 'lantai-memory-setting__retry', 'aria-disabled': busy,
+            ref: retryButton, id: retryId, type: 'button', className: 'lantai-memory-setting__retry', 'aria-disabled': busy,
+            'aria-labelledby': `${retryId} ${titleId}`, 'aria-describedby': feedbackId,
             onClick: () => { if (!busy) void run(view.retry) },
           }, t(view.retry === false ? 'retryStop' : 'retryRead'))),
         h('button', {
           ref: control, type: 'button', role: 'switch', className: 'lantai-memory-setting__switch',
-          'aria-labelledby': titleId, 'aria-describedby': detailsId,
+          'aria-labelledby': titleId, 'aria-describedby': `${detailsId} ${feedbackId}`,
           'aria-checked': view.snapshot?.enabled === true, 'aria-disabled': blocked,
           onClick: () => { if (!blocked) void run(!view.snapshot?.enabled) },
         }, h('span', { className: 'lantai-memory-setting__track', 'aria-hidden': 'true' })))
@@ -285,11 +311,16 @@ const clientDictionaries = {
         const unmount = await ctx.remote.$mount(createControlContribution())
         ctx.effect(() => async () => { await unmount() }, 'lantai-core-memory.client.remote')
         ctx.inject(['remote.lantaiCoreMemory'], remoteCtx => {
-          remoteCtx.effect(() => remoteCtx.remoteAccess.whenAccess(writeAction, () =>
-            remoteCtx.slots.inject(slotName, () => remoteCtx.slots.register({
-              name: slotName, id: 'lantai-core-memory-setting', order: 20, locale: namespace,
-            }, ({ t }) => h(MemorySetting, { t, remote: remoteCtx.remote.lantaiCoreMemory }))),
-          ), 'lantai-core-memory.client.settings')
+          remoteCtx.effect(() => {
+            const registerSetting = (action, id, extraction) => remoteCtx.remoteAccess.whenAccess(action, () =>
+              remoteCtx.slots.inject(slotName, () => remoteCtx.slots.register({
+                name: slotName, id, order: 20, locale: namespace,
+              }, ({ t }) => h(MemorySetting, { t, remote: remoteCtx.remote.lantaiCoreMemory, extraction })))
+            )
+            const unmountLoad = registerSetting(writeAction, 'lantai-core-memory-setting', false)
+            const unmountExtraction = registerSetting(extractionAction, 'lantai-core-memory-extraction-setting', true)
+            return async () => { await unmountLoad?.(); await unmountExtraction?.() }
+          }, 'lantai-core-memory.client.settings')
         })
       },
     }

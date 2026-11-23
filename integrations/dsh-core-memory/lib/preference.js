@@ -8,8 +8,8 @@ const hashPattern = /^[a-f0-9]{64}$/u
 const fail = code => { throw new CoreMemoryError(code) }
 
 /** One profile owns a durable choice for one exact configured memory scope. */
-export function createProfilePreference({ storageDomain, profileDirectory, scopeKey, onChange = () => {} }) {
-  const valid = typeof storageDomain?.open === 'function' && typeof profileDirectory === 'string' &&
+export function createProfilePreference({ storageDomain, profileDirectory, scopeKey, choiceKey = 'current', onChange = () => {} }) {
+  const valid = ['current', 'extraction'].includes(choiceKey) && typeof storageDomain?.open === 'function' && typeof profileDirectory === 'string' &&
     path.isAbsolute(profileDirectory) && !/[\u0000-\u001f\u007f]/u.test(profileDirectory) && hashPattern.test(scopeKey) && typeof onChange === 'function'
   let selected = false
   let reason = valid ? 'ready' : 'unavailable'
@@ -23,7 +23,7 @@ export function createProfilePreference({ storageDomain, profileDirectory, scope
   const profile = valid ? path.resolve(profileDirectory) : ''
   const identity = createHash('sha256').update(process.platform === 'win32' ? profile.toLowerCase() : profile).digest('hex')
   const spec = defineDomain({
-    name: `lantai_core_memory_${identity}`,
+    name: `${choiceKey === 'extraction' ? 'lantai_dialogue_extraction' : 'lantai_core_memory'}_${identity}`,
     version: 1,
     tables: { preferences: domainTable(z.object({ scopeKey: z.string().regex(hashPattern), enabled: z.boolean() }).strict()) },
   })
@@ -66,7 +66,7 @@ export function createProfilePreference({ storageDomain, profileDirectory, scope
     try {
       const opened = await open()
       if (disposed) return
-      const saved = opened.table('preferences').get('current')
+      const saved = opened.table('preferences').get(choiceKey)
       reason = saved && saved.scopeKey !== scopeKey ? 'scope_changed' : 'ready'
       // A choice made while storage opens takes precedence over the snapshot.
       publish(epoch === 0 && Boolean(saved?.scopeKey === scopeKey && saved.enabled))
@@ -94,11 +94,11 @@ export function createProfilePreference({ storageDomain, profileDirectory, scope
       try {
         const opened = await open()
         if (enabled) checkEnable()
-        await opened.table('preferences').put('current', { scopeKey, enabled })
+        await opened.table('preferences').put(choiceKey, { scopeKey, enabled })
         if (enabled && (disposed || signal?.aborted || acceptedStop !== stopGeneration)) {
           // Domain writes cannot be cancelled once begun. Persist the rollback
           // before reporting an interrupted enable, so restart also remains off.
-          await opened.table('preferences').put('current', { scopeKey, enabled: false })
+          await opened.table('preferences').put(choiceKey, { scopeKey, enabled: false })
           publish(false)
           reason = 'ready'
           if (signal?.aborted) fail('aborted')

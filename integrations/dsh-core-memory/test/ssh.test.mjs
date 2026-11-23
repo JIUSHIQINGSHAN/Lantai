@@ -26,6 +26,21 @@ function respond() {
   const mode = process.argv[2]
   if (mode === 'hang') return
   if (mode === 'windows-config' && process.platform === 'win32' && !process.env.ProgramData) process.exit(255)
+  if (mode === 'post') {
+    const split = input.indexOf('\\r\\n\\r\\n')
+    const head = input.slice(0, split)
+    const content = input.slice(split + 4)
+    const line = head.split('\\r\\n')[0]
+    const tenantId = head.match(/x-tenant-id: ([^\\r\\n]+)/i)?.[1] ?? null
+    const length = Number(head.match(/content-length: (\\d+)/i)?.[1] ?? '0')
+    if (Buffer.byteLength(content) < length) return
+    const body = line === 'GET /admin/api/sysinfo HTTP/1.1'
+      ? { pid: 1, system: 'fixture' }
+      : { task_id: 'task_ssh_fixture', status: 'queued', received: JSON.parse(content), requestLine: line, tenantId, bytes: Buffer.byteLength(content), declared: length }
+    const receipt = JSON.stringify(body)
+    process.stdout.end('HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nConnection: close\\r\\n\\r\\n' + receipt, () => process.stdin.destroy())
+    return
+  }
   const status = mode === 'unauthorized' ? '401 Unauthorized' : mode === 'redirect' ? '302 Found' : mode === 'server-error' ? '500 Error' : '200 OK'
   const body = mode === 'invalid-utf8' ? Buffer.from([0xc3, 0x28]) : Buffer.from(mode === 'bad-json' ? '{' : JSON.stringify({ blocks: [{ block: 'policy' }] }))
   const headers = mode === 'length' ? 'Content-Type: application/json\\r\\nContent-Length: 99999\\r\\n' : 'Content-Type: application/json\\r\\n'
@@ -61,6 +76,30 @@ test('uses a bounded SSH process and returns parsed JSON over HTTP stdin', async
   assert(argv.includes('HostName=memory.example') && argv.includes('User=root') && argv.includes('Port=22'))
   assert(!JSON.stringify([argv, config.env]).includes('top-secret'))
   assert.equal(config.env.DSH_TOKEN, undefined)
+})
+
+test('submits the existing async dialogue JSON contract over SSH with correct UTF-8 length', async t => {
+  const f = await fixture(t, 'post')
+  const payload = { text: '记住：我偏好中文 🍵', user_id: 'api_key', session_id: 'fixture-session', idempotency_key: 'dsh:fixture' }
+  const result = await f.reader.submit(payload, 'fixture-secret', AbortSignal.timeout(2000), { userId: 'api_key', tenantId: 'fixture-tenant' })
+  assert.equal(result.task_id, 'task_ssh_fixture')
+  assert.equal(result.status, 'queued')
+  assert.deepEqual(result.received, payload)
+  assert.equal(result.requestLine, 'POST /dialogue/async HTTP/1.1')
+  assert.equal(result.tenantId, 'fixture-tenant')
+  assert.equal(result.bytes, Buffer.byteLength(JSON.stringify(payload)))
+  assert.equal(result.declared, result.bytes)
+  assert.equal(f.launches.length, 2, 'admin authentication then one dialogue POST')
+  assert.doesNotMatch(JSON.stringify(f.launches), /fixture-secret|记住/u)
+})
+
+test('SSH rejects an API key bound to a different user before starting the tunnel', async t => {
+  const reader = createSshCoreReader(options(), {
+    spawn() { assert.fail('a mismatch must not open the SSH tunnel') },
+  })
+  t.after(() => reader.dispose())
+  const binding = { userId: 'other-user', tenantId: null }
+  await assert.rejects(reader.submit({ text: 'synthetic', user_id: binding.userId }, 'fixture-token', undefined, binding), errorCode('ownership_mismatch'))
 })
 
 test('passes the system configuration directory required by Windows OpenSSH', async t => {

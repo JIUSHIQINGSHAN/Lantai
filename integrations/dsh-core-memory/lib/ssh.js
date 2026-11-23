@@ -3,6 +3,7 @@ import { request as httpRequest } from 'node:http'
 import { Duplex } from 'node:stream'
 import path from 'node:path'
 import { CoreMemoryError } from './core.js'
+import { submitScopedDialogue } from './extraction.js'
 
 const fail = code => { throw new CoreMemoryError(code) }
 const validToken = value => typeof value === 'string' && /^[\x21-\x7e]{1,8192}$/u.test(value)
@@ -65,9 +66,8 @@ export function createSshCoreReader(input, deps = {}) {
   const active = new Set()
   let disposed = false
 
-  async function read(binding, token, signal) {
+  async function requestJson(method, requestPath, token, signal, requestPayload, tenantId) {
     if (disposed) fail('disposed')
-    if (!binding || typeof binding.namespace !== 'string' || !binding.namespace || binding.namespace.length > 256 || /[\u0000-\u001f\u007f]/u.test(binding.namespace)) fail('invalid_config')
     if (!validToken(token)) fail('missing_credentials')
     if (signal?.aborted) fail('aborted')
     const childEnv = Object.create(null)
@@ -90,7 +90,7 @@ export function createSshCoreReader(input, deps = {}) {
     }
     active.add(operation)
     try {
-      const payload = await new Promise((resolve, reject) => {
+      const result = await new Promise((resolve, reject) => {
         const settle = (error, value) => {
           if (settled) return
           settled = true
@@ -109,11 +109,16 @@ export function createSshCoreReader(input, deps = {}) {
         tunnel = tunnelStream(child)
         tunnel.on('error', () => rejectCode('transport_error'))
         const headers = { Accept: 'application/json', 'Accept-Encoding': 'identity', Connection: 'close' }
+        if (tenantId != null) headers['X-Tenant-Id'] = tenantId
         if (options.authMode === 'api-key') headers['X-API-Key'] = token
         else headers.Authorization = `Bearer ${token}`
-        request = httpRequest({ method: 'GET', host: '127.0.0.1', port: options.remotePort, path: `/core-memory?namespace=${encodeURIComponent(binding.namespace)}`, headers, createConnection: () => tunnel, maxHeaderSize: 16384 }, response => {
+        const body = requestPayload === undefined ? undefined : JSON.stringify(requestPayload)
+        if (body !== undefined) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = Buffer.byteLength(body, 'utf8') }
+        request = httpRequest({ method, host: '127.0.0.1', port: options.remotePort, path: requestPath, headers, createConnection: () => tunnel, maxHeaderSize: 16384 }, response => {
           const status = response.statusCode ?? 0
           if (status === 401 || status === 403) { rejectCode('authentication_failed'); return }
+          if (status === 404 && requestPath === '/dialogue/identity') { rejectCode('identity_unavailable'); return }
+          if (status === 409 && requestPath === '/dialogue/async') { rejectCode('dialogue_disabled'); return }
           if (status < 200 || status >= 300) { rejectCode('remote_error'); return }
           const type = (response.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase()
           if (type !== 'application/json' && !/^application\/[a-z0-9.+-]+\+json$/u.test(type)) { rejectCode('invalid_response'); return }
@@ -138,12 +143,12 @@ export function createSshCoreReader(input, deps = {}) {
           })
         })
         request.once('error', () => rejectCode('transport_error'))
-        request.end()
+        request.end(body)
         if (signal?.aborted) abort()
       })
       if (disposed) fail('disposed')
       if (signal?.aborted) fail('aborted')
-      return payload
+      return result
     } catch (error) {
       if (error instanceof CoreMemoryError) throw error
       fail('transport_error')
@@ -173,5 +178,15 @@ export function createSshCoreReader(input, deps = {}) {
     if (failures.some(Boolean)) fail('transport_cleanup_failed')
   }
 
-  return Object.freeze({ read, dispose })
+  function read(binding, token, signal) {
+    if (!binding || typeof binding.namespace !== 'string' || !binding.namespace || binding.namespace.length > 256 || /[\u0000-\u001f\u007f]/u.test(binding.namespace)) return Promise.reject(new CoreMemoryError('invalid_config'))
+    return requestJson('GET', `/core-memory?namespace=${encodeURIComponent(binding.namespace)}`, token, signal)
+  }
+
+  function submit(payload, token, signal, binding) {
+    const request = (method, path, body, tenantId) => requestJson(method, `/${path}`, token, signal, body, tenantId)
+    return submitScopedDialogue({ authMode: options.authMode, binding, payload, request, signal })
+  }
+
+  return Object.freeze({ read, submit, dispose })
 }

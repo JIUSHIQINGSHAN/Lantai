@@ -59,6 +59,31 @@ test('real owner Gateway dispatch uses only global boolean settings and parsed m
   assert.equal(calls[1].signal.aborted, false)
 })
 
+test('extraction controls require the real owner and cannot mutate the reading choice', { timeout: 20000 }, async t => {
+  const { root, control } = await runtime(t)
+  let reading = true
+  let extraction = false
+  let writes = 0
+  await install(root, control, {
+    status: () => ({ ...status(), enabled: reading }),
+    setEnabled: enabled => { reading = enabled; return { ...status(), enabled: reading } },
+    extractionStatus: () => ({ ...status(), enabled: extraction }),
+    setExtractionEnabled: enabled => { writes++; extraction = enabled; return { ...status(), enabled: extraction } },
+  })
+  const owner = root.connection.createPeer({ principal: { kind: 'owner' } })
+  assert.equal((await invoke(root, owner, 'extractionStatus', {})).enabled, false)
+  assert.equal((await invoke(root, owner, 'setExtractionEnabled', { enabled: true })).enabled, true)
+  assert.equal((await invoke(root, owner, 'status', {})).enabled, true)
+  await assert.rejects(root.lantaiCoreMemory.setExtractionEnabled(false), ownerError)
+  root.remoteAccess.registerPolicy('fixture-viewer', { bindings: () => [{ role: { name: 'allowed', resource: 'global', actions: ['lantaiCoreMemory/extractionStatus', 'lantaiCoreMemory/setExtractionEnabled'] }, resource: { kind: 'global' } }] })
+  const viewer = root.connection.createPeer({ principal: { kind: 'fixture-viewer' } })
+  await assert.rejects(invoke(root, viewer, 'setExtractionEnabled', { enabled: false }), ownerError)
+  await assert.rejects(invoke(root, viewer, 'extractionStatus', {}), ownerError)
+  await assert.rejects(invoke(root, owner, 'setExtractionEnabled', { enabled: 'true' }), argumentsError)
+  assert.equal(writes, 1)
+  assert.equal(extraction, true)
+})
+
 test('direct calls without Host invocation reject before operation lookup', { timeout: 20000 }, async t => {
   const { root, control } = await runtime(t)
   let calls = 0
@@ -188,7 +213,7 @@ test('real Client mount calls the global Host contract through the actual Gatewa
   await client.plugin(FixtureTransport)
   await client.plugin(await load('dsh-api-gateway/client'))
   const unmount = await client.remote.$mount(createControlContribution())
-  assert.equal(client.typert.remotes.list().length, 2)
+  assert.equal(client.typert.remotes.list().length, 4)
   assert.deepEqual(await client.remote.lantaiCoreMemory.status(), { ok: true, value: status() })
   assert.deepEqual(await client.remote.lantaiCoreMemory.setEnabled(true), { ok: true, value: status() })
   assert.deepEqual({ ...transmissions[0].payload.args }, {})

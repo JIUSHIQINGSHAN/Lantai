@@ -7,6 +7,7 @@ window.__ModuleLoader__.load({
     const namespace = 'lantai-core-memory.client'
     const slotName = 'settings.general.item'
     const writeAction = 'lantaiCoreMemory/setEnabled'
+    const extractionAction = 'lantaiCoreMemory/setExtractionEnabled'
     const initialView = { snapshot: null, busy: 'status', feedback: null, retry: null }
     const styles = `
       .lantai-memory-setting {
@@ -98,13 +99,25 @@ window.__ModuleLoader__.load({
       } catch { return { ok: false } }
     }
 
-    function MemorySetting({ t, remote }) {
+    function MemorySetting({ t, remote, extraction = false }) {
       const titleId = React.useId()
       const detailsId = React.useId()
+      const retryId = React.useId()
+      const feedbackId = React.useId()
       const request = React.useRef(null)
       const control = React.useRef(null)
       const retryButton = React.useRef(null)
       const [view, setView] = React.useState(initialView)
+      const status = signal => extraction ? remote.extractionStatus(signal) : remote.status(signal)
+      const setEnabled = (enabled, signal) => extraction
+        ? remote.setExtractionEnabled(enabled, signal)
+        : remote.setEnabled(enabled, signal)
+      const settle = (...args) => {
+        const result = settleControlResult(...args)
+        return extraction && result.feedback === 'storageUnavailable'
+          ? { ...result, feedback: 'extractionUnavailable' }
+          : result
+      }
       const run = React.useCallback(async action => {
         if (request.current !== null || !['status', true, false].includes(action)) return
         const controller = new AbortController()
@@ -112,21 +125,21 @@ window.__ModuleLoader__.load({
         setView(previous => ({ ...previous, busy: action }))
         try {
           const result = await invoke(signal => action === 'status'
-            ? remote.status(signal)
-            : remote.setEnabled(action, signal), controller)
+            ? status(signal)
+            : setEnabled(action, signal), controller)
           if (controller.signal.aborted || request.current !== controller) return
-          let next = settleControlResult(action, result)
+          let next = settle(action, result)
           if (typeof action === 'boolean' && next.retry !== null) {
-            const observed = await invoke(signal => remote.status(signal), controller)
+            const observed = await invoke(signal => status(signal), controller)
             if (controller.signal.aborted || request.current !== controller) return
-            next = settleControlResult(action, result, observed)
+            next = settle(action, result, observed)
           }
           if (next.retry === null && retryButton.current?.matches(':focus')) control.current?.focus()
           setView({ ...next, busy: null })
         } finally {
           if (request.current === controller) request.current = null
         }
-      }, [remote])
+      }, [remote, extraction])
 
       React.useEffect(() => {
         setView(initialView)
@@ -140,22 +153,23 @@ window.__ModuleLoader__.load({
       const busy = view.busy !== null
       const blocked = busy || view.snapshot?.writable !== true || view.snapshot.reason === 'unavailable' || view.retry === false
       const feedback = busy ? (view.busy === 'status' ? 'reading' : 'saving') : view.feedback ||
-        (view.snapshot?.reason === 'scope_changed' ? 'scopeChanged' : view.snapshot?.writable === false ? 'readOnly' : null)
+        (view.snapshot?.reason === 'scope_changed' ? (extraction ? 'extractionScopeChanged' : 'scopeChanged') : view.snapshot?.writable === false ? 'readOnly' : null)
       return h('div', { className: 'lantai-memory-setting' },
         h('style', null, styles),
         h('div', null,
-          h('div', { id: titleId, className: 'lantai-memory-setting__title' }, t('title')),
+          h('div', { id: titleId, className: 'lantai-memory-setting__title' }, t(extraction ? 'extractionTitle' : 'title')),
           h('div', { id: detailsId },
-            h('p', { className: 'lantai-memory-setting__detail' }, t('description')),
-            view.snapshot && h('p', { className: 'lantai-memory-setting__detail' }, t(view.snapshot.includesTask ? 'scopeWithTask' : 'scopeCore'))),
-          h('div', { className: 'lantai-memory-setting__detail', role: 'status', 'aria-atomic': 'true' }, feedback && t(feedback)),
+            h('p', { className: 'lantai-memory-setting__detail' }, t(extraction ? 'extractionDescription' : 'description')),
+            view.snapshot && h('p', { className: 'lantai-memory-setting__detail' }, t(extraction ? 'extractionScope' : view.snapshot.includesTask ? 'scopeWithTask' : 'scopeCore'))),
+          h('div', { id: feedbackId, className: 'lantai-memory-setting__detail', role: 'status', 'aria-atomic': 'true' }, feedback && t(feedback)),
           view.retry !== null && h('button', {
-            ref: retryButton, type: 'button', className: 'lantai-memory-setting__retry', 'aria-disabled': busy,
+            ref: retryButton, id: retryId, type: 'button', className: 'lantai-memory-setting__retry', 'aria-disabled': busy,
+            'aria-labelledby': `${retryId} ${titleId}`, 'aria-describedby': feedbackId,
             onClick: () => { if (!busy) void run(view.retry) },
           }, t(view.retry === false ? 'retryStop' : 'retryRead'))),
         h('button', {
           ref: control, type: 'button', role: 'switch', className: 'lantai-memory-setting__switch',
-          'aria-labelledby': titleId, 'aria-describedby': detailsId,
+          'aria-labelledby': titleId, 'aria-describedby': `${detailsId} ${feedbackId}`,
           'aria-checked': view.snapshot?.enabled === true, 'aria-disabled': blocked,
           onClick: () => { if (!blocked) void run(!view.snapshot?.enabled) },
         }, h('span', { className: 'lantai-memory-setting__track', 'aria-hidden': 'true' })))
@@ -168,11 +182,16 @@ window.__ModuleLoader__.load({
         const unmount = await ctx.remote.$mount(createControlContribution())
         ctx.effect(() => async () => { await unmount() }, 'lantai-core-memory.client.remote')
         ctx.inject(['remote.lantaiCoreMemory'], remoteCtx => {
-          remoteCtx.effect(() => remoteCtx.remoteAccess.whenAccess(writeAction, () =>
-            remoteCtx.slots.inject(slotName, () => remoteCtx.slots.register({
-              name: slotName, id: 'lantai-core-memory-setting', order: 20, locale: namespace,
-            }, ({ t }) => h(MemorySetting, { t, remote: remoteCtx.remote.lantaiCoreMemory }))),
-          ), 'lantai-core-memory.client.settings')
+          remoteCtx.effect(() => {
+            const registerSetting = (action, id, extraction) => remoteCtx.remoteAccess.whenAccess(action, () =>
+              remoteCtx.slots.inject(slotName, () => remoteCtx.slots.register({
+                name: slotName, id, order: 20, locale: namespace,
+              }, ({ t }) => h(MemorySetting, { t, remote: remoteCtx.remote.lantaiCoreMemory, extraction })))
+            )
+            const unmountLoad = registerSetting(writeAction, 'lantai-core-memory-setting', false)
+            const unmountExtraction = registerSetting(extractionAction, 'lantai-core-memory-extraction-setting', true)
+            return async () => { await unmountLoad?.(); await unmountExtraction?.() }
+          }, 'lantai-core-memory.client.settings')
         })
       },
     }

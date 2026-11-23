@@ -1,11 +1,14 @@
 {
   "meta": {
     "title": "Lantai core memory",
-    "description": "Manage automatic loading in DSH General settings. Off by default. Conversations in configured folders use an encrypted connection to load rules (policy), personal information (identity), and any explicitly configured task progress. Memory is sent to the model and recorded in chat history. Turning it off keeps existing history."
+    "description": "Manage automatic loading and independent automatic extraction to Lantai in DSH General settings; both are off by default. In configured folders, loading uses an encrypted connection to load rules (policy), personal information (identity), and explicitly configured task progress (task); memory is sent to the conversation model and retained in chat history, and turning loading off keeps existing history. Extraction processes only future user text in main conversations in configured folders, does not backfill history, and sends that text to Lantai for processing. Turning extraction off stops new task submissions, but tasks already accepted by Lantai may still finish and write memories."
   },
   "client": {
     "title": "Load Lantai memory automatically",
     "description": "Applies to conversations in configured folders. Memory is sent to the model and may be visible to anyone who can view the conversation. Turning it off keeps existing history.",
+    "extractionTitle": "Automatically extract and save to Lantai",
+    "extractionDescription": "Processes only user text in main conversations in configured folders from this point forward; it does not backfill history. User text is sent to Lantai for processing. Turning this off stops new task submissions, but tasks already accepted by Lantai may still finish and write memories. Existing memories are not deleted.",
+    "extractionScope": "Only future user text in main conversations is processed; no history backfill.",
     "scopeCore": "Rules and personal information",
     "scopeWithTask": "Rules, personal information, and configured task progress",
     "reading": "Reading setting…",
@@ -13,9 +16,11 @@
     "savedOn": "Enabled and saved.",
     "savedOff": "Disabled and saved.",
     "scopeChanged": "The memory scope changed. Automatic loading is off.",
+    "extractionScopeChanged": "The write scope changed. Automatic extraction is off.",
     "readOnly": "This setting cannot be changed right now.",
     "readFailed": "Could not read the setting.",
     "storageUnavailable": "The setting could not be confirmed. Memory reads are paused.",
+    "extractionUnavailable": "The setting could not be confirmed. Automatic submissions are paused; accepted tasks may still be processed.",
     "enableUnconfirmed": "Could not confirm that memory was enabled.",
     "stopUnconfirmed": "Turning memory off could not be confirmed.",
     "retryRead": "Check again",

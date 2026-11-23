@@ -685,6 +685,38 @@ def namespace_provenance_issues(repo_root: Path, *, env: dict[str, str] | None =
     return issues
 
 
+def _is_writable_dir(path: Path) -> bool:
+    try:
+        test_dir = tempfile.TemporaryDirectory(dir=str(path), prefix=".probe_write_")
+        test_dir.cleanup()
+        return True
+    except (OSError, PermissionError):
+        return False
+
+
+def ascii_suite_dir(repo_root: Path) -> str:
+    """Find an existing ASCII directory to anchor the suite's temporary files.
+
+    Windows native Chroma/HNSW requires an ASCII path. When the repository or
+    its parent is within a non-ASCII directory (e.g. under a Chinese folder
+    name), climb to an ASCII ancestor or check standard ASCII temp locations.
+    """
+    if str(repo_root.parent).isascii() and _is_writable_dir(repo_root.parent):
+        return str(repo_root.parent)
+    for ancestor in repo_root.parents:
+        if str(ancestor).isascii() and ancestor.is_dir() and _is_writable_dir(ancestor):
+            return str(ancestor)
+    candidates = [
+        Path(r"C:\Temp"),
+        Path(os.environ.get("PUBLIC", r"C:\Users\Public")),
+        Path(tempfile.gettempdir()),
+    ]
+    for fallback in candidates:
+        if str(fallback).isascii() and fallback.is_dir() and _is_writable_dir(fallback):
+            return str(fallback)
+    return str(repo_root.parent)
+
+
 def suite_gate_issues(
     repo_root: Path,
     *,
@@ -718,7 +750,7 @@ def suite_gate_issues(
     # repository's ASCII parent also makes this gate exercise the same path
     # shape as the CI runner instead of masking the migration test.
     with tempfile.TemporaryDirectory(
-        prefix="lantai_gate_suite_", dir=str(repo_root.parent)
+        prefix="lantai_gate_suite_", dir=ascii_suite_dir(repo_root)
     ) as work_dir:
         report_path = os.path.join(work_dir, "tripwire_report.txt")
         env = os.environ.copy()

@@ -581,7 +581,7 @@ def test_suite_gate_uses_ascii_temp_root_for_native_chroma(monkeypatch, tmp_path
     issues = RC.suite_gate_issues(RC.REPO_ROOT, timeout=1, real_home=str(tmp_path))
     assert issues == []
     work_dir = observed["COVERAGE_FILE"].rsplit(os.sep, 1)[0]
-    assert work_dir.startswith(str(RC.REPO_ROOT.parent))
+    assert work_dir.startswith(RC.ascii_suite_dir(RC.REPO_ROOT))
     assert work_dir.isascii()
     assert observed["TMP"] == observed["TEMP"] == observed["TMPDIR"] == work_dir
     command = observed["suite_command"]
