@@ -494,3 +494,29 @@ def test_build_context_budget_and_guide(monkeypatch):
     assert len(out["evidence"]) < 5  # 总预算丢弃了部分记忆
     assert all(len(e["content"]) <= 50 for e in out["evidence"])
     assert out["event_id"] is not None
+
+
+def test_handle_one_uses_frame_event_name(monkeypatch):
+    """票 .scratch/multi-client-adaptation-20261124/issues/01：真帧 → 真事件名。
+
+    这是本缺陷的回归锁：CC 把 `hookEventName` 与触发事件不一致的帧整帧丢弃，
+    此前 `_handle_one` 一律写成宿主固定的 UserPromptSubmit，SessionStart 底本
+    因此从未到达模型（2.1.330 真机对照实证）。
+    """
+    mod = _load_hook(monkeypatch, timeout=5.0)
+    monkeypatch.setenv("LANTAI_HOST", "claude-code")
+    monkeypatch.setattr(mod, "_handle_checkpoint", lambda: {"context": "上次会话底本"})
+    out = mod._handle_one(
+        json.dumps({"hook_event_name": "SessionStart", "source": "startup", "cwd": "D:/x"})
+    )
+    assert out["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert out["hookSpecificOutput"]["additionalContext"] == "上次会话底本"
+
+
+def test_handle_one_does_not_inject_on_stop(monkeypatch):
+    """Stop/End 一类事件不得注入兜底画像——没带 prompt 的帧会被当成空查询。"""
+    mod = _load_hook(monkeypatch, timeout=5.0)
+    monkeypatch.setenv("LANTAI_HOST", "claude-code")
+    monkeypatch.setattr(mod, "build_context", lambda q, s: pytest.fail("Stop 事件不该跑检索"))
+    out = mod._handle_one(json.dumps({"hook_event_name": "Stop", "last_assistant_message": "x"}))
+    assert out == {}

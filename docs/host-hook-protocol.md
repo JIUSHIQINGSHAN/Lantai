@@ -38,11 +38,31 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 
 一个由本协议实现的新宿主**必须**在调用 hook 时设置 `LANTAI_HOST`，否则拿不到 `additionalContext`，注入静默失效。安装脚本生成的命令已包含该设置。
 
+**事件名跟随真实事件（v0.70 起）**：宿主输入帧里的 `hook_event_name` 现在随请求归一化
+（`HostRequest.event`），响应帧的 `hookSpecificOutput.hookEventName` 取**这一帧的真实事件**，
+不再按宿主写死。Claude Code 2.1.330 真机实证：事件名与触发事件不一致时整帧被当作错误
+丢弃，此前 `SessionStart` 注入的会话底本因此从未到达模型。帧里没有 `hook_event_name`
+（Hermes、手工帧）时回落到本表宿主默认值，旧行为逐字不变。
+
+只有**注入白名单**事件会被包装：`SessionStart` / `UserPromptSubmit` / `SubagentStart`。
+其余事件（`Stop` / `SessionEnd` / `PreCompact` …）即便 handler 返回了 `context` 也原样
+返回、不注入——宿主要在那些时点注入只会往对话里灌噪音，而兰台对无 `prompt` 的帧会
+回落成空查询产出画像兜底帧。
+
+**`SessionStart` 帧自动读底本**：该事件不带 `prompt`，若按空查询回落，只会拿到画像
+兜底帧。故「声明了 `SessionStart` 且确实没有查询串」的帧转 `checkpoint` 动作，注入上次
+会话五段快照。
+
+**钩子预算**：冷启动宿主（Claude Code / Codex 每个事件新起子进程）在本机实测
+2.5–4.8s，默认 `SHELL_HOOK_TIMEOUT=2` 会把每轮降级成画像兜底（无 `event_id`，回执链断）。
+安装脚本生成的命令已 `setdefault` 为 8 秒，显式环境变量优先。
+
 ---
 
 ## 2. 动作（actions）
 
-请求按 `type` 字段分派；**无 `type` 或 `type` 未匹配时回落 `query`**。
+请求按 `type` 字段分派；**无 `type` 或 `type` 未匹配时回落 `query`**（例外：声明了
+`hook_event_name == "SessionStart"` 且没有查询串的帧转到 `checkpoint`）。
 
 | 动作 | 触发 | 用途 |
 |---|---|---|
@@ -58,6 +78,7 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `query` / `message` / `prompt` | str | 其一 | 查询串，按 `query` > `message` > `prompt` 回退 |
+| `hook_event_name` | str | 否 | 宿主事件名（≤64 字符、无控制字符）；决定响应帧的事件名与是否注入，坏值置空不拒帧 |
 | `extra.user_message` | str \| list | 否 | **Hermes shell hook 原生线格式**：顶层三字段都缺、且 `hook_event_name == "pre_llm_call"` 时按它取查询串（Hermes v0.23.1 把事件参数全放在 `extra` 里）；多模态轮是 content parts 列表，取其中 text 段拼接。其他 `hook_event_name` 不读 |
 | `session_id` | str | 否 | 会话标识，经归一化；非法 → 不落（宁 miss） |
 
@@ -162,7 +183,7 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 | `codex` | `.codex/hooks.json` | `features.hooks: true` + `hooks.UserPromptSubmit` |
 | `cursor` | `.cursor/rules/lantai.mdc` | 静态规则（`alwaysApply: true`），**降级档** |
 
-**响应形状差异**：Hermes 直接消费兰台自有形状（`context`/`evidence`/`event_id` 顶层）；Claude Code 与 Codex 走 `hookSpecificOutput.additionalContext` 通道，兰台元数据（`event_id`/`request_id`/`evidence`）作为**顶层兄弟字段**带出——宿主侧 wrapper 捕获 `event_id` 供稍后回执。未知顶层字段在 CC `UserPromptSubmit` 上被静默忽略（仅记 debug 日志），不报错；**仅 `Stop` 事件严格校验**，本协议不用该事件。
+**响应形状差异**：Hermes 直接消费兰台自有形状（`context`/`evidence`/`event_id` 顶层）；Claude Code 与 Codex 走 `hookSpecificOutput.additionalContext` 通道，兰台元数据（`event_id`/`request_id`/`evidence`）作为**顶层兄弟字段**带出——宿主侧 wrapper 捕获 `event_id` 供稍后回执。未知顶层字段在 CC `UserPromptSubmit` 上被静默忽略（仅记 debug 日志），不报错。**但 `hookSpecificOutput.hookEventName` 是强校验项**——与触发事件不一致时整帧被视为错误丢弃（2.1.330 真机实证），故事件名必须取真实事件（见 §1）。附：`Stop` 事件另有严格校验，本协议不用该事件。
 
 **写路径结果不翻译**：`backfill`/`dialogue`/`checkpoint*` 的控制面应答（含 `receipt_status`）原样返回——包成 `additionalContext` 会抹掉宿主侧所需的字段。
 

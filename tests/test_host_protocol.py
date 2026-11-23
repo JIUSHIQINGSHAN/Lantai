@@ -173,3 +173,85 @@ class TestHostRequestShape:
         req = HostRequest(action="query", query="x")
         with pytest.raises(Exception):
             req.action = "dialogue"  # type: ignore[misc]
+
+
+class TestHookEventExtraction:
+    """票 .scratch/multi-client-adaptation-20261124/issues/01：
+
+    Claude Code 强校验 `hookSpecificOutput.hookEventName`，与触发事件不一致即整帧
+    丢弃（2.1.330 真机实证）。适配层必须知道"这一帧是哪个事件触发的"，故事件名
+    随请求一起归一化，并提供只读的 `peek_hook_event` 给渲染侧。
+    """
+
+    def test_event_carried_on_request(self):
+        req = parse_host_request(
+            json.dumps({"hook_event_name": "SessionStart", "source": "startup"})
+        )
+        assert req is not None
+        assert req.event == "SessionStart"
+
+    def test_event_default_is_empty(self):
+        """无 hook_event_name（Hermes / 手工帧）→ 空串，旧行为不变。"""
+        req = parse_host_request(json.dumps({"query": "x"}))
+        assert req is not None and req.event == ""
+
+    @pytest.mark.parametrize(
+        "bad",
+        [123, None, "", "   ", "x" * 200, "Sess\nionStart"],
+    )
+    def test_bad_event_degrades_to_empty(self, bad):
+        """事件名是标签不是身份：坏值置空，不拒绝整帧（宁 miss 不脏写）。"""
+        req = parse_host_request(json.dumps({"hook_event_name": bad, "query": "x"}))
+        assert req is not None
+        assert req.event == ""
+
+    def test_peek_hook_event(self):
+        from lantai.integrations.host_protocol import peek_hook_event
+
+        assert peek_hook_event(json.dumps({"hook_event_name": "Stop"})) == "Stop"
+
+    @pytest.mark.parametrize("raw", ["", "not-json{{{", "[1,2]", "null"])
+    def test_peek_hook_event_bad_frame_is_empty(self, raw):
+        from lantai.integrations.host_protocol import peek_hook_event
+
+        assert peek_hook_event(raw) == ""
+
+    def test_peek_hook_event_bad_type_is_empty(self):
+        from lantai.integrations.host_protocol import peek_hook_event
+
+        assert peek_hook_event(json.dumps({"hook_event_name": ["SessionStart"]})) == ""
+
+
+class TestSessionStartRouting:
+    """票 .scratch/multi-client-adaptation-20261124/issues/01：
+
+    宿主 `SessionStart` 帧不带 prompt。若按空查询回落，只会拿到画像兜底帧，
+    会话底本（上次会话五段）永远注入不出去。只在「声明了 SessionStart 且确实
+    没有查询串」时改读 checkpoint，其余行为不变。
+    """
+
+    def test_session_start_without_prompt_reads_checkpoint(self):
+        req = parse_host_request(
+            json.dumps({"hook_event_name": "SessionStart", "source": "startup"})
+        )
+        assert req is not None
+        assert req.action == "checkpoint"
+        assert req.event == "SessionStart"
+
+    def test_session_start_with_expansion_prompt_stays_query(self):
+        """宿主的提示词扩写有时会带 prompt——有查询串就按查询走，别抢成底本。"""
+        req = parse_host_request(
+            json.dumps({"hook_event_name": "SessionStart", "prompt": "部署怎么做"})
+        )
+        assert req is not None
+        assert req.action == "query"
+        assert req.query == "部署怎么做"
+
+    def test_user_prompt_submit_still_query(self):
+        req = parse_host_request(json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": "x"}))
+        assert req is not None and req.action == "query"
+
+    def test_blank_session_start_is_rejected_frame(self):
+        """SessionStart 帧带空串 prompt 时不能变成 query（空查询=噪音）。"""
+        req = parse_host_request(json.dumps({"hook_event_name": "SessionStart", "prompt": "  "}))
+        assert req is not None and req.action == "checkpoint"

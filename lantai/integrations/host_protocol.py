@@ -19,6 +19,11 @@ from dataclasses import dataclass, field
 
 from lantai.core.text import normalize_session_id
 
+# 宿主事件名（`hook_event_name`）的边界：Claude Code 的取值是 PascalCase 短标识
+# （SessionStart / UserPromptSubmit / Stop …）。它是**标签不是身份**——超长、非字符串、
+# 含控制字符一律置空，让调用方回落到宿主默认值，绝不因为一个坏标签拒绝整帧。
+_HOOK_EVENT_MAX_CHARS = 64
+
 # 动作集合：前四个按 `type` 字段精确匹配；无匹配时回落 query（现状语义）。
 ACTION_QUERY = "query"
 ACTION_DIALOGUE = "dialogue"
@@ -46,6 +51,43 @@ class HostRequest:
     used_ids: tuple[str, ...] = ()
     request_id: str | None = None
     blocks: dict = field(default_factory=dict)
+    event: str = ""
+
+
+def _normalize_hook_event(value) -> str:
+    """宿主事件名归一化：合法标识原样（去首尾空白），否则空串。
+
+    空串的语义是「这一帧没告诉我们事件」——渲染侧据此回落到宿主默认值。
+    """
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
+    if not value or len(value) > _HOOK_EVENT_MAX_CHARS:
+        return ""
+    if any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in value):
+        return ""
+    return value
+
+
+def peek_hook_event(raw: str) -> str:
+    """只读地取一帧里的事件名（坏帧/缺字段 → 空串）。
+
+    `_handle_one` 需要在 dispatch 之后仍然知道"这一帧是哪个事件触发的"——
+    `parse_host_request` 把帧消化成 HostRequest 后原始帧不再保留，而渲染
+    （`adapt_response`）必须按真实事件名命名，否则 Claude Code 会把整帧当
+    错误丢弃（票 `.scratch/multi-client-adaptation-20261124/issues/01`）。
+    本函数与 `parse_host_request` 共用 `json.loads` 与同一归一化规则，不重复校验。
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    return _normalize_hook_event(data.get("hook_event_name"))
 
 
 def _hermes_shell_user_message(data: dict) -> str:
@@ -102,6 +144,7 @@ def parse_host_request(raw: str) -> HostRequest | None:
     if not isinstance(data, dict):
         return None
 
+    event = _normalize_hook_event(data.get("hook_event_name"))
     action = data.get("type")
 
     if action == ACTION_DIALOGUE:
@@ -114,7 +157,13 @@ def parse_host_request(raw: str) -> HostRequest | None:
         turn = data.get("turn")
         if not isinstance(turn, int) or isinstance(turn, bool) or turn < 1:
             turn = None
-        return HostRequest(action=ACTION_DIALOGUE, text=text, session_id=session_id, turn=turn)
+        return HostRequest(
+            action=ACTION_DIALOGUE,
+            text=text,
+            session_id=session_id,
+            turn=turn,
+            event=event,
+        )
 
     if action == ACTION_BACKFILL:
         event_id = data.get("event_id")
@@ -132,6 +181,7 @@ def parse_host_request(raw: str) -> HostRequest | None:
             action=ACTION_BACKFILL,
             event_id=event_id,
             used_ids=tuple(used_ids),
+            event=event,
             request_id=request_id,
         )
 
@@ -141,10 +191,10 @@ def parse_host_request(raw: str) -> HostRequest | None:
         event_id = data.get("event_id")
         if not (isinstance(event_id, str) and event_id.strip()):
             return None
-        return HostRequest(action=ACTION_VETO, event_id=event_id)
+        return HostRequest(action=ACTION_VETO, event_id=event_id, event=event)
 
     if action == ACTION_CHECKPOINT:
-        return HostRequest(action=ACTION_CHECKPOINT)
+        return HostRequest(action=ACTION_CHECKPOINT, event=event)
 
     if action == ACTION_CHECKPOINT_WRITE:
         # 注意：此处 session_id 不过 normalize_session_id（抽取前的既有差异），
@@ -153,7 +203,9 @@ def parse_host_request(raw: str) -> HostRequest | None:
         blocks = data.get("blocks")
         if not isinstance(session_id, str) or not isinstance(blocks, dict):
             return None
-        return HostRequest(action=ACTION_CHECKPOINT_WRITE, session_id=session_id, blocks=blocks)
+        return HostRequest(
+            action=ACTION_CHECKPOINT_WRITE, session_id=session_id, blocks=blocks, event=event
+        )
 
     # 回落 query：无 type 或 type 未匹配（现状语义）。字段按 falsy 回退，
     # 非字符串（如 123）视为无效帧而非交由下游抛错。
@@ -164,12 +216,22 @@ def parse_host_request(raw: str) -> HostRequest | None:
         or data.get("prompt")
         or _hermes_shell_user_message(data)
     )
+
+    # 会话启动读底本（ADR-0022）：宿主的 `SessionStart` 帧**不带 prompt**，
+    # 若按空查询回落，只会拿到画像兜底帧，底本永远注入不出去（票
+    # `.scratch/multi-client-adaptation-20261124/issues/01` 实测：
+    # SessionStart 事件名的修好之后，注入内容仍是画像而非五段快照）。
+    # 只在"这一帧声明了 SessionStart 且确实没有查询串"时才转到 checkpoint，
+    # 其余情况（Hermes 不带事件名、手工帧自带 query）行为不变。
+    if event == "SessionStart" and not (isinstance(query, str) and query.strip()):
+        return HostRequest(action=ACTION_CHECKPOINT, event=event)
     if not isinstance(query, str):
         return None
     return HostRequest(
         action=ACTION_QUERY,
         query=query,
         session_id=normalize_session_id(data.get("session_id"), default=None),
+        event=event,
     )
 
 
