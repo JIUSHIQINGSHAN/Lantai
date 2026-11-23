@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "lantai": {
+      "command": "D:/Programs/Python312/python.exe",
+      "args": [
+        "D:/Hermes/scripts/lantai_mcp_bridge.py"
+      ],
+      "env": {
+        "PYTHONUTF8": "1"
+      }
+    }
+  }
+}

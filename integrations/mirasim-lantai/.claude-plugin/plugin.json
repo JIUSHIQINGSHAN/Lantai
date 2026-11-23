@@ -1,0 +1,23 @@
+{
+  "name": "lantai",
+  "version": "1.0.0",
+  "displayName": "兰台 (Lantai)",
+  "description": "兰台核心记忆中枢：为各智能体与 Mirasim 平台提供长期记忆检索、事实沉淀、偏好画像与对话归档服务。",
+  "author": {
+    "name": "JIUSHIQINGSHAN"
+  },
+  "homepage": "https://github.com/JIUSHIQINGSHAN",
+  "repository": "https://github.com/JIUSHIQINGSHAN/memory",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "lantai",
+    "mcp",
+    "knowledge-graph",
+    "long-term-memory"
+  ],
+  "mcpServers": "./.mcp.json",
+  "skills": [
+    "./skills/lantai-memory"
+  ]
+}
