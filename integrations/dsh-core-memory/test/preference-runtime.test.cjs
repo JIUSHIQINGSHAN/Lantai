@@ -68,6 +68,24 @@ test('the real DSH storage defaults off and persists an explicit choice across r
   assert.ok(!stored.includes('credential'))
 })
 
+test('read and extraction choices persist independently in the real profile store', async t => {
+  const f = await fixture(t)
+  const reading = f.create()
+  const extracting = f.create({ choiceKey: 'extraction' })
+  await Promise.all([reading.ready, extracting.ready])
+  await reading.setEnabled(true)
+  assert.equal(extracting.enabled(), false)
+  await extracting.setEnabled(true)
+  await reading.setEnabled(false)
+  assert.equal(extracting.enabled(), true)
+  await Promise.all([reading.dispose(), extracting.dispose()])
+  const reopenedRead = f.create()
+  const reopenedExtraction = f.create({ choiceKey: 'extraction' })
+  await Promise.all([reopenedRead.ready, reopenedExtraction.ready])
+  assert.equal(reopenedRead.enabled(), false)
+  assert.equal(reopenedExtraction.enabled(), true)
+})
+
 test('profiles are separate domains and changed scopes require a fresh explicit choice', async t => {
   const f = await fixture(t)
   const a = f.create()

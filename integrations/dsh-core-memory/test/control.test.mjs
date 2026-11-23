@@ -4,10 +4,10 @@ import { test } from 'node:test'
 const { createControlContribution } = createRequire(import.meta.url)('../lib/control-contract.cjs')
 const metadata = () => ({ enabled: false, writable: true, reason: 'ready', folderCount: 2, includesTask: false })
 
-test('shared control contract has only global status and boolean setEnabled', () => {
+test('shared control contract keeps reading and extraction choices separate', () => {
   const contribution = createControlContribution()
   assert.equal(contribution.package, '@lantai/dsh-core-memory')
-  assert.deepEqual(contribution.descriptors.map(d => d.method), ['status', 'setEnabled'])
+  assert.deepEqual(contribution.descriptors.map(d => d.method), ['status', 'setEnabled', 'extractionStatus', 'setExtractionEnabled'])
   assert.deepEqual(contribution.descriptors[0].parameters, [])
   for (const descriptor of contribution.descriptors) {
     assert.equal(descriptor.service, 'lantaiCoreMemory')

@@ -64,6 +64,14 @@ async function startFixture() {
       body: Buffer.concat(chunks).toString('utf8'),
     });
     const url = new URL(request.url, 'http://127.0.0.1');
+    if (request.method === 'GET' && url.pathname === '/dialogue/identity') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      return response.end(JSON.stringify({ user_id: 'fixture-user', tenant_id: null }));
+    }
+    if (request.method === 'POST' && url.pathname === '/dialogue/async') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      return response.end(JSON.stringify({ task_id: 'task_fixture', status: 'queued' }));
+    }
     if (request.method !== 'GET' || url.pathname !== '/core-memory') return response.writeHead(404).end();
     const body = JSON.stringify(fixture.status === 200 ? { blocks: [{
       id: 'core-1', block: 'policy', namespace: 'fixture', user_id: 'fixture-user', tenant_id: null,
@@ -132,6 +140,7 @@ test('installed DSH global switch and real model-request boundary', { timeout: 6
   let credentialReads = 0;
   let callId = 0;
   let pluginFiber;
+  let holdNextModelResponse;
 
   // Resolve the linked plugin as the packaged Host does, with an isolated
   // profile path and no installation or live profile mutation.
@@ -165,6 +174,12 @@ test('installed DSH global switch and real model-request boundary', { timeout: 6
   class CaptureAdapter extends LlmAdapter {
     async *stream(options) {
       requests.push(options);
+      const held = holdNextModelResponse;
+      if (held) {
+        holdNextModelResponse = undefined;
+        held.started.resolve();
+        await held.released.promise;
+      }
       yield { type: 'block-start', index: 0, blockType: 'text' };
       yield { type: 'text-delta', index: 0, text: 'fixture-answer' };
       yield { type: 'block-end', index: 0, block: { type: 'text', text: 'fixture-answer' } };
@@ -484,6 +499,172 @@ test('installed DSH global switch and real model-request boundary', { timeout: 6
       assert.equal(request.body, '');
       assert.equal(request.authorization, `Bearer ${TOKEN}`);
     }
+  });
+
+  await t.test('independent extraction switch submits only fresh main-conversation user text', async () => {
+    await remount();
+    await toggle(false);
+    assert.deepEqual(await control('extractionStatus'), startSettings);
+    const agent = await create('memory-auto-extraction');
+    const posts = () => fixture.requests.filter(request => request.method === 'POST' && request.url === '/dialogue/async');
+    const probes = () => fixture.requests.filter(request => request.method === 'GET' && request.url === '/dialogue/identity');
+    const before = posts().length;
+    const beforeProbes = probes().length;
+    await send(agent, 'history-before-extraction-enable');
+    assert.equal(posts().length, before);
+    assert.equal(probes().length, beforeProbes);
+    await control('setExtractionEnabled', { enabled: true });
+    assert.equal((await control('status')).enabled, false, 'extracting does not enable reading');
+    async function extractionState() {
+      const result = (await root.tools.execute({ agent, signal: new AbortController().signal,
+        calls: [{ type: 'tool-call', id: `fixture-call-${++callId}`, name: 'lantai_extraction_status', arguments: '{}' }],
+      })).results[0].result;
+      assert.equal(result.isError, false);
+      assert.doesNotMatch(JSON.stringify(result.value), /fixture-only-core-memory-token|fresh-user-input/);
+      return result.value;
+    }
+    async function submitted(count) {
+      await within((async () => {
+        while ((await extractionState()).submittedCount !== count) await new Promise(resolve => setImmediate(resolve));
+      })(), 'automatic extraction did not receive its queue receipt');
+    }
+    await send(agent, 'fresh-user-input 偏好清楚的中文');
+    await submitted(1);
+    assert.equal(posts().length, before + 1);
+    assert.equal(probes().length, beforeProbes + 1);
+    assert.equal(probes().at(-1).body, '', 'identity verification carries no dialogue or query body');
+    assert.equal(probes().at(-1).authorization, `Bearer ${TOKEN}`);
+    const payload = JSON.parse(posts().at(-1).body);
+    assert.equal(payload.text, 'fresh-user-input 偏好清楚的中文');
+    assert.equal(payload.session_id, agent.id);
+    assert.equal(payload.user_id, binding.userId);
+    assert.match(payload.idempotency_key, /^dsh:[a-f0-9]{64}$/);
+    assert.equal(payload.attribution.request_session_id, agent.id);
+    assert.equal(posts().at(-1).authorization, `Bearer ${TOKEN}`);
+    assert.equal(posts().at(-1).url, '/dialogue/async');
+    const outside = await create('extraction-unbound', { cwd: otherWorkspace });
+    const child = await create('extraction-subagent', { origin: 'subagent', parentSession: agent.id, delegationDepth: 1 });
+    await send(outside, 'unconfigured-user-input');
+    await send(child, 'child-user-input');
+    assert.equal(root.tools.get('lantai_extraction_status', child), undefined);
+    agent.inject(createUserMessage({ content: [{ type: 'text', text: 'injected-private-context' }], source: { kind: 'runtime-context', form: 'notice', summary: 'fixture' } }));
+    await send(agent, 'second-real-user-input');
+    await submitted(2);
+    assert.equal(posts().length, before + 2, 'model answers, runtime snapshots, injections and subagents do not submit');
+    await control('setExtractionEnabled', { enabled: false });
+    await send(agent, 'after-extraction-disabled');
+    assert.equal(posts().length, before + 2);
+    assert.equal((await control('status')).enabled, false);
+    await remount();
+    assert.equal((await control('extractionStatus')).enabled, false);
+    await control('setExtractionEnabled', { enabled: true });
+    await remount();
+    assert.equal((await control('extractionStatus')).enabled, true, 'extraction choice survives remount independently');
+    assert.equal(posts().length, before + 2, 'remount never replays existing history');
+    await control('setExtractionEnabled', { enabled: false });
+  });
+
+  await t.test('pending input from outside the current extraction consent never reaches Lantai', async () => {
+    const setExtraction = enabled => control('setExtractionEnabled', { enabled });
+    const posts = () => fixture.requests.filter(request => request.url === '/dialogue/async')
+      .map(request => JSON.parse(request.body).text);
+    const before = posts().length;
+    const agent = await create('memory-extraction-old-pending');
+    const postedToModel = text => requests.some(request => request.sessionId === agent.id
+      && request.messages.some(message => message.role === 'user' && messageText(message) === text));
+    const held = { started: Promise.withResolvers(), released: Promise.withResolvers() };
+    holdNextModelResponse = held;
+    followup(agent, 'long-model-turn-while-off');
+    try {
+      await within(held.started.promise, 'the real model loop must still be running');
+      followup(agent, 'queued-while-extraction-was-off');
+      assert.equal(agent.inbox.nextTurn.length, 1, 'the private follow-up has entered the durable inbox');
+      assert.equal((await setExtraction(true)).enabled, true);
+    } finally { held.released.resolve(); }
+    try {
+      await within(agent.whenIdle(), 'the loop must complete the pending user input');
+      assert.ok(postedToModel('queued-while-extraction-was-off'));
+      await send(agent, 'first-fresh-input-after-consent');
+      await within((async () => {
+        while (!posts().includes('first-fresh-input-after-consent')) await new Promise(resolve => setImmediate(resolve));
+      })(), 'fresh input should be submitted');
+      assert.deepEqual(posts().slice(before), ['first-fresh-input-after-consent']);
+
+      const expected = ['first-fresh-input-after-consent'];
+      async function posted(text) {
+        await within((async () => {
+          while (!posts().includes(text)) await new Promise(resolve => setImmediate(resolve));
+        })(), `fresh admitted input should submit: ${text}`);
+      }
+      async function heldTurn(text, editPending) {
+        const holding = { started: Promise.withResolvers(), released: Promise.withResolvers() };
+        holdNextModelResponse = holding;
+        followup(agent, text);
+        try {
+          await within(holding.started.promise, 'the current model turn must hold pending input');
+          await posted(text);
+          expected.push(text);
+          await editPending();
+        } finally { holding.released.resolve(); }
+        await within(agent.whenIdle(), 'pending input should still reach the model');
+      }
+
+      await heldTurn('admitted-before-extraction-toggle', async () => {
+        followup(agent, 'pending-from-previous-consent');
+        const pending = agent.inbox.nextTurn[0];
+        assert.equal(messageText(pending), 'pending-from-previous-consent');
+        await setExtraction(false);
+        await setExtraction(true);
+        const edited = { ...pending, content: [{ type: 'text', text: 'edited-old-consent-input' }] };
+        assert.equal(agent.inbox.replace(pending.id, edited), true);
+        assert.equal(agent.inbox.remove(pending.id), true);
+        agent.steer(edited);
+      });
+      assert.ok(postedToModel('edited-old-consent-input'));
+      await send(agent, 'fresh-input-after-extraction-toggle');
+      await posted('fresh-input-after-extraction-toggle');
+      expected.push('fresh-input-after-extraction-toggle');
+      assert.deepEqual(posts().slice(before), expected, 'edit and steer cannot renew an old pending identity');
+
+      await heldTurn('admitted-before-directory-change', async () => {
+        followup(agent, 'pending-before-directory-change');
+        await root.workingDirectory.set(agent, otherWorkspace);
+        followup(agent, 'pending-from-unbound-directory');
+        await root.workingDirectory.set(agent, WORKSPACE);
+      });
+      assert.ok(postedToModel('pending-before-directory-change'));
+      assert.ok(postedToModel('pending-from-unbound-directory'));
+      await send(agent, 'fresh-input-after-directory-return');
+      await posted('fresh-input-after-directory-return');
+      expected.push('fresh-input-after-directory-return');
+      assert.deepEqual(posts().slice(before), expected, 'directory changes invalidate pending input from both old scopes');
+
+      const beforeResume = await create('memory-extraction-restored-inbox');
+      const restoredInput = createUserMessage({ content: [{ type: 'text', text: 'restored-pending-user-input' }], source: { kind: 'user' } });
+      beforeResume.inbox.append('next-turn', restoredInput);
+      await root.sessions.flush(beforeResume.session);
+      // Normal Agent disposal deliberately cancels its pending inbox. Persist
+      // the accepted prefix through the public storage seam to model a crash.
+      const recoveryId = 'memory-extraction-restored-after-crash';
+      const stored = await root.sessionPersistence.create({ ...beforeResume.session.header, id: recoveryId });
+      try {
+        await stored.append(beforeResume.session.snapshotEvents());
+        await stored.flush();
+      } finally { await stored.close(); }
+      await release(beforeResume);
+      await remount();
+      assert.equal((await control('extractionStatus')).enabled, true);
+      const resumed = await root.agents.resume({ resumeSessionId: recoveryId,
+        agentOptions: { provider: 'fixture', model: 'capture' } });
+      handles.add(resumed);
+      assert.equal(resumed.agent.inbox.nextTurn[0].id, restoredInput.id, 'the real persisted inbox is restored');
+      assert.equal(resumed.agent.inbox.replace(restoredInput.id, restoredInput), true);
+      followup(resumed.agent, 'fresh-input-after-inbox-resume');
+      await within(resumed.agent.whenIdle(), 'resumed input should still reach the real model loop');
+      await posted('fresh-input-after-inbox-resume');
+      expected.push('fresh-input-after-inbox-resume');
+      assert.deepEqual(posts().slice(before), expected, 'restored pending input is never retroactively authorized');
+    } finally { await setExtraction(false); }
   });
 
   // The optional actual FastAPI + SQLite backend is always fixture-owned.

@@ -1,9 +1,9 @@
 {
   "name": "@lantai/dsh-core-memory",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "Automatically load scoped Lantai core memory when enabled in DeepSeek Harness Settings.",
+  "description": "Independently control scoped Lantai memory loading and automatic dialogue extraction in DeepSeek Harness Settings.",
   "engines": { "node": ">=24.9.0", "dsh": "0.2.2-rc.5" },
   "peerDependencies": {
     "@deepseek-ai/schemastery": "~3.19.0",

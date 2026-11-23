@@ -31,7 +31,8 @@ export function registerOwnerControl(ctx, operations) {
       const operation = Promise.resolve().then(() => {
         if (signal.aborted) throw cancelled()
         checkOwner(invocation)
-        return method === 'status' ? operations.status() : operations.setEnabled(parseEnabled(value), signal)
+        return method === 'status' || method === 'extractionStatus'
+          ? operations[method]() : operations[method](parseEnabled(value), signal)
       })
       result = await Promise.race([operation, interrupted])
     } catch {
@@ -49,6 +50,8 @@ export function registerOwnerControl(ctx, operations) {
     constructor(context) { super(context, 'lantaiCoreMemory', { namespace: 'lantaiCoreMemory' }) }
     async status(signal) { return dispatch('status', undefined, checkOwner(this.ctx.invocation)) }
     async setEnabled(enabled, signal) { return dispatch('setEnabled', enabled, checkOwner(this.ctx.invocation)) }
+    async extractionStatus(signal) { return dispatch('extractionStatus', undefined, checkOwner(this.ctx.invocation)) }
+    async setExtractionEnabled(enabled, signal) { return dispatch('setExtractionEnabled', enabled, checkOwner(this.ctx.invocation)) }
   }
   new OwnerControl(ctx)
   const unregister = ctx.typert.register({

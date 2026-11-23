@@ -39,6 +39,8 @@ function createControlContribution() {
     descriptors: [
       makeDescriptor('status', []),
       makeDescriptor('setEnabled', [{ name: 'enabled', wire: 'enabled', source: 'json', codec: enabledInput }]),
+      makeDescriptor('extractionStatus', []),
+      makeDescriptor('setExtractionEnabled', [{ name: 'enabled', wire: 'enabled', source: 'json', codec: enabledInput }]),
     ],
   }
 }

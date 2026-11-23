@@ -342,6 +342,18 @@ def test_isolated_real_lantai_http_fixture_flows_through_node_adapter(node_runti
             runtime_output = completed.stdout + completed.stderr
             assert completed.returncode == 0, runtime_output[-16000:]
             assert "realBackend=fixture" in runtime_output, runtime_output[-16000:]
-            assert re.search(r"(?m)^ℹ tests 22\s*$", runtime_output), runtime_output[-16000:]
-            assert re.search(r"(?m)^ℹ pass 22\s*$", runtime_output), runtime_output[-16000:]
+            assert (
+                "independent extraction switch submits only fresh main-conversation user text"
+                in runtime_output
+            )
+            assert (
+                "isolated real Lantai backend reaches the first admitted model request"
+                in runtime_output
+            )
+            assert (
+                "pending input from outside the current extraction consent never reaches Lantai"
+                in runtime_output
+            )
+            assert re.search(r"(?m)^ℹ tests 24\s*$", runtime_output), runtime_output[-16000:]
+            assert re.search(r"(?m)^ℹ pass 24\s*$", runtime_output), runtime_output[-16000:]
             assert re.search(r"(?m)^ℹ fail 0\s*$", runtime_output), runtime_output[-16000:]

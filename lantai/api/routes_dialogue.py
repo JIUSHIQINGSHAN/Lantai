@@ -3,7 +3,7 @@
 POST /dialogue   对话文本写入（fastpath 直通 / 提取建候选 / 闲聊入待审队列）
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from lantai.core.attribution import Attribution, attribution_dict
@@ -11,6 +11,27 @@ from lantai.core.auth import Principal, get_current_user
 from lantai.ingestion.dialogue import DialogueDisabledError, ingest_dialogue
 
 router = APIRouter(tags=["dialogue"])
+
+
+def _require_bearer_identity(request: Request, ctx: Principal) -> Principal:
+    """Reject DEV/API-key fallbacks before exposing the authenticated identity."""
+    authorization = request.headers.get("Authorization")
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid Authorization header format")
+    if request.headers.get("X-API-Key") is not None or ctx.role != "user":
+        raise HTTPException(status_code=401, detail="Bearer credentials required")
+    return ctx
+
+
+@router.get("/dialogue/identity")
+def dialogue_identity_route(
+    request: Request, ctx: Principal = Depends(get_current_user)
+) -> dict[str, str | None]:
+    """Return only the verified Bearer principal used for a scoped write precheck."""
+    principal = _require_bearer_identity(request, ctx)
+    return {"user_id": principal.user_id, "tenant_id": principal.tenant_id}
 
 
 class DialogueIngestReq(BaseModel):

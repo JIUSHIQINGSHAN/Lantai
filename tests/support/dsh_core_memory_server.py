@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import queue
+import re
 import secrets
 import socket
 import subprocess
@@ -28,6 +29,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_TOKEN = "fixture-token"
+FIXTURE_ADMIN_TOKEN = "fixture-admin-only-token"
 FIXTURE_USER_ID = "fixture-user"
 FIXTURE_NAMESPACE = "fixture"
 FIXTURE_AGENT_ID = "fixture-agent"
@@ -38,7 +40,7 @@ MAX_CHILD_LIFETIME_SECONDS = 120
 MAX_FIXTURE_CONTENT_BYTES = 16 * 1024
 
 
-def _fixture_environment(home: Path) -> dict[str, str]:
+def _fixture_environment(home: Path, *, dev_mode: bool = False) -> dict[str, str]:
     """Make a strict env for the child before it can import lantai.settings/db."""
     db_file = home / "fixture.sqlite3"
     db_url = "sqlite:///" + db_file.as_posix()
@@ -51,7 +53,7 @@ def _fixture_environment(home: Path) -> dict[str, str]:
             "DATABASE_URL": db_url,
             "HOST": "127.0.0.1",
             "PORT": "0",
-            "API_KEY": "",
+            "API_KEY": "" if dev_mode else FIXTURE_ADMIN_TOKEN,
             "OPENAI_API_KEY": "fixture-only-not-a-credential",
             "OPENAI_BASE_URL": "https://fixture.invalid/v1",
             "LLM_MODEL": "fixture-no-network",
@@ -68,13 +70,15 @@ def _fixture_environment(home: Path) -> dict[str, str]:
 class IsolatedCoreMemoryServer:
     """Context-managed real HTTP process, temp DB, and synthetic control surface."""
 
-    def __init__(self, startup_timeout: float = 30.0) -> None:
-        """Start a synthetic loopback API and wait at most startup_timeout seconds."""
+    def __init__(self, startup_timeout: float = 30.0, *, dev_mode: bool = False) -> None:
+        """Start a synthetic loopback API; dev_mode deliberately removes all API keys."""
         self._temporary = tempfile.TemporaryDirectory(prefix="lantai-core-memory-fixture-")
         self.home = Path(self._temporary.name).resolve()
         self.token = FIXTURE_TOKEN
+        self.admin_token = FIXTURE_ADMIN_TOKEN
         self.user_id = FIXTURE_USER_ID
         self.namespace = FIXTURE_NAMESPACE
+        self.dev_mode = dev_mode
         self.control_token = secrets.token_urlsafe(24)
         self.base_url = ""
         self.control_url = ""
@@ -89,11 +93,12 @@ class IsolatedCoreMemoryServer:
             str(self.home),
             "--control-token",
             self.control_token,
+            *(["--dev-mode"] if self.dev_mode else []),
         ]
         self._process = subprocess.Popen(
             command,
             cwd=REPO_ROOT,
-            env=_fixture_environment(self.home),
+            env=_fixture_environment(self.home, dev_mode=self.dev_mode),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -174,6 +179,14 @@ class IsolatedCoreMemoryServer:
             raise ValueError("fixture content exceeds its synthetic-data budget")
         return self._control_post("update", {"block": block, "content": content})
 
+    def inspect_requests(self, *, reset: bool = False) -> dict:
+        """Observe request paths and table-name-only SELECT metadata."""
+        return self._control_post("requests", {"reset": reset})
+
+    def set_identity_available(self, available: bool) -> None:
+        """Toggle the synthetic identity route to emulate a legacy server."""
+        self._control_post("identity", {"available": available})
+
     def stop(self) -> None:
         """Request graceful shutdown, then release the child and temporary storage."""
         if self._closed:
@@ -228,12 +241,14 @@ class IsolatedCoreMemoryServer:
         self.stop()
 
 
-def isolated_core_memory_server(startup_timeout: float = 30.0) -> IsolatedCoreMemoryServer:
-    """Create a ready, context-managed server with disposable synthetic-only storage."""
-    return IsolatedCoreMemoryServer(startup_timeout=startup_timeout)
+def isolated_core_memory_server(
+    startup_timeout: float = 30.0, *, dev_mode: bool = False
+) -> IsolatedCoreMemoryServer:
+    """Create a ready, context-managed loopback server with synthetic-only storage."""
+    return IsolatedCoreMemoryServer(startup_timeout=startup_timeout, dev_mode=dev_mode)
 
 
-def _serve_child(home_arg: str, control_token: str) -> int:
+def _serve_child(home_arg: str, control_token: str, *, dev_mode: bool = False) -> int:
     home = Path(home_arg).resolve()
     temp_root = Path(tempfile.gettempdir()).resolve()
     if home.parent != temp_root or not home.name.startswith("lantai-core-memory-fixture-"):
@@ -248,7 +263,7 @@ def _serve_child(home_arg: str, control_token: str) -> int:
     if os.environ.get("DATABASE_URL") != "sqlite:///" + expected_db.as_posix():
         raise SystemExit("DATABASE_URL must point to the owned fixture database")
     if (
-        os.environ.get("API_KEY")
+        os.environ.get("API_KEY") != ("" if dev_mode else FIXTURE_ADMIN_TOKEN)
         or os.environ.get("OPENAI_API_KEY") != "fixture-only-not-a-credential"
     ):
         raise SystemExit("fixture process requires synthetic-only credential settings")
@@ -256,6 +271,7 @@ def _serve_child(home_arg: str, control_token: str) -> int:
     import uvicorn
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import JSONResponse
+    from sqlalchemy import event
 
     from lantai.core.auth import Principal, hash_key
     from lantai.core.settings import settings
@@ -279,6 +295,24 @@ def _serve_child(home_arg: str, control_token: str) -> int:
         role="user",
         allowed_lanes=["default"],
     )
+    request_records: list[dict[str, str]] = []
+    select_tables: list[str] = []
+    identity_available = True
+
+    def record_select(_connection, _cursor, statement, _parameters, _context, _executemany) -> None:
+        """Record only known table names, never SQL text, values, or memory content."""
+        lowered = statement.lower()
+        if not lowered.lstrip().startswith("select"):
+            return
+        for table in (
+            "api_keys",
+            "corememoryblock",
+            "memoryitem",
+            "memorycandidate",
+            "ingest_event",
+        ):
+            if re.search(rf"\b{table}\b", lowered):
+                select_tables.append(table)
 
     port = 0
 
@@ -286,17 +320,19 @@ def _serve_child(home_arg: str, control_token: str) -> int:
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         """Seed the disposable database before announcing this loopback API as ready."""
         db_module.init_db()
-        with db_module.get_session() as session:
-            session.add(
-                ApiKey(
-                    id="fixture-api-key",
-                    key_hash=hash_key(FIXTURE_TOKEN),
-                    user_id=FIXTURE_USER_ID,
-                    allowed_lanes=["default"],
-                    is_active=True,
+        event.listen(db_module.engine, "before_cursor_execute", record_select)
+        if not dev_mode:
+            with db_module.get_session() as session:
+                session.add(
+                    ApiKey(
+                        id="fixture-api-key",
+                        key_hash=hash_key(FIXTURE_TOKEN),
+                        user_id=FIXTURE_USER_ID,
+                        allowed_lanes=["default"],
+                        is_active=True,
+                    )
                 )
-            )
-            session.commit()
+                session.commit()
         for block, content in (
             ("policy", FIXTURE_POLICY),
             ("identity", FIXTURE_IDENTITY),
@@ -317,9 +353,25 @@ def _serve_child(home_arg: str, control_token: str) -> int:
         yield
 
     app = FastAPI(lifespan=lifespan)
+
+    @app.middleware("http")
+    async def observe_fixture_requests(request: Request, call_next):
+        """Record method/path only; never capture request bodies or headers."""
+        if not request.url.path.startswith("/__fixture__/"):
+            request_records.append({"method": request.method, "path": request.url.path})
+        if request.url.path == "/dialogue/identity" and not identity_available:
+            return JSONResponse({"detail": "legacy fixture has no identity route"}, status_code=404)
+        return await call_next(request)
+
+    from lantai.api.routes_admin import router as admin_router
+    from lantai.api.routes_dialogue import router as dialogue_router
     from lantai.api.routes_memory import router as memory_router
+    from lantai.api.routes_tanyi import router as tanyi_router
 
     app.include_router(memory_router)
+    app.include_router(dialogue_router)
+    app.include_router(admin_router)
+    app.include_router(tanyi_router)
 
     def authorize_control(request: Request) -> None:
         """Require a loopback peer and the parent-owned synthetic control token."""
@@ -327,6 +379,27 @@ def _serve_child(home_arg: str, control_token: str) -> int:
         supplied = request.headers.get("X-Fixture-Control", "")
         if peer not in {"127.0.0.1", "::1"} or not secrets.compare_digest(supplied, control_token):
             raise HTTPException(status_code=401, detail="fixture control authorization failed")
+
+    @app.post("/__fixture__/requests")
+    async def inspect_fixture_requests(request: Request) -> dict:
+        """Return request paths and table names, optionally clearing the snapshot."""
+        authorize_control(request)
+        raw = await request.body()
+        payload = json.loads(raw or b"{}")
+        result = {"requests": list(request_records), "selectTables": list(select_tables)}
+        if payload.get("reset") is True:
+            request_records.clear()
+            select_tables.clear()
+        return result
+
+    @app.post("/__fixture__/identity")
+    async def configure_fixture_identity(request: Request) -> dict:
+        """Toggle only the synthetic identity route availability."""
+        nonlocal identity_available
+        authorize_control(request)
+        payload = json.loads(await request.body() or b"{}")
+        identity_available = payload.get("available") is True
+        return {"available": identity_available}
 
     @app.post("/__fixture__/update")
     async def update_fixture(request: Request) -> dict:
@@ -396,5 +469,8 @@ if __name__ == "__main__":
     parser.add_argument("--child", action="store_true")
     parser.add_argument("--home", required=True)
     parser.add_argument("--control-token", required=True)
+    parser.add_argument("--dev-mode", action="store_true")
     arguments = parser.parse_args()
-    raise SystemExit(_serve_child(arguments.home, arguments.control_token))
+    raise SystemExit(
+        _serve_child(arguments.home, arguments.control_token, dev_mode=arguments.dev_mode)
+    )
