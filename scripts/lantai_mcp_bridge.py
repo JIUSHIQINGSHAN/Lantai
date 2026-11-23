@@ -199,10 +199,11 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "event_id": {"type": "string"},
-                "decision": {"type": "string"},
-                "note": {"type": "string", "default": ""},
+                # 与服务端 conflict_service 及 lantai-mcp-bridge（ADR-0090 第 3 条）同口径
+                "decision": {"type": "string", "enum": ["resolved", "dismissed"]},
+                "note": {"type": "string", "minLength": 1},
             },
-            "required": ["event_id", "decision"],
+            "required": ["event_id", "decision", "note"],
         },
     },
     "get_digest": {
