@@ -23,6 +23,10 @@ Jaccard，原实现对**每一对**都调一次 `_token_set`（内含 jieba 分�
 
 ### 1.2 意图分类不在预算链上，单这一步就能撞穿 hook 的 2 秒硬墙
 
+> **后续（同日）**：主线 PR #77（票 90）独立发现并修了同一处，实测 11.0s；
+> 本分支实测 6.47s。两条独立路径撞到同一个 bug，是本条判断的交叉印证。
+> 变基时采纳主线版本（有票号与配套测试），本分支的重复改动已删除。
+
 `hybrid_search` 第一步是 `classify_intent()`，它同步调外部 LLM（`chat_json`），
 走 tenacity 3 连击。`shell_hook.build_context` 只把 `budget_s` 传给 embed 与
 rerank，**没有传给意图分类**。
@@ -70,8 +74,8 @@ RST）：`classify_intent` 单次 **6.47s**。而 `SHELL_HOOK_TIMEOUT` 默认 2s
 | 位置 | 问题 | 改法 |
 |---|---|---|
 | `retrieval/hybrid.py::mmr_select` | 成对重复分词（上表 1.1） | 按正文缓存 token 集 |
-| `retrieval/hybrid.py::_hybrid_search_impl` | 意图分类不接预算（1.2） | 传剩余预算；无预算保持单参形状 |
-| `retrieval/intent.py::classify_intent` | 同上 | 新增 `timeout` 形参，有预算走单次调用 |
+| `retrieval/hybrid.py::_hybrid_search_impl` | 意图分类不接预算（1.2） | 同上一行：采纳票 90 的实现 |
+| `retrieval/intent.py::classify_intent` | 同上 | **主线 PR #77（票 90）独立修了同一处**，已采纳其版本（留 25% 余量、带配套测试），本分支的同名改动删除 |
 | `storage/db.py::init_db` | FTS 初始化用的 `raw_connection()` 用完不 close，启动即漏一条 DBAPI 连接（同函数上方迁移块有正确的 `finally`） | 补 `try/finally: conn.close()` |
 | `storage/db.py` 新增 `get_session_dep` | 裸 `Session` 作 `Depends` 时 FastAPI 不做 teardown，`routes_cognitive` 五个端点异常路径无确定性 rollback，连接等 GC | 生成器依赖，请求结束一定 close；`get_session()` 保留给 341 处 `with` |
 | `services/candidate_service.py::review_candidate` | 调 `propose_from_candidate` 漏传 `principal`：proposer 的 EXISTING 取数与 `target_key` 寻址都不收窄，A 审批时 B 的正文进外部 LLM 提示词 | 传 `principal` |
