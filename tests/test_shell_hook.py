@@ -170,6 +170,33 @@ def test_serve_mode_survives_malformed_frame(monkeypatch, capsys):
     assert all(ln.startswith("{") for ln in lines)
 
 
+def test_serve_mode_survives_handler_exception(monkeypatch, capsys):
+    """常驻循环兜底：单帧处理抛异常不得打死 serve 进程（巡检 2026-11-24）。
+
+    病灶：`main()` 的 serve 分支此前只在渲染处有守卫，`_handle_one` 的任何未预期
+    异常（未配 API_KEY 的 HookAuthError、适配层/协议层回归）会直接打死常驻子进程。
+    插件侧只看到 EOF，下一次调用得冷启动重来（就绪探测 15s），一帧坏 = 之后每轮
+    注入全丢。协议承诺「hook 绝不抛异常、不拖垮宿主」，故须逐帧降级并继续。
+    """
+    mod = _load_hook(monkeypatch)
+    calls = {"n": 0}
+    real_dispatch = mod._dispatch_one
+
+    def _flaky(raw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("模拟适配层/密钥闸门回归")
+        return real_dispatch(raw)
+
+    monkeypatch.setattr(mod, "_dispatch_one", _flaky)
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"query":""}\n{"query":""}\n'))
+    monkeypatch.setattr("sys.argv", ["shell_hook.py", "--serve"])
+    mod.main()  # 不抛即通过
+    lines = [ln for ln in capsys.readouterr().out.strip().splitlines() if ln.strip()]
+    assert len(lines) == 2, f"坏帧之后循环应继续应答，实得 {len(lines)} 帧"
+    assert all(json.loads(ln) is not None for ln in lines)
+
+
 def test_serve_mode_processes_line(monkeypatch, capsys):
     """serve 模式：--serve 参数走 NDJSON 循环，逐行响应。"""
     mod = _load_hook(monkeypatch)

@@ -619,18 +619,21 @@ def _handle_dialogue(text: str, session_id: str = "", turn: int | None = None) -
     session_id/turn：来源链透传（P0 票02）——落候选 session_id 列与
     provenance.origin_turn，随演化链继承到记忆。
 
-    缺表兜底（票 90）：真实库可能滞后于代码 schema（2026-11-24 实测真实库
-    user_version=44，代码到 v47，缺 `ingest_event`/`conversation_message`/
-    `conversation_job` 三表）——钩子独立进程不跑 `init_db`，首次对话提交即
-    `no such table: ingest_event`。此前该异常被本函数的 except 吞成 `{}`，
-    宿主看到的与「通道没开」完全同形，无从区分。
+    缺表兜底（票 90，v0.70 起自愈下沉到摄取层）：真实库可能滞后于代码 schema
+    （2026-11-24 实测真实库 user_version=44，代码到 v47，缺 `ingest_event`/
+    `conversation_message`/`conversation_job` 三表）——钩子独立进程不跑
+    `init_db`，首次对话提交即 `no such table: ingest_event`。此前该异常被本函数
+    的 except 吞成 `{}`，宿主看到的与「通道没开」完全同形，无从区分。
 
-    改法：捕获 `OperationalError` 中含「no such table」时补跑一次 `init_db()`
-    （幂等，空库实测 1.03s，只在首次失败时付一次）后重试一次；仍失败则
-    **留痕返回 `{"ok": False, "error": ...}`**——写路径结果不翻译（协议 §4.1），
+    现由 `ingest_dialogue` → `lantai.storage.schema_guard` 统一补跑一次
+    `init_db()` 并重试（HTTP 的 `/dialogue`、`/dialogue/async` 走同一真源，
+    不再只有 stdio 通道自愈）；本函数只做「补建后仍失败」的如实上报——
+    **留痕返回 `{"ok": False, "error": ...}`**（写路径结果不翻译，协议 §4.1），
     宿主能看见失败而不是把它当成功。其余异常仍走零侵入 `{}`。
     """
     from sqlalchemy.exc import OperationalError
+
+    from lantai.storage.schema_guard import is_missing_table_error
 
     def _ingest() -> dict:
         from lantai.ingestion.dialogue import ingest_dialogue
@@ -640,18 +643,13 @@ def _handle_dialogue(text: str, session_id: str = "", turn: int | None = None) -
     try:
         return _ingest()
     except OperationalError as exc:
-        # 只对「缺表」这一种 schema 漂移自愈；锁冲突/磁盘满等不重试
-        if "no such table" not in str(exc).lower():
-            logger.warning("dialogue 写入失败（非缺表）: %r", exc)
-            return {}
-        try:
-            logger.warning("dialogue 写入命中缺失表，补跑 init_db 后重试: %s", exc)
-            with contextlib.suppress(Exception):
-                db.init_db()
-            return _ingest()
-        except Exception as retry_exc:
-            logger.error("dialogue 补建表后仍失败: %r", retry_exc)
-            return {"ok": False, "error": f"schema 修复后仍失败: {type(retry_exc).__name__}"}
+        # 摄取层已尝试过自愈并重试；这里撞到缺表说明修复本身没成（如只读介质）。
+        if is_missing_table_error(exc):
+            logger.error("dialogue 缺表自愈后仍失败: %r", exc)
+            return {"ok": False, "error": f"schema 修复后仍失败: {type(exc).__name__}"}
+        # 锁冲突/磁盘满等不是 schema 漂移，保持零侵入（不重试）
+        logger.warning("dialogue 写入失败（非缺表）: %r", exc)
+        return {}
     except Exception as exc:
         # 票 90：静默吞掉让「通道坏了」与「通道没开」同形——至少留一行痕。
         logger.warning("dialogue 写入失败: %r", exc)
@@ -941,7 +939,16 @@ def main():
             line = line.strip()
             if not line:
                 continue
-            result = _handle_one(line)
+            try:
+                result = _handle_one(line)
+            except Exception as exc:
+                # 常驻循环兜底（巡检 2026-11-24）：单帧任何未预期异常此前会直接
+                # 打死整个 serve 子进程——插件侧只看到 EOF，下一次调用得冷启动
+                # 重来（就绪探测 15s），一帧坏 = 之后每轮注入全丢。协议承诺
+                # 「hook 绝不抛异常、不拖垮宿主」，故降级为空帧（{}＝无意见）
+                # 并留一行 stderr 痕；解析层自己的坏帧仍是 `{}`（不在这里报）。
+                logger.warning("shell_hook: 帧处理异常，降级为空帧: %r", exc)
+                result = {}
             try:
                 rendered = render_host_response(result)
             except Exception as exc:

@@ -91,8 +91,11 @@ class IsolatedCoreMemoryServer:
             "--child",
             "--home",
             str(self.home),
-            "--control-token",
-            self.control_token,
+            # `--opt=value` 形态而非逐位传参：control_token 来自 urlsafe base64，
+            # 首字符约 1/64 概率是 '-'，逐位传参时 argparse 会把它当选项、
+            # 报 "argument --control-token: expected one argument"——整个 DSH
+            # 契约用例集在启动 fixture 时随机红（2026-11-24 全量跑测实锤）。
+            f"--control-token={self.control_token}",
             *(["--dev-mode"] if self.dev_mode else []),
         ]
         self._process = subprocess.Popen(

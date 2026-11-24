@@ -9,11 +9,13 @@
    低置信度 / 提取失败（上游 502）→ 候选进待审队列，不丢数据
 """
 
+import contextlib
 import hashlib
 import logging
 import re
 from datetime import timedelta
 
+from sqlalchemy.exc import OperationalError
 from sqlmodel import select
 
 from lantai.core.attribution import Attribution, resolve_attribution
@@ -98,7 +100,64 @@ def ingest_dialogue(
     agent_id: str | None = None,
     _ingest_event_id: str | None = None,
 ) -> dict:
-    """Receive one logical dialogue and keep its event through all later stages."""
+    """Receive one logical dialogue and keep its event through all later stages.
+
+    缺表自愈（v0.70 起扩到本层，票 90 延伸）：真实库可能滞后于代码 schema，
+    首次写入即 ``no such table``。此前只有 stdio 钩子内联处理这件事，HTTP
+    的 ``/dialogue`` / ``/dialogue/async`` 直接 500。自愈收敛到
+    ``lantai.storage.schema_guard`` 后，本函数在缺表时补跑一次 ``init_db``
+    再重试一次；非缺表错误原样上抛（调用方决定 422/409/5xx 或 ``ok=False``）。
+    重试只发生在「事务整体未提交」的缺表错误上，不会重复落已提交的候选。
+    """
+    try:
+        return _ingest_dialogue_entry(
+            text,
+            user_id=user_id,
+            source=source,
+            created_at=created_at,
+            session_id=session_id,
+            turn=turn,
+            attribution=attribution,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            _ingest_event_id=_ingest_event_id,
+        )
+    except OperationalError as exc:
+        from lantai.storage.schema_guard import heal_missing_schema, is_missing_table_error
+
+        if not is_missing_table_error(exc):
+            raise
+        logger.warning("对话摄取命中缺失表，补跑 init_db 后重试一次: %s", exc)
+        # 修复自身失败不在这里吞掉：随后重试会原样再撞缺表，由调用方如实上报。
+        with contextlib.suppress(Exception):
+            heal_missing_schema()
+        return _ingest_dialogue_entry(
+            text,
+            user_id=user_id,
+            source=source,
+            created_at=created_at,
+            session_id=session_id,
+            turn=turn,
+            attribution=attribution,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            _ingest_event_id=_ingest_event_id,
+        )
+
+
+def _ingest_dialogue_entry(
+    text: str,
+    *,
+    user_id: str = "default",
+    source: str = "dialogue",
+    created_at=None,
+    session_id: str = "",
+    turn: int | None = None,
+    attribution: dict | Attribution | None = None,
+    tenant_id: str | None = None,
+    agent_id: str | None = None,
+    _ingest_event_id: str | None = None,
+) -> dict:
     context = resolve_attribution(session_id, attribution)
     event_id = start_ingest_event(
         channel="dialogue",
