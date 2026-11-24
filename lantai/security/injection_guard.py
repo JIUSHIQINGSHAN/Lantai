@@ -36,21 +36,32 @@ MAX_CONTENT_CHARS = 200_000
 # 长重复做二次回溯（上游独立进程预算验证过 32KiB/100KiB near-match）。
 _RAW_INJECTION_PATTERNS = re.compile(
     # 英文指令覆盖（容纳 the/these/any/all/your 等限定词及指令复数/单数）
-    r"ignore\s+(?:(?:all|your|the|these|any)\s+)*(?:(?:previous|prior|earlier|above|system)\s+)?(?:instructions?|directions?|prompts?)"
+    # 交叉互审收窄（2026-11-24，用户裁决「按推荐收窄三组」）：对象后紧跟**定位短语**
+    # （in/on/of/from/at…）时是在指外部文档（「ignore the instructions in the
+    # README」），不是要求覆盖系统指令——负向前瞻放行；「…instructions and output…」
+    # 之类攻击仍命中（对象后不是定位词）。`\b` 防 `instructions?` 回退到单数后
+    # 让前瞻误判（实测过的假绿路径）。
+    r"ignore\s+(?:(?:all|your|the|these|any)\s+)*(?:(?:previous|prior|earlier|above|system)\s+)?(?:instructions?|directions?|prompts?)\b(?!\s+(?:in|on|of|from|at|inside|within|for)\s)"
     r"|forget\s+(?:(?:all|your|the|these|any|everything)\s+)*(?:(?:previous|prior)\s+)?(?:instructions?|commands?|directives?|system\s+prompts?|(?:you\s+)?(?:learned|were\s+told|remember)\s+(?:about\s+your\s+rules|and\s+start\s+fresh))"
-    r"|disregard\s+(?:(?:all|your|the|these|any)\s+)*(?:previous\s+|prior\s+)?(?:instructions?|commands?|directives?|system\s+prompts?)"
+    r"|disregard\s+(?:(?:all|your|the|these|any)\s+)*(?:(?:previous|prior|earlier|above|system)\s+)?(?:instructions?|commands?|directives?|system\s+prompts?)\b(?!\s+(?:in|on|of|from|at|inside|within|for)\s)"
     r"|do\s+not\s+follow\s+(?:(?:all|the|any|these|your)\s+)*(?:previous\s+|prior\s+)?(?:instructions?|system\s+prompts?|rules?)"
     r"|you\s+must\s+(?:ignore|forget|override|bypass)\s+(?:(?:all|the|any|these|your)\s+)*(?:rules?|instructions?|system\s+prompts?)"
     r"|override\s+(?:all\s+)?(?:system\s+)?(?:prompts?|instructions?)"
-    # 英文角色劫持与越狱（限定对抗/越狱形态；支持 switch to / enable / enter / roleplay as）
-    r"|(?:from\s+now\s+on\s+you\s+are|act\s+as|pretend\s+(?:you\s+are|to\s+be)|you\s+are\s+now(?:\s+in)?|you\s+will\s+now\s+act\s+as|switch\s+to|enable|enter|roleplay\s+as)\s+(?:an?\s+)?(?:unrestricted|jailbroken|dan\s+mode|developer\s+mode|evil|god\s+mode|bypass\s+mode)"
+    # 英文角色劫持与越狱（限定对抗/越狱形态）。
+    # 强角色句式（from now on you are / act as / you are now …）不受句式位置限制；
+    # switch to / enable / enter 只在**祈使位置**（句首/句末标点后/please 后）命中——
+    # 交叉互审收窄（2026-11-24）：「How to switch to developer mode on Android?」
+    # 与「If you enter developer mode, Chrome …」这类正常技术叙述不再误伤，
+    # 而「enter developer mode」「please enable developer mode now」照旧命中。
+    r"|(?:from\s+now\s+on\s+you\s+are|act\s+as|pretend\s+(?:you\s+are|to\s+be)|you\s+are\s+now(?:\s+in)?|you\s+will\s+now\s+act\s+as|roleplay\s+as)\s+(?:an?\s+)?(?:unrestricted|jailbroken|dan\s+mode|developer\s+mode|evil|god\s+mode|bypass\s+mode)"
+    r"|(?:^|[.!?;\n]\s*|please\s+)(?:switch\s+to|enable|enter)\s+(?:an?\s+)?(?:unrestricted|jailbroken|dan\s+mode|developer\s+mode|god\s+mode|bypass\s+mode)"
     r"|your\s+(?:new|real|true|actual)\s+system\s+(?:prompt|instruction)\s+is"
     # 系统级标记与特殊 Token：管道符必需——裸 <system> 是 XML，agent 最常存
     r"|<\|?im_start\|?>|<\|?im_end\|?>|<\|?endoftext\|?>"
     r"|<\|\s*(?:system|user|assistant)\s*\|>"
-    r"|<\|?start_header_id\|?>|<\|?end_header_id\|?>|<\|?eot_id\|?>|<\|?begin_of_text\|?>"
-    r"|\[/?\s*INST\s*\]"
-    r"|<\s*/?(?:start_of_turn|end_of_turn)\s*>"
+    # 通用对话模板特殊 Token 不单独定罪（交叉互审收窄 2026-11-24）：AI 工程笔记
+    # 常整段引用模板；只有「被用来伪造 system 角色」或与指令覆盖词共现时才命中，
+    # 见下方 `_SPECIAL_TOKEN_ABUSE_RE` 与 check_prompt_injection 的合取判定。
     # 方括号/尖括号类必须词组共现（裸 [system] / <system> 放行）
     r"|\[\s*(system|assistant|developer)\s+(prompt|message|instruction)s?\s*\]"
     r"|\[/?\s*(system|assistant|developer)\s+(prompt|message|instruction)s?\s*\]"
@@ -84,14 +95,34 @@ _RAW_INJECTION_PATTERNS = re.compile(
 )
 
 # ── 第二层：归一化字符去重正则（粉碎 i.g.n.o.r.e / 忽 略 指 令 等变体）──────
+# 通用对话模板特殊 Token 的**滥用**判定：token 本身是正常工程内容（AI 工程笔记
+# 常整段引用模板），只有两种形态定罪——伪造 system 角色帧，或与指令覆盖词共现。
+_SPECIAL_TOKEN_RE = re.compile(
+    r"<\|?start_header_id\|?>|<\|?end_header_id\|?>|<\|?eot_id\|?>|<\|?begin_of_text\|?>"
+    r"|\[/?\s*INST\s*\]|<\s*/?(?:start_of_turn|end_of_turn)\s*>",
+    re.IGNORECASE,
+)
+_SPECIAL_TOKEN_ABUSE_RE = re.compile(
+    r"(?:<\|?start_header_id\|?>|<\s*start_of_turn\s*>)\s*system"
+    r"|\b(?:ignore|disregard|forget|override|bypass|act\s+as|you\s+are\s+now)\b"
+    r"|无视|忽略|忘记|不要(?:遵守|执行|遵从)",
+    re.IGNORECASE,
+)
+
 _NORMALIZE_CLEAN_RE = re.compile(r"[^0-9a-zA-Z一-鿿]", re.UNICODE)
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 _NORMALIZED_INJECTION_PATTERNS = re.compile(
-    r"ignore(all|your|the|these|any)*(previous|prior|earlier|above|system)?(instruction|instructions|direction|prompt)"
+    # 收窄（2026-11-24）：归一化层保留**强限定词**要求——本层已去标点，无法区分
+    # 「instructions in the README」这类定位短语，宽量词会在本层复现同一误伤；
+    # 裸量词变体由第一层（保留原文）负责。
+    r"ignore(?:all|your)?(?:previous|prior|earlier|above|system)(instruction|instructions|direction|prompt)"
     r"|forget(all|your|the|these|any|everything)*(previous|prior)?(instruction|instructions|command|directive|systemprompt|(you)?(learned|weretold|remember)?(system)?(instruction|prompt))"
-    r"|disregard(all|your|the|these|any)*(previous|prior)?(instruction|instructions|command|directive|systemprompt)"
-    r"|(fromnowonyouare|actas|pretendto|youarenow|youwillnowactas|switchto|enable|enter|roleplayas)(unrestricted|jailbroken|danmode|developermode|evil|godmode|bypassmode)"
+    r"|disregard(?:all)?(?:previous|prior)(instruction|instructions|command|directive|systemprompt)"
+    # 角色劫持：强角色句式保留全部对象；祈使切换动词（switchto/enable/enter）去掉
+    # developermode（「how to switch to developer mode」是正常技术叙述）。
+    r"|(fromnowonyouare|actas|pretendto|youarenow|youwillnowactas|roleplayas)(unrestricted|jailbroken|danmode|developermode|evil|godmode|bypassmode)"
+    r"|(switchto|enable|enter)(unrestricted|jailbroken|danmode|godmode|bypassmode)"
     r"|youmust(ignore|forget|override|bypass)(all|the|any|these|your)*(rule|instruction|systemprompt)"
     r"|override(all)?(system)?(prompt|instruction)"
     r"|忽略(之前|先前|上述|上面|历史|原有|所有|全部){0,8}(的)?(所有|全部|之前|先前|历史){0,8}(系统)?(指令|指示|提示词)"
@@ -134,6 +165,14 @@ def check_prompt_injection(content: str) -> tuple[bool, str]:
 
     # 1. 原始正则匹配
     if _RAW_INJECTION_PATTERNS.search(content):
+        return True, "Layer 1"
+
+    # 1b. 通用对话模板特殊 Token：不单独定罪，须与「伪造 system 角色」或指令覆盖
+    #     词共现（交叉互审收窄 2026-11-24——AI 工程笔记整段引用模板是正常内容，
+    #     例如「The chat template uses <|start_header_id|>user<|end_header_id|>
+    #     and [INST] blocks.」；而 `<|start_header_id|>system` 或 `[INST] ignore
+    #     previous instructions` 属真注入）。
+    if _SPECIAL_TOKEN_RE.search(content) and _SPECIAL_TOKEN_ABUSE_RE.search(content):
         return True, "Layer 1"
 
     # 2. NFKC 折叠 + 控制字符清洗 + 去标点后的归一化匹配

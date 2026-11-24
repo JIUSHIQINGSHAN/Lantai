@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 獬豸注入检测按用户裁决收窄三组误伤（2026-11-24 交叉互审）：① 指令覆盖对象后跟定位短语（`in/on/of/from/at…`）视为指外部文档（`ignore the instructions in the README`）放行，`ignore … and output …` 等攻击仍命中；② `switch to/enable/enter` 只在祈使位置（句首/句末标点后/please 后）命中，`How to switch to developer mode on Android?` 不再误伤；③ 通用对话模板特殊 Token（`<|start_header_id|>`、`[INST]`、`<start_of_turn>`…）不单独定罪，只在伪造 system 角色或与指令覆盖词共现时命中。AI 工程笔记因此可正常入库；真载荷测试全部保留。
+- 交叉互审修正（模块四审模块一/二/三，2026-11-24）：樊篱中性化此前用 `[^>]*` 含换行，正文 `</memory_data` 后接换行与任意文本、再接 `>` 时中间整段被吞（注入帧静默删文本）；改为先中性化完整闭合标签、再只打断跨行残留的裸前缀，正文一个字不吃。
+- 交叉互审修正（2026-11-24）：守藏 `_STOP_VERIFY` 把「严禁/禁止…跳过验证」这类**要求核验**的句式判成「停止核验」，方向反了（正常安全规范被转待审）；补跳过类否定前瞻，`切勿核实 / 严禁再查` 等真载荷仍命中。
+- 交叉互审修正（2026-11-24）：`POST /ingest/run` 与 `/workers/ingest/run` 同源，但前者未接 `RuntimeError → 409`：worker 单飞锁并发拒绝时泄漏成 500，与 `ingest_worker` 注释「路由映射 409」不符；补齐映射。
 - 人工审批候选时把 `principal` 传给 `propose_from_candidate`：此前漏传，proposer 的 EXISTING 取数与 `target_key` 寻址都不按归属收窄——A 审批自己的候选会把 B 的记忆正文拼进外部 LLM 提示词，LLM 给出的目标键也能解析到别人的记忆。
 - `init_db` 初始化 FTS 的 `raw_connection()` 用完不关，启动即漏一条 DBAPI 连接；补 `try/finally`，与同函数上方迁移块一致。
 - `routes_cognitive` 的五个端点改用生成器依赖 `get_session_dep`：裸 `Session` 作 `Depends` 时 FastAPI 不做 teardown，异常路径上没有确定性 `rollback`，连接要等 GC 才归还。

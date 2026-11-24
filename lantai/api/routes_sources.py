@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from lantai.core.auth import Principal, get_current_user, require_admin
 from lantai.models.schemas import SourceReq
@@ -32,8 +32,18 @@ def list_sources_route(ctx=Depends(get_current_user)):
 def ingest_run_route(principal: Principal = Depends(require_admin)):
     """直跑摄取 worker（票 19 复查补刀：此前零身份——与 `/workers/ingest/run`
     触发同一 `run_ingest_once`，不挂闸则守卫被平行 URL 整体架空）。全局
-    动作面，仅 admin（runner 系统身份）。"""
-    return run_ingest()
+    动作面，仅 admin（runner 系统身份）。
+
+    并发冲突译 409（交叉审计 2026-11-24）：worker 侧新增单飞锁，另一路正在跑时
+    `run_ingest_once` 抛 `RuntimeError("ingest is already running")`。同源入口
+    `/workers/ingest/run`（routes_monitor）早已把同类 `RuntimeError` 译成 409；
+    本路由此前裸调，并发时泄漏成 500，且与 `ingest_worker.py` 注释「路由映射
+    409」不符。与平行入口同口径，不另创造状态码。
+    """
+    try:
+        return run_ingest()
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get("/candidates")

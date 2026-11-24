@@ -49,3 +49,32 @@ def test_ingest_run_route_smoke(monkeypatch):
         resp = client.post("/ingest/run", headers={"X-API-Key": admin_key})
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"ok": True}
+
+
+def test_ingest_run_route_maps_concurrent_run_to_409(monkeypatch):
+    """并发冲突必须译 409，不得泄漏成 500（交叉审计 2026-11-24）。
+
+    worker 侧新增单飞锁：另一路在跑时 `run_ingest_once` 抛
+    `RuntimeError("ingest is already running")`。同源入口
+    `/workers/ingest/run`（routes_monitor）早已把同类 RuntimeError 译 409；
+    本路此前裸调 → 并发时 500，与 `ingest_worker.py` 注释「路由映射 409」不符。
+    """
+    from fastapi.testclient import TestClient
+
+    from lantai.api import routes_sources
+    from lantai.api.app import app
+    from lantai.core.settings import settings
+
+    admin_key = "ingest-run-409-admin"
+    monkeypatch.setattr(settings, "API_KEY", admin_key)
+
+    def _busy():
+        raise RuntimeError("ingest is already running")
+
+    monkeypatch.setattr(routes_sources, "run_ingest", _busy)
+
+    with TestClient(app) as client:
+        resp = client.post("/ingest/run", headers={"X-API-Key": admin_key})
+
+    assert resp.status_code == 409, f"并发冲突应译 409，实得 {resp.status_code}：{resp.text}"
+    assert "already running" in resp.text
