@@ -65,7 +65,7 @@ from lantai.models.tables import MemoryItem
 from lantai.retrieval.hierarchical import (
     rerank_by_information_density,
 )
-from lantai.retrieval.hybrid import hybrid_search
+from lantai.retrieval.hybrid import RetrievalParams, hybrid_search
 
 # 更正闸已下沉 lantai/retrieval/supersede.py（v0.68 票 02，行为零变化的移动重构）；
 # 四个名字以同名别名保留：既有更正闸测试经 mod._apply_supersede_guard /
@@ -330,6 +330,34 @@ def _build_scene_lines(items, per_scene_chars: int) -> list[str]:
     return build_scene_navigation_lines(items, per_scene_chars, _RECALL_TRUNCATION_SUFFIX)
 
 
+def _hook_principal():
+    """钩子检索的属主身份（票 90）。
+
+    **显式配置，不猜**：`LANTAI_HOOK_USER_ID` 为空返回 None —— 维持旧行为
+    （`hybrid_search` 收敛成 `user_id="default"`）。非空时按配置构造一个
+    Principal，让钩子读到自己库里的记忆。
+
+    为何不做「自动探测」：MCP 侧刻意不猜身份（`cli/mcp.py:_principal_from_params`
+    写明「不看环境变量、不看进程名、不推导——猜错等于把别人的查询挂到另一个人
+    头上」）。钩子是本地单用户场景，但同样不该猜：真实库 265/276 条记忆挂在
+    `api_key` 下（HTTP 环境密钥的 admin 形态），那是历史写入归属，**不是**某个
+    真实用户的身份。要看见它们，必须由运维显式配置，配错也看得见、可回退。
+    """
+    raw = (settings.LANTAI_HOOK_USER_ID or "").strip()
+    if not raw:
+        return None
+    from lantai.core.acl import Principal
+
+    return Principal(
+        tenant_id=None,
+        user_id=raw,
+        agent_id=None,
+        session_id=None,
+        role=settings.LANTAI_HOOK_ROLE or "user",
+        allowed_lanes=None,
+    )
+
+
 def build_context(query: str, session_id: str | None = None) -> dict:
     """查询相关记忆，构建注入上下文。
 
@@ -376,7 +404,23 @@ def build_context(query: str, session_id: str | None = None) -> dict:
         # 组装 + 置顶拼接，外层 join(timeout) 是硬墙——不给余量必擦线超
         # （实测 2.0 预算全给 embed → 总 2.17s > 2.0 墙，降级结果被墙丢弃）。
         budget_s = max(0.05, settings.SHELL_HOOK_TIMEOUT * 0.85 - (time.perf_counter() - t0))
-        raw_results = hybrid_search(query, top_k=settings.SHELL_HOOK_TOP_K, budget_s=budget_s)
+        raw_results = hybrid_search(
+            query,
+            top_k=settings.SHELL_HOOK_TOP_K,
+            budget_s=budget_s,
+            principal=_hook_principal(),
+            # verbatim 开关三元：None = 沿用全局 settings（旧行为零漂移），
+            # 显式 True/False 由宿主配置覆盖。
+            **(
+                {}
+                if settings.LANTAI_HOOK_VERBATIM_IN_RECALL is None
+                else {
+                    "params": RetrievalParams.from_overrides(
+                        {"verbatim_in_recall": bool(settings.LANTAI_HOOK_VERBATIM_IN_RECALL)}
+                    )
+                }
+            ),
+        )
 
         # 相似度置信度阈值过滤：D-03 分路阈值（reranker 走 0.5 语义门禁，RRF 走 0.15 独立量纲，避免第 2/3 名被一刀切）
         def _score_passes(r: dict) -> bool:
@@ -574,15 +618,43 @@ def _handle_dialogue(text: str, session_id: str = "", turn: int | None = None) -
 
     session_id/turn：来源链透传（P0 票02）——落候选 session_id 列与
     provenance.origin_turn，随演化链继承到记忆。
+
+    缺表兜底（票 90）：真实库可能滞后于代码 schema（2026-11-24 实测真实库
+    user_version=44，代码到 v47，缺 `ingest_event`/`conversation_message`/
+    `conversation_job` 三表）——钩子独立进程不跑 `init_db`，首次对话提交即
+    `no such table: ingest_event`。此前该异常被本函数的 except 吞成 `{}`，
+    宿主看到的与「通道没开」完全同形，无从区分。
+
+    改法：捕获 `OperationalError` 中含「no such table」时补跑一次 `init_db()`
+    （幂等，空库实测 1.03s，只在首次失败时付一次）后重试一次；仍失败则
+    **留痕返回 `{"ok": False, "error": ...}`**——写路径结果不翻译（协议 §4.1），
+    宿主能看见失败而不是把它当成功。其余异常仍走零侵入 `{}`。
     """
-    try:
+    from sqlalchemy.exc import OperationalError
+
+    def _ingest() -> dict:
         from lantai.ingestion.dialogue import ingest_dialogue
 
-        return {
-            "ok": True,
-            **ingest_dialogue(text, session_id=session_id or "", turn=turn),
-        }
-    except Exception:
+        return {"ok": True, **ingest_dialogue(text, session_id=session_id or "", turn=turn)}
+
+    try:
+        return _ingest()
+    except OperationalError as exc:
+        # 只对「缺表」这一种 schema 漂移自愈；锁冲突/磁盘满等不重试
+        if "no such table" not in str(exc).lower():
+            logger.warning("dialogue 写入失败（非缺表）: %r", exc)
+            return {}
+        try:
+            logger.warning("dialogue 写入命中缺失表，补跑 init_db 后重试: %s", exc)
+            with contextlib.suppress(Exception):
+                db.init_db()
+            return _ingest()
+        except Exception as retry_exc:
+            logger.error("dialogue 补建表后仍失败: %r", retry_exc)
+            return {"ok": False, "error": f"schema 修复后仍失败: {type(retry_exc).__name__}"}
+    except Exception as exc:
+        # 票 90：静默吞掉让「通道坏了」与「通道没开」同形——至少留一行痕。
+        logger.warning("dialogue 写入失败: %r", exc)
         return {}
 
 

@@ -299,6 +299,20 @@ class Settings(BaseSettings):
         0.15  # RRF 降级/非重排通道独立置信度下限（避免 0.5 将第 2 名后一刀切）
     )
     SHELL_HOOK_MIN_CHARS: int = 3
+    # 钩子检索的属主身份（票 90，2026-11-24 真机验收实证）。**不自动猜**：
+    # 空 = 维持旧行为（hybrid_search 收到 principal=None → 收敛成 user_id="default"）。
+    # 真实库 265/276 条记忆的 user_id 是 "api_key"（HTTP 环境密钥的 admin 形态，
+    # auth.py:149），钩子不传身份就一条都看不见——这是「检索通了但空转」的根因。
+    # 由宿主/运维显式写成环境变量 LANTAI_HOOK_USER_ID（与设置同名）。
+    LANTAI_HOOK_USER_ID: str = ""
+    # 同属主的角色档：`admin` 才享有全表口径；默认 `user` 仍受归属过滤。
+    LANTAI_HOOK_ROLE: str = "user"
+    # 钩子检索是否纳入 verbatim（原文）记忆。**默认沿用全局**（False）。
+    # 真实库实测：265/276 条业务记忆都是 verbatim 形态（历史 raw_add 直存原文），
+    # 非 verbatim 的 11 条里全是 A/B 测试数据——不开这个开关，钩子在真实库上
+    # 即使属主配好也召不回任何业务记忆。由宿主按「单用户本地 / 多人共享库」
+    # 自行决定：单人本地开，共享库慎开（原文可能含他人内容）。
+    LANTAI_HOOK_VERBATIM_IN_RECALL: bool | None = None
     # 召回预算（借鉴 TencentDB Agent Memory auto-recall）：单条记忆注入上限 +
     # 总字符预算，超预算截断并附工具指南；防大记忆撑爆上下文
     SHELL_HOOK_MAX_CHARS_PER_MEMORY: int = 200
