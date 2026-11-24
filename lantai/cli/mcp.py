@@ -1836,6 +1836,9 @@ def handle_muci_catalog(params: dict) -> dict:
     """目次：多维记忆知识目录与分级导航查询（v0.44 ADR-0065）。"""
     domain = params.get("domain")
     lane = params.get("lane")
+    topic = params.get("topic")
+    if topic is not None and (not isinstance(topic, str) or not topic.strip()):
+        raise ValueError("topic must be a non-empty string")
     detail_level = params.get("detail_level", "compact")
     max_entries = _int_param(params, "max_entries", 3, 1, 20)  # 票 66：对齐 REST [1,20]
 
@@ -1845,6 +1848,7 @@ def handle_muci_catalog(params: dict) -> dict:
         principal=_principal_from_params(params),
         domain=domain,
         lane=lane,
+        topic=topic,
         detail_level=detail_level,
         max_entries_per_section=max_entries,
     )
@@ -3624,6 +3628,12 @@ TOOLS = {
                 "lane": {
                     "type": "string",
                     "description": "限定分轨：fact/rule/preference/experience/general",
+                },
+                "topic": {
+                    "type": "string",
+                    "description": "按标签主题精确下钻（去首尾空白并忽略大小写）",
+                    "minLength": 1,
+                    "pattern": r"\S",
                 },
                 "detail_level": {
                     "type": "string",

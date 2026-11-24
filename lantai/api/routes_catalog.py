@@ -19,6 +19,7 @@ router = APIRouter(tags=["catalog"])
 def catalog_overview_route(
     domain: str | None = Query(None, description="限定辨域：user/session/agent"),
     lane: str | None = Query(None, description="限定分轨：fact/rule/preference/experience/general"),
+    topic: str | None = Query(None, pattern=r"\S", description="按标签主题精确下钻"),
     detail_level: Literal["compact", "full"] = Query(
         "compact", description="目录详尽程度：compact 或 full"
     ),
@@ -30,6 +31,7 @@ def catalog_overview_route(
         principal=ctx,
         domain=domain,
         lane=lane,
+        topic=topic,
         detail_level=detail_level,
         max_entries_per_section=max_entries,
     )
@@ -39,6 +41,7 @@ def catalog_overview_route(
 def catalog_domain_route(
     domain: str,
     lane: str | None = Query(None, description="限定分轨：fact/rule/preference/experience/general"),
+    topic: str | None = Query(None, pattern=r"\S", description="按标签主题精确下钻"),
     detail_level: Literal["compact", "full"] = Query(
         "compact", description="目录详尽程度：compact 或 full"
     ),
@@ -50,6 +53,7 @@ def catalog_domain_route(
         principal=ctx,
         domain=domain,
         lane=lane,
+        topic=topic,
         detail_level=detail_level,
         max_entries_per_section=max_entries,
     )

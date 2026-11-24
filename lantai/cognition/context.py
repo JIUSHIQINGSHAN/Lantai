@@ -229,9 +229,11 @@ class CognitiveContext:
             cat = self.catalog_digest
             c_summary = cat.get("summary") or "知识目录概览"
             c_sections = cat.get("sections") or []
+            c_outline = cat.get("outline") or []
+            c_landmarks = cat.get("landmarks") or []
 
             c_lines = [f"## Memory Catalog & Knowledge Index: {wrap_as_data(str(c_summary))}"]
-            if c_sections:
+            if c_sections and not c_outline:
                 c_lines.append("- **Knowledge Sections**:")
                 for s in c_sections:
                     d = s.get("domain", "")
@@ -246,6 +248,33 @@ class CognitiveContext:
                     c_lines.append(
                         f"  * {wrap_as_data(str(d))}/{wrap_as_data(str(l))}: {cnt} items{tag_str}"
                     )
+
+            if c_landmarks:
+                c_lines.append("- **Global Landmarks**:")
+                for landmark in c_landmarks:
+                    topic = wrap_as_data(str(landmark.get("topic", "")))
+                    count = landmark.get("count", 0)
+                    coverage = landmark.get("domain_lane_count", 0)
+                    c_lines.append(
+                        f"  * {topic}: {count} memories across {coverage} domain/lane groups"
+                    )
+
+            if c_outline:
+                c_lines.append("- **Hierarchical Outline**:")
+                for domain_node in c_outline:
+                    domain = wrap_as_data(str(domain_node.get("domain", "")))
+                    c_lines.append(f"  * {domain}: {domain_node.get('count', 0)} memories")
+                    for lane_node in domain_node.get("lanes") or []:
+                        lane = wrap_as_data(str(lane_node.get("lane", "")))
+                        c_lines.append(f"    - {lane}: {lane_node.get('count', 0)} memories")
+                        for topic_node in lane_node.get("topics") or []:
+                            topic = wrap_as_data(str(topic_node.get("topic", "")))
+                            c_lines.append(
+                                f"      - {topic}: {topic_node.get('count', 0)} memories"
+                            )
+                        omitted = lane_node.get("omitted_topic_count", 0)
+                        if omitted:
+                            c_lines.append(f"      - {omitted} more topics omitted")
 
             sections.insert(0, "\n".join(c_lines))
 

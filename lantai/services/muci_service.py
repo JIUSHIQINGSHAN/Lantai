@@ -17,6 +17,7 @@ def get_catalog_service(
     principal: Principal | None = None,
     domain: str | None = None,
     lane: str | None = None,
+    topic: str | None = None,
     detail_level: str = "compact",
     max_entries_per_section: int = 3,
 ) -> dict[str, Any]:
@@ -26,6 +27,7 @@ def get_catalog_service(
         return engine.build_catalog(
             domain=domain,
             lane=lane,
+            topic=topic,
             detail_level=detail_level,
             max_entries_per_section=max_entries_per_section,
         )
