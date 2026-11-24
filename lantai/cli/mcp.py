@@ -579,7 +579,9 @@ def handle_kaogong_eval(params: dict) -> dict:
     """考功：执行全库记忆价值演化考评周期（ADR-0031 / ADR-0078）。"""
     from lantai.services.kaogong_service import run_kaogong_cycle
 
-    limit = int(params.get("limit", 100))
+    # 票 66 口径：先验后用。裸 int 会让负 limit 直落 `q.limit(-1)`——SQLite
+    # 的 LIMIT -1 是无上限，一次考评把全库记忆过一遍并写回 tier/importance。
+    limit = _int_param(params, "limit", 100, 1, 1000)
     # 归属（票 01a）
     return run_kaogong_cycle(principal=_principal_from_params(params), limit=limit)
 
@@ -635,7 +637,9 @@ def handle_zhiming_lifecycle(params: dict) -> dict:
     superseded_by = params.get("superseded_by")
     apply = bool(params.get("apply", False))
     auto_apply = bool(params.get("auto_apply", False))
-    limit = int(params.get("limit", 100))
+    # 票 66 口径：先验后用（负 limit 在 SQLite 是无上限，生命周期批量写周期会
+    # 一次扫全表并翻状态）。
+    limit = _int_param(params, "limit", 100, 1, 1000)
 
     from lantai.services.zhiming_service import (
         zhiming_audit_service,
