@@ -87,7 +87,16 @@ class TestMMRSelectCache:
         assert not dup, f"同一正文被重复分词 {len(dup)} 条，例如：{dup[0][:30]!r}"
 
     def test_selection_is_fast_at_realistic_pool_size(self):
-        """80 候选选 20 条须在 400ms 内（修前实测 3.8s+，缓存后 ~72ms）。"""
+        """80 候选选 20 条须在 250ms 内。
+
+        实测（同机同语料，取三轮最小值）：无缓存参考实现 **1964ms**；
+        「只缓存已选、候选每次重算」的半吊子修法 105ms；本实现 18-30ms。
+        阈值取 250ms：对坏实现（含半吊子）仍有 8 倍以上区分度，对好实现在
+        全量测试后段的高负载下留足余量（同机负载可让绝对值翻倍）。
+
+        注意这条是**辅助**锁——真正的判据是上面「同一正文只分词一次」的计数
+        直证；计时锁只防「缓存被整个删掉」这类粗回退，不单独承担精确性。
+        """
         from lantai.retrieval.hybrid import mmr_select
 
         corpus = _corpus(80)
@@ -98,7 +107,7 @@ class TestMMRSelectCache:
         got = mmr_select(list(corpus), 20, lam=0.7)
         elapsed = time.perf_counter() - t0
         assert len(got) == 20
-        assert elapsed < 0.4, f"mmr_select 80->20 耗时 {elapsed:.2f}s，重复分词未除"
+        assert elapsed < 0.25, f"mmr_select 80->20 耗时 {elapsed:.2f}s，重复分词未除"
 
     def test_pinned_items_still_exempt(self):
         """被 supersedes 边置顶的新值条目豁免冗余惩罚（既有契约不回归）。
