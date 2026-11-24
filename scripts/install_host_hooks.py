@@ -31,7 +31,14 @@ REQUIRED_ENV_HINT = (
     "  API_KEY            必需；缺少时 shell_hook 拒绝运行（禁止 DEV 回退）\n"
     "  LANTAI_HOME        兰台数据目录（未设时回落到仓库/用户目录推导）\n"
     f"  SHELL_HOOK_TIMEOUT  钩子预算秒数；生成的命令已 setdefault 为 {DEFAULT_HOOK_TIMEOUT}，"
-    "显式设置优先"
+    "显式设置优先\n"
+    "  LANTAI_HOOK_USER_ID / LANTAI_HOOK_ROLE\n"
+    "                     钩子读记忆的属主（票 90）。**不设 = 只看到 default 属主**；\n"
+    "                     真实库 265/276 条记忆挂在 api_key（HTTP 环境密钥的 admin 形态）下，\n"
+    "                     不配这一项，钩子检索会静默空转。\n"
+    "  LANTAI_HOOK_VERBATIM_IN_RECALL\n"
+    "                     钩子是否纳入 verbatim 原文记忆（默认沿用全局 False）。\n"
+    "                     单人本地库建议 true；多人共享库慎开（原文可能含他人内容）。"
 )
 
 # 命令钩子矩阵（走 shell_hook 协议）+ cursor 降级档。
