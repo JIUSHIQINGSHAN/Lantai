@@ -253,7 +253,9 @@ CORE_ROUTERS = [
     routes_shiyi_router,
     routes_jiaochou_router,
     routes_niyi_router,
-    routes_diben_router,
+    # 2026-11-24：此处原有一份重复的 routes_diben_router（CORE_ROUTERS 顶部
+    # 已含），同一路由注册两遍，OpenAPI 报 Duplicate Operation ID、每条路径
+    # 挂两份依赖与两遍中间件。删除重复项，行为不变（路由仍挂载）。
     routes_cehou_router,
     routes_shishi_router,
     routes_qingniao_router,
