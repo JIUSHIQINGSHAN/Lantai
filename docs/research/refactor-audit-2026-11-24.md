@@ -83,6 +83,19 @@ RST）：`classify_intent` 单次 **6.47s**。而 `SHELL_HOOK_TIMEOUT` 默认 2s
 | `evolution/reflector.py::theme_triggered` | 全表读 MemoryItem 再在 Python 判窗口；`any()` 是 O(N×batch) | 窗口下推 SQL；成员判定改 set |
 | `retrieval/evidence.py::build_evidence` | 整个函数 `except Exception: return []` 零日志，与「本来没有来源」同形 | 补 `logger.warning(..., exc_info=True)` |
 | `storage/fts.py` 两处查询失败 | 同上 | 加 `exc_info=True` |
+| `workers/ingest_worker.py` | 外部 LLM 提取（单发 60s）在写事务内逐 doc 调用，N 条 doc 把 SQLite 写锁持有 N×60s；期间检索埋点/遥测/LLM 事件全排队报 database is locked | 拆「无事务准备（闸+密钥+提取到内存）」与「短写事务（只 INSERT）」两阶段 |
+| `workers/ingest_worker.py` | 摄取无进程内单飞：cron / `/ingest/run` / `/monitor/workers/ingest/run` 三面可并发跑同一批 source | 按 `evolve_worker._RUN_ONCE_LOCK` 范式加非阻塞锁 |
+| `cognition/context.py::build` | `_task_relevance` 对**每条记忆**重切一遍 task（构建 O(库容) 次分词），`/cognitive/context[/prompt]` 每请求都走 | 任务词集提到循环外算一次，排序逐位不变 |
+| `cognition/canshang.py` | `principal=None` 时 `_check_access` 直接放行、查询侧也不带属主条件——MCP 匿名扫描能读到全库记忆的正文片段 | 收敛 default 属主空间（对齐 famen/zuozheng/muci/diben 票 57 口径），查询与主键直读两条路同判 |
+| `services/shiyi_service.py` | 引擎 `_check_access` 对 None 全放是**内部调用契约**（worker/CLI 不空转），但服务入口是 MCP/REST 面——两者相接等于匿名调用拿到全库模糊召回 | 不动承重墙：服务入口收敛 default（同 `hybrid_search._converge_principal` 范式） |
+| `eval/forgetting_quality.py` | 评测种子后调 `apply_forgetting()`（`principal=None` = 全表），而默认 CLI 直连部署库——一次评测给真实记忆做衰减并自动归档，archived 无 undo | 作用域收窄到评测自己的 `eval_fq` 种子，逐行判定口径原样搬 |
+| `api/routes_cognitive.py::/cognitive/observe` | 只 `db.add`+`commit`，不 `sync_fts` 也不 `index_memory_item`——写进来的观测对两条召回通道永久不可见 | FTS 同事务同步（FTS_OK=False 或真缺表时降级）、向量在 commit 后补 |
+| `security/injection_guard.py` | 折叠结果与原串相同时，第 2 遍全篇正则与第 1 步是同一模式同一输入的重复 | `folded != content` 才扫第二遍 |
+| `cognition/chenfeng.py::search_archived` | `limit`/`offset` 三层都没界，`limit=-1` 在 SQLite 是 `LIMIT -1` = 无上限，一次拉回全部归档全文 | 引擎拒绝（bool 显式排除）+ REST `Query` 声明 + MCP `_int_param` |
+| `cli/mcp.py` 考功/治命 | 裸 `int(params.get("limit"))`：负值直落 `q.limit(-1)`，一次调用过全库并写回 tier | 改 `_int_param`（缺省 100 不变） |
+| `services/auto_triage_service.py` | 批量采纳的 `actions` 无条数上限，一个请求可放大成上万次写 + 每条 approve 一次外部 LLM | service 层 200 条上限并拒绝（不静默截断），REST 译 422 |
+| `parameters/reliability.py` | `/verification/stats` 逐行调 `reliability_penalty`，而它每次重查同一行（N+1） | 判定体搬进纯函数 `penalty_from_stat(stat)`，函数保留为薄壳 |
+| `api/app.py::CORE_ROUTERS` | `routes_diben_router` 注册两遍（OpenAPI 刷 Duplicate Operation ID，依赖与中间件各挂两份） | 删重复项；回归锁从 OpenAPI 反查而非数列表长度 |
 
 ## 3. 看过但判定不用动的
 
@@ -105,13 +118,48 @@ RST）：`classify_intent` 单次 **6.47s**。而 `SHELL_HOOK_TIMEOUT` 默认 2s
   `helpful_count` / `importance` / `decay_class` 上，且 R1 的 superseded 判定
   要先建全量边映射。逐信号下推 SQL 是**五个独立查询 + 语义重写**，不是一行改动；
   且它跑在后台 cron、不进请求路径。按「够用先于精巧」本轮不动，留作独立票据。
+- **staged 评测往部署库泄漏 9 条记忆**（`eval/staged.py`）：清场只删 `evs-`
+  前缀，而 ③ 段晋升出的记性主键是 `mem_`。真解要 `apply_proposal` 回传新建
+  memory_id，且 ④/⑤ 段的对账断言依赖现有 id 形态——改动面与风险都超出「顺手
+  修」的范围，登记后单独立票。
+- **观测同步落库 5.1ms/次**（`observability/retrieval_log.py`）：占 hook 预算
+  约四分之一，属既有性能基线登记过的热点 H4。异步化要动遥测线程模型（崩溃
+  窗口、pending→missed 语义），不是本轮能安全收口的改动。
+- **MCP `handle_search` 的双 `_principal_from_params`**：只构造一个 dataclass，
+  无 IO 无查询，复用省下的量可忽略，且会让「注入摘要用哪个身份」更难读。
+- **`build_cognitive_summary` 的 `except: pass`**（`cli/mcp.py`）：改成
+  `logger.warning` 是零成本，但它会改变 MCP 返回体（要不要带 error 标记涉及
+  宿主契约），本轮不动，只登记。
 
 ## 4. 复现
 
 ```bash
 # 解释器按 docs/project/development-environment.md 的机器记录取，清空 PYTHONPATH
-<python> -m pytest tests/test_opt_refactor_smoke.py tests/test_opt_candidate_flow_smoke.py -q
+<python> -m pytest tests/test_opt_*.py -q          # 本轮全部回归锁（15 个文件 68 例）
 <python> -m pytest tests/ --basetemp <ASCII 临时目录> -q
 <python> -m ruff check lantai tests scripts
 <python> -m ruff format --check lantai tests scripts
 ```
+
+## 5. 本轮新增的回归锁（`tests/test_opt_*.py`）
+
+每一条都带**变异对照**（把修复前的写法放回去，实测该锁变红），不是「写了
+断言就交差」：
+
+| 锁 | 咬住什么 |
+|---|---|
+| `test_opt_refactor_smoke.py` | MMR 缓存等价性 + 只分词一次 + 耗时阈值；意图分类的预算传导与无预算单参形状；`init_db` 连接归还 |
+| `test_opt_candidate_flow_smoke.py` | 审批不漏传 principal；deprecate 不白跑 embed（add 有反向保险） |
+| `test_opt_evidence_batch_smoke.py` | 批量来源判定与逐条判定逐条一致；checkpoint 只发一次 IN |
+| `test_opt_context_tokens_smoke.py` | task 只分词一次；切面顺序不变 |
+| `test_opt_canshang_acl_smoke.py` | 匿名扫描读不到他人记忆；NULL 老行仍可见；显式点名同样受控 |
+| `test_opt_shiyi_entry_acl_smoke.py` | 服务入口收敛；引擎直调仍全放（两头都锁） |
+| `test_opt_ingest_worker_smoke.py` | 单飞（含异常放锁）；提取期间另一连接能立刻写（事务边界用行为取证） |
+| `test_opt_observe_index_smoke.py` | 观测记忆 FTS 可召回、向量确被调用、失败不回滚、缺表不 500 |
+| `test_opt_forgetting_scope_smoke.py` | 评测不碰真实记忆；陈旧种子仍被判归档；种子不残留 |
+| `test_opt_injection_scan_smoke.py` | 折叠相同时只扫一次；全角/NFD/控制字符变体仍命中 |
+| `test_opt_chenfeng_limit_smoke.py` | limit/offset 三层边界 + bool/字符串混入 |
+| `test_opt_mcp_batch_limit_smoke.py` | 考功/治命 limit 先验后用；合法值真的传下去 |
+| `test_opt_triage_batch_cap_smoke.py` | 批量采纳上限；恰好到上限照常处理；REST 译 422 |
+| `test_opt_verification_penalty_smoke.py` | 两种算法等价；行数翻倍 session 次数不变 |
+| `test_opt_router_assembly_smoke.py` | 无重复注册（从 OpenAPI 反查） |
