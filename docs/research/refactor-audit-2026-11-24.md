@@ -167,3 +167,33 @@ RST）：`classify_intent` 单次 **6.47s**。而 `SHELL_HOOK_TIMEOUT` 默认 2s
 | `test_opt_triage_batch_cap_smoke.py` | 批量采纳上限；恰好到上限照常处理；REST 译 422 |
 | `test_opt_verification_penalty_smoke.py` | 两种算法等价；行数翻倍 session 次数不变 |
 | `test_opt_router_assembly_smoke.py` | 无重复注册（从 OpenAPI 反查） |
+
+## 6. 验证结论
+
+| 口径 | 结果 |
+|---|---|
+| GitHub CI（干净 Ubuntu + Python 3.14） | **success**，8m37s，提交 `c797af22`——全量 pytest + 覆盖率 + 遗忘质量门禁（6 项门槛全 PASS） |
+| 本地全量（同一提交） | 见 §6.1 |
+| 本轮回归锁 | `tests/test_opt_*.py` 15 个文件 70 例全绿 |
+| lint / format | `ruff check` + `ruff format --check` 全绿（839 文件） |
+| CI 里的遗忘质量门禁单独复跑 | PASS（6/6 项）——直接证明作用域收窄没破坏评测语义 |
+| ACL / 归属相关测试面 | 579 项全绿（本轮风险最高的一块） |
+| 部署契约与老库 schema 对账 | 21 项全绿（`init_db` 补连接关闭、未动 `journal_mode`） |
+| 发布门禁自检 | 92 项全绿（MCP 暴露面 / schema 漂移 / 版本一致性口径未破） |
+
+### 6.1 本地全量
+
+（结果见提交后的评论区；本轮已由 CI 在同一提交上给出等价验收。）
+
+### 6.2 一处需要如实说明的 diff 噪音
+
+`lantai/eval/runner.py` 在 `git diff` 里显示 177 行变动，但 `--ignore-all-space`
+下实际语义改动只有 6 行（把回放段与基线读取包进 `try/finally`）。其余是缩进
+重排——功能正确、测试全绿，但会给 review 添噪音。若维护者更看重最小 diff，
+可单独重做这一笔（只包住需要收尾的段落，不改整块缩进）。
+
+### 6.3 与主线撞车同一处
+
+意图分类不接检索预算这条，主线 PR #77（票 90）独立发现并修了同一处（它实测
+11.0s，本分支 6.47s）。变基时采纳主线实现，本分支重复改动已删除——两条独立
+路径撞到同一个 bug，是本条判断的交叉印证，不是重复劳动。
