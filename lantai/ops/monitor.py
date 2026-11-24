@@ -37,6 +37,7 @@ import platform
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from sqlalchemy import or_
 from sqlmodel import func, select
 
 from lantai.core import scheduler as scheduler_module
@@ -1067,6 +1068,11 @@ def list_operation_logs(
     `id/user_id/endpoint/latency_ms/status_code/created_at`），所以这是
     "看见他人打过哪些端点"的归属问题，不是正文泄漏。按 `user_id` 收窄，
     空串（埋点早于归属改造）可见，口径同 `_monitor_scope`。
+
+    `only_problems` 的判定下推 SQL（2026-11-24 优化）：修前先 `LIMIT` 取回
+    最新 N 条、再在 Python 里筛掉正常行——`LIMIT` 作用在**未过滤**集合上，
+    于是错误行被前面的正常行挤掉，面板系统性漏报更旧的故障，表现为
+    "最近没有故障"。现在谓词进 `WHERE`，`limit` 作用在已过滤集上。
     """
     if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
         raise ValueError("limit must be an int in [1, 500]")
@@ -1074,14 +1080,19 @@ def list_operation_logs(
     scope = _oplog_scope(principal)
     if scope is not None:
         statement = statement.where(scope)
+    slow_ms = float(settings.MONITOR_PERSIST_SLOW_MS)
+    if only_problems:
+        statement = statement.where(
+            or_(
+                OperationLog.status_code >= 400,
+                OperationLog.latency_ms >= slow_ms,
+            )
+        )
     with db.get_session() as s:
         rows = s.exec(statement).all()
-    slow_ms = float(settings.MONITOR_PERSIST_SLOW_MS)
     items = []
     for row in rows:
         problem = row.status_code >= 400 or float(row.latency_ms or 0.0) >= slow_ms
-        if only_problems and not problem:
-            continue
         items.append(
             {
                 "id": row.id,
