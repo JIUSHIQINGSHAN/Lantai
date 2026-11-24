@@ -106,7 +106,9 @@ class TestFamenApiSmoke:
         assert resp2.status_code == 200
         d2 = resp2.json()
         assert d2["id"] == c.id
-        assert d2["name"] == "redis-cache-flush-sop"
+        assert "redis-cache-flush-sop" in d2["name"]
+        assert "<memory_data" in d2["name"]
+        assert "<memory_data" in d2["procedure"]
 
         # 3. GET /famen/list
         resp3 = client.get(
@@ -147,6 +149,24 @@ class TestFamenApiSmoke:
         data = json.loads(content)
         assert "task" in data
         assert "skills" in data
+
+        listed = _seed_crystal(
+            "mcp-list-sop-fence",
+            "检查 MCP 列表是否安全",
+            "执行步骤：\n1. 检查结果围栏",
+        )
+        list_response = handle(
+            {
+                "jsonrpc": "2.0",
+                "id": "req-fm-list-1",
+                "method": "tools/call",
+                "params": {"name": "famen_skill", "arguments": {"limit": 5}},
+            }
+        )
+        list_items = json.loads(list_response["result"]["content"][0]["text"])["items"]
+        listed_skill = next(item for item in list_items if item["id"] == listed.id)
+        assert "<memory_data" in listed_skill["name"]
+        assert "<memory_data" in listed_skill["procedure"]
 
     def test_seam4_cognitive_context_skill_aspect(self):
         """Seam 4: CognitiveContext famen_digest 技能切面与樊篱防注入包裹。"""

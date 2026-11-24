@@ -1926,7 +1926,7 @@ def handle_famen_skill(params: dict) -> dict:
     if task:
         matched = match_skills_service(task=task, limit=limit, principal=p)
         return {"task": task, "count": len(matched), "skills": matched}
-    skills = list_skills_service(limit=limit, principal=p)
+    skills = list_skills_service(limit=limit, principal=p, fenced=True)
     return {"count": len(skills), "items": skills}
 
 

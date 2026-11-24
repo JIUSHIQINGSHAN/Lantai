@@ -273,11 +273,31 @@ class CognitiveContext:
             for s in fm_skills[:3]:
                 name = s.get("name") or "未命名法门"
                 trigger = s.get("trigger_rule") or ""
-                steps = s.get("steps") or []
+                sop = s.get("sop") if isinstance(s.get("sop"), dict) else {}
+                description = sop.get("description") or s.get("description") or ""
+                preconditions = sop.get("preconditions") or []
+                steps = sop.get("steps") or s.get("steps") or []
+                parameters = sop.get("parameters") or []
+                verification_steps = sop.get("verification_steps") or []
+                rollback_steps = sop.get("rollback_steps") or []
                 trigger_str = f" _(触发: {wrap_as_data(str(trigger))})_" if trigger else ""
                 fm_lines.append(f"- **{wrap_as_data(str(name))}**{trigger_str}")
-                for i, st in enumerate(steps[:5], 1):
-                    fm_lines.append(f"  {i}. {wrap_as_data(str(st))}")
+                if description:
+                    fm_lines.append(f"  - 说明：{wrap_as_data(str(description))}")
+                for label, values in (
+                    ("前置条件", preconditions),
+                    ("执行步骤", steps),
+                    ("参数", parameters),
+                    ("验证步骤", verification_steps),
+                    ("回滚步骤", rollback_steps),
+                ):
+                    if not isinstance(values, (list, tuple)):
+                        values = [values]
+                    if not values:
+                        continue
+                    fm_lines.append(f"  - {label}：")
+                    for i, value in enumerate(values[:5], 1):
+                        fm_lines.append(f"    {i}. {wrap_as_data(str(value))}")
 
             sections.insert(0, "\n".join(fm_lines))
 
