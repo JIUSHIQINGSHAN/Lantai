@@ -175,9 +175,10 @@ def _format_memory_entry(
     丢弃（判定与裁决分离，与獬豸同一纪律）。
     """
     truncated = _truncate_codepoints(content, max_chars, suffix)
-    head = str(score)
-    if time_str:
-        head = f"{time_str} | {head}"
+    # 行头逐字保持既有契约：带时间时 `time | score N`，无时间时就是裸分数
+    # `- [0.92]`（test_format_memory_entry_shape 断言逐字相等）。加来源标注
+    # 只在尾部追加，不动这两段。
+    head = f"{time_str} | score {score}" if time_str else str(score)
     if trust_str:
         head = f"{head} | {trust_str}"
     return f"- [{head}] {truncated}", truncated
