@@ -200,6 +200,7 @@ def apply_forgetting(principal=None, *, page_size: int = 500):
                             MemoryItem.last_used_at == m.last_used_at,
                         )
                         if archived:
+                            m.status = "archived"
                             changed = True
                         else:
                             # 判定输入已变：丢弃本行在本页累积的 ORM 脏属性

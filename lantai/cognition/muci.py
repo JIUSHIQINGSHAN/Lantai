@@ -96,121 +96,126 @@ class MuciEngine:
             detail_level: "compact" (紧凑低Token大纲) 或 "full" (详尽包含条目摘要)
             max_entries_per_section: full 模式下每板块最大摘录条目数
         """
+        own_session = self.session is None
         session = self._get_session()
-        # 票 62：读面 lifecycle 过滤（口径=tables.py 正交注释 + 票 15 shiyi 先例）：
-        # status 是管道态、lifecycle_status 是认识论态，supersede 只写 lifecycle
-        # （status 仍 active）——只看 status 时 archived/retracted 之外的
-        # superseded 行全文混进目录、活跃计数虚高。白名单 = 管道 active +
-        # 认识论 {active, weakened}（weakened 语义「仍参与检索但权重降低」，
-        # retired「等同于 archived」排除）。DDL NOT NULL DEFAULT 'active'，
-        # 无需 NULL 防御分支。
-        query = (
-            select(MemoryItem)
-            .where(
-                MemoryItem.status == "active",
-                MemoryItem.lifecycle_status.in_(("active", "weakened")),
+        try:
+            # 票 62：读面 lifecycle 过滤（口径=tables.py 正交注释 + 票 15 shiyi 先例）：
+            # status 是管道态、lifecycle_status 是认识论态，supersede 只写 lifecycle
+            # （status 仍 active）——只看 status 时 archived/retracted 之外的
+            # superseded 行全文混进目录、活跃计数虚高。白名单 = 管道 active +
+            # 认识论 {active, weakened}（weakened 语义「仍参与检索但权重降低」，
+            # retired「等同于 archived」排除）。DDL NOT NULL DEFAULT 'active'，
+            # 无需 NULL 防御分支。
+            query = (
+                select(MemoryItem)
+                .where(
+                    MemoryItem.status == "active",
+                    MemoryItem.lifecycle_status.in_(("active", "weakened")),
+                )
+                .order_by(MemoryItem.importance.desc(), MemoryItem.updated_at.desc())
             )
-            .order_by(MemoryItem.importance.desc(), MemoryItem.updated_at.desc())
-        )
 
-        # 预过滤条件
-        if domain:
-            query = query.where(MemoryItem.domain == domain)
-        if lane:
-            query = query.where(MemoryItem.lane == lane)
+            # 预过滤条件
+            if domain:
+                query = query.where(MemoryItem.domain == domain)
+            if lane:
+                query = query.where(MemoryItem.lane == lane)
 
-        items = session.exec(query).all()
+            items = session.exec(query).all()
 
-        # ACL 安全剪枝
-        visible_items = [it for it in items if self._check_access(it)]
+            # ACL 安全剪枝
+            visible_items = [it for it in items if self._check_access(it)]
 
-        # 按 (domain, lane) 二元聚合
-        grouped: dict[tuple[str, str], list[MemoryItem]] = defaultdict(list)
-        for it in visible_items:
-            d = it.domain or "user"
-            l = it.lane or "general"
-            grouped[(d, l)].append(it)
+            # 按 (domain, lane) 二元聚合
+            grouped: dict[tuple[str, str], list[MemoryItem]] = defaultdict(list)
+            for it in visible_items:
+                d = it.domain or "user"
+                l = it.lane or "general"
+                grouped[(d, l)].append(it)
 
-        sections: list[dict[str, Any]] = []
-        all_domains = set()
-        all_lanes = set()
-        total_memories = len(visible_items)
-        # 票 62：活跃计数 = 管道态 active 且认识论态 active（weakened 算在册
-        # 不算活跃；superseded 行已被上方白名单过滤，此处不重复判定）
-        active_memories = sum(
-            1
-            for it in visible_items
-            if it.status == "active" and (it.lifecycle_status or "") == "active"
-        )
+            sections: list[dict[str, Any]] = []
+            all_domains = set()
+            all_lanes = set()
+            total_memories = len(visible_items)
+            # 票 62：活跃计数 = 管道态 active 且认识论态 active（weakened 算在册
+            # 不算活跃；superseded 行已被上方白名单过滤，此处不重复判定）
+            active_memories = sum(
+                1
+                for it in visible_items
+                if it.status == "active" and (it.lifecycle_status or "") == "active"
+            )
 
-        # 排序：确保输出稳定可测（按 domain 再按 lane）
-        for (sec_domain, sec_lane), sec_items in sorted(
-            grouped.items(), key=lambda x: (x[0][0], x[0][1])
-        ):
-            all_domains.add(sec_domain)
-            all_lanes.add(sec_lane)
+            # 排序：确保输出稳定可测（按 domain 再按 lane）
+            for (sec_domain, sec_lane), sec_items in sorted(
+                grouped.items(), key=lambda x: (x[0][0], x[0][1])
+            ):
+                all_domains.add(sec_domain)
+                all_lanes.add(sec_lane)
 
-            # 聚合标签与最新时间
-            tags_set = set()
-            latest_time = None
-            for it in sec_items:
-                if it.tags:
-                    for t in it.tags:
-                        if isinstance(t, str) and t.strip():
-                            tags_set.add(t.strip())
-                if it.updated_at:
-                    if latest_time is None or it.updated_at > latest_time:
-                        latest_time = it.updated_at
+                # 聚合标签与最新时间
+                tags_set = set()
+                latest_time = None
+                for it in sec_items:
+                    if it.tags:
+                        for t in it.tags:
+                            if isinstance(t, str) and t.strip():
+                                tags_set.add(t.strip())
+                    if it.updated_at:
+                        if latest_time is None or it.updated_at > latest_time:
+                            latest_time = it.updated_at
 
-            sec_data: dict[str, Any] = {
-                "domain": sec_domain,
-                "lane": sec_lane,
-                "count": len(sec_items),
-                # 票 62：板块活跃计数同全库口径（认识论 active 才计）
-                "active_count": sum(
-                    1
-                    for it in sec_items
-                    if it.status == "active" and (it.lifecycle_status or "") == "active"
-                ),
-                "tags": sorted(list(tags_set))[:10],
-                "latest_event_at": iso_utc(latest_time) or None,
+                sec_data: dict[str, Any] = {
+                    "domain": sec_domain,
+                    "lane": sec_lane,
+                    "count": len(sec_items),
+                    # 票 62：板块活跃计数同全库口径（认识论 active 才计）
+                    "active_count": sum(
+                        1
+                        for it in sec_items
+                        if it.status == "active" and (it.lifecycle_status or "") == "active"
+                    ),
+                    "tags": sorted(list(tags_set))[:10],
+                    "latest_event_at": iso_utc(latest_time) or None,
+                }
+
+                if detail_level == "full":
+                    # 抽取精要条目，正文经樊篱（wrap_as_data）包裹
+                    picked_entries = []
+                    for it in sec_items[:max_entries_per_section]:
+                        safe_content = wrap_as_data(it.content, item_id=it.id)
+                        picked_entries.append(
+                            {
+                                "id": it.id,
+                                "content": safe_content,
+                                "importance": round(it.importance, 2)
+                                if it.importance is not None
+                                else 0.5,
+                                "decay_class": it.decay_class,
+                                "updated_at": iso_utc(it.updated_at) or None,
+                            }
+                        )
+                    sec_data["entries"] = picked_entries
+
+                sections.append(sec_data)
+
+            # 构建综述摘要
+            summary_parts = [f"记忆总数 {total_memories} 条（活跃 {active_memories} 条）"]
+            if sections:
+                sec_summary = ", ".join(
+                    f"{s['domain']}/{s['lane']}({s['count']})" for s in sections[:4]
+                )
+                summary_parts.append(f"核心板块: {sec_summary}")
+
+            return {
+                "total_memories": total_memories,
+                "active_memories": active_memories,
+                "domains": sorted(list(all_domains)),
+                "lanes": sorted(list(all_lanes)),
+                "detail_level": detail_level,
+                "sections": sections,
+                "summary": " · ".join(summary_parts),
+                "generated_at": iso_utc(utcnow()),
             }
-
-            if detail_level == "full":
-                # 抽取精要条目，正文经樊篱（wrap_as_data）包裹
-                picked_entries = []
-                for it in sec_items[:max_entries_per_section]:
-                    safe_content = wrap_as_data(it.content, item_id=it.id)
-                    picked_entries.append(
-                        {
-                            "id": it.id,
-                            "content": safe_content,
-                            "importance": round(it.importance, 2)
-                            if it.importance is not None
-                            else 0.5,
-                            "decay_class": it.decay_class,
-                            "updated_at": iso_utc(it.updated_at) or None,
-                        }
-                    )
-                sec_data["entries"] = picked_entries
-
-            sections.append(sec_data)
-
-        # 构建综述摘要
-        summary_parts = [f"记忆总数 {total_memories} 条（活跃 {active_memories} 条）"]
-        if sections:
-            sec_summary = ", ".join(
-                f"{s['domain']}/{s['lane']}({s['count']})" for s in sections[:4]
-            )
-            summary_parts.append(f"核心板块: {sec_summary}")
-
-        return {
-            "total_memories": total_memories,
-            "active_memories": active_memories,
-            "domains": sorted(list(all_domains)),
-            "lanes": sorted(list(all_lanes)),
-            "detail_level": detail_level,
-            "sections": sections,
-            "summary": " · ".join(summary_parts),
-            "generated_at": iso_utc(utcnow()),
-        }
+        finally:
+            if own_session:
+                session.close()

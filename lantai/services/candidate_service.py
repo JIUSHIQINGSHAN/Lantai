@@ -144,14 +144,24 @@ def review_candidate(candidate_id: str, approve: bool, reason: str = "", *, prin
         if not (reason or "").strip():
             raise ValueError("reject reason is required")
         with db.get_session() as s:
-            c = s.get(MemoryCandidate, candidate_id)
-            if not c or c.status != "pending_review":
+            claimed = cas_update(
+                s,
+                MemoryCandidate,
+                candidate_id,
+                {"status": "pending_review"},
+                {
+                    "status": "rejected",
+                    "review_due_at": None,
+                    "deferred_at": None,
+                    "previous_review_due_at": None,
+                    "defer_reason": "",
+                },
+            )
+            if not claimed:
+                s.rollback()
                 raise CandidateStateConflict("candidate state changed; refresh and retry")
-            c.status = "rejected"
-            _clear_defer_state(c)
-            s.add(c)
             record_ingest_outcome(
-                s, candidate_id=c.id, outcome="rejected", reason_code="candidate_rejected"
+                s, candidate_id=candidate_id, outcome="rejected", reason_code="candidate_rejected"
             )
             s.commit()
             return {"ok": True, "candidate_status": "rejected", "reason": reason.strip()}
@@ -164,7 +174,7 @@ def review_candidate(candidate_id: str, approve: bool, reason: str = "", *, prin
         "conflicts": [],
         "reason": reason or "approved by user review",
     }
-    prop = propose_from_candidate(candidate_id, gate_result)
+    prop = propose_from_candidate(candidate_id, gate_result, principal=principal)
     if prop is None:
         # 目标不可寻址（update/merge/deprecate 的 target_key 解析不到唯一 active
         # 记忆）：proposer 已留痕丢弃。如实回报，不伪造 proposal_id，

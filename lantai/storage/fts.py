@@ -155,8 +155,8 @@ def init_fts(conn: sqlite3.Connection) -> bool:
 def sync_fts(session, memory_id: str, content: str | None) -> None:
     """同事务同步 FTS 索引（ADR-0008：强一致，不吞异常）。
 
-    content 非 None：先删后插（UPSERT 语义）；
-    content 为 None：删除该记忆的 FTS 行。
+    content 非 None 且非纯空白：先删后插（UPSERT 语义）；
+    content 为 None 或空白：删除该记忆的 FTS 行。
 
     票 45：入索引的 content 副本过归一缝 `normalize_for_index`——trigram
     按精确码位切 gram，未归一副本让全角/ZWSP/NFD 正文与归一查询确定性
@@ -169,10 +169,12 @@ def sync_fts(session, memory_id: str, content: str | None) -> None:
     conn = session.connection()
     conn.execute(text("DELETE FROM memory_fts WHERE memory_id = :id"), {"id": memory_id})
     if content:
-        conn.execute(
-            text("INSERT INTO memory_fts(memory_id, content) VALUES (:id, :content)"),
-            {"id": memory_id, "content": normalize_for_index(content)},
-        )
+        norm = normalize_for_index(content)
+        if norm and norm.strip():
+            conn.execute(
+                text("INSERT INTO memory_fts(memory_id, content) VALUES (:id, :content)"),
+                {"id": memory_id, "content": norm},
+            )
 
 
 def fts_has_row(session, memory_id: str) -> bool:
@@ -187,14 +189,20 @@ def fts_has_row(session, memory_id: str) -> bool:
 
 
 def index_fts(conn: sqlite3.Connection, memory_id: str, content: str):
-    """索引单条（独立连接场景；生产路径用 sync_fts，此函数仅供测试/脚本）。"""
+    """索引单条（独立连接场景；生产路径用 sync_fts，此函数仅供测试/脚本）。
+
+    同 sync_fts 口径保持幂等（UPSERT）：先删后插，防止重复索引累积重复行。
+    """
     from lantai.core.text import normalize_for_index
 
     try:
-        conn.execute(
-            "INSERT INTO memory_fts(memory_id, content) VALUES (?, ?)",
-            (memory_id, normalize_for_index(content)),
-        )
+        norm = normalize_for_index(content) if content else ""
+        conn.execute("DELETE FROM memory_fts WHERE memory_id = ?", (memory_id,))
+        if norm and norm.strip():
+            conn.execute(
+                "INSERT INTO memory_fts(memory_id, content) VALUES (?, ?)",
+                (memory_id, norm),
+            )
         conn.commit()
     except Exception as e:
         logger.warning("FTS5 index failed for %s: %s", memory_id, e)
@@ -206,6 +214,10 @@ def rebuild_fts(session) -> int:
     索引是派生数据——归一缝上线前的存量行是未归一原文，查询侧归一后反向
     失配（索引侧「ＡＩ」vs 查询侧「AI」）。只重灌索引副本，正文零触碰；
     不 commit（同 sync_fts 口径，事务归调用方）。运维入口 scripts/rebuild_fts.py。
+
+    生命周期过滤守卫（模块三审计）：retracted（已撤回）与 consolidated（已巩固碎片）
+    在写侧已明确清空其 FTS 索引（撤回即清索引 / 碎片折叠即删 FTS）。重建时严禁全表
+    无条件拉取，必须排查排除非检索态记录，防止已失效数据死灰复燃破坏检索权威性。
     """
     from sqlalchemy import text
 
@@ -214,13 +226,19 @@ def rebuild_fts(session) -> int:
     conn = session.connection()
     conn.execute(text("DELETE FROM memory_fts"))
     rows = conn.execute(
-        text("SELECT id, content FROM memoryitem WHERE content IS NOT NULL AND content != ''")
+        text(
+            "SELECT id, content FROM memoryitem "
+            "WHERE content IS NOT NULL AND content != '' "
+            "AND status NOT IN ('retracted', 'consolidated')"
+        )
     ).fetchall()
     for memory_id, content in rows:
-        conn.execute(
-            text("INSERT INTO memory_fts(memory_id, content) VALUES (:id, :content)"),
-            {"id": memory_id, "content": normalize_for_index(content)},
-        )
+        norm = normalize_for_index(content)
+        if norm and norm.strip():
+            conn.execute(
+                text("INSERT INTO memory_fts(memory_id, content) VALUES (:id, :content)"),
+                {"id": memory_id, "content": norm},
+            )
     return len(rows)
 
 
