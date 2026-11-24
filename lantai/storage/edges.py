@@ -79,6 +79,7 @@ def get_edges(
     session: db.Session | None = None,
 ) -> list[MemoryEdge]:
     """查询记忆关系（支持传入外部 session 复用连接，避免图遍历 N+1 连接池借还）。"""
+
     def _query(s: db.Session) -> list[MemoryEdge]:
         stmt = select(MemoryEdge)
         if as_source and as_target:
@@ -153,6 +154,7 @@ def get_supersed_chain(memory_id: str, *, session: db.Session | None = None) -> 
     且让链多跳一步。`visited` 只挡无限循环，挡不住已经追加的假条目。
     支持 session 复用，整条链单 session 完成，避免 N 次连接池往返。
     """
+
     def _run(s: db.Session) -> list[dict]:
         chain = []
         current = memory_id
@@ -194,6 +196,7 @@ def get_causal_chain(
       - "backward": 逆查前置诱因（沿着 triggered_by 正向查找 target，或沿 causes 逆向查找 source）
     支持 session 复用，溯源遍历共享同一会话连接。
     """
+
     def _run(s: db.Session) -> list[dict]:
         chain: list[dict] = []
         current = memory_id
@@ -247,7 +250,8 @@ def get_causal_chain(
                     cause_candidates = [
                         e
                         for e in edges_cause
-                        if e.relation in ("causes", "leads_to") and e.source_memory_id not in visited
+                        if e.relation in ("causes", "leads_to")
+                        and e.source_memory_id not in visited
                     ]
                     if cause_candidates:
                         edge = cause_candidates[0]

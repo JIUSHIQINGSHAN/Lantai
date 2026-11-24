@@ -122,7 +122,9 @@ class TestMuciEngineSessionLifecycle:
         catalog = engine_muci.build_catalog()
 
         assert "total_memories" in catalog
-        assert len(closed_sessions) == 1, "MuciEngine.build_catalog 未在执行完成后关闭内部创建的 session"
+        assert len(closed_sessions) == 1, (
+            "MuciEngine.build_catalog 未在执行完成后关闭内部创建的 session"
+        )
 
 
 class TestFTSLifecycleAndIdempotency:
@@ -194,8 +196,12 @@ class TestFTSLifecycleAndIdempotency:
                 driver_conn = conn.connection.driver_connection
                 assert "mem-active-1" in search_fts(driver_conn, "深度学习")
                 assert "mem-archived-1" in search_fts(driver_conn, "设计指南")
-                assert "mem-retracted-1" not in search_fts(driver_conn, "配置指南"), "已撤回记录在 rebuild_fts 后死灰复燃灌回 FTS"
-                assert "mem-consolidated-1" not in search_fts(driver_conn, "碎片指南"), "已巩固碎片在 rebuild_fts 后死灰复燃灌回 FTS"
+                assert "mem-retracted-1" not in search_fts(driver_conn, "配置指南"), (
+                    "已撤回记录在 rebuild_fts 后死灰复燃灌回 FTS"
+                )
+                assert "mem-consolidated-1" not in search_fts(driver_conn, "碎片指南"), (
+                    "已巩固碎片在 rebuild_fts 后死灰复燃灌回 FTS"
+                )
 
     def test_index_fts_is_idempotent_on_duplicate_call(self):
         """index_fts 多次写入同一 memory_id 时应为 UPSERT 语义，不得在 FTS 表中产生重号冗余行。"""
@@ -205,7 +211,9 @@ class TestFTSLifecycleAndIdempotency:
         index_fts(c, "mid-test-1", "首次写入的知识内容")
         index_fts(c, "mid-test-1", "覆盖更新的知识内容")
 
-        rows = c.execute("SELECT memory_id, content FROM memory_fts WHERE memory_id = 'mid-test-1'").fetchall()
+        rows = c.execute(
+            "SELECT memory_id, content FROM memory_fts WHERE memory_id = 'mid-test-1'"
+        ).fetchall()
         assert len(rows) == 1, f"index_fts 重复调用产生了冗余行: {rows}"
         assert rows[0][1] == "覆盖更新的知识内容"
         c.close()
@@ -280,7 +288,9 @@ class TestCandidateQueueLifecycleAndCAS:
 
         assert res["ok"] is True
         assert len(captured_principal) == 1
-        assert captured_principal[0] is alice_principal, "review_candidate 未将 principal 透传至 proposer"
+        assert captured_principal[0] is alice_principal, (
+            "review_candidate 未将 principal 透传至 proposer"
+        )
 
 
 class TestEdgeTraversalsSessionReuse:
@@ -293,8 +303,24 @@ class TestEdgeTraversalsSessionReuse:
         monkeypatch.setattr(db_mod, "engine", engine)
 
         with Session(engine) as s:
-            s.add(MemoryEdge(id="e1", source_memory_id="m1", target_memory_id="m2", relation="supersedes", confidence=0.9))
-            s.add(MemoryEdge(id="e2", source_memory_id="m2", target_memory_id="m3", relation="supersedes", confidence=0.8))
+            s.add(
+                MemoryEdge(
+                    id="e1",
+                    source_memory_id="m1",
+                    target_memory_id="m2",
+                    relation="supersedes",
+                    confidence=0.9,
+                )
+            )
+            s.add(
+                MemoryEdge(
+                    id="e2",
+                    source_memory_id="m2",
+                    target_memory_id="m3",
+                    relation="supersedes",
+                    confidence=0.8,
+                )
+            )
             s.commit()
 
         # 传入外部 session
@@ -315,8 +341,24 @@ class TestEdgeTraversalsSessionReuse:
         monkeypatch.setattr(db_mod, "engine", engine)
 
         with Session(engine) as s:
-            s.add(MemoryEdge(id="e1", source_memory_id="c1", target_memory_id="c2", relation="causes", confidence=0.9))
-            s.add(MemoryEdge(id="e2", source_memory_id="c2", target_memory_id="c3", relation="leads_to", confidence=0.8))
+            s.add(
+                MemoryEdge(
+                    id="e1",
+                    source_memory_id="c1",
+                    target_memory_id="c2",
+                    relation="causes",
+                    confidence=0.9,
+                )
+            )
+            s.add(
+                MemoryEdge(
+                    id="e2",
+                    source_memory_id="c2",
+                    target_memory_id="c3",
+                    relation="leads_to",
+                    confidence=0.8,
+                )
+            )
             s.commit()
 
         with Session(engine) as custom_session:
