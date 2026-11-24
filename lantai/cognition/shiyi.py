@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -21,11 +22,11 @@ import jieba
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import active_bindings, allowed_lanes, viewer_of
 from lantai.core.auth import Principal
 from lantai.core.settings import settings
 from lantai.core.text import LIKE_ESCAPE_CHAR, like_escape
-from lantai.core.time import iso_utc
+from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import LifecycleStatus, MemoryItem
 from lantai.storage import db
@@ -114,6 +115,7 @@ class ShiyiEngine:
         owner_id: str | None,
         tenant_id: str | None,
         shared_scope: str = "private",
+        lane: str | None = None,
     ) -> bool:
         """行级安全隔离校验（宁漏不越权）。
 
@@ -127,14 +129,19 @@ class ShiyiEngine:
             return True
         if getattr(self.principal, "is_admin", False):
             return True
-        if shared_scope == "swarm_shared":
-            return True
-
+        lanes = getattr(self.principal, "allowed_lanes", None)
+        agent_id = getattr(self.principal, "agent_id", None)
+        if agent_id and active_bindings():
+            lanes = allowed_lanes(agent_id) or []
+        if lanes is not None and lane not in lanes:
+            return False
         viewer = viewer_of(self.principal)
         current_tenant = getattr(self.principal, "tenant_id", None)
 
-        if tenant_id and current_tenant and tenant_id != current_tenant:
+        if tenant_id and tenant_id != current_tenant:
             return False
+        if shared_scope == "swarm_shared" and tenant_id and tenant_id == current_tenant:
+            return True
 
         return not (owner_id is not None and owner_id != viewer)
 
@@ -146,8 +153,15 @@ class ShiyiEngine:
         limit: int = 5,
     ) -> dict[str, Any]:
         """针对指定查询启动分阶补救召回。"""
-        if not query:
-            return {"query": "", "is_remedied": False, "remedied_items": []}
+        self._last_raw_candidates = []
+        if not query.strip() or limit <= 0 or not re.search(r"\w", query):
+            return {
+                "query": query,
+                "is_remedied": False,
+                "remedied_items": [],
+                "scanned_count": 0,
+                "scan_truncated": False,
+            }
 
         if self.session is not None:
             return self._remedy_recall(self.session, query, domain, allow_domain_relax, limit)
@@ -162,132 +176,154 @@ class ShiyiEngine:
         allow_domain_relax: bool,
         limit: int,
     ) -> dict[str, Any]:
-        # 1. 分词与 token 提取
-        q_lower = query.lower()
+        # 词项、三元组和进入 Python 的行数均设硬上限；各阶共用一个扫描预算。
+        q_lower = unicodedata.normalize("NFKC", query).casefold()
         cut_words = [w.strip() for w in jieba.cut(q_lower) if len(w.strip()) > 1]
         raw_chars = [c for c in re.findall(r"[\w一-龥]", q_lower) if c]
-        tokens = set(cut_words) if cut_words else set(raw_chars)
-
-        # 2. 扫描活跃记忆（N-02 治理，v0.63 票 02）：
-        #    a) SQL 预筛——token LIKE 先行收窄，无关行不进 Python 逐条匹配
-        #       （tokens 为空时退回全表，但受 b 熔断约束）；
-        #    b) 扫描预算熔断——超 SHIYI_SCAN_BUDGET_MS 即中断，partial 语义
-        #       标注 scan_truncated；拾遗 best-effort，宁 miss 不拖延。
-        stmt = select(MemoryItem).where(
-            MemoryItem.status == "active",
-            # lifecycle 过滤（v0.68 票 15）：更正设计里旧说有意保留 status=active，
-            # 仅标 lifecycle_status=superseded（tables.py 注释：superseded「退出检索」）
-            # ——本扫描只认 status 时，superseded 行可经拾遗回灌（hybrid 兜底面由
-            # 更正闸标记臂兜住；/shiyi/remedy 直连面无闸）。口径对齐 context.py
-            # `5ae6caf3`：lifecycle 单条件过滤，superseded_by 为空的异常行一并退出
-            # （拾遗无「已更正」标记机制，过滤是最小正确语义，宁 miss 不脏写）。
-            # DDL 为 NOT NULL DEFAULT 'active'，无需 NULL 防御分支。
-            MemoryItem.lifecycle_status != LifecycleStatus.SUPERSEDED,
-        )
-        # verbatim「默认不召回」契约（票 05 续32，评审 N-01/R-02 同族）：主流水线
-        # 在 hybrid.py 过滤段排除逐字原文，但拾遗有 `/shiyi/remedy` 直连入口，
-        # 守卫挂在水线侧管不到它——契约必须在扫描侧同样成立（VERBATIM_IN_RECALL
-        # 显式打开时放行，与主流水线同一开关、同一方向）。
-        if not settings.VERBATIM_IN_RECALL:
-            stmt = stmt.where(MemoryItem.memory_type != "verbatim")
-        if domain != "all" and not allow_domain_relax:
-            stmt = stmt.where(MemoryItem.domain == domain)
-        if tokens:
-            stmt = stmt.where(
-                or_(
-                    *[
-                        # 票 28 病灶 3：token 经 like_escape 字面化（\w 字符类
-                        # 保留 `_`，裸 `_` 查询曾全表扫描）。
-                        MemoryItem.content.like(f"%{like_escape(t)}%", escape=LIKE_ESCAPE_CHAR)
-                        for t in sorted(tokens)
-                    ]
+        tokens = set(dict.fromkeys(cut_words or raw_chars))
+        tokens = set(sorted(tokens, key=lambda t: (q_lower.find(t), t))[:32])
+        grams = set(
+            list(
+                dict.fromkeys(
+                    word[i : i + 3]
+                    for word in re.findall(r"\w+", q_lower)
+                    for i in range(len(word) - 2)
                 )
-            )
-        all_memories = s.exec(stmt).all()
-        scanned_count = len(all_memories)
-
+            )[:64]
+        )
+        current_time = utcnow()
+        base = select(MemoryItem).where(
+            MemoryItem.status == "active",
+            MemoryItem.lifecycle_status.not_in(
+                [LifecycleStatus.SUPERSEDED, LifecycleStatus.RETIRED]
+            ),
+            or_(MemoryItem.valid_from.is_(None), MemoryItem.valid_from <= current_time),
+            or_(MemoryItem.valid_to.is_(None), MemoryItem.valid_to > current_time),
+        )
+        # 直连补救与主路同样排除逐字原文，回拨不能恢复已失效的主张。
+        if not settings.VERBATIM_IN_RECALL:
+            base = base.where(MemoryItem.memory_type != "verbatim")
+        scopes = [base] if domain == "all" else [base.where(MemoryItem.domain == domain)]
+        if domain != "all" and allow_domain_relax:
+            scopes.append(base.where(MemoryItem.domain != domain))
         budget_s = max(settings.SHIYI_SCAN_BUDGET_MS, 0) / 1000.0
         t_start = self._now()
         scan_truncated = False
-
-        candidates: list[tuple[float, RemedyCandidate]] = []
-        for mem in all_memories:
-            # 每行检查预算：perf_counter 是 ns 级调用，节流反而会在小库
-            # 场景漏判（循环先于下一次检查自然结束 = 熔断形同虚设）
-            if (self._now() - t_start) > budget_s:
-                scan_truncated = True
+        seen: set[str] = set()
+        candidates: list[tuple[int, float, RemedyCandidate]] = []
+        regular_count = 0
+        for scope in scopes:
+            if regular_count >= limit or scan_truncated:
                 break
-            if not self._check_access(
-                owner_id=mem.user_id,
-                tenant_id=mem.tenant_id,
-                shared_scope=getattr(mem, "shared_scope", "private"),
-            ):
-                continue
-
-            content_text = (mem.content or "").lower()
-
-            # 判定 Tier 1: 模糊关键词匹配
-            hit_tokens = [t for t in tokens if t in content_text]
-            token_ratio = len(hit_tokens) / max(len(tokens), 1)
-
-            # 判定字符级重合 (针对缩略词如 K8S -> kubernetes)
-            char_hits = sum(1 for c in set(q_lower) if c.isalnum() and c in content_text)
-            char_ratio = char_hits / max(len(set(q_lower)), 1)
-
-            tier = None
-            score = 0.0
-            reason = ""
-
-            # 判断是否跨域放宽 (Tier 2)
-            is_domain_relaxed = domain != "all" and mem.domain != domain
-
-            if token_ratio >= 0.3:
-                score = token_ratio * 0.7 + (mem.confidence or 0.8) * 0.3
-                if is_domain_relaxed:
-                    tier = "domain_relax"
-                    score *= 0.85  # 跨域轻微置信度折扣
-                    reason = f"放宽域范围至 [{mem.domain}] 召回 (命中 {len(hit_tokens)} 个词)"
-                else:
-                    tier = "fuzzy_tokens"
-                    reason = f"模糊词条重合 ({len(hit_tokens)}/{len(tokens)})"
-            elif char_ratio >= 0.5:
-                score = char_ratio * 0.5 + (mem.confidence or 0.8) * 0.3
-                if is_domain_relaxed:
-                    tier = "domain_relax"
-                    score *= 0.8
-                    reason = f"放宽域范围至 [{mem.domain}] 字符子串召回"
-                else:
-                    tier = "subsequence"
-                    reason = f"字符级子序列模糊召回 (重合率 {round(char_ratio, 2)})"
-
-            if tier is not None and score >= 0.3:
-                candidates.append(
-                    (
-                        score,
-                        RemedyCandidate(
-                            id=mem.id,
-                            content=mem.content,
-                            remedy_tier=tier,
-                            confidence=score,
-                            remedy_reason=reason,
-                            domain=mem.domain,
-                            lane=mem.lane,
-                            user_id=mem.user_id,
-                            tenant_id=mem.tenant_id,
-                            created_at=mem.created_at,
-                        ),
+            for terms in (tokens, grams):
+                if not terms or regular_count >= limit or scan_truncated:
+                    break
+                if self._now() - t_start > budget_s:
+                    scan_truncated = True
+                    break
+                stmt = scope.where(
+                    or_(
+                        *[
+                            MemoryItem.content.like(f"%{like_escape(t)}%", escape=LIKE_ESCAPE_CHAR)
+                            for t in sorted(terms)
+                        ]
                     )
                 )
+                if seen:
+                    stmt = stmt.where(MemoryItem.id.not_in(sorted(seen)))
+                # 多取一行仅用于准确报告截断；不全量物化，也不在每阶重置配额。
+                rows = s.exec(
+                    stmt.order_by(MemoryItem.id)
+                    .limit(513 - len(seen))
+                    .execution_options(yield_per=64)
+                )
+                try:
+                    for mem in rows:
+                        if len(seen) >= 512 or self._now() - t_start > budget_s:
+                            scan_truncated = True
+                            break
+                        seen.add(mem.id)
+                        if not self._check_access(
+                            owner_id=mem.user_id,
+                            tenant_id=mem.tenant_id,
+                            shared_scope=mem.shared_scope,
+                            lane=mem.lane,
+                        ):
+                            continue
+                        content = unicodedata.normalize("NFKC", mem.content or "").casefold()
+                        token_hits = sum(t in content for t in tokens)
+                        token_ratio = token_hits / max(len(tokens), 1)
+                        gram_hits = sum(g in content for g in grams)
+                        gram_ratio = gram_hits / max(len(grams), 1)
+                        confidence = min(
+                            max(mem.confidence if mem.confidence is not None else 0.8, 0.0), 1.0
+                        )
+                        if token_ratio >= 0.3:
+                            tier = "fuzzy_tokens"
+                            lexical_score = token_ratio * 0.7 + confidence * 0.3
+                            reason = f"模糊词条重合 ({token_hits}/{len(tokens)})"
+                        elif gram_hits >= 2 and gram_ratio >= 0.6:
+                            tier = "subsequence"
+                            lexical_score = gram_ratio * 0.5 + confidence * 0.3
+                            reason = f"连续字符三元组重合 ({gram_hits}/{len(grams)})"
+                        else:
+                            continue
+                        relaxed = domain != "all" and mem.domain != domain
+                        priority = 1 if relaxed else 0
+                        if relaxed:
+                            lexical_score *= 0.85
+                            tier = "domain_relax"
+                            reason = f"放宽域范围至 [{mem.domain}]；{reason}"
+                        decay = min(max(mem.decay_score, 0.0), 1.0)
+                        score = lexical_score * decay
+                        before = score
+                        if score < 0.3:
+                            # 只回拨衰减惩罚的一半；不改主张有效期、存储分数与生命周期。
+                            score = lexical_score * (0.5 + 0.5 * decay)
+                            tier = "decay_boost"
+                            priority = 2
+                            reason += "；衰减惩罚减半回拨"
+                        if score < 0.3:
+                            continue
+                        if priority < 2:
+                            regular_count += 1
+                        candidates.append(
+                            (
+                                priority,
+                                score,
+                                RemedyCandidate(
+                                    id=mem.id,
+                                    content=mem.content,
+                                    remedy_tier=tier,
+                                    confidence=score,
+                                    remedy_reason=reason,
+                                    domain=mem.domain,
+                                    lane=mem.lane,
+                                    user_id=mem.user_id,
+                                    tenant_id=mem.tenant_id,
+                                    created_at=mem.created_at,
+                                    metadata={
+                                        "original_query": query,
+                                        "domain_relaxed": relaxed,
+                                        "decay_score": decay,
+                                        "score_before": round(before, 4),
+                                        "score_after": round(score, 4),
+                                    },
+                                ),
+                            )
+                        )
+                finally:
+                    rows.close()
 
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        remedied_items = [c.to_dict(fenced=True) for _, c in candidates[:limit]]
-        self._last_raw_candidates = [c for _, c in candidates[:limit]]
+        candidates.sort(key=lambda x: (x[0], -x[1], x[2].id))
+        self._last_raw_candidates = [c for _, _, c in candidates[:limit]]
+        remedied_items = [c.to_dict(fenced=True) for c in self._last_raw_candidates]
 
         return {
             "query": query,
             "is_remedied": len(remedied_items) > 0,
             "remedied_items": remedied_items,
-            "scanned_count": scanned_count,
+            "scanned_count": len(seen),
             "scan_truncated": scan_truncated,
         }
 
