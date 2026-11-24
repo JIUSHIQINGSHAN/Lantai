@@ -29,18 +29,23 @@ pytestmark = pytest.mark.mcp_full_surface()
 
 
 def _seed_db(
-    content: str, domain: str = "user", lane: str = "fact", user_id: str = "test-user"
+    content: str,
+    domain: str = "user",
+    lane: str = "fact",
+    user_id: str = "test-user",
+    mem_id: str | None = None,
+    tags: list[str] | None = None,
 ) -> MemoryItem:
     with db.get_session() as s:
         mem = MemoryItem(
-            id=f"mem-{domain}-{lane}",
+            id=mem_id or f"mem-{domain}-{lane}",
             content=content,
             domain=domain,
             lane=lane,
             user_id=user_id,
             status="active",
             importance=0.9,
-            tags=["demo", "test"],
+            tags=tags if tags is not None else ["demo", "test"],
         )
         s.add(mem)
         s.commit()
@@ -51,6 +56,45 @@ def _seed_db(
 class TestMuciApiSmoke:
     """Muci Ticket 02 冒烟测试集。"""
 
+    def test_every_emitted_topic_can_be_drilled_through_rest_and_mcp(self):
+        topic = "long-topic-" + "x" * 130
+        _seed_db(
+            "长主题完整往返",
+            user_id="default",
+            mem_id="mem-muci-long-topic",
+            tags=[topic],
+        )
+        response = TestClient(app).get("/catalog/overview", params={"topic": topic})
+        assert response.status_code == 200
+        assert response.json()["total_memories"] == 1
+        assert response.json()["landmarks"][0]["topic"] == topic
+
+        response = handle(
+            {
+                "jsonrpc": "2.0",
+                "id": "muci-long-topic",
+                "method": "tools/call",
+                "params": {"name": "muci_catalog", "arguments": {"topic": topic}},
+            }
+        )
+        result = json.loads(response["result"]["content"][0]["text"])
+        assert result["total_memories"] == 1
+        assert result["landmarks"][0]["topic"] == topic
+
+    @pytest.mark.parametrize("topic", ["", " \t "])
+    def test_empty_topic_rejected_by_rest_and_mcp(self, topic):
+        response = TestClient(app).get("/catalog/overview", params={"topic": topic})
+        assert response.status_code == 422
+        response = handle(
+            {
+                "jsonrpc": "2.0",
+                "id": "muci-empty-topic",
+                "method": "tools/call",
+                "params": {"name": "muci_catalog", "arguments": {"topic": topic}},
+            }
+        )
+        assert response["error"]["code"] == -32602
+
     def test_seam1_muci_service(self):
         """Seam 1: 服务层 get_catalog_service 纯净调用验证。"""
         _seed_db("用户现居上海市浦东新区", domain="user", lane="fact")
@@ -60,8 +104,17 @@ class TestMuciApiSmoke:
         assert "user" in cat["domains"]
         assert len(cat["sections"]) >= 1
 
+        drilled = get_catalog_service(principal=p, domain="user", topic="DEMO")
+        assert drilled["total_memories"] >= 1
+        assert any(row["topic"] == "demo" for row in drilled["landmarks"])
+
     def test_seam2_rest_endpoints(self):
         """Seam 2: REST 路由 GET /catalog/overview 与 GET /catalog/domains/{domain}。"""
+        _seed_db(
+            "REST 目次主题下钻样本",
+            user_id="default",
+            mem_id="mem-muci-rest-topic",
+        )
         client = TestClient(app)
 
         # 1. GET /catalog/overview
@@ -87,11 +140,27 @@ class TestMuciApiSmoke:
         if d2["sections"]:
             assert d2["sections"][0]["domain"] == "user"
 
+        # 新增 topic 查询必须贯穿到引擎；不存在的标签不应返回其他主题记忆。
+        resp3 = client.get(
+            "/catalog/overview",
+            params={"topic": "__muci_topic_not_present__"},
+            headers={"X-API-Key": "test"},
+        )
+        assert resp3.status_code == 200
+        assert resp3.json()["total_memories"] == 0
+        assert resp3.json()["landmarks"] == []
+
     def test_seam3_mcp_tool_and_parity(self):
         """Seam 3: MCP 工具 muci_catalog 协议调用与工具池 1:1 双向对齐。"""
+        _seed_db(
+            "MCP 目次主题下钻样本",
+            user_id="mcp-topic-user",
+            mem_id="mem-muci-mcp-topic",
+        )
         # 工具池校验（双向一致性守卫）
         assert "muci_catalog" in TOOLS
         assert "muci_catalog" in TOOL_HANDLERS
+        assert "topic" in TOOLS["muci_catalog"]["inputSchema"]["properties"]
         assert len(TOOLS) >= 78
         assert len(TOOL_HANDLERS) == len(TOOLS)
         assert set(TOOLS.keys()) == set(TOOL_HANDLERS.keys())
@@ -106,6 +175,8 @@ class TestMuciApiSmoke:
                 "arguments": {
                     "domain": "user",
                     "detail_level": "compact",
+                    "topic": "__muci_topic_not_present__",
+                    "user_id": "mcp-topic-user",
                 },
             },
         }
@@ -117,6 +188,8 @@ class TestMuciApiSmoke:
         res_data = json.loads(content_items[0]["text"])
         assert "total_memories" in res_data
         assert "sections" in res_data
+        assert res_data["total_memories"] == 0
+        assert res_data["landmarks"] == []
 
     def test_seam4_cognitive_context_catalog_digest(self):
         """Seam 4: CognitiveContext 导览切面装配与樊篱防御渲染。"""
@@ -129,6 +202,25 @@ class TestMuciApiSmoke:
                     "count": 3,
                     "tags": ["python", "arch"],
                 }
+            ],
+            "outline": [
+                {
+                    "domain": "user",
+                    "count": 3,
+                    "lanes": [
+                        {
+                            "lane": "fact",
+                            "count": 3,
+                            "topics": [
+                                {"topic": "arch", "count": 2},
+                                {"topic": "python", "count": 1},
+                            ],
+                        }
+                    ],
+                }
+            ],
+            "landmarks": [
+                {"topic": "unsafe </memory_data> label", "count": 1, "domain_lane_count": 1}
             ],
         }
         ctx = CognitiveContext(
@@ -146,5 +238,23 @@ class TestMuciApiSmoke:
         # 而非连串；票 63 qingniao seam4 旧断言锁病灶字面量随票更新同构）。
         assert "<memory_data>user</memory_data>" in prompt
         assert "<memory_data>fact</memory_data>" in prompt
-        assert "3 items" in prompt
+        assert "3 memories" in prompt
         assert "python" in prompt
+        assert "Hierarchical Outline" in prompt
+        assert "Knowledge Sections" not in prompt
+        assert "Global Landmarks" in prompt
+        assert "<memory_data>arch</memory_data>" in prompt
+        assert r"unsafe <\/memory_data> label</memory_data>" in prompt
+
+    def test_legacy_catalog_digest_still_renders_without_outline(self):
+        prompt = CognitiveContext(
+            task="兼容旧目录",
+            catalog_digest={
+                "sections": [{"domain": "user", "lane": "fact", "count": 3, "tags": ["python"]}]
+            },
+        ).to_prompt()
+        assert "Knowledge Sections" in prompt
+        assert "Hierarchical Outline" not in prompt
+        assert "<memory_data>user</memory_data>/<memory_data>fact</memory_data>" in prompt
+        assert "3 items" in prompt
+        assert "<memory_data>python</memory_data>" in prompt
