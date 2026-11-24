@@ -69,25 +69,32 @@ def init_db():
     from lantai.models import tables  # noqa
 
     SQLModel.metadata.create_all(engine)
-    # 幂等列迁移与 FTS5 初始化：老库缺列时 create_all 不会加列，统一走 user_version 增量链。
-    # 统一复用同一底层连接并在 finally 中严格关闭，避免连接槽与文件句柄泄露。
+    # 幂等列迁移：老库缺列时 create_all 不会加列，统一走 user_version 增量链
     conn = None
     try:
         conn = engine.raw_connection()
         apply_migrations(conn)
-        # 初始化 FTS5（词汇召回通道）。返回 False 时**不抛**——抛出去会让整个服务
-        # 起不来，而这是「降级但可用」状态（SQLite + 向量召回仍工作）。改为如实留痕，
-        # 并由 /health/deep 的 checks["fts"] 让运维看得见（票 .scratch/fts-availability/01）。
-        global FTS_OK
-        FTS_OK = init_fts(conn)
-        if not FTS_OK:
-            logger.warning(
-                "FTS5 词汇召回通道不可用（详见上方 error 日志）：检索将退回向量通道，"
-                "中文子串匹配可能全部失效；/health/deep 的 checks.fts 会报告 fail"
-            )
     finally:
         if conn is not None:
             conn.close()
+
+    # 初始化 FTS5（词汇召回通道）。返回 False 时**不抛**——抛出去会让整个服务
+    # 起不来，而这是「降级但可用」状态（SQLite + 向量召回仍工作）。改为如实留痕，
+    # 并由 /health/deep 的 checks["fts"] 让运维看得见（票 .scratch/fts-availability/01）。
+    # 连接必须归还：`init_fts` 只在成功路径 commit、从不到 close（fts.py），
+    # 修前这里漏关，启动即漏一条 DBAPI 连接直到 GC——与上方迁移块的正确写法
+    # （try/finally close）不一致。回归锁 tests/test_opt_refactor_smoke.py。
+    conn = engine.raw_connection()
+    global FTS_OK
+    try:
+        FTS_OK = init_fts(conn)
+    finally:
+        conn.close()
+    if not FTS_OK:
+        logger.warning(
+            "FTS5 词汇召回通道不可用（详见上方 error 日志）：检索将退回向量通道，"
+            "中文子串匹配可能全部失效；/health/deep 的 checks.fts 会报告 fail"
+        )
 
 
 def get_session() -> Session:
