@@ -99,6 +99,12 @@ RST）：`classify_intent` 单次 **6.47s**。而 `SHELL_HOOK_TIMEOUT` 默认 2s
   且是夜间任务、有单飞锁。
 - **reflect 逐条提案各开 session**：`_reject` 是 LLM 网络调用，把网络调用放在
   事务外是刻意设计；改批提交反而持写锁跨网络往返。
+- **`health_scan` 的全表读**（`reflector.py`，每轮反思读两次：前/后快照）：确实
+  是「只产出 ≤20 条候选却物化整张 active 表」，但它同时要产出五个信号的**全量
+  计数**（`snapshot`），而那五个判据分别落在 `valid_to` / `use_count` /
+  `helpful_count` / `importance` / `decay_class` 上，且 R1 的 superseded 判定
+  要先建全量边映射。逐信号下推 SQL 是**五个独立查询 + 语义重写**，不是一行改动；
+  且它跑在后台 cron、不进请求路径。按「够用先于精巧」本轮不动，留作独立票据。
 
 ## 4. 复现
 
