@@ -39,8 +39,9 @@ def list_skills_service(
     *,
     limit: int = 50,
     principal: Principal | None = None,
+    fenced: bool = False,
 ) -> list[dict[str, Any]]:
     """获取当前租户权限范围内的法门列表。"""
     with db.get_session() as session:
         engine = FamenEngine(session=session, principal=principal)
-        return engine.list_skills(limit=limit)
+        return engine.list_skills(limit=limit, fenced=fenced)

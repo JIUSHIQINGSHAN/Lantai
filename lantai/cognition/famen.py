@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+import jieba
 from sqlmodel import Session, select
 
 from lantai.core.acl import is_system_viewer, viewer_of
@@ -41,20 +42,26 @@ class SkillAsset:
     tenant_id: str | None = None
     created_at: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    sop: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self, *, fenced: bool = False) -> dict[str, Any]:
         """序列化为字典，支持樊篱安全包裹。"""
         if fenced:
+            safe_name = wrap_as_data(self.name, item_id=self.id)
             fenced_steps = [wrap_as_data(s, item_id=self.id) for s in self.steps]
             fenced_proc = wrap_as_data(self.procedure, item_id=self.id)
             fenced_trigger = wrap_as_data(self.trigger_rule, item_id=self.id)
+            fenced_sop = _fence_sop(self.sop, item_id=self.id)
             return {
                 "id": self.id,
-                "name": self.name,
+                "name": safe_name,
+                "fenced_name": safe_name,
                 "trigger_rule": fenced_trigger,
-                "procedure": self.procedure,
+                "procedure": fenced_proc,
                 "fenced_procedure": fenced_proc,
                 "steps": fenced_steps,
+                "description": fenced_sop["description"],
+                "sop": fenced_sop,
                 "source_type": self.source_type,
                 "confidence": self.confidence,
                 "shared_scope": self.shared_scope,
@@ -68,6 +75,8 @@ class SkillAsset:
             "trigger_rule": self.trigger_rule,
             "procedure": self.procedure,
             "steps": self.steps,
+            "description": self.sop.get("description", ""),
+            "sop": self.sop,
             "source_type": self.source_type,
             "confidence": self.confidence,
             "shared_scope": self.shared_scope,
@@ -77,21 +86,345 @@ class SkillAsset:
         }
 
 
-def _extract_steps(procedure: str) -> list[str]:
-    """从文本流程中提取清晰的编号/列表步骤。"""
-    if not procedure:
+_SOP_FIELDS = (
+    "description",
+    "preconditions",
+    "steps",
+    "parameters",
+    "verification_steps",
+    "rollback_steps",
+)
+_SOP_LIST_FIELDS = set(_SOP_FIELDS) - {"description"}
+_SOP_HEADER_ALIASES = {
+    "description": ("用途", "简介", "描述", "目的", "概述", "description", "overview", "purpose"),
+    "preconditions": (
+        "前置条件",
+        "前置检查",
+        "准备工作",
+        "前提条件",
+        "prerequisites",
+        "preconditions",
+        "preflight",
+        "preflight checks",
+        "requirements",
+        "setup",
+    ),
+    "steps": (
+        "执行步骤",
+        "操作步骤",
+        "具体步骤",
+        "步骤",
+        "流程",
+        "steps",
+        "procedure",
+        "execution steps",
+        "procedure steps",
+        "instructions",
+        "workflow",
+        "actions",
+    ),
+    "parameters": (
+        "参数插槽",
+        "参数列表",
+        "参数",
+        "variables",
+        "parameters",
+        "parameter slots",
+        "arguments",
+        "inputs",
+        "configuration",
+    ),
+    "verification_steps": (
+        "验证步骤",
+        "验证",
+        "检查点",
+        "验收",
+        "verification",
+        "validation",
+        "verification steps",
+        "validation steps",
+        "acceptance criteria",
+        "checks",
+    ),
+    "rollback_steps": (
+        "回滚步骤",
+        "回滚",
+        "回退",
+        "rollback",
+        "recovery",
+        "rollback steps",
+        "recovery steps",
+        "backout",
+    ),
+}
+_LIST_MARKER_RE = re.compile(
+    r"^(?:[-*+•]\s*|\d+[.)、]\s*|[一二三四五六七八九十]+[.)、．]\s*|"
+    r"步骤\s*(?:\d+|[一二三四五六七八九十]+)\s*[:：.)、．]\s*)"
+)
+_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
+_LATIN_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_+#.-]*")
+_EXCLUSION_RE = re.compile(
+    r"(?:不适用于|不适用|不适合|不触发|不要用于|排除|not\s+applicable\s+for|not\s+for|except|exclude)"
+    r"\s*[:：]?\s*([^。！？!?；;\n]+)",
+    re.IGNORECASE,
+)
+_MATCH_STOPWORDS = frozenset(
+    [
+        "一个",
+        "这个",
+        "那个",
+        "进行",
+        "使用",
+        "用于",
+        "适用",
+        "适用于",
+        "触发",
+        "任务",
+        "情况",
+        "问题",
+        "执行",
+        "处理",
+        "相关",
+        "相关的",
+        "步骤",
+        "流程",
+        "操作",
+        "检查",
+        "确认",
+        "可以",
+        "需要",
+        "如果",
+        "当",
+        "时",
+        "在",
+        "并",
+        "与",
+        "及",
+        "或",
+        "的",
+        "了",
+        "是",
+        "和",
+        "不",
+        "要",
+        "请",
+        "the",
+        "and",
+        "for",
+        "when",
+        "with",
+        "from",
+        "this",
+        "that",
+        "use",
+        "used",
+        "using",
+        "run",
+        "task",
+        "steps",
+        "procedure",
+        "applicable",
+        "only",
+        "not",
+        "except",
+        "exclude",
+    ]
+)
+
+
+def _clean_list_item(value: Any) -> str:
+    text = str(value).strip() if value is not None else ""
+    text = _LIST_MARKER_RE.sub("", text, count=1).strip()
+    return re.sub(
+        r"^步骤\s*(?:\d+|[一二三四五六七八九十]+)\s*[:：.)、．]\s*",
+        "",
+        text,
+    ).strip()
+
+
+def _as_text_list(value: Any) -> list[str]:
+    """把已有 SOP 列表字段规范成非空文本项。"""
+    if isinstance(value, str):
+        values = value.splitlines()
+    elif isinstance(value, (list, tuple)):
+        values = value
+    else:
         return []
-    lines = procedure.strip().splitlines()
-    steps: list[str] = []
-    for line in lines:
-        s = line.strip()
-        if not s:
+    return [cleaned for item in values if (cleaned := _clean_list_item(item))]
+
+
+def _section_header(line: str) -> tuple[str, str] | None:
+    text = re.sub(r"^\s*#{1,6}\s*", "", line).strip().strip("*_` ")
+    text = re.sub(r"^(?:\d+[.)、]\s*|[一二三四五六七八九十]+[.)、．]\s*)", "", text)
+    text = re.sub(r"^(?:\d+[.)、]\s*|[一二三四五六七八九十]+[.)、．]\s*)", "", text)
+    for field_name, aliases in _SOP_HEADER_ALIASES.items():
+        for alias in sorted(aliases, key=len, reverse=True):
+            match = re.match(rf"^{re.escape(alias)}\s*(?::|：)\s*(.*)$", text, re.IGNORECASE)
+            if match:
+                return field_name, match.group(1).strip()
+            if text.casefold() == alias.casefold():
+                return field_name, ""
+    return None
+
+
+def _empty_sop() -> dict[str, Any]:
+    return {name: "" if name == "description" else [] for name in _SOP_FIELDS}
+
+
+def _extract_sop(procedure: str, structure: dict[str, Any] | None = None) -> dict[str, Any]:
+    """从自由文本与既有 structure 中提取稳定的 SOP 栏目。"""
+    parsed = _empty_sop()
+    active_section: str | None = None
+    fallback_steps: list[str] = []
+
+    for raw_line in (procedure or "").splitlines():
+        line = raw_line.strip()
+        if not line:
             continue
-        # 匹配 - 步骤1: xxx / 1. xxx / - xxx / * xxx
-        cleaned = re.sub(r"^([-\*]|\d+\.|\d+、|步骤\d+[:：]?)\s*", "", s).strip()
-        if cleaned:
-            steps.append(cleaned)
-    return steps if steps else [procedure.strip()]
+        header = _section_header(line)
+        if header:
+            active_section, inline_value = header
+            if inline_value:
+                if active_section in _SOP_LIST_FIELDS:
+                    parsed[active_section].append(_clean_list_item(inline_value))
+                else:
+                    parsed[active_section] = inline_value
+            continue
+
+        marked = bool(_LIST_MARKER_RE.match(line))
+        value = _clean_list_item(line)
+        if active_section:
+            if active_section in _SOP_LIST_FIELDS:
+                parsed[active_section].append(value)
+            else:
+                parsed[active_section] = "\n".join(
+                    part for part in (parsed[active_section], value) if part
+                )
+        elif marked:
+            fallback_steps.append(value)
+        else:
+            parsed["description"] = "\n".join(
+                part for part in (parsed["description"], value) if part
+            )
+
+    if not parsed["steps"]:
+        parsed["steps"] = fallback_steps
+
+    if isinstance(structure, dict):
+        for field_name in _SOP_FIELDS:
+            value = structure.get(field_name)
+            if field_name == "description":
+                if isinstance(value, str) and value.strip():
+                    parsed[field_name] = value.strip()
+            else:
+                structured_values = _as_text_list(value)
+                if structured_values:
+                    parsed[field_name] = structured_values
+
+    for field_name in _SOP_LIST_FIELDS:
+        parsed[field_name] = _as_text_list(parsed[field_name])
+    return parsed
+
+
+def _extract_steps(procedure: str) -> list[str]:
+    """兼容入口：只返回明确编号/列表或 SOP 执行步骤小节。"""
+    return _extract_sop(procedure)["steps"]
+
+
+def _fence_sop(sop: dict[str, Any], *, item_id: str) -> dict[str, Any]:
+    """围栏化所有进入执行投影的 SOP 正文。"""
+    result: dict[str, Any] = {}
+    for field_name in _SOP_FIELDS:
+        value = sop.get(field_name, "" if field_name == "description" else [])
+        if field_name == "description":
+            result[field_name] = wrap_as_data(str(value or ""), item_id=item_id)
+        else:
+            result[field_name] = [
+                wrap_as_data(str(item), item_id=item_id) for item in _as_text_list(value)
+            ]
+    return result
+
+
+def _match_tokens(text: str) -> set[str]:
+    """提取稳定的中英文意图词项，减少中文整句被当成单一 token 的漏配。"""
+    normalized = (text or "").casefold()
+    tokens = {word.strip() for word in jieba.cut(normalized) if word.strip()}
+    latin_tokens = _LATIN_TOKEN_RE.findall(normalized)
+    tokens.update(latin_tokens)
+    tokens.update(part for token in latin_tokens for part in re.split(r"[-_.]+", token) if part)
+    tokens.update(
+        bigram
+        for run in _CJK_RE.findall(normalized)
+        for bigram in (run[index : index + 2] for index in range(len(run) - 1))
+    )
+    return {token for token in tokens if token not in _MATCH_STOPWORDS and len(token) > 1}
+
+
+def _excluded_by_trigger(task_tokens: set[str], trigger_rule: str) -> bool:
+    for match in _EXCLUSION_RE.finditer(trigger_rule or ""):
+        excluded_tokens = _match_tokens(match.group(1))
+        if not excluded_tokens:
+            continue
+        overlap = task_tokens & excluded_tokens
+        if overlap and len(overlap) / len(excluded_tokens) >= 0.5:
+            return True
+    return False
+
+
+def _trigger_text(value: Any, *, fallback: str) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(value, (list, tuple)):
+        values = [str(item).strip() for item in value if str(item).strip()]
+        if values:
+            return "；".join(values)
+    return fallback
+
+
+def _crystal_asset(crystal: SkillCrystal) -> SkillAsset:
+    sop = _extract_sop(crystal.procedure)
+    return SkillAsset(
+        id=crystal.id,
+        name=crystal.skill_name,
+        trigger_rule=_trigger_text(
+            crystal.trigger_rule,
+            fallback=f"适用任务关键词: {crystal.skill_name}",
+        ),
+        procedure=crystal.procedure,
+        steps=sop["steps"],
+        source_type="crystal",
+        sop=sop,
+        confidence=1.0,
+        shared_scope=crystal.shared_scope,
+        user_id=crystal.user_id,
+        tenant_id=crystal.tenant_id,
+        created_at=crystal.created_at,
+        metadata={"hit_count": crystal.hit_count, "success_count": crystal.success_count},
+    )
+
+
+def _memory_asset(memory: MemoryItem) -> SkillAsset:
+    struct = memory.structure if isinstance(memory.structure, dict) else {}
+    sop = _extract_sop(memory.content, struct)
+    skill_name = struct.get("name") or memory.key or f"sop-{memory.id[:8]}"
+    return SkillAsset(
+        id=memory.id,
+        name=str(skill_name),
+        trigger_rule=_trigger_text(
+            struct.get("trigger_rule") or struct.get("triggers"),
+            fallback=memory.content[:100],
+        ),
+        procedure=memory.content,
+        steps=sop["steps"],
+        source_type="procedural_memory",
+        sop=sop,
+        confidence=memory.confidence if memory.confidence is not None else 0.9,
+        shared_scope="private",
+        user_id=memory.user_id,
+        tenant_id=memory.tenant_id,
+        created_at=memory.created_at,
+        metadata={"lane": memory.lane, "decay_class": memory.decay_class},
+    )
 
 
 class FamenEngine:
@@ -148,26 +481,7 @@ class FamenEngine:
                 shared_scope=sc.shared_scope,
             ):
                 continue
-            steps = _extract_steps(sc.procedure)
-            assets.append(
-                SkillAsset(
-                    id=sc.id,
-                    name=sc.skill_name,
-                    trigger_rule=sc.trigger_rule or f"适用任务关键词: {sc.skill_name}",
-                    procedure=sc.procedure,
-                    steps=steps,
-                    source_type="crystal",
-                    confidence=1.0,
-                    shared_scope=sc.shared_scope,
-                    user_id=sc.user_id,
-                    tenant_id=sc.tenant_id,
-                    created_at=sc.created_at,
-                    metadata={
-                        "hit_count": sc.hit_count,
-                        "success_count": sc.success_count,
-                    },
-                )
-            )
+            assets.append(_crystal_asset(sc))
 
         # 2. 扫描 procedural 或带 structure.steps 的 MemoryItem
         memories = s.exec(
@@ -187,42 +501,19 @@ class FamenEngine:
                 shared_scope="private",
             ):
                 continue
-            struct = m.structure if isinstance(m.structure, dict) else {}
-            raw_steps = struct.get("steps") or []
-            if isinstance(raw_steps, list) and raw_steps:
-                steps = [str(x) for x in raw_steps]
-            else:
-                steps = _extract_steps(m.content)
-
-            skill_name = struct.get("name") or (m.key or f"sop-{m.id[:8]}")
-            assets.append(
-                SkillAsset(
-                    id=m.id,
-                    name=skill_name,
-                    trigger_rule=m.content[:100],
-                    procedure=m.content,
-                    steps=steps,
-                    source_type="procedural_memory",
-                    confidence=m.confidence if m.confidence is not None else 0.9,
-                    shared_scope="private",
-                    user_id=m.user_id,
-                    tenant_id=m.tenant_id,
-                    created_at=m.created_at,
-                    metadata={"lane": m.lane, "decay_class": m.decay_class},
-                )
-            )
+            assets.append(_memory_asset(m))
 
         return assets
 
-    def list_skills(self, limit: int = 50) -> list[dict[str, Any]]:
+    def list_skills(self, limit: int = 50, *, fenced: bool = False) -> list[dict[str, Any]]:
         """获取当前租户权限范围内的法门列表。"""
         if self.session is not None:
             assets = self._collect_all_skills(self.session)
-            return [a.to_dict(fenced=False) for a in assets[:limit]]
+            return [a.to_dict(fenced=fenced) for a in assets[:limit]]
 
         with db.get_session() as s:
             assets = self._collect_all_skills(s)
-            return [a.to_dict(fenced=False) for a in assets[:limit]]
+            return [a.to_dict(fenced=fenced) for a in assets[:limit]]
 
     def get_skill_detail(self, skill_id: str) -> dict[str, Any] | None:
         """获取单个法门的详细 SOP，带樊篱保护包裹。"""
@@ -237,25 +528,7 @@ class FamenEngine:
                     shared_scope=sc.shared_scope,
                 ):
                     return None
-                steps = _extract_steps(sc.procedure)
-                asset = SkillAsset(
-                    id=sc.id,
-                    name=sc.skill_name,
-                    trigger_rule=sc.trigger_rule or f"适用任务关键词: {sc.skill_name}",
-                    procedure=sc.procedure,
-                    steps=steps,
-                    source_type="crystal",
-                    confidence=1.0,
-                    shared_scope=sc.shared_scope,
-                    user_id=sc.user_id,
-                    tenant_id=sc.tenant_id,
-                    created_at=sc.created_at,
-                    metadata={
-                        "hit_count": sc.hit_count,
-                        "success_count": sc.success_count,
-                    },
-                )
-                return asset.to_dict(fenced=True)
+                return _crystal_asset(sc).to_dict(fenced=True)
 
             # 2. 尝试找 MemoryItem
             m = s.exec(select(MemoryItem).where(MemoryItem.id == skill_id)).first()
@@ -272,28 +545,7 @@ class FamenEngine:
                     shared_scope="private",
                 ):
                     return None
-                struct = m.structure if isinstance(m.structure, dict) else {}
-                raw_steps = struct.get("steps") or []
-                if isinstance(raw_steps, list) and raw_steps:
-                    steps = [str(x) for x in raw_steps]
-                else:
-                    steps = _extract_steps(m.content)
-                skill_name = struct.get("name") or (m.key or f"sop-{m.id[:8]}")
-                asset = SkillAsset(
-                    id=m.id,
-                    name=skill_name,
-                    trigger_rule=m.content[:100],
-                    procedure=m.content,
-                    steps=steps,
-                    source_type="procedural_memory",
-                    confidence=m.confidence if m.confidence is not None else 0.9,
-                    shared_scope="private",
-                    user_id=m.user_id,
-                    tenant_id=m.tenant_id,
-                    created_at=m.created_at,
-                    metadata={"lane": m.lane, "decay_class": m.decay_class},
-                )
-                return asset.to_dict(fenced=True)
+                return _memory_asset(m).to_dict(fenced=True)
 
             return None
 
@@ -304,34 +556,38 @@ class FamenEngine:
 
     def match_skills(self, task: str, limit: int = 5) -> list[dict[str, Any]]:
         """根据任务描述与触发条件进行相关度匹配。"""
-        if not task:
+        if not task or not isinstance(task, str):
+            return []
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+            return []
+        task_tokens = _match_tokens(task)
+        if not task_tokens:
             return []
 
         def _score(asset: SkillAsset) -> float:
-            score = 0.0
-            task_lower = task.lower()
-            name_lower = asset.name.lower()
-            trigger_lower = asset.trigger_rule.lower()
+            trigger_tokens = _match_tokens(asset.trigger_rule)
+            name_tokens = _match_tokens(asset.name)
+            step_tokens = _match_tokens(" ".join(asset.steps))
+            if _excluded_by_trigger(task_tokens, asset.trigger_rule):
+                return 0.0
 
-            # 1. 显式名字匹配
-            if name_lower in task_lower or task_lower in name_lower:
-                score += 5.0
+            # 1. 任务意图与名称/触发规则/步骤的加权覆盖。
+            name_overlap = task_tokens & name_tokens
+            trigger_overlap = task_tokens & trigger_tokens
+            step_overlap = task_tokens & step_tokens
+            score = (
+                (len(name_overlap) / max(len(name_tokens), 1)) * 4.0
+                + (len(trigger_overlap) / max(len(trigger_tokens), 1)) * 3.0
+                + (len(step_overlap) / max(len(step_tokens), 1)) * 1.0
+            )
 
-            # 2. 词元重叠匹配
-            task_tokens = set(re.findall(r"\w+", task_lower))
-            trigger_tokens = set(re.findall(r"\w+", trigger_lower))
-            name_tokens = set(re.findall(r"\w+", name_lower))
-
-            common_trigger = task_tokens & trigger_tokens
-            common_name = task_tokens & name_tokens
-
-            score += len(common_name) * 2.0
-            score += len(common_trigger) * 1.5
-
-            # 3. 步骤上下文奖励
-            for step in asset.steps:
-                step_tokens = set(re.findall(r"\w+", step.lower()))
-                score += len(task_tokens & step_tokens) * 0.5
+            # 短技术标识的精确出现应显著高于泛化中文字符重合。
+            exact_terms = {
+                token
+                for token in task_tokens
+                if token.isascii() and len(token) >= 2 and token in trigger_tokens | name_tokens
+            }
+            score += len(exact_terms) * 2.0
 
             return score
 
@@ -344,10 +600,10 @@ class FamenEngine:
         scored: list[tuple[float, SkillAsset]] = []
         for a in all_assets:
             s = _score(a)
-            if s > 0:
+            if s >= 1.0:
                 scored.append((s, a))
 
-        scored.sort(key=lambda x: x[0], reverse=True)
+        scored.sort(key=lambda x: (-x[0], -(x[1].confidence or 0.0), x[1].id))
         results: list[dict[str, Any]] = []
         for s, a in scored[:limit]:
             d = a.to_dict(fenced=True)
