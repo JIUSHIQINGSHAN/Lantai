@@ -57,6 +57,24 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 2.5–4.8s，默认 `SHELL_HOOK_TIMEOUT=2` 会把每轮降级成画像兜底（无 `event_id`，回执链断）。
 安装脚本生成的命令已 `setdefault` 为 8 秒，显式环境变量优先。
 
+预算同时约束**意图分类**（v0.70 起）：检索链把 `SHELL_HOOK_TIMEOUT × 0.85` 的余量按
+25% 分给 `classify_intent`，超预算回落 `DEFAULT_INTENT`。此前意图分类不吃预算，本机实测
+一次 LLM 调用 11.0s，8 秒墙下每轮超时降级、`event_id` 丢失（真机对照：10.5s → 5.9–6.4s）。
+
+**钩子读取属主（v0.70 起，可选）**：钩子进程默认以 `user_id="default"` 读库。真实库里
+历史记忆可能挂在别的属主下（HTTP 环境密钥写入的是 `api_key`），且可能全是 `verbatim`
+类型（`VERBATIM_IN_RECALL` 全局默认关）。两项不满足时钩子检索会**结构性零命中且不报错**。
+宿主可为钩子进程显式设置：
+
+| 环境变量 | 默认 | 作用 |
+|---|---|---|
+| `LANTAI_HOOK_USER_ID` | 空 | 空 = 旧行为（收敛成 `default`）；非空 = 以此属主读 |
+| `LANTAI_HOOK_ROLE` | `user` | `admin` 才享全表口径 |
+| `LANTAI_HOOK_VERBATIM_IN_RECALL` | 未设 | 未设 = 沿用全局；`true`/`false` 显式覆盖 |
+
+**不自动探测属主**：与 MCP 侧 `_principal_from_params` 同一纪律——猜错等于把别人的
+查询挂到另一个人头上。要看见非 default 属主的记忆，必须由运维显式配置。
+
 ---
 
 ## 2. 动作（actions）
@@ -155,6 +173,10 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
   服务端在超时回调里对该事件执行 `mark_abandoned`（pending→missed 并抹原话，
   ADR-0084 §2.6），原话不留库。
 - **异常一律静默降级**：hook 绝不抛异常、不拖垮宿主。
+- **例外：`dialogue` 缺表自愈**（v0.70 起）：命中 `no such table` 时补跑一次 `init_db()`
+  并重试；仍失败返回 `{"ok": false, "error": ...}`（写路径结果不翻译，宿主看得见失败），
+  其余异常保留零侵入 `{}` 但记日志。此前真实库滞后于代码 schema 时，该通道静默返回
+  `{}`，与「通道没开」完全同形。
 - **畸形/非对象 JSON 帧**（`null`/`[1,2]`/`123`/`"str"`）→ `{}`。常驻模式下逐个降级，**进程不被打死**。
 - **单宿主故障隔离**：任一宿主的坏帧/超时不影响其他宿主与服务端。
 
