@@ -44,7 +44,7 @@ def run_ingest_once():
 
                     # 闸文本（獬豸 + 密钥共用一个组合口径）：title 与 content 以换行
                     # 分隔——相邻拼接会让 title 尾词与 content 首词融出第四层匹配面。
-                    gate_text = f"{d.title}\n{d.content}"
+                    gate_text = f"{d.title or ''}\n{d.content or ''}"
 
                     # 獬豸（v0.68 票 03）：外部内容摄取面是唯一无写入闸入口——RSS/arxiv
                     # 是第三方可写内容，注入载荷经提取进入候选、晋升为 MemoryItem 后经
