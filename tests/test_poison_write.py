@@ -474,3 +474,45 @@ def test_eval_does_not_touch_network_or_credentials(monkeypatch):
     assert m["poison_count"] >= 5
     assert m["external_ingest_rate"] <= GATES["external_ingest_rate_max"]
     assert m["clean_false_reject_rate"] <= GATES["clean_false_reject_rate_max"]
+
+
+def test_ingest_worker_records_source_trust(poison_env, monkeypatch):
+    """外部摄取链路的候选 provenance 必须带来源档（注入帧标注的起点）。
+
+    一切真实外部内容都经 `run_ingest_once` 落候选；这条链路不落来源档，
+    晋升后的 MemoryItem 就标不出「第三方页面写的」，守藏的标注面等于白做。
+    """
+    import lantai.workers.ingest_worker as worker_mod
+    from lantai.models.tables import Source
+
+    session_factory, engine = poison_env
+
+    class _Adapter:
+        kind = "probe"
+
+        def fetch(self, config):
+            doc_id = new_id("doc")
+            return [
+                RawDocument(
+                    id=doc_id,
+                    source_type="article",
+                    source_id=doc_id,
+                    url="",
+                    title="",
+                    content="一篇关于向量检索召回率的中文笔记正文内容。",
+                    content_hash=new_id("h"),
+                )
+            ]
+
+    monkeypatch.setitem(worker_mod.ADAPTERS, "probe", _Adapter())
+    monkeypatch.setattr(worker_mod.settings, "PAPER_SIGNAL_ENABLED", False)
+    with session_factory() as s:
+        s.add(Source(id="src-trust", kind="probe", config={}, enabled=True))
+        s.commit()
+
+    worker_mod.run_ingest_once()
+
+    with session_factory() as s:
+        cand = s.exec(select(MemoryCandidate)).first()
+        assert cand is not None, "正常外部内容应建候选"
+        assert cand.provenance.get("source_trust") == "external", cand.provenance
