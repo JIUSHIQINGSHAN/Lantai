@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
+from lantai.core.acl import SESSION_ID_PATTERN
 from lantai.core.auth import get_current_user
 from lantai.services.diben_service import (
     analyze_drift_service,
@@ -21,13 +22,15 @@ router = APIRouter(tags=["diben"])
 
 
 class AnchorRequest(BaseModel):
-    session_id: str = Field(..., description="目标会话 ID（≥3 字符）")
+    session_id: str = Field(..., pattern=SESSION_ID_PATTERN, description="目标会话 ID（3–128 位）")
     blocks: dict[str, Any] = Field(..., description="五段认知现场键值对")
 
 
 class DriftRequest(BaseModel):
     query: str = Field(..., description="用户当前输入文本")
-    session_id: str | None = Field(None, description="目标会话 ID（可选）")
+    session_id: str | None = Field(
+        None, pattern=SESSION_ID_PATTERN, description="目标会话 ID（可选）"
+    )
 
 
 @router.post("/diben/anchor")
@@ -58,7 +61,11 @@ def diben_drift_route(
 
 @router.get("/diben/latest")
 def diben_latest_route(
-    session_id: str | None = Query(None, description="指定会话 ID（可选）"),
+    session_id: str | None = Query(
+        None,
+        pattern=SESSION_ID_PATTERN,
+        description="指定会话 ID（可选）",
+    ),
     ctx=Depends(get_current_user),
 ) -> dict[str, Any] | None:
     """获取当前租户范围内激活的最新会话底本。"""

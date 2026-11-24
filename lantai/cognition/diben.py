@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -17,7 +18,7 @@ from typing import Any
 import jieba
 from sqlmodel import Session, delete, select
 
-from lantai.core.acl import is_system_viewer, viewer_of
+from lantai.core.acl import SESSION_ID_PATTERN, is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.core.settings import settings
 from lantai.core.time import iso_utc, utcnow
@@ -28,6 +29,51 @@ from lantai.storage import db
 # 同 `checkpoint_service._BACKGROUND_LOG_PREFIX` 口径（分层禁 cognition→services
 # import，两处同值需同步维护——票 57 对齐受审计写方四保护时引入）。
 _BACKGROUND_LOG_PREFIX = "[IMPORTANT: Background process"
+_LIST_ENCODING_PREFIX = "[DIBEN-LIST-V1]:"
+
+
+def _serialize_list(items: list[str]) -> str:
+    """Encode list separators with a stable, versioned checkpoint marker."""
+    if not items:
+        return ""
+    escaped = [item.replace("\\", "\\\\").replace(";", "\\;") for item in items]
+    return _LIST_ENCODING_PREFIX + "; ".join(escaped)
+
+
+def _parse_list(value: str) -> list[str]:
+    """Decode escaped lists and continue reading legacy semicolon-separated values."""
+    if not value.startswith(_LIST_ENCODING_PREFIX):
+        return [item.strip() for item in value.split(";") if item.strip()]
+
+    value = value[len(_LIST_ENCODING_PREFIX) :]
+    items: list[str] = []
+    current: list[str] = []
+    i = 0
+    while i < len(value):
+        char = value[i]
+        if char == "\\" and i + 1 < len(value) and value[i + 1] in ("\\", ";"):
+            current.append(value[i + 1])
+            i += 2
+            continue
+        if char == ";":
+            item = "".join(current).strip()
+            if item:
+                items.append(item)
+            current.clear()
+            i += 2 if value[i : i + 2] == "; " else 1
+            continue
+        current.append(char)
+        i += 1
+    item = "".join(current).strip()
+    if item:
+        items.append(item)
+    return items
+
+
+def _validate_session_id(session_id: str) -> str:
+    if not isinstance(session_id, str) or not re.fullmatch(SESSION_ID_PATTERN, session_id):
+        raise ValueError("session_id must match ^[A-Za-z0-9_\\-.]{3,128}$")
+    return session_id
 
 
 @dataclass
@@ -118,7 +164,7 @@ class DibenEngine:
         viewer = viewer_of(self.principal)
         current_tenant = getattr(self.principal, "tenant_id", None)
 
-        if tenant_id and current_tenant and tenant_id != current_tenant:
+        if tenant_id is not None and tenant_id != current_tenant:
             return False
 
         return owner_id is None or owner_id == viewer
@@ -129,6 +175,9 @@ class DibenEngine:
         blocks: dict[str, Any],
     ) -> dict[str, Any]:
         """将五段现场提炼并固化为当前会话底本。"""
+        session_id = _validate_session_id(session_id)
+        if not isinstance(blocks, dict):
+            raise ValueError("blocks must be an object")
         if self.session is not None:
             return self._synthesize_anchor(self.session, session_id, blocks)
         with db.get_session() as s:
@@ -168,11 +217,11 @@ class DibenEngine:
 
         # 落库保存/更新 SessionCheckpoint
         block_items = [
-            ("cp_active_intent", active_intent),
-            ("cp_next_action", next_action),
-            ("cp_current_work", working_context),
-            ("cp_key_decisions", "; ".join(decisions)),
-            ("cp_open_notes", "; ".join(notes)),
+            ("cp_active_intent", active_intent, active_intent),
+            ("cp_next_action", next_action, next_action),
+            ("cp_current_work", working_context, working_context),
+            ("cp_key_decisions", _serialize_list(decisions), "; ".join(decisions)),
+            ("cp_open_notes", _serialize_list(notes), "; ".join(notes)),
         ]
 
         t = utcnow()
@@ -180,17 +229,24 @@ class DibenEngine:
         # 过短不落（宁 miss 不脏写）、超长截断、后台通知整块丢弃；
         # 全部新块不合格 → 旧快照原样保留不碰库。
         valid_blocks: list[tuple[str, str]] = []
-        for k, v in block_items:
+        for k, v, logical_text in block_items:
             text = (v or "").strip()
-            if not text or text.startswith(_BACKGROUND_LOG_PREFIX):
+            if not text or logical_text.startswith(_BACKGROUND_LOG_PREFIX):
                 continue
-            if len(text) < settings.CHECKPOINT_MIN_CONTENT:
+            if len(logical_text.strip()) < settings.CHECKPOINT_MIN_CONTENT:
                 continue
             valid_blocks.append((k, text[: settings.CHECKPOINT_MAX_CONTENT]))
         if valid_blocks:
             # upsert（票 57）：同 session 重写即替换（delete+insert 同事务），
-            # 块行不再累积。
-            s.exec(delete(SessionCheckpoint).where(SessionCheckpoint.session_id == session_id))
+            # 块行不再累积。删除范围限定在当前属主与租户，防止 session_id
+            # 碰撞时覆盖其他人的快照。
+            delete_stmt = delete(SessionCheckpoint).where(
+                SessionCheckpoint.session_id == session_id
+            )
+            write_scope = self._write_scope()
+            if write_scope is not None:
+                delete_stmt = delete_stmt.where(write_scope)
+            s.exec(delete_stmt)
             for k, text in valid_blocks:
                 s.add(
                     SessionCheckpoint(
@@ -219,6 +275,8 @@ class DibenEngine:
 
     def get_active_anchor(self, session_id: str | None = None) -> dict[str, Any] | None:
         """检索激活会话的最新底本定本。"""
+        if session_id is not None:
+            session_id = _validate_session_id(session_id)
         if self.session is not None:
             return self._get_active_anchor(self.session, session_id)
         with db.get_session() as s:
@@ -228,33 +286,42 @@ class DibenEngine:
         stmt = select(SessionCheckpoint)
         if session_id:
             stmt = stmt.where(SessionCheckpoint.session_id == session_id)
-        stmt = stmt.order_by(SessionCheckpoint.created_at.desc())
-
-        rows = s.exec(stmt).all()
-        accessible_rows = [
-            r for r in rows if self._check_access(owner_id=r.user_id, tenant_id=r.tenant_id)
-        ]
-        if not accessible_rows:
+        read_scope = self._read_scope()
+        if read_scope is not None:
+            stmt = stmt.where(read_scope)
+        head = s.exec(
+            stmt.order_by(SessionCheckpoint.created_at.desc(), SessionCheckpoint.id.desc()).limit(1)
+        ).first()
+        if head is None:
             return None
 
-        target_sid = accessible_rows[0].session_id
-        session_rows = [r for r in accessible_rows if r.session_id == target_sid]
+        target_sid = head.session_id
+        rows_stmt = select(SessionCheckpoint).where(SessionCheckpoint.session_id == target_sid)
+        if head.user_id is None:
+            rows_stmt = rows_stmt.where(SessionCheckpoint.user_id.is_(None))
+        else:
+            rows_stmt = rows_stmt.where(SessionCheckpoint.user_id == head.user_id)
+        if head.tenant_id is None:
+            rows_stmt = rows_stmt.where(SessionCheckpoint.tenant_id.is_(None))
+        else:
+            rows_stmt = rows_stmt.where(SessionCheckpoint.tenant_id == head.tenant_id)
+        if read_scope is not None:
+            rows_stmt = rows_stmt.where(read_scope)
+        session_rows = [
+            row
+            for row in s.exec(
+                rows_stmt.order_by(SessionCheckpoint.created_at.desc(), SessionCheckpoint.id.desc())
+            ).all()
+            if self._check_access(owner_id=row.user_id, tenant_id=row.tenant_id)
+        ]
 
         blocks: dict[str, str] = {}
         for r in session_rows:
             if r.block_key not in blocks:
                 blocks[r.block_key] = r.content
 
-        decisions = (
-            [d.strip() for d in blocks.get("cp_key_decisions", "").split(";") if d.strip()]
-            if blocks.get("cp_key_decisions")
-            else []
-        )
-        notes = (
-            [n.strip() for n in blocks.get("cp_open_notes", "").split(";") if n.strip()]
-            if blocks.get("cp_open_notes")
-            else []
-        )
+        decisions = _parse_list(blocks.get("cp_key_decisions", ""))
+        notes = _parse_list(blocks.get("cp_open_notes", ""))
 
         anchor = SessionAnchor(
             session_id=target_sid,
@@ -268,6 +335,29 @@ class DibenEngine:
             tenant_id=session_rows[0].tenant_id,
         )
         return anchor.to_dict(fenced=True)
+
+    def _read_scope(self):
+        """Push the row-level owner and tenant checks into the checkpoint query."""
+        if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
+            return None
+
+        viewer = viewer_of(self.principal)
+        scope = (SessionCheckpoint.user_id.is_(None)) | (SessionCheckpoint.user_id == viewer)
+        current_tenant = getattr(self.principal, "tenant_id", None)
+        if current_tenant is None:
+            return scope & SessionCheckpoint.tenant_id.is_(None)
+        return scope & (
+            (SessionCheckpoint.tenant_id.is_(None))
+            | (SessionCheckpoint.tenant_id == current_tenant)
+        )
+
+    def _write_scope(self):
+        """Keep upserts identity-scoped, including when the caller can read globally."""
+        scope = SessionCheckpoint.user_id == viewer_of(self.principal)
+        current_tenant = getattr(self.principal, "tenant_id", None)
+        if current_tenant is None:
+            return scope & SessionCheckpoint.tenant_id.is_(None)
+        return scope & (SessionCheckpoint.tenant_id == current_tenant)
 
     def analyze_drift(
         self,
@@ -292,24 +382,54 @@ class DibenEngine:
                 fenced_reason=fenced_reason,
             ).to_dict()
 
-        anchor_text = f"{anchor.get('active_intent', '')} {anchor.get('next_action', '')} {anchor.get('working_context', '')}"
-        q_words = [w.strip().lower() for w in jieba.cut(current_query or "") if len(w.strip()) > 1]
-        a_words = [w.strip().lower() for w in jieba.cut(anchor_text or "") if len(w.strip()) > 1]
+        anchor_parts = [
+            anchor.get("active_intent", ""),
+            anchor.get("next_action", ""),
+            anchor.get("working_context", ""),
+            *_anchor_items(anchor.get("key_decisions")),
+            *_anchor_items(anchor.get("open_notes")),
+        ]
+        anchor_text = " ".join(str(part) for part in anchor_parts if part)
+        q_set = {w.strip().lower() for w in jieba.cut(current_query or "") if len(w.strip()) > 1}
+        a_set = {w.strip().lower() for w in jieba.cut(anchor_text) if len(w.strip()) > 1}
 
-        q_set = set(q_words)
-        a_set = set(a_words)
+        if not q_set:
+            reason = "查询缺少可用于比对的关键词，无法判断意图是否延续"
+            return DriftAnalysis(
+                query=current_query,
+                continuity_score=0.0,
+                is_continuation=False,
+                drift_level="none",
+                drift_reason=reason,
+                fenced_reason=wrap_as_data(
+                    reason, item_id=f"drift-{anchor.get('session_id')}", score=0.0
+                ),
+            ).to_dict()
 
-        overlap = q_set.intersection(a_set)
-        score = len(overlap) / max(len(q_set), 1)
+        if not a_set:
+            reason = "底本缺少可用于比对的关键词，无法判断意图是否延续"
+            return DriftAnalysis(
+                query=current_query,
+                continuity_score=0.0,
+                is_continuation=False,
+                drift_level="none",
+                drift_reason=reason,
+                fenced_reason=wrap_as_data(
+                    reason, item_id=f"drift-{anchor.get('session_id')}", score=0.0
+                ),
+            ).to_dict()
+
+        overlap = sorted(q_set.intersection(a_set))
+        score = len(overlap) / len(q_set)
 
         if score >= 0.35:
             drift_level = "none"
             is_cont = True
-            reason = f"高契合度延续既有会话意图（关键词匹配: {', '.join(list(overlap)[:3])}）"
+            reason = f"高契合度延续既有会话意图（关键词匹配: {', '.join(overlap[:3])}）"
         elif score >= 0.15:
             drift_level = "slight"
             is_cont = True
-            reason = f"轻度延伸相关任务（关键词匹配: {', '.join(list(overlap)[:2])}）"
+            reason = f"轻度延伸相关任务（关键词匹配: {', '.join(overlap[:2])}）"
         else:
             drift_level = "significant"
             is_cont = False
@@ -327,3 +447,11 @@ class DibenEngine:
             drift_reason=reason,
             fenced_reason=fenced_reason,
         ).to_dict()
+
+
+def _anchor_items(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value if item]
+    return []

@@ -2053,7 +2053,14 @@ def handle_diben_anchor(params: dict) -> dict:
     session_id = params.get("session_id")
     blocks = params.get("blocks")
     query = params.get("query")
-    detect_drift = bool(params.get("detect_drift", False))
+    detect_drift_raw = params.get("detect_drift", False)
+    if not isinstance(detect_drift_raw, bool):
+        raise ValueError("detect_drift must be a boolean")
+    detect_drift = detect_drift_raw
+    if blocks is not None and not isinstance(blocks, dict):
+        raise ValueError("blocks must be an object")
+    if not detect_drift and blocks and session_id is None:
+        raise ValueError("session_id is required when blocks are provided")
 
     from lantai.services.diben_service import (
         analyze_drift_service,
@@ -2062,9 +2069,11 @@ def handle_diben_anchor(params: dict) -> dict:
     )
 
     p = _principal_from_params(params)
-    if detect_drift and query:
+    if detect_drift:
+        if not isinstance(query, str):
+            raise ValueError("query must be a string")
         return analyze_drift_service(query=query, session_id=session_id, principal=p)
-    if session_id and blocks:
+    if session_id is not None and blocks:
         return synthesize_anchor_service(session_id=session_id, blocks=blocks, principal=p)
 
     active = get_active_anchor_service(session_id=session_id, principal=p)
@@ -3812,6 +3821,7 @@ TOOLS = {
             "properties": {
                 "session_id": {
                     "type": "string",
+                    "pattern": "^[A-Za-z0-9_\\-.]{3,128}$",
                     "description": "会话标识 ID",
                 },
                 "blocks": {
