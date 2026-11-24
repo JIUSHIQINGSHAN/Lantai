@@ -54,8 +54,9 @@ def jiaochou_scan_route(
 ) -> dict[str, Any]:
     """扫描当前权限范围内的活跃记忆近义冗余簇。
 
-    口径（票 59）：候选池 = 最近创建的 min(limit, 100) 行，池内两两取最相似
-    limit 对报告；threshold 越界 (0,1] 拒绝。
+    口径（票 59 / ADR-0097）：候选池 = 最近创建的 min(limit, 100) 行，池内全量
+    阈值候选边识别簇；配对详情最多返回 limit 对，省略边计数并由簇级建议保守待核。
+    threshold 越界 (0,1] 拒绝。
     """
     return scan_redundancy_service(
         limit=limit,

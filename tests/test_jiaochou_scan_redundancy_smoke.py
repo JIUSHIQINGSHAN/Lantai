@@ -181,6 +181,193 @@ class TestScanStillFindsNearDup:
             f"池窗口收窄吞掉了明显冗余对：{res['total_pairs']} 对里没有它"
         )
 
+    def test_scan_groups_reported_pairs_into_stable_clusters(self, test_db):
+        t = utcnow()
+        cluster = [
+            MemoryItem(
+                id=f"mem-cluster-{i}",
+                content=text,
+                confidence=0.9,
+                user_id="default",
+                created_at=t,
+                updated_at=t,
+            )
+            for i, text in enumerate(
+                [
+                    "生产数据库主库使用 PostgreSQL 配置端口 5432",
+                    "生产环境 PostgreSQL 主数据库连接端口 5432",
+                    "PostgreSQL 生产数据库主库端口设置为 5432",
+                ]
+            )
+        ]
+        test_db.add_all(cluster)
+        test_db.commit()
+
+        result = JiaochouEngine(principal=_principal("default")).scan_redundancy(
+            limit=10, similarity_threshold=0.3
+        )
+
+        expected_ids = {item.id for item in cluster}
+        matching = [c for c in result["redundant_clusters"] if set(c["memory_ids"]) == expected_ids]
+        assert len(matching) == 1
+        assert matching[0]["member_count"] == 3
+        assert matching[0]["pair_count"] == 3
+        assert len(matching[0]["pairs"]) == matching[0]["pair_count"]
+        assert {
+            "memory_id_a",
+            "memory_id_b",
+            "similarity",
+            "action_suggestion",
+            "divergence_summary",
+            "divergence_tokens_a",
+            "divergence_tokens_b",
+        } == set(matching[0]["pairs"][0])
+        assert matching[0]["suggested_action"] in {"merge", "update"}
+        assert matching[0]["common_tokens"]
+        assert matching[0]["divergence_tokens"]
+
+    def test_dense_cluster_uses_all_candidates_without_expanding_pair_details(self, test_db):
+        t = utcnow()
+        duplicate_memories = [
+            MemoryItem(
+                id=f"mem-dense-{i:03d}",
+                content="生产主库使用 PostgreSQL 端口 5432",
+                confidence=0.9,
+                user_id="default",
+                created_at=t,
+                updated_at=t,
+            )
+            for i in range(100)
+        ]
+        test_db.add_all(duplicate_memories)
+        test_db.commit()
+
+        result = JiaochouEngine(principal=_principal("default")).scan_redundancy(
+            limit=100, similarity_threshold=1.0
+        )
+
+        assert result["total_pairs"] == 100
+        assert result["total_clusters"] == 1
+        assert result["candidate_pair_count"] == 4950
+        cluster = result["redundant_clusters"][0]
+        assert cluster["member_count"] == 100
+        assert cluster["pair_count"] == 4950
+        assert cluster["reported_pair_count"] == 100
+        assert cluster["omitted_pair_count"] == 4850
+        assert len(cluster["pairs"]) == result["total_pairs"]
+        assert cluster["suggested_action"] == "retain_both"
+        assert "未逐对校勘" in cluster["correction_suggestion"]
+
+    def test_candidate_cluster_without_reported_edges_gets_representative_review(self, test_db):
+        t = utcnow()
+        memories = [
+            MemoryItem(
+                id=f"mem-dense-{group}-{i:03d}",
+                content=(
+                    "生产主库使用 PostgreSQL 端口 5432"
+                    if group == "a"
+                    else "用户偏好开启护眼深色模式 22 点后"
+                ),
+                confidence=0.9,
+                user_id="default",
+                created_at=t,
+                updated_at=t,
+            )
+            for group, count in (("z", 98), ("a", 2))
+            for i in range(count)
+        ]
+        test_db.add_all(memories)
+        test_db.commit()
+
+        result = JiaochouEngine(principal=_principal("default")).scan_redundancy(
+            limit=100, similarity_threshold=1.0
+        )
+
+        assert result["total_pairs"] == 100
+        omitted_cluster = next(
+            cluster
+            for cluster in result["redundant_clusters"]
+            if cluster["memory_ids"] == ["mem-dense-a-000", "mem-dense-a-001"]
+        )
+        assert omitted_cluster["reported_pair_count"] == 0
+        assert omitted_cluster["omitted_pair_count"] == 1
+        assert omitted_cluster["pairs"] == []
+        assert omitted_cluster["representative_pair"]["action_suggestion"] == "merge"
+        assert omitted_cluster["suggested_action"] == "retain_both"
+        assert "未逐对校勘" in omitted_cluster["correction_suggestion"]
+
+    def test_conflicting_value_pair_suggests_review_not_merge(self, test_db):
+        t = utcnow()
+        pair = [
+            MemoryItem(
+                id=f"mem-conflict-{i}",
+                content=text,
+                confidence=0.9,
+                user_id="default",
+                created_at=t,
+                updated_at=t,
+            )
+            for i, text in enumerate(
+                [
+                    "生产环境当前数据库主库核心网络服务端口配置为 5432",
+                    "生产环境当前数据库主库核心网络服务端口配置为 5433",
+                ]
+            )
+        ]
+        test_db.add_all(pair)
+        test_db.commit()
+
+        result = JiaochouEngine(principal=_principal("default")).scan_redundancy(
+            limit=10, similarity_threshold=0.7
+        )
+
+        assert result["total_pairs"] == 1
+        assert result["redundant_pairs"][0]["action_suggestion"] == "retain_both"
+        assert result["total_clusters"] == 1
+        assert result["redundant_clusters"][0]["suggested_action"] == "retain_both"
+        assert "核验" in result["redundant_clusters"][0]["correction_suggestion"]
+
+    def test_scan_does_not_bridge_dissimilar_pair_through_a_neighbor(self, test_db):
+        t = utcnow()
+        bridge = [
+            MemoryItem(
+                id=f"mem-bridge-{letter}",
+                content=text,
+                confidence=0.9,
+                user_id="default",
+                created_at=t,
+                updated_at=t,
+            )
+            for letter, text in [
+                ("a", "alpha bravo charlie delta"),
+                ("b", "alpha bravo charlie delta echo foxtrot"),
+                ("c", "alpha bravo echo foxtrot"),
+            ]
+        ]
+        test_db.add_all(bridge)
+        test_db.commit()
+
+        result = JiaochouEngine(principal=_principal("default")).scan_redundancy(
+            limit=10, similarity_threshold=0.6
+        )
+
+        expected_pairs = {
+            frozenset((bridge[0].id, bridge[1].id)),
+            frozenset((bridge[1].id, bridge[2].id)),
+        }
+        actual_pairs = {
+            frozenset((pair["memory_id_a"], pair["memory_id_b"]))
+            for pair in result["redundant_pairs"]
+        }
+        assert actual_pairs == expected_pairs
+        cluster_pairs = {
+            frozenset((pair["memory_id_a"], pair["memory_id_b"]))
+            for cluster in result["redundant_clusters"]
+            for pair in cluster["pairs"]
+        }
+        assert cluster_pairs == expected_pairs
+        assert all(cluster["member_count"] == 2 for cluster in result["redundant_clusters"])
+
 
 class TestScanIdentity:
     """修复目标 1（TDD 要求 4）：身份臂——None 收敛 default（票 57 口径交叉引用）。
