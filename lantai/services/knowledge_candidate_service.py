@@ -98,8 +98,8 @@ def _candidate_origin_sources(s: Session, items: list[MemoryItem]) -> set[str]:
     差别只在**取数方式**：原实现每条来源发一次 checkpoint 查询（评审详情页
     N+1 的主项），这里一次 `IN` 拿全部命中 id，再按同一谓词判定。
 
-    回归锁：`tests/test_opt_refactor_smoke.py` 只锁 MMR/预算/连接，批量这条路
-    的正确性由 `tests/test_knowledge_candidate*.py` 的既有断言兜住。
+    回归锁：`tests/test_opt_evidence_batch_smoke.py` 用同一批来源同时跑本函数与
+    `is_candidate_origin`，逐条比对判定结果（等价性，不是抽样）。
     """
     if not items:
         return set()
