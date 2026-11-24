@@ -33,7 +33,9 @@ def _load_hook():
 def empty_db(monkeypatch, tmp_path):
     """空库（无任何表）+ get_session 指向它，模拟真实库滞后 schema。"""
     import lantai.storage.db as db_module
+    from lantai.storage.schema_guard import reset_heal_state
 
+    reset_heal_state()
     db_path = tmp_path / "remembrance.db"
     db_path.write_bytes(b"")
     engine = create_engine(
@@ -119,3 +121,82 @@ def test_non_schema_error_still_zero_intrusion(monkeypatch, empty_db):
     mod = _load_hook()
     out = mod._handle_dialogue("任意足够长的对话内容用于触发提取流程。", session_id="x", turn=1)
     assert out == {}, f"非 schema 异常应零侵入回 {{}}，实得 {out!r}"
+
+
+# ── v0.70：自愈下沉到摄取层，HTTP 通道同源受益 ─────────────────────────
+
+
+def test_ingest_dialogue_selfheals_without_hook(monkeypatch, empty_db):
+    """HTTP 侧（不经钩子）直调 ingest_dialogue：缺表 → 补建 → 落候选。
+
+    此前自愈只写在 `shell_hook._handle_dialogue` 里，README 的 REST
+    `/dialogue`、`/dialogue/async` 撞上滞后库直接 500。自愈下沉到
+    `lantai.storage.schema_guard` 后，两条 HTTP 通道与 stdio 通道同源。
+    """
+    import lantai.ingestion.dialogue as dialogue_mod
+    import lantai.models.tables  # noqa: F401
+
+    # fastpath 文本直通，不触发外部 LLM 提取（不 mock 被测链路）
+    out = dialogue_mod.ingest_dialogue(
+        "记住：兰台检索预算 SHELL_HOOK_TIMEOUT 改为 8 秒，Windows 冷启动较慢。",
+        session_id="http-selfheal",
+        turn=1,
+    )
+
+    assert out["ingested"] is True
+    assert out["candidate_id"]
+    assert out["ingest_event_id"]
+    db_path, engine = empty_db
+    with engine.connect() as conn:
+        tables = {
+            r[0] for r in conn.exec_driver_sql("select name from sqlite_master where type='table'")
+        }
+    assert "ingest_event" in tables, f"自愈后应存在 ingest_event，实有 {sorted(tables)[:8]}"
+
+
+def test_heal_runs_at_most_once_per_engine(monkeypatch, empty_db):
+    """同一 engine 只付一次 init_db 代价：schema 真坏时不至于每次写入都重建。"""
+    import lantai.storage.db as db_module
+    from lantai.storage.schema_guard import heal_missing_schema
+
+    calls = {"n": 0}
+    real_init = db_module.init_db
+
+    def counted():
+        calls["n"] += 1
+        real_init()
+
+    monkeypatch.setattr(db_module, "init_db", counted)
+
+    assert heal_missing_schema() is True, "首次命中缺表应真的补建"
+    assert heal_missing_schema() is False, "同一 engine 第二次应直接复用，不再重建"
+    assert calls["n"] == 1, f"init_db 应只跑一次，实跑 {calls['n']} 次"
+
+
+def test_non_missing_operational_error_is_not_retried(monkeypatch, empty_db):
+    """锁冲突等非缺表 OperationalError 不得触发自愈重试（重试治不了那些病）。"""
+    from sqlalchemy.exc import OperationalError
+
+    import lantai.ingestion.dialogue as dialogue_mod
+    from lantai.storage.schema_guard import heal_missing_schema as real_heal
+
+    calls = {"ingest": 0, "heal": 0}
+
+    def locked(**kwargs):
+        calls["ingest"] += 1
+        raise OperationalError("SELECT 1", {}, Exception("database is locked"))
+
+    def heal_counted():
+        calls["heal"] += 1
+        return real_heal()
+
+    monkeypatch.setattr(dialogue_mod, "start_ingest_event", locked)
+    monkeypatch.setattr(
+        "lantai.storage.schema_guard.heal_missing_schema", heal_counted, raising=True
+    )
+
+    with pytest.raises(OperationalError):
+        dialogue_mod.ingest_dialogue("记住：锁冲突不重试", session_id="x", turn=1)
+
+    assert calls["ingest"] == 1, f"非缺表错误只应尝试一次，实得 {calls['ingest']}"
+    assert calls["heal"] == 0, "非缺表错误不应触发 schema 自愈"

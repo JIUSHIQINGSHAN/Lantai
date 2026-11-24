@@ -10,19 +10,88 @@
 task_id、同键不同文 422；未传键用内容指纹自动键，只护 600s 重试窗。
 """
 
+import contextlib
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from sqlalchemy.exc import OperationalError
+
 from lantai.core.attribution import Attribution, attribution_dict, resolve_attribution
 from lantai.core.idempotency import auto_key, claim, fingerprint_payload, settle
 from lantai.core.logger import logger
-from lantai.core.time import iso_utc, utcnow
+from lantai.core.time import iso_utc, parse_iso_utc, utcnow
 from lantai.observability.ingest_events import record_ingest_exception, start_ingest_event
 
 # 内存任务状态注册表
 _TASKS: dict[str, dict[str, Any]] = {}
 _EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="qianyi_ingest_")
+
+# 注册表保留策略（巡检 2026-11-24：此前 `_TASKS` 只增不减——每轮对话一条，
+# 常驻服务跑几天就是几万条 dict，且 `result` 里带着候选正文；线程池队列也没有
+# 上限。终态任务按 TTL 清扫，超上限时从最旧的终态任务开始淘汰；**在跑/排队中
+# 的任务绝不淘汰**（淘汰会让轮询拿到 not_found，也够不着迟到结算）。
+_TASK_RETENTION_SECONDS = 3600.0  # 终态任务保留 1 小时，覆盖宿主重试/轮询窗口
+_TASKS_MAX = 1000  # 注册表硬顶（终态可淘汰；活跃任务超出时宁可暂不淘汰）
+
+
+def _task_finished_at(task: dict) -> float:
+    """终态任务完成时刻（epoch 秒）；解析不了按 0（最旧）处理。"""
+    raw = task.get("completed_at")
+    if not raw:
+        return 0.0
+    try:
+        return parse_iso_utc(str(raw)).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _sweep_tasks(now: float | None = None) -> int:
+    """清理注册表：TTL 外的终态任务 + 超上限时淘汰最旧终态。返回删除条数。
+
+    只淘汰 ``completed``/``failed``：``queued``/``processing`` 的任务还等着宿主
+    轮询与迟到结算，淘汰它们等于把在跑的任务变成 not_found。
+    """
+    now = utcnow().timestamp() if now is None else now
+    removed = 0
+    for task_id, task in list(_TASKS.items()):
+        if task.get("status") in ("completed", "failed"):
+            if now - _task_finished_at(task) > _TASK_RETENTION_SECONDS:
+                _TASKS.pop(task_id, None)
+                removed += 1
+    overflow = len(_TASKS) - _TASKS_MAX
+    if overflow > 0:
+        finished = sorted(
+            (
+                (task_id, task)
+                for task_id, task in _TASKS.items()
+                if task.get("status") in ("completed", "failed")
+            ),
+            key=lambda item: _task_finished_at(item[1]),
+        )
+        for task_id, _task in finished[:overflow]:
+            _TASKS.pop(task_id, None)
+            removed += 1
+    return removed
+
+
+def _start_ingest_event_selfheal(**kwargs) -> str:
+    """建摄取事件行；缺表时补跑一次 init_db 再重试（与对话摄取同源自愈）。
+
+    此前 HTTP 异步通道没有这层：真实库滞后于代码 schema 时，``/dialogue/async``
+    在提交阶段就 500，连 task_id 都拿不到。非缺表错误不重试，原样上抛。
+    """
+    from lantai.storage.schema_guard import heal_missing_schema, is_missing_table_error
+
+    try:
+        return start_ingest_event(**kwargs)
+    except OperationalError as exc:
+        if not is_missing_table_error(exc):
+            raise
+        logger.warning("潜移：提交阶段命中缺失表，补跑 init_db 后重试一次: %s", exc)
+        with contextlib.suppress(Exception):
+            heal_missing_schema()
+        return start_ingest_event(**kwargs)
 
 
 def _execute_dialogue_task(
@@ -40,9 +109,19 @@ def _execute_dialogue_task(
     ingest_event_id: str,
 ) -> None:
     """后台线程执行完整摄取流水线。"""
+    # 注册表可能已被清扫（或测试 clear_tasks）：任务号没登记就无处写状态。
+    # 不吞掉这次执行的话，worker 会在 ``_TASKS[task_id]`` 上抛 KeyError、
+    # 在线程里静默死掉且不结算 claim；显式释放 claim 让重试可再执行。
+    task = _TASKS.get(task_id)
+    if task is None:
+        logger.warning("潜移：任务【%s】不在注册表（已被清扫），本次不执行", task_id)
+        # 没执行过任何业务写入，释放 claim 才是对的：ok=True 会给显式键落一条
+        # 没有结果的 done 回执，让宿主从此重放到一个空任务上。
+        settle(binding, ok=False)
+        return
     try:
-        _TASKS[task_id]["status"] = "processing"
-        _TASKS[task_id]["started_at"] = iso_utc(utcnow())
+        task["status"] = "processing"
+        task["started_at"] = iso_utc(utcnow())
 
         # 调用同步核心摄取函数
         from lantai.ingestion.dialogue import ingest_dialogue
@@ -59,27 +138,27 @@ def _execute_dialogue_task(
             _ingest_event_id=ingest_event_id,
         )
 
-        _TASKS[task_id]["status"] = "completed"
-        _TASKS[task_id]["result"] = res
-        _TASKS[task_id]["completed_at"] = iso_utc(utcnow())
+        task["status"] = "completed"
+        task["result"] = res
+        task["completed_at"] = iso_utc(utcnow())
         logger.info("潜移：异步对话摄取任务【%s】执行完成", task_id)
         # 勘合结算：显式键落 done 回执（TTL 内重放），自动键不落（到期自然失效）
         settle(binding, ok=True, result=res, task_id=task_id)
     except Exception as exc:
         logger.error("潜移：异步对话摄取任务【%s】执行失败: %s", task_id, type(exc).__name__)
-        _TASKS[task_id]["status"] = "failed"
-        _TASKS[task_id]["error"] = type(exc).__name__
-        _TASKS[task_id]["completed_at"] = iso_utc(utcnow())
+        task["status"] = "failed"
+        task["error"] = type(exc).__name__
+        task["completed_at"] = iso_utc(utcnow())
         # Preserve a committed candidate on a post-commit exception; releasing
         # its idempotency claim would duplicate the already received dialogue.
-        committed = bool(_TASKS[task_id].get("result"))
+        committed = bool(task.get("result"))
         try:
             committed = (
                 record_ingest_exception([ingest_event_id], rejected=isinstance(exc, ValueError))
                 or committed
             )
         finally:
-            settle(binding, ok=committed, result=_TASKS[task_id].get("result"), task_id=task_id)
+            settle(binding, ok=committed, result=task.get("result"), task_id=task_id)
 
 
 def submit_async_dialogue(
@@ -150,7 +229,7 @@ def submit_async_dialogue(
         }
 
     try:
-        ingest_event_id = start_ingest_event(
+        ingest_event_id = _start_ingest_event_selfheal(
             channel="dialogue",
             user_id=user_id,
             tenant_id=tenant_id or None,
@@ -162,6 +241,8 @@ def submit_async_dialogue(
         # Nothing was submitted; this owner must release its claim for retry.
         settle(binding, ok=False)
         raise
+    # 注册前清扫：终态旧任务按 TTL/硬顶淘汰，注册表不随对话轮次无界增长。
+    _sweep_tasks()
     task_info = {
         "task_id": task_id,
         "ingest_event_id": ingest_event_id,

@@ -357,3 +357,19 @@ def test_isolated_real_lantai_http_fixture_flows_through_node_adapter(node_runti
             assert re.search(r"(?m)^ℹ tests 24\s*$", runtime_output), runtime_output[-16000:]
             assert re.search(r"(?m)^ℹ pass 24\s*$", runtime_output), runtime_output[-16000:]
             assert re.search(r"(?m)^ℹ fail 0\s*$", runtime_output), runtime_output[-16000:]
+
+
+def test_fixture_server_accepts_control_token_starting_with_dash(monkeypatch) -> None:
+    """控制令牌首字符是 '-' 时 fixture 仍能启动（随机红的根因回归锁）。
+
+    `control_token` 来自 `secrets.token_urlsafe`，urlsafe base64 字母表含 '-'，
+    首字符约 1/64 概率命中。此前以 `["--control-token", token]` 逐位传参，
+    argparse 会把 `-leading...` 当选项、报 "expected one argument"，导致
+    `test_dsh_dialogue_extraction_contract.py` 等用例在启动 fixture 阶段随机红。
+    改用 `--control-token=<token>` 后与首字符无关。
+    """
+    from tests.support import dsh_core_memory_server as support
+
+    monkeypatch.setattr(support.secrets, "token_urlsafe", lambda _n: "-leading-dash-token")
+    with support.isolated_core_memory_server() as server:
+        assert server.base_url.startswith("http://127.0.0.1:")

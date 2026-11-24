@@ -593,26 +593,48 @@ def handle(msg):
     }
 
 
+# 帧上限与超限应答：与打包版 `lantai/cli/mcp_bridge.py` 同口径。此前用
+# `for line in sys.stdin` 先把整行读进内存、再判长度——上限起不到防护作用，
+# 一个几百 MB 的坏帧就能把桥进程撑爆（MCP 宿主只看到 EOF，整条记忆通道失联）。
+# 改为按上限 `readline`，超长帧排空到行尾后回 -32600 继续服务。
+_MAX_FRAME = 1_000_000
+
+
 def main():
     for stream in (sys.stdin, sys.stdout):
         try:
             stream.reconfigure(encoding="utf-8")
         except (AttributeError, ValueError):
-            os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-    for line in sys.stdin:
+            # 运行期 setdefault 对已建流无效（解释器启动时已定格编码），如实告警。
+            import warnings
+
+            warnings.warn(
+                f"{stream.__class__.__name__} reconfigure failed; stream stays locale-encoded",
+                stacklevel=2,
+            )
+    incoming = sys.stdin.buffer
+    outgoing = sys.stdout.buffer
+    while line := incoming.readline(_MAX_FRAME + 1):
+        if len(line) > _MAX_FRAME:
+            while line and not line.endswith(b"\n"):
+                line = incoming.readline(_MAX_FRAME + 1)
+            outgoing.write(
+                b'{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Oversize frame"}}\n'
+            )
+            outgoing.flush()
+            continue
         line = line.strip()
         if not line:
             continue
-        if len(line) > 1_000_000:
-            continue
         try:
-            msg = json.loads(line)
-        except json.JSONDecodeError:
+            msg = json.loads(line.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # 坏帧静默降级：未带 id 的帧没有合法的应答对象（与打包版同口径）。
             continue
         resp = handle(msg)
         if resp is not None:
-            sys.stdout.write(json.dumps(resp, ensure_ascii=False) + "\n")
-            sys.stdout.flush()
+            outgoing.write((json.dumps(resp, ensure_ascii=False) + "\n").encode("utf-8"))
+            outgoing.flush()
 
 
 if __name__ == "__main__":
