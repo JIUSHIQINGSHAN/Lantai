@@ -121,3 +121,26 @@ def test_hybrid_search_without_budget_keeps_old_signature(monkeypatch):
 
     hybrid.hybrid_search("任意查询", top_k=3, trace=True)
     assert calls == [None], f"无预算时 timeout 应为 None（旧签名等价），实得 {calls!r}"
+
+
+def test_hybrid_search_without_budget_calls_strict_single_arg(monkeypatch):
+    """无预算时必须是**严格单参**调用——多传一个关键字就 TypeError。
+
+    回归锚点：2026-11-24 变基后全量暴露——首版无条件传 `timeout=`，打挂了
+    `tests/test_rerank_index_and_schema.py` 的两条用例（其替身是
+    `lambda q: {"candidate_n": 2}`）。上一条用例的替身写了 `timeout=None`
+    双参形参，所以发现不了这个坑。这条用严格单参替身锁住契约。
+    """
+    calls = []
+
+    def strict_single_arg_classify(query):
+        # 严格旧签名：多一个关键字即 TypeError，模拟既有评测替身
+        calls.append(query)
+        return {"intent": "fact_lookup", "candidate_n": 2}
+
+    monkeypatch.setattr(hybrid, "classify_intent", strict_single_arg_classify)
+    monkeypatch.setattr(hybrid, "embed", lambda texts, timeout=None: [[0.0] * 8 for _ in texts])
+    monkeypatch.setattr(hybrid, "get_vector_store", lambda: _EmptyVectorStore())
+
+    hybrid.hybrid_search("任意查询", top_k=3)  # 不传 budget_s → 必须走旧形状
+    assert len(calls) == 1, "无预算时 classify_intent 应被调用一次"
