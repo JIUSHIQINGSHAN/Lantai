@@ -115,3 +115,26 @@ def test_principal_reaches_hybrid_search(monkeypatch):
     assert principal is not None, "配置的属主没传到 hybrid_search"
     assert principal.user_id == "api_key"
     assert bool(principal.is_admin) is True
+
+
+def test_unconfigured_call_keeps_legacy_signature(monkeypatch):
+    """未配置时按**旧签名**调用（不传 principal/params）——既有替身零漂移。
+
+    回归锚点：2026-11-24 首版修法无条件传 `principal=`，打挂了
+    `tests/test_mokan_items_budget_smoke.py`（其替身签名只收
+    `query, top_k, budget_s`），钩子整体异常 → build_context 返回 {} → 注入全丢。
+    """
+    mod = _load_hook(monkeypatch, user_id="", role="user")
+    monkeypatch.setattr(mod.settings, "LANTAI_HOOK_VERBATIM_IN_RECALL", None)
+
+    def legacy_sig_hybrid(query, top_k=5, budget_s=None):
+        # 严格旧签名：多一个关键字就 TypeError，模拟既有评测替身
+        return []
+
+    monkeypatch.setattr(mod, "hybrid_search", legacy_sig_hybrid)
+    monkeypatch.setattr(mod, "relevance_check", lambda q, user_id=None: {"needs_memory": True})
+    monkeypatch.setattr(mod, "_build_resident_persona", lambda: "画像")
+
+    out = mod.build_context("任意查询内容", session_id="s1")
+    # 没崩、走了画像兜底路径即为通过（零命中分支）
+    assert "context" in out

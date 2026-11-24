@@ -404,22 +404,22 @@ def build_context(query: str, session_id: str | None = None) -> dict:
         # 组装 + 置顶拼接，外层 join(timeout) 是硬墙——不给余量必擦线超
         # （实测 2.0 预算全给 embed → 总 2.17s > 2.0 墙，降级结果被墙丢弃）。
         budget_s = max(0.05, settings.SHELL_HOOK_TIMEOUT * 0.85 - (time.perf_counter() - t0))
+        # 只在**显式配置**了属主/verbatim 时附加这两个关键字参数：
+        # 未配置时不传，保持 `hybrid_search(query, top_k=, budget_s=)` 的旧调用形状
+        # （票 90 零漂移要求——既有测试与评测替身按旧签名 mock 这个函数）。
+        _extra: dict = {}
+        _principal = _hook_principal()
+        if _principal is not None:
+            _extra["principal"] = _principal
+        if settings.LANTAI_HOOK_VERBATIM_IN_RECALL is not None:
+            _extra["params"] = RetrievalParams.from_overrides(
+                {"verbatim_in_recall": bool(settings.LANTAI_HOOK_VERBATIM_IN_RECALL)}
+            )
         raw_results = hybrid_search(
             query,
             top_k=settings.SHELL_HOOK_TOP_K,
             budget_s=budget_s,
-            principal=_hook_principal(),
-            # verbatim 开关三元：None = 沿用全局 settings（旧行为零漂移），
-            # 显式 True/False 由宿主配置覆盖。
-            **(
-                {}
-                if settings.LANTAI_HOOK_VERBATIM_IN_RECALL is None
-                else {
-                    "params": RetrievalParams.from_overrides(
-                        {"verbatim_in_recall": bool(settings.LANTAI_HOOK_VERBATIM_IN_RECALL)}
-                    )
-                }
-            ),
+            **_extra,
         )
 
         # 相似度置信度阈值过滤：D-03 分路阈值（reranker 走 0.5 语义门禁，RRF 走 0.15 独立量纲，避免第 2/3 名被一刀切）
