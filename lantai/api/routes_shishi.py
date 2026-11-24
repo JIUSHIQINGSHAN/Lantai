@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from lantai.cognition.shishi import ShishiConflictError
 from lantai.core.auth import get_current_user
 from lantai.services.shishi_service import (
     get_sealed_blocks_service,
@@ -33,13 +34,18 @@ def shishi_seal_block_route(
     ctx=Depends(get_current_user),
 ) -> dict[str, Any]:
     """金匮封存或更新核心记忆块。"""
-    return seal_core_memory_service(
-        block=req.block,
-        content=req.content,
-        is_immutable=req.is_immutable,
-        namespace=req.namespace,
-        principal=ctx,
-    )
+    try:
+        return seal_core_memory_service(
+            block=req.block,
+            content=req.content,
+            is_immutable=req.is_immutable,
+            namespace=req.namespace,
+            principal=ctx,
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ShishiConflictError as e:
+        raise HTTPException(409, str(e))
 
 
 @router.get("/shishi/verify")

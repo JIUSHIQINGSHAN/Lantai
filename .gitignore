@@ -62,6 +62,8 @@ docs/memory-quality/*.md
 !docs/memory-quality/digest-boundaries-diagnosis-2026-11-13.md
 # DSH 会话归因实施验收：工程报告，仅协议/聚合事实，无用户记忆正文。
 !docs/memory-quality/session-attribution-implementation-2026-11-18.md
+# 石室封存安全诊断，仅含合成用例与工程验收事实。
+!docs/memory-quality/shishi-vault-integrity-diagnosis-2026-11-25.md
 
 .uv-cache/
 .mimosa/
