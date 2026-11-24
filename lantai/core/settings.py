@@ -337,6 +337,13 @@ class Settings(BaseSettings):
     # 整条拒不改写。默认开；关 = 行为退回无检测（off 对照测试锚定）。
     INJECTION_GUARD_ENABLED: bool = True
 
+    # 守藏（ADR-0096，2026-11-24 每日建议）：写入来源信任分级。外部摄取
+    # （RSS/arxiv 等第三方可写来源）里同时具备「命令式 + 外发动作 + 敏感对象」
+    # 的条目**不拒**、转锦囊（pending_review）交人裁决；其余照常。
+    # off = 行为退回无分级（全部按原路径入库，off 对照测试锚定）。
+    # 三档信任口径见 lantai/security/trust_tier.py。
+    SOURCE_TRUST_MODE: str = "enforce"
+
     # 密钥熔断(票 K 第一道闸):off=不检测;shadow=只记录不转待审;enforce=命中转待审
     # X-06（v0.63 票 02）：默认 shadow——enforce 会把「记住：我的 key 是
     # sk-...」这类正当密钥记忆强制挂起人工裁决（假阳性放大器）；shadow

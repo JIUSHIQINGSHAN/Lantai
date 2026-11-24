@@ -157,17 +157,45 @@ def _live_atomic_facts(facts: list) -> list:
 
 
 def _format_memory_entry(
-    content: str, score: float, max_chars: int, suffix: str, time_str: str = ""
+    content: str,
+    score: float,
+    max_chars: int,
+    suffix: str,
+    time_str: str = "",
+    trust_str: str = "",
 ) -> tuple[str, str]:
     """格式化单条记忆行 + 截断后内容（evidence 与注入行保持一致）。
 
     time_str 非空时行首带事件时间（`- [2026-09-20 | score 0.87] 正文`）——
     模型看得见「什么时候」（票据 .scratch/inject-frame-time/01，上游 f0.1 同款）；
     空串 = 无时间出身的旧行为逐字不变（`- [0.87] 正文`）。
+
+    trust_str（守藏 ADR-0096）：外部摄取来源的条目带 `来源: 外部摄取` 标记，
+    让模型知道这条是第三方可写内容而非用户直述——标注不改写正文，也不因此
+    丢弃（判定与裁决分离，与獬豸同一纪律）。
     """
     truncated = _truncate_codepoints(content, max_chars, suffix)
-    head = f"{time_str} | score {score}" if time_str else str(score)
+    head = str(score)
+    if time_str:
+        head = f"{time_str} | {head}"
+    if trust_str:
+        head = f"{head} | {trust_str}"
     return f"- [{head}] {truncated}", truncated
+
+
+def _source_trust_str(item) -> str:
+    """单条记忆的来源档渲染（只有外部摄取才标；其余来源出空串=旧行为不变）。
+
+    读 `provenance.source_trust`（写入面 `memory_service._source_trust_of`
+    落值，随候选 → 提案 → MemoryItem 链路继承）。缺失或非外部档一律空串：
+    不猜、不给用户自己的记忆加「可疑」标签。
+    """
+    prov = getattr(item, "provenance", None) or {}
+    if not isinstance(prov, dict):
+        return ""
+    if prov.get("source_trust") == "external":
+        return "来源: 外部摄取"
+    return ""
 
 
 def _event_time_str(item) -> str:
@@ -429,6 +457,9 @@ def build_context(query: str, session_id: str | None = None) -> dict:
                         per_memory,
                         _RECALL_TRUNCATION_SUFFIX,
                         time_str=_event_time_str(m),
+                        # 守藏（ADR-0096）：外部来源标注——模型能分清「用户说的」
+                        # 与「第三方页面写的」，不必等到防线漏了才发现
+                        trust_str=_source_trust_str(m),
                     )
                 target_id = m.id
             else:

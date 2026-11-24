@@ -12,7 +12,7 @@ from lantai.gate.contradiction import check_contradiction
 from lantai.gate.scorer import novelty_score
 from lantai.llm.client import embed
 from lantai.models.enums import GateDecision
-from lantai.models.tables import ConflictEvent, MemoryCandidate, MemoryItem
+from lantai.models.tables import ConflictEvent, MemoryCandidate, MemoryItem, RawDocument
 from lantai.storage import db
 from lantai.storage.cas import atomic_update
 from lantai.storage.vector_store import get_vector_store
@@ -88,6 +88,36 @@ def _ensure_can_decide(principal, cand: MemoryCandidate) -> None:
     )
 
 
+def _source_trust_hold(s, cand: MemoryCandidate) -> dict | None:
+    """守藏（ADR-0096）：外部来源 + 命令式 → 转锦囊，不直接入库。
+
+    与獬豸互补：獬豸认「指令覆盖字样」，这里认「第三方在指挥读者做事」——
+    伪造授权 / 伪造流程 / 外泄型偏好这类载荷没有指令词，正则在源头上认不出，
+    只能靠**来源信任**兜。判定走 `lantai/security/trust_tier.py` 单一真源。
+
+    判据取原文（`RawDocument` 的 title+content），不取候选摘要：摘要可能被
+    提取改写过，命令句在摘要里已经不是原样（宁看原文，不看二手）。文档行
+    缺失（评测存桩、老候选）时退回候选自带文本，缺失即无法判定「外部」，
+    按未命中处理（宁 miss 不脏写：不确定就不加一道无据的拦截）。
+
+    返回 None = 放行；否则返回待审原因 dict（调用方据此判 REJECT → 锦囊）。
+    """
+    from lantai.security.trust_tier import hold_for_review, source_trust
+
+    if settings.SOURCE_TRUST_MODE != "enforce":
+        return None
+    doc = s.get(RawDocument, cand.document_id) if cand.document_id else None
+    if doc is None:
+        return None
+    text = f"{doc.title or ''}\n{doc.content or ''}"
+    if not hold_for_review(doc.source_type, text):
+        return None
+    return {
+        "source_type": doc.source_type,
+        "trust": source_trust(doc.source_type),
+    }
+
+
 def decide(candidate_id: str, principal=None) -> dict:
     """闸门裁决。principal（票 readside-gaps/15）：冲突比对的归属边界，
     未传则按候选自身的 `user_id` / `tenant_id` 收敛。"""
@@ -115,6 +145,25 @@ def decide(candidate_id: str, principal=None) -> dict:
                 tenant_id=cand.tenant_id,
                 allowed_lanes=None,
             )
+
+        # 守藏（ADR-0096）：外部摄取的命令式条目 → 锦囊，不晋升。
+        # 放在归属校验之后、冲突比对之前：冲突检测会往既有记忆上写
+        # ConflictEvent 并按 salience 降 importance——一条还没过来源信任的
+        # 外部命令句不该先改动别人的记忆。REJECT 走 evolve_worker 既有的
+        # `enqueue_rejected` 分支（→ pending_review + review_due_at），无需新终态。
+        trust_hold = _source_trust_hold(s, cand)
+        if trust_hold is not None:
+            logger.warning(
+                "候选 %s 转锦囊：外部来源命令式条目（source_type=%s，守藏 ADR-0096）",
+                cand.id,
+                trust_hold["source_type"],
+            )
+            return {
+                "decision": GateDecision.REJECT,
+                "reason": "external command-shaped content needs human review",
+                "source_trust": trust_hold["trust"],
+                "source_type": trust_hold["source_type"],
+            }
 
         summary_text = cand.summary or " ".join(cand.claims)[:400]
 
