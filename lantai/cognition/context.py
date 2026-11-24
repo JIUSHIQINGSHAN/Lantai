@@ -38,6 +38,14 @@ _SECTION_HEADINGS = {
 }
 
 
+def _as_text_list(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value if item]
+    return []
+
+
 @dataclass
 class CognitiveContext:
     task: str
@@ -363,14 +371,17 @@ class CognitiveContext:
             from lantai.llm.fence import wrap_as_data
 
             db_data = self.diben_digest
-            sid = db_data.get("session_id", "active")
+            sid = " ".join(str(db_data.get("session_id", "active")).split())
             intent = db_data.get("active_intent", "")
             action = db_data.get("next_action", "")
             work = db_data.get("working_context", "")
             decisions = db_data.get("key_decisions") or []
             notes = db_data.get("open_notes") or []
 
-            db_lines = [f"## Canonical Session Anchor (底本 · 会话 {sid}):"]
+            db_lines = [
+                "## Canonical Session Anchor (底本 · 定本快照):",
+                f"- **会话 ID (Session ID)**: {wrap_as_data(sid, item_id='diben-session')}",
+            ]
             if intent:
                 db_lines.append(f"- **在做 (Intent)**: {wrap_as_data(str(intent))}")
             if action:
@@ -378,9 +389,13 @@ class CognitiveContext:
             if work:
                 db_lines.append(f"- **工作区 (Working Context)**: {wrap_as_data(str(work))}")
             if decisions:
-                db_lines.append(f"- **关键决策 (Decisions)**: {wrap_as_data('; '.join(decisions))}")
+                db_lines.append(
+                    f"- **关键决策 (Decisions)**: {wrap_as_data('; '.join(_as_text_list(decisions)))}"
+                )
             if notes:
-                db_lines.append(f"- **未竟待办 (Open Notes)**: {wrap_as_data('; '.join(notes))}")
+                db_lines.append(
+                    f"- **未竟待办 (Open Notes)**: {wrap_as_data('; '.join(_as_text_list(notes)))}"
+                )
 
             sections.insert(0, "\n".join(db_lines))
 

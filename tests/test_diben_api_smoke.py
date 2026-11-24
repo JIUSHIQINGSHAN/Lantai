@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from lantai.api.app import app
-from lantai.cli.mcp import TOOL_HANDLERS, TOOLS, handle
+from lantai.cli.mcp import TOOL_HANDLERS, TOOLS, handle, handle_diben_anchor
 from lantai.cognition.context import CognitiveContext
 from lantai.core.auth import Principal
 from lantai.core.time import utcnow
@@ -210,10 +210,48 @@ class TestDibenApiSmoke:
         ctx = CognitiveContext(task="排查网关认证插件", diben_digest=anchor_data)
         prompt = ctx.to_prompt()
 
-        assert "## Canonical Session Anchor (底本 · 会话 sess-ctx-diben):" in prompt
+        assert "## Canonical Session Anchor (底本 · 定本快照):" in prompt
+        assert '<memory_data id="diben-session">sess-ctx-diben</memory_data>' in prompt
         assert "**在做 (Intent)**:" in prompt
         assert "**下一步 (Next Action)**:" in prompt
         assert "<memory_data" in prompt
         assert "部署与调试 Apache APISIX 网关" in prompt
         assert "加载 prometheus 与 jwt-auth 插件" in prompt
+        assert "调整 config.yaml 并重启容器" in prompt
+        assert "网关层禁用冗余审计插件" in prompt
+        assert "验证突发限流测试脚本" in prompt
         assert "</memory_data>" in prompt
+
+    def test_anchor_route_rejects_invalid_session_id(self):
+        client = TestClient(app)
+
+        response = client.post(
+            "/diben/anchor",
+            json={"session_id": 'session-"-break', "blocks": {"cp_active_intent": "工作计划"}},
+            headers={"X-API-Key": "test"},
+        )
+
+        assert response.status_code == 422
+
+    def test_latest_route_rejects_invalid_session_id(self):
+        client = TestClient(app)
+
+        response = client.get(
+            "/diben/latest",
+            params={"session_id": 'session-"-break'},
+            headers={"X-API-Key": "test"},
+        )
+
+        assert response.status_code == 422
+
+    def test_mcp_diben_rejects_invalid_payload_shapes(self):
+        with pytest.raises(ValueError, match="blocks must be an object"):
+            handle_diben_anchor({"session_id": "sess-invalid", "blocks": []})
+        with pytest.raises(ValueError, match="blocks must be an object"):
+            handle_diben_anchor({"blocks": []})
+        with pytest.raises(ValueError, match="session_id is required"):
+            handle_diben_anchor({"blocks": {"cp_active_intent": "完整工作计划"}})
+        with pytest.raises(ValueError, match="query must be a string"):
+            handle_diben_anchor({"detect_drift": True, "query": None})
+        with pytest.raises(ValueError, match="detect_drift must be a boolean"):
+            handle_diben_anchor({"detect_drift": "false", "query": "valid query"})
