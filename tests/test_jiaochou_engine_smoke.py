@@ -67,8 +67,87 @@ class TestJiaochouEngineSmoke:
         assert diff["similarity"] > 0.4
         assert diff["action_suggestion"] in ("update", "merge")
         assert len(diff["overlap_tokens"]) >= 1
+        assert diff["common_summary"].startswith("共同词项:")
         assert "关闭按键音" in diff["divergence_summary"] or len(diff["divergence_tokens"]) >= 1
+        assert diff["divergence_tokens_a"]
+        assert diff["divergence_tokens_b"]
+        assert set(diff["divergence_tokens"]) == set(diff["divergence_tokens_b"])
+        assert any(token in diff["divergence_summary"] for token in diff["divergence_tokens_a"])
+        assert any(token in diff["divergence_summary"] for token in diff["divergence_tokens_b"])
         assert diff["synthesized_proposal"] != ""
+
+    @pytest.mark.parametrize(
+        ("text_a", "text_b", "old_value", "new_value"),
+        [
+            (
+                "生产环境当前数据库主库核心网络服务端口配置为 5432",
+                "生产环境当前数据库主库核心网络服务端口配置为 5433",
+                "5432",
+                "5433",
+            ),
+            (
+                "生产集群 PostgreSQL 服务部署在杭州核心机房",
+                "生产集群 PostgreSQL 服务部署在上海核心机房",
+                "杭州",
+                "上海",
+            ),
+        ],
+    )
+    def test_bidirectional_value_conflict_is_preserved_for_review(
+        self, text_a, text_b, old_value, new_value
+    ):
+        """双向都判为更新的冲突值不能按输入顺序猜新旧，必须保留双源。"""
+        diff = JiaochouEngine().compare_and_collate(text_a, text_b)
+
+        assert diff["similarity"] >= 0.75
+        assert diff["action_suggestion"] == "retain_both"
+        assert diff["metadata"]["structural_relation_a_to_b"] == "update"
+        assert diff["metadata"]["structural_relation_b_to_a"] == "update"
+        assert text_a in diff["synthesized_proposal"]
+        assert text_b in diff["synthesized_proposal"]
+        assert new_value in diff["divergence_tokens_b"]
+        assert old_value in diff["divergence_tokens_a"]
+        assert "核实" in diff["correction_suggestion"]
+        assert diff["confidence"] < 0.7
+        assert diff["metadata"]["confidence_is_calibrated"] is False
+
+        reversed_diff = JiaochouEngine().compare_and_collate(text_b, text_a)
+        assert reversed_diff["action_suggestion"] == diff["action_suggestion"]
+        assert reversed_diff["divergence_tokens_a"] == diff["divergence_tokens_b"]
+        assert reversed_diff["divergence_tokens_b"] == diff["divergence_tokens_a"]
+
+    def test_directional_fact_expansion_proposes_the_expanded_source(self):
+        """只有新增侧被判为 update、反向可 merge 时，才生成方向明确的订误稿。"""
+        text_a = "我喜欢喝无糖咖啡"
+        text_b = "我喜欢喝无糖咖啡以及热茶"
+
+        diff = JiaochouEngine().compare_and_collate(text_a, text_b)
+
+        assert diff["metadata"]["structural_relation_a_to_b"] == "update"
+        assert diff["metadata"]["structural_relation_b_to_a"] == "merge"
+        assert diff["action_suggestion"] == "update"
+        assert diff["synthesized_proposal"] == text_b
+        assert "来源 B" in diff["correction_suggestion"]
+        assert diff["confidence"] > 0.5
+
+        reversed_diff = JiaochouEngine().compare_and_collate(text_b, text_a)
+        assert reversed_diff["metadata"]["structural_relation_a_to_b"] == "merge"
+        assert reversed_diff["metadata"]["structural_relation_b_to_a"] == "update"
+        assert reversed_diff["action_suggestion"] == "update"
+        assert reversed_diff["synthesized_proposal"] == text_b
+        assert "来源 A" in reversed_diff["correction_suggestion"]
+
+    def test_shared_location_does_not_merge_unrelated_topics(self):
+        """共享地名值不能越过相似度下限，把服务器与旅行记录误判为同一事实。"""
+        diff = JiaochouEngine().compare_and_collate(
+            "服务器部署在杭州机房",
+            "杭州旅行计划包含西湖与灵隐寺",
+        )
+
+        assert diff["similarity"] < 0.35
+        assert diff["metadata"]["structural_relation_a_to_b"] == "merge"
+        assert diff["metadata"]["structural_relation_b_to_a"] == "merge"
+        assert diff["action_suggestion"] == "retain_both"
 
     def test_seam2_scan_redundancy_suggestions(self):
         """Seam 2: 存量库近义冗余扫描与动作建议。"""

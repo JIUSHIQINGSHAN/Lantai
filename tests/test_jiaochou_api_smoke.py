@@ -225,6 +225,8 @@ class TestJiaochouApiSmoke:
         assert res2 is not None and "result" in res2
         data2 = json.loads(res2["result"]["content"][0]["text"])
         assert "redundant_pairs" in data2
+        assert "candidate_pair_count" in data2
+        assert "redundant_clusters" in data2
 
     def test_seam4_cognitive_context_jiaochou_aspect(self):
         """Seam 4: CognitiveContext 认知上下文 jiaochou_digest 校雠切面樊篱包裹验证。"""

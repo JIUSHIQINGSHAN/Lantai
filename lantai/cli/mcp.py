@@ -1995,8 +1995,9 @@ def handle_shiyi_pipeline(params: dict) -> dict:
 def handle_jiaochou_collate(params: dict) -> dict:
     """校雠：智能语义去重与知识对齐订误（v0.49 ADR-0070）。
 
-    scan 口径（票 59）：候选池 = 最近创建的 min(limit, 100) 行，池内两两取最相似
-    limit 对；threshold 合法区间 (0, 1]，越界由引擎拒绝（-32602 错误载荷，不炸宿主）。
+    scan 口径（票 59 / ADR-0097）：最近创建的 min(limit, 100) 行组成候选池，完整
+    阈值候选边用于识别簇；详情最多返回 limit 对，未逐对校勘的簇保守待核。threshold
+    合法区间 (0, 1]，越界由引擎拒绝（-32602 错误载荷，不炸宿主）。
     """
     text_a = params.get("text_a")
     text_b = params.get("text_b")
