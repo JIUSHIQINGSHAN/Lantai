@@ -457,6 +457,13 @@ def _add_memory(
     )
 
 
+def _source_trust_of(req: AddMemoryReq) -> str:
+    """守藏（ADR-0096）：写入请求的来源信任档（候选 provenance 落库用）。"""
+    from lantai.security.trust_tier import source_trust
+
+    return source_trust(getattr(req, "source_type", None))
+
+
 def _create_candidate_direct(
     req: AddMemoryReq,
     fp_data: dict,
@@ -533,7 +540,11 @@ def _create_candidate_direct(
             constraints=fp_data["constraints"],
             actions=fp_data["actions"],
             extractor_confidence=fp_data["extractor_confidence"],
-            provenance=make_provenance(PROVENANCE_PROMPT_FASTPATH_DIRECT),
+            provenance=make_provenance(
+                PROVENANCE_PROMPT_FASTPATH_DIRECT,
+                # 守藏（ADR-0096）：与提取路径同口径，来源信任档随链继承
+                {"source_trust": _source_trust_of(req)},
+            ),
             lane=fp_data.get("lane", req.lane),
             status="fastpath",
         )
@@ -615,6 +626,9 @@ def _create_candidate_with_extraction(
         prov_extra = dict(provenance_extra or {})
         if errsig_hits:
             prov_extra["errsig"] = errsig_hits
+        # 守藏（ADR-0096）：来源信任档随候选 provenance 落库，一路继承到
+        # MemoryItem，注入帧据此标注「这条来自外部摄取」
+        prov_extra["source_trust"] = _source_trust_of(req)
 
         agent_id = getattr(principal, "agent_id", None) if principal else None
         cand = MemoryCandidate(

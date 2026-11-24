@@ -11,6 +11,7 @@ from lantai.models.tables import IngestJob, MemoryCandidate, RawDocument, Source
 from lantai.parsing.extractor import extract_candidate
 from lantai.security.injection_guard import assert_no_prompt_injection
 from lantai.security.secret_guard import detect_secret_shapes, route_secret_hits
+from lantai.security.trust_tier import source_trust
 from lantai.storage import db
 
 
@@ -80,7 +81,12 @@ def run_ingest_once():
                         constraints=data["constraints"],
                         actions=data["actions"],
                         extractor_confidence=data["extractor_confidence"],
-                        provenance=make_provenance(PROVENANCE_PROMPT_EXTRACT),
+                        # 守藏（ADR-0096）：外部摄取是**这条链路本身**的语义——不落来源档，
+                        # 晋升后的 MemoryItem 在注入帧就标不出「第三方页面写的」
+                        provenance=make_provenance(
+                            PROVENANCE_PROMPT_EXTRACT,
+                            {"source_trust": source_trust(d.source_type)},
+                        ),
                     )
                     s.add(cand)
                     new_cands += 1

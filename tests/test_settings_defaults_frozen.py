@@ -177,6 +177,8 @@ FROZEN_DEFAULTS = {
     "FTS_BM25_GRAM_TOKENIZE": True,
     "DATA_FENCE_ENABLED": True,
     "INJECTION_GUARD_ENABLED": True,
+    # 守藏（ADR-0096）：写入来源信任分级默认 enforce。off = 退回无分级（off 对照）
+    "SOURCE_TRUST_MODE": "enforce",
     "SECRET_GUARD_MODE": "shadow",
     "IDEMPOTENCY_TTL_DAYS": 7,
     "SHIYI_SCAN_BUDGET_MS": 800,
