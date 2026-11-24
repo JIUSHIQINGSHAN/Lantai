@@ -589,7 +589,30 @@ def prune_decayed_synapses(
         return _prune(s)
 
 
-def _consolidation_proposal_blocked(s: Session, evidence_ids: list[str]) -> str | None:
+def _consolidation_block_index(s: Session) -> dict[frozenset, list[MemoryProposal]]:
+    """一次取回全部 pending/rejected 的 consolidation 提案，按 evidence 冻结集建索引。
+
+    修前 `_consolidation_proposal_blocked` 在簇循环内**每簇**重跑一遍全量查询
+    （C 个簇 = C 次同样的全表拉取，`memoryproposal` 上 `proposal_type`/`status`
+    均无索引）。取数与判定谓词完全不变，只是把「每簇查一次」改成「一轮查一次」。
+
+    每个 key 保留**全部**同行，不是只留一条：同簇可能存在多条 rejected 行
+    （不同裁决时刻），修前「任一条在冷却期内即判 cooldown」，只留一条会漏判。
+    """
+    rows = s.exec(
+        select(MemoryProposal)
+        .where(MemoryProposal.proposal_type == "consolidation")
+        .where(MemoryProposal.status.in_([ProposalStatus.PENDING, ProposalStatus.REJECTED]))
+    ).all()
+    index: dict[frozenset, list[MemoryProposal]] = {}
+    for row in rows:
+        index.setdefault(frozenset(row.evidence_ids or []), []).append(row)
+    return index
+
+
+def _consolidation_proposal_blocked(
+    s: Session, evidence_ids: list[str], index: dict | None = None
+) -> str | None:
     """enforce 生成侧拦截判定（ADR-0050 决策 3）：返回拦截桶名，未拦截返回 None。
 
     - "dupes"：同 evidence_ids 冻结集已存在 pending 的 consolidation 提案（幂等去重：
@@ -606,16 +629,14 @@ def _consolidation_proposal_blocked(s: Session, evidence_ids: list[str]) -> str 
     ev = frozenset(evidence_ids)
     if not ev:
         return None
-    rows = s.exec(
-        select(MemoryProposal)
-        .where(MemoryProposal.proposal_type == "consolidation")
-        .where(MemoryProposal.status.in_([ProposalStatus.PENDING, ProposalStatus.REJECTED]))
-    ).all()
+    if index is None:
+        index = _consolidation_block_index(s)
+    candidates = index.get(ev)
+    if not candidates:
+        return None
     now = utcnow()
     cooldown = timedelta(days=settings.CONSOLIDATION_REJECTED_COOLDOWN_DAYS)
-    for row in rows:
-        if frozenset(row.evidence_ids or []) != ev:
-            continue
+    for row in candidates:
         if row.status == ProposalStatus.PENDING:
             return "dupes"
         if row.status == ProposalStatus.REJECTED:
@@ -766,12 +787,16 @@ def run_consolidation_cycle(session: Session | None = None, principal=None) -> d
         # （record_ops_service._revive_one「宁缺不糊」先例），聚合进报告不静默。
         warnings: list[str] = []
         try:
+            # 一轮只建一次拦截索引（修前每簇一次全量拉取，见 `_consolidation_block_index`）
+            block_index = _consolidation_block_index(s) if mode == "enforce" else {}
             for idx, cluster in enumerate(clusters, 1):
                 try:
                     if mode == "enforce":
                         # 生成侧幂等去重与拒绝冷却（ADR-0050 决策 3）：先查后奏，
                         # 防每夜重复提纯（真实 LLM 成本）与重复提案打扰
-                        blocked = _consolidation_proposal_blocked(s, [m.id for m in cluster])
+                        blocked = _consolidation_proposal_blocked(
+                            s, [m.id for m in cluster], block_index
+                        )
                         if blocked == "dupes":
                             skipped_dupes += 1
                             continue
@@ -786,6 +811,11 @@ def run_consolidation_cycle(session: Session | None = None, principal=None) -> d
                     elif isinstance(res, MemoryProposal):
                         proposals_created += 1
                         purified_ok += 1
+                        # 新提案登记进本轮索引：修前每个簇都重新查库，能看到前面
+                        # 簇刚建的 pending 提案；索引改成一轮一次后必须手动补登，
+                        # 否则后出现的同 evidence 簇会漏判 dupes（宁 miss 的反面：重复提案）。
+                        if mode == "enforce" and res.evidence_ids:
+                            block_index.setdefault(frozenset(res.evidence_ids), []).append(res)
                     else:
                         new_count += 1
                         purified_ok += 1

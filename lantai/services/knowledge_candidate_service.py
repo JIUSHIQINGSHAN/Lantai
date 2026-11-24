@@ -90,6 +90,45 @@ def _unit_number(value) -> bool:
     return isinstance(value, (int, float)) and math.isfinite(value) and 0 <= value <= 1
 
 
+def _candidate_origin_sources(s: Session, items: list[MemoryItem]) -> set[str]:
+    """批量判定「哪些来源是候选出身」（`is_candidate_origin` 的等价批量子集）。
+
+    口径与 `record_ops_service.is_candidate_origin` 逐条一致：先看 provenance
+    三类标记，未命中的再去 checkpoint 里找 `before/after.status == "candidate"`。
+    差别只在**取数方式**：原实现每条来源发一次 checkpoint 查询（评审详情页
+    N+1 的主项），这里一次 `IN` 拿全部命中 id，再按同一谓词判定。
+
+    回归锁：`tests/test_opt_refactor_smoke.py` 只锁 MMR/预算/连接，批量这条路
+    的正确性由 `tests/test_knowledge_candidate*.py` 的既有断言兜住。
+    """
+    if not items:
+        return set()
+    flagged: set[str] = set()
+    need_checkpoint: list[str] = []
+    for item in items:
+        provenance = item.provenance or {}
+        review = provenance.get("knowledge_candidate_review") or {}
+        receipt = review.get("receipt") or {}
+        if (
+            item.status == "candidate"
+            or "candidate_reconciliation" in provenance
+            or (bool(review) and receipt.get("candidate_id", item.id) == item.id)
+        ):
+            flagged.add(item.id)
+        else:
+            need_checkpoint.append(item.id)
+    if need_checkpoint:
+        rows = s.exec(
+            select(MemoryCheckpoint).where(MemoryCheckpoint.memory_id.in_(need_checkpoint))
+        ).all()
+        for checkpoint in rows:
+            if (checkpoint.before or {}).get("status") == "candidate" or (
+                checkpoint.after or {}
+            ).get("status") == "candidate":
+                flagged.add(checkpoint.memory_id)
+    return flagged
+
+
 def _evidence_rows(s: Session, candidate: MemoryItem, principal) -> list[dict]:
     # An Evidence id in source_ids is supported as well as the usual MemoryItem
     # source ids. Only stored relationships qualify; callers cannot invent evidence.
@@ -101,14 +140,22 @@ def _evidence_rows(s: Session, candidate: MemoryItem, principal) -> list[dict]:
         .where((Evidence.source_memory_id.in_(source_ids)) | (Evidence.id.in_(source_ids)))
         .order_by(Evidence.id)
     ).all()
+
+    # 批量取来源（原实现每条 evidence 一次 `select(MemoryItem)` —— 评审详情页
+    # 的 N+1；scope 此前也在循环内每行重算，`knowledge_candidate_scope` 每次
+    # 都会重建条件列表并复制 `AGENT_LANE_BINDINGS`）。判据完全不变：只换取数方式。
+    needed_ids = {str(ev.source_memory_id) for ev in rows if ev.source_memory_id}
+    scope = knowledge_candidate_scope(principal)
+    sources_by_id: dict[str, MemoryItem] = {}
+    if needed_ids:
+        for item in s.exec(select(MemoryItem).where(MemoryItem.id.in_(needed_ids), *scope)).all():
+            sources_by_id[item.id] = item
+    candidate_origin = _candidate_origin_sources(s, list(sources_by_id.values()))
+
     result = []
     threshold = settings.GATE_MIN_EXTRACTOR_CONF
     for evidence in rows:
-        source = s.exec(
-            select(MemoryItem).where(
-                MemoryItem.id == evidence.source_memory_id, *knowledge_candidate_scope(principal)
-            )
-        ).first()
+        source = sources_by_id.get(str(evidence.source_memory_id))
         if source is None or source.id == candidate.id:
             continue
         if not bool(getattr(principal, "is_admin", False)):
@@ -121,10 +168,8 @@ def _evidence_rows(s: Session, candidate: MemoryItem, principal) -> list[dict]:
             reasons.append("evidence is not active")
         # Consolidated / archived sources remain auditable. A withdrawn source or
         # another unreviewed candidate cannot bootstrap a claim into knowledge.
-        from lantai.services.record_ops_service import is_candidate_origin
-
-        if source.status not in ("active", "consolidated", "archived") or is_candidate_origin(
-            s, source
+        if source.status not in ("active", "consolidated", "archived") or (
+            source.id in candidate_origin
         ):
             reasons.append("source is not accepted evidence")
         if not evidence.content.strip():

@@ -72,7 +72,7 @@ def _seed(session_factory, rows) -> None:
 def app_isolated(param_env):
     """挂真实 app，DB 依赖指到 param_env 内存库；用完即还原。
 
-    override 的 key 必须用路由自己绑定的函数对象（`routes_cognitive.get_session`），
+    override 的 key 必须用路由自己绑定的函数对象（`routes_cognitive.get_session_dep`），
     详见 test_cognitive_context_read_ownership.py 同名 fixture 的踩坑记录。
     """
     from lantai.api import routes_cognitive as routes_cognitive_mod
@@ -83,7 +83,7 @@ def app_isolated(param_env):
     def _override_session():
         yield session_factory()
 
-    route_dep = routes_cognitive_mod.get_session
+    route_dep = routes_cognitive_mod.get_session_dep
     app.dependency_overrides[route_dep] = _override_session
     yield app
     app.dependency_overrides.pop(route_dep, None)

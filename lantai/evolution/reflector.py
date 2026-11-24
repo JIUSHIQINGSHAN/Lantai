@@ -532,16 +532,19 @@ def _run_reflect_once(source: str, principal=None) -> dict:
     if theme_triggered:
         start = utcnow() - timedelta(days=settings.REFLECT_IMPORTANCE_WINDOW_DAYS)
         with db.get_session() as s:
-            tq = select(MemoryItem)
+            # 窗口下推 SQL（2026-11-24 优化）：修前无条件全表物化再在 Python 里
+            # 判 `created_at < start`——「窗口内新增」的查询只要窗口内的行。
+            # NULL `created_at` 两版都排除（SQL 比较对 NULL 不为真），口径不变。
+            tq = select(MemoryItem).where(MemoryItem.created_at >= start)
             if scope is not None:
                 tq = tq.where(scope)
+            # 成员判定改用集合：修前对每行扫一遍候选列表（O(N×batch)）。
+            seen_ids = {c["memory_id"] for c in candidates}
             for m in s.exec(tq).all():
-                created = _as_utc(m.created_at)
-                if created is None or created < start:
-                    continue
-                if any(c["memory_id"] == m.id for c in candidates):
+                if m.id in seen_ids:
                     continue
                 candidates.append(_cand(m, "new_theme"))
+                seen_ids.add(m.id)
                 if len(candidates) >= settings.REFLECT_MAX_BATCH:
                     break
 

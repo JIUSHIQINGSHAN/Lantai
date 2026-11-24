@@ -348,7 +348,7 @@ def search_fts(
         cursor = conn.execute(sql, tuple(params))
         return [row[0] for row in cursor.fetchall()]
     except Exception as e:
-        logger.warning("FTS search failed: %s", e)
+        logger.warning("FTS search failed: %s", e, exc_info=True)
         return []
 
 
@@ -408,5 +408,5 @@ def search_fts_bm25(
         cursor = conn.execute(sql, tuple(params))
         return [(row[0], row[1]) for row in cursor.fetchall()]
     except Exception as e:
-        logger.warning("FTS BM25 search failed: %s", e)
+        logger.warning("FTS BM25 search failed: %s", e, exc_info=True)
         return []

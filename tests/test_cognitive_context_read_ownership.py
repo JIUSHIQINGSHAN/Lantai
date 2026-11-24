@@ -125,7 +125,7 @@ def app_isolated(param_env):
     def _override_session():
         yield session_factory()
 
-    route_dep = routes_cognitive_mod.get_session
+    route_dep = routes_cognitive_mod.get_session_dep
     app.dependency_overrides[route_dep] = _override_session
     yield app
     app.dependency_overrides.pop(route_dep, None)

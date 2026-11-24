@@ -21,7 +21,7 @@ from lantai.core.ids import new_id
 from lantai.core.time import utcnow
 from lantai.models.tables import CognitiveRole, Evidence, MemoryItem
 from lantai.security.injection_guard import assert_no_prompt_injection
-from lantai.storage.db import get_session
+from lantai.storage.db import get_session_dep
 
 router = APIRouter(prefix="/cognitive", tags=["cognitive"])
 
@@ -47,7 +47,7 @@ class ObserveReq(BaseModel):
 @router.post("/observe")
 def cognitive_observe(
     req: ObserveReq,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session_dep),
     ctx=Depends(get_current_user),
 ) -> dict:
     """
@@ -107,7 +107,7 @@ def cognitive_observe(
 
 @router.post("/reflect")
 def cognitive_reflect(
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session_dep),
     ctx=Depends(get_current_user),
 ) -> dict:
     """
@@ -146,7 +146,7 @@ def cognitive_context(
     task: str = "",
     # 票 42：1..100——对齐 SearchReq.top_k 既有上界；0 会让 per-role 检索空转
     top_k: int = Query(12, ge=1, le=100),
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session_dep),
     ctx=Depends(get_current_user),
 ) -> dict:
     """
@@ -174,7 +174,7 @@ def cognitive_context_prompt(
     task: str = "",
     # 票 42：1..100——对齐 SearchReq.top_k 既有上界
     top_k: int = Query(12, ge=1, le=100),
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session_dep),
     ctx=Depends(get_current_user),
 ) -> dict:
     """
@@ -193,7 +193,7 @@ def cognitive_summary(
     max_failures: int = Query(1, ge=0, le=50),
     max_probes: int = Query(1, ge=0, le=50),
     char_budget: int = Query(350, ge=100, le=100000),
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session_dep),
     ctx=Depends(get_current_user),
 ) -> dict:
     """

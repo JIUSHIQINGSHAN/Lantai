@@ -164,7 +164,14 @@ def review_candidate(candidate_id: str, approve: bool, reason: str = "", *, prin
         "conflicts": [],
         "reason": reason or "approved by user review",
     }
-    prop = propose_from_candidate(candidate_id, gate_result)
+    # principal 必须传下去（2026-11-24 修复）：proposer 的 EXISTING 取数与
+    # `target_key` 寻址都只在**拿到 principal** 时才按归属收窄。漏传时
+    # `principal=None` 等于「worker 全表」口径：A 的候选审批会把 B 的记忆正文
+    # 拼进外部 LLM 的提示词，LLM 给出的 target_key 也能解析到 B 的记忆 id
+    # （随后在 apply 被 `_ensure_targets_owned` 拒掉，A 得到一条注定失败的提案）。
+    # 同口径见本文件 `review_candidate` 的归属校验与 `readside-gaps` 系列。
+    # 回归锁：tests/test_opt_candidate_flow_smoke.py。
+    prop = propose_from_candidate(candidate_id, gate_result, principal)
     if prop is None:
         # 目标不可寻址（update/merge/deprecate 的 target_key 解析不到唯一 active
         # 记忆）：proposer 已留痕丢弃。如实回报，不伪造 proposal_id，
@@ -304,10 +311,18 @@ def run_candidate_ttl_once() -> dict:
     """TTL 任务：超龄（review_due_at < now）的 pending_review 自动归档。"""
     archived = 0
     with db.get_session() as s:
-        rows = s.exec(
-            select(MemoryCandidate).where(MemoryCandidate.status == "pending_review")
-        ).all()
         now = utcnow()
+        # 到期判定下推 SQL（2026-11-24 优化）：修前把**全部** pending_review 行
+        # 物化进内存再逐行比时间，未到期的绝大多数行白读一遍；本任务由
+        # digest_worker 的每次盘点触发，库随运行时长增长。谓词与下方 CAS 的
+        # 写时重验逐字一致（同一列、同一 now），语义零变——CAS 仍逐行认领，
+        # 并发 defer/裁决的跳过口径不变。
+        rows = s.exec(
+            select(MemoryCandidate)
+            .where(MemoryCandidate.status == "pending_review")
+            .where(MemoryCandidate.review_due_at.is_not(None))
+            .where(MemoryCandidate.review_due_at <= now)
+        ).all()
         for c in rows:
             due = c.review_due_at
             if due is None:

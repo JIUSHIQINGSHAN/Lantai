@@ -11,6 +11,7 @@ from sqlalchemy import or_
 from sqlmodel import select
 
 from lantai.core.acl import viewer_of
+from lantai.core.logger import logger
 from lantai.models.tables import MemoryItem
 from lantai.storage import db
 
@@ -57,5 +58,9 @@ def build_evidence(results: list, limit: int = 10, principal=None) -> list:
                         }
                     )
         return evidence[:limit]
-    except Exception:
+    except Exception as e:
+        # 静默返空时，「本来就没有来源」与「反查炸了」完全同形：REST /search
+        # 与 MCP search 共用本函数，故障只能靠这条日志区分（同
+        # `retrieval-silent-failure` 系列口径：降级可以，留痕不可省）。
+        logger.warning("build_evidence failed, returning empty: %s", e, exc_info=True)
         return []
