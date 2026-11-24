@@ -95,10 +95,10 @@ def _source_trust_hold(s, cand: MemoryCandidate) -> dict | None:
     伪造授权 / 伪造流程 / 外泄型偏好这类载荷没有指令词，正则在源头上认不出，
     只能靠**来源信任**兜。判定走 `lantai/security/trust_tier.py` 单一真源。
 
-    判据取原文（`RawDocument` 的 title+content），不取候选摘要：摘要可能被
+    判据优先取原文（`RawDocument` 的 title+content），不取候选摘要：摘要可能被
     提取改写过，命令句在摘要里已经不是原样（宁看原文，不看二手）。文档行
-    缺失（评测存桩、老候选）时退回候选自带文本，缺失即无法判定「外部」，
-    按未命中处理（宁 miss 不脏写：不确定就不加一道无据的拦截）。
+    缺失（评测存桩、老候选）时退回候选自带文本与 provenance 来源档，缺失且无来源档时按
+    未命中处理（宁 miss 不脏写：不确定就不加一道无据的拦截）。
 
     返回 None = 放行；否则返回待审原因 dict（调用方据此判 REJECT → 锦囊）。
     """
@@ -107,14 +107,18 @@ def _source_trust_hold(s, cand: MemoryCandidate) -> dict | None:
     if settings.SOURCE_TRUST_MODE != "enforce":
         return None
     doc = s.get(RawDocument, cand.document_id) if cand.document_id else None
-    if doc is None:
-        return None
-    text = f"{doc.title or ''}\n{doc.content or ''}"
-    if not hold_for_review(doc.source_type, text):
+    if doc is not None:
+        text = f"{doc.title or ''}\n{doc.content or ''}"
+        source_type = doc.source_type
+    else:
+        text = cand.summary or " ".join(cand.claims or [])
+        source_type = (cand.provenance or {}).get("source_trust")
+
+    if not source_type or not hold_for_review(source_type, text):
         return None
     return {
-        "source_type": doc.source_type,
-        "trust": source_trust(doc.source_type),
+        "source_type": source_type,
+        "trust": source_trust(source_type),
     }
 
 

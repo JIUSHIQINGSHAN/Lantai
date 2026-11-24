@@ -54,7 +54,7 @@ EXPLICIT_RECALL = re.compile(
 
 # 不需要记忆的纯社交结束语
 NO_MEMORY_PATTERNS = re.compile(
-    r"^(?:ok|好|好的|嗯|哦|行|可以|是的|对|收到|了解|明白|知道了|再见|拜拜|谢谢|"
+    r"^(?:ok|好|好的|好吧|行|行吧|好嘞|好的呢|好滴|嗯|哦|可以|是的|对|收到|了解|明白|知道了|再见|拜拜|谢谢|不用谢|不客气|没事|没关系|"
     r"yes|no|yep|nope|k|kk|okay|thanks|bye|got it|sure|alright|"
     r"hello|hi|hey|早上好|晚上好|晚安|[!！。. ]){1,15}$",
     re.IGNORECASE,
@@ -65,9 +65,10 @@ CORRECTION_PATTERNS = re.compile(
     r"不对|不是这|你记错|错了|no, |wrong|actually|not really|记错了|你说错", re.IGNORECASE
 )
 
-# 自我指代基础模式（ADR-0028：收录大哥等项目核心自指）
+# 自我指代基础模式（ADR-0028：收录大哥等项目核心自指，拓展常驻画像实体）
 _BASE_SELF_REFERENCE = (
-    r"我的|我是|我叫|我.*(名字|生日|年龄|地址|电话|邮箱)|"
+    r"我的|我是|我叫|我.*(名字|生日|年龄|地址|电话|邮箱|住|家|喜好|爱好|习惯|职业|工作|公司|学校|专业|学历)|"
+    r"我(住哪|在哪|多大|是谁)|"
     r"大哥|master|owner|assistant|agent|user|用户"
 )
 

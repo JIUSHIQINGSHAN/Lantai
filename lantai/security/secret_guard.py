@@ -22,6 +22,8 @@ _SECRET_PATTERNS: dict[str, re.Pattern[str]] = {
     "openai_key": re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
     "aws_access_key": re.compile(r"AKIA[0-9A-Z]{16}"),
     "github_token": re.compile(r"ghp_[A-Za-z0-9]{36}"),
+    "github_pat": re.compile(r"github_pat_[A-Za-z0-9_]{60,}"),
+    "huggingface_token": re.compile(r"hf_[A-Za-z0-9]{34,}"),
     "google_api_key": re.compile(r"AIza[0-9A-Za-z_-]{35}"),
 }
 

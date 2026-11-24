@@ -103,12 +103,14 @@ _OUTBOUND_ACTIONS = re.compile(
     r"贴|粘贴|贴出|贴到|发到|发给|发送|输出|写进|写到|上传|附上|附加|追加|转发|透露|回复|答复"
     r"|转账|汇款|打款|付款|支付|访问|请求|调用|下载"
     r"|发我|发过来|给我|交给我|传给我"
+    r"|打印|展示|显示|回显|回传|导出"
 )
 # 敏感对象：密钥/凭据、URL、资金账户、个人信息、让模型弃规则。
 # URL 与「链接」拆开算：`https?://` 是外发落点（高信），「链接」在本仓正常
 # 笔记里太常见（「附上变更清单链接」），单独算会把误伤面放大——见 c4 红线。
 _SENSITIVE_OBJECTS = re.compile(
-    r"密钥|密码|凭据|凭证|令牌|私钥|公钥|\bkey\b|\btoken\b|secret|credential|id_rsa|\.ssh|\.env"
+    r"密钥|密码|凭据|凭证|令牌|私钥|公钥|passwords?|passwds?|credentials?|secrets?|id_rsa|\.ssh|\.env"
+    r"|privkey|private[_-]?key|(?:api[_-]?|access[_-]?|auth[_-]?|session[_-]?|bearer[_-]?|secret[_-]?)?(?:key|token)s?\b"
     r"|https?://|www\.|网址|外链|外部链接"
     r"|账户|账号|卡号|银行卡|支付宝|微信支付"
     r"|邮箱|e-?mail|手机号|身份证"
@@ -124,14 +126,17 @@ _DISCARD_WORDS = re.compile(r"别管|无视|忽略|不要理会|不用理会|别
 # ① 本页/本文自称已核实 + 叫你别再核（两个条件都要，避免「本文来自官方文档」
 #    这类正常引用被误判）
 _SELF_AUTHORIZED = re.compile(
-    r"(本页|本文|本条|这份|此文档|该页面).{0,16}(官方|权威|核实|认证|已验证|已确认)"
+    r"(本页|本文|本条|这份|此文档|该页面|本篇|该文章|本报告|此文|此页面).{0,16}(官方|权威|核实|认证|已验证|已确认)"
     r"|(官方|权威).{0,10}(核实来源|认证来源)"
 )
-_STOP_VERIFY = re.compile(r"(不必|无需|不用|别再|不要再).{0,8}(再?查|再?核|验证|核实|求证|比对)")
+_STOP_VERIFY = re.compile(
+    r"(不必|无需|不用|别再|不要再|切勿|严禁|禁止|免于).{0,8}(再?查|再?核|验证|核实|求证|比对)"
+)
 # ② 范围扩张：显式写着「适用范围」并要求覆盖全部/所有/任何场景
 _SCOPE_CLAIM = re.compile(r"(?:适用范围|作用范围|生效范围|scope)\s*[:：].{0,24}")
 _SCOPE_UNIVERSAL = re.compile(
-    r"全部项目|全部会话|所有项目|所有会话|任何场景|一切场景|所有场景|无一例外"
+    r"全部项目|全部会话|所有项目|所有会话|任何场景|一切场景|所有场景|无一例外|all\s+projects|all\s+sessions|every\s+scenario|universally",
+    re.IGNORECASE,
 )
 
 
@@ -167,9 +172,10 @@ def is_command_shaped(content: str) -> bool:
 
 
 def hold_for_review(source_type: str | None, content: str) -> bool:
-    """外部摄取 + 命令式 → 应转待审（不直接入库）。
+    """外部摄取或未知来源 + 命令式 → 应转待审（不直接入库）。
 
-    只对第三方可写来源生效：用户直述与对话抽取不受此闸（用户自己能说的话，
-    不需要系统替他拦）。见 ADR-0096「不拒绝、转待确认」。
+    符合 docstring 契约：未知来源按 external_unknown 处理（不当用户直述），
+    宁严勿松，命令式条目同样转待审；用户直述与对话抽取不受此闸。见 ADR-0096「不拒绝、转待确认」。
     """
-    return is_external_source(source_type) and is_command_shaped(content)
+    st = source_trust(source_type)
+    return st in (TRUST_EXTERNAL, TRUST_EXTERNAL_UNKNOWN) and is_command_shaped(content)
