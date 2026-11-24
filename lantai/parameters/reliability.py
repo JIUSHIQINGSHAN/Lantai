@@ -56,20 +56,14 @@ def record_verification_result(
         return stat
 
 
-def reliability_penalty(venue_class: str) -> float:
-    """计算某信号类别的降权系数（1.0=无降权，<1.0=降权）。
+def penalty_from_stat(stat) -> float:
+    """按**已取到的**统计行计算降权系数（纯函数，不查库）。
 
-    规则（阈值来自 settings，只降不升）：
-    - 样本不足（pass+fail < PENALTY_MIN_SAMPLES）→ 1.0（不动手）
-    - fail_streak >= PENALTY_FAIL_STREAK 或 fail_rate >= PENALTY_FAIL_RATE → 降权
-    - TTL：last_verified_at 超过 PENALTY_TTL_DAYS 未更新 → 降权失效恢复 1.0
-    - 降权幅度 = fail_rate（有上限 0.5 保护，见 apply_penalty_to_weight）
+    `reliability_penalty` 的判定体（阈值、TTL、只降不升）原样收在这里，
+    区别只在于统计行由调用方给——列表页需要逐行算，逐行查库就是 N+1
+    （`/verification/stats` 原先每行一次 `get_session()`）。
+    `stat is None`（该类还没有统计行）→ 1.0。
     """
-    venue_class = ((venue_class or "").strip() or "unknown").lower()
-    with db.get_session() as s:
-        stat = s.exec(
-            select(SignalReliabilityStat).where(SignalReliabilityStat.venue_class == venue_class)
-        ).first()
     if stat is None:
         return 1.0
 
@@ -95,6 +89,27 @@ def reliability_penalty(venue_class: str) -> float:
         # 只降不升：降权系数 = 1 - fail_rate（下限 0.5 保护，防归零）
         return round(max(1.0 - fail_rate, 0.5), 4)
     return 1.0
+
+
+def reliability_penalty(venue_class: str) -> float:
+    """计算某信号类别的降权系数（1.0=无降权，<1.0=降权）。
+
+    规则（阈值来自 settings，只降不升）：
+    - 样本不足（pass+fail < PENALTY_MIN_SAMPLES）→ 1.0（不动手）
+    - fail_streak >= PENALTY_FAIL_STREAK 或 fail_rate >= PENALTY_FAIL_RATE → 降权
+    - TTL：last_verified_at 超过 PENALTY_TTL_DAYS 未更新 → 降权失效恢复 1.0
+    - 降权幅度 = fail_rate（有上限 0.5 保护，见 apply_penalty_to_weight）
+
+    判定体在 `penalty_from_stat`（纯函数）；本函数只负责按类别取一次统计行。
+    批量场景（列表页逐行算 penalty）请直接用 `penalty_from_stat(行)`，
+    否则就是逐行查库的 N+1。
+    """
+    venue_class = ((venue_class or "").strip() or "unknown").lower()
+    with db.get_session() as s:
+        stat = s.exec(
+            select(SignalReliabilityStat).where(SignalReliabilityStat.venue_class == venue_class)
+        ).first()
+    return penalty_from_stat(stat)
 
 
 def apply_penalty_to_weight(base_weight: float, venue_class: str) -> float:
