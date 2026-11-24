@@ -17,6 +17,11 @@ from lantai.services.candidate_service import review_candidate
 from lantai.services.refine_service import refine_candidate_record
 from lantai.storage import db
 
+# 批量采纳的单批条数上限：每条 approve 至少一次写事务、并可能触发一次外部
+# LLM（propose）。上限与 REST 列表页同量级，够一次人工批量操作，又挡住
+# 「一个请求放大成上万次写」。
+_BATCH_ACTION_MAX = 200
+
 TRIAGE_SYSTEM_PROMPT = """你是一个专业的长程记忆管理与知识审阅专家（兰台记忆·案牍审阅系统）。
 你的任务是对系统自动提取的候选记忆进行质量研判与决策建议。
 
@@ -198,6 +203,13 @@ def apply_ai_triage_batch(
     / refine_candidate_record（那两处已有），这里只负责传身份。
     """
     applied = {"approved": 0, "rejected": 0, "refined": 0, "failed": 0}
+
+    # 条数上限（2026-11-24）：`actions` 来自裸 dict 请求体，没有上限时一个请求
+    # 可放大成上万次写事务，approve 每条还会触发一次外部 LLM（propose）。上限
+    # 取 `LIST_PAGE_MAX` 量级；拒绝而非截断（宁 miss 不脏写：静默截断会让调用方
+    # 以为整批都处理了）。
+    if len(actions) > _BATCH_ACTION_MAX:
+        raise ValueError(f"actions 单批最多 {_BATCH_ACTION_MAX} 条，收到 {len(actions)} 条")
 
     for item in actions:
         cid = item.get("id")
