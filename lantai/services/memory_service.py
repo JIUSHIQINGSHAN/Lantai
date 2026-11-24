@@ -3,7 +3,7 @@
 import hashlib
 from datetime import datetime
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
@@ -799,8 +799,102 @@ def get_core_memory(namespace: str = "default", principal=None) -> dict:
             stmt = stmt.where(
                 (CoreMemoryBlock.user_id == viewer) | (CoreMemoryBlock.user_id.is_(None))
             )
+            tenant_id = getattr(principal, "tenant_id", None)
+            if tenant_id:
+                stmt = stmt.where(
+                    (CoreMemoryBlock.tenant_id == tenant_id) | (CoreMemoryBlock.tenant_id.is_(None))
+                )
         blocks = s.exec(stmt.order_by(CoreMemoryBlock.block)).all()
         return {"blocks": [b.model_dump(mode="json") for b in blocks]}
+
+
+def _update_core_memory_row(
+    session,
+    row: CoreMemoryBlock,
+    values: dict,
+    *,
+    block: str,
+    namespace: str,
+    is_admin: bool,
+) -> None:
+    from lantai.cognition.shishi import ShishiConflictError
+
+    guard = (
+        CoreMemoryBlock.block == block,
+        CoreMemoryBlock.namespace == namespace,
+        CoreMemoryBlock.user_id == row.user_id,
+        CoreMemoryBlock.tenant_id == row.tenant_id,
+    )
+    if str(row.agent_id or "").startswith("sha256="):
+        guard += (
+            CoreMemoryBlock.agent_id == row.agent_id,
+            CoreMemoryBlock.content == row.content,
+        )
+    else:
+        # 普通 agent_id 的变化仍是末写胜，但不能清掉读后新加的封存。
+        guard += (
+            or_(
+                CoreMemoryBlock.agent_id.is_(None),
+                and_(
+                    CoreMemoryBlock.agent_id.not_like("%sha256=%"),
+                    CoreMemoryBlock.agent_id.not_like("%:sealed%"),
+                ),
+            ),
+        )
+    if not is_admin:
+        guard += (
+            or_(
+                CoreMemoryBlock.agent_id.is_(None),
+                CoreMemoryBlock.agent_id.not_like("%:sealed:immutable%"),
+            ),
+        )
+
+    if atomic_update(session, CoreMemoryBlock, row.id, values, *guard):
+        return
+
+    session.rollback()
+    current = session.get(CoreMemoryBlock, row.id)
+    if (
+        not is_admin
+        and current is not None
+        and current.agent_id
+        and ":sealed:immutable" in str(current.agent_id)
+    ):
+        raise PermissionError(
+            f"CoreMemoryBlock '{block}' in namespace '{namespace}' "
+            "is sealed in Shishi vault and immutable"
+        )
+    raise ShishiConflictError(
+        f"CoreMemoryBlock '{block}' in namespace '{namespace}' changed during update; retry"
+    )
+
+
+def _core_memory_agent_id_after_write(
+    row: CoreMemoryBlock,
+    *,
+    block: str,
+    content: str,
+    namespace: str,
+    agent_id: str | None,
+    tenant_id: str | None,
+    is_admin: bool,
+) -> str | None:
+    from lantai.cognition.shishi import compute_content_digest, validate_existing_seal
+
+    if not is_admin:
+        if tenant_id and row.tenant_id and tenant_id != row.tenant_id:
+            raise PermissionError("CoreMemoryBlock belongs to another tenant")
+        if row.agent_id and ":sealed:immutable" in str(row.agent_id):
+            raise PermissionError(
+                f"CoreMemoryBlock '{block}' in namespace '{namespace}' "
+                "is sealed in Shishi vault and immutable"
+            )
+    recorded_digest, immutable = validate_existing_seal(row)
+    if recorded_digest is None:
+        return agent_id
+    suffix = ":sealed:immutable" if immutable else ":sealed"
+    new_digest = compute_content_digest(block, content, namespace)
+    return f"sha256={new_digest}{suffix}"
 
 
 def put_core_memory(block: str, content: str, namespace: str = "default", principal=None) -> dict:
@@ -842,10 +936,29 @@ def put_core_memory(block: str, content: str, namespace: str = "default", princi
             "updated_at": utcnow(),
             "user_id": user_id,
             "tenant_id": tenant_id,
-            "agent_id": agent_id,
+            "agent_id": (
+                _core_memory_agent_id_after_write(
+                    row,
+                    block=block,
+                    content=content,
+                    namespace=namespace,
+                    agent_id=agent_id,
+                    tenant_id=tenant_id,
+                    is_admin=is_admin,
+                )
+                if row is not None
+                else agent_id
+            ),
         }
         if row:
-            atomic_update(s, CoreMemoryBlock, row.id, values=bump_values)
+            _update_core_memory_row(
+                s,
+                row,
+                bump_values,
+                block=block,
+                namespace=namespace,
+                is_admin=is_admin,
+            )
             s.commit()
             s.refresh(row)
         else:
@@ -868,7 +981,23 @@ def put_core_memory(block: str, content: str, namespace: str = "default", princi
                 row = s.exec(stmt).first()
                 if row is None:
                     raise
-                atomic_update(s, CoreMemoryBlock, row.id, values=bump_values)
+                bump_values["agent_id"] = _core_memory_agent_id_after_write(
+                    row,
+                    block=block,
+                    content=content,
+                    namespace=namespace,
+                    agent_id=agent_id,
+                    tenant_id=tenant_id,
+                    is_admin=is_admin,
+                )
+                _update_core_memory_row(
+                    s,
+                    row,
+                    bump_values,
+                    block=block,
+                    namespace=namespace,
+                    is_admin=is_admin,
+                )
                 s.commit()
             # 两路汇合后统一刷新：提交即过期，不刷新时 SQLModel 的
             # model_dump 走不到惰性加载，返回空 dict（e2e put_core_memory 回归）。

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from lantai.cognition.chenfeng import search_archived_memories, unarchive_memory_entry
+from lantai.cognition.shishi import ShishiConflictError
 from lantai.core.auth import Principal, get_current_user
 from lantai.models.schemas import AddMemoryReq, RawMemoryReq
 from lantai.services.memory_service import (
@@ -69,6 +70,10 @@ def put_core_memory_route(req: PutCoreMemoryReq, ctx: Principal = Depends(get_cu
     # 票 71：block/content 改 body 接收（query 只留零参数），正文撤出 URL 面
     try:
         return put_core_memory(req.block, req.content, req.namespace, principal=ctx)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ShishiConflictError as e:
+        raise HTTPException(409, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
 

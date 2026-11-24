@@ -2,7 +2,7 @@
 
 为 Agent 核心记忆（identity / policy / task）提供：
 1. 金匮硬核封存（ShishiVaultBlock）：记录递增版本与不可变标记；
-2. 内容完整性哈希签名（SHA-256 Content Digest）：实时防篡改与完整性验真（IntegrityVerificationResult）；
+2. 内容完整性摘要（SHA-256 Content Digest）：篡改感知与完整性验真（IntegrityVerificationResult）；
 3. 樊篱隔离防护（wrap_as_data）：最高优先级 `<memory_data>` 防提示注入围栏；
 4. 租户隔离与行级 ACL 权限收窄：宁 miss 不越权，不可变块禁止非法篡改。
 """
@@ -10,11 +10,11 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from ulid import ULID
@@ -29,7 +29,11 @@ from lantai.storage.cas import atomic_update
 VALID_BLOCKS = frozenset({"identity", "policy", "task"})
 
 
-@dataclass
+class ShishiConflictError(RuntimeError):
+    """核心记忆的封存状态在读取后改变，调用方须重读后重试。"""
+
+
+@dataclass(frozen=True)
 class ShishiVaultBlock:
     """金匮核心记忆封存块契约。"""
 
@@ -69,6 +73,7 @@ class IntegrityVerificationResult:
     tampered_blocks: list[str]
     tamper_details: list[dict[str, Any]]
     verified_at: datetime = field(default_factory=utcnow)
+    unsealed_blocks: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +81,7 @@ class IntegrityVerificationResult:
             "total_blocks": self.total_blocks,
             "verified_blocks": self.verified_blocks,
             "tampered_blocks": self.tampered_blocks,
+            "unsealed_blocks": self.unsealed_blocks,
             "tamper_details": self.tamper_details,
             "verified_at": iso_utc(self.verified_at) or None,
         }
@@ -85,6 +91,98 @@ def compute_content_digest(block_key: str, content: str, namespace: str) -> str:
     """计算核心块内容 SHA-256 完整性摘要。"""
     raw = f"{namespace}:{block_key}:{content}".encode()
     return hashlib.sha256(raw).hexdigest()
+
+
+def _parse_seal_metadata(agent_id: str | None) -> tuple[str | None, bool, bool, bool]:
+    """返回摘要、不可变标记、是否有封存标记及元数据格式是否损坏。"""
+    value = str(agent_id or "")
+    has_seal_marker = "sha256=" in value or ":sealed" in value
+    if not has_seal_marker:
+        return None, False, False, False
+
+    immutable_suffix = ":sealed:immutable"
+    mutable_suffix = ":sealed"
+    if value.endswith(immutable_suffix):
+        suffix = immutable_suffix
+        is_immutable = True
+    elif value.endswith(mutable_suffix):
+        suffix = mutable_suffix
+        is_immutable = False
+    else:
+        return None, False, True, True
+
+    if not value.startswith("sha256="):
+        return None, is_immutable, True, True
+
+    digest = value.removeprefix("sha256=").removesuffix(suffix)
+    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        return None, is_immutable, True, True
+    return digest, is_immutable, True, False
+
+
+def validate_existing_seal(row: CoreMemoryBlock) -> tuple[str | None, bool]:
+    """验证已有封存；未封存返回空摘要，损坏封存拒绝续写。"""
+    digest, immutable, sealed, malformed = _parse_seal_metadata(row.agent_id)
+    if malformed:
+        raise PermissionError(
+            f"CoreMemoryBlock '{row.block}' in namespace '{row.namespace}' "
+            "has invalid Shishi seal metadata"
+        )
+    if sealed and digest != compute_content_digest(row.block, row.content or "", row.namespace):
+        raise PermissionError(
+            f"CoreMemoryBlock '{row.block}' in namespace '{row.namespace}' "
+            "failed Shishi integrity verification"
+        )
+    return digest, immutable
+
+
+def _update_unlocked_block(
+    session: Session,
+    row: CoreMemoryBlock,
+    *,
+    values: dict[str, Any],
+    block: str,
+    namespace: str,
+    is_admin: bool,
+) -> None:
+    guard = (
+        CoreMemoryBlock.block == block,
+        CoreMemoryBlock.namespace == namespace,
+        CoreMemoryBlock.user_id == row.user_id,
+        CoreMemoryBlock.tenant_id == row.tenant_id,
+    )
+    if _parse_seal_metadata(row.agent_id)[2]:
+        # 已封存行须保留读时证据；普通未封存行继续遵循末写胜与库端版本自增。
+        guard += (
+            CoreMemoryBlock.agent_id == row.agent_id,
+            CoreMemoryBlock.content == row.content,
+        )
+    if not is_admin:
+        guard += (
+            or_(
+                CoreMemoryBlock.agent_id.is_(None),
+                CoreMemoryBlock.agent_id.not_like("%:sealed:immutable%"),
+            ),
+        )
+
+    if atomic_update(session, CoreMemoryBlock, row.id, values, *guard):
+        return
+
+    session.rollback()
+    current = session.get(CoreMemoryBlock, row.id)
+    if (
+        not is_admin
+        and current is not None
+        and current.agent_id
+        and ":sealed:immutable" in str(current.agent_id)
+    ):
+        raise PermissionError(
+            f"CoreMemoryBlock '{block}' in namespace '{namespace}' "
+            "is sealed in Shishi vault and immutable"
+        )
+    raise ShishiConflictError(
+        f"CoreMemoryBlock '{block}' in namespace '{namespace}' changed during seal; retry"
+    )
 
 
 class ShishiEngine:
@@ -98,12 +196,15 @@ class ShishiEngine:
         principal = self.principal
         if principal is not None and bool(getattr(principal, "is_admin", False)):
             return None
-        viewer = (
-            (getattr(principal, "user_id", None) or "default")
-            if principal is not None
-            else "default"
+        scope = (CoreMemoryBlock.user_id == viewer_of(principal)) | (
+            CoreMemoryBlock.user_id.is_(None)
         )
-        return (CoreMemoryBlock.user_id == viewer) | (CoreMemoryBlock.user_id.is_(None))
+        tenant_id = getattr(principal, "tenant_id", None)
+        if tenant_id:
+            scope &= (CoreMemoryBlock.tenant_id == tenant_id) | (
+                CoreMemoryBlock.tenant_id.is_(None)
+            )
+        return scope
 
     def seal_core_memory(
         self,
@@ -118,7 +219,7 @@ class ShishiEngine:
         1. 校验合规块名；
         2. 校验 prompt injection 注入防御；
         3. 检查行级 ACL 与不可变加锁，已锁定时非管理员直接报错拒收；
-        4. 计算完整性哈希签名并自增版本落库。
+        4. 计算完整性摘要并自增版本落库。
         """
         if block not in VALID_BLOCKS:
             raise ValueError(f"Invalid core block '{block}', must be one of {sorted(VALID_BLOCKS)}")
@@ -159,7 +260,7 @@ class ShishiEngine:
                 # (user_id, tenant_id) 升序确定性取最小属主行。
                 stmt = stmt.order_by(CoreMemoryBlock.user_id, CoreMemoryBlock.tenant_id)
 
-            row = s.exec(stmt).first()
+            row = s.exec(stmt.execution_options(populate_existing=True)).first()
             digest = compute_content_digest(block, content, namespace)
 
             if row is not None:
@@ -172,20 +273,24 @@ class ShishiEngine:
                     raise PermissionError(
                         f"CoreMemoryBlock '{block}' in namespace '{namespace}' is sealed in Shishi vault and immutable"
                     )
+                if not is_admin:
+                    validate_existing_seal(row)
 
                 lock_flag = ":sealed:immutable" if is_immutable else ":sealed"
                 # 票 23：版本号库端自增——两路并发封存各 +1 都落账（红测 F5b）；
                 # content/签名/锁定元信息同语句原子（末写者胜）。
-                atomic_update(
+                _update_unlocked_block(
                     s,
-                    CoreMemoryBlock,
-                    row.id,
+                    row,
                     values={
                         "content": content,
                         "version": CoreMemoryBlock.version + 1,
                         "updated_at": utcnow(),
                         "agent_id": f"sha256={digest}{lock_flag}",
                     },
+                    block=block,
+                    namespace=namespace,
+                    is_admin=is_admin,
                 )
                 s.commit()
                 s.refresh(row)
@@ -222,16 +327,20 @@ class ShishiEngine:
                         raise PermissionError(
                             f"CoreMemoryBlock '{block}' in namespace '{namespace}' is sealed in Shishi vault and immutable"
                         ) from None
-                    atomic_update(
+                    if not is_admin:
+                        validate_existing_seal(row)
+                    _update_unlocked_block(
                         s,
-                        CoreMemoryBlock,
-                        row.id,
+                        row,
                         values={
                             "content": content,
                             "version": CoreMemoryBlock.version + 1,
                             "updated_at": utcnow(),
                             "agent_id": encoded_agent,
                         },
+                        block=block,
+                        namespace=namespace,
+                        is_admin=is_admin,
                     )
                     s.commit()
                     s.refresh(row)
@@ -247,8 +356,8 @@ class ShishiEngine:
                 is_immutable=is_immutable,
                 namespace=namespace,
                 fenced_content=fenced,
-                user_id=user_id,
-                tenant_id=tenant_id,
+                user_id=row.user_id,
+                tenant_id=row.tenant_id,
                 updated_at=row.updated_at,
             )
             return vault_block.to_dict()
@@ -267,25 +376,24 @@ class ShishiEngine:
             if scope is not None:
                 stmt = stmt.where(scope)
 
-            rows = s.exec(stmt.order_by(CoreMemoryBlock.block)).all()
+            rows = s.exec(
+                stmt.order_by(CoreMemoryBlock.block).execution_options(populate_existing=True)
+            ).all()
             total_blocks = len(rows)
             verified_count = 0
             tampered_keys: list[str] = []
+            unsealed_keys: list[str] = []
             tamper_details: list[dict[str, Any]] = []
 
             for r in rows:
                 actual_digest = compute_content_digest(r.block, r.content or "", namespace)
-                recorded_digest = ""
-                if r.agent_id and "sha256=" in str(r.agent_id):
-                    part = str(r.agent_id).split("sha256=")[1]
-                    recorded_digest = part.split(":")[0]
+                recorded_digest, _, is_sealed, malformed = _parse_seal_metadata(r.agent_id)
 
-                if not recorded_digest:
-                    # 未金匮封存的早期记录，不视为篡改但标为未签名
-                    verified_count += 1
+                if not is_sealed:
+                    unsealed_keys.append(r.block)
                     continue
 
-                if recorded_digest == actual_digest:
+                if not malformed and recorded_digest == actual_digest:
                     verified_count += 1
                 else:
                     tampered_keys.append(r.block)
@@ -295,16 +403,18 @@ class ShishiEngine:
                             "recorded_digest": recorded_digest,
                             "actual_digest": actual_digest,
                             "version": r.version,
+                            "reason": "invalid_signature" if malformed else "digest_mismatch",
                             "tampered_at": iso_utc(utcnow()),
                         }
                     )
 
-            is_valid = len(tampered_keys) == 0
+            is_valid = not tampered_keys and not unsealed_keys
             res = IntegrityVerificationResult(
                 is_valid=is_valid,
                 total_blocks=total_blocks,
                 verified_blocks=verified_count,
                 tampered_blocks=tampered_keys,
+                unsealed_blocks=unsealed_keys,
                 tamper_details=tamper_details,
             )
             return res.to_dict()
@@ -323,17 +433,23 @@ class ShishiEngine:
             if scope is not None:
                 stmt = stmt.where(scope)
 
-            rows = s.exec(stmt.order_by(CoreMemoryBlock.block)).all()
+            rows = s.exec(
+                stmt.order_by(CoreMemoryBlock.block).execution_options(populate_existing=True)
+            ).all()
             result = []
             for r in rows:
                 content = r.content or ""
                 digest = compute_content_digest(r.block, content, namespace)
-                is_immutable = bool(r.agent_id and ":sealed:immutable" in str(r.agent_id))
+                recorded_digest, is_immutable, is_sealed, malformed = _parse_seal_metadata(
+                    r.agent_id
+                )
+                if not is_sealed or malformed or recorded_digest != digest:
+                    continue
                 fenced = wrap_as_data(content, item_id=f"shishi-{r.block}", score=1.0)
                 vault_block = ShishiVaultBlock(
                     block_key=r.block,
                     content=content,
-                    content_digest=digest,
+                    content_digest=recorded_digest,
                     version=r.version or 1,
                     is_immutable=is_immutable,
                     namespace=namespace,
