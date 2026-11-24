@@ -261,11 +261,24 @@ def _replay(s: Session, checkpoint_id: str, fingerprint: str) -> dict | None:
     return {**stored["receipt"], "idempotent": True}
 
 
-def _snapshot(s: Session, candidate: MemoryItem, principal, req) -> dict:
+def _snapshot(
+    s: Session, candidate: MemoryItem, principal, req, *, with_evidence: bool = False
+) -> dict | tuple[dict, list[dict]]:
+    """质量快照。with_evidence=True 时返回 (quality, evidence)。
+
+    一次评审里本函数的输入（候选、来源、请求）在拿到写锁前后各变一次，故
+    `_snapshot` 本身要在锁前与锁后各跑一遍（前者是快速失败，后者是对已认领
+    行的重验，语义不能合并）。但**锁后那次**与审计段取的是同一份 evidence：
+    修前两处各跑一次 `_evidence_rows`（每条来源一次 MemoryItem 查询 + 一次
+    checkpoint 查询 + 一次注入扫描），同一次请求里纯重复。这里让锁后那次把
+    evidence 一并交出来给审计用（`with_evidence=True`）。
+    """
     evidence = _evidence_rows(s, candidate, principal)
     quality = _quality(candidate, evidence, req.evidence_ids)
     if req.decision == "approve" and not quality["eligible"]:
         raise HTTPException(422, {"code": "quality_gate", **quality})
+    if with_evidence:
+        return quality, evidence
     return quality
 
 
@@ -372,7 +385,7 @@ def review_knowledge_candidate(
                 raise HTTPException(
                     409, "candidate changed during review; refresh before reviewing"
                 )
-            quality = _snapshot(s, candidate, principal, req)
+            quality, locked_evidence = _snapshot(s, candidate, principal, req, with_evidence=True)
             now = utcnow()
             before = dict(preflight)
             candidate.updated_at = now
@@ -404,6 +417,8 @@ def review_knowledge_candidate(
                 "decided_at": iso_utc(now),
                 "evidence_ids": req.evidence_ids,
                 "receipt": receipt,
+                # 复用上面锁后那次 `_snapshot(with_evidence=True)` 的结果：
+                # 同一 session、同一候选、同一次认领之后，两处输入完全相同。
                 "evidence_snapshot": [
                     {
                         key: row[key]
@@ -417,7 +432,7 @@ def review_knowledge_candidate(
                             "independence",
                         )
                     }
-                    for row in _evidence_rows(s, candidate, principal)
+                    for row in locked_evidence
                     if row["id"] in req.evidence_ids
                 ],
             }
