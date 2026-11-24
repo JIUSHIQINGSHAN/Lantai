@@ -579,7 +579,9 @@ def handle_kaogong_eval(params: dict) -> dict:
     """考功：执行全库记忆价值演化考评周期（ADR-0031 / ADR-0078）。"""
     from lantai.services.kaogong_service import run_kaogong_cycle
 
-    limit = int(params.get("limit", 100))
+    # 票 66 口径：先验后用。裸 int 会让负 limit 直落 `q.limit(-1)`——SQLite
+    # 的 LIMIT -1 是无上限，一次考评把全库记忆过一遍并写回 tier/importance。
+    limit = _int_param(params, "limit", 100, 1, 1000)
     # 归属（票 01a）
     return run_kaogong_cycle(principal=_principal_from_params(params), limit=limit)
 
@@ -635,7 +637,9 @@ def handle_zhiming_lifecycle(params: dict) -> dict:
     superseded_by = params.get("superseded_by")
     apply = bool(params.get("apply", False))
     auto_apply = bool(params.get("auto_apply", False))
-    limit = int(params.get("limit", 100))
+    # 票 66 口径：先验后用（负 limit 在 SQLite 是无上限，生命周期批量写周期会
+    # 一次扫全表并翻状态）。
+    limit = _int_param(params, "limit", 100, 1, 1000)
 
     from lantai.services.zhiming_service import (
         zhiming_audit_service,
@@ -868,8 +872,10 @@ def handle_memory_archived_search(params: dict) -> dict:
     # 票 26：未广告别名 scene_id 删除消费点——两名一参只文档一个（schema
     # 只广告 scene），别名从未进广告面，不留暗门。
     scene = params.get("scene", "")
-    limit = int(params.get("limit", 50))
-    offset = int(params.get("offset", 0))
+    # 票 66 口径：先验后用（引擎侧另有一层同口径拒绝；`LIMIT -1` 在 SQLite
+    # 是无上限，负 limit 会一次拉回全部归档记忆全文）。
+    limit = _int_param(params, "limit", 50, 1, 500)
+    offset = _int_param(params, "offset", 0, 0, 10_000_000)
     return search_archived_memories(
         query=query,
         lane=lane,

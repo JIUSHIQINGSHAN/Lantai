@@ -14,7 +14,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from lantai.cognition.blb import compute_blb_report
 from lantai.runtime.middleware import build_cognitive_summary, encode_cognitive_header
-from lantai.storage.db import get_session
+from lantai.storage.db import get_session_dep
 
 
 @pytest.fixture(name="client")
@@ -35,7 +35,7 @@ def client_fixture(monkeypatch: pytest.MonkeyPatch):
         with Session(engine) as session:
             yield session
 
-    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_session_dep] = override_get_session
     # DEV MODE 判定（auth.dev_mode_allowed → db_has_api_key）直连模块级
     # db.get_session 查真实库，不受上面的依赖注入 override 影响；真实库有
     # api_keys 行时 DEV MODE 被拒 → 401。必须把模块级入口一并隔离到内存库。
@@ -44,7 +44,7 @@ def client_fixture(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(db_module, "get_session", session_factory)
     with TestClient(app) as test_client:
         yield test_client
-    app.dependency_overrides.pop(get_session, None)
+    app.dependency_overrides.pop(get_session_dep, None)
 
 
 # ──────────────────────────────────────────────────────

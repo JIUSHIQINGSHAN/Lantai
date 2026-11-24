@@ -66,9 +66,13 @@ def client():
                 session.commit()
             yield session
 
-    from lantai.storage.db import get_session
+    # 依赖键必须是路由自己绑定的函数对象（`routes_cognitive` 在 2026-11-24 改用
+    # 生成器依赖 `get_session_dep`，请求结束必定 close——见 `db.get_session_dep`
+    # 的 docstring；用旧 `get_session` 做 key 时 override 不生效，请求会打到
+    # 真实 engine 上，测试静默读到空库）。
+    from lantai.storage.db import get_session_dep
 
-    app.dependency_overrides[get_session] = _override_session
+    app.dependency_overrides[get_session_dep] = _override_session
 
     with TestClient(app) as c:
         yield c

@@ -114,10 +114,30 @@ class CanshangEngine:
         self.principal = principal
         self._conflict_engine = ConflictEngine()
 
+    def _owner_clause(self):
+        """查询侧归属条件（票 57 口径：None 收敛 "default"；admin 不滤）。
+
+        与 `_check_access` 同一判据，区别只是位置：这里下推到 SQL，`_check_access`
+        仍留在 Python 侧兜 lanes 与主键直读路径。两处都不许单边放宽。
+        """
+        if self.principal is not None and self.principal.is_admin:
+            return None
+        viewer = self.principal.user_id if self.principal is not None else "default"
+        if self.principal is not None and not viewer:
+            viewer = "default"
+        return (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
+
     def _check_access(self, item: MemoryItem) -> bool:
-        """行级租户与属主 ACL 隔离校验。"""
+        """行级租户与属主 ACL 隔离校验。
+
+        `principal=None` 收敛到 "default" 属主空间（票 57 口径，与 famen /
+        zuozheng / muci / diben 一致），不再全放：MCP `conflict_scan_consistency`
+        宿主不透传 `user_id` 时 `_principal_from_params` 返回 None，全放等于
+        任何人都能借扫描读到全库任意两条记忆的正文片段（`description` 里
+        `content[:30]`，`metadata` 里还有更多结构）。
+        """
         if self.principal is None:
-            return True
+            return item.user_id in (None, "default")
         if self.principal.is_admin:
             return True
         if item.user_id and self.principal.user_id and item.user_id != self.principal.user_id:
@@ -236,6 +256,9 @@ class CanshangEngine:
 
         items: list[MemoryItem] = []
         if memory_ids:
+            # 显式列表同样过 ACL：`s.get` 是主键直读，绕开下面查询里的归属条件——
+            # 调用方直接点名别人的记忆 id 时，`_check_access` 是唯一一道门
+            # （None 已在其中收敛到 "default"，见该函数 docstring）。
             for mid in memory_ids:
                 item = s.get(MemoryItem, mid)
                 # 票 62：认识论态过滤——superseded 行（status 仍 active）退出审计
@@ -251,14 +274,12 @@ class CanshangEngine:
                 MemoryItem.status == "active",
                 MemoryItem.lifecycle_status.in_(("active", "weakened")),
             )
-            if (
-                self.principal is not None
-                and not self.principal.is_admin
-                and self.principal.user_id
-            ):
-                query = query.where(
-                    (MemoryItem.user_id == self.principal.user_id) | (MemoryItem.user_id.is_(None))
-                )
+            # 归属条件下推（票 57 口径）：None 收敛 "default"，不再落到"无条件下推 +
+            # Python 层 `_check_access` 全放"的两道都松。`allowed_lanes` 仍归
+            # `_check_access`（它只是额外收窄，SQL 侧不加也不放宽可见集）。
+            owner = self._owner_clause()
+            if owner is not None:
+                query = query.where(owner)
             all_items = s.exec(query.limit(limit * 3)).all()
             for it in all_items:
                 if self._check_access(it):
@@ -276,14 +297,9 @@ class CanshangEngine:
                 MemoryItem.status == "active",
                 MemoryItem.lifecycle_status.in_(("active", "weakened")),
             )
-            if (
-                self.principal is not None
-                and not self.principal.is_admin
-                and self.principal.user_id
-            ):
-                query = query.where(
-                    (MemoryItem.user_id == self.principal.user_id) | (MemoryItem.user_id.is_(None))
-                )
+            owner = self._owner_clause()
+            if owner is not None:
+                query = query.where(owner)
             all_items = s.exec(query.limit(limit * 2)).all()
             for it in all_items:
                 if self._check_access(it):

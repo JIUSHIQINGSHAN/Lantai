@@ -218,7 +218,14 @@ def mmr_select(scored: list, limit: int, *, lam: float = 0.7) -> list:
 
     λ 语义照抄上游 Memmy 融改（0.7 默认），实现独立。候选不足或 limit
     非正时逐条退回按分截断，与改前一字不差（零回归铁律）。
-    被 supersedes 边置顶的新值条目（_supersedes_pinned）豁免冗余惩罚。"""
+    被 supersedes 边置顶的新值条目（_supersedes_pinned）豁免冗余惩罚。
+
+    **分词缓存（2026-11-24 优化）**：冗余度是「候选 × 已选」的成对 Jaccard，
+    原实现对**每一对**都重跑一次 `_token_set`（jieba 分词），选择过程因此是
+    O(n²·k) 次分词——实测 80 候选选 20 条要 3.8~5.2s。正文在整个选择期间
+    不变，故按正文缓存 token 集：同一正文只分词一次，选择结果逐位不变
+    （`tests/test_opt_refactor_smoke.py` 锁等价性与耗时上限）。
+    """
     if limit <= 0:
         return []
     if len(scored) <= limit:
@@ -226,23 +233,42 @@ def mmr_select(scored: list, limit: int, *, lam: float = 0.7) -> list:
     lam = min(max(float(lam), 0.0), 1.0)
     pool = list(scored)
     chosen: list = []
-    chosen_texts: list = []
+    chosen_tokens: list = []
+    token_cache: dict[str, set] = {}
+
+    def _tokens(text: str) -> set:
+        cached = token_cache.get(text)
+        if cached is None:
+            cached = _token_set(text)
+            token_cache[text] = cached
+        return cached
+
     while pool and len(chosen) < limit:
         best_idx = None
         best_val = None
         for i, (rel, m) in enumerate(pool):
-            red = (
-                0.0
-                if getattr(m, "_supersedes_pinned", False)
-                else _redundancy(m.content, chosen_texts)
-            )
+            if getattr(m, "_supersedes_pinned", False):
+                red = 0.0
+            else:
+                red = 0.0
+                tokens = _tokens(m.content)
+                if tokens:
+                    worst = 0.0
+                    for ot in chosen_tokens:
+                        if not ot:
+                            continue
+                        union = tokens | ot
+                        sim = len(tokens & ot) / len(union) if union else 0.0
+                        if sim > worst:
+                            worst = sim
+                    red = worst
             val = lam * rel - (1.0 - lam) * red
             if best_val is None or val > best_val:
                 best_idx = i
                 best_val = val
         rel, m = pool.pop(best_idx)
         chosen.append((rel, m))
-        chosen_texts.append(m.content)
+        chosen_tokens.append(_tokens(m.content))
     return chosen
 
 

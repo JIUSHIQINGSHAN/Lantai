@@ -51,7 +51,8 @@ def verification_stats() -> dict:
                     "fail_count": st.fail_count,
                     "fail_streak": st.fail_streak,
                     "last_verified_at": (iso_utc(st.last_verified_at) or None),
-                    "penalty": reliability.reliability_penalty(st.venue_class),
+                    # 逐行用已取到的行算（原为 reliability_penalty，每次重查同一行）
+                    "penalty": reliability.penalty_from_stat(st),
                 }
             )
     return {"stats": rows}

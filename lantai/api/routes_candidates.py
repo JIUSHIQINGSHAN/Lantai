@@ -141,4 +141,10 @@ def candidates_batch_apply_triage(req: dict, ctx=Depends(get_current_user)):
     actions = req.get("actions", [])
     if not isinstance(actions, list):
         raise HTTPException(422, "actions 必须为列表")
-    return apply_ai_triage_batch(actions, principal=ctx)
+    try:
+        return apply_ai_triage_batch(actions, principal=ctx)
+    except ValueError as e:
+        # 单批条数上限（2026-11-24）：`actions` 是裸 dict 请求体、原本没有上限，
+        # 一个请求可放大成上万次写 + 每条 approve 一次外部 LLM。service 层拒绝，
+        # 这里译成 422（同文件其它 ValueError → 422 的既有口径）。
+        raise HTTPException(422, str(e)) from e

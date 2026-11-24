@@ -356,7 +356,15 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
             _commit_rejection(s, prop)
             return out
 
-        emb = embed([content])[0] if content else []
+        # 只有真会把 content 写进向量库的分支才算 embedding（2026-11-24 优化）：
+        # deprecate 只归档不写正文（下面 deprecate 分支连 `emb` 都不引用），
+        # merge 用的是既有正文的 `emb2`——此前无条件 embed 让这两类提案白跑
+        # 一次外部网络往返（还带 tenacity 3 次重试的可能），且发生在下方 CAS
+        # 认领**之前**，正是票 22 S3 想缩短的「评估→认领」竞态窗。
+        # 回归锁：tests/test_opt_candidate_flow_smoke.py（含 add 反向保险）。
+        emb: list = []
+        if content and prop.proposal_type != "deprecate":
+            emb = embed([content])[0]
         # 票 22 S3：apply 认领——「pending|approved → applied」条件 UPDATE 作为
         # 本事务第一条 DML。此前状态门检查后隔 embed 网络往返才提交 APPLIED，
         # REST decide 内联 × run_pending_proposals 定时逐条 × evolve/reflect
@@ -830,6 +838,10 @@ def rollback(memory_id: str, principal=None) -> dict:
                 MemoryCheckpoint.created_at.desc(),
                 MemoryCheckpoint.id.desc(),
             )
+            # 只用当前版与上一版（`ckpts[1]`）——每条 checkpoint 是整条记忆的
+            # `model_dump` JSON，热门记忆回滚时全量物化纯属浪费。`limit(2)`
+            # 后 `len(ckpts) < 2` 的判定语义不变（排序已定，前两条即所需）。
+            .limit(2)
         ).all()
         if len(ckpts) < 2:
             return {"ok": False, "reason": "no previous version"}

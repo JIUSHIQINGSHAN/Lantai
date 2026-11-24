@@ -167,6 +167,73 @@ def _collect_contents(results) -> list[str]:
     return contents
 
 
+def _forget_eval_seeds(seeded: list[str], now) -> int:
+    """只对本次评测自己的种子跑衰减/归档（`eval_fq` 命名空间 + 给定 id 集）。
+
+    语义与 `apply_forgetting` 的逐行判定同口径（procedural 豁免、|Δ|<0.001
+    跳过、decay 阈值归档），差别只在候选集：这里是**显式 id 集**，不是全表。
+    评测要验的正是「陈旧种子衰减后被归档、fresh 组不残留」，所以作用域收窄
+    不改变被测语义——而真实库里的其他记忆一条都不该被评测碰到。
+
+    返回本次实际改动的行数（供调用方/测试对账，不静默）。
+    """
+    import math
+
+    from sqlmodel import select
+
+    from lantai.core.settings import settings
+    from lantai.memory.forgetting import _decay_exempt, _lane_strength, _ttl_exempt, _usage_signal
+    from lantai.models.tables import MemoryItem
+
+    if not seeded:
+        return 0
+    changed_rows = 0
+    with db.get_session() as s:
+        rows = s.exec(
+            select(MemoryItem).where(
+                MemoryItem.id.in_(seeded),
+                MemoryItem.namespace == EVAL_NAMESPACE,
+                MemoryItem.status == "active",
+            )
+        ).all()
+        for m in rows:
+            if m.decay_class == "procedural":
+                if m.decay_score != 1.0:
+                    m.decay_score = 1.0
+                    changed_rows += 1
+                continue
+            last = m.last_used_at or m.created_at
+            if last is None:
+                continue
+            last_cmp, now_cmp = last, now
+            if last_cmp.tzinfo is not None and now_cmp.tzinfo is None:
+                last_cmp = last_cmp.replace(tzinfo=None)
+            elif last_cmp.tzinfo is None and now_cmp.tzinfo is not None:
+                last_cmp = last_cmp.replace(tzinfo=now_cmp.tzinfo)
+            days = max(0.0, (now_cmp - last_cmp).total_seconds() / 86400.0)
+            strength = _lane_strength(m.importance, _usage_signal(m), m.lane)
+            new_decay = math.exp(-days / strength)
+            if abs(m.decay_score - new_decay) >= 0.001:
+                m.decay_score = new_decay
+                changed_rows += 1
+            is_exempt = _ttl_exempt(m)
+            ttl_expired = (
+                m.tier == "working"
+                and days > settings.WORKING_MEMORY_TTL_DAYS
+                and m.helpful_count == 0
+                and not is_exempt
+            )
+            decay_breached = m.decay_score < settings.ARCHIVE_DECAY_THRESHOLD and not _decay_exempt(
+                m
+            )
+            if ttl_expired or decay_breached:
+                m.status = "archived"
+                changed_rows += 1
+            s.add(m)
+        s.commit()
+    return changed_rows
+
+
 def evaluate_forgetting_quality(
     dataset: dict, *, search=None, top_k: int = 5, judge: str = "off"
 ) -> dict:
@@ -192,7 +259,13 @@ def evaluate_forgetting_quality(
 
     try:
         if dataset.get("apply_forgetting"):
-            apply_forgetting()
+            # 作用域收窄到本次评测种子（2026-11-24 修复）：`apply_forgetting()`
+            # 的 `principal=None` 语义是**全表**（定期任务的系统行为，见
+            # `_forgetting_scope`），而本函数的默认调用方
+            # `scripts/run_forgetting_quality.py` 非 --check 模式直连部署库——
+            # 一次评测会给真实记忆做衰减并自动归档（archived 无 undo 入口）。
+            # 这里只保留评测自己种下的行：先取种子 id 集，再逐条按 id 衰减归档。
+            _forget_eval_seeds(seeded, now)
 
         per_query: list[dict] = []
         for idx, case in enumerate(dataset.get("cases", [])):

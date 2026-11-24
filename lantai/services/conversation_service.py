@@ -21,6 +21,8 @@ from lantai.models.tables import ConversationJob, ConversationMessage
 from lantai.security.injection_guard import check_prompt_injection
 from lantai.security.secret_guard import find_secret_shapes
 
+_storage_logger = logging.getLogger("lantai.conversation")
+
 _LABEL = compile_pattern(r"[A-Za-z0-9_.:-]{1,128}")
 _SCOPE_COLUMNS = ("user_id", "tenant_id", "agent_id")
 _SOURCE_COLUMNS = ("workspace_id", "host_id", "conversation_id", "source_message_id")
@@ -210,8 +212,15 @@ class MessageStore:
                     begin = "BEGIN EXCLUSIVE" if write_lock == "EXCLUSIVE" else "BEGIN IMMEDIATE"
                     session.connection().exec_driver_sql(begin)
                 yield session
-        except SQLAlchemyError:
+        except SQLAlchemyError as exc:
             # Do not expose request text through SQL exception parameters or causes.
+            # 但要留痕：`from None` 之后调用方只看到一句常量文案，线上无法区分
+            # 「存储不可用」「schema 不匹配」「约束冲突」。只记异常类型，不带参数
+            # 也不带 cause——脱敏口径与改前一致（回归锁同
+            # `tests/test_conversation_*.py` 的「不泄漏参数」断言）。
+            _storage_logger.warning(
+                "conversation storage failed: %s", type(exc).__name__, exc_info=False
+            )
             raise SQLAlchemyError("Conversation storage unavailable") from None
 
     def capture(

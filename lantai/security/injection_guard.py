@@ -136,7 +136,11 @@ def check_prompt_injection(content: str) -> tuple[bool, str]:
     # 2. NFKC 折叠 + 控制字符清洗 + 去标点后的归一化匹配
     #    必须先 NFKC：全角字母若直接被去标点正则删光，攻击变体就蒸发绕过
     folded = _CONTROL_CHARS_RE.sub("", unicodedata.normalize("NFKC", content))
-    if _RAW_INJECTION_PATTERNS.search(folded):
+    # 折叠结果与原串逐字节相同时（纯 ASCII 正文，无全角/NFD/控制字符），第二次
+    # 全篇正则是纯重复——同一模式同一输入，结论必然与第 1 步一致。实测 80k 纯
+    # ASCII 正文单次扫描 ~25ms，这条短路省掉一半。含全角标点的中文正文
+    # NFKC 会把「，」折成「,」，folded != content，照常扫（不能省）。
+    if folded != content and _RAW_INJECTION_PATTERNS.search(folded):
         return True, "Layer 2"
     normalized = _NORMALIZE_CLEAN_RE.sub("", folded).lower()
     if len(normalized) >= 4 and _NORMALIZED_INJECTION_PATTERNS.search(normalized):

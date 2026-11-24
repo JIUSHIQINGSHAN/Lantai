@@ -115,7 +115,14 @@ class ShiyiEngine:
         tenant_id: str | None,
         shared_scope: str = "private",
     ) -> bool:
-        """行级安全隔离校验（宁漏不越权）。"""
+        """行级安全隔离校验（宁漏不越权）。
+
+        引擎层保持既有契约：`principal=None` 全放——worker/CLI/直调的内部
+        调用方要靠它不空转（`tests/test_key_gate_and_shiyi_perf.py` 用无身份
+        直调断言能看见任意属主的行，是钉住的行为）。**匿名外部面的收敛在调用
+        方**：`services/shiyi_service.py` 的入口把 None 换成 default 属主，
+        与 `hybrid_search._converge_principal` 同一范式（不动承重墙）。
+        """
         if self.principal is None:
             return True
         if getattr(self.principal, "is_admin", False):

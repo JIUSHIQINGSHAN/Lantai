@@ -61,6 +61,7 @@ __all__ = [
     "engine",
     "init_db",
     "get_session",
+    "get_session_dep",
 ]
 
 
@@ -91,3 +92,20 @@ def init_db():
 
 def get_session() -> Session:
     return Session(engine)
+
+
+def get_session_dep():
+    """FastAPI 依赖专用会话（生成器形态 ⇒ 请求结束一定 close）。
+
+    `get_session()` 返回裸 `Session`，被 `Depends` 用作普通函数依赖时 FastAPI
+    **不做 teardown**——只有生成器依赖才会在请求结束时执行 `finally`。此前
+    `routes_cognitive` 的五个端点（observe / reflect / context / context/prompt）
+    整个请求期间持有连接池连接，且异常路径上没有确定性 `rollback`，连接要等
+    对象被 GC 才归还（`CognitiveContextBuilder` 持有 db、大结果对象有引用环时
+    会拖延）。`get_session()` 保留给 341 处 `with` 用法——生成器不能 `with`。
+    """
+    session = Session(engine)
+    try:
+        yield session
+    finally:
+        session.close()

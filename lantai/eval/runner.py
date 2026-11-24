@@ -82,92 +82,97 @@ def run_dry_run(
         )
         _intent_patcher.start()
 
-    for i, q in enumerate(queries):
-        query_text = (q or {}).get("query", "")
-        if not query_text:
-            errors += 1
-            per_query.append(
-                {
-                    "query": "",
-                    "event_id": (q or {}).get("event_id", ""),
-                    "result_ids": [],
-                    "top_scores": [],
-                    "zero_result": True,
-                    "latency_ms": 0,
-                    "error": "empty_query",
-                }
-            )
-            continue
-        t0 = time.perf_counter()
-        try:
-            results = hybrid_search(
-                query_text,
-                top_k=top_k,
-                use_rerank=use_rerank,
-                param_overrides=param_overrides,
-                # 评测语料不带归属（`user_id` 全 NULL），但**必须显式给
-                # 系统身份**（票 `.scratch/mcp-identity-gaps/11`）：
-                # `hybrid_search` 入口现在把 `principal=None` 收敛成
-                # `"default"`，评测的向量 metadata 又是手搓的、没有
-                # `user_id` 键，收敛后 `{"$or":[{user_id:default},{user_id:""}]}`
-                # 匹配不到它 → 向量通道整条失效。`SYSTEM_VIEWER` 是
-                # `vector_owner_filter` 与 `_query_items` 都认的"全表"
-                # 显式形态（同 06 号票立项理由），且 SQL 侧靠
-                # `OR IS NULL` 召回 NULL 语料。
-                principal=Principal(user_id=SYSTEM_VIEWER),
-            )
-            if isinstance(results, tuple):  # trace=True 不可能在这里，防御
-                results = results[0]
-            latency_ms = int((time.perf_counter() - t0) * 1000)
-            ids = []
-            scores = []
-            for r in results or []:
-                if isinstance(r, dict):
-                    if "memory" in r:
-                        m = r["memory"]
-                        if isinstance(m, dict) and m.get("id"):
-                            ids.append(m["id"])
-                        elif hasattr(m, "id"):
-                            ids.append(m.id)
-                    elif "document" in r:
-                        # rerank 结果无 memory.id，用 document 截断代替
-                        ids.append(f"doc:{r['document'][:40]}")
-                    if "score" in r:
-                        scores.append(round(float(r["score"]), 4))
-            per_query.append(
-                {
-                    "query": query_text,
-                    "event_id": (q or {}).get("event_id", ""),
-                    "result_ids": ids,
-                    "top_scores": scores,
-                    "zero_result": not ids,
-                    "latency_ms": latency_ms,
-                }
-            )
-        except Exception as exc:  # noqa: BLE001 —— 单条失败不中断整个 dry-run
-            errors += 1
-            logger.warning("dry-run query %d failed: %s", i, exc)
-            per_query.append(
-                {
-                    "query": query_text,
-                    "result_ids": [],
-                    "top_scores": [],
-                    "zero_result": True,
-                    "latency_ms": 0,
-                    "error": str(exc)[:200],
-                }
-            )
+    # 回放 + 基线读取包在 try/finally 里（2026-11-24）：原实现把
+    # `_intent_patcher.stop()` 放在正常路径末尾，中途任何异常（基线读取、
+    # 检索、写库）都会把 `hybrid.classify_intent` 的 patch 留成进程级残留
+    # （本仓 conftest 专门治理这类绑定残留；生产脚本环境下无人收尾）。
+    try:
+        for i, q in enumerate(queries):
+            query_text = (q or {}).get("query", "")
+            if not query_text:
+                errors += 1
+                per_query.append(
+                    {
+                        "query": "",
+                        "event_id": (q or {}).get("event_id", ""),
+                        "result_ids": [],
+                        "top_scores": [],
+                        "zero_result": True,
+                        "latency_ms": 0,
+                        "error": "empty_query",
+                    }
+                )
+                continue
+            t0 = time.perf_counter()
+            try:
+                results = hybrid_search(
+                    query_text,
+                    top_k=top_k,
+                    use_rerank=use_rerank,
+                    param_overrides=param_overrides,
+                    # 评测语料不带归属（`user_id` 全 NULL），但**必须显式给
+                    # 系统身份**（票 `.scratch/mcp-identity-gaps/11`）：
+                    # `hybrid_search` 入口现在把 `principal=None` 收敛成
+                    # `"default"`，评测的向量 metadata 又是手搓的、没有
+                    # `user_id` 键，收敛后 `{"$or":[{user_id:default},{user_id:""}]}`
+                    # 匹配不到它 → 向量通道整条失效。`SYSTEM_VIEWER` 是
+                    # `vector_owner_filter` 与 `_query_items` 都认的"全表"
+                    # 显式形态（同 06 号票立项理由），且 SQL 侧靠
+                    # `OR IS NULL` 召回 NULL 语料。
+                    principal=Principal(user_id=SYSTEM_VIEWER),
+                )
+                if isinstance(results, tuple):  # trace=True 不可能在这里，防御
+                    results = results[0]
+                latency_ms = int((time.perf_counter() - t0) * 1000)
+                ids = []
+                scores = []
+                for r in results or []:
+                    if isinstance(r, dict):
+                        if "memory" in r:
+                            m = r["memory"]
+                            if isinstance(m, dict) and m.get("id"):
+                                ids.append(m["id"])
+                            elif hasattr(m, "id"):
+                                ids.append(m.id)
+                        elif "document" in r:
+                            # rerank 结果无 memory.id，用 document 截断代替
+                            ids.append(f"doc:{r['document'][:40]}")
+                        if "score" in r:
+                            scores.append(round(float(r["score"]), 4))
+                per_query.append(
+                    {
+                        "query": query_text,
+                        "event_id": (q or {}).get("event_id", ""),
+                        "result_ids": ids,
+                        "top_scores": scores,
+                        "zero_result": not ids,
+                        "latency_ms": latency_ms,
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001 —— 单条失败不中断整个 dry-run
+                errors += 1
+                logger.warning("dry-run query %d failed: %s", i, exc)
+                per_query.append(
+                    {
+                        "query": query_text,
+                        "result_ids": [],
+                        "top_scores": [],
+                        "zero_result": True,
+                        "latency_ms": 0,
+                        "error": str(exc)[:200],
+                    }
+                )
 
-    # 基线 per_query 用于 jaccard（按 queries 顺序对齐）
-    baseline_per_query = None
-    if baseline_run_id:
-        with db.get_session() as s:
-            base = s.get(EvalRun, baseline_run_id)
-            if base and base.per_query:
-                baseline_per_query = [pq.get("result_ids") or [] for pq in base.per_query]
-
-    if _intent_patcher is not None:
-        _intent_patcher.stop()
+        # 基线 per_query 用于 jaccard（按 queries 顺序对齐）
+        baseline_per_query = None
+        if baseline_run_id:
+            with db.get_session() as s:
+                base = s.get(EvalRun, baseline_run_id)
+                if base and base.per_query:
+                    baseline_per_query = [pq.get("result_ids") or [] for pq in base.per_query]
+    finally:
+        if _intent_patcher is not None:
+            _intent_patcher.stop()
 
     # used_ids 弱标注回填（方向二）：按 event_id 从 retrieval_event 拉 used_ids，
     # 无回填时 used_ids_map 为空 → weak_hit_rate 诚实标 None（不编造 0）。

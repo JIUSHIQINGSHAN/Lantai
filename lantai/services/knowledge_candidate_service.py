@@ -90,6 +90,45 @@ def _unit_number(value) -> bool:
     return isinstance(value, (int, float)) and math.isfinite(value) and 0 <= value <= 1
 
 
+def _candidate_origin_sources(s: Session, items: list[MemoryItem]) -> set[str]:
+    """批量判定「哪些来源是候选出身」（`is_candidate_origin` 的等价批量子集）。
+
+    口径与 `record_ops_service.is_candidate_origin` 逐条一致：先看 provenance
+    三类标记，未命中的再去 checkpoint 里找 `before/after.status == "candidate"`。
+    差别只在**取数方式**：原实现每条来源发一次 checkpoint 查询（评审详情页
+    N+1 的主项），这里一次 `IN` 拿全部命中 id，再按同一谓词判定。
+
+    回归锁：`tests/test_opt_evidence_batch_smoke.py` 用同一批来源同时跑本函数与
+    `is_candidate_origin`，逐条比对判定结果（等价性，不是抽样）。
+    """
+    if not items:
+        return set()
+    flagged: set[str] = set()
+    need_checkpoint: list[str] = []
+    for item in items:
+        provenance = item.provenance or {}
+        review = provenance.get("knowledge_candidate_review") or {}
+        receipt = review.get("receipt") or {}
+        if (
+            item.status == "candidate"
+            or "candidate_reconciliation" in provenance
+            or (bool(review) and receipt.get("candidate_id", item.id) == item.id)
+        ):
+            flagged.add(item.id)
+        else:
+            need_checkpoint.append(item.id)
+    if need_checkpoint:
+        rows = s.exec(
+            select(MemoryCheckpoint).where(MemoryCheckpoint.memory_id.in_(need_checkpoint))
+        ).all()
+        for checkpoint in rows:
+            if (checkpoint.before or {}).get("status") == "candidate" or (
+                checkpoint.after or {}
+            ).get("status") == "candidate":
+                flagged.add(checkpoint.memory_id)
+    return flagged
+
+
 def _evidence_rows(s: Session, candidate: MemoryItem, principal) -> list[dict]:
     # An Evidence id in source_ids is supported as well as the usual MemoryItem
     # source ids. Only stored relationships qualify; callers cannot invent evidence.
@@ -101,14 +140,22 @@ def _evidence_rows(s: Session, candidate: MemoryItem, principal) -> list[dict]:
         .where((Evidence.source_memory_id.in_(source_ids)) | (Evidence.id.in_(source_ids)))
         .order_by(Evidence.id)
     ).all()
+
+    # 批量取来源（原实现每条 evidence 一次 `select(MemoryItem)` —— 评审详情页
+    # 的 N+1；scope 此前也在循环内每行重算，`knowledge_candidate_scope` 每次
+    # 都会重建条件列表并复制 `AGENT_LANE_BINDINGS`）。判据完全不变：只换取数方式。
+    needed_ids = {str(ev.source_memory_id) for ev in rows if ev.source_memory_id}
+    scope = knowledge_candidate_scope(principal)
+    sources_by_id: dict[str, MemoryItem] = {}
+    if needed_ids:
+        for item in s.exec(select(MemoryItem).where(MemoryItem.id.in_(needed_ids), *scope)).all():
+            sources_by_id[item.id] = item
+    candidate_origin = _candidate_origin_sources(s, list(sources_by_id.values()))
+
     result = []
     threshold = settings.GATE_MIN_EXTRACTOR_CONF
     for evidence in rows:
-        source = s.exec(
-            select(MemoryItem).where(
-                MemoryItem.id == evidence.source_memory_id, *knowledge_candidate_scope(principal)
-            )
-        ).first()
+        source = sources_by_id.get(str(evidence.source_memory_id))
         if source is None or source.id == candidate.id:
             continue
         if not bool(getattr(principal, "is_admin", False)):
@@ -121,10 +168,8 @@ def _evidence_rows(s: Session, candidate: MemoryItem, principal) -> list[dict]:
             reasons.append("evidence is not active")
         # Consolidated / archived sources remain auditable. A withdrawn source or
         # another unreviewed candidate cannot bootstrap a claim into knowledge.
-        from lantai.services.record_ops_service import is_candidate_origin
-
-        if source.status not in ("active", "consolidated", "archived") or is_candidate_origin(
-            s, source
+        if source.status not in ("active", "consolidated", "archived") or (
+            source.id in candidate_origin
         ):
             reasons.append("source is not accepted evidence")
         if not evidence.content.strip():
@@ -216,11 +261,24 @@ def _replay(s: Session, checkpoint_id: str, fingerprint: str) -> dict | None:
     return {**stored["receipt"], "idempotent": True}
 
 
-def _snapshot(s: Session, candidate: MemoryItem, principal, req) -> dict:
+def _snapshot(
+    s: Session, candidate: MemoryItem, principal, req, *, with_evidence: bool = False
+) -> dict | tuple[dict, list[dict]]:
+    """质量快照。with_evidence=True 时返回 (quality, evidence)。
+
+    一次评审里本函数的输入（候选、来源、请求）在拿到写锁前后各变一次，故
+    `_snapshot` 本身要在锁前与锁后各跑一遍（前者是快速失败，后者是对已认领
+    行的重验，语义不能合并）。但**锁后那次**与审计段取的是同一份 evidence：
+    修前两处各跑一次 `_evidence_rows`（每条来源一次 MemoryItem 查询 + 一次
+    checkpoint 查询 + 一次注入扫描），同一次请求里纯重复。这里让锁后那次把
+    evidence 一并交出来给审计用（`with_evidence=True`）。
+    """
     evidence = _evidence_rows(s, candidate, principal)
     quality = _quality(candidate, evidence, req.evidence_ids)
     if req.decision == "approve" and not quality["eligible"]:
         raise HTTPException(422, {"code": "quality_gate", **quality})
+    if with_evidence:
+        return quality, evidence
     return quality
 
 
@@ -327,7 +385,7 @@ def review_knowledge_candidate(
                 raise HTTPException(
                     409, "candidate changed during review; refresh before reviewing"
                 )
-            quality = _snapshot(s, candidate, principal, req)
+            quality, locked_evidence = _snapshot(s, candidate, principal, req, with_evidence=True)
             now = utcnow()
             before = dict(preflight)
             candidate.updated_at = now
@@ -359,6 +417,8 @@ def review_knowledge_candidate(
                 "decided_at": iso_utc(now),
                 "evidence_ids": req.evidence_ids,
                 "receipt": receipt,
+                # 复用上面锁后那次 `_snapshot(with_evidence=True)` 的结果：
+                # 同一 session、同一候选、同一次认领之后，两处输入完全相同。
                 "evidence_snapshot": [
                     {
                         key: row[key]
@@ -372,7 +432,7 @@ def review_knowledge_candidate(
                             "independence",
                         )
                     }
-                    for row in _evidence_rows(s, candidate, principal)
+                    for row in locked_evidence
                     if row["id"] in req.evidence_ids
                 ],
             }

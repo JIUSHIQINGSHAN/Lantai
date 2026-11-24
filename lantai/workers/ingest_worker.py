@@ -1,3 +1,5 @@
+from threading import Lock
+
 from sqlmodel import select
 
 from lantai.core import scheduler as scheduler_mod
@@ -14,8 +16,25 @@ from lantai.security.secret_guard import detect_secret_shapes, route_secret_hits
 from lantai.security.trust_tier import source_trust
 from lantai.storage import db
 
+# 单飞（2026-11-24，同 `evolve_worker._RUN_ONCE_LOCK` 范式）：cron 定时任务
+# （APScheduler `max_instances=1` 只管自己那条）与 `/ingest/run`、
+# `/monitor/workers/ingest/run` 两条人工入口是**三个**独立发起面——并发进入
+# 会让同一批 source 被跑两遍：重复 IngestJob 行、`content_hash` 唯一约束
+# 撞 IntegrityError 使整批回滚、双份 LLM 提取成本。非阻塞：已在跑即拒绝
+# （路由映射 409），不排队叠加。跨进程（MCP 第二进程）同前例登记为残留竞态。
+_INGEST_LOCK = Lock()
+
 
 def run_ingest_once():
+    if not _INGEST_LOCK.acquire(blocking=False):
+        raise RuntimeError("ingest is already running")
+    try:
+        return _run_ingest_once_locked()
+    finally:
+        _INGEST_LOCK.release()
+
+
+def _run_ingest_once_locked():
     with db.get_session() as s:
         sources = s.exec(select(Source).where(Source.enabled)).all()
     for src in sources:
@@ -31,16 +50,27 @@ def run_ingest_once():
             new_docs, new_cands, blocked = 0, 0, 0
             paper_doc_ids: list[str] = []
             secret_hits_by_cand: list[tuple[str, list[str]]] = []
+
+            # ── 阶段一：无事务准备（闸 + 密钥检测 + LLM 提取） ────────────────
+            # 2026-11-24 优化：原先这段整体在一个写事务里，`extract_candidate` 是
+            # 外部 LLM 调用（单发 60s 预算），N 条 doc 就把 SQLite 写锁持有
+            # N×60s——本库 `journal_mode=delete` + busy_timeout=30s，期间所有写
+            # （检索埋点、遥测 flush、LLM 事件）排队等锁后报 database is locked。
+            # 现在网络调用全部前置到内存，写事务只做 INSERT，持锁时间为毫秒级。
+            prepared: list[tuple[RawDocument, dict | None, list[str] | None]] = []
+            seen_hashes: set[str] = set()
             with db.get_session() as s:
+                known_hashes = set(
+                    s.exec(
+                        select(RawDocument.content_hash).where(
+                            RawDocument.content_hash.in_([d.content_hash for d in docs])
+                        )
+                    ).all()
+                )
                 for d in docs:
-                    exists = s.exec(
-                        select(RawDocument).where(RawDocument.content_hash == d.content_hash)
-                    ).first()
-                    if exists:
+                    if d.content_hash in known_hashes or d.content_hash in seen_hashes:
                         continue
-                    s.add(d)
-                    s.flush()
-                    new_docs += 1
+                    seen_hashes.add(d.content_hash)
 
                     # 闸文本（獬豸 + 密钥共用一个组合口径）：title 与 content 以换行
                     # 分隔——相邻拼接会让 title 尾词与 content 首词融出第四层匹配面。
@@ -50,16 +80,14 @@ def run_ingest_once():
                     # 是第三方可写内容，注入载荷经提取进入候选、晋升为 MemoryItem 后经
                     # 完璧/verbatim 等注入面回到模型上下文。命中即跳过该 doc 的候选创建
                     # （宁 miss 不脏写）：RawDocument 行可留 + meta 记阻断标记供审计
-                    # （闸位前已 flush，JSON 列必须整属性重赋，原地改不被 dirty 跟踪，
-                    # 且 arxiv meta 已携 quality_signal 须合并不覆盖）。
-                    # 逐 doc 捕获：闸异常若逸出会回滚同事务整批（含正常 doc），「一个
-                    # 恶意 feed 不得拖停」在 source 内同样要成立。
+                    # 逐 doc 捕获：「一个恶意 feed 不得拖停」在 source 内同样要成立。
                     try:
                         assert_no_prompt_injection(gate_text)
                     except ValueError as exc:
                         d.meta = {**d.meta, "xiezhi_blocked": True}
                         blocked += 1
                         logger.warning("獬豸阻断摄取候选 doc=%s src=%s：%s", d.id, src.id, exc)
+                        prepared.append((d, None, None))
                         continue
 
                     # 密钥熔断（X-06 同口径）：off 不检测；shadow 检测+记录不阻断；
@@ -70,7 +98,22 @@ def run_ingest_once():
                     if d.source_type == "paper":
                         paper_doc_ids.append(d.id)
 
-                    data = extract_candidate(d.title, d.content)
+                    prepared.append((d, extract_candidate(d.title, d.content), secret_hits))
+
+            # ── 阶段二：短写事务（只 INSERT，无网络调用） ─────────────────────
+            with db.get_session() as s:
+                for d, data, secret_hits in prepared:
+                    # 并发面重验（阶段一到阶段二之间可能有另一路提交了同内容）
+                    exists = s.exec(
+                        select(RawDocument).where(RawDocument.content_hash == d.content_hash)
+                    ).first()
+                    if exists:
+                        continue
+                    s.add(d)
+                    s.flush()
+                    new_docs += 1
+                    if data is None:
+                        continue  # 獬豸阻断：RawDocument 行留下供审计，不建候选
                     cand = MemoryCandidate(
                         id=new_id("cand"),
                         document_id=d.id,

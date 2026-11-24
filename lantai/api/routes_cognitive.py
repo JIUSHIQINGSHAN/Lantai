@@ -18,10 +18,11 @@ from lantai.cognition.context import CognitiveContextBuilder
 from lantai.cognition.reflection import ReflectionEngine
 from lantai.core.auth import get_current_user
 from lantai.core.ids import new_id
+from lantai.core.logger import logger
 from lantai.core.time import utcnow
 from lantai.models.tables import CognitiveRole, Evidence, MemoryItem
 from lantai.security.injection_guard import assert_no_prompt_injection
-from lantai.storage.db import get_session
+from lantai.storage.db import get_session_dep
 
 router = APIRouter(prefix="/cognitive", tags=["cognitive"])
 
@@ -47,7 +48,7 @@ class ObserveReq(BaseModel):
 @router.post("/observe")
 def cognitive_observe(
     req: ObserveReq,
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session_dep),
     ctx=Depends(get_current_user),
 ) -> dict:
     """
@@ -100,14 +101,62 @@ def cognitive_observe(
 
     db.add(mem)
     db.add(ev)
+    # 双通道索引（2026-11-24 修复）：此前只 commit 不建索引——`/cognitive/observe`
+    # 写进来的记忆对 FTS 与向量两条召回通道**永久不可见**，只有向量失败时的
+    # LIKE 兜底偶尔捞到。对照 `memory_service` 的正常写入路径（`sync_fts` +
+    # `index_memory_item` 是同一套必备动作）。
+    # FTS 同事务同步（强一致，ADR-0008 口径），向量在 commit 之后补：
+    # 向量库是外部存储，写失败不该回滚已落库的记忆，只如实上报。
+    from lantai.storage import db as db_module
+    from lantai.storage.fts import sync_fts
+
+    fts_synced = False
+    if db_module.FTS_OK is not False:
+        # FTS_OK 为 False = 初始化时已判定不可用（db.init_db 的降级分支），
+        # 此时强行走 sync_fts 会把「降级但可用」变成 500。None 表示本进程没
+        # 走过 init_db（测试/脚本直载），按可用尝试——真缺表时下面兜住。
+        try:
+            sync_fts(db, mem_id, mem.content)
+            fts_synced = True
+        except Exception as exc:
+            logger.warning("cognitive observe FTS 同步失败（记忆仍落库，检索降级）: %s", exc)
     db.commit()
 
-    return {"ok": True, "memory_id": mem_id, "evidence_id": ev_id}
+    index_warning = None
+    try:
+        from lantai.llm.client import embed
+        from lantai.retrieval.hybrid import index_memory_item
+
+        emb = embed([mem.content])[0]
+        index_memory_item(
+            mem_id,
+            emb,
+            {
+                "key": mem.key,
+                "memory_type": mem.memory_type,
+                "lane": getattr(mem, "lane", "general") or "general",
+                "domain": getattr(mem, "domain", "user") or "user",
+                "shared_scope": getattr(mem, "shared_scope", "private") or "private",
+                "tenant_id": getattr(mem, "tenant_id", "") or "",
+                "user_id": getattr(mem, "user_id", "") or "",
+                "session_id": getattr(mem, "session_id", "") or "",
+                "agent_id": getattr(mem, "agent_id", "") or "",
+            },
+        )
+    except Exception as exc:
+        # 不静默：向量索引失败时该条只能靠 FTS/LIKE 召回，运维要看得见。
+        logger.warning("cognitive observe 向量索引失败（FTS 已同步=%s）: %s", fts_synced, exc)
+        index_warning = "vector_index_failed"
+
+    payload = {"ok": True, "memory_id": mem_id, "evidence_id": ev_id}
+    if index_warning:
+        payload["warning"] = index_warning
+    return payload
 
 
 @router.post("/reflect")
 def cognitive_reflect(
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session_dep),
     ctx=Depends(get_current_user),
 ) -> dict:
     """
@@ -146,7 +195,7 @@ def cognitive_context(
     task: str = "",
     # 票 42：1..100——对齐 SearchReq.top_k 既有上界；0 会让 per-role 检索空转
     top_k: int = Query(12, ge=1, le=100),
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session_dep),
     ctx=Depends(get_current_user),
 ) -> dict:
     """
@@ -174,7 +223,7 @@ def cognitive_context_prompt(
     task: str = "",
     # 票 42：1..100——对齐 SearchReq.top_k 既有上界
     top_k: int = Query(12, ge=1, le=100),
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session_dep),
     ctx=Depends(get_current_user),
 ) -> dict:
     """
@@ -193,7 +242,7 @@ def cognitive_summary(
     max_failures: int = Query(1, ge=0, le=50),
     max_probes: int = Query(1, ge=0, le=50),
     char_budget: int = Query(350, ge=100, le=100000),
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_session_dep),
     ctx=Depends(get_current_user),
 ) -> dict:
     """
