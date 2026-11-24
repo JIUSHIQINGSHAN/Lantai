@@ -868,8 +868,10 @@ def handle_memory_archived_search(params: dict) -> dict:
     # 票 26：未广告别名 scene_id 删除消费点——两名一参只文档一个（schema
     # 只广告 scene），别名从未进广告面，不留暗门。
     scene = params.get("scene", "")
-    limit = int(params.get("limit", 50))
-    offset = int(params.get("offset", 0))
+    # 票 66 口径：先验后用（引擎侧另有一层同口径拒绝；`LIMIT -1` 在 SQLite
+    # 是无上限，负 limit 会一次拉回全部归档记忆全文）。
+    limit = _int_param(params, "limit", 50, 1, 500)
+    offset = _int_param(params, "offset", 0, 0, 10_000_000)
     return search_archived_memories(
         query=query,
         lane=lane,

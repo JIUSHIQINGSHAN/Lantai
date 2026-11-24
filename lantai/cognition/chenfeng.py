@@ -203,7 +203,16 @@ class ChenfengEngine:
         """专用于检索与翻阅尘封（archived）记忆。
 
         严守租户隔离，过滤出 status='archived' 的条目并支持关键词、分轨、场景及时间范围过滤。
+
+        边界先验（2026-11-24）：`limit`/`offset` 来自调用方（REST 查询参数、
+        MCP params），此前直接进 `stmt.limit()`——SQLite 的 `LIMIT -1` 是
+        **无上限**，`{"limit": -1}` 一次拉回全部归档记忆的 `model_dump` 全文。
+        拒绝而非静默钳制（票 66 口径）：界的真源是 REST 那面的 Query 声明。
         """
+        if not isinstance(limit, int) or isinstance(limit, bool) or not (1 <= limit <= 500):
+            raise ValueError(f"limit 须为 [1, 500] 内整数，收到 {limit!r}")
+        if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+            raise ValueError(f"offset 须为非负整数，收到 {offset!r}")
 
         def _search(s: Session) -> dict[str, Any]:
             stmt = select(MemoryItem).where(MemoryItem.status == STATUS_ARCHIVED)

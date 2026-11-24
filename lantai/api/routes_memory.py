@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from lantai.cognition.chenfeng import search_archived_memories, unarchive_memory_entry
@@ -138,11 +138,16 @@ def search_archived_memories_route(
     scene: str = "",
     time_from: datetime | None = None,
     time_to: datetime | None = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     ctx: Principal = Depends(get_current_user),
 ):
-    """尘封（Chenfeng · 归档记忆专栏检索）：只读分页与过滤。受行级租户安全保护。"""
+    """尘封（Chenfeng · 归档记忆专栏检索）：只读分页与过滤。受行级租户安全保护。
+
+    `limit`/`offset` 用 `Query` 声明界（2026-11-24）：裸 int 会把
+    `limit=-1` 原样交给 SQLite，而 `LIMIT -1` 是无上限——一次拉回全部归档
+    记忆全文。引擎侧另有一层同口径的拒绝（`search_archived`），两面不许单边放宽。
+    """
     try:
         return search_archived_memories(
             query=query,
