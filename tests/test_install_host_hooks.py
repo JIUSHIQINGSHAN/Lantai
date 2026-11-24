@@ -195,3 +195,48 @@ def test_hook_subprocess_env_declares_api_key(tmp_path, monkeypatch):
     monkeypatch.delenv("API_KEY", raising=False)
     env = _hook_subprocess_env(tmp_path / "home")
     assert env.get("API_KEY"), "_hook_subprocess_env 未声明 API_KEY：结果将随宿主环境漂移"
+
+
+class TestHookBudgetAndEnvHints:
+    """票 .scratch/multi-client-adaptation-20261124/issues/02。
+
+    CC 每个钩子事件新起进程，本机实测冷启动 2.5–3.6s（替身嵌入）/4.7–4.8s（真网关）。
+    默认 SHELL_HOOK_TIMEOUT=2 必然超时降级：只剩画像兜底、无 event_id，回执链断。
+    安装器生成的命令要自带预算默认值（setdefault，显式环境变量优先），并在打印模式
+    附上必设环境变量清单（缺 API_KEY 时 hook 直接拒绝运行）。
+    """
+
+    def test_generated_command_sets_timeout_default(self):
+        cmd = cli._hook_command("claude-code")
+        assert "setdefault" in cmd and "SHELL_HOOK_TIMEOUT" in cmd
+
+    def test_explicit_timeout_env_wins(self, tmp_path):
+        """用户显式设置的 SHELL_HOOK_TIMEOUT 不被 setdefault 覆盖（子进程实测）。"""
+        import subprocess
+
+        code = (
+            "import json, os, runpy, sys; "
+            "os.environ['LANTAI_HOST'] = 'claude-code'; "
+            "os.environ.setdefault('SHELL_HOOK_TIMEOUT', '8'); "
+            "from lantai.core.settings import settings; "
+            "print(settings.SHELL_HOOK_TIMEOUT)"
+        )
+        env = _hook_subprocess_env(tmp_path / "home")
+        env["SHELL_HOOK_TIMEOUT"] = "3"
+        r = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=env,
+            timeout=300,
+        )
+        assert r.returncode == 0, r.stderr[-400:]
+        assert r.stdout.strip() == "3"
+
+    def test_print_mode_lists_required_env(self, monkeypatch, capsys):
+        monkeypatch.setattr(sys, "argv", ["install_host_hooks.py", "--host", "claude-code"])
+        assert cli.main() == 0
+        err = capsys.readouterr().err
+        for key in ("API_KEY", "LANTAI_HOME", "SHELL_HOOK_TIMEOUT"):
+            assert key in err

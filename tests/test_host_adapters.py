@@ -14,7 +14,11 @@ import json
 
 import pytest
 
-from lantai.integrations.host_adapters import HOST_EVENT, adapt_response
+from lantai.integrations.host_adapters import (
+    HOST_EVENT,
+    INJECTION_EVENTS,
+    adapt_response,
+)
 
 
 class TestAdaptResponseHermes:
@@ -129,7 +133,7 @@ class TestWiredThroughShellHook:
 
 class TestHostRegistry:
     def test_all_matrix_hosts_have_event(self):
-        """三命令钩子宿主均已登记事件名。"""
+        """三命令钩子宿主均已登记兜底事件名（仅在拿不到真实事件时使用）。"""
         for host in ("claude-code", "codex"):
             assert host in HOST_EVENT
         assert HOST_EVENT["claude-code"] == "UserPromptSubmit"
@@ -139,3 +143,48 @@ class TestHostRegistry:
         """未登记宿主 → 直通（不破坏未来宿主的自有形状）。"""
         result = {"context": "x"}
         assert adapt_response("future-host", result) == result
+
+
+class TestEventAwareInjection:
+    """票 .scratch/multi-client-adaptation-20261124/issues/01。
+
+    Claude Code 2.1.330 真机对照（`claude --settings <f> -p` + 标记串问模型）：
+    钩子返回 `hookEventName: UserPromptSubmit` 而实际触发事件是 `SessionStart`
+    → 模型答 NO（整帧被丢弃）；改成 `SessionStart` → 答 YES。
+
+    故事件名必须**跟随触发事件**，宿主固定值只在拿不到事件时兜底。
+    """
+
+    def test_session_start_keeps_its_own_event_name(self):
+        out = adapt_response("claude-code", {"context": "底本"}, event="SessionStart")
+        assert out["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+
+    def test_user_prompt_submit_unchanged(self):
+        out = adapt_response("claude-code", {"context": "x"}, event="UserPromptSubmit")
+        assert out["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+
+    def test_codex_follows_event_too(self):
+        out = adapt_response("codex", {"context": "x"}, event="SessionStart")
+        assert out["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+
+    @pytest.mark.parametrize("event", ["Stop", "SessionEnd", "PreCompact", "Notification"])
+    def test_non_injection_events_never_inject(self, event):
+        """非注入事件原样返回：Stop 等拿到画像帧只会往上下文灌噪音。"""
+        result = {"context": "画像兜底"}
+        assert adapt_response("claude-code", result, event=event) == result
+
+    def test_non_injection_event_keeps_write_path_untouched(self):
+        ack = {"ok": True, "event_id": "rev_1", "receipt_status": "acked"}
+        assert adapt_response("claude-code", ack, event="Stop") == ack
+
+    def test_missing_event_falls_back_to_host_default(self):
+        """事件缺失（旧调用方 / 手工帧）→ 宿主默认值，旧行为逐字不变。"""
+        out = adapt_response("claude-code", {"context": "x"})
+        assert out["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+
+    def test_empty_event_string_falls_back(self):
+        out = adapt_response("claude-code", {"context": "x"}, event="")
+        assert out["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+
+    def test_injection_event_whitelist_matches_documented_set(self):
+        assert frozenset({"SessionStart", "UserPromptSubmit", "SubagentStart"}) == INJECTION_EVENTS

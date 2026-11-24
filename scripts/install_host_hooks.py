@@ -21,6 +21,19 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 HOOK_SCRIPT = REPO / "scripts" / "shell_hook.py"
 
+# 生成命令里的钩子预算默认值（秒）。冷启动宿主（Claude Code / Codex 每个事件新起
+# 子进程）在这台机器上实测 2.5–4.8s，2s 默认预算会把每轮都降级成画像兜底。
+DEFAULT_HOOK_TIMEOUT = "8"
+
+# 打印模式附带的必设环境变量清单（缺 API_KEY 时 hook 直接拒绝运行）。
+REQUIRED_ENV_HINT = (
+    "运行钩子前须设置的环境变量：\n"
+    "  API_KEY            必需；缺少时 shell_hook 拒绝运行（禁止 DEV 回退）\n"
+    "  LANTAI_HOME        兰台数据目录（未设时回落到仓库/用户目录推导）\n"
+    f"  SHELL_HOOK_TIMEOUT  钩子预算秒数；生成的命令已 setdefault 为 {DEFAULT_HOOK_TIMEOUT}，"
+    "显式设置优先"
+)
+
 # 命令钩子矩阵（走 shell_hook 协议）+ cursor 降级档。
 # 注意：hermes 走**插件通道**（hermes-plugin/），不经 shell 钩子配置文件，
 # 故本安装脚本不为它生成片段——放进 ALL_HOSTS 会造成「合法取值必然报错」。
@@ -45,6 +58,10 @@ def _hook_command(host: str) -> str:
     inner = (
         f"import os, runpy; "
         f"os.environ['LANTAI_HOST'] = {host!r}; "
+        # 冷启动宿主每个事件都新起进程：本机实测 2.5–3.6s（嵌入替身）/4.7–4.8s
+        # （真实网关），默认 2s 预算必然超时降级（只剩画像、无 event_id）。
+        # setdefault 让用户显式设置的环境变量优先。
+        f"os.environ.setdefault('SHELL_HOOK_TIMEOUT', {DEFAULT_HOOK_TIMEOUT!r}); "
         f"runpy.run_path({hook!r}, run_name='__main__')"
     )
     return f'{py} -c "{inner}"'
@@ -176,6 +193,7 @@ def main() -> int:
 
     if not args.write:
         print(snippet)
+        print(f"\n{REQUIRED_ENV_HINT}", file=sys.stderr)
         if args.host in DEGRADED_HOSTS:
             print(
                 f"\n（提示：{args.host} 为降级档，不计入命令钩子矩阵；"

@@ -56,6 +56,7 @@ from lantai.integrations.host_protocol import (
     ACTION_QUERY,
     ACTION_VETO,
     parse_host_request,
+    peek_hook_event,
     render_host_response,
 )
 from lantai.llm.client import embed
@@ -725,7 +726,13 @@ def _handle_one(raw: str) -> dict:
     自有形状，故既有断言零改动即证明等价。
     """
     assert_hook_api_key_configured()
-    return adapt_response(os.environ.get("LANTAI_HOST") or None, _dispatch_one(raw))
+    return adapt_response(
+        os.environ.get("LANTAI_HOST") or None,
+        _dispatch_one(raw),
+        # 事件名按**这一帧**的真实触发事件取（CC 会校验事件名，不一致整帧丢弃）；
+        # 取不到时适配层回落宿主默认值。
+        peek_hook_event(raw),
+    )
 
 
 def _dispatch_one(raw: str) -> dict:
