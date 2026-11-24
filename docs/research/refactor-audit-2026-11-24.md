@@ -197,3 +197,16 @@ RST）：`classify_intent` 单次 **6.47s**。而 `SHELL_HOOK_TIMEOUT` 默认 2s
 意图分类不接检索预算这条，主线 PR #77（票 90）独立发现并修了同一处（它实测
 11.0s，本分支 6.47s）。变基时采纳主线实现，本分支重复改动已删除——两条独立
 路径撞到同一个 bug，是本条判断的交叉印证，不是重复劳动。
+
+## 7. 审查中发现的既有缺陷（登记，本轮不改）
+
+- **`test_handle_one_does_not_inject_on_stop` 是假绿**（`tests/test_shell_hook.py`）：
+  用例把 `build_context` 替身成 `pytest.fail("Stop 事件不该跑检索")`，但检索跑在
+  **后台线程**里，`pytest.fail` 的异常在那条线程上无人接，主线程照常拿到 `{}` 并
+  断言通过——用例「绿」了，`Stop` 帧却确实启动了检索。
+  取证：`pytest -W error::pytest.PytestUnhandledThreadExceptionWarning` 下该用例
+  变红（`Exception in thread Thread-1 / Failed: Stop 事件不该跑检索`）；而
+  `scripts/shell_hook.py` 在本分支与 `origin/master` **逐字一致**（客户端代码
+  一行没碰），故这是既有缺陷，不是本轮引入。
+  修法方向：线程内的失败要能回传到主线程（收集到列表、主线程 join 后断言），
+  或让 `Stop` 帧根本不排检索线程。两条都涉及 `_handle_one` 的线程模型，属独立票。
