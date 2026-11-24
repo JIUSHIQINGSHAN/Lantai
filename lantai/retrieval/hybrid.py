@@ -513,10 +513,15 @@ def _hybrid_search_impl(
     # 下它单独就能吃掉 11s（实测），整轮必超时降级、event_id 丢失。留 25% 余量
     # 给后续 embed/BM25/组装——与 build_context 给 embed 的 85% 口径一致，
     # 因为 t0 就在这里，外层剩余预算是整段检索的。
-    intent_info = classify_intent(
-        query,
-        timeout=None if budget_s is None else max(0.05, budget_s * 0.25),
-    )
+    #
+    # 无预算时**按旧单参形状调用**：既有评测/测试按 `lambda q: {...}` 替身
+    # mock 这个函数，多一个关键字即 TypeError（与 shell_hook 的
+    # `test_unconfigured_call_keeps_legacy_signature` 同一纪律——首版无条件
+    # 传 timeout= 打挂了 test_rerank_index_and_schema 两条用例）。
+    if budget_s is None:
+        intent_info = classify_intent(query)
+    else:
+        intent_info = classify_intent(query, timeout=max(0.05, budget_s * 0.25))
     candidate_n = intent_info["candidate_n"]
     if trace:
         t1 = time.perf_counter()

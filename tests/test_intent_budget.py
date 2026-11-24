@@ -16,6 +16,7 @@ import time
 
 import pytest
 
+from lantai.core.settings import settings
 from lantai.retrieval import hybrid, intent
 
 
@@ -42,14 +43,11 @@ def test_intent_budget_propagates_to_chat_json(monkeypatch):
 
     assert captured["timeout"] == 1.7, "预算未传导：chat_json 没收到 timeout"
     assert out["intent"] == "procedural"
-    assert out["candidate_n"] == int(
-        pytest.importorskip("lantai.core.settings").settings.INTENT_CANDIDATE_SIZES["procedural"]
-    )
+    assert out["candidate_n"] == int(settings.INTENT_CANDIDATE_SIZES["procedural"])
 
 
 def test_intent_budget_exceeded_falls_back_to_default(monkeypatch):
     """LLM 在预算内失败 → 回落 DEFAULT_INTENT，不抛异常、不阻塞调用方。"""
-    from lantai.core.settings import settings
 
     def slow_chat_json(system, user, timeout=None):
         # 复刻预算模式语义：一次机会睡满预算即抛，不重试
@@ -70,7 +68,6 @@ def test_intent_budget_exceeded_falls_back_to_default(monkeypatch):
 
 def test_intent_off_switch_bypasses_llm(monkeypatch):
     """LANTAI_INTENT_OFF=1 走默认意图，且不触网（既有开关零回归）。"""
-    from lantai.core.settings import settings
 
     def boom(*a, **kw):
         raise AssertionError("LANTAI_INTENT_OFF=1 时不该调用 LLM")
