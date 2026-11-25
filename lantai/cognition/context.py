@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -113,6 +114,14 @@ class CognitiveContext:
                 continue
 
             lines = [heading]
+            if section_key == "clarification_probes":
+                lines.append(
+                    "若与当前话题相关，请先完成主任务，再在回复末尾自然、简短地求证，不要打断对话。"
+                )
+            # 探颐并陈（Surfacing Disagreement / ADR-0037）：明确提示未决争议
+            if section_key == "conflicts":
+                lines.append("> 以下为未决冲突，请勿当作定论；必要时向用户求证")
+
             for item in items:
                 if isinstance(item, dict):
                     # 处理 causal_provenance 归因结构字典
@@ -158,6 +167,33 @@ class CognitiveContext:
                         )
                         continue
 
+                    # 探颐并陈（ADR-0037 / 并陈 2026-11-23）：未决冲突专化渲染——新旧说法并陈
+                    if section_key == "conflicts" and (
+                        "incoming_ref" in item or "rule_name" in item
+                    ):
+                        from lantai.llm.fence import wrap_as_data
+
+                        mem_id = item.get("memory_id", "")
+                        mem_content = item.get("memory_content", "")
+                        incoming = item.get("incoming_ref", "")
+                        rule = item.get("rule_name") or item.get("kind") or "conflict"
+                        source = item.get("source")
+
+                        desc_parts = []
+                        if mem_content:
+                            desc_parts.append(f"既有记忆: {mem_content}")
+                        elif mem_id:
+                            desc_parts.append(f"既有记忆ID: {mem_id}")
+                        if incoming:
+                            desc_parts.append(f"待裁决新说法: {incoming}")
+                        if source:
+                            source_text = json.dumps(source, ensure_ascii=False, sort_keys=True)
+                            desc_parts.append(f"冲突来源: {source_text}")
+                        full_desc = " | ".join(desc_parts) if desc_parts else str(item)
+                        conflict_text = f"[未决冲突 ({rule}) 涉及: {mem_id}] {full_desc}"
+                        lines.append(f"- {wrap_as_data(conflict_text)}")
+                        continue
+
                     content = item.get("content") or item.get("lesson") or str(item)
                     scope = item.get("scope", "")
                     conf = item.get("confidence", "")
@@ -186,6 +222,18 @@ class CognitiveContext:
                         ids_str = ", ".join(getattr(item, "conflicting_memory_ids", []))
                         lines.append(
                             f"- [参商抵触 ({severity}) 涉及: {ids_str}] {wrap_as_data(str(desc))}"
+                        )
+                    elif (
+                        section_key == "conflicts"
+                        and hasattr(item, "incoming_ref")
+                        and hasattr(item, "memory_id")
+                    ):
+                        mem_id = getattr(item, "memory_id", "")
+                        incoming = getattr(item, "incoming_ref", "")
+                        rule = getattr(item, "rule_name", "") or getattr(item, "kind", "conflict")
+                        full_desc = f"既有记忆ID: {mem_id} | 待裁决新说法: {incoming}"
+                        lines.append(
+                            f"- [未决冲突 ({rule}) 涉及: {mem_id}] {wrap_as_data(full_desc)}"
                         )
                     else:
                         lines.append(f"- {wrap_as_data(str(item))}")
@@ -848,7 +896,81 @@ class CognitiveContextBuilder:
                 }
             )
 
-        # 4. conflicts 预留（后续接入 ConflictEngine 实时检测）
+        # 4. 探颐并陈与主动探针：Level 1 并列展示分歧，Level 2 只生成温和求证建议。
         ctx.conflicts = []
+        surface_conflicts = getattr(settings, "COGNITION_CONFLICTS_SURFACING_ENABLED", True)
+        generate_probes = getattr(settings, "ENABLE_PROACTIVE_PROBING", True)
+        selected_mem_ids = {
+            item["id"]
+            for section in ("facts", "experience", "beliefs", "rules", "principles", "memories")
+            for item in getattr(ctx, section, [])
+            if isinstance(item, dict) and item.get("id")
+        }
+
+        if selected_mem_ids and (surface_conflicts or generate_probes):
+            from lantai.models.tables import ConflictEvent
+            from lantai.security.injection_guard import is_blocked_by_injection_guard
+            from lantai.services.conflict_service import _visible_conflict_ids
+
+            # 属主可见性过滤（宁漏不放）
+            visible_cids = _visible_conflict_ids(self.db, self.principal)
+            safe_candidates = []
+            if visible_cids is None or visible_cids:
+                q = (
+                    select(ConflictEvent)
+                    .where(
+                        ConflictEvent.status == "open",
+                        ConflictEvent.memory_id.in_(selected_mem_ids),
+                    )
+                    .order_by(ConflictEvent.created_at.desc())
+                )
+                if visible_cids is not None:
+                    q = q.where(ConflictEvent.id.in_(visible_cids))
+
+                max_conflicts = getattr(settings, "COGNITION_CONFLICTS_MAX_IN_CONTEXT", 3)
+                mem_content_map = {m.id: (m.content or "") for m in memories if hasattr(m, "id")}
+                candidates = self.db.exec(q.limit(max_conflicts * 2)).all()
+                for conf in candidates:
+                    incoming_ref = conf.incoming_ref or ""
+                    # 獬豸防注入护栏：命中的新说法既不并陈，也不生成追问。
+                    if is_blocked_by_injection_guard(incoming_ref):
+                        continue
+                    safe_candidates.append(conf)
+
+                    if surface_conflicts and len(ctx.conflicts) < max_conflicts:
+                        ctx.conflicts.append(
+                            {
+                                "id": conf.id,
+                                "memory_id": conf.memory_id,
+                                "incoming_ref": incoming_ref,
+                                "rule_name": conf.rule_name,
+                                "kind": conf.kind,
+                                "status": conf.status,
+                                "memory_content": mem_content_map.get(conf.memory_id, ""),
+                                "source": conf.detail or {},
+                                "created_at": conf.created_at,
+                            }
+                        )
+
+            if generate_probes:
+                from lantai.cognition.tanyi import TanyiProbingEngine
+
+                max_conflicts = getattr(settings, "COGNITION_CONFLICTS_MAX_IN_CONTEXT", 3)
+                selected_memories = [
+                    m
+                    for m in memories
+                    if m.id in selected_mem_ids
+                    and m.role == CognitiveRole.OBSERVATION
+                    and 0.3 <= float(m.confidence or 0.0) <= 0.6
+                ]
+                probes = TanyiProbingEngine().generate_probes(
+                    query=task,
+                    recalled_memories=selected_memories,
+                    unresolved_conflicts=safe_candidates,
+                    session=self.db,
+                    principal=self.principal,
+                    limit=min(5, max_conflicts),
+                )
+                ctx.clarification_probes = [probe.to_dict() for probe in probes]
 
         return ctx
