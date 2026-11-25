@@ -87,71 +87,62 @@ def trace_decision_provenance(
             "narrative": "未找到匹配的目标决策或无权访问。",
         }
 
-    # 沿 backward 方向逆查因果链
-    chain_res = get_causal_chain(
-        target_item.id, direction="backward", max_depth=max_depth, principal=principal
+    from lantai.cognition.gewu import GewuEngine
+
+    result = GewuEngine(principal=principal).trace_decision_provenance(
+        target_item.id, max_depth=max_depth
     )
-    causal_hops = chain_res.get("chain", [])
+    if not result["found"]:
+        return {
+            "found": False,
+            "target_id": target_item.id,
+            "root_cause_id": None,
+            "causal_chain": [],
+            "timeline": [],
+            "narrative": "未找到匹配的目标决策或无权访问。",
+            "paths_truncated": result["paths_truncated"],
+        }
 
-    # 收集链上所有节点记忆
-    node_ids = [target_item.id]
-    for hop in causal_hops:
-        if hop["to_id"] not in node_ids:
-            node_ids.append(hop["to_id"])
+    best_path = next(
+        (path for path in result["paths"] if path["node_ids"] == result["critical_path"]), None
+    )
+    causal_chain = []
+    if best_path:
+        for hop in reversed(best_path["hops"]):
+            causal_chain.append(
+                {
+                    **hop,
+                    "from_id": hop["to_id"],
+                    "to_id": hop["from_id"],
+                    "relation": "triggered_by",
+                }
+            )
+    timeline = []
+    event_summaries = {}
+    for event in result["timeline"]:
+        projected = dict(event)
+        projected["memory_id"] = event["event_id"]
+        projected["content"] = event["summary"]
+        event_summaries[event["event_id"]] = event["summary"]
+        timeline.append(projected)
 
-    # 取出各节点详情以构建时间线与摘要
-    nodes_map: dict[str, MemoryItem] = {}
-    with db.get_session() as s:
-        for nid in node_ids:
-            m = s.get(MemoryItem, nid)
-            if m and _is_accessible(m, viewer):
-                nodes_map[nid] = m
-
-    # 确定根因节点（逆向链最后一跳的 to_id）
-    root_cause_id = target_item.id
-    if causal_hops:
-        last_to = causal_hops[-1]["to_id"]
-        if last_to in nodes_map:
-            root_cause_id = last_to
-
-    # 构建时间线（按 event_time 或 created_at 排序）
-    timeline_items = []
-    for nid, m in nodes_map.items():
-        ts = m.event_time or m.created_at
-        if ts is not None and ts.tzinfo is None:
-            ts = ts.replace(tzinfo=UTC)
-        timeline_items.append(
-            {
-                "memory_id": nid,
-                "content": m.content,
-                "timestamp": iso_utc(ts) or None,
-                "_sort_ts": ts or datetime.min.replace(tzinfo=UTC),
-            }
+    root_cause_id = result["critical_path"][0] if result["critical_path"] else target_item.id
+    if root_cause_id != target_item.id:
+        narrative = (
+            f"溯源分析结论：目标决策「{event_summaries.get(target_item.id, target_item.content)}」"
+            f"其前序初始根因可追溯至「{event_summaries.get(root_cause_id, root_cause_id)}」。"
         )
-
-    timeline_items.sort(key=lambda x: x["_sort_ts"])
-    for item in timeline_items:
-        item.pop("_sort_ts", None)
-
-    # 自动生成自然语言脉络叙事
-    narrative_parts = []
-    if root_cause_id != target_item.id and root_cause_id in nodes_map:
-        root_content = nodes_map[root_cause_id].content
-        target_content = target_item.content
-        narrative_parts.append(f"溯源分析结论：目标决策「{target_content}」")
-        narrative_parts.append(f"其前序初始根因可追溯至「{root_content}」。")
-        if len(causal_hops) > 1:
-            narrative_parts.append(f"经过中间共 {len(causal_hops)} 级因果链路逐步传导演进。")
+        if len(causal_chain) > 1:
+            narrative += f"经过中间共 {len(causal_chain)} 级因果链路逐步传导演进。"
     else:
-        narrative_parts.append(f"目标决策「{target_item.content}」未检索到更深层的前置诱因。")
+        narrative = f"目标决策「{target_item.content}」未检索到更深层的前置诱因。"
 
     return {
-        "found": True,
-        "target_id": target_item.id,
+        **result,
         "root_cause_id": root_cause_id,
-        "causal_chain": causal_hops,
-        "timeline": timeline_items,
-        "narrative": "".join(narrative_parts),
+        "causal_chain": causal_chain,
+        "timeline": timeline,
+        "narrative": narrative,
     }
 
 
@@ -173,42 +164,23 @@ def get_event_timeline(
         if not root or not _is_accessible(root, viewer):
             return {"events": []}
 
-    # 正向与逆向因果链双向扩展
-    fwd = get_causal_chain(memory_id, direction="forward", max_depth=max_depth, principal=principal)
-    bwd = get_causal_chain(
-        memory_id, direction="backward", max_depth=max_depth, principal=principal
+    from lantai.cognition.gewu import GewuEngine
+
+    result = GewuEngine(principal=principal).project_event_timeline(
+        [memory_id], max_depth=max_depth
     )
-
-    all_ids = {memory_id}
-    for hop in fwd.get("chain", []):
-        all_ids.add(hop["from_id"])
-        all_ids.add(hop["to_id"])
-    for hop in bwd.get("chain", []):
-        all_ids.add(hop["from_id"])
-        all_ids.add(hop["to_id"])
-
     events = []
-    with db.get_session() as s:
-        for mid in all_ids:
-            mem = s.get(MemoryItem, mid)
-            if mem and _is_accessible(mem, viewer):
-                ts = mem.event_time or mem.created_at
-                if ts is not None and ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=UTC)
-                events.append(
-                    {
-                        "memory_id": mem.id,
-                        "content": mem.content,
-                        "timestamp": iso_utc(ts) or None,
-                        "_sort_ts": ts or datetime.min.replace(tzinfo=UTC),
-                    }
-                )
-
-    events.sort(key=lambda x: x["_sort_ts"])
-    for e in events:
-        e.pop("_sort_ts", None)
-
-    return {"events": events}
+    for event in result["events"]:
+        projected = dict(event)
+        projected["memory_id"] = event["event_id"]
+        projected["content"] = event["summary"]
+        events.append(projected)
+    return {
+        "events": events,
+        "timeline_truncated": result["timeline_truncated"],
+        "cycles_detected": result["cycles_detected"],
+        "temporal_conflicts": result["temporal_conflicts"],
+    }
 
 
 def evaluate_counterfactual_service(
