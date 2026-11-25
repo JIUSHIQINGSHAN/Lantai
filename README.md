@@ -193,6 +193,8 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 - **远程 MCP bridge**：入口 `lantai-mcp-bridge`，通过 HTTPS 将 stdio 工具调用转发至远程 Lantai；无本地 DB、`.env` 或代理发现，配置与安全约束见 [说明](docs/mcp-bridge.md)。
 - **DSH 召回研究**：独立 `lantai-recall` 包已暂停启用，在副作用前拒绝自动召回；现有 MCP 逐调用归因适配器保持独立。原因与重新验收条件见 [bundle 文档](integrations/dsh-lantai-recall/README.md)。
 
+同袍私有工作区与公共典籍的密钥绑定、接口及隔离范围见 [使用说明](docs/tongpao-workspace.md)。
+
 ### 🛡️ 护盾（安全基线）
 
 > 神盾护住的不是代码，是代码背后的人。

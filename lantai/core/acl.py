@@ -18,6 +18,7 @@ class Principal:
     session_id: str | None = None
     role: str = "user"  # "admin", "system", "user"
     allowed_lanes: list[str] | None = None
+    workspace_bound: bool = False
 
     @property
     def is_admin(self) -> bool:
