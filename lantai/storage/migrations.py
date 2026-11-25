@@ -41,7 +41,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 47
+TARGET_SCHEMA_VERSION = 48
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -1166,6 +1166,25 @@ def _migrate_v47(conn) -> None:
     logger.info("Migrated v47: conversation message capture and durable processing intent")
 
 
+def _migrate_v48(conn) -> None:
+    """绑定工作区密钥；旧密钥保持 NULL，不推断或回填身份。"""
+    from sqlalchemy.dialects import sqlite as sa_sqlite
+    from sqlalchemy.schema import CreateIndex, CreateTable
+
+    from lantai.models.tables import WorkspaceMemory
+
+    if _table_exists(conn, "api_keys"):
+        for column in ("tenant_id", "agent_id"):
+            if not _has_column(conn, "api_keys", column):
+                conn.execute(f"ALTER TABLE api_keys ADD COLUMN {column} VARCHAR")
+            conn.execute(f"CREATE INDEX IF NOT EXISTS ix_api_keys_{column} ON api_keys ({column})")
+    table = WorkspaceMemory.__table__
+    dialect = sa_sqlite.dialect()
+    conn.execute(str(CreateTable(table, if_not_exists=True).compile(dialect=dialect)))
+    for index in sorted(table.indexes, key=lambda value: value.name):
+        conn.execute(str(CreateIndex(index, if_not_exists=True).compile(dialect=dialect)))
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -1213,6 +1232,7 @@ MIGRATIONS = [
     (45, _migrate_v45),
     (46, _migrate_v46),
     (47, _migrate_v47),
+    (48, _migrate_v48),
 ]
 
 

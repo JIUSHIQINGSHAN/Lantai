@@ -856,12 +856,30 @@ class SessionScratchpad(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+class WorkspaceMemory(SQLModel, table=True):
+    """同袍工作区独立存储，旧通用记忆接口与后台扫描不隐式获得访问权。"""
+
+    __tablename__ = "tongpao_workspace_memory"
+
+    id: str = Field(primary_key=True)
+    tenant_id: str = Field(index=True)
+    user_id: str = Field(index=True)
+    agent_id: str = Field(index=True)
+    content: str
+    shared_scope: str = Field(default="private", index=True)
+    lane: str = Field(default="general", index=True)
+    status: str = Field(default="active", index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class ApiKey(SQLModel, table=True):
     __tablename__ = "api_keys"
 
     id: str = Field(primary_key=True)
     key_hash: str = Field(index=True, unique=True)
     user_id: str = Field(index=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    agent_id: str | None = Field(default=None, index=True)
     allowed_lanes: list = Field(default_factory=list, sa_column=Column(JSON))
     rate_limit_rpm: int = Field(default=60)
     created_at: datetime = Field(default_factory=utcnow)

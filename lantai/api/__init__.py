@@ -47,6 +47,7 @@ from .routes_shiyi import router as routes_shiyi_router
 from .routes_sources import router as routes_sources_router
 from .routes_tanyi import router as routes_tanyi_router
 from .routes_terminal import router as routes_terminal_router
+from .routes_tongpao import router as routes_tongpao_router
 from .routes_tree import router as routes_tree_router
 from .routes_ui import router as routes_ui_router
 from .routes_verification import router as routes_verification_router
@@ -109,4 +110,5 @@ __all__ = [
     "routes_zhiming_router",
     "routes_gouchen_router",
     "routes_mokan_router",
+    "routes_tongpao_router",
 ]
