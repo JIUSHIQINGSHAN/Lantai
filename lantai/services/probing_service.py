@@ -23,7 +23,7 @@ from lantai.security.injection_guard import (
 )
 from lantai.services.record_ops_service import sync_vector_upsert
 from lantai.storage import db
-from lantai.storage.cas import atomic_update, cas_update
+from lantai.storage.cas import atomic_update
 from lantai.storage.fts import sync_fts
 
 # ==================== 票 02（v0.66）：CJK 语义判定基础件 ====================
@@ -513,16 +513,32 @@ def resolve_probe_response(
                     lane=item.lane,
                 )
 
-            # 1. 优先匹配否定词（否定意图优先）
-            hedged = _is_noncommittal(clean_reply)  # 含糊或反问一律不写库（票 02）
-            is_neg = not hedged and _matches_any(_NEGATIVE_PATTERNS, clean_reply)
-            is_aff = not hedged and _is_affirmative_reply(clean_reply)
+            from lantai.cognition.tanyi import ResolutionIntent, parse_user_resolution_intent
+            from lantai.services.conflict_service import (
+                record_probe_deferral,
+                resolve_conflict_event,
+            )
+
+            intent, correction = parse_user_resolution_intent(clean_reply)
+            is_neg = intent == ResolutionIntent.NEGATIVE
+            is_aff = intent in (ResolutionIntent.AFFIRMATIVE, ResolutionIntent.CORRECTION)
 
             if is_neg:
-                conf.status = "dismissed"
-                conf.resolved_by = "proactive_probe_user_rejected"
-                conf.resolved_at = utcnow()
-                s.add(conf)
+                try:
+                    resolve_conflict_event(
+                        actual_conflict_id,
+                        "dismissed",
+                        "proactive_probe_user_rejected",
+                        principal=principal,
+                        session=s,
+                    )
+                except ValueError:
+                    s.rollback()
+                    return {
+                        "status": "conflict",
+                        "action": "concurrent_adjudication",
+                        "conflict_id": actual_conflict_id,
+                    }
                 s.commit()
                 logger.info("探颐：用户否定探针，已废弃冲突 %s", actual_conflict_id)
                 return {
@@ -532,11 +548,18 @@ def resolve_probe_response(
                 }
 
             elif is_aff:
+                applied_content = (
+                    correction
+                    if intent == ResolutionIntent.CORRECTION
+                    else (conf.incoming_ref or "")
+                )
+                if not applied_content.strip():
+                    return record_probe_deferral(s, conf)
                 # 獬豸（巡检 2026-11-06）：肯定分支把 incoming_ref 写进正文，与
                 # correct_memory / 终端编辑同族同闸。命中整条拒：不改正文、
                 # 不动冲突账本、不 commit（拒绝了不落库）
                 try:
-                    assert_no_prompt_injection(conf.incoming_ref or "")
+                    assert_no_prompt_injection(applied_content)
                 except ValueError as e:
                     logger.warning("探颐：冲突 %s 的新说法未过獬豸闸，拒绝写入", actual_conflict_id)
                     return {
@@ -559,7 +582,7 @@ def resolve_probe_response(
                     MemoryItem,
                     item.id,
                     {
-                        "content": conf.incoming_ref,
+                        "content": applied_content,
                         "version": scan_version + 1,
                         "decay_score": 1.0,
                         "updated_at": utcnow(),
@@ -597,18 +620,15 @@ def resolve_probe_response(
                 # 票 78：conf 翻转同走条件认领（票 22 S6 conflict_service 蓝图）——
                 # 记忆 CAS 与 conf CAS 之间人工裁决已把冲突裁成终态时，败方不
                 # 覆写终态；回滚整笔（含刚写的正文），冲突终态权威保留。
-                conf_claimed = cas_update(
-                    s,
-                    ConflictEvent,
-                    conf.id,
-                    {"status": "open"},
-                    {
-                        "status": "resolved",
-                        "resolved_by": "proactive_probe_user_confirmed",
-                        "resolved_at": utcnow(),
-                    },
-                )
-                if not conf_claimed:
+                try:
+                    resolve_conflict_event(
+                        actual_conflict_id,
+                        "resolved",
+                        "proactive_probe_user_confirmed",
+                        principal=principal,
+                        session=s,
+                    )
+                except ValueError:
                     s.rollback()
                     logger.info(
                         "探颐：冲突 %s 已被并发裁决成终态，消解让路（正文写入一并回滚）",
@@ -640,7 +660,9 @@ def resolve_probe_response(
                 logger.info("探颐：用户肯定探针，已成功消解冲突并更新记忆 %s", item.id)
                 return {
                     "status": "resolved",
-                    "action": "applied",
+                    "action": "applied_correction"
+                    if intent == ResolutionIntent.CORRECTION
+                    else "applied",
                     "conflict_id": actual_conflict_id,
                     "memory_id": item.id,
                     "vector_synced": vector_synced,
@@ -649,11 +671,7 @@ def resolve_probe_response(
 
             else:
                 logger.info("探颐：用户答复未明确表态，保持冲突待审状态")
-                return {
-                    "status": "deferred",
-                    "action": "pending",
-                    "conflict_id": actual_conflict_id,
-                }
+                return record_probe_deferral(s, conf)
 
         # 分支 B：针对模糊记忆项澄清（probe_mem_xxx 或 MemoryItem）
         mem_target_id = target_id
@@ -725,7 +743,14 @@ def resolve_probe_response(
 
         return {"status": "not_found", "message": f"未找到可消解的冲突或事实对象: {target_id}"}
 
+    def resolve_transaction(s: Session) -> dict:
+        try:
+            return _resolve(s)
+        except Exception:
+            s.rollback()
+            raise
+
     if session is not None:
-        return _resolve(session)
+        return resolve_transaction(session)
     with db.get_session() as s:
-        return _resolve(s)
+        return resolve_transaction(s)

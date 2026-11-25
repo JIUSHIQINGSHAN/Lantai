@@ -37,57 +37,35 @@ class ResolutionIntent(StrEnum):
     AMBIGUOUS = "ambiguous"
 
 
-_AFFIRMATIVE_PATTERNS = [
-    r"是",
-    r"对",
-    r"没错",
-    r"确实",
-    r"好的",
-    r"更改了",
-    r"已变更",
-    r"变了",
-    r"成了",
-    r"改用",
-    r"换成",
-    r"改了",
-    r"改好了",
-    r"确认",
-    r"确有此事",
-    r"属实",
-    r"准确",
-    r"yes",
-    r"yep",
-    r"yeah",
-    r"correct",
-    r"right",
-    r"true",
-]
-
-_NEGATIVE_PATTERNS = [
-    r"不是",
-    r"不对",
-    r"没有",
-    r"写错",
-    r"搞错",
-    r"弄错",
-    r"别改",
-    r"未变",
-    r"还是",
-    r"依然",
-    r"没变",
-    r"保持",
-    r"不属实",
-    r"不准确",
-    r"假",
-    r"no",
-    r"nope",
-    r"false",
-    r"wrong",
-]
-
-_CORRECTION_TRIGGER_PATTERNS = [
-    r"(?:其实|实际上|而是|转到了|换成了|选用了|搬到了|改成|改为)\s*(.+)$",
-]
+_REPLY_SPLIT = re.compile(r"[。，,！!；;：:～~、（）()「」『』“”‘’\"'—…\r\n]+")
+_REPLY_EDGES = " \t\r\n。。，,！!；;：:～~、（）()「」『』“”‘’\"'—…"
+_UNCERTAIN_REPLY = re.compile(
+    r"[？?]|是不是|对不对|有没有|要不要|能不能|是否|难道|为什么|"
+    r"如果|假如|要是|倘若|也许|可能|大概|不确定|不清楚|不知道|未确认|"
+    r"说不好|还没(?:决定|想好|定)|先别|但|不过|是吧|"
+    r"不是不|没有不|并非不|不能不|未必|(?:吗|么|呢)(?:$|[\s。，,！!；;])",
+    re.IGNORECASE,
+)
+_ADOPT_REPLY = re.compile(
+    r"^(?:是(?:的)?|对(?:的)?|没错|确实|好的|更改了|已变更|变了|"
+    r"成了|改了|改好了|确认(?:变更了)?|确有此事|属实|准确|正确|是对的|"
+    r"(?:改成|换成|就用|采用)后者|yes|yep|yeah|correct|right|true)"
+    r"[的啊呀吧呢了]*(?:没错)?$",
+    re.IGNORECASE,
+)
+_REJECT_REPLY = re.compile(
+    r"^(?:(?:都)?不是|不对|并非|没有(?:这回事|变)|没有[啊呀吧呢了]*$|写错|搞错|弄错|"
+    r"(?:请)?(?:别|勿)(?:改|记|录|用|采|把)|不可(?:采信|信|当真|算|作为)|"
+    r"禁止(?:改|将|把|记|录|采|用|当|作)|未变|没变|"
+    r"还是(?:原来|用旧)|依然(?:是|没变|未变)|(?:保持|保留)(?:原样|前者|原来|旧)|不属实|不准确|假的|"
+    r"no\b|nope\b|false\b|wrong\b)",
+    re.IGNORECASE,
+)
+_CORRECT_REPLY = re.compile(
+    r"^(?:其实(?:是)?|实际上(?:是)?|而是|转到了|换成了|选用了|搬到了|"
+    r"(?:改成|改为|换用|改用|换成))\s*(.+)$",
+    re.DOTALL,
+)
 
 
 def parse_user_resolution_intent(reply: str) -> tuple[ResolutionIntent, str]:
@@ -95,36 +73,44 @@ def parse_user_resolution_intent(reply: str) -> tuple[ResolutionIntent, str]:
 
     返回: (ResolutionIntent, 修正事实内容)
     """
-    clean_reply = (reply or "").strip()
-    if not clean_reply:
+    if not isinstance(reply, str) or not reply.strip():
         return ResolutionIntent.AMBIGUOUS, ""
-
-    body = re.sub(r"^[\s。,.!?~!?,、]+|[\s。,.!?~!?,、]+$", "", clean_reply)
-
-    # 1. 检查是否有针对性修正语句（例如：“不是A，其实搬到了杭州滨江”、“最后选用了 PostgreSQL 数据库”）
-    for pat in _CORRECTION_TRIGGER_PATTERNS:
-        match = re.search(pat, body)
+    if len(reply) > 2000:
+        raise ValueError("user_reply must not exceed 2000 characters")
+    # 只对判定文本合并汉字间空格；提取的事实保留原始英文与小数点。
+    normalized = re.sub(r"(?<=[\u3400-\u9fff])\s+(?=[\u3400-\u9fff])", "", reply)
+    if _UNCERTAIN_REPLY.search(normalized):
+        return ResolutionIntent.AMBIGUOUS, ""
+    clauses = [c.strip() for c in _REPLY_SPLIT.split(normalized) if c.strip()]
+    while clauses and clauses[0] in {"嗯", "恩", "哦"}:
+        clauses.pop(0)
+    if not clauses or clauses[0] == "对了":
+        return ResolutionIntent.AMBIGUOUS, ""
+    first = clauses[0]
+    # 沿用 CJK 契约：「没有问题」「还是改成…」单独出现仍待审，不扩大写入授权。
+    # 明确的第三值可修订被否定的新说法，但不能从离题段落中捡一个“其实”。
+    direct = _ADOPT_REPLY.match(first) or _REJECT_REPLY.match(first) or _CORRECT_REPLY.match(first)
+    if not direct:
+        return ResolutionIntent.AMBIGUOUS, ""
+    # 分句只定位修订词；事实值从原文切片，不能截断网址、时间或逗号后的事实。
+    clause_starts = [0, *(match.end() for match in _REPLY_SPLIT.finditer(reply))]
+    for start in clause_starts:
+        clause = reply[start:].lstrip(_REPLY_EDGES)
+        if _ADOPT_REPLY.match(first) and not clause.startswith(("其实", "实际上", "而是")):
+            continue
+        match = _CORRECT_REPLY.match(clause)
         if match:
-            correction_text = match.group(1).strip()
-            # 清理末尾标点
-            correction_text = re.sub(r"[\s。,.!?~!?,、]+$", "", correction_text)
-            if len(correction_text) >= 2:
-                return ResolutionIntent.CORRECTION, correction_text
-
-    # 2. 检查否定意图优先
-    is_neg = any(re.search(pat, body, re.IGNORECASE) for pat in _NEGATIVE_PATTERNS)
-    if is_neg:
+            correction = match[1].strip(_REPLY_EDGES)
+            if correction not in {"后者", "后者吧", "前者"} and len(correction) >= 2:
+                return ResolutionIntent.CORRECTION, correction
+    affirmative = any(_ADOPT_REPLY.match(c) for c in clauses)
+    negative = any(_REJECT_REPLY.match(c) for c in clauses)
+    if affirmative and negative:
+        return ResolutionIntent.AMBIGUOUS, ""
+    if _REJECT_REPLY.match(first):
         return ResolutionIntent.NEGATIVE, ""
-
-    # 3. 检查肯定语气（句首确认或含有明确肯定词）
-    for pat in _AFFIRMATIVE_PATTERNS:
-        if re.search(
-            rf"(?:^|[\s，,。!?~、])(?:{pat})(?:$|[\s,.!?~,。!?、的啊呀吧呢了]|变更|变了)",
-            body,
-            re.IGNORECASE,
-        ):
-            return ResolutionIntent.AFFIRMATIVE, ""
-
+    if _ADOPT_REPLY.match(first):
+        return ResolutionIntent.AFFIRMATIVE, ""
     return ResolutionIntent.AMBIGUOUS, ""
 
 
@@ -133,6 +119,17 @@ def execute_tanyi_resolution(
     user_reply: str,
     session: Session,
     principal=None,
+) -> dict[str, Any]:
+    """执行次轮裁决，并在持久化失败时清理事务以便会话继续使用。"""
+    try:
+        return _execute_tanyi_resolution(conflict_id, user_reply, session, principal)
+    except Exception:
+        session.rollback()
+        raise
+
+
+def _execute_tanyi_resolution(
+    conflict_id: str, user_reply: str, session: Session, principal=None
 ) -> dict[str, Any]:
     """执行探颐主动求证自动闭环消解。
 
@@ -162,12 +159,24 @@ def execute_tanyi_resolution(
         )
 
     intent, correction = parse_user_resolution_intent(user_reply)
+    from lantai.services.conflict_service import record_probe_deferral, resolve_conflict_event
 
     if intent == ResolutionIntent.NEGATIVE:
-        conf.status = "dismissed"
-        conf.resolved_by = "tanyi_proactive_user_rejected"
-        conf.resolved_at = utcnow()
-        session.add(conf)
+        try:
+            resolve_conflict_event(
+                conflict_id,
+                "dismissed",
+                "tanyi_proactive_user_rejected",
+                principal=principal,
+                session=session,
+            )
+        except ValueError:
+            session.rollback()
+            return {
+                "status": "conflict",
+                "action": "concurrent_adjudication",
+                "conflict_id": conflict_id,
+            }
         session.commit()
         logger.info("探颐：用户否定探针，已废弃冲突 %s", conflict_id)
         return {
@@ -182,6 +191,8 @@ def execute_tanyi_resolution(
         applied_content = (
             correction if intent == ResolutionIntent.CORRECTION else (conf.incoming_ref or "")
         )
+        if not applied_content.strip():
+            return record_probe_deferral(session, conf)
         # 獬豸（巡检 2026-11-06）：肯定写 incoming_ref、修正写用户答复里的新说法，
         # 两者都会成为正文并注入后续上下文——与终端编辑同闸，命中整条拒、不落库
         try:
@@ -246,16 +257,23 @@ def execute_tanyi_resolution(
         )
         session.add(cp)
 
-        conf.status = "resolved"
-        conf.resolved_by = "tanyi_proactive_user_confirmed"
-        conf.resolved_at = utcnow()
-        session.add(conf)
-
-        # 同步全文与向量（容错 SQLite 内存测试无 FTS 表的场景）
         try:
-            sync_fts(session, item.id, item.content)
-        except Exception as e:
-            logger.warning("探颐：FTS 表未初始化或同步失败，跳过: %s", e)
+            resolve_conflict_event(
+                conflict_id,
+                "resolved",
+                "tanyi_proactive_user_confirmed",
+                principal=principal,
+                session=session,
+            )
+        except ValueError:
+            session.rollback()
+            return {
+                "status": "conflict",
+                "action": "concurrent_adjudication",
+                "conflict_id": conflict_id,
+            }
+
+        sync_fts(session, item.id, item.content)
         session.commit()
 
         vector_synced = sync_vector_upsert(item.id, item)
@@ -276,13 +294,7 @@ def execute_tanyi_resolution(
 
     # 模糊暧昧，不脏写
     logger.info("探颐：用户答复表态模糊暧昧，保持冲突待审状态")
-    return {
-        "status": "deferred",
-        "action": "pending",
-        "intent": ResolutionIntent.AMBIGUOUS,
-        "conflict_id": conflict_id,
-        "memory_id": item.id,
-    }
+    return {**record_probe_deferral(session, conf), "intent": intent, "memory_id": item.id}
 
 
 @dataclass

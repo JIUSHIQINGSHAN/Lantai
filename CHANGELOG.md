@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 探颐次轮冲突消歧统一识别肯定、否定与第三值修订，疑问、假设和离题答复保留分歧并原子累计观测次数；公开 REST/MCP 修订分支接通。正文版本、冲突裁决、快照和全文索引同事务，失败整体回滚；首次探颐修改也可凭原快照恢复，版本保持递增。新增真实存储、并发与多轮接口回归。
 - 目次 `latest_event_at` 只反映真实事件时间，未知时返回空值，不再以更新时间冒充；认知上下文优先渲染分级目录，避免与兼容板块重复输出，旧目录仍可正常显示。
 - 拾遗按同域、跨域和衰减回拨逐阶补缺，增加连续字符三元组预筛和可解释的只读回拨；修复空查询回放旧候选、零置信度被默认值覆盖、分轨及租户共享越界、失效/退役记忆回灌。扫描改为跨阶共享预算及最多 512 行的流式处理，主流水线默认关闭和历史视图跳过守卫保留。
 - 獬豸注入检测按用户裁决收窄三组误伤（2026-11-24 交叉互审）：① 指令覆盖对象后跟定位短语（`in/on/of/from/at…`）视为指外部文档（`ignore the instructions in the README`）放行，`ignore … and output …` 等攻击仍命中；② `switch to/enable/enter` 只在祈使位置（句首/句末标点后/please 后）命中，`How to switch to developer mode on Android?` 不再误伤；③ 通用对话模板特殊 Token（`<|start_header_id|>`、`[INST]`、`<start_of_turn>`…）不单独定罪，只在伪造 system 角色或与指令覆盖词共现时命中。AI 工程笔记因此可正常入库；真载荷测试全部保留。

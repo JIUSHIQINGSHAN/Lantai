@@ -843,9 +843,17 @@ def rollback(memory_id: str, principal=None) -> dict:
             # 后 `len(ckpts) < 2` 的判定语义不变（排序已定，前两条即所需）。
             .limit(2)
         ).all()
-        if len(ckpts) < 2:
+        if len(ckpts) >= 2:
+            previous_snapshot = ckpts[1].after
+        elif (
+            ckpts
+            and ckpts[0].trigger == "proactive_probe_resolved"
+            and ckpts[0].before.get("version") == ckpts[0].version - 1
+        ):
+            # 首次探颐写入已带 before；没有初始 checkpoint 也可按既有快照还原。
+            previous_snapshot = ckpts[0].before
+        else:
             return {"ok": False, "reason": "no previous version"}
-        prev = ckpts[1]
         mem = s.get(MemoryItem, memory_id)
         if not mem:
             return {"ok": False, "reason": "memory missing"}
@@ -897,7 +905,7 @@ def rollback(memory_id: str, principal=None) -> dict:
         try:
             restored = {
                 k: (parse_iso_utc(v) if isinstance(v, str) and _is_datetime_column(k) else v)
-                for k, v in prev.after.items()
+                for k, v in previous_snapshot.items()
             }
         except ValueError as e:
             logger.warning(

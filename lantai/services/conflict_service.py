@@ -14,12 +14,13 @@
 记忆换属主、冲突可见性跟着换，比加列更准。
 """
 
-from sqlmodel import select
+from sqlalchemy import func
+from sqlmodel import Session, select
 
 from lantai.core.time import iso_utc, utcnow
 from lantai.models.tables import ConflictEvent, MemoryItem
 from lantai.storage import db
-from lantai.storage.cas import cas_update
+from lantai.storage.cas import atomic_update, cas_update
 
 _ALLOWED_STATUSES = ("open", "resolved", "dismissed")
 
@@ -87,7 +88,9 @@ def list_conflict_events(limit: int = 50, status: str = "open", principal=None) 
         return {"events": [r.model_dump(mode="json") for r in rows]}
 
 
-def resolve_conflict_event(event_id: str, decision: str, note: str = "", principal=None) -> dict:
+def resolve_conflict_event(
+    event_id: str, decision: str, note: str = "", principal=None, *, session: Session | None = None
+) -> dict:
     """人工裁决冲突事件：decision ∈ resolved（确认冲突成立）/ dismissed（误报）。
 
     归属校验（票 .scratch/readside-gaps/07 修法口径 3）：裁决是**破坏性操作**
@@ -101,7 +104,8 @@ def resolve_conflict_event(event_id: str, decision: str, note: str = "", princip
         raise ValueError("decision must be 'resolved' or 'dismissed'")
     if not (note or "").strip():
         raise ValueError("decision reason is required")
-    with db.get_session() as s:
+
+    def resolve(s: Session) -> dict:
         ev = s.get(ConflictEvent, event_id)
         if not ev:
             raise ValueError("conflict event not found")
@@ -133,8 +137,45 @@ def resolve_conflict_event(event_id: str, decision: str, note: str = "", princip
         if claimed != 1:
             s.refresh(ev)
             raise ValueError(f"conflict event not open (status={ev.status})")
+        return {"ok": True, "event_id": event_id, "status": decision}
+
+    # 显式会话由调用方统一提交，避免裁决先于正文、索引、快照独立落库。
+    if session is not None:
+        return resolve(session)
+    with db.get_session() as s:
+        result = resolve(s)
         s.commit()
-        return {"ok": True, "event_id": ev.id, "status": decision}
+        return result
+
+
+def record_probe_deferral(session: Session, event: ConflictEvent) -> dict:
+    """仅在冲突仍 open 时原子累计观测次数；不保存用户原话或修改事实。"""
+    count_path = "$.tanyi_observation.deferred_count"
+    count = func.coalesce(func.json_extract(ConflictEvent.detail, count_path), 0) + 1
+    claimed = atomic_update(
+        session,
+        ConflictEvent,
+        event.id,
+        {
+            "detail": func.json_set(
+                ConflictEvent.detail,
+                "$.tanyi_observation",
+                func.json_object("deferred_count", count, "last_intent", "ambiguous"),
+            )
+        },
+        ConflictEvent.status == "open",
+    )
+    if not claimed:
+        session.rollback()
+        return {"status": "conflict", "action": "concurrent_adjudication", "conflict_id": event.id}
+    session.commit()
+    session.refresh(event)
+    return {
+        "status": "deferred",
+        "action": "pending",
+        "conflict_id": event.id,
+        "observation_count": event.detail["tanyi_observation"]["deferred_count"],
+    }
 
 
 def audit_consistency_service(

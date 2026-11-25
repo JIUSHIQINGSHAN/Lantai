@@ -20,6 +20,7 @@ from lantai.cognition.tanyi import (
 )
 from lantai.core.auth import Principal
 from lantai.models.tables import ConflictEvent, MemoryCheckpoint, MemoryItem
+from lantai.storage.fts import init_fts
 
 
 @pytest.fixture()
@@ -32,11 +33,14 @@ def tanyi_res_env():
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
+    with engine.connect() as connection:
+        assert init_fts(connection.connection.driver_connection)
 
     def session_factory() -> Session:
         return Session(engine)
 
-    return session_factory
+    yield session_factory
+    engine.dispose()
 
 
 def test_parse_user_resolution_intent():
