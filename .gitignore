@@ -66,6 +66,8 @@ docs/memory-quality/*.md
 !docs/memory-quality/shishi-vault-integrity-diagnosis-2026-11-25.md
 # 七模块合流工程验收，仅含合成输入、公开代码路径与检查结果。
 !docs/memory-quality/seven-module-quality-2026-11-25.md
+# 探颐次轮消歧工程诊断，仅含合成测试和代码验证证据。
+!docs/memory-quality/tanyi-followup-diagnosis-2026-11-25.md
 
 .uv-cache/
 .mimosa/
