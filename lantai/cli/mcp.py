@@ -28,6 +28,7 @@ import time
 import warnings
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
+from typing import Any
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -40,6 +41,7 @@ from lantai.core.attribution import (
 )
 from lantai.core.settings import settings as _settings
 from lantai.gate.prefilter import relevance_check
+from lantai.llm.fence import wrap_as_data
 from lantai.models.schemas import AddMemoryReq, FeedbackReq
 from lantai.retrieval.hybrid import hybrid_search
 from lantai.services.evolution_service import record_feedback_entry
@@ -4218,6 +4220,83 @@ def _get_active_tools() -> dict:
     return {k: v for k, v in TOOLS.items() if k in HERMES_CORE_TOOLS}
 
 
+_COGNITIVE_FENCE_TOOLS = frozenset(
+    {
+        "niyi_deliberate",
+        "jiaochou_collate",
+        "diben_anchor",
+        "shiyi_remedy",
+        "shiyi_pipeline",
+        "shishi_vault",
+    }
+)
+_COGNITIVE_TEXT_FIELDS = frozenset(
+    {
+        "content",
+        "document",
+        "text_a",
+        "text_b",
+        "synthesized_proposal",
+        "active_intent",
+        "next_action",
+        "working_context",
+        "key_decisions",
+        "open_notes",
+        "text_summary",
+        "query",
+        "deliberation_reason",
+        "drift_reason",
+        "audit_summary",
+        "description",
+        "reason",
+        "common_summary",
+        "divergence_summary",
+        "correction_suggestion",
+        "overlap_tokens",
+        "divergence_tokens",
+        "divergence_tokens_a",
+        "divergence_tokens_b",
+        "common_tokens",
+        "remedy_reason",
+        "metadata",
+        "structure",
+        "tags",
+        "after_patch",
+        "conflicting_fields",
+    }
+)
+_COGNITIVE_NAVIGATION_TOOLS = frozenset({"muci_catalog", "famen_skill"})
+_COGNITIVE_NAVIGATION_TEXT_FIELDS = frozenset({"tags", "topic", "summary", "task", "metadata"})
+
+
+def _fence_cognitive_result(
+    value: Any,
+    *,
+    data: bool = False,
+    text_fields: frozenset[str] = _COGNITIVE_TEXT_FIELDS,
+) -> Any:
+    """Fence canonical body fields too: a fenced sibling cannot protect a raw copy.
+
+    Keep this at the model-facing transport boundary. Engine/service dictionaries
+    remain usable for computation and REST clients; IDs, enums and numbers retain
+    their protocol meanings. Arbitrary patch and metadata values inherit fencing.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _fence_cognitive_result(
+                child, data=data or key in text_fields, text_fields=text_fields
+            )
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _fence_cognitive_result(child, data=data, text_fields=text_fields) for child in value
+        ]
+    if data and isinstance(value, str):
+        return wrap_as_data(value)
+    return value
+
+
 def handle(msg: object) -> dict | None:
     if not isinstance(msg, dict):
         # 票 52：非对象 JSON 帧（[1]/"str"/null）此前在 msg.get("id") 即
@@ -4335,6 +4414,12 @@ def handle(msg: object) -> dict | None:
             # （checkpoint_latest）时 dumps 的 TypeError 此前冲出 handle() 杀死
             # 进程。allow_nan=False 把 NaN 静默非法 JSON（审计登记项）转成显式错。
             # 计入 guard 失败：恒返不可序列化输出的工具也要能被熔断。
+            if name in _COGNITIVE_FENCE_TOOLS:
+                result = _fence_cognitive_result(result)
+            elif name in _COGNITIVE_NAVIGATION_TOOLS:
+                result = _fence_cognitive_result(
+                    result, text_fields=_COGNITIVE_NAVIGATION_TEXT_FIELDS
+                )
             text = json.dumps(result, ensure_ascii=False, allow_nan=False)
         except Exception as e:
             if token is not None:

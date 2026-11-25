@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- 七模块合流质量检查：拟议外部服务将匿名身份收敛到默认属主，阻止匿名读取其他属主的记忆与未决提案；校雠冗余扫描排除已被取代和退役的记忆。七模块的八个认知 MCP 工具（含拾遗流水线）补齐模型可见的正文副本、派生说明、目录标签/主题及任务回显的樊篱，MCP 文本字段表示随之变化，内部计算与 REST 原文字典保持原有契约；详见 ADR-0071 的质量检查补充。
 - 目次 `latest_event_at` 只反映真实事件时间，未知时返回空值，不再以更新时间冒充；认知上下文优先渲染分级目录，避免与兼容板块重复输出，旧目录仍可正常显示。
 - 拾遗按同域、跨域和衰减回拨逐阶补缺，增加连续字符三元组预筛和可解释的只读回拨；修复空查询回放旧候选、零置信度被默认值覆盖、分轨及租户共享越界、失效/退役记忆回灌。扫描改为跨阶共享预算及最多 512 行的流式处理，主流水线默认关闭和历史视图跳过守卫保留。
 - 獬豸注入检测按用户裁决收窄三组误伤（2026-11-24 交叉互审）：① 指令覆盖对象后跟定位短语（`in/on/of/from/at…`）视为指外部文档（`ignore the instructions in the README`）放行，`ignore … and output …` 等攻击仍命中；② `switch to/enable/enter` 只在祈使位置（句首/句末标点后/please 后）命中，`How to switch to developer mode on Android?` 不再误伤；③ 通用对话模板特殊 Token（`<|start_header_id|>`、`[INST]`、`<start_of_turn>`…）不单独定罪，只在伪造 system 角色或与指令覆盖词共现时命中。AI 工程笔记因此可正常入库；真载荷测试全部保留。

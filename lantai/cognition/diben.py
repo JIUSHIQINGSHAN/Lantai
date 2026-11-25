@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import Any
 
 import jieba
-from sqlmodel import Session, delete, select
+from sqlmodel import Session, col, delete, select
 
 from lantai.core.acl import SESSION_ID_PATTERN, is_system_viewer, viewer_of
 from lantai.core.auth import Principal
@@ -241,7 +241,7 @@ class DibenEngine:
             # 块行不再累积。删除范围限定在当前属主与租户，防止 session_id
             # 碰撞时覆盖其他人的快照。
             delete_stmt = delete(SessionCheckpoint).where(
-                SessionCheckpoint.session_id == session_id
+                col(SessionCheckpoint.session_id) == session_id
             )
             write_scope = self._write_scope()
             if write_scope is not None:
@@ -290,7 +290,9 @@ class DibenEngine:
         if read_scope is not None:
             stmt = stmt.where(read_scope)
         head = s.exec(
-            stmt.order_by(SessionCheckpoint.created_at.desc(), SessionCheckpoint.id.desc()).limit(1)
+            stmt.order_by(
+                col(SessionCheckpoint.created_at).desc(), col(SessionCheckpoint.id).desc()
+            ).limit(1)
         ).first()
         if head is None:
             return None
@@ -298,11 +300,11 @@ class DibenEngine:
         target_sid = head.session_id
         rows_stmt = select(SessionCheckpoint).where(SessionCheckpoint.session_id == target_sid)
         if head.user_id is None:
-            rows_stmt = rows_stmt.where(SessionCheckpoint.user_id.is_(None))
+            rows_stmt = rows_stmt.where(col(SessionCheckpoint.user_id).is_(None))
         else:
             rows_stmt = rows_stmt.where(SessionCheckpoint.user_id == head.user_id)
         if head.tenant_id is None:
-            rows_stmt = rows_stmt.where(SessionCheckpoint.tenant_id.is_(None))
+            rows_stmt = rows_stmt.where(col(SessionCheckpoint.tenant_id).is_(None))
         else:
             rows_stmt = rows_stmt.where(SessionCheckpoint.tenant_id == head.tenant_id)
         if read_scope is not None:
@@ -310,7 +312,9 @@ class DibenEngine:
         session_rows = [
             row
             for row in s.exec(
-                rows_stmt.order_by(SessionCheckpoint.created_at.desc(), SessionCheckpoint.id.desc())
+                rows_stmt.order_by(
+                    col(SessionCheckpoint.created_at).desc(), col(SessionCheckpoint.id).desc()
+                )
             ).all()
             if self._check_access(owner_id=row.user_id, tenant_id=row.tenant_id)
         ]
@@ -342,21 +346,21 @@ class DibenEngine:
             return None
 
         viewer = viewer_of(self.principal)
-        scope = (SessionCheckpoint.user_id.is_(None)) | (SessionCheckpoint.user_id == viewer)
+        scope = (col(SessionCheckpoint.user_id).is_(None)) | (SessionCheckpoint.user_id == viewer)
         current_tenant = getattr(self.principal, "tenant_id", None)
         if current_tenant is None:
-            return scope & SessionCheckpoint.tenant_id.is_(None)
+            return scope & col(SessionCheckpoint.tenant_id).is_(None)
         return scope & (
-            (SessionCheckpoint.tenant_id.is_(None))
+            (col(SessionCheckpoint.tenant_id).is_(None))
             | (SessionCheckpoint.tenant_id == current_tenant)
         )
 
     def _write_scope(self):
         """Keep upserts identity-scoped, including when the caller can read globally."""
-        scope = SessionCheckpoint.user_id == viewer_of(self.principal)
+        scope = col(SessionCheckpoint.user_id) == viewer_of(self.principal)
         current_tenant = getattr(self.principal, "tenant_id", None)
         if current_tenant is None:
-            return scope & SessionCheckpoint.tenant_id.is_(None)
+            return scope & col(SessionCheckpoint.tenant_id).is_(None)
         return scope & (SessionCheckpoint.tenant_id == current_tenant)
 
     def analyze_drift(

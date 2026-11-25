@@ -64,6 +64,8 @@ docs/memory-quality/*.md
 !docs/memory-quality/session-attribution-implementation-2026-11-18.md
 # 石室封存安全诊断，仅含合成用例与工程验收事实。
 !docs/memory-quality/shishi-vault-integrity-diagnosis-2026-11-25.md
+# 七模块合流工程验收，仅含合成输入、公开代码路径与检查结果。
+!docs/memory-quality/seven-module-quality-2026-11-25.md
 
 .uv-cache/
 .mimosa/
