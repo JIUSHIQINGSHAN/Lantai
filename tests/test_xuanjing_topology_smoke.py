@@ -20,7 +20,13 @@ from sqlmodel import Session, SQLModel, create_engine
 from lantai.core.auth import Principal, get_current_user
 from lantai.models.enums import EdgeRelation
 from lantai.models.tables import MemoryEdge, MemoryItem, MemoryScene
-from lantai.services.xuanjing_service import build_xuanjing_topology, get_xuanjing_graph
+from lantai.services.xuanjing_service import (
+    build_xuanjing_topology,
+    calculate_decay_curve,
+    calculate_halo,
+    get_xuanjing_changes,
+    get_xuanjing_graph,
+)
 
 pytestmark = pytest.mark.mcp_full_surface()
 
@@ -55,6 +61,8 @@ def _create_mem(
     importance: float = 0.8,
     use_count: int = 5,
     status: str = "active",
+    tags: list[str] | None = None,
+    domain: str = "user",
 ) -> MemoryItem:
     return MemoryItem(
         id=mid,
@@ -62,6 +70,8 @@ def _create_mem(
         key=f"k-{mid}",
         content=content,
         lane=lane,
+        domain=domain,
+        tags=tags or [],
         scene_id=scene_id,
         user_id=user_id,
         tenant_id=tenant_id,
@@ -213,7 +223,7 @@ def test_xuanjing_api_and_mcp_contracts(xuanjing_env, monkeypatch):
     session_factory, _ = xuanjing_env
     import lantai.storage.db as db_module
     from lantai.api.app import app
-    from lantai.cli.mcp import handle
+    from lantai.cli.mcp import handle, handle_get_xuanjing_graph
 
     monkeypatch.setattr(db_module, "get_session", session_factory)
 
@@ -250,3 +260,279 @@ def test_xuanjing_api_and_mcp_contracts(xuanjing_env, monkeypatch):
     payload = json.loads(mcp_result["content"][0]["text"])
     assert "nodes" in payload
     assert any(n["id"] == "m-api" for n in payload["nodes"])
+    with pytest.raises(ValueError, match="integer"):
+        handle_get_xuanjing_graph({"limit": True})
+    with pytest.raises(ValueError, match="boolean"):
+        handle_get_xuanjing_graph({"include_archived": "false"})
+
+    # 3. 增量路由必须复用快照游标并经过响应模型校验
+    snapshot = client.get("/graph/xuanjing?limit=10&domain=project&tag=release")
+    assert snapshot.status_code == 200
+    snapshot_data = snapshot.json()
+
+    with session_factory() as s:
+        changed = _create_mem(
+            "m-api-change",
+            "API 增量过滤测试节点",
+            domain="project",
+            tags=["release"],
+        )
+        archived = _create_mem(
+            "m-api-archived",
+            "API 归档事件节点",
+            domain="project",
+            tags=["release"],
+            status="archived",
+        )
+        changed_at = datetime.now(UTC)
+        changed.updated_at = changed_at
+        archived.updated_at = changed_at
+        s.add_all([changed, archived])
+        s.commit()
+
+    changes = client.get(
+        "/graph/xuanjing/changes",
+        params={
+            "cursor": snapshot_data["stream_cursor"],
+            "limit": 10,
+            "domain": "project",
+            "tag": "release",
+        },
+    )
+    assert changes.status_code == 200
+    changes_data = changes.json()
+    assert {event["type"] for event in changes_data["events"]} >= {
+        "memory.upsert",
+        "memory.remove",
+    }
+    assert all("id" in event["data"] for event in changes_data["events"])
+
+
+def test_decay_curve_and_activity_halo_models():
+    curve = calculate_decay_curve("episodic", base_score=0.8, days=(0, 30, 60))
+    assert curve == [
+        {"days": 0, "score": 0.8},
+        {"days": 30, "score": 0.4},
+        {"days": 60, "score": 0.2},
+    ]
+    assert calculate_decay_curve("procedural", base_score=0.8, days=(0, 30)) == [
+        {"days": 0, "score": 0.8},
+        {"days": 30, "score": 0.8},
+    ]
+    assert calculate_halo(decay_score=0.25, weight=1.0) == {
+        "radius": 2.828,
+        "intensity": 0.125,
+        "opacity": 0.125,
+    }
+    assert calculate_halo(decay_score=1.0, weight=1e12)["radius"] == 64.0
+
+
+def test_topology_filters_use_exact_tags_and_theme_and_keyset_pages(xuanjing_env):
+    session_factory, _ = xuanjing_env
+    with session_factory() as s:
+        s.add(
+            _create_mem(
+                "m-a",
+                "部署记录",
+                lane="rule",
+                importance=0.7,
+                domain="project",
+                tags=["release", "blue"],
+            )
+        )
+        s.add(
+            _create_mem(
+                "m-b",
+                "发布计划",
+                lane="rule",
+                importance=0.6,
+                domain="project",
+                tags=["release-notes"],
+            )
+        )
+        s.add(_create_mem("m-c", "个人偏好", lane="preference"))
+        s.commit()
+
+    principal = Principal(user_id="user-1", tenant_id="t-1", role="user")
+    filtered = build_xuanjing_topology(
+        session_factory(), principal=principal, domain="project", lane="rule", tag="release"
+    )
+    assert [node["id"] for node in filtered["nodes"]] == ["m-a"]
+    multi_tagged = build_xuanjing_topology(
+        session_factory(), principal=principal, tags=["release", "blue"]
+    )
+    assert [node["id"] for node in multi_tagged["nodes"]] == ["m-a"]
+
+    themed = build_xuanjing_topology(
+        session_factory(), principal=principal, domain="project", theme="部署"
+    )
+    assert [node["id"] for node in themed["nodes"]] == ["m-a"]
+
+    first = build_xuanjing_topology(session_factory(), principal=principal, limit=2)
+    assert first["has_more"] is True
+    assert len(first["nodes"]) == 2
+    second = build_xuanjing_topology(
+        session_factory(), principal=principal, limit=2, cursor=first["next_cursor"]
+    )
+    assert len(second["nodes"]) == 1
+    assert {node["id"] for node in first["nodes"]}.isdisjoint(
+        {node["id"] for node in second["nodes"]}
+    )
+
+
+def test_topology_node_projection_includes_space_time_curve_and_halo(xuanjing_env):
+    session_factory, _ = xuanjing_env
+    created = datetime.now(UTC) - timedelta(days=5)
+    valid_from = datetime.now(UTC) - timedelta(days=4)
+    with session_factory() as s:
+        s.add(MemoryScene(id="scene-space", name="项目星系", centroid=[0.1, 0.2, 0.3]))
+        item = _create_mem("m-space", "时空节点", scene_id="scene-space", decay_score=0.8)
+        item.event_time = created
+        item.valid_from = valid_from
+        item.tags = ["release"]
+        s.add(item)
+        s.commit()
+
+    topology = build_xuanjing_topology(
+        session_factory(), principal=Principal(user_id="user-1", tenant_id="t-1")
+    )
+    node = topology["nodes"][0]
+    assert node["coordinates"] == {
+        "space": {"scene_id": "scene-space", "lane": "fact"},
+        "time": {
+            "event_time": node["event_time"],
+            "valid_from": node["valid_from"],
+            "valid_to": None,
+        },
+    }
+    assert node["decay_curve"][0] == {"days": 0, "score": 0.8}
+    assert node["halo"]["intensity"] > 0
+    assert {cluster["type"] for cluster in topology["clusters"]} == {"scene", "lane"}
+
+
+def test_xuanjing_change_feed_paginates_and_emits_content_free_removals(xuanjing_env):
+    session_factory, _ = xuanjing_env
+    principal = Principal(user_id="user-1", tenant_id="t-1")
+    snapshot = get_xuanjing_graph(principal=principal)
+    changed_at = datetime.now(UTC)
+    with session_factory() as s:
+        first = _create_mem("m-change-a", "变更前正文", tags=["keep"])
+        second = _create_mem("m-change-b", "待归档正文", tags=["keep"], status="archived")
+        first.updated_at = changed_at
+        second.updated_at = changed_at
+        s.add(first)
+        s.add(second)
+        s.commit()
+
+    first_page = get_xuanjing_changes(
+        session_factory(), cursor=snapshot["stream_cursor"], limit=1, principal=principal
+    )
+    assert first_page["has_more"] is True
+    second_page = get_xuanjing_changes(
+        session_factory(), cursor=first_page["next_cursor"], limit=1, principal=principal
+    )
+    events = first_page["events"] + second_page["events"]
+    assert [event["type"] for event in events] == ["memory.upsert", "memory.remove"]
+    assert events[0]["data"]["id"] == "m-change-a"
+    assert events[1]["data"] == {"id": "m-change-b"}
+    assert "待归档正文" not in str(events[1])
+    archived_snapshot = get_xuanjing_changes(
+        session_factory(),
+        cursor=snapshot["stream_cursor"],
+        limit=10,
+        principal=principal,
+        include_archived=True,
+    )
+    archived_event = next(
+        event for event in archived_snapshot["events"] if event["id"] == "m-change-b"
+    )
+    assert archived_event["type"] == "memory.upsert"
+
+
+def test_xuanjing_hides_scene_aggregates_and_edges_outside_viewer_scope(xuanjing_env):
+    session_factory, _ = xuanjing_env
+    with session_factory() as s:
+        s.add(
+            MemoryScene(
+                id="scene-shared-id",
+                name="hidden scene name",
+                summary="hidden scene summary",
+                heat=99,
+                member_count=2,
+                centroid=[0.91, 0.82],
+            )
+        )
+        s.add(
+            _create_mem(
+                "m-visible",
+                "visible memory",
+                scene_id="scene-shared-id",
+                user_id="user-1",
+            )
+        )
+        s.add(
+            _create_mem(
+                "m-hidden",
+                "hidden memory",
+                scene_id="scene-shared-id",
+                user_id="user-2",
+                status="archived",
+            )
+        )
+        s.add(
+            _create_edge(
+                "e-hidden",
+                "m-visible",
+                "m-hidden",
+                user_id="user-2",
+            )
+        )
+        s.commit()
+
+    topology = build_xuanjing_topology(
+        session_factory(),
+        principal=Principal(user_id="user-1", tenant_id="t-1", agent_id="agent-A"),
+    )
+    assert [node["id"] for node in topology["nodes"]] == ["m-visible"]
+    assert topology["edges"] == []
+    scene = next(cluster for cluster in topology["clusters"] if cluster["type"] == "scene")
+    assert scene["name"] == "scene-shared-id"
+    assert scene["summary"] == ""
+    assert scene["centroid"] == []
+    assert scene["heat"] == 0
+    assert scene["member_count"] == 1
+
+
+def test_xuanjing_change_feed_merges_edges_and_memories_in_a_bounded_order(xuanjing_env):
+    session_factory, _ = xuanjing_env
+    principal = Principal(user_id="user-1", tenant_id="t-1")
+    snapshot = get_xuanjing_graph(principal=principal)
+    changed_at = datetime.now(UTC)
+    with session_factory() as s:
+        first = _create_mem("m-stream-a", "first stream node")
+        second = _create_mem("m-stream-b", "second stream node")
+        first.updated_at = changed_at
+        second.updated_at = changed_at
+        edge = _create_edge("e-stream", first.id, second.id)
+        edge.created_at = changed_at
+        s.add(first)
+        s.add(second)
+        s.add(edge)
+        s.commit()
+
+    first_page = get_xuanjing_changes(
+        session_factory(), cursor=snapshot["stream_cursor"], limit=2, principal=principal
+    )
+    second_page = get_xuanjing_changes(
+        session_factory(), cursor=first_page["next_cursor"], limit=2, principal=principal
+    )
+    assert len(first_page["events"]) == 2
+    assert len(second_page["events"]) == 1
+    events = first_page["events"] + second_page["events"]
+    assert [event["type"] for event in events] == [
+        "edge.created",
+        "memory.upsert",
+        "memory.upsert",
+    ]
+    assert len({(event["at"], event["id"]) for event in events}) == 3
+    assert second_page["has_more"] is False

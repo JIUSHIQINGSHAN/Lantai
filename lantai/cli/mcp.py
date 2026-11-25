@@ -1461,15 +1461,41 @@ def handle_get_xuanjing_graph(params: dict) -> dict:
     from lantai.services.xuanjing_service import get_xuanjing_graph
 
     limit = params.get("limit", 250)
-    if not isinstance(limit, int) or limit < 1 or limit > 1000:
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 1000:
         raise ValueError("limit must be an integer between 1 and 1000")
     scene_id = params.get("scene_id")
+    domain = params.get("domain")
     lane = params.get("lane")
-    include_archived = bool(params.get("include_archived", False))
+    tag = params.get("tag")
+    tags = params.get("tags")
+    theme = params.get("theme")
+    cursor = params.get("cursor")
+    for name, value in (
+        ("scene_id", scene_id),
+        ("domain", domain),
+        ("lane", lane),
+        ("tag", tag),
+        ("theme", theme),
+        ("cursor", cursor),
+    ):
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"{name} must be a string")
+    if tags is not None and (
+        not isinstance(tags, list) or not all(isinstance(value, str) for value in tags)
+    ):
+        raise ValueError("tags must be a list of strings")
+    include_archived = params.get("include_archived", False)
+    if not isinstance(include_archived, bool):
+        raise ValueError("include_archived must be a boolean")
     return get_xuanjing_graph(
         limit=limit,
         scene_id=scene_id,
+        domain=domain,
         lane=lane,
+        tag=tag,
+        tags=tags,
+        theme=theme,
+        cursor=cursor,
         include_archived=include_archived,
         principal=_principal_from_params(params),
     )
@@ -3330,7 +3356,16 @@ TOOLS = {
                 "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 250, "description": "最大节点数 [1, 1000]"},
                 "scene_id": {"type": "string", "description": "限定场景 ID（可选）"},
+                "domain": {"type": "string", "description": "限定辨域（可选）"},
                 "lane": {"type": "string", "description": "限定泳道（可选）"},
+                "tag": {"type": "string", "description": "精确标签（可选）"},
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "精确标签集合（可选）",
+                },
+                "theme": {"type": "string", "description": "主题搜索子串（可选）"},
+                "cursor": {"type": "string", "description": "快照分页游标（可选）"},
                 "include_archived": {
                     "type": "boolean",
                     "default": False,
