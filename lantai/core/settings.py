@@ -157,6 +157,10 @@ class Settings(BaseSettings):
     CONFLICT_SALIENCE_DEMOTE_STEP: float = 0.2  # 每次降权幅度（下限 0，Checkpoint 可回滚）
     # DD-03：冲突检测向量召回候选数（替代硬编码 [:10] 插入序抽查）
     CONFLICT_CHECK_TOP_K: int = 10
+    # 探颐并陈（Surfacing Disagreement / ADR-0037）：认知上下文是否并陈未决冲突与上限
+    COGNITION_CONFLICTS_SURFACING_ENABLED: bool = True
+    COGNITION_CONFLICTS_MAX_IN_CONTEXT: int = 3
+
     # 新颖度判定参数（ADR-0002 零硬编码）
     GATE_NOVELTY_THRESHOLD: float = 0.15  # 语义高度重叠阈值
     GATE_NOVELTY_SAMPLE_SIZE: int = 50  # 新颖度计算最大样本数
