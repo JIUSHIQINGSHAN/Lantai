@@ -150,9 +150,6 @@ def _apply_edge_scope(stmt, principal):
     agent_id = getattr(principal, "agent_id", None)
     if agent_id:
         stmt = stmt.where(or_(MemoryEdge.agent_id == agent_id, MemoryEdge.agent_id.is_(None)))
-    federation_scope = federation_scope_clause(MemoryEdge, principal)
-    if federation_scope is not None:
-        stmt = stmt.where(federation_scope)
     return stmt
 
 

@@ -18,14 +18,14 @@ router = APIRouter()
 
 
 class DecayPointResponse(BaseModel):
-    days: int
-    score: float
+    days: int = Field(ge=0)
+    score: float = Field(ge=0, le=1)
 
 
 class HaloResponse(BaseModel):
-    radius: float
-    intensity: float
-    opacity: float
+    radius: float = Field(ge=0, le=64)
+    intensity: float = Field(ge=0, le=1)
+    opacity: float = Field(ge=0.12, le=0.9)
 
 
 class NodeCoordinatesResponse(BaseModel):
@@ -42,13 +42,13 @@ class XuanjingNodeResponse(BaseModel):
     lane: str | None = None
     domain: str | None = None
     tier: str | None = None
-    decay_score: float
+    decay_score: float = Field(ge=0, le=1)
     decay_class: str
     decay_curve: list[DecayPointResponse]
-    weight: float
-    importance: float
-    use_count: int
-    helpful_count: int
+    weight: float = Field(ge=1, allow_inf_nan=False)
+    importance: float = Field(ge=0, le=1)
+    use_count: int = Field(ge=0)
+    helpful_count: int = Field(ge=0)
     scene_id: str | None = None
     shared_scope: str = "private"
     lifecycle_status: str = "active"
@@ -74,7 +74,7 @@ class XuanjingEdgeResponse(BaseModel):
     source: str
     target: str
     relation: str
-    confidence: float
+    confidence: float = Field(ge=0, le=1)
     provenance: EdgeProvenanceResponse = Field(default_factory=EdgeProvenanceResponse)
 
 
@@ -82,22 +82,22 @@ class XuanjingClusterResponse(BaseModel):
     id: str
     type: Literal["scene", "lane"]
     name: str
-    count: int
+    count: int = Field(ge=0)
     lanes: list[str] = Field(default_factory=list)
     centroid: list[Any] = Field(default_factory=list)
     summary: str = ""
-    heat: float = 0
-    member_count: int = 0
+    heat: float = Field(0, ge=0, allow_inf_nan=False)
+    member_count: int = Field(0, ge=0)
 
 
 class XuanjingStatsResponse(BaseModel):
-    node_count: int
-    edge_count: int
+    node_count: int = Field(ge=0)
+    edge_count: int = Field(ge=0)
     lane_counts: dict[str, int]
     relation_counts: dict[str, int]
-    total_nodes: int
-    total_edges: int
-    avg_decay_score: float | None
+    total_nodes: int = Field(ge=0)
+    total_edges: int = Field(ge=0)
+    avg_decay_score: float | None = Field(ge=0, le=1)
 
 
 class MemoryUpsertEventResponse(BaseModel):
@@ -119,7 +119,7 @@ class EdgeCreatedDataResponse(BaseModel):
     source: str
     target: str
     relation: str
-    confidence: float
+    confidence: float = Field(ge=0, le=1)
 
 
 class EdgeCreatedEventResponse(BaseModel):
@@ -136,7 +136,7 @@ XuanjingChangeEventResponse = Annotated[
 
 
 class PaginationResponse(BaseModel):
-    limit: int
+    limit: int = Field(ge=1, le=1000)
     has_more: bool
     next_cursor: str | None
 

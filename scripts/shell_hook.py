@@ -47,7 +47,7 @@ from lantai.core.text import apply_recall_budget as _apply_recall_budget
 from lantai.core.text import truncate_codepoints as _truncate_codepoints
 from lantai.core.time import render_event_time
 from lantai.gate.prefilter import relevance_check
-from lantai.integrations.host_adapters import adapt_response
+from lantai.integrations.host_adapters import HOST_EVENT, INJECTION_EVENTS, adapt_response
 from lantai.integrations.host_protocol import (
     ACTION_BACKFILL,
     ACTION_CHECKPOINT,
@@ -876,6 +876,14 @@ def _dispatch_one(raw: str) -> dict:
         )
 
     if req.action == ACTION_QUERY:
+        # 非注入事件不启动检索；显式控制通道已在上面分发。
+        if (
+            os.environ.get("LANTAI_HOST") in HOST_EVENT
+            and req.event
+            and req.event not in INJECTION_EVENTS
+        ):
+            return {}
+
         # D-04（票 `.scratch/v0.65-next-window-2026-11/01`）：超时兜底返回
         # 常驻画像——检索超时不该把"置顶无检索依赖"的画像段一并丢弃。
         def _query_fallback() -> dict:
