@@ -638,7 +638,22 @@ def _handle_dialogue(text: str, session_id: str = "", turn: int | None = None) -
     def _ingest() -> dict:
         from lantai.ingestion.dialogue import ingest_dialogue
 
-        return {"ok": True, **ingest_dialogue(text, session_id=session_id or "", turn=turn)}
+        # 读写同一属主（巡检 2026-11-25）：票 90 让读侧按 `LANTAI_HOOK_USER_ID`
+        # 检索，但写侧仍落 `ingest_dialogue` 的默认 `user_id="default"`——
+        # 候选 → 提案 → MemoryItem 全链继承这个属主（promoter 照抄
+        # src_cand.user_id），而非 admin 的读侧过滤是 `user_id == 配置值 OR
+        # IS NULL`，于是**配了 user 档属主后，钩子自己从对话里学到的记忆，
+        # 钩子自己永远读不到**。显式配置了属主才传（与读侧同一 `_hook_principal`
+        # 真源）；未配置时保持旧调用形状（既有替身按
+        # `(text, session_id=, turn=)` 断言，零漂移）。
+        _extra: dict = {}
+        _principal = _hook_principal()
+        if _principal is not None:
+            _extra["user_id"] = _principal.user_id
+        return {
+            "ok": True,
+            **ingest_dialogue(text, session_id=session_id or "", turn=turn, **_extra),
+        }
 
     try:
         return _ingest()
