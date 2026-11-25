@@ -474,6 +474,7 @@ def consolidate_cluster(
                         "memory_type": master.memory_type,
                         "lane": getattr(master, "lane", "general") or "general",
                         "domain": getattr(master, "domain", "user") or "user",
+                        "federation_id": getattr(master, "federation_id", "") or "",
                         "tenant_id": getattr(master, "tenant_id", "") or "",
                         "user_id": getattr(master, "user_id", "") or "",
                         "session_id": getattr(master, "session_id", "") or "",

@@ -101,6 +101,20 @@ def _tenant_filter_clause(principal) -> tuple[str, str] | None:
     return " AND (m.tenant_id = ? OR m.tenant_id IS NULL)", tenant_id
 
 
+def _federation_filter_clause(principal) -> tuple[str, str | None] | None:
+    """Restrict assigned rows to the caller's federation; keep legacy NULL rows visible."""
+    if (
+        principal is None
+        or _is_system_viewer(principal)
+        or bool(getattr(principal, "is_admin", False))
+    ):
+        return None
+    federation_id = getattr(principal, "federation_id", None)
+    if federation_id:
+        return " AND (m.federation_id = ? OR m.federation_id IS NULL)", federation_id
+    return " AND m.federation_id IS NULL", None
+
+
 def init_fts(conn: sqlite3.Connection) -> bool:
     """初始化 FTS5 虚拟表；自动迁移旧 schema。返回词汇召回通道是否真正可用。
 
@@ -342,6 +356,11 @@ def search_fts(
             if tenant is not None:
                 sql += tenant[0]
                 params.append(tenant[1])
+            federation = _federation_filter_clause(principal)
+            if federation is not None:
+                sql += federation[0]
+                if federation[1] is not None:
+                    params.append(federation[1])
             # 同袍（ADR-0058）：Agent 私有隔离与公共知识殿堂放行
             if getattr(principal, "agent_id", None):
                 sql += (
@@ -405,6 +424,11 @@ def search_fts_bm25(
             if tenant is not None:
                 sql += tenant[0]
                 params.append(tenant[1])
+            federation = _federation_filter_clause(principal)
+            if federation is not None:
+                sql += federation[0]
+                if federation[1] is not None:
+                    params.append(federation[1])
             # 同袍（ADR-0058）：Agent 私有隔离与公共知识殿堂放行
             if getattr(principal, "agent_id", None):
                 sql += (

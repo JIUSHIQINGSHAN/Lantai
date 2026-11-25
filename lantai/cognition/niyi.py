@@ -19,7 +19,7 @@ from typing import Any
 
 from sqlmodel import Session, col, select
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import federation_visible, viewer_of
 from lantai.core.auth import Principal
 from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
@@ -123,6 +123,7 @@ class NiyiEngine:
         *,
         owner_id: str | None,
         tenant_id: str | None,
+        federation_id: str | None = None,
         shared_scope: str = "private",
     ) -> bool:
         """行级安全隔离校验（宁 miss 不脏写）。"""
@@ -130,14 +131,17 @@ class NiyiEngine:
             return True
         if getattr(self.principal, "is_admin", False):
             return True
-        if shared_scope == "swarm_shared":
-            return True
+        if not federation_visible(self.principal, federation_id):
+            return False
 
         viewer = viewer_of(self.principal)
         current_tenant = getattr(self.principal, "tenant_id", None)
 
         if tenant_id and current_tenant and tenant_id != current_tenant:
             return False
+
+        if shared_scope == "swarm_shared":
+            return not tenant_id or tenant_id == current_tenant
 
         return not (owner_id is not None and owner_id != viewer)
 
@@ -180,6 +184,7 @@ class NiyiEngine:
                 not self._check_access(
                     owner_id=endpoint.user_id,
                     tenant_id=endpoint.tenant_id,
+                    federation_id=getattr(endpoint, "federation_id", None),
                     shared_scope=getattr(endpoint, "shared_scope", "private"),
                 )
                 for endpoint in endpoints
@@ -403,6 +408,7 @@ class NiyiEngine:
             and self._check_access(
                 owner_id=node.user_id,
                 tenant_id=node.tenant_id,
+                federation_id=getattr(node, "federation_id", None),
                 shared_scope=getattr(node, "shared_scope", "private"),
             )
         )
@@ -511,6 +517,7 @@ class NiyiEngine:
         if not mem or not self._check_access(
             owner_id=mem.user_id,
             tenant_id=mem.tenant_id,
+            federation_id=getattr(mem, "federation_id", None),
             shared_scope=getattr(mem, "shared_scope", "private"),
         ):
             # 目标不存在或无权限访问
@@ -588,6 +595,7 @@ class NiyiEngine:
             if source is None or not self._check_access(
                 owner_id=getattr(source, "user_id", None),
                 tenant_id=getattr(source, "tenant_id", None),
+                federation_id=getattr(source, "federation_id", None),
                 shared_scope=getattr(source, "shared_scope", "private"),
             ):
                 topology_impact["unresolved_node_ids"] = sorted(

@@ -452,6 +452,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     "memory_type": existing.memory_type,
                     "lane": getattr(existing, "lane", "general") or "general",
                     "domain": getattr(existing, "domain", "user") or "user",
+                    "federation_id": getattr(existing, "federation_id", "") or "",
                     "tenant_id": getattr(existing, "tenant_id", "") or "",
                     "user_id": getattr(existing, "user_id", "") or "",
                     "session_id": getattr(existing, "session_id", "") or "",
@@ -571,6 +572,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     "memory_type": master.memory_type,
                     "lane": getattr(master, "lane", "general") or "general",
                     "domain": getattr(master, "domain", "user") or "user",
+                    "federation_id": getattr(master, "federation_id", "") or "",
                     "tenant_id": getattr(master, "tenant_id", "") or "",
                     "user_id": getattr(master, "user_id", "") or "",
                     "session_id": getattr(master, "session_id", "") or "",
@@ -679,6 +681,8 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     mem_kwargs["user_id"] = src_cand.user_id
                 if src_cand.tenant_id:
                     mem_kwargs["tenant_id"] = src_cand.tenant_id
+                if getattr(src_cand, "federation_id", None):
+                    mem_kwargs["federation_id"] = src_cand.federation_id
                 if getattr(src_cand, "agent_id", None):
                     mem_kwargs["agent_id"] = src_cand.agent_id
                 if getattr(src_cand, "shared_scope", None):
@@ -734,6 +738,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     "lane": getattr(mem, "lane", "general") or "general",
                     "domain": getattr(mem, "domain", "user") or "user",
                     "shared_scope": getattr(mem, "shared_scope", "private") or "private",
+                    "federation_id": getattr(mem, "federation_id", "") or "",
                     "tenant_id": getattr(mem, "tenant_id", "") or "",
                     "user_id": getattr(mem, "user_id", "") or "",
                     "session_id": getattr(mem, "session_id", "") or "",
@@ -787,6 +792,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     "memory_type": existing.memory_type,
                     "lane": getattr(existing, "lane", "general") or "general",
                     "domain": getattr(existing, "domain", "user") or "user",
+                    "federation_id": getattr(existing, "federation_id", "") or "",
                     "tenant_id": getattr(existing, "tenant_id", "") or "",
                     "user_id": getattr(existing, "user_id", "") or "",
                     "session_id": getattr(existing, "session_id", "") or "",

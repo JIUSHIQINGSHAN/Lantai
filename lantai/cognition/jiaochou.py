@@ -19,7 +19,7 @@ from typing import Any
 import jieba
 from sqlmodel import Session, col, select
 
-from lantai.core.acl import is_system_viewer, viewer_of
+from lantai.core.acl import federation_scope_clause, is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.gate.relation import classify_relation
 from lantai.llm.fence import wrap_as_data
@@ -237,6 +237,9 @@ class JiaochouEngine:
                     (col(MemoryItem.tenant_id).is_(None)) | (MemoryItem.tenant_id == current_tenant)
                 )
             stmt = stmt.where(owner_clause | (MemoryItem.shared_scope == "swarm_shared"))
+            federation_scope = federation_scope_clause(MemoryItem, self.principal)
+            if federation_scope is not None:
+                stmt = stmt.where(federation_scope)
 
         # 候选池硬上界：最近创建优先（created_at+id 双键稳定序），计算量 O(池²)
         # 恒定，不再全表 O(n²)（票 59 病灶 1+2）。

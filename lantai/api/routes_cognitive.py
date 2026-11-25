@@ -137,6 +137,7 @@ def cognitive_observe(
                 "lane": getattr(mem, "lane", "general") or "general",
                 "domain": getattr(mem, "domain", "user") or "user",
                 "shared_scope": getattr(mem, "shared_scope", "private") or "private",
+                "federation_id": getattr(mem, "federation_id", "") or "",
                 "tenant_id": getattr(mem, "tenant_id", "") or "",
                 "user_id": getattr(mem, "user_id", "") or "",
                 "session_id": getattr(mem, "session_id", "") or "",

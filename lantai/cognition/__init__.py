@@ -59,6 +59,12 @@ from lantai.cognition.tanyi import (
     execute_tanyi_resolution,
     parse_user_resolution_intent,
 )
+from lantai.cognition.tongpao import (
+    PRIVATE_SCOPE,
+    SHARED_SCOPE,
+    CrystalDraft,
+    TongpaoEngine,
+)
 from lantai.cognition.zhaji import (
     ZhajiDigestResult,
     ZhajiEngine,
@@ -75,6 +81,10 @@ from lantai.cognition.zhiming import (
 __all__ = [
     "CausalEngine",
     "CausalHop",
+    "CrystalDraft",
+    "PRIVATE_SCOPE",
+    "SHARED_SCOPE",
+    "TongpaoEngine",
     "ChenfengEngine",
     "CognitiveContext",
     "CognitiveContextBuilder",

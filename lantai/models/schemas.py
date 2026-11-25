@@ -193,10 +193,10 @@ class CrystalDecideReq(BaseModel):
 
 
 class CrystalPromoteReq(BaseModel):
-    """技能结晶跨 Agent 晋升至公共殿堂请求（同袍 ADR-0058）。"""
+    """技能结晶晋升请求；steps 为兼容字段，实际内容取已观察的 procedure。"""
 
     steps: list[str] = []
-    min_success_count: int = 1
+    min_success_count: int = 3
 
 
 class ConflictResolveReq(BaseModel):

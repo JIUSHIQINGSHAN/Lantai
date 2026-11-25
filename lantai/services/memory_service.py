@@ -523,12 +523,14 @@ def _create_candidate_direct(
             s.flush()
 
         agent_id = getattr(principal, "agent_id", None) if principal else None
+        federation_id = getattr(principal, "federation_id", None) if principal else None
         cand = MemoryCandidate(
             id=new_id("cand"),
             # 归属四元组（票 .scratch/ownership-gaps/03）：不落列则来源链
             # 继承到 MemoryItem 也是 NULL，属主过滤把所有人的结果都滤光
             user_id=user_id,
             tenant_id=tenant_id,
+            federation_id=federation_id,
             agent_id=agent_id,
             shared_scope=getattr(req, "shared_scope", "private") or "private",
             session_id=(getattr(req, "session_id", "") or "").strip() or None,
@@ -631,11 +633,13 @@ def _create_candidate_with_extraction(
         prov_extra["source_trust"] = _source_trust_of(req)
 
         agent_id = getattr(principal, "agent_id", None) if principal else None
+        federation_id = getattr(principal, "federation_id", None) if principal else None
         cand = MemoryCandidate(
             id=new_id("cand"),
             # 归属四元组（票 .scratch/ownership-gaps/03）：同 fastpath 路径口径
             user_id=user_id,
             tenant_id=tenant_id,
+            federation_id=federation_id,
             agent_id=agent_id,
             shared_scope=getattr(req, "shared_scope", "private") or "private",
             session_id=(getattr(req, "session_id", "") or "").strip() or None,
@@ -1014,6 +1018,7 @@ def build_verbatim_item(
     updated_at: datetime | None = None,
     user_id: str | None = None,
     tenant_id: str | None = None,
+    federation_id: str | None = None,
     agent_id: str | None = None,
     shared_scope: str = "private",
 ) -> MemoryItem:
@@ -1049,6 +1054,7 @@ def build_verbatim_item(
         decay_class="semantic",  # 原文直存衰减慢；procedural 永不衰减过强
         user_id=user_id,
         tenant_id=tenant_id,
+        federation_id=federation_id,
         agent_id=agent_id,
         shared_scope=shared_scope or "private",
         valid_from=created,  # 主张自落库起生效（票 08：模型层默认 None，写入点显式声明）
@@ -1062,11 +1068,13 @@ def add_raw_memory(
     *,
     user_id: str = "default",
     tenant_id: str | None = None,
+    federation_id: str | None = None,
     agent_id: str | None = None,
     principal=None,
     attribution: dict | Attribution | None = None,
 ) -> dict:
     """Record the new invocation even when verbatim dedup reuses an old item."""
+    federation_id = federation_id or getattr(principal, "federation_id", None)
     envelope = attribution if attribution is not None else req.attribution
     context = resolve_attribution(req.session_id, envelope)
     event_id = start_ingest_event(
@@ -1083,6 +1091,7 @@ def add_raw_memory(
             request,
             user_id=user_id,
             tenant_id=tenant_id,
+            federation_id=federation_id,
             agent_id=agent_id,
             principal=principal,
             ingest_event_ids=[event_id],
@@ -1095,6 +1104,7 @@ def _add_raw_memory(
     *,
     user_id: str = "default",
     tenant_id: str | None = None,
+    federation_id: str | None = None,
     agent_id: str | None = None,
     principal=None,
     ingest_event_ids: list[str] | None = None,
@@ -1166,6 +1176,7 @@ def _add_raw_memory(
             tags=req.tags,
             user_id=user_id,
             tenant_id=tenant_id,
+            federation_id=federation_id,
             agent_id=agent_id,
             shared_scope=getattr(req, "shared_scope", "private") or "private",
         )
@@ -1204,6 +1215,7 @@ def _add_raw_memory(
                 "domain": getattr(mem, "domain", "user") or "user",
                 "shared_scope": getattr(mem, "shared_scope", "private") or "private",
                 "tenant_id": getattr(mem, "tenant_id", "") or "",
+                "federation_id": getattr(mem, "federation_id", "") or "",
                 "user_id": getattr(mem, "user_id", "") or "",
                 "session_id": getattr(mem, "session_id", "") or "",
                 "agent_id": getattr(mem, "agent_id", "") or "",

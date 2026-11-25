@@ -17,7 +17,7 @@ from typing import Any
 from sqlalchemy import and_, exists, func
 from sqlmodel import Session, col, or_, select
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import federation_scope_clause, viewer_of
 from lantai.core.time import ensure_aware, iso_utc, parse_iso_utc, utcnow
 from lantai.memory.decay_class import decay_multiplier
 from lantai.models.tables import MemoryEdge, MemoryItem, MemoryScene
@@ -127,6 +127,9 @@ def _apply_scope(stmt, principal):
                 MemoryItem.shared_scope == "swarm_shared",
             )
         )
+    federation_scope = federation_scope_clause(MemoryItem, principal)
+    if federation_scope is not None:
+        stmt = stmt.where(federation_scope)
     session_id = getattr(principal, "session_id", None)
     if session_id:
         stmt = stmt.where(MemoryItem.session_id == session_id)
@@ -147,6 +150,9 @@ def _apply_edge_scope(stmt, principal):
     agent_id = getattr(principal, "agent_id", None)
     if agent_id:
         stmt = stmt.where(or_(MemoryEdge.agent_id == agent_id, MemoryEdge.agent_id.is_(None)))
+    federation_scope = federation_scope_clause(MemoryEdge, principal)
+    if federation_scope is not None:
+        stmt = stmt.where(federation_scope)
     return stmt
 
 

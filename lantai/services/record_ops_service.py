@@ -174,6 +174,7 @@ def sync_vector_upsert(memory_id: str, item: MemoryItem) -> bool:
                 "memory_type": item.memory_type,
                 "lane": item.lane or "general",
                 "domain": getattr(item, "domain", "user") or "user",
+                "federation_id": getattr(item, "federation_id", "") or "",
                 "tenant_id": getattr(item, "tenant_id", "") or "",
                 "user_id": getattr(item, "user_id", "") or "",
                 "session_id": getattr(item, "session_id", "") or "",

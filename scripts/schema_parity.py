@@ -42,6 +42,12 @@ NULL_DRIFT_WAIVERS: dict[str, str] = {
     "skillcrystal.success_count": (
         "v35 ALTER ADD COLUMN INTEGER DEFAULT 0，建为 nullable；模型 default=0（票 06）"
     ),
+    "skillcrystal.failure_count": (
+        "v48 ALTER ADD COLUMN INTEGER DEFAULT 0，建为 nullable；模型 default=0（同袍影子评考）"
+    ),
+    "skillcrystal.shadow_state": (
+        "v48 ALTER ADD COLUMN TEXT DEFAULT 'candidate'，建为 nullable；模型 default='candidate'（同袍影子评考）"
+    ),
     "memorycandidate.shared_scope": (
         "v36 ALTER ADD COLUMN 建为 nullable；模型 default='private'，ORM 不落 NULL（票 06）"
     ),
@@ -161,15 +167,20 @@ def parity_findings(conn: sqlite3.Connection) -> dict:
             if bool(col.primary_key) != cols[col.name]["pk"]:
                 out["pk_drift"].append(f"{name}.{col.name}")
         model_indexed = {c.name for c in table.columns if c.index}
+        index_rows = list(conn.execute(f'PRAGMA index_list("{name}")'))
+        have = {row[1] for row in index_rows if row[1]}
+        for index in sorted(table.indexes, key=lambda value: value.name or ""):
+            if index.name and index.name not in have:
+                out["index_drift"].append(f"{name}: 缺 {index.name}")
         if model_indexed:
-            have = set()
-            for r in list(conn.execute(f'PRAGMA index_list("{name}")')):
-                if not r[1] or str(r[1]).startswith("sqlite_"):
+            indexed_columns = set()
+            for row in index_rows:
+                if not row[1] or str(row[1]).startswith("sqlite_"):
                     continue
-                for c in list(conn.execute(f'PRAGMA index_info("{r[1]}")')):
-                    if c[2] is not None:
-                        have.add(c[2])
-            for col in sorted(model_indexed - have):
+                for column in list(conn.execute(f'PRAGMA index_info("{row[1]}")')):
+                    if column[2] is not None:
+                        indexed_columns.add(column[2])
+            for col in sorted(model_indexed - indexed_columns):
                 out["index_drift"].append(f"{name}.{col} 模型声明 index=True 但实库无可用索引")
         out["extra_columns"].extend(
             f"{name}.{c}" for c in sorted(set(cols) - {x.name for x in table.columns})

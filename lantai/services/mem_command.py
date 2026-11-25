@@ -150,12 +150,25 @@ def create_skill(
     # 对 `principal=None` 返回 `(None, "default", None)`，会把本函数「None
     # 留 NULL」的既有行为改成落 "default"。这里要的是字面透传：有身份才落。
     if principal is None:
-        tenant_id = user_id = agent_id = None
+        tenant_id = user_id = agent_id = federation_id = None
     else:
         tenant_id = getattr(principal, "tenant_id", None)
         user_id = getattr(principal, "user_id", None)
         agent_id = getattr(principal, "agent_id", None)
+        federation_id = getattr(principal, "federation_id", None)
+    if shared_scope == "swarm_shared" and not federation_id:
+        raise ValueError("shared skill requires a trusted federation_id")
     dedup_scope = [MemoryItem.user_id == user_id] if user_id else []
+    dedup_scope.extend(
+        [
+            MemoryItem.tenant_id == tenant_id if tenant_id else MemoryItem.tenant_id.is_(None),
+            MemoryItem.agent_id == agent_id if agent_id else MemoryItem.agent_id.is_(None),
+            MemoryItem.federation_id == federation_id
+            if federation_id
+            else MemoryItem.federation_id.is_(None),
+            MemoryItem.shared_scope == shared_scope,
+        ]
+    )
     with db.get_session() as s:
         existing = s.exec(
             select(MemoryItem).where(
@@ -182,6 +195,7 @@ def create_skill(
             decay_class="procedural",  # 技能资产常青，永不衰减
             tenant_id=tenant_id,
             user_id=user_id,
+            federation_id=federation_id,
             agent_id=agent_id,
             shared_scope=shared_scope or "private",
             valid_from=utcnow(),  # 主张自落库起生效（票 08：模型层默认 None，写入点显式声明）
@@ -215,6 +229,7 @@ def create_skill(
                 "domain": getattr(mem, "domain", "user") or "user",
                 "shared_scope": getattr(mem, "shared_scope", "private") or "private",
                 "tenant_id": getattr(mem, "tenant_id", "") or "",
+                "federation_id": getattr(mem, "federation_id", "") or "",
                 "user_id": getattr(mem, "user_id", "") or "",
                 "session_id": getattr(mem, "session_id", "") or "",
                 "agent_id": getattr(mem, "agent_id", "") or "",

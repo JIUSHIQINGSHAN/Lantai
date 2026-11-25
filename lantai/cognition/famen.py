@@ -19,7 +19,7 @@ from typing import Any
 import jieba
 from sqlmodel import Session, col, select
 
-from lantai.core.acl import is_system_viewer, viewer_of
+from lantai.core.acl import federation_visible, is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem, SkillCrystal
@@ -440,6 +440,7 @@ class FamenEngine:
         *,
         owner_id: str | None,
         tenant_id: str | None,
+        federation_id: str | None = None,
         shared_scope: str = "private",
     ) -> bool:
         """行级安全隔离校验（宁 miss 不脏写）。
@@ -452,11 +453,12 @@ class FamenEngine:
             return True
 
         # 公共结晶开放给集群伙伴
-        if shared_scope == "swarm_shared":
-            return True
-
         # 票 57：无身份收敛 "default"（同 zhaji 口径），不再全放
         if self.principal is None:
+            if tenant_id is not None or federation_id is not None:
+                return False
+            if shared_scope == "swarm_shared":
+                return True
             return owner_id in (None, "default")
 
         viewer = viewer_of(self.principal)
@@ -464,6 +466,10 @@ class FamenEngine:
 
         if tenant_id and current_tenant and tenant_id != current_tenant:
             return False
+        if not federation_visible(self.principal, federation_id):
+            return False
+        if shared_scope == "swarm_shared":
+            return True
 
         return not (owner_id is not None and owner_id != viewer)
 
@@ -479,6 +485,7 @@ class FamenEngine:
             if not self._check_access(
                 owner_id=sc.user_id,
                 tenant_id=sc.tenant_id,
+                federation_id=getattr(sc, "federation_id", None),
                 shared_scope=sc.shared_scope,
             ):
                 continue
@@ -500,7 +507,8 @@ class FamenEngine:
             if not self._check_access(
                 owner_id=m.user_id,
                 tenant_id=m.tenant_id,
-                shared_scope="private",
+                federation_id=getattr(m, "federation_id", None),
+                shared_scope=getattr(m, "shared_scope", "private"),
             ):
                 continue
             assets.append(_memory_asset(m))
@@ -527,6 +535,7 @@ class FamenEngine:
                 if not self._check_access(
                     owner_id=sc.user_id,
                     tenant_id=sc.tenant_id,
+                    federation_id=getattr(sc, "federation_id", None),
                     shared_scope=sc.shared_scope,
                 ):
                     return None
@@ -544,7 +553,8 @@ class FamenEngine:
                 if not self._check_access(
                     owner_id=m.user_id,
                     tenant_id=m.tenant_id,
-                    shared_scope="private",
+                    federation_id=getattr(m, "federation_id", None),
+                    shared_scope=getattr(m, "shared_scope", "private"),
                 ):
                     return None
                 return _memory_asset(m).to_dict(fenced=True)

@@ -80,11 +80,12 @@ def _load_audit():
     return advertised, descriptions, handlers, mapping
 
 
-def _consumed_keys(fn):
+def _consumed_keys(fn, handlers=None):
     """handler 体内的直接消费键集：params.get("字面量") 与
     _int_param(params, "字面量", …)（票 66 钳制 helper——键字面量仍在调用点，
     AST 可逐 handler 精确归因，故收编进扫描器而非豁免表；其余未知消费形态
-    一律视为不消费，哨兵保持 fail-closed）。"""
+    一律视为不消费，哨兵保持 fail-closed）。显式调用身份解析 helper 时，继续
+    归因该 helper 对 params 的实际读取，不把它扩成全局豁免。"""
     keys = set()
     for node in ast.walk(fn):
         if not isinstance(node, ast.Call) or not node.args:
@@ -107,6 +108,15 @@ def _consumed_keys(fn):
             and isinstance(node.args[1], ast.Constant)
         ):
             keys.add(node.args[1].value)
+        elif (
+            isinstance(f, ast.Name)
+            and f.id in {"_principal_from_params", "_federated_principal_from_params"}
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == "params"
+            and handlers
+            and f.id in handlers
+        ):
+            keys.update(_consumed_keys(handlers[f.id], handlers))
     return keys
 
 
@@ -124,7 +134,7 @@ def test_no_hidden_params():
     for tname, fname in mapping.items():
         fn = handlers.get(fname)
         assert fn is not None, f"工具 {tname} 的 handler {fname} 不存在"
-        h = _consumed_keys(fn) - advertised[tname] - GLOBAL_EXEMPT
+        h = _consumed_keys(fn, handlers) - advertised[tname] - GLOBAL_EXEMPT
         if h:
             hidden[tname] = sorted(h)
     assert not hidden, (
@@ -138,7 +148,7 @@ def test_no_ghost_params():
     ghost = {}
     for tname, fname in mapping.items():
         fn = handlers.get(fname)
-        g = advertised[tname] - _consumed_keys(fn) - GLOBAL_EXEMPT
+        g = advertised[tname] - _consumed_keys(fn, handlers) - GLOBAL_EXEMPT
         if g:
             ghost[tname] = sorted(g)
     assert not ghost, f"MCP 虚广告（广告 ⊄ 消费）：{ghost}"
@@ -153,7 +163,7 @@ def test_user_id_declared_on_all_consuming_tools():
     for tname, fname in mapping.items():
         fn = handlers.get(fname)
         consumes_uid = _references(fn, "_principal_from_params") or (
-            "user_id" in _consumed_keys(fn)
+            "user_id" in _consumed_keys(fn, handlers)
         )
         if consumes_uid and "user_id" not in advertised[tname]:
             undeclared[tname] = fname
@@ -187,7 +197,7 @@ def test_archived_search_scene_alias_removed():
     """未广告别名 scene_id 删除：memory_archived_search 只认已广告的 scene。"""
     _, _, handlers, _ = _load_audit()
     fn = handlers["handle_memory_archived_search"]
-    assert "scene_id" not in _consumed_keys(fn), (
+    assert "scene_id" not in _consumed_keys(fn, handlers), (
         "memory_archived_search 仍消费未广告别名 scene_id（票 26 病灶 5："
         "两名一参只文档一个，别名应删消费点）"
     )
@@ -287,7 +297,7 @@ def test_tools_list_schema_via_subprocess():
         t
         for t, fname in mapping.items()
         if _references(handlers.get(fname), "_principal_from_params")
-        or "user_id" in _consumed_keys(handlers.get(fname))
+        or "user_id" in _consumed_keys(handlers.get(fname), handlers)
     )
     missing_uid = sorted(t for t in consuming if "user_id" not in out.get(t, []))
     assert not missing_uid, f"user_id 消费未声明（票 26，{len(missing_uid)} 工具）：{missing_uid}"

@@ -8,12 +8,10 @@
 5. 事件溯源与图谱记录：构建 MemoryEdge(relation='leads_to') 关联 crystal_id 与 memory_id。
 """
 
-from lantai.core.ids import new_id
+from fastapi import HTTPException
+
 from lantai.core.logger import logger
-from lantai.core.time import utcnow
-from lantai.models.tables import MemoryEdge, SkillCrystal
-from lantai.services.mem_command import create_skill
-from lantai.storage import db
+from lantai.models.tables import SkillCrystal
 
 
 def evaluate_crystal_for_promotion(
@@ -61,60 +59,29 @@ def evaluate_crystal_for_promotion(
 def promote_crystal(
     crystal_id: str,
     steps: list[str] | None = None,
-    min_success_count: int = 1,
+    min_success_count: int = 3,
     principal=None,
 ) -> dict:
-    """执行技能结晶晋升流水线。
+    """兼容入口：使用同袍影子考评状态机后再发布结晶。
 
-    1. 读取结晶并执行评考；
-    2. 创建公共典籍 MemoryItem (shared_scope='swarm_shared')；
-    3. 结晶状态置为 promoted，shared_scope='swarm_shared'；
-    4. 建立格物因果拓扑 MemoryEdge(relation='leads_to')。
+    ``steps`` 保留为 API 兼容参数，但晋升内容只取结晶已观察的 procedure，
+    避免调用方在考评后替换即将发布的执行步骤。
     """
-    with db.get_session() as s:
-        crystal = s.get(SkillCrystal, crystal_id)
-        if not crystal:
-            raise ValueError(f"结晶 {crystal_id} 未找到")
-
-        eligible, reason, resolved_steps = evaluate_crystal_for_promotion(
-            crystal, min_success_count=min_success_count, steps=steps
-        )
-        if not eligible:
-            raise ValueError(f"结晶评考未通过: {reason}")
-
-        skill_name = crystal.skill_name
-        trigger_rule = crystal.trigger_rule or "多智能体联邦共享技能"
-        tenant_id = getattr(crystal, "tenant_id", None) or getattr(principal, "tenant_id", None)
-        user_id = getattr(crystal, "user_id", None) or getattr(principal, "user_id", None)
-        source_agent = (
-            getattr(crystal, "source_agent_id", None)
-            or getattr(crystal, "agent_id", None)
-            or getattr(principal, "agent_id", None)
-        )
-
-    # 2. 沉淀至公共知识殿堂（shared_scope="swarm_shared"）
-    from lantai.core.auth import Principal
-
-    effective_principal = Principal(
-        tenant_id=tenant_id,
-        user_id=user_id,
-        agent_id=source_agent,
-    )
-
+    if principal is None:
+        raise HTTPException(status_code=403, detail="crystal promotion requires a principal")
     try:
-        skill_res = create_skill(
-            name=skill_name,
-            description=trigger_rule,
-            steps=resolved_steps,
-            tags=["crystal_promoted", "tongpao_shared"],
-            principal=effective_principal,
-            shared_scope="swarm_shared",
+        from lantai.cognition.tongpao import TongpaoEngine
+
+        return TongpaoEngine(principal=principal).promote_crystal(
+            crystal_id,
+            min_success_count=min_success_count,
+            min_agents=2,
         )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         if "injection guard" not in str(exc):
-            raise  # 非獬豸拒绝不冒充闸拦、不误标（消息前缀是 guard 既有契约）
-        # 獬豸（v0.68 票 14）：结晶文本命中注入闸 → 不落公共殿堂资产（skip+留痕）。
-        # 结晶维持 candidate（不标 promoted），不抛异常炸调用方。
+            raise
         logger.warning("同袍结晶 %s 晋升撞獬豸闸，技能未落库（skip）：%s", crystal_id, exc)
         return {
             "ok": False,
@@ -122,49 +89,3 @@ def promote_crystal(
             "reason": str(exc),
             "xiezhi_blocked": True,
         }
-    if not skill_res.get("ok"):
-        raise ValueError(f"技能落库失败: {skill_res.get('error')}")
-
-    memory_id = skill_res["memory_id"]
-
-    # 3. 更新结晶本身状态 + 记录 MemoryEdge
-    with db.get_session() as s:
-        c_to_update = s.get(SkillCrystal, crystal_id)
-        if c_to_update:
-            c_to_update.status = "promoted"
-            c_to_update.shared_scope = "swarm_shared"
-            c_to_update.decision_reason = reason
-            c_to_update.updated_at = utcnow()
-            s.add(c_to_update)
-
-        # 4. 建立因果/溯源边
-        edge = MemoryEdge(
-            id=new_id("edge"),
-            tenant_id=tenant_id,
-            user_id=user_id,
-            agent_id=source_agent,
-            source_memory_id=crystal_id,
-            target_memory_id=memory_id,
-            relation="leads_to",
-            confidence=1.0,
-            reason=f"SkillCrystal 经评考晋升至公共殿堂: {skill_name}",
-        )
-        s.add(edge)
-        s.commit()
-
-    logger.info(
-        "同袍结晶晋升成功: crystal=%s -> memory=%s, skill_name=%s",
-        crystal_id,
-        memory_id,
-        skill_name,
-    )
-
-    return {
-        "ok": True,
-        "crystal_id": crystal_id,
-        "memory_id": memory_id,
-        "status": "promoted",
-        "shared_scope": "swarm_shared",
-        "reason": reason,
-        "steps": resolved_steps,
-    }

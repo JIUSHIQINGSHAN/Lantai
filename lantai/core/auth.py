@@ -89,6 +89,7 @@ class Principal:
     role: str = "user"
     allowed_lanes: list[str] | None = None
     workspace_bound: bool = False
+    federation_id: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -139,6 +140,7 @@ def get_current_user(request: Request) -> Principal:
     tenant_id = request.headers.get("X-Tenant-Id")
     claimed_user_id = request.headers.get("X-User-Id")
     agent_id = request.headers.get("X-Agent-Id")
+    federation_id = request.headers.get("X-Federation-Id")
     session_id = request.headers.get("X-Session-Id")
 
     def make_principal(
@@ -170,10 +172,23 @@ def get_current_user(request: Request) -> Principal:
             # 绑定工作区密钥只收窄；旧未绑定密钥保留部署泳道覆盖契约。
             lanes = [lane for lane in lanes if lane in allowed] if bound else allowed
 
+        from lantai.core.acl import resolve_federation_id
+
+        trusted_federation_id = (
+            None
+            if role in ("admin", "system")
+            else resolve_federation_id(
+                key_tenant if bound else tenant_id,
+                user_id,
+                effective_agent,
+                federation_id,
+            )
+        )
         return Principal(
             tenant_id=key_tenant if bound else tenant_id,
             user_id=user_id,
             agent_id=effective_agent,
+            federation_id=trusted_federation_id,
             session_id=session_id,
             role=role,
             allowed_lanes=lanes,
