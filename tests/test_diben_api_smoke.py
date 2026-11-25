@@ -195,7 +195,9 @@ class TestDibenApiSmoke:
         assert res_w is not None and "result" in res_w
         data_w = json.loads(res_w["result"]["content"][0]["text"])
         assert data_w["session_id"] == "sess-mcp-new"
-        assert data_w["active_intent"] == "实施 ClickHouse 分布式表分片优化"
+        assert (
+            data_w["active_intent"] == "<memory_data>实施 ClickHouse 分布式表分片优化</memory_data>"
+        )
 
     def test_seam4_cognitive_context_diben_aspect(self):
         """Seam 4: CognitiveContext 认知上下文 diben_digest 定本切面樊篱包裹验证。"""

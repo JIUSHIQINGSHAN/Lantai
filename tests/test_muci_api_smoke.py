@@ -79,7 +79,7 @@ class TestMuciApiSmoke:
         )
         result = json.loads(response["result"]["content"][0]["text"])
         assert result["total_memories"] == 1
-        assert result["landmarks"][0]["topic"] == topic
+        assert result["landmarks"][0]["topic"] == f"<memory_data>{topic}</memory_data>"
 
     @pytest.mark.parametrize("topic", ["", " \t "])
     def test_empty_topic_rejected_by_rest_and_mcp(self, topic):

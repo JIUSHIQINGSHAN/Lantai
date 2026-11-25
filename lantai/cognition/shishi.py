@@ -16,7 +16,7 @@ from typing import Any
 
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 from ulid import ULID
 
 from lantai.core.acl import viewer_of
@@ -145,24 +145,26 @@ def _update_unlocked_block(
     namespace: str,
     is_admin: bool,
 ) -> None:
-    guard = (
-        CoreMemoryBlock.block == block,
-        CoreMemoryBlock.namespace == namespace,
-        CoreMemoryBlock.user_id == row.user_id,
-        CoreMemoryBlock.tenant_id == row.tenant_id,
-    )
+    guard = [
+        col(CoreMemoryBlock.block) == block,
+        col(CoreMemoryBlock.namespace) == namespace,
+        col(CoreMemoryBlock.user_id) == row.user_id,
+        col(CoreMemoryBlock.tenant_id) == row.tenant_id,
+    ]
     if _parse_seal_metadata(row.agent_id)[2]:
         # 已封存行须保留读时证据；普通未封存行继续遵循末写胜与库端版本自增。
-        guard += (
-            CoreMemoryBlock.agent_id == row.agent_id,
-            CoreMemoryBlock.content == row.content,
+        guard.extend(
+            (
+                col(CoreMemoryBlock.agent_id) == row.agent_id,
+                col(CoreMemoryBlock.content) == row.content,
+            )
         )
     if not is_admin:
-        guard += (
+        guard.append(
             or_(
-                CoreMemoryBlock.agent_id.is_(None),
-                CoreMemoryBlock.agent_id.not_like("%:sealed:immutable%"),
-            ),
+                col(CoreMemoryBlock.agent_id).is_(None),
+                col(CoreMemoryBlock.agent_id).not_like("%:sealed:immutable%"),
+            )
         )
 
     if atomic_update(session, CoreMemoryBlock, row.id, values, *guard):
@@ -196,13 +198,13 @@ class ShishiEngine:
         principal = self.principal
         if principal is not None and bool(getattr(principal, "is_admin", False)):
             return None
-        scope = (CoreMemoryBlock.user_id == viewer_of(principal)) | (
-            CoreMemoryBlock.user_id.is_(None)
+        scope = (col(CoreMemoryBlock.user_id) == viewer_of(principal)) | (
+            col(CoreMemoryBlock.user_id).is_(None)
         )
         tenant_id = getattr(principal, "tenant_id", None)
         if tenant_id:
             scope &= (CoreMemoryBlock.tenant_id == tenant_id) | (
-                CoreMemoryBlock.tenant_id.is_(None)
+                col(CoreMemoryBlock.tenant_id).is_(None)
             )
         return scope
 
@@ -251,14 +253,14 @@ class ShishiEngine:
                     # 新行);本租户未知(ownerless-tenant 行)不拦,与 _check_access
                     # 「双方都有 tenant 才比对」的口径一致。
                     stmt = stmt.where(
-                        (CoreMemoryBlock.tenant_id.is_(None))
+                        (col(CoreMemoryBlock.tenant_id).is_(None))
                         | (CoreMemoryBlock.tenant_id == tenant_id)
                     )
             else:
                 # admin 定靶确定性(票 68 位点 5):同 (block, namespace) 多用户行
                 # 并存时裸 .first() 命中哪行全凭存储序(SQLite 实况 rowid),按
                 # (user_id, tenant_id) 升序确定性取最小属主行。
-                stmt = stmt.order_by(CoreMemoryBlock.user_id, CoreMemoryBlock.tenant_id)
+                stmt = stmt.order_by(col(CoreMemoryBlock.user_id), col(CoreMemoryBlock.tenant_id))
 
             row = s.exec(stmt.execution_options(populate_existing=True)).first()
             digest = compute_content_digest(block, content, namespace)

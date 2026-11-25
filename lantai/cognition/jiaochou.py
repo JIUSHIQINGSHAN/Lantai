@@ -221,17 +221,20 @@ class JiaochouEngine:
         pool_size: int,
         similarity_threshold: float,
     ) -> dict[str, Any]:
-        stmt = select(MemoryItem).where(MemoryItem.status == "active")
+        stmt = select(MemoryItem).where(
+            MemoryItem.status == "active",
+            col(MemoryItem.lifecycle_status).in_(("active", "weakened")),
+        )
         # 行级 ACL 下推 SQL（票 57 口径）：None 收敛 viewer_of="default"（只看默认
         # 属主 + NULL 老行），admin/SYSTEM_VIEWER 显式全表，swarm_shared 公共结晶
         # 人人可读（原 `_check_access` 判序）；租户不匹配同判 False。
         if not (getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal)):
             viewer = viewer_of(self.principal)
             current_tenant = getattr(self.principal, "tenant_id", None)
-            owner_clause = (MemoryItem.user_id == viewer) | (MemoryItem.user_id.is_(None))
+            owner_clause = (col(MemoryItem.user_id) == viewer) | (col(MemoryItem.user_id).is_(None))
             if current_tenant:
                 owner_clause = owner_clause & (
-                    (MemoryItem.tenant_id.is_(None)) | (MemoryItem.tenant_id == current_tenant)
+                    (col(MemoryItem.tenant_id).is_(None)) | (MemoryItem.tenant_id == current_tenant)
                 )
             stmt = stmt.where(owner_clause | (MemoryItem.shared_scope == "swarm_shared"))
 
