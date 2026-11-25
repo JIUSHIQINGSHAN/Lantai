@@ -74,6 +74,7 @@ class DocumentChunk(SQLModel, table=True):
 class MemoryCandidate(SQLModel, table=True):
     id: str = Field(primary_key=True)
     tenant_id: str | None = Field(default=None, index=True)
+    federation_id: str | None = Field(default=None, index=True)
     user_id: str | None = Field(default=None, index=True)
     agent_id: str | None = Field(default=None, index=True)
     session_id: str | None = Field(default=None, index=True)
@@ -107,6 +108,7 @@ class MemoryCandidate(SQLModel, table=True):
 class MemoryItem(SQLModel, table=True):
     id: str = Field(primary_key=True)
     tenant_id: str | None = Field(default=None, index=True)
+    federation_id: str | None = Field(default=None, index=True)
     user_id: str | None = Field(default=None, index=True)
     agent_id: str | None = Field(default=None, index=True)
     session_id: str | None = Field(default=None, index=True)
@@ -362,7 +364,7 @@ class MemoryNode(SQLModel, table=True):
 
 
 class SkillCrystal(SQLModel, table=True):
-    """技能结晶候选项（v0.7，借鉴 aiduMEI SkillCrystallizer 窄版）。
+    """技能结晶候选项（v0.7，借鉴 aiduMEI SkillCrystallizer 窄版。
 
     Mímir 铁律：LLM 只能建议不能直接 commit——检测只产 candidate，人工审核
     （decide approve 必须带 steps）后才落成 Skill 资产；宁 miss 不脏写。
@@ -372,11 +374,25 @@ class SkillCrystal(SQLModel, table=True):
     真实库 skillcrystal 5 行；迁移见 `migrations_v022.apply_v022_migrations`。
     """
 
+    __table_args__ = (
+        Index(
+            "uq_skillcrystal_scope_name",
+            text("coalesce(tenant_id, '')"),
+            text("coalesce(federation_id, '')"),
+            text("coalesce(user_id, '')"),
+            text("coalesce(agent_id, '')"),
+            text("coalesce(shared_scope, 'private')"),
+            "skill_name",
+            unique=True,
+        ),
+    )
+
     id: str = Field(primary_key=True)
     tenant_id: str | None = Field(default=None, index=True)
+    federation_id: str | None = Field(default=None, index=True)
     user_id: str | None = Field(default=None, index=True)
     agent_id: str | None = Field(default=None, index=True)
-    skill_name: str = Field(index=True, unique=True)
+    skill_name: str = Field(index=True)
     trigger_rule: str = ""
     procedure: str = ""
     source_lanes: list = Field(default_factory=list, sa_column=Column(JSON))
@@ -385,6 +401,10 @@ class SkillCrystal(SQLModel, table=True):
     candidate_count: int = 0
     success_count: int = 0  # 验证成功次数（同袍 ADR-0058）
     source_agent_id: str | None = Field(default=None, index=True)  # 贡献者 Agent（同袍 ADR-0058）
+    replica_agent_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    failure_count: int = 0
+    shadow_state: str = Field(default="candidate", index=True)
+    last_evaluated_at: datetime | None = None
     shared_scope: str = Field(
         default="private", index=True
     )  # 同袍（ADR-0058）：private（私有结晶）/ swarm_shared（公共殿堂结晶）
@@ -392,6 +412,36 @@ class SkillCrystal(SQLModel, table=True):
     decision_reason: str = ""
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class SkillPromotionAudit(SQLModel, table=True):
+    """同袍技能结晶晋升审核流痕。"""
+
+    id: str = Field(primary_key=True)
+    crystal_id: str = Field(index=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    federation_id: str | None = Field(default=None, index=True)
+    evaluator: str = "system:kaogong"
+    success_count_at_eval: int = 0
+    cross_agent_count: int = 0
+    verification_hash: str = ""
+    decision: str = Field(index=True)  # promoted | approved | rejected | deferred
+    decision_reason: str = ""
+    promoted_memory_id: str | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class SwarmKnowledgeEvent(SQLModel, table=True):
+    """公共典籍变更序号，用于 Agent 按游标增量同步。"""
+
+    __tablename__ = "swarm_knowledge_event"
+
+    id: int | None = Field(default=None, primary_key=True)
+    memory_id: str = Field(index=True)
+    tenant_id: str | None = Field(default=None, index=True)
+    federation_id: str = Field(index=True)
+    event_type: str = "published"
+    created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
 class CoreMemoryBlock(SQLModel, table=True):
@@ -862,6 +912,7 @@ class ApiKey(SQLModel, table=True):
     id: str = Field(primary_key=True)
     key_hash: str = Field(index=True, unique=True)
     user_id: str = Field(index=True)
+    agent_id: str | None = Field(default=None, index=True)
     allowed_lanes: list = Field(default_factory=list, sa_column=Column(JSON))
     rate_limit_rpm: int = Field(default=60)
     created_at: datetime = Field(default_factory=utcnow)

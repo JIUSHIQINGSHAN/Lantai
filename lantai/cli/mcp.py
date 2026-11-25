@@ -224,7 +224,7 @@ def handle_search(params: dict) -> dict:
     # 归属（票 .scratch/readside-gaps/10）：MCP 没有 HTTP 鉴权层，宿主若透传
     # `user_id` 就据此构造 principal 落进检索事件；不透传留 NULL（与改动前逐字
     # 一致）——宁 miss 不脏写，不拿环境变量或进程名猜一个身份。
-    principal = _principal_from_params(params)
+    principal = _federated_principal_from_params(params)
     gate = relevance_check(query)
     if not force and not gate["needs_memory"]:
         # 拦截轮也落事件（zero_result 遥测），但原话写入即脱（v0.68 票 11，
@@ -374,9 +374,47 @@ def _principal_from_params(params: dict):
         tenant_id=None,
         user_id=user_id,
         agent_id=None,
+        federation_id=None,
         session_id=None,
         role="user",
         allowed_lanes=None,
+    )
+
+
+def _federated_principal_from_params(params: dict):
+    """Resolve federated identity only for tools that advertise these fields."""
+    principal = _principal_from_params(params)
+    if principal is None:
+        return None
+
+    from dataclasses import replace
+
+    from lantai.core.acl import active_bindings, resolve_federation_id
+
+    tenant_id = params.get("tenant_id")
+    agent_id = params.get("agent_id")
+    requested_federation_id = params.get("federation_id")
+    for name, value in (
+        ("tenant_id", tenant_id),
+        ("agent_id", agent_id),
+        ("federation_id", requested_federation_id),
+    ):
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"{name} must be a string")
+    if agent_id and active_bindings() and agent_id not in active_bindings():
+        raise ValueError("Agent not bound (ACL)")
+    try:
+        federation_id = resolve_federation_id(
+            tenant_id, principal.user_id, agent_id, requested_federation_id
+        )
+    except HTTPException as exc:
+        raise ValueError(exc.detail) from exc
+
+    return replace(
+        principal,
+        tenant_id=tenant_id,
+        agent_id=agent_id,
+        federation_id=federation_id,
     )
 
 
@@ -1332,7 +1370,7 @@ def handle_crystals_list(params: dict) -> dict:
     from lantai.services.crystal_service import list_crystals
 
     # 归属（票 .scratch/mcp-identity-gaps/01a）
-    return list_crystals(status, limit, principal=_principal_from_params(params))
+    return list_crystals(status, limit, principal=_federated_principal_from_params(params))
 
 
 def handle_crystals_detect(params: dict) -> dict:
@@ -1343,7 +1381,9 @@ def handle_crystals_detect(params: dict) -> dict:
     from lantai.services.crystal_service import run_crystal_detect_once
 
     # 归属（票 01a）：新建候选落 principal 的 user_id，否则又是无主行
-    return run_crystal_detect_once(dry_run=dry_run, principal=_principal_from_params(params))
+    return run_crystal_detect_once(
+        dry_run=dry_run, principal=_federated_principal_from_params(params)
+    )
 
 
 def handle_crystal_decide(params: dict) -> dict:
@@ -1358,11 +1398,15 @@ def handle_crystal_decide(params: dict) -> dict:
         raise ValueError("approve must be a boolean")
     if not isinstance(steps, list) or not all(isinstance(x, str) for x in steps):
         raise ValueError("steps must be a list of strings")
+    if not isinstance(reason, str):
+        raise ValueError("reason must be a string")
+    if not approve and not reason.strip():
+        raise ValueError("reject reason is required")
     from lantai.services.crystal_service import decide_crystal
 
     # 归属（票 01a）：裁决是破坏性操作，A 不能替 B 批准/驳回技能结晶
     return decide_crystal(
-        crystal_id, approve, steps, reason, principal=_principal_from_params(params)
+        crystal_id, approve, steps, reason, principal=_federated_principal_from_params(params)
     )
 
 
@@ -1370,7 +1414,7 @@ def handle_crystal_promote(params: dict) -> dict:
     """同袍（ADR-0058）：将技能结晶晋升发布至公共知识殿堂（swarm_shared）。"""
     crystal_id = params.get("crystal_id", "")
     steps = params.get("steps", []) or []
-    min_success_count = params.get("min_success_count", 1)
+    min_success_count = params.get("min_success_count", 3)
     if not isinstance(crystal_id, str) or not crystal_id.strip():
         raise ValueError("crystal_id must be a non-empty string")
     if not isinstance(steps, list) or not all(isinstance(x, str) for x in steps):
@@ -1378,16 +1422,16 @@ def handle_crystal_promote(params: dict) -> dict:
     if (
         not isinstance(min_success_count, int)
         or isinstance(min_success_count, bool)
-        or min_success_count < 0
+        or min_success_count < 1
     ):
-        raise ValueError("min_success_count must be a non-negative int")
+        raise ValueError("min_success_count must be a positive int")
     from lantai.evolution.crystal_promoter import promote_crystal
 
     return promote_crystal(
         crystal_id,
         steps=steps,
         min_success_count=min_success_count,
-        principal=_principal_from_params(params),
+        principal=_federated_principal_from_params(params),
     )
 
 
@@ -2293,6 +2337,9 @@ TOOLS = {
                     },
                 },
                 "user_id": _USER_ID_PARAM,
+                "tenant_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "federation_id": {"type": "string"},
                 "query": {"type": "string", "description": "搜索查询"},
                 "top_k": {"type": "integer", "default": 5, "description": "返回条数 [1, 100]"},
                 "domain": {
@@ -3152,6 +3199,9 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "user_id": _USER_ID_PARAM,
+                "tenant_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "federation_id": {"type": "string"},
                 "status": {
                     "type": "string",
                     "default": "candidate",
@@ -3168,6 +3218,9 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "user_id": _USER_ID_PARAM,
+                "tenant_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "federation_id": {"type": "string"},
                 "dry_run": {"type": "boolean", "default": False, "description": "true=预演不写库"},
             },
         },
@@ -3178,6 +3231,9 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "user_id": _USER_ID_PARAM,
+                "tenant_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "federation_id": {"type": "string"},
                 "crystal_id": {"type": "string", "description": "候选 id（crystals_list 中可见）"},
                 "approve": {
                     "type": "boolean",
@@ -3203,16 +3259,19 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "user_id": _USER_ID_PARAM,
+                "tenant_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "federation_id": {"type": "string"},
                 "crystal_id": {"type": "string", "description": "技能结晶 ID"},
                 "steps": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "执行步骤列表（可选，未传时自 procedure 抽取）",
+                    "description": "兼容字段；发布内容以已观察的 procedure 为准",
                 },
                 "min_success_count": {
                     "type": "integer",
-                    "default": 1,
-                    "description": "最低验证成功门槛（默认 1）",
+                    "default": 3,
+                    "description": "最低验证成功门槛（默认 3）",
                 },
             },
             "required": ["crystal_id"],

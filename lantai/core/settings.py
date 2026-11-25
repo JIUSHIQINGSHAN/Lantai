@@ -380,6 +380,8 @@ class Settings(BaseSettings):
 
     # lane 级 ACL（借鉴 TencentDB Memory Hub Fixed Binding 窄版）：agent_id → lane 白名单；空 = 不启用
     AGENT_LANE_BINDINGS: dict[str, list[str]] = {}
+    # 同袍联邦归属由部署端绑定，不采信调用者自报；键为 tenant|user|agent。
+    AGENT_FEDERATION_BINDINGS: dict[str, str] = {}
 
     # 冷启动导入（借鉴腾讯 L0 会话记录 + v2.0.1 时间戳修正）：历史会话 JSONL 批量喂摄取链
     IMPORT_MAX_LINES: int = 5000  # 单次导入最大行数（防误喂超大文件）

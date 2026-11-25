@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, timedelta
 from typing import Any
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlmodel import select
 
 from lantai.core.acl import vector_owner_filter
@@ -713,6 +713,18 @@ def _hybrid_search_impl(
                         MemoryItem.shared_scope == "swarm_shared",
                     )
                 )
+            federation_id = getattr(principal, "federation_id", None)
+            # Legacy rows have no federation assignment; retain their pre-federation
+            # visibility while never exposing rows assigned to another federation.
+            if federation_id:
+                stmt = stmt.where(
+                    or_(
+                        MemoryItem.federation_id == federation_id,
+                        MemoryItem.federation_id.is_(None),
+                    )
+                )
+            else:
+                stmt = stmt.where(MemoryItem.federation_id.is_(None))
         return s.exec(stmt).all()
 
     if session is not None:
@@ -1351,6 +1363,16 @@ def _keyword_fallback(
                         MemoryItem.shared_scope == "swarm_shared",
                     )
                 )
+            federation_id = getattr(principal, "federation_id", None)
+            if federation_id:
+                stmt = stmt.where(
+                    or_(
+                        MemoryItem.federation_id == federation_id,
+                        MemoryItem.federation_id.is_(None),
+                    )
+                )
+            else:
+                stmt = stmt.where(MemoryItem.federation_id.is_(None))
         return s.exec(stmt).all()
 
     items = _get_s(_items_cb)

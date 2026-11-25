@@ -164,18 +164,29 @@ def test_candidate_review_reject_requires_reason_current_lock(param_env):
     assert "reason" in resp["error"]["message"], resp["error"]
 
 
-def test_crystal_decide_reject_requires_reason_current_lock(param_env):
+@pytest.mark.parametrize("user_id", [None, "t27-crystal-reject-user"])
+def test_crystal_decide_reject_requires_reason_current_lock(param_env, user_id):
     """现状锁：真实结晶候选 + reject 无 reason 必失败且信息提及 reason。"""
     from lantai.models.tables import SkillCrystal
 
     session_factory, _ = param_env
     with session_factory() as s:
-        s.add(SkillCrystal(id="t27-crystal-reject", skill_name="t27_lock_skill"))
+        s.add(
+            SkillCrystal(
+                id="t27-crystal-reject",
+                skill_name="t27_lock_skill",
+                user_id=user_id,
+            )
+        )
         s.commit()
 
     mod = _load_mcp()
-    resp = _call(mod, "crystal_decide", {"crystal_id": "t27-crystal-reject", "approve": False})
+    arguments = {"crystal_id": "t27-crystal-reject", "approve": False}
+    if user_id is not None:
+        arguments["user_id"] = user_id
+    resp = _call(mod, "crystal_decide", arguments)
     assert "error" in resp, "reject 无 reason 必须失败"
+    assert resp["error"]["code"] == -32602, resp["error"]
     assert "reason" in resp["error"]["message"], resp["error"]
 
 

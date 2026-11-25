@@ -138,6 +138,7 @@ def _store_imported_memory(s, content, created_at, updated_at, lane, tags) -> st
                 "memory_type": mem.memory_type,
                 "lane": getattr(mem, "lane", "general") or "general",
                 "domain": getattr(mem, "domain", "user") or "user",
+                "federation_id": getattr(mem, "federation_id", "") or "",
                 "tenant_id": getattr(mem, "tenant_id", "") or "",
                 "user_id": getattr(mem, "user_id", "") or "",
                 "session_id": getattr(mem, "session_id", "") or "",

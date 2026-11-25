@@ -13,7 +13,7 @@ from typing import Any
 
 from sqlmodel import Session, or_, select
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import federation_scope_clause, viewer_of
 from lantai.core.time import iso_utc
 from lantai.models.tables import MemoryEdge, MemoryItem, MemoryScene
 from lantai.storage import db
@@ -87,6 +87,10 @@ def build_xuanjing_topology(
                     MemoryItem.shared_scope == "swarm_shared",
                 )
             )
+
+        federation_scope = federation_scope_clause(MemoryItem, principal)
+        if federation_scope is not None:
+            stmt = stmt.where(federation_scope)
 
         if principal.allowed_lanes is not None:
             from sqlmodel import col

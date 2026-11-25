@@ -114,6 +114,7 @@ class ShiyiEngine:
         *,
         owner_id: str | None,
         tenant_id: str | None,
+        federation_id: str | None = None,
         shared_scope: str = "private",
         lane: str | None = None,
     ) -> bool:
@@ -137,8 +138,11 @@ class ShiyiEngine:
             return False
         viewer = viewer_of(self.principal)
         current_tenant = getattr(self.principal, "tenant_id", None)
+        current_federation = getattr(self.principal, "federation_id", None)
 
         if tenant_id and tenant_id != current_tenant:
+            return False
+        if federation_id and federation_id != current_federation:
             return False
         if shared_scope == "swarm_shared" and tenant_id and tenant_id == current_tenant:
             return True
@@ -246,6 +250,7 @@ class ShiyiEngine:
                         if not self._check_access(
                             owner_id=mem.user_id,
                             tenant_id=mem.tenant_id,
+                            federation_id=getattr(mem, "federation_id", None),
                             shared_scope=mem.shared_scope,
                             lane=mem.lane,
                         ):

@@ -88,6 +88,7 @@ class Principal:
     session_id: str | None = None
     role: str = "user"
     allowed_lanes: list[str] | None = None
+    federation_id: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -104,13 +105,18 @@ def hash_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
 
-def create_api_key(user_id: str, allowed_lanes: list[str] = None) -> tuple[str, ApiKey]:
+def create_api_key(
+    user_id: str,
+    allowed_lanes: list[str] = None,
+    agent_id: str | None = None,
+) -> tuple[str, ApiKey]:
     """Create a new API key and return the raw key and the DB object."""
     raw_key = f"sk-{secrets.token_urlsafe(32)}"
     api_key = ApiKey(
         id=new_id("apikey"),
         key_hash=hash_key(raw_key),
         user_id=user_id,
+        agent_id=agent_id,
         allowed_lanes=allowed_lanes or ["default"],
     )
     return raw_key, api_key
@@ -123,6 +129,7 @@ def get_current_user(request: Request) -> Principal:
 
     tenant_id = request.headers.get("X-Tenant-Id")
     agent_id = request.headers.get("X-Agent-Id")
+    federation_id = request.headers.get("X-Federation-Id")
     session_id = request.headers.get("X-Session-Id")
 
     def make_principal(user_id: str, lanes: list[str], role: str = "user") -> Principal:
@@ -135,10 +142,18 @@ def get_current_user(request: Request) -> Principal:
                 raise HTTPException(status_code=403, detail="Agent not bound (ACL)")
             lanes = acl_allowed_lanes(agent_id) or []
 
+        from lantai.core.acl import resolve_federation_id
+
+        trusted_federation_id = (
+            None
+            if role in ("admin", "system")
+            else resolve_federation_id(tenant_id, user_id, agent_id, federation_id)
+        )
         return Principal(
             tenant_id=tenant_id,
             user_id=user_id,
             agent_id=agent_id,
+            federation_id=trusted_federation_id,
             session_id=session_id,
             role=role,
             allowed_lanes=lanes,
@@ -161,6 +176,10 @@ def get_current_user(request: Request) -> Principal:
             if not api_key or not api_key.is_active:
                 raise HTTPException(status_code=401, detail="Invalid API Key")
 
+            trusted_agent_id = api_key.agent_id
+            if trusted_agent_id and agent_id and agent_id != trusted_agent_id:
+                raise HTTPException(status_code=403, detail="Agent does not match API key binding")
+            agent_id = trusted_agent_id or agent_id
             return make_principal(api_key.user_id, api_key.allowed_lanes)
 
     # C: 受限 DEV MODE（仅回环 + 无 API_KEY + 空库）

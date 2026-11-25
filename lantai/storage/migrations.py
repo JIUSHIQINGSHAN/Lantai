@@ -10,6 +10,8 @@ SQL 与注释逐字未改，只改包裹结构：
   `checks["migrations"]` 报出来。
 """
 
+import re
+
 from lantai.core.logger import logger
 
 
@@ -41,7 +43,7 @@ def _has_column(conn, table: str, column: str) -> bool:
 
 # 单一真源：迁移链的目标版本。没有它就没法判断「跑到头了没有」——
 # 原来最高版本硬编码散落在 25 个 `if user_version < N` 里。
-TARGET_SCHEMA_VERSION = 47
+TARGET_SCHEMA_VERSION = 49
 
 # 本次进程内记录到的失败跳（version, error）。健康检查与运维查询用。
 _MIGRATION_FAILURES: list[dict] = []
@@ -926,6 +928,12 @@ def _migrate_v40(conn) -> None:
             if ix.name in existing:
                 continue
             missing_cols = [c.name for c in ix.columns if c.name not in table_cols]
+            for expression in ix.expressions:
+                expression_sql = str(expression.compile(dialect=dialect))
+                for column in table.columns:
+                    if re.search(rf"\b{re.escape(column.name)}\b", expression_sql):
+                        if column.name not in table_cols and column.name not in missing_cols:
+                            missing_cols.append(column.name)
             if missing_cols:
                 # 列维度的既有缺口（部分被索引列链上无对应 ADD COLUMN，如
                 # skillcrystal 身份列）——不是本同步步能修的，越权补列违反
@@ -1166,6 +1174,152 @@ def _migrate_v47(conn) -> None:
     logger.info("Migrated v47: conversation message capture and durable processing intent")
 
 
+def _migrate_v48(conn) -> None:
+    """补同袍 federation_id、影子评考字段与审核流痕表。"""
+    for table, column in (
+        ("memoryitem", "federation_id"),
+        ("memorycandidate", "federation_id"),
+        ("skillcrystal", "tenant_id"),
+        ("skillcrystal", "user_id"),
+        ("skillcrystal", "agent_id"),
+        ("skillcrystal", "federation_id"),
+    ):
+        if _table_exists(conn, table) and not _has_column(conn, table, column):
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+        if _table_exists(conn, table):
+            conn.execute(f"CREATE INDEX IF NOT EXISTS ix_{table}_{column} ON {table} ({column})")
+
+    if _table_exists(conn, "skillcrystal"):
+        for column, definition in (
+            ("replica_agent_ids", "TEXT DEFAULT '[]'"),
+            ("failure_count", "INTEGER DEFAULT 0"),
+            ("shadow_state", "TEXT DEFAULT 'candidate'"),
+            ("last_evaluated_at", "DATETIME"),
+        ):
+            if not _has_column(conn, "skillcrystal", column):
+                conn.execute(f"ALTER TABLE skillcrystal ADD COLUMN {column} {definition}")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_skillcrystal_shadow_state ON skillcrystal (shadow_state)"
+        )
+
+    if _table_exists(conn, "api_keys"):
+        if not _has_column(conn, "api_keys", "agent_id"):
+            conn.execute("ALTER TABLE api_keys ADD COLUMN agent_id TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_api_keys_agent_id ON api_keys (agent_id)")
+
+    from sqlalchemy.dialects import sqlite as sa_sqlite
+    from sqlalchemy.schema import CreateIndex, CreateTable
+
+    from lantai.models.tables import SkillPromotionAudit, SwarmKnowledgeEvent
+
+    dialect = sa_sqlite.dialect()
+    for model in (SkillPromotionAudit, SwarmKnowledgeEvent):
+        table = model.__table__
+        conn.execute(str(CreateTable(table, if_not_exists=True).compile(dialect=dialect)))
+        for index in sorted(table.indexes, key=lambda value: value.name):
+            conn.execute(str(CreateIndex(index, if_not_exists=True).compile(dialect=dialect)))
+    logger.info("Migrated v48: 同袍 federation_id、影子状态、审核流痕与增量事件")
+
+
+def _migrate_v49(conn) -> None:
+    """移除结晶名称全局唯一，改为按归属范围复合唯一。"""
+    if not _table_exists(conn, "skillcrystal"):
+        return
+
+    from sqlalchemy.dialects import sqlite as sa_sqlite
+    from sqlalchemy.schema import CreateIndex
+
+    from lantai.models.tables import SkillCrystal
+
+    index_rows = list(conn.execute('PRAGMA index_list("skillcrystal")'))
+
+    def index_columns(index_name: str) -> list[str]:
+        return [
+            row[2]
+            for row in conn.execute(f'PRAGMA index_info("{index_name}")')
+            if row[2] is not None
+        ]
+
+    def index_sql(index_name: str) -> str:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name=?", (index_name,)
+        ).fetchone()
+        return "".join((row[0] or "").lower().split()) if row else ""
+
+    scoped_index_sql = index_sql("uq_skillcrystal_scope_name")
+    scoped_expressions = (
+        "coalesce(tenant_id,'')",
+        "coalesce(federation_id,'')",
+        "coalesce(user_id,'')",
+        "coalesce(agent_id,'')",
+        "coalesce(shared_scope,'private')",
+    )
+    has_scoped_unique = any(
+        bool(row[2])
+        and row[1] == "uq_skillcrystal_scope_name"
+        and all(expression in scoped_index_sql for expression in scoped_expressions)
+        and "skill_name" in scoped_index_sql
+        for row in index_rows
+    )
+    has_global_unique = any(
+        bool(row[2])
+        and index_columns(row[1]) == ["skill_name"]
+        and "coalesce(" not in index_sql(row[1])
+        for row in index_rows
+    )
+    if has_scoped_unique and not has_global_unique:
+        return
+
+    # SQLite cannot drop the autoindex created by a table-level UNIQUE clause.
+    # Rebuild the table while retaining the old column nullability and defaults.
+    columns = list(conn.execute('PRAGMA table_info("skillcrystal")'))
+    primary_keys = [row[1] for row in columns if row[5]]
+    definitions = []
+    for _cid, name, column_type, not_null, default, primary_key in columns:
+        quoted_name = '"' + name.replace('"', '""') + '"'
+        definition = f"{quoted_name} {column_type or 'TEXT'}"
+        if not_null:
+            definition += " NOT NULL"
+        if default is not None:
+            definition += f" DEFAULT {default}"
+        if primary_key and len(primary_keys) == 1:
+            definition += " PRIMARY KEY"
+        definitions.append(definition)
+    if len(primary_keys) > 1:
+        primary_sql = ", ".join('"' + name.replace('"', '""') + '"' for name in primary_keys)
+        definitions.append(f"PRIMARY KEY ({primary_sql})")
+
+    preserved_indexes = []
+    for _seq, name, unique, _origin, _partial in index_rows:
+        if not name or name.startswith("sqlite_"):
+            continue
+        if name == "uq_skillcrystal_scope_name":
+            continue
+        if unique and index_columns(name) == ["skill_name"]:
+            continue
+        preserved_index_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name=?", (name,)
+        ).fetchone()
+        if preserved_index_sql and preserved_index_sql[0]:
+            preserved_indexes.append(preserved_index_sql[0])
+
+    conn.execute('CREATE TABLE "skillcrystal_v49_rebuild" (' + ", ".join(definitions) + ")")
+    column_names = ", ".join('"' + row[1].replace('"', '""') + '"' for row in columns)
+    conn.execute(
+        f'INSERT INTO "skillcrystal_v49_rebuild" ({column_names}) '
+        f'SELECT {column_names} FROM "skillcrystal"'
+    )
+    conn.execute('DROP TABLE "skillcrystal"')
+    conn.execute('ALTER TABLE "skillcrystal_v49_rebuild" RENAME TO "skillcrystal"')
+    for index_sql in preserved_indexes:
+        conn.execute(index_sql)
+
+    dialect = sa_sqlite.dialect()
+    for index in sorted(SkillCrystal.__table__.indexes, key=lambda value: value.name):
+        conn.execute(str(CreateIndex(index, if_not_exists=True).compile(dialect=dialect)))
+    logger.info("Migrated v49: SkillCrystal 按租户/联邦/用户/Agent/范围复合唯一")
+
+
 MIGRATIONS = [
     (2, _migrate_v2),
     (3, _migrate_v3),
@@ -1213,6 +1367,8 @@ MIGRATIONS = [
     (45, _migrate_v45),
     (46, _migrate_v46),
     (47, _migrate_v47),
+    (48, _migrate_v48),
+    (49, _migrate_v49),
 ]
 
 

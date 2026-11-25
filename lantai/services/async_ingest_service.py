@@ -106,6 +106,7 @@ def _execute_dialogue_task(
     attribution: dict | Attribution | None = None,
     tenant_id: str | None = None,
     agent_id: str | None = None,
+    federation_id: str | None = None,
     ingest_event_id: str,
 ) -> None:
     """后台线程执行完整摄取流水线。"""
@@ -135,6 +136,7 @@ def _execute_dialogue_task(
             attribution=attribution,
             tenant_id=tenant_id,
             agent_id=agent_id,
+            federation_id=federation_id,
             _ingest_event_id=ingest_event_id,
         )
 
@@ -170,6 +172,7 @@ def submit_async_dialogue(
     idempotency_key: str = "",
     tenant_id: str = "",
     agent_id: str | None = None,
+    federation_id: str | None = None,
     attribution: dict | Attribution | None = None,
 ) -> dict:
     """提交对话文本进行异步提纯摄取（毫秒级非阻塞返回）。
@@ -272,6 +275,7 @@ def submit_async_dialogue(
             attribution=envelope,
             tenant_id=tenant_id or None,
             agent_id=agent_id,
+            federation_id=federation_id,
             ingest_event_id=ingest_event_id,
         )
     except Exception:

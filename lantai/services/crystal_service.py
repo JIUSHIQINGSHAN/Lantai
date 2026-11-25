@@ -6,6 +6,8 @@ Mímir 铁律：LLM/规则只能建议，不能直接 commit——检测只产 c
 检测聚类复用 autodream.cluster_memories（同 lane + 共享关键词，确定性可复现）。
 """
 
+from fastapi import HTTPException
+from sqlalchemy import and_, or_
 from sqlmodel import select
 
 from lantai.core.ids import new_id
@@ -74,7 +76,33 @@ def run_crystal_detect_once(
             MemoryItem.namespace == namespace,
             MemoryItem.memory_type != "skill",
             MemoryItem.lane.not_in(_NOISE_LANES),
+            or_(MemoryItem.shared_scope == "private", MemoryItem.shared_scope.is_(None)),
         )
+        from lantai.core.acl import SYSTEM_VIEWER
+        from lantai.services.work_item_service import _viewer_of
+
+        if (
+            not bool(getattr(principal, "is_admin", False))
+            and _viewer_of(principal) != SYSTEM_VIEWER
+        ):
+            viewer = _viewer_of(principal)
+            tenant_id = getattr(principal, "tenant_id", None) if principal is not None else None
+            agent_id = getattr(principal, "agent_id", None) if principal is not None else None
+            federation_id = (
+                getattr(principal, "federation_id", None) if principal is not None else None
+            )
+            q = q.where(
+                or_(MemoryItem.user_id == viewer, MemoryItem.user_id.is_(None)),
+                or_(MemoryItem.tenant_id == tenant_id, MemoryItem.tenant_id.is_(None))
+                if tenant_id
+                else MemoryItem.tenant_id.is_(None),
+                or_(MemoryItem.agent_id == agent_id, MemoryItem.agent_id.is_(None))
+                if agent_id
+                else MemoryItem.agent_id.is_(None),
+                or_(MemoryItem.federation_id == federation_id, MemoryItem.federation_id.is_(None))
+                if federation_id
+                else MemoryItem.federation_id.is_(None),
+            )
         if limit:
             q = q.limit(limit)
         items = s.exec(q).all()
@@ -82,13 +110,27 @@ def run_crystal_detect_once(
     candidates = build_crystal_candidates(clusters)
     created = updated = 0
     if not dry_run:
-        owner = getattr(principal, "user_id", None)
+        owner = getattr(principal, "user_id", None) or "default"
         tenant = getattr(principal, "tenant_id", None)
         agent_id = getattr(principal, "agent_id", None)
+        federation_id = getattr(principal, "federation_id", None)
         with db.get_session() as s:
             for cand in candidates[: settings.CRYSTAL_MAX_DAILY]:
                 existing = s.exec(
-                    select(SkillCrystal).where(SkillCrystal.skill_name == cand["skill_name"])
+                    select(SkillCrystal).where(
+                        SkillCrystal.skill_name == cand["skill_name"],
+                        SkillCrystal.user_id == owner,
+                        SkillCrystal.tenant_id == tenant
+                        if tenant
+                        else SkillCrystal.tenant_id.is_(None),
+                        SkillCrystal.agent_id == agent_id
+                        if agent_id
+                        else SkillCrystal.agent_id.is_(None),
+                        SkillCrystal.federation_id == federation_id
+                        if federation_id
+                        else SkillCrystal.federation_id.is_(None),
+                        SkillCrystal.shared_scope == "private",
+                    )
                 ).first()
                 if existing:
                     existing.hit_count += 1
@@ -106,6 +148,7 @@ def run_crystal_detect_once(
                             user_id=owner,
                             tenant_id=tenant,
                             agent_id=agent_id,
+                            federation_id=federation_id,
                             source_agent_id=agent_id,
                             shared_scope="private",
                             **cand,
@@ -141,11 +184,38 @@ def _crystal_scope(principal):
     viewer = _viewer_of(principal)
     if viewer == SYSTEM_VIEWER:
         return None
-    # 同袍（ADR-0058）：公共殿堂结晶或同属主结晶放行
-    scope = (SkillCrystal.user_id == viewer) | (SkillCrystal.user_id.is_(None))
-    if hasattr(SkillCrystal, "shared_scope"):
-        scope = scope | (SkillCrystal.shared_scope == "swarm_shared")
-    return scope
+    tenant_id = getattr(principal, "tenant_id", None) if principal is not None else None
+    agent_id = getattr(principal, "agent_id", None) if principal is not None else None
+    federation_id = getattr(principal, "federation_id", None) if principal is not None else None
+    tenant_scope = (
+        or_(SkillCrystal.tenant_id == tenant_id, SkillCrystal.tenant_id.is_(None))
+        if tenant_id
+        else SkillCrystal.tenant_id.is_(None)
+    )
+    agent_scope = (
+        or_(SkillCrystal.agent_id == agent_id, SkillCrystal.agent_id.is_(None))
+        if agent_id
+        else SkillCrystal.agent_id.is_(None)
+    )
+    federation_scope = (
+        or_(SkillCrystal.federation_id == federation_id, SkillCrystal.federation_id.is_(None))
+        if federation_id
+        else SkillCrystal.federation_id.is_(None)
+    )
+    private_scope = and_(
+        or_(SkillCrystal.user_id == viewer, SkillCrystal.user_id.is_(None)),
+        tenant_scope,
+        agent_scope,
+        federation_scope,
+        or_(SkillCrystal.shared_scope == "private", SkillCrystal.shared_scope.is_(None)),
+    )
+    shared_scope = and_(
+        SkillCrystal.user_id == viewer,
+        tenant_scope,
+        federation_scope,
+        SkillCrystal.shared_scope == "swarm_shared",
+    )
+    return or_(private_scope, shared_scope)
 
 
 def list_crystals(status: str = "candidate", limit: int = 50, principal=None) -> dict:
@@ -177,12 +247,23 @@ def decide_crystal(
     校验在任何写操作**之前**（403 不能伴随落库），复用
     `acl.ensure_can_delete` 单一真源（同票 02）。
     """
+    if principal is None:
+        raise HTTPException(status_code=403, detail="crystal decision requires a principal")
+
     with db.get_session() as s:
         crystal = s.get(SkillCrystal, crystal_id)
         if not crystal:
             raise ValueError("crystal not found")
         if crystal.status != "candidate":
             raise ValueError("crystal state changed; refresh and retry")
+        scope = _crystal_scope(principal)
+        if (
+            scope is not None
+            and not s.exec(
+                select(SkillCrystal.id).where(SkillCrystal.id == crystal_id, scope)
+            ).first()
+        ):
+            raise HTTPException(status_code=403, detail="principal cannot decide this crystal")
         if principal is not None:
             from lantai.core.acl import ensure_can_delete
 

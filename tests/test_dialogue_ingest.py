@@ -254,6 +254,29 @@ class TestSessionOriginChain:
             assert cand.session_id == "sess_http"
             assert cand.provenance.get("origin_turn") == 5
 
+    def test_dialogue_route_persists_authenticated_federation(self, client, monkeypatch):
+        """REST 对话候选继承已认证 Principal 的联邦身份。"""
+        import lantai.storage.db as db_mod
+        from lantai.api.app import app
+        from lantai.core.auth import Principal, get_current_user
+
+        monkeypatch.setitem(
+            app.dependency_overrides,
+            get_current_user,
+            lambda: Principal(
+                user_id="dialogue-user",
+                tenant_id="dialogue-tenant",
+                agent_id="dialogue-agent",
+                federation_id="trusted-federation",
+            ),
+        )
+        response = client.post("/dialogue", json={"text": "记住：同袍字段必须贯穿对话候选"})
+
+        assert response.status_code == 200
+        with db_mod.get_session() as session:
+            candidate = session.get(MemoryCandidate, response.json()["candidate_id"])
+        assert candidate.federation_id == "trusted-federation"
+
 
 # ── REST 路由测试 ──────────────────────────────────────────────
 

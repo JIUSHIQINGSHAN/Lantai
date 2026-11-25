@@ -110,6 +110,44 @@ class TestAuthEnforced:
         )
         assert resp.status_code == 200
 
+    def test_bearer_rejects_unbound_federation_header(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "AGENT_LANE_BINDINGS", {})
+        monkeypatch.setattr(settings, "AGENT_FEDERATION_BINDINGS", {})
+        resp = client.get(
+            "/candidates/pending",
+            headers={
+                "Authorization": f"Bearer {self.raw_key}",
+                "X-Tenant-Id": "tenant-a",
+                "X-Agent-Id": "agent-a",
+                "X-Federation-Id": "fed-a",
+            },
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "Agent federation is not bound"
+
+    def test_bearer_federation_header_must_match_deployment_binding(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "AGENT_LANE_BINDINGS", {})
+        monkeypatch.setattr(
+            settings,
+            "AGENT_FEDERATION_BINDINGS",
+            {"tenant-a|user123|agent-a": "fed-a"},
+        )
+        headers = {
+            "Authorization": f"Bearer {self.raw_key}",
+            "X-Tenant-Id": "tenant-a",
+            "X-Agent-Id": "agent-a",
+            "X-Federation-Id": "fed-a",
+        }
+        accepted = client.get("/candidates/pending", headers=headers)
+        assert accepted.status_code == 200
+
+        rejected = client.get(
+            "/candidates/pending",
+            headers={**headers, "X-Federation-Id": "fed-b"},
+        )
+        assert rejected.status_code == 403
+        assert rejected.json()["detail"] == "Agent federation mismatch"
+
     def test_public_endpoint_with_key_set(self, client):
         resp = client.get("/health")
         assert resp.status_code == 200

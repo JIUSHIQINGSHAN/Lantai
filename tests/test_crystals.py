@@ -12,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, func, select
 
 import lantai.storage.db as db_module
+from lantai.core.acl import Principal
 from lantai.models.tables import MemoryItem, SkillCrystal
 
 
@@ -55,6 +56,10 @@ def _m(mid, content, lane="fact"):
         created_at=datetime.now(UTC) - timedelta(days=1),
         updated_at=datetime.now(UTC),
     )
+
+
+def _crystal_principal() -> Principal:
+    return Principal(user_id="default")
 
 
 # ── 纯函数：聚类 + 候选形状（零 DB 零 LLM）────────────────
@@ -138,7 +143,7 @@ def test_decide_reject_archives(crystal_env):
     # 先取真实 id
     with session_factory() as s:
         cid = s.exec(select(SkillCrystal)).first().id
-    out = decide_crystal(cid, approve=False, reason="不需要")
+    out = decide_crystal(cid, approve=False, reason="不需要", principal=_crystal_principal())
     assert out["ok"] is True
     with session_factory() as s:
         row = s.get(SkillCrystal, cid)
@@ -165,7 +170,9 @@ def test_decide_approve_requires_steps(crystal_env):
     with session_factory() as s:
         cid = s.exec(select(SkillCrystal)).first().id
     with pytest.raises(ValueError, match="steps"):
-        decide_crystal(cid, approve=True, steps=[])  # 宁 miss 不脏写
+        decide_crystal(
+            cid, approve=True, steps=[], principal=_crystal_principal()
+        )  # 宁 miss 不脏写
 
 
 def test_decide_approve_creates_skill(crystal_env):
@@ -186,7 +193,12 @@ def test_decide_approve_creates_skill(crystal_env):
         s.commit()
     with session_factory() as s:
         cid = s.exec(select(SkillCrystal)).first().id
-    out = decide_crystal(cid, approve=True, steps=["先彩排", "再发布"])
+    out = decide_crystal(
+        cid,
+        approve=True,
+        steps=["先彩排", "再发布"],
+        principal=_crystal_principal(),
+    )
     assert out["ok"] is True
     assert out["skill"]["ok"] is True
     with session_factory() as s:
