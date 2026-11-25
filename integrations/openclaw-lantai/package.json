@@ -1,0 +1,10 @@
+{
+  "name": "@lantai/openclaw-lantai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.mjs",
+  "files": ["index.mjs", "bridge.mjs", "openclaw.plugin.json", "README.md"],
+  "openclaw": { "extensions": ["./index.mjs"] },
+  "engines": { "node": ">=22" }
+}
