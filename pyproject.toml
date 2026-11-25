@@ -64,6 +64,7 @@ include = ["lantai*"]
 
 [tool.setuptools.package-data]
 "lantai.api" = ["ui/*"]
+"lantai.mcp_app" = ["ui/*.html", "ui/*.css", "ui/*.js"]
 
 [tool.ruff]
 target-version = "py311"

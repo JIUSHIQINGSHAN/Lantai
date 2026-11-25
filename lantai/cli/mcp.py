@@ -42,6 +42,13 @@ from lantai.core.attribution import (
 from lantai.core.settings import settings as _settings
 from lantai.gate.prefilter import relevance_check
 from lantai.llm.fence import wrap_as_data
+from lantai.mcp_app.protocol import (
+    McpAppSession,
+    app_resources,
+    app_tools,
+    client_supports_mcp_apps,
+    read_app_resource,
+)
 from lantai.models.schemas import AddMemoryReq, FeedbackReq
 from lantai.retrieval.hybrid import hybrid_search
 from lantai.services.evolution_service import record_feedback_entry
@@ -4391,7 +4398,7 @@ def _fence_cognitive_result(
     return value
 
 
-def handle(msg: object) -> dict | None:
+def handle(msg: object, *, session: McpAppSession | None = None) -> dict | None:
     if not isinstance(msg, dict):
         # 票 52：非对象 JSON 帧（[1]/"str"/null）此前在 msg.get("id") 即
         # AttributeError——serve 循环里一个畸形帧即打死进程。回 -32600
@@ -4405,12 +4412,16 @@ def handle(msg: object) -> dict | None:
     method = msg.get("method", "")
     active_tools = _get_active_tools()
     if method == "initialize":
+        params = msg.get("params")
+        capabilities = params.get("capabilities") if isinstance(params, dict) else None
+        if session is not None:
+            session.supports_mcp_apps = client_supports_mcp_apps(capabilities)
         return {
             "jsonrpc": "2.0",
             "id": mid,
             "result": {
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {"tools": {}},
+                "capabilities": {"tools": {}, "resources": {}},
                 "serverInfo": {"name": "lantai", "version": "0.69.1"},
             },
         }
@@ -4422,8 +4433,52 @@ def handle(msg: object) -> dict | None:
         return {
             "jsonrpc": "2.0",
             "id": mid,
-            "result": {"tools": [{"name": n, **meta} for n, meta in active_tools.items()]},
+            "result": {
+                "tools": app_tools(
+                    active_tools,
+                    enabled=session is not None and session.supports_mcp_apps,
+                )
+            },
         }
+    if method == "resources/list":
+        return {
+            "jsonrpc": "2.0",
+            "id": mid,
+            "result": {
+                "resources": app_resources(
+                    enabled=session is not None and session.supports_mcp_apps
+                )
+            },
+        }
+    if method == "resources/read":
+        params = msg.get("params", {})
+        if not isinstance(params, dict):
+            return {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32602, "message": "params must be an object"},
+            }
+        if session is None or not session.supports_mcp_apps:
+            return {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32602, "message": "unknown resource"},
+            }
+        try:
+            content = read_app_resource(params.get("uri"))
+        except ValueError as exc:
+            return {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32602, "message": str(exc)},
+            }
+        except Exception as exc:
+            return {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32603, "message": f"resource read failed: {type(exc).__name__}"},
+            }
+        return {"jsonrpc": "2.0", "id": mid, "result": {"contents": [content]}}
     if method == "tools/call":
         params = msg.get("params", {})
         if not isinstance(params, dict):
@@ -4608,6 +4663,7 @@ def _oversize_reject(line: str) -> dict | None:
 
 def main():
     _configure_stdio_utf8()
+    session = McpAppSession()
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -4636,7 +4692,7 @@ def main():
         # 服务，全部工具失联）。mid 先取，兜底帧保住请求关联。
         mid = msg.get("id") if isinstance(msg, dict) else None
         try:
-            resp = handle(msg)
+            resp = handle(msg, session=session)
         except Exception as e:
             _emit_error_frame(mid, type(e).__name__)
             continue
