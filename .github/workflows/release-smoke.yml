@@ -1,0 +1,102 @@
+name: 发布镜像验收
+on:
+  push:
+    branches: ['verify/v0.70.0-container-smoke-20261127']
+permissions:
+  contents: read
+  packages: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 使用只读权限拉取发布镜像
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 断网合成环境验收固定摘要镜像
+        env:
+          IMAGE: ghcr.io/jiushiqingshan/lantai@sha256:ffcb5c60441f4d79057ce0621cf8207e44cc62c9ce741819d71331e9dfe23d4d
+        run: |
+          set -euo pipefail
+          container="lantai-release-smoke-${GITHUB_RUN_ID}"
+          cleanup() {
+            docker logs "$container" 2>/dev/null || true
+            docker rm -fv "$container" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker pull --platform linux/amd64 "$IMAGE"
+          docker run -d --platform linux/amd64 --network none --name "$container" \
+            -e API_KEY=synthetic-container-api-key \
+            -e OPENAI_API_KEY=synthetic-provider-key \
+            -e OPENAI_BASE_URL=http://127.0.0.1:9/v1 \
+            -e HOST=127.0.0.1 -e LANTAI_RUN_SCHEDULER=false \
+            -e MONITOR_ENABLED=false -e ANONYMIZED_TELEMETRY=false \
+            -e HF_HUB_OFFLINE=1 "$IMAGE"
+          docker exec -i "$container" python - <<'PY'
+          import importlib.metadata,json,os,platform,subprocess,sys,time,urllib.error,urllib.request
+          assert platform.machine()=='x86_64',platform.machine()
+          assert importlib.metadata.version('lantai')=='0.70.0'
+          base='http://127.0.0.1:8767'
+          ready=False
+          for _ in range(60):
+              try:
+                  with urllib.request.urlopen(base+'/health',timeout=2) as response:
+                      ready=response.status==200
+              except (OSError,urllib.error.URLError):
+                  time.sleep(1)
+                  continue
+              if ready:
+                  break
+          assert ready,'Container did not become healthy'
+          try:
+              urllib.request.urlopen(base+'/stats',timeout=5)
+          except urllib.error.HTTPError as error:
+              assert error.code==401
+          else:
+              raise AssertionError('Missing API key was accepted')
+          request=urllib.request.Request(base+'/stats',headers={'X-API-Key':'synthetic-container-api-key'})
+          with urllib.request.urlopen(request,timeout=10) as response:
+              assert response.status==200
+          with urllib.request.urlopen(base+'/ui',timeout=10) as response:
+              assert b'connectionDialog' in response.read()
+          try:
+              urllib.request.urlopen(base+'/openapi.json',timeout=5)
+          except urllib.error.HTTPError as error:
+              assert error.code==404
+          else:
+              raise AssertionError('Documentation is enabled by default')
+          frames=[
+              {'jsonrpc':'2.0','id':1,'method':'initialize','params':{'capabilities':{'extensions':{'io.modelcontextprotocol/ui':{'mimeTypes':['text/html;profile=mcp-app']}}}}},
+              {'jsonrpc':'2.0','id':2,'method':'tools/list'},
+              {'jsonrpc':'2.0','id':3,'method':'resources/read','params':{'uri':'ui://lantai/memory-panel'}},
+              {'jsonrpc':'2.0','id':4,'method':7},
+              {'jsonrpc':'2.0','id':5,'method':'ping'}
+          ]
+          env=dict(os.environ)
+          env.pop('LANTAI_MCP_PROFILE',None)
+          env.pop('MCP_TOOL_PROFILE',None)
+          result=subprocess.run(['lantai-mcp'],input=('\n'.join(json.dumps(frame) for frame in frames)+'\n').encode(),env=env,capture_output=True,timeout=60)
+          assert result.returncode==0,result.stderr.decode('utf-8','replace')[-2000:]
+          replies={reply['id']:reply for reply in map(json.loads,result.stdout.splitlines())}
+          assert set(replies)=={1,2,3,4,5}
+          assert replies[1]['result']['serverInfo']=={'name':'lantai','version':'0.70.0'}
+          from lantai.cli.mcp import HERMES_CORE_TOOLS
+          assert {tool['name'] for tool in replies[2]['result']['tools']}==set(HERMES_CORE_TOOLS)
+          assert '<html' in replies[3]['result']['contents'][0]['text']
+          assert replies[4]['error']['code']==-32600 and replies[5]['result']=={}
+          assert env['API_KEY'].encode() not in result.stdout+result.stderr
+          bridge_frames=[{'jsonrpc':'2.0','id':1,'method':'initialize'},{'jsonrpc':'2.0','id':2,'method':'tools/list'},{'jsonrpc':'2.0','id':3,'method':'ping'}]
+          env.update({'LANTAI_BRIDGE_BASE_URL':'http://127.0.0.1:9','LANTAI_BRIDGE_ALLOW_LOOPBACK_HTTP':'1','LANTAI_BRIDGE_BEARER_TOKEN':'synthetic-container-bridge-key'})
+          result=subprocess.run(['lantai-mcp-bridge'],input=('\n'.join(json.dumps(frame) for frame in bridge_frames)+'\n').encode(),env=env,capture_output=True,timeout=30)
+          assert result.returncode==0
+          assert env['LANTAI_BRIDGE_BEARER_TOKEN'].encode() not in result.stdout+result.stderr
+          replies={reply['id']:reply for reply in map(json.loads,result.stdout.splitlines())}
+          assert replies[1]['result']['serverInfo']['name']=='lantai-remote' and replies[3]['result']=={}
+          tools={tool['name']:tool for tool in replies[2]['result']['tools']}
+          assert 'list_memory_checkpoints' in tools and 'memory_id' in tools['latest_checkpoint']['inputSchema']['properties']
+          assert 'note' in tools['conflict_resolve']['inputSchema']['required']
+          print('OCI_CONTAINER_SMOKE '+json.dumps({'version':'0.70.0','architecture':platform.machine(),'default_startup':True,'health':True,'missing_auth_rejected':True,'synthetic_auth_accepted':True,'packaged_ui':True,'docs_disabled':True,'native_stdio':True,'default_tools':True,'mcp_app_resource':True,'invalid_frame_survival':True,'bridge_stdio':True,'checkpoint_compatibility':True,'conflict_contract':True,'network':'none','production_data':False}))
+          PY
