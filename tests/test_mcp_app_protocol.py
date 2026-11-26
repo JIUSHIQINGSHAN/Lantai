@@ -35,7 +35,13 @@ def _initialize_frame(*, supports_ui: bool) -> dict:
     }
 
 
-def _run_stdio(tmp_path: Path, *, supports_ui: bool, profile: str | None = None) -> dict[int, dict]:
+def _run_stdio(
+    tmp_path: Path,
+    *,
+    supports_ui: bool,
+    profile: str | None = None,
+    read_resources: tuple[str, ...] = (UI_RESOURCE,),
+) -> dict[int, dict]:
     home = tmp_path / "home"
     home.mkdir()
     env = dict(os.environ)
@@ -52,13 +58,16 @@ def _run_stdio(tmp_path: Path, *, supports_ui: bool, profile: str | None = None)
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
         {"jsonrpc": "2.0", "id": 3, "method": "resources/list"},
+    ]
+    frames.extend(
         {
             "jsonrpc": "2.0",
-            "id": 4,
+            "id": request_id,
             "method": "resources/read",
-            "params": {"uri": UI_RESOURCE},
-        },
-    ]
+            "params": {"uri": uri},
+        }
+        for request_id, uri in enumerate(read_resources, start=4)
+    )
     proc = subprocess.run(
         [sys.executable, "-c", "from lantai.cli.mcp import main; main()"],
         input="\n".join(json.dumps(frame) for frame in frames) + "\n",
@@ -123,6 +132,66 @@ def test_full_profile_links_crystal_panel_without_changing_tool_schemas(tmp_path
         assert tools[name]["inputSchema"] == original["inputSchema"], name
     for name in ("crystals_list", "crystal_decide"):
         assert tools[name]["_meta"]["ui"]["resourceUri"] == UI_RESOURCE
+
+
+def test_full_profile_registers_xuanjing_app_through_stdio_protocol(tmp_path: Path) -> None:
+    xuanjing_uri = "ui://lantai/xuanjing-observatory"
+    responses = _run_stdio(
+        tmp_path,
+        supports_ui=True,
+        profile="full",
+        read_resources=(UI_RESOURCE, xuanjing_uri),
+    )
+
+    tools = responses[2]["result"]["tools"]
+    xuanjing_tool = next(tool for tool in tools if tool["name"] == "get_xuanjing_graph")
+    assert xuanjing_tool["inputSchema"] == mcp.TOOLS["get_xuanjing_graph"]["inputSchema"]
+    assert xuanjing_tool["_meta"]["ui"] == {
+        "resourceUri": xuanjing_uri,
+        "visibility": ["model", "app"],
+    }
+
+    resources = responses[3]["result"]["resources"]
+    resource_uris = [resource["uri"] for resource in resources]
+    assert resource_uris == [UI_RESOURCE, xuanjing_uri]
+    assert len(resource_uris) == len(set(resource_uris))
+    assert resources[1]["mimeType"] == UI_MIME
+
+    content = responses[5]["result"]["contents"][0]
+    assert content["uri"] == xuanjing_uri
+    assert content["mimeType"] == UI_MIME
+    assert "ui/initialize" in content["text"]
+    assert content["_meta"]["ui"]["csp"] == {
+        "connectDomains": [],
+        "resourceDomains": [],
+        "frameDomains": [],
+        "baseUriDomains": [],
+    }
+
+
+def test_unnegotiated_full_profile_keeps_xuanjing_tool_plain(tmp_path: Path) -> None:
+    responses = _run_stdio(tmp_path, supports_ui=False, profile="full")
+
+    tools = responses[2]["result"]["tools"]
+    xuanjing_tool = next(tool for tool in tools if tool["name"] == "get_xuanjing_graph")
+    assert "ui" not in xuanjing_tool.get("_meta", {})
+    assert responses[3]["result"]["resources"] == []
+    assert responses[4]["error"]["code"] == -32602
+
+
+def test_core_profile_cannot_read_unlisted_xuanjing_resource(tmp_path: Path) -> None:
+    xuanjing_uri = "ui://lantai/xuanjing-observatory"
+    responses = _run_stdio(
+        tmp_path,
+        supports_ui=True,
+        read_resources=(xuanjing_uri,),
+    )
+
+    assert [resource["uri"] for resource in responses[3]["result"]["resources"]] == [UI_RESOURCE]
+    assert responses[4]["error"] == {
+        "code": -32602,
+        "message": "unknown resource",
+    }
 
 
 def test_default_profile_stays_exactly_six_without_app_negotiation(tmp_path: Path) -> None:

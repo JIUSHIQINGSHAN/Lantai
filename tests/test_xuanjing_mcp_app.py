@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.support.ui_browser import chromium_executable
+
 
 def test_xuanjing_resource_contract_is_read_only_and_host_registered():
     from lantai.mcp_apps.xuanjing import (
@@ -191,13 +193,7 @@ def test_browser_renders_graph_and_links_timeline_selection():
     resource = read_xuanjing_app_resource(RESOURCE_URI)["contents"][0]
 
     with playwright_api.sync_playwright() as playwright:
-        try:
-            browser = playwright.chromium.launch(headless=True)
-        except Exception:
-            try:
-                browser = playwright.chromium.launch(headless=True, channel="msedge")
-            except Exception as exc:
-                pytest.skip(f"No installed Playwright browser is available: {exc}")
+        browser = playwright.chromium.launch(headless=True, executable_path=chromium_executable())
         page = browser.new_page(viewport={"width": 1440, "height": 1000})
         page.set_content(
             "<style>html,body{width:100%;height:100%;margin:0}iframe{display:block;width:100%;height:100%;border:0}</style>"

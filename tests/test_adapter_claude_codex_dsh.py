@@ -179,13 +179,18 @@ def test_public_builder_is_pure_and_rejects_invalid_configuration(tmp_path):
     assert not (tmp_path / "review").exists()
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows command-shell path restrictions")
 @pytest.mark.parametrize("name", ["data&command", "data%ADAPTER%"])
-def test_hook_configuration_rejects_shell_expansion_paths(tmp_path, name):
+def test_hook_configuration_handles_shell_expansion_paths(tmp_path, name):
     completed = configure("codex", tmp_path / name, "--hooks")
-    assert completed.returncode == 2
-    assert completed.stdout == ""
-    assert "shell" in completed.stderr
+    if os.name == "nt":
+        assert completed.returncode == 2
+        assert completed.stdout == ""
+        assert "shell" in completed.stderr
+    else:
+        assert completed.returncode == 0, completed.stderr
+        files = json.loads(completed.stdout)
+        server = tomllib.loads(files[".codex/config.toml"])["mcp_servers"]["lantai"]
+        assert server["env"]["LANTAI_HOME"] == str(tmp_path / name)
     assert not (tmp_path / name).exists()
 
 
@@ -259,10 +264,9 @@ def test_generated_hook_command_injects_and_acknowledges_real_memory(request, ho
 
 
 def test_generated_dsh_entry_through_installed_registry_and_sdk(tmp_path):
-    executable = os.environ.get("DSH_NODE_EXECUTABLE")
-    install = os.environ.get("DSH_INSTALL_DIR")
-    if not executable or not install:
+    if not os.environ.get("DSH_NODE_EXECUTABLE") or not os.environ.get("DSH_INSTALL_DIR"):
         pytest.skip("select installed DSH runtime for real registry/SDK verification")
+    executable = os.environ["DSH_NODE_EXECUTABLE"]
     home = tmp_path / "data"
     home.mkdir()
     completed = configure("dsh", home)

@@ -4446,7 +4446,8 @@ def handle(msg: object, *, session: McpAppSession | None = None) -> dict | None:
             "id": mid,
             "result": {
                 "resources": app_resources(
-                    enabled=session is not None and session.supports_mcp_apps
+                    enabled=session is not None and session.supports_mcp_apps,
+                    active_tools=active_tools,
                 )
             },
         }
@@ -4465,7 +4466,7 @@ def handle(msg: object, *, session: McpAppSession | None = None) -> dict | None:
                 "error": {"code": -32602, "message": "unknown resource"},
             }
         try:
-            content = read_app_resource(params.get("uri"))
+            content = read_app_resource(params.get("uri"), active_tools=active_tools)
         except ValueError as exc:
             return {
                 "jsonrpc": "2.0",

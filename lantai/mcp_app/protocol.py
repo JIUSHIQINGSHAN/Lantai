@@ -6,9 +6,21 @@ from copy import deepcopy
 from dataclasses import dataclass
 from importlib.resources import files
 
+from lantai.mcp_apps.xuanjing import (
+    RESOURCE_URI as XUANJING_RESOURCE_URI,
+)
+from lantai.mcp_apps.xuanjing import (
+    TOOL_UI_METADATA as XUANJING_TOOL_UI_METADATA,
+)
+from lantai.mcp_apps.xuanjing import (
+    list_xuanjing_app_resources,
+    read_xuanjing_app_resource,
+)
+
 MCP_APPS_EXTENSION = "io.modelcontextprotocol/ui"
 MCP_APPS_MIME_TYPE = "text/html;profile=mcp-app"
 MCP_APP_RESOURCE_URI = "ui://lantai/memory-panel"
+XUANJING_TOOL_NAME = "get_xuanjing_graph"
 MCP_APP_TOOL_NAMES = frozenset(
     {"search", "core_memory_get", "mem_recent", "crystals_list", "crystal_decide"}
 )
@@ -47,14 +59,18 @@ def app_tools(active_tools: dict, *, enabled: bool) -> list[dict]:
         tool = deepcopy({"name": name, **definition})
         if enabled and name in MCP_APP_TOOL_NAMES:
             tool.setdefault("_meta", {}).setdefault("ui", {})["resourceUri"] = MCP_APP_RESOURCE_URI
+        elif enabled and name == XUANJING_TOOL_NAME:
+            tool.setdefault("_meta", {}).setdefault("ui", {}).update(
+                deepcopy(XUANJING_TOOL_UI_METADATA["ui"])
+            )
         tools.append(tool)
     return tools
 
 
-def app_resources(*, enabled: bool) -> list[dict]:
+def app_resources(*, enabled: bool, active_tools: dict | None = None) -> list[dict]:
     if not enabled:
         return []
-    return [
+    resources = [
         {
             "uri": MCP_APP_RESOURCE_URI,
             "name": "兰台记忆面板",
@@ -62,9 +78,16 @@ def app_resources(*, enabled: bool) -> list[dict]:
             "mimeType": MCP_APPS_MIME_TYPE,
         }
     ]
+    if active_tools is not None and XUANJING_TOOL_NAME in active_tools:
+        resources.extend(list_xuanjing_app_resources())
+    return resources
 
 
-def read_app_resource(uri: object) -> dict:
+def read_app_resource(uri: object, *, active_tools: dict | None = None) -> dict:
+    if uri == XUANJING_RESOURCE_URI:
+        if active_tools is None or XUANJING_TOOL_NAME not in active_tools:
+            raise ValueError("unknown resource")
+        return read_xuanjing_app_resource(uri)["contents"][0]
     if uri != MCP_APP_RESOURCE_URI:
         raise ValueError("unknown resource")
 
