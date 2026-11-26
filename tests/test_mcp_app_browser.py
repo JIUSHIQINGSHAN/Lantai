@@ -7,6 +7,7 @@ import json
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -16,22 +17,71 @@ from lantai.mcp_app.protocol import MCP_APP_RESOURCE_URI, read_app_resource
 from tests.support.ui_browser import chromium
 
 
-async def _app_context(page) -> int:
+@dataclass(frozen=True)
+class _AppContext:
+    """沙箱 iframe 里的执行上下文：所在 CDP 会话 + 隔离世界的 contextId。"""
+
+    session: str
+    context_id: int
+
+
+async def _send_in(page, session: str, method: str, params: dict | None = None) -> dict:
+    """在指定 CDP 会话里发一条命令，发完换回页面自己的会话。"""
+    previous = page.session
+    page.session = session
+    try:
+        return await page.send(method, params)
+    finally:
+        page.session = previous
+
+
+async def _app_context(page) -> _AppContext:
+    """找到 MCP App 的沙箱 iframe，在里面建一个隔离世界。
+
+    headless shell 把 sandbox="allow-scripts" 的 srcdoc iframe 留在页面进程里，
+    它会出现在页面的 frame tree 下。完整版 Chrome（CI 用的 /usr/bin/google-chrome）
+    默认开着 IsolateSandboxedIframes，沙箱 iframe 被放进独立进程（OOPIF），
+    页面会话的 frame tree 里没有 childFrames，只能作为 iframe target 附着上去。
+    两种都要支持，否则测试只在其中一种浏览器上能跑。
+    """
     frames = await page.send("Page.getFrameTree")
-    app_frame = frames["frameTree"]["childFrames"][0]["frame"]["id"]
-    world = await page.send(
+    children = frames["frameTree"].get("childFrames") or []
+    if children:
+        session = page.session
+        frame_id = children[0]["frame"]["id"]
+    else:
+        targets = await page.send("Target.getTargets", browser=True)
+        iframes = [
+            info
+            for info in targets["targetInfos"]
+            if info["type"] == "iframe" and info["url"] == "about:srcdoc"
+        ]
+        assert len(iframes) == 1, targets["targetInfos"]
+        attached = await page.send(
+            "Target.attachToTarget",
+            {"targetId": iframes[0]["targetId"], "flatten": True},
+            browser=True,
+        )
+        session = attached["sessionId"]
+        # OOPIF 的 target id 就是它的 frame id。
+        frame_id = iframes[0]["targetId"]
+    world = await _send_in(
+        page,
+        session,
         "Page.createIsolatedWorld",
-        {"frameId": app_frame, "worldName": "lantai-mcp-app-test"},
+        {"frameId": frame_id, "worldName": "lantai-mcp-app-test"},
     )
-    return world["executionContextId"]
+    return _AppContext(session=session, context_id=world["executionContextId"])
 
 
-async def _app_eval(page, context_id: int, expression: str):
-    result = await page.send(
+async def _app_eval(page, context: _AppContext, expression: str):
+    result = await _send_in(
+        page,
+        context.session,
         "Runtime.evaluate",
         {
             "expression": expression,
-            "contextId": context_id,
+            "contextId": context.context_id,
             "returnByValue": True,
             "awaitPromise": True,
             "userGesture": True,
