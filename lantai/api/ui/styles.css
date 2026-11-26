@@ -515,6 +515,40 @@ button, a, input, select, textarea, .work-row { touch-action: manipulation; }
   display: block;
 }
 
+.xuanjing-stage[aria-busy="true"] .xuanjing-svg {
+  opacity: 0.48;
+}
+
+.xuanjing-node-item:focus-visible {
+  outline: 2px solid var(--accent, #70c8aa);
+  outline-offset: 4px;
+}
+
+.xuanjing-node-item:focus-visible .stellar-core {
+  stroke: var(--accent, #70c8aa);
+  stroke-width: 3px;
+}
+
+.xuanjing-state {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  z-index: 4;
+  width: min(420px, calc(100% - 40px));
+  transform: translate(-50%, -50%);
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  color: var(--ink);
+  box-shadow: 0 8px 24px var(--shadow);
+  text-align: center;
+}
+
+.xuanjing-state[data-state="error"] {
+  border-color: color-mix(in srgb, var(--danger, #d55) 65%, var(--line));
+  color: var(--danger, #d55);
+}
+
 .xuanjing-legend {
   position: absolute;
   bottom: 20px;

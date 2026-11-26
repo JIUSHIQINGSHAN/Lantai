@@ -47,7 +47,9 @@ async def _app_eval(page, context_id: int, expression: str):
 
 
 @contextmanager
-def _host_page(*, tool_name: str, server_tools: bool = True) -> Iterator[str]:
+def _host_page(
+    *, tool_name: str, server_tools: bool = True, tool_delay_ms: int = 0, failed_tool: str = ""
+) -> Iterator[str]:
     resource = read_app_resource(MCP_APP_RESOURCE_URI)["text"]
     scope = {
         "user_id": "user-a",
@@ -83,6 +85,10 @@ const toolName = {json.dumps(tool_name)};
 const scope = {json.dumps(scope, ensure_ascii=False)};
 const payloads = {json.dumps(payloads, ensure_ascii=False)};
 const serverTools = {json.dumps({} if server_tools else None)};
+const toolDelayMs = {tool_delay_ms};
+const failedTool = {json.dumps(failed_tool)};
+window.__inFlight = 0;
+window.__maxInFlight = 0;
 function reply(source, id, result) {{ source.postMessage({{jsonrpc:'2.0', id, result}}, '*'); }}
 function hostContext(theme='dark') {{ return {{
   theme,
@@ -99,7 +105,16 @@ window.addEventListener('message', event => {{
   }} else if (message.method === 'tools/call') {{
     window.__calls.push(message.params);
     const value = payloads[message.params.name] || {{}};
-    reply(event.source, message.id, {{content:[{{type:'text', text:JSON.stringify(value)}}]}});
+    window.__inFlight += 1;
+    window.__maxInFlight = Math.max(window.__maxInFlight, window.__inFlight);
+    window.setTimeout(() => {{
+      if (message.params.name === failedTool) {{
+        event.source.postMessage({{jsonrpc:'2.0', id:message.id, error:{{code:-32603, message:'synthetic error'}}}}, '*');
+      }} else {{
+        reply(event.source, message.id, {{content:[{{type:'text', text:JSON.stringify(value)}}]}});
+      }}
+      window.__inFlight -= 1;
+    }}, toolDelayMs);
   }}
 }});
 window.changeHostTheme = () => document.querySelector('#app-frame').contentWindow.postMessage({{
@@ -133,6 +148,43 @@ window.changeHostTheme = () => document.querySelector('#app-frame').contentWindo
         server.shutdown()
         server.server_close()
         worker.join(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_app_loads_overview_tools_in_parallel(tmp_path: Path) -> None:
+    with _host_page(tool_name="core_memory_get", tool_delay_ms=60) as url:
+        async with chromium(
+            tmp_path,
+            url,
+            ready="document.querySelector('#app-frame')",
+        ) as page:
+            await page.wait("window.__iframeLoaded === true")
+            context_id = await _app_context(page)
+            await _app_eval(
+                page,
+                context_id,
+                "new Promise(resolve => { const check = () => document.querySelector('#coreBlocks .record-card') && document.querySelector('#recentMemories .record-card') ? resolve(true) : requestAnimationFrame(check); check(); })",
+            )
+            assert await page.evaluate("window.__maxInFlight") >= 2
+            assert {call["name"] for call in await page.evaluate("window.__calls")} >= {
+                "core_memory_get",
+                "mem_recent",
+            }
+
+
+def test_app_overview_failure_keeps_the_other_panel_available(tmp_path: Path) -> None:
+    with _host_page(tool_name="core_memory_get", failed_tool="core_memory_get") as url:
+        with browser_page(tmp_path, url) as page:
+            frame = page.frame_locator("iframe")
+            expect(frame.locator("#status")).to_have_text("宿主工具调用失败")
+            expect(frame.locator("#recentMemories .record-card p")).to_have_text("最近记忆")
+            frame.locator("#tab-overview").focus()
+            frame.locator("#tab-overview").press("ArrowRight")
+            expect(frame.locator("#searchQuery")).to_be_visible()
+            assert [call["name"] for call in page.evaluate("window.__calls")] == [
+                "core_memory_get",
+                "mem_recent",
+            ]
 
 
 @pytest.mark.asyncio
