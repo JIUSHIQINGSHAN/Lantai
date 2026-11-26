@@ -4410,6 +4410,12 @@ def handle(msg: object, *, session: McpAppSession | None = None) -> dict | None:
         }
     mid = msg.get("id")
     method = msg.get("method", "")
+    if not isinstance(method, str):
+        return {
+            "jsonrpc": "2.0",
+            "id": mid,
+            "error": {"code": -32600, "message": "invalid request: method must be a string"},
+        }
     active_tools = _get_active_tools()
     if method == "initialize":
         params = msg.get("params")
@@ -4662,6 +4668,10 @@ def _oversize_reject(line: str) -> dict | None:
     }
 
 
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON number: {value}")
+
+
 def main():
     _configure_stdio_utf8()
     session = McpAppSession()
@@ -4685,8 +4695,10 @@ def main():
                 sys.stdout.flush()
             continue
         try:
-            msg = json.loads(line)
-        except json.JSONDecodeError:
+            msg = json.loads(line, parse_constant=_reject_json_constant)
+        except (ValueError, RecursionError):
+            # JSONDecodeError 之外，大整数和深层 JSON 也会在分发守卫前失败。
+            # 与桥接入口同口径：坏 JSON 静默丢弃，后续请求继续处理。
             continue
         # 票 52：单帧只值一条错误响应——handle 或响应组装的任何异常都不得冲出
         # 主循环（此前 checkpoint_latest 的裸 datetime 一帧即杀死整个 stdio
