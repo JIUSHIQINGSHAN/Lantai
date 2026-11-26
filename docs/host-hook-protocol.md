@@ -35,6 +35,7 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 |---|---|
 | 未设置 / 空 / `hermes` | 直通兰台自有形状 |
 | `claude-code` / `codex` | 包成 `hookSpecificOutput.additionalContext` |
+| `openclaw` | 直通兰台自有形状；原生插件映射成宿主 `prependContext` |
 
 一个由本协议实现的新宿主**必须**在调用 hook 时设置 `LANTAI_HOST`，否则拿不到 `additionalContext`，注入静默失效。安装脚本生成的命令已包含该设置。
 
@@ -194,13 +195,20 @@ stdout: {"context": "...", "evidence": [...], "event_id": "rev_...", "request_id
 | **Hermes** | 既有插件（`hermes-plugin/lantai-hook/`） | ✅ |
 | **Claude Code** | `type: command` 钩子（`SessionStart` / `UserPromptSubmit`） | ✅ |
 | **Codex CLI** | hooks.json / `config.toml [hooks]`（须开 `features.hooks`） | ✅ |
-| **Cursor** | 无命令钩子 → 静态规则（`AGENTS.md` + `.cursor/rules/*.mdc`） | ❌ **降级档** |
+| **OpenClaw** | 原生生命周期插件 → NDJSON（见接入包） | 原生插件另验，不计命令钩子 |
+| **DSH** | MCP 归因桥接插件；核心记忆/采集有独立开关 | 不计命令钩子 |
+| **Antigravity** | 通用 MCP stdio；本仓无专用 Hook | 不计命令钩子 |
+| **Cursor** | 本仓安装器只生成静态规则（`AGENTS.md` + `.cursor/rules/*.mdc`） | ❌ **降级档** |
 
-**Cursor 为何不计入**：调研（2026-09-25 一手来源）核实 Cursor 无命令型钩子入口，只能做**静态规则注入**（规则内容在模型上下文开头注入，无运行时检索、无回执）。把它混进命令钩子矩阵会让「≥3 宿主端到端冒烟」的口径名不副实。其降级档由 `scripts/install_host_hooks.py --host cursor` 生成，如实交付但不冒充命令钩子。
+**Cursor 为何不计入**：本仓沿用调研时的**静态规则注入**适配（无运行时检索、无回执），由 `scripts/install_host_hooks.py --host cursor` 生成。此表描述仓库实际实现，不据历史调研断言客户端当前不存在其他能力。
+
+OpenClaw 的配置、运行身份、原话采集和延后回执约束见 [原生接入包](../integrations/openclaw-lantai/README.md)。Hermes 的 `LANTAI_PYTHON` / `LANTAI_SHELL_HOOK` 显式覆盖必须为存在的绝对文件，坏覆盖不回落；插件固定子进程宿主为 `hermes`，不继承父进程的 `codex` 包装模式。
 
 **Codex 阻塞语义不依赖**：官方 config-reference 未载其返回值/阻塞语义（未确认），本协议只覆盖**读路径注入**，不基于未确认项做实现。
 
 ### 4.1 宿主侧接入方式
+
+Claude Code/Codex/DSH 的新配置推荐先用 [三宿主生成器](../integrations/mirasim-lantai/README.md) 预览，旧安装器继续保留。生成器默认不写文件，`--output` 仅写全新审阅目录；Windows 命令 Hook 拒绝命令解释器特殊字符（包括括号），MCP 的实参数组不受此限制。三宿主入口没有 `lantai mcp` 子命令，使用 `configure.py` 生成的 `entry.py mcp` 或已安装的 `lantai-mcp`。
 
 `scripts/install_host_hooks.py --host <宿主>` **默认只打印**配置片段（不写宿主目录，宁 miss 不脏写）；`--write` 才落盘并打印落点（落点已存在则拒绝覆盖）。
 

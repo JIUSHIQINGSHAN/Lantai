@@ -11,9 +11,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from playwright.sync_api import expect
 
 from lantai.mcp_app.protocol import MCP_APP_RESOURCE_URI, read_app_resource
+from tests.support.browser_e2e import browser_page
 from tests.support.ui_browser import chromium
+from tests.test_xuanjing_ui_smoke import UNTRUSTED
+from tests.test_xuanjing_ui_smoke import observatory as observatory
+from tests.test_xuanjing_ui_smoke import ui_smoke_env as ui_smoke_env
 
 
 async def _app_context(page) -> int:
@@ -337,3 +342,82 @@ async def test_app_without_server_tool_capability_stays_read_only(tmp_path: Path
                 context_id,
                 "document.querySelector('#status').textContent.includes('未开放')",
             )
+
+
+def test_live_panel_hydrates_navigates_and_renders_nested_search(observatory, tmp_path):
+    with browser_page(tmp_path, observatory + "/__test_host__?kind=core") as page:
+        frame = page.frame_locator("iframe")
+        expect(frame.locator("#status")).to_have_text("记忆总览已更新")
+        expect(frame.locator("#coreBlocks .record-card p")).to_have_text(UNTRUSTED)
+        expect(frame.locator("#recentMemories .record-card")).to_have_count(2)
+        assert frame.locator("#overviewPanel img").count() == 0
+        frame.locator("#tab-overview").focus()
+        frame.locator("#tab-overview").press("ArrowRight")
+        expect(frame.locator("#tab-search")).to_be_focused()
+        expect(frame.locator("#searchPanel")).to_be_visible()
+        # The real search wire contract nests each memory in results[].memory.
+        page.evaluate("""window.__hostResult = {structuredContent:{results:[{
+            memory:{id:'browser-alpha',title:'搜索正文',content:'<img src=x onerror=window.__xss=true>命中正文'},
+            score:0.95}]}}""")
+        frame.locator("#searchQuery").fill("不可执行正文")
+        frame.locator("#searchQuery").press("Enter")
+        expect(frame.locator("#status")).to_have_text("检索完成")
+        expect(frame.locator("#searchResults h3")).to_have_text("搜索正文")
+        expect(frame.locator("#searchResults p")).to_have_text(
+            "<img src=x onerror=window.__xss=true>命中正文"
+        )
+        assert frame.locator("#searchResults img").count() == 0
+        assert frame.locator("body").evaluate("() => window.__xss === undefined")
+        page.evaluate("window.__hostResult = {structuredContent:{results:[]}}")
+        frame.locator("#searchSubmit").click()
+        expect(frame.locator("#searchResults")).to_have_text("没有检索结果")
+        frame.locator("#tab-search").focus()
+        frame.locator("#tab-search").press("Home")
+        expect(frame.locator("#overviewPanel")).to_be_visible()
+        assert [call["name"] for call in page.evaluate("window.__calls")] == [
+            "core_memory_get",
+            "mem_recent",
+            "search",
+            "search",
+        ]
+
+
+@pytest.mark.parametrize("nested", [True, False])
+def test_live_panel_theme_switch_without_style_variables(observatory, tmp_path, nested):
+    with browser_page(tmp_path, observatory + "/__test_host__?kind=core", width=390) as page:
+        frame = page.frame_locator("iframe")
+        expect(frame.locator("#status")).to_have_text("记忆总览已更新")
+        page.evaluate("nested => window.sendContext({theme:'dark'}, nested)", nested)
+        expect(frame.locator("html")).to_have_attribute("data-theme", "dark")
+        expect(frame.locator("body")).to_have_css("background-color", "rgb(23, 33, 43)")
+        page.evaluate("nested => window.sendContext({theme:'light'}, nested)", nested)
+        expect(frame.locator("html")).to_have_attribute("data-theme", "light")
+        expect(frame.locator("body")).to_have_css("background-color", "rgb(248, 250, 251)")
+        expect(frame.locator("body")).to_have_css("color", "rgb(23, 33, 43)")
+        assert frame.locator("html").evaluate("e => e.scrollWidth <= e.clientWidth")
+
+
+@pytest.mark.parametrize("refresh", ["overview", "recent"])
+def test_live_panel_refresh_failure_is_visible_and_recoverable(observatory, tmp_path, refresh):
+    with browser_page(tmp_path, observatory + "/__test_host__?kind=core") as page:
+        frame = page.frame_locator("iframe")
+        expect(frame.locator("#status")).to_have_text("记忆总览已更新")
+        page.evaluate("window.__hostError = '刷新失败'")
+        frame.locator(f'[data-refresh="{refresh}"]').click()
+        expect(frame.locator("#status")).to_have_text("宿主工具调用失败")
+        expect(frame.locator("#coreBlocks .record-card")).to_have_count(1)
+        frame.locator(f'[data-refresh="{refresh}"]').click()
+        expect(frame.locator("#status")).to_have_text("记忆已更新")
+
+
+def test_live_read_only_panel_accepts_initial_result(observatory, tmp_path):
+    with browser_page(
+        tmp_path, observatory + "/__test_host__?kind=core&server_tools=false"
+    ) as page:
+        frame = page.frame_locator("iframe")
+        expect(frame.locator("#status")).to_contain_text("未开放工具调用")
+        page.evaluate("window.sendResult({structuredContent:{blocks:[]}})")
+        expect(frame.locator("#coreBlocks")).to_have_text("暂无核心记忆")
+        expect(frame.locator('[data-refresh="overview"]')).to_be_disabled()
+        expect(frame.locator("#searchSubmit")).to_be_disabled()
+        assert page.evaluate("window.__calls") == []

@@ -71,6 +71,27 @@ def test_hermes_explicit_bad_hook_never_falls_back(monkeypatch, tmp_path, load_h
     assert mod._proc is None
 
 
+@pytest.mark.parametrize("variable", ["LANTAI_PYTHON", "LANTAI_SHELL_HOOK"])
+@pytest.mark.parametrize("bad_path", ["empty", "relative", "directory"])
+def test_hermes_invalid_explicit_paths_never_register(
+    monkeypatch, tmp_path, responder, load_hermes, variable, bad_path
+):
+    monkeypatch.setenv("LANTAI_PYTHON", sys.executable)
+    monkeypatch.setenv("LANTAI_SHELL_HOOK", str(responder))
+    values = {"empty": "", "relative": "responder.py", "directory": str(tmp_path)}
+    monkeypatch.setenv(variable, values[bad_path])
+    mod = load_hermes()
+    hooks = {}
+
+    class Host:
+        def register_hook(self, name, callback):
+            hooks[name] = callback
+
+    mod.register(Host())
+    assert hooks == {}
+    assert mod._proc is None
+
+
 @pytest.mark.parametrize("bad", [[], {}, 123, "bad\nidentity", "x" * 129])
 def test_hermes_bad_session_fails_closed(monkeypatch, responder, bad, load_hermes):
     monkeypatch.setenv("LANTAI_SHELL_HOOK", str(responder))
@@ -113,39 +134,7 @@ def test_openclaw_native_contracts(tmp_path):
     """Run the native JS public entry and bridge against a real Python NDJSON peer."""
     node = shutil.which("node")
     assert node, "OpenClaw contract tests require Node.js"
-    script = tmp_path / "peer.py"
-    script.write_text(
-        "import json, os, sys, time\n"
-        "for line in sys.stdin:\n"
-        "    data = json.loads(line)\n"
-        "    with open(os.environ['LANTAI_ADAPTER_TEST_LOG'], 'a', encoding='utf-8') as f:\n"
-        "        f.write(json.dumps(data, ensure_ascii=False) + '\\n')\n"
-        "    query = data.get('query', '')\n"
-        "    if query == 'timeout': time.sleep(10)\n"
-        "    if query == 'exit': sys.exit(0)\n"
-        "    if query == 'malformed':\n"
-        "        print('not-json', flush=True)\n"
-        "        continue\n"
-        "    if query == 'array':\n"
-        "        print('[]', flush=True)\n"
-        "        continue\n"
-        "    if data.get('type') == 'backfill' and data.get('event_id') == 'bad-ack':\n"
-        "        print('not-json', flush=True)\n"
-        "        continue\n"
-        "    if query == 'oversize':\n"
-        "        print('x' * 1100000, flush=True)\n"
-        "        continue\n"
-        "    result = {'ok': True, 'host': os.environ.get('LANTAI_HOST'),\n"
-        "        'owner': os.environ.get('LANTAI_HOOK_USER_ID'),\n"
-        "        'role': os.environ.get('LANTAI_HOOK_ROLE'), 'echo': data}\n"
-        "    if data.get('type') == 'backfill': result['receipt_status'] = 'acked'\n"
-        "    if not data.get('type'):\n"
-        "        result.update(context='<memory>' + query + '</memory>',\n"
-        "            event_id='bad-ack' if query == 'bad-ack' else 'rev_' + data.get('session_id', ''),\n"
-        "            evidence=[{'id': 'mem_1'}, {'id': 'mem_1'}, {'id': None}])\n"
-        "    print(json.dumps(result, ensure_ascii=False), flush=True)\n",
-        encoding="utf-8",
-    )
+    script = ROOT / "tests/support/openclaw_peer.py"
     env = dict(os.environ)
     env.update(
         LANTAI_TEST_PYTHON=sys.executable,

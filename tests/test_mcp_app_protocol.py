@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from lantai.cli import mcp
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,16 +70,28 @@ def _run_stdio(
         }
         for request_id, uri in enumerate(read_resources, start=4)
     )
-    proc = subprocess.run(
-        [sys.executable, "-c", "from lantai.cli.mcp import main; main()"],
-        input="\n".join(json.dumps(frame) for frame in frames) + "\n",
-        capture_output=True,
-        cwd=ROOT,
-        env=env,
-        text=True,
-        encoding="utf-8",
-        timeout=60,
+    # Keep the existing wall; a stalled child must leave evidence of where it waits.
+    bootstrap = (
+        "import faulthandler; faulthandler.dump_traceback_later(20, repeat=True); "
+        "from lantai.cli.mcp import main; main(); "
+        "faulthandler.cancel_dump_traceback_later()"
     )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", bootstrap],
+            input="\n".join(json.dumps(frame) for frame in frames) + "\n",
+            capture_output=True,
+            cwd=ROOT,
+            env=env,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired as error:
+        trace = error.stderr or b""
+        if isinstance(trace, bytes):
+            trace = trace.decode("utf-8", errors="replace")
+        pytest.fail(f"MCP stdio exceeded 60 seconds; child traceback:\n{trace[-6000:]}")
     assert proc.returncode == 0, proc.stderr[-2000:]
     responses = [json.loads(line) for line in proc.stdout.splitlines()]
     return {response["id"]: response for response in responses}

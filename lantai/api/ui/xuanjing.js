@@ -12,6 +12,7 @@ let simulation = null;
 let currentData = { nodes: [], edges: [], clusters: [], stats: {} };
 let selectedNode = null;
 let zoomBehavior = null;
+let loadVersion = 0;
 
 export function initXuanjing() {
   const refreshBtn = $('#xuanjingRefreshBtn');
@@ -47,6 +48,7 @@ export function activateXuanjingView() {
 }
 
 export function deactivateXuanjing() {
+  loadVersion++;
   if (simulation) {
     simulation.stop();
   }
@@ -55,6 +57,7 @@ export function deactivateXuanjing() {
 export async function loadXuanjingGraph() {
   const container = $('#xuanjingSvgContainer');
   if (!container) return;
+  const version = ++loadVersion;
 
   const lane = $('#xuanjingLaneFilter')?.value || '';
   const limit = $('#xuanjingLimitFilter')?.value || '200';
@@ -68,15 +71,23 @@ export async function loadXuanjingGraph() {
     if (statusEl) statusEl.textContent = '正在观测星图脉络…';
 
     const data = await api(url);
+    if (version !== loadVersion) return;
     currentData = data || { nodes: [], edges: [], clusters: [], stats: {} };
 
     updateHeaderStats(currentData.stats);
     renderXuanjing(currentData);
+    filterNodes($('#xuanjingSearchInput')?.value);
+    const selection = currentData.nodes.find(node => node.id === selectedNode?.id);
+    if (selection) openDrawer(selection);
+    else closeDrawer();
 
     if (statusEl) {
-      statusEl.textContent = `已投射 ${currentData.nodes.length} 恒星节点 · ${currentData.edges.length} 引力因果边`;
+      statusEl.textContent = currentData.nodes.length
+        ? `已投射 ${currentData.nodes.length} 恒星节点 · ${currentData.edges.length} 引力因果边`
+        : '当前分轨暂无记忆节点';
     }
   } catch (err) {
+    if (version !== loadVersion) return;
     console.error('加载悬镜星图失败', err);
     const statusEl = $('#xuanjingStatus');
     if (statusEl) statusEl.textContent = `星图投射受阻: ${err.message}`;

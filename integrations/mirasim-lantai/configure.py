@@ -37,7 +37,7 @@ def build_bundle(
     if hooks and os.name == "nt":
         # list2cmdline quotes argv for CreateProcess, not cmd.exe expansion/operators.
         for path in (home, python, ENTRY):
-            if any(char in str(path) for char in '&|<>^%!"\r\n'):
+            if any(char in str(path) for char in '&|<>^%!"()\r\n'):
                 raise ValueError("hook paths must not contain Windows shell expansion characters")
     server = {
         "command": str(python),

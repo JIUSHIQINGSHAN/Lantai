@@ -179,7 +179,7 @@ def test_public_builder_is_pure_and_rejects_invalid_configuration(tmp_path):
     assert not (tmp_path / "review").exists()
 
 
-@pytest.mark.parametrize("name", ["data&command", "data%ADAPTER%"])
+@pytest.mark.parametrize("name", ["data&command", "data%ADAPTER%", "data(command)"])
 def test_hook_configuration_handles_shell_expansion_paths(tmp_path, name):
     completed = configure("codex", tmp_path / name, "--hooks")
     if os.name == "nt":

@@ -1,8 +1,32 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import test, { after } from "node:test";
 import plugin, { validateConfig } from "../integrations/openclaw-lantai/index.mjs";
 import { createBridge } from "../integrations/openclaw-lantai/bridge.mjs";
+
+const fixtureKeys = ["LANTAI_TEST_PYTHON", "LANTAI_TEST_HOOK", "LANTAI_ADAPTER_TEST_LOG"];
+const supplied = fixtureKeys.filter((key) => process.env[key] !== undefined);
+assert.ok(supplied.length === 0 || supplied.length === 3, "Provide all three fixture overrides together");
+if (supplied.length === 0) {
+  const python = spawnSync("python", ["-c", "import sys; print(sys.executable)"], {
+    encoding: "utf8", windowsHide: true, timeout: 10000,
+  });
+  assert.equal(python.status, 0, "Python is required for the real NDJSON peer");
+  const scratch = fileURLToPath(new URL("../.scratch/", import.meta.url));
+  mkdirSync(scratch, { recursive: true });
+  const fixture = mkdtempSync(join(scratch, "openclaw-node-"));
+  process.env.LANTAI_TEST_PYTHON = python.stdout.trim();
+  process.env.LANTAI_TEST_HOOK = fileURLToPath(new URL("./support/openclaw_peer.py", import.meta.url));
+  process.env.LANTAI_ADAPTER_TEST_LOG = join(fixture, "frames.jsonl");
+  after(() => {
+    assert.equal(dirname(fixture), resolve(scratch));
+    rmSync(fixture, { recursive: true, force: true });
+    for (const key of fixtureKeys) delete process.env[key];
+  });
+}
 
 const config = (overrides = {}) => ({
   python: process.env.LANTAI_TEST_PYTHON,
