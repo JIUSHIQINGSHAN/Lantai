@@ -1,6 +1,8 @@
 """Exercise the release gate with real pytest, coverage and the tripwire."""
 
+import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -88,12 +90,48 @@ def test_release_gate_passes_with_working_node_override(
     release_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """An explicit working command must reach and pass the isolated capability check."""
-    if _NODE is None:
-        pytest.skip("Node is required for the positive release-gate case")
+    assert _NODE is not None, "Node is required for the positive release-gate case"
     monkeypatch.setenv("LANTAI_TEST_NODE", _NODE)
 
     assert _run_gate(release_repo) == []
     assert "passed=2" in capsys.readouterr().out
+
+
+def test_positive_release_gate_control_cannot_skip_missing_node(tmp_path: Path) -> None:
+    """The positive control must fail loudly when its real runtime is unavailable."""
+    empty_path = tmp_path / "empty-path"
+    empty_path.mkdir()
+    env = os.environ.copy()
+    env["PATH"] = str(empty_path)
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    env.pop("LANTAI_TEST_NODE", None)
+    env.pop("PYTEST_ADDOPTS", None)
+    env.pop("PYTEST_PLUGINS", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            f"{Path(__file__).resolve()}::test_release_gate_passes_with_working_node_override",
+            "-q",
+            "-o",
+            "addopts=",
+            "-p",
+            "no:cacheprovider",
+            "--basetemp",
+            str(tmp_path / "positive-control"),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, output
+    assert "1 failed" in output, output
+    assert "Node is required for the positive release-gate case" in output, output
 
 
 def test_release_gate_blocks_python_as_node_override(
