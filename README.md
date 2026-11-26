@@ -249,25 +249,32 @@ critical）、反思/参数建议任务失败、5xx 错误率、p95 延迟、零
 
 所有配置通过环境变量 / `.env` 注入，**全部可选**——不设置就走安全默认值。完整清单见 `lantai/core/settings.py`。
 
+进程环境变量覆盖 `.env` 的同名配置；`.env` 固定读取 `lantai/core/settings.py` 对应的源码根，不随当前工作目录或 `LANTAI_HOME` 移动。下表为出厂默认值，`.env.example` 的硅基流动端点与模型属于显式示例覆盖。
+
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `HOST` / `PORT` | `127.0.0.1` / `8767` | 监听地址；非回环必须配 API_KEY |
 | `API_KEY` | 空 | 环境变量密钥（请求头 `X-API-Key`）；非回环必填，命中后 principal=api_key/admin；与库内 Bearer 并存 |
 | `OPENAI_API_KEY` | 空 | LLM 提取 + Embedding |
-| `OPENAI_BASE_URL` / `LLM_MODEL` | openai / gpt-4o-mini | OpenAI 兼容端点 |
+| `OPENAI_BASE_URL` / `LLM_MODEL` | `https://api.openai.com/v1` / `gpt-4o-mini` | OpenAI 兼容端点 |
 | `EMBED_MODEL` | `BAAI/bge-m3` | Embedding 模型 |
 | `RERANKER_ENABLED` | `true` | 精排开关（失败自动降级） |
+| `RERANKER_BASE_URL` | `https://api.siliconflow.cn/v1` | 精排端点，与 LLM 端点独立配置 |
+| `RERANKER_API_KEY` | 空 | 独立精排密钥；空值仅在与 `OPENAI_BASE_URL` 同 host 时复用 `OPENAI_API_KEY`，跨服务商未配密钥则跳过精排 |
 | `COALESCE_ENABLED` | `false` | 潮波并忆开关 |
-| `DEDUP_MERGE/UPDATE_THRESHOLD` | `0.90` / `0.65` | fastpath 三态阈值；提取路径预筛 `DEDUP_PRESCREEN_MERGE`=0.95 + 结构判别（ADR-0019） |
+| `DEDUP_MERGE_THRESHOLD` / `DEDUP_UPDATE_THRESHOLD` | `0.90` / `0.65` | fastpath 三态阈值；提取路径预筛 `DEDUP_PRESCREEN_MERGE`=0.95 + 结构判别（ADR-0019） |
 | `GATE_CACHE_TTL` | `15.0` | 闸门热缓存秒数 |
-| `LANTAI_HOME` | 仓库根 | 数据目录（DB/向量库/备份）；旧名 `REMEMBRANCE_HOME` 兼容回退 |
-| `ALLOWED_API_HOSTS` | openai/siliconflow | 外部 API 域名白名单 |
+| `LANTAI_HOME` | 自动探测后回退源码根 | 数据目录（DB/向量库/备份）；优先显式配置，其次旧名 `REMEMBRANCE_HOME`，再探测已有用户库 |
+| `DATABASE_URL` / `CHROMADB_PATH` | 从数据目录推导 | 未显式设置时分别为数据目录下 `remembrance.db` / `.chromadb`；显式路径保持原值 |
+| `ALLOWED_API_HOSTS` | `["api.openai.com", "api.siliconflow.cn"]` | 外部 API 域名白名单；精排另受客户端固定的这两个 host 限制 |
 | `MONITOR_ENABLED` | `true` | 司天监控与请求遥测开关（关闭后中间件零开销直通） |
 | `MONITOR_PERSIST_SLOW_MS` / `MONITOR_PERSIST_SAMPLE` | `800` / `20` | 慢请求阈值（必落库）与正常请求落库采样率 1/N |
 | `MONITOR_RETENTION_DAYS` | `7` | `operation_logs` 保留天数 |
 | `MONITOR_ALERT_*` | 见 settings | 告警阈值：错误率 / p95 / 零召回率 / 待审积压 / 库体积 |
 | `CONSOLIDATION_AUDIT_MODE` | `off` | 沉潜巩固产物过审模式（ADR-0050）：`off` 现行直写 / `shadow` 影子对照 / `enforce` 一律提案待人工裁决；非法值 fail-loud 停摆 |
 | `REFLECT_AUTO_APPLY` | `false` | 反思产物自动应用开关（ADR-0050 决策 7a）：默认关＝反思产物一律进 pending 待审 |
+
+已有用户库的探测位置为 Windows 用户主目录下 `AppData/Local/remembrance-data`，Linux/macOS 为 `~/.remembrance-data`；只有目录及其中的 `remembrance.db` 均存在才自动沿用，否则回退源码根。需要隔离开发、测试或多个实例时，应显式设置 `LANTAI_HOME`，不要依赖自动探测。
 
 ## 测试
 

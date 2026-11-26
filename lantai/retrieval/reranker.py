@@ -39,7 +39,7 @@ def rerank(
         return []
 
     url = f"{settings.RERANKER_BASE_URL}/rerank"
-    # X-09 跨服务商密钥防泄漏：仅当未配 RERANKER_API_KEY 且 host 与 OPENAI 同域 (api.openai.com) 时才允许回退
+    # X-09 跨服务商密钥防泄漏：未配独立密钥时，仅允许与 OPENAI_BASE_URL 同 hostname 回退
     # 同一服务商的判定按 OPENAI_BASE_URL 的实际 host，而不是写死 api.openai.com：
     # .env.example 推荐的配置就是 OPENAI_BASE_URL=https://api.siliconflow.cn/v1，
     # 此时 OPENAI_API_KEY 本来就是硅基流密钥，回退不外发、也不该把精排静默关掉。
