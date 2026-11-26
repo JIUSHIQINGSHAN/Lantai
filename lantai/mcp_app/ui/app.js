@@ -222,8 +222,9 @@
 
   async function loadOverview() {
     setStatus("正在读取记忆…");
-    await loadCoreMemory();
-    await loadRecentMemory();
+    const results = await Promise.allSettled([loadCoreMemory(), loadRecentMemory()]);
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure) throw failure.reason;
     setStatus("记忆总览已更新");
   }
 
