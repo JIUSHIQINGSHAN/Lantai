@@ -371,17 +371,17 @@ _MODULE_STATE_UNCAPTURED: list[str] = []
 
 
 def _copy_module_state(value):
-    """浅拷贝容器内容：懒单例/标量按引用即可（它们的隔离靠「写回 None」）。"""
+    """递归复制容器；懒单例/标量保留引用，不复制线程锁等运行资源。"""
     if isinstance(value, dict):
-        return dict(value)
+        return {key: _copy_module_state(child) for key, child in value.items()}
     if isinstance(value, list):
-        return list(value)
+        return [_copy_module_state(child) for child in value]
     if isinstance(value, set):
         return set(value)
     if isinstance(value, frozenset):
         return frozenset(value)
     if isinstance(value, tuple):
-        return tuple(value)
+        return tuple(_copy_module_state(child) for child in value)
     return value
 
 
@@ -851,6 +851,23 @@ def _isolate_module_state(request):
     problems = _restore_module_state(_MODULE_STATE_PRISTINE)
     if problems:
         _MODULE_STATE_RESTORE_FAILURES.append((request.node.nodeid, problems))
+
+
+@pytest.fixture
+def core_service_state(_isolate_module_state):
+    """显式认领本例触发的核心守卫/报告，不让正常运行副作用依赖兜底回滚。"""
+    import importlib
+
+    channels = (
+        ("lantai.cli.mcp", "_guard_instance"),
+        ("lantai.cognition.kaogong", "_LATEST_KAOGONG_REPORT"),
+        ("lantai.services.consolidation_service", "_LAST_CONSOLIDATION_REPORT"),
+    )
+    with pytest.MonkeyPatch.context() as mp:
+        for module_name, attr in channels:
+            module = importlib.import_module(module_name)
+            mp.setattr(module, attr, _copy_module_state(getattr(module, attr)))
+        yield
 
 
 # ── 模块级生产状态「有主纳管」（票 05 续23：清掉续22 点名台账的头部条目）────────
