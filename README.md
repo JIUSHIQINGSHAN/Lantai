@@ -16,6 +16,8 @@
 [![Tests](https://github.com/JIUSHIQINGSHAN/Lantai/actions/workflows/tests.yml/badge.svg)](https://github.com/JIUSHIQINGSHAN/Lantai/actions/workflows/tests.yml)
 [![改编自](https://img.shields.io/badge/based%20on-aiduMEM-orange.svg)](https://github.com/monkey2jack/aiduMEM)
 
+当前发布版：**v0.70.0「悬镜」**。更新与升级注意事项见 [CHANGELOG](CHANGELOG.md)，参与开发见 [贡献指南](CONTRIBUTING.md)。
+
 ---
 
 ## 兰台记忆是什么？
@@ -26,7 +28,7 @@
 
 | 层级 | 做什么 | 核心特性 |
 |------|--------|----------|
-| 🧠 **记忆** | 在对的时间找到对的回忆 | **四路混合检索**：向量语义 + jieba BM25 + FTS5 trigram 子串容错 + 时效衰减 |
+| 🧠 **记忆** | 在对的时间找到对的回忆 | **四路混合检索**：向量语义 + jieba BM25 + FTS5 trigram 子串匹配 + 时效衰减 |
 | 🔍 **闸门** | 只检索真正相关的内容 | 启发式相关性闸门拦截无关上下文：纠错/社交/热缓存/自我指代/明确回忆/延续/实质内容 |
 | 🌊 **潮浪** | 批量 LLM 提取，不逐条调用 | Tidal Coalescing：短消息按 `user_id + lane` 缓冲合并，一次 LLM 调用处理多条 |
 | ⚡ **直写** | 高频句型不走 LLM | Fastpath 白名单：自我声明/偏好表达/显式指令三类句型直接写入，宁 miss 不脏写 |
@@ -34,9 +36,10 @@
 | ⏳ **遗忘** | 遗忘是特性，不是 bug | Ebbinghaus 指数衰减，低分自动归档；归档不参与检索、物理不删 |
 | 🕰️ **克罗诺斯** | 时间感知的有效期 | 双时间轴（`valid_from` / `valid_to`），过期事实降权，未生效事实过滤 |
 | 🧹 **去重** | 不写垃圾比事后清理便宜 | 余弦预筛 + 结构判别（ADR-0019）：改写直合 / 值变更走待审提案 / 中带 LLM 兜底（0.90 / 0.65 可配） |
-| 🔗 **双形态** | 读有 Hook，写有 MCP | Shell Hook（零依赖 CLI 注入，2s 硬超时）+ MCP server（标准 JSON-RPC 2.0） |
+| 🔗 **双形态** | 读有 Hook，写有 MCP | Shell Hook（按预算注入上下文）+ MCP server（标准 JSON-RPC 2.0） |
 | 🛡️ **护盾** | 安全不是可选项 | 默认回环绑定、非回环强制鉴权、SSRF 防护、原子备份恢复、端点白名单 |
 | 📡 **司天** | 系统自己会报告状态 | 后台监控面板：进程/存储/调度/请求遥测 + 规则告警 + Prometheus 出口，一屏看清「现在跑得怎么样」 |
+| **悬镜** | 看清记忆关系与来源 | Web 控制台中的拓扑与时序溯源；支持 MCP Apps 的宿主可按权限显示沙箱面板 |
 
 ---
 
@@ -67,42 +70,81 @@
 
 ### 方式一：源码克隆运行
 
+需要 Python 3.11+；当前冻结环境与 CI 使用 Python 3.14。下面固定到已发布标签；参与开发请改走 [贡献指南](CONTRIBUTING.md)，已有 Chroma 0.6.x 数据先读 [迁移指南](docs/chroma-migration.md)，不要直接让新运行时打开旧向量目录。
+
 ```bash
-# 1. 克隆
-git clone https://github.com/JIUSHIQINGSHAN/Lantai.git
+# 克隆已发布版本
+git clone --branch v0.70.0 https://github.com/JIUSHIQINGSHAN/Lantai.git
 cd Lantai
+```
 
-# 2. 虚拟环境
+**Windows PowerShell：**
+
+```powershell
 python -m venv .venv
-.venv\Scripts\activate          # Windows
-# source .venv/bin/activate     # Linux/macOS
+.\.venv\Scripts\python.exe -m pip install -e .
+Copy-Item .env.example .env
+$env:LANTAI_HOME = 'D:\LantaiData'  # 换成独立的数据目录
+```
 
-# 3. 安装
-pip install -e .
+**Linux / macOS（Bash）：**
 
-# 4. 配置
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
 cp .env.example .env
-# 填入 OPENAI_API_KEY（必填）；API_KEY 为非回环部署必填
+export LANTAI_HOME="$HOME/.local/share/lantai"
+```
 
-# 5. 初始化并启动
+启动前编辑 `.env`：把 `API_KEY` 换成自己的长随机密钥，并按服务商配置 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`LLM_MODEL` 和 `EMBED_MODEL`。示例文件显式选用硅基流动，模型名必须与实际端点匹配；缺少模型密钥不妨碍进程启动，但模型提取和向量检索不可用，不能据此视为完整接入。需要冻结依赖时使用 [开发测试环境](docs/project/development-environment.md) 的 `uv sync --locked` 方式。
+
+配置完成后，在同一终端初始化并启动：
+
+```powershell
+# Windows PowerShell
+.\.venv\Scripts\python.exe scripts/init_db.py
+.\.venv\Scripts\lantai-server.exe
+```
+
+```bash
+# Linux / macOS（已激活 .venv）
 python scripts/init_db.py
 lantai-server
-# 等价：python api_server.py
-# API 运行在 http://127.0.0.1:8767
 ```
+
+服务默认运行在 `http://127.0.0.1:8767`。浏览器访问 `http://127.0.0.1:8767/ui`，在连接设置中填写同一个 API 密钥；`GET /health` 是存活探针，不代表模型或检索链已验证。
 
 ### 方式二：Docker 容器运行
 
-```bash
-docker build -t lantai:0.70.0 .
-docker run -d -p 8767:8767 \
-  -e API_KEY=your-admin-key \
-  -e OPENAI_API_KEY=sk-xxx \
-  -v /your/data:/data \
-  lantai:0.70.0
+先准备已被 Git 忽略的 `.env`，填写自己的密钥和端点支持的模型（也可参照 [.env.example](.env.example)；已有配置请先核对，不要覆盖）：
+
+```dotenv
+API_KEY=replace-with-a-long-random-key
+OPENAI_API_KEY=replace-with-your-provider-key
+OPENAI_BASE_URL=https://api.siliconflow.cn/v1
+LLM_MODEL=Qwen/Qwen2.5-7B-Instruct
+EMBED_MODEL=BAAI/bge-m3
 ```
 
-> 容器默认 `HOST=0.0.0.0` 对外暴露，**必须注入 `API_KEY`**——启动守卫（`assert_secure_binding`）会在非回环地址且无密钥时拒绝运行；请求路径也会校验 `X-API-Key`（或库内 Bearer key），非回环不再回退 DEV MODE。
+使用已发布的 GHCR 镜像（下方续行语法为 Bash；PowerShell 请合并为一行）：
+
+```bash
+docker pull ghcr.io/jiushiqingshan/lantai:v0.70.0
+docker run -d --name lantai -p 127.0.0.1:8767:8767 \
+  --env-file .env -e LANTAI_HOME=/data \
+  -v lantai-data:/data \
+  ghcr.io/jiushiqingshan/lantai:v0.70.0
+```
+
+也可从上述标签的源码自行构建：
+
+```bash
+docker build -t lantai:0.70.0 .
+# 将 docker run 的镜像名替换为 lantai:0.70.0
+```
+
+> 容器内部默认 `HOST=0.0.0.0`，**必须注入 `API_KEY`**：启动守卫（`assert_secure_binding`）会在非回环地址且无密钥时拒绝运行。示例只把宿主端口发布到 `127.0.0.1`，数据持久化到命名卷 `lantai-data`；改用目录挂载时须允许容器用户 UID 1001 写入。需要远程访问时另配 TLS 与访问控制。
 > 
 > ⚠️ **部署约束（单进程部署）**：当前版本的后台定时任务调度器（APScheduler）与嵌入式底座（SQLite journal_mode=delete + 内嵌 ChromaDB）按单进程架构设计。请在部署时保持单进程运行（`--workers 1`，默认行为）；多 Worker 运行会导致遗忘与蒸馏任务重复触发及向量库写锁争用。
 
@@ -128,8 +170,12 @@ docker run -d -p 8767:8767 \
 
 ### 示例：搜索（带诊断）
 
+以下示例使用 Bash，先将 `API_KEY` 设为与服务端一致的密钥；PowerShell 使用 `curl.exe` 并按其引号规则传 JSON。除公开存活探针外，已配置密钥的接口请求均须鉴权。
+
 ```bash
+API_KEY='replace-with-the-same-server-key'
 curl -s -X POST "http://127.0.0.1:8767/search?trace=true" \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"query": "上次我们聊的检索方案是什么？", "top_k": 5}'
 ```
@@ -138,6 +184,7 @@ curl -s -X POST "http://127.0.0.1:8767/search?trace=true" \
 
 ```bash
 curl -s -X POST http://127.0.0.1:8767/add \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"title": "项目截止", "content": "项目截止日期是3月15号", "lane": "fact"}'
 ```
@@ -158,11 +205,11 @@ curl -s -X POST http://127.0.0.1:8767/add \
 score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·时效衰减
 ```
 
-**FTS5 trigram 子串匹配**对中文错别字、插入删除有天然容错（"向良"能撞上"向量"）——这是 jieba 分词 BM25 给不了的；两者互补，FTS 命中但向量漏掉的记忆会被**追加召回**。决策见 [ADR-0008](docs/adr/0008-fts5-parallel-recall.md)。
+**FTS5 trigram 子串匹配**补充词级 BM25：连续三字符片段可参与全文匹配，FTS 命中但向量漏掉的记忆可被**追加召回**。它不保证错别字或两字查询能匹配；短查询另有关键词降级路径。上式为默认基础权重，实际结果还受时间、权限、生命周期和可选精排影响。决策见 [ADR-0008](docs/adr/0008-fts5-parallel-recall.md)。
 
 ### ⏳ 遗忘曲线衰减（Ebbinghaus Decay · 移植自 aiduMEM）
 
-记忆有保质期。按 lane 分轨的指数衰减：`fact` 半衰期 30 天、`chat` 仅 3 天、`preference` 15 天。decay 低于阈值自动转 archived——**归档不参与检索、物理不删**，可回滚。
+记忆按 lane、重要度和使用信号计算保持强度，随未使用天数指数衰减；保持强度不等于固定半衰期。低分或超出工作记忆 TTL 的条目可自动归档，高重要度、语义类和程序性记忆有相应豁免。**归档不参与普通检索、物理不删**；Checkpoint 回滚用于撤销记忆版本变更，不是通用的归档撤销入口。
 
 ### 🕰️ 克罗诺斯双时间轴（Chronos · 移植自 aiduMEM）
 
@@ -188,10 +235,16 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 
 > 读有 Hook，写有 MCP——各走各的快路径。
 
-- **Shell Hook**（读，零依赖）：stdin 收 JSON，2s 硬超时返回 Markdown 上下文，≤3 字符不注入
+- **Shell Hook**（上下文注入）：stdin 收 JSON，按 `SHELL_HOOK_TIMEOUT` 预算返回上下文；出厂默认 2 秒，安装器生成的命令默认给冷启动 8 秒。超短查询（默认 ≤3 字符）不检索，但已配置常驻画像时仍可返回画像帧。详见 [宿主协议](docs/host-hook-protocol.md)。
 - **MCP server**（写，标准协议）：入口 `lantai-mcp`（`python -m lantai.cli.mcp`），标准 JSON-RPC 2.0，输入校验 + 异常隔离。默认档只暴露核心 6 工具（`search` / `add` / `feedback` / `offload_read` / `mem_recent` / `core_memory_get`，fail-closed）；`LANTAI_MCP_PROFILE=full` 显式放开全量 96 项
 - **远程 MCP bridge**：入口 `lantai-mcp-bridge`，通过 HTTPS 将 stdio 工具调用转发至远程 Lantai；无本地 DB、`.env` 或代理发现，配置与安全约束见 [说明](docs/mcp-bridge.md)。
 - **DSH 召回研究**：独立 `lantai-recall` 包已暂停启用，在副作用前拒绝自动召回；现有 MCP 逐调用归因适配器保持独立。原因与重新验收条件见 [bundle 文档](integrations/dsh-lantai-recall/README.md)。
+
+Claude Code、Codex、DSH、Hermes、OpenClaw 与 Antigravity 的实际入口、配置和权限边界见 [MCP 客户端矩阵](docs/mcp-client-matrix.md)。标准 MCP 接通、自动注入、对话采集与内嵌面板是分别验收的能力；Antigravity 目前使用通用 MCP stdio 配置，不宣称专用安装器或自动采集。
+
+### 悬镜与 MCP Apps
+
+Web 控制台入口为 `http://127.0.0.1:8767/ui`，记忆拓扑与时序溯源入口为 `/ui#/xuanjing`。支持 MCP Apps 的宿主还可在沙箱中展示核心记忆和悬镜面板；后续查询依赖宿主提供 `serverTools` 能力，普通 MCP 客户端不因此自动获得内嵌界面。悬镜工具 `get_xuanjing_graph` 属于 full 档，显示面板不会扩大默认六工具权限。接入与验收边界见 [客户端矩阵](docs/mcp-client-matrix.md)。
 
 同袍私有工作区与公共典籍的密钥绑定、接口及隔离范围见 [使用说明](docs/tongpao-workspace.md)。
 
@@ -212,17 +265,17 @@ score = 0.6·向量语义 + 0.25·jieba BM25 + 0.05·FTS5 子串命中 + 0.1·�
 
 ```bash
 # 全量快照（进程/存储/记忆/管道/调度/请求/安全 + 规则告警）
-curl -s http://127.0.0.1:8767/monitor/overview | jq '.summary, .alerts'
+curl -s -H "X-API-Key: $API_KEY" http://127.0.0.1:8767/monitor/overview | jq '.summary, .alerts'
 
 # 分钟级趋势 / 端点耗时排行 / 错误与慢请求
-curl -s "http://127.0.0.1:8767/monitor/series?minutes=60" | jq '.series[-5:]'
-curl -s "http://127.0.0.1:8767/monitor/logs?only_problems=true" | jq '.items[:5]'
+curl -s -H "X-API-Key: $API_KEY" "http://127.0.0.1:8767/monitor/series?minutes=60" | jq '.series[-5:]'
+curl -s -H "X-API-Key: $API_KEY" "http://127.0.0.1:8767/monitor/logs?only_problems=true" | jq '.items[:5]'
 
 # 外部监控直接抓取（Prometheus 文本格式）
-curl -s http://127.0.0.1:8767/monitor/prometheus | head -20
+curl -s -H "X-API-Key: $API_KEY" http://127.0.0.1:8767/monitor/prometheus | head -20
 
 # worker 停摆时手动补跑一次（与案牍共用互斥锁）
-curl -s -X POST http://127.0.0.1:8767/monitor/workers/forgetting/run
+curl -s -X POST -H "X-API-Key: $API_KEY" http://127.0.0.1:8767/monitor/workers/forgetting/run
 ```
 
 面板一屏给出：运行时长 / 请求速率 / p95 延迟 / 5xx 错误率 / 记忆总量 / 待审积压 /
@@ -247,7 +300,7 @@ critical）、反思/参数建议任务失败、5xx 错误率、p95 延迟、零
 
 ## 环境变量
 
-所有配置通过环境变量 / `.env` 注入，**全部可选**——不设置就走安全默认值。完整清单见 `lantai/core/settings.py`。
+所有配置通过环境变量 / `.env` 注入。多数有默认值，但非回环部署必须配置 `API_KEY`，使用外部模型也必须提供对应端点和凭据；默认值不代表所有能力开箱可用。完整清单见 [配置实现](lantai/core/settings.py)。
 
 进程环境变量覆盖 `.env` 的同名配置；`.env` 固定读取 `lantai/core/settings.py` 对应的源码根，不随当前工作目录或 `LANTAI_HOME` 移动。下表为出厂默认值，`.env.example` 的硅基流动端点与模型属于显式示例覆盖。
 
@@ -278,45 +331,39 @@ critical）、反思/参数建议任务失败、5xx 错误率、p95 延迟、零
 
 ## 测试
 
+先按 [贡献指南](CONTRIBUTING.md) 与 [开发测试环境](docs/project/development-environment.md) 准备冻结依赖、真实 Chromium、Node.js 24.9+ 和隔离临时目录，再使用该环境的解释器运行：
+
 ```bash
-.venv\Scripts\python.exe -m pytest tests/ -q
-# 全量测试以 CI 为准（含 FTS/SSRF/备份恢复/MCP 协议/Shell Hook 超时；实跑记录见 docs/research/ 相关发版回归记录）
+python -m ruff check lantai/ tests/ scripts/
+python -m ruff format --check lantai/ tests/ scripts/
+python -m pytest tests/ -q --cov=lantai --cov-report=term-missing
 ```
 
-## 路线图
+发布验收还包含宿主真实库连接绊线和隔离运行的遗忘质量检查，完整口径见 [发布流程](docs/release-process.md)。测试徽章显示最近一次 CI 状态，不能替代当前改动的实跑记录。
 
-- [x] v0.3.1 审计修复（P0 仓库卫生 / 绑定鉴权 / 测试基线）
-- [x] v0.3.2 FTS5 schema + Chronos 时区 + BM25 兼容修复
-- [x] v0.3.3 P1 安全收口（SSRF / 备份恢复 / MCP 校验）
-- [x] v0.3.4 FTS5 并列接入 + BM25 缓存（ADR-0008）
-- [x] v0.3.5 测试全绿 120/120 · v0.3.6 供应链加固（Actions 锁 SHA / 非 root）
-- [x] salience 冲突降权与 contradiction gate 整合（Fog，ADR-0020）——反义词词级碰撞 + 低 salience 旧记忆确定性冲突降权放行
-- [x] autodream 7 天周期记忆蒸馏（Fog）——autodream_worker 周期入口，落待审提案
-- [x] checkpoint 五段会话快照（Fog，ADR-0021）——底本：在做/下一步/工作区/决策/待办
-- [x] 去重阈值实测校准
-- [x] v0.15.0–.2 观察期回填校准 + 底本闭环 + 检索深化 + 工程健康（绳墨）
-- [x] v0.16.0 沙汰候选信噪分离 + 察窗观察期窗口口径（更漏）
-- [ ] v0.16.1 零召回根因修复（检索/索引/embedding 诊断）
-- [ ] v0.16.2 观察池选一（Persona / refine / EvolveMem / 评测集新类别）（bge-m3 中文样本）——实测 36 对 / 3 类：单一余弦阈值无法分离 merge/update，升级结构判别（ADR-0019）
-- [x] v0.15 校准·底本·检索·工程健康（A 观察期校准 + B 底本闭环 + C 检索深化 + D 工程健康）——v0.15.0/.1/.2 三版收口，tag 已推送
-- [ ] v0.16 沙汰·察窗·零召回·观察池（运营健康收口）——候选入队信噪分离 + 观察窗口口径 + 零召回根因修复 + 观察池选一，见 [路线计划书](docs/plans/roadmap-2026-08-v016.md)
-- [x] v0.22.0 圭表——更漏双时间轴（ADR-0048）+ 回执链一等化（ADR-0049）+ 宿主矩阵（ADR-0051）+ 沉潜产物过审（ADR-0050）+ E1/E2 评测 harness（roadmap-v2 11 票全清，tag 已推送）
-- [x] v0.22.1 起复——巩固撤销与碎片恢复（ADR-0052）+ 裁决时刻列 decided_at 与冷却期口径修正（ADR-0053），闭环 ADR-0050 决策 5 两笔欠账（tag 已推送）
-- [x] v0.23.0 司门——上游 f0.3 吸收计划七票收口：LLM 并发闸门 + 潮波会话分键 + 注入帧事件时间 + MCP 循环守卫 + 獬豸写入侧注入闸（三层检测命中整条拒）+ 勘合异步幂等回执 + 复原路径三层自查（tag 已推送）
+## 已发布里程碑
+
+- **v0.70.0「悬镜」**：拓扑与时序溯源、沙箱 MCP 应用面板、多宿主接入、同袍隔离工作区，以及核心并发、协议和配置边界收口。
+- **v0.69.0 / v0.69.1**：逐调用会话归因、摄取阶段监控、远程 MCP 桥与浏览器交互修复。
+- **v0.68.2**：依赖与嵌入式存储运行时升级；旧 Chroma 数据须按迁移规程另验。
+
+完整版本历史与升级说明见 [CHANGELOG](CHANGELOG.md)。[历史路线计划](docs/plans/) 保留决策背景，不作为当前待办清单。
 
 ## 文档索引
 
-- `CONTEXT.md` — 领域词汇表（lane / gate / coalesce / fastpath / checkpoint…）
-- `docs/glossary.md` — **工程术语对照表（大白话版）**：契约 / 冒烟 / 门禁 / 回归…以及「怎么看一份 Agent 汇报」
-- `docs/adr/` — 架构决策记录（持续增补，现 84+ 份）
-- `docs/plans/` — 各版本执行方案
-- `docs/release-process.md` — 版本上传规范流程（发布门禁 + 人工闸门）
-- `docs/aidumem-port-results.md` — aiduMEM 移植结果与审计修复记录
-- `AGENTS.md` — Agent 协作约定（issue tracker / 测试纪律）
+- [CONTEXT](CONTEXT.md) — 领域词汇表（lane / gate / coalesce / fastpath / checkpoint…）
+- [工程术语对照表（大白话版）](docs/glossary.md) — 契约 / 冒烟 / 门禁 / 回归，以及怎么看一份 Agent 汇报
+- [贡献指南](CONTRIBUTING.md) · [开发入口](docs/project/DEVELOPMENT.md) · [标准开发流程](docs/development-workflow.md)
+- [MCP 客户端矩阵](docs/mcp-client-matrix.md) · [宿主协议](docs/host-hook-protocol.md) · [远程 MCP 桥](docs/mcp-bridge.md)
+- [DSH 核心记忆与对话采集](integrations/dsh-core-memory/README.md) · [同袍工作区](docs/tongpao-workspace.md)
+- [Chroma 迁移规程](docs/chroma-migration.md) · [运维手册](docs/ops-runbook.md)
+- [架构决策](docs/adr/) — 持续增补；[历史计划](docs/plans/) — 各版本执行方案
+- [版本上传流程](docs/release-process.md) — 发布门禁与人工闸门
+- [aiduMEM 移植记录](docs/aidumem-port-results.md) · [Agent 协作约定](AGENTS.md)
 
 ## 许可证
 
-MIT（改编自 [aiduMEM](https://github.com/monkey2jack/aiduMEM)，MIT License）。
+[MIT License](LICENSE)，版权归属见许可证原文。改编自 [aiduMEM](https://github.com/monkey2jack/aiduMEM)（MIT License）。
 
 ---
 
