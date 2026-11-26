@@ -104,14 +104,18 @@ def unset_env(name: str) -> None:
 
 
 @contextmanager
-def env_context(name: str, value: str):
+def env_context(name: str, value: str | None):
     """临时环境变量：离开 with 时**精确复原**（原本没有才删除，原本有则写回原值）。
 
     与 `monkeypatch.setenv` 同语义，但不依赖 fixture——给 `with` 形态的测试夹具
     （如 `test_recall_chain.ChainHarness`）用，避免它们手写 `os.environ[...]`。
+    `value=None` 临时删除该键，离开时仍精确恢复原值。
     """
     previous = os.environ.get(name, _ABSENT)
-    os.environ[name] = value
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
     try:
         yield value
     finally:

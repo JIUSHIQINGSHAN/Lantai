@@ -191,20 +191,22 @@ class LoopGuard:
 def _get_guard() -> LoopGuard:
     """进程级守卫单例：配置取 settings（env 可覆写），值非法回落默认。"""
     global _guard_instance
-    try:
-        guard = LoopGuard(
-            enabled=_settings.MCP_LOOP_GUARD_ENABLED,
-            threshold=_settings.MCP_LOOP_GUARD_THRESHOLD,
-            window_s=_settings.MCP_LOOP_GUARD_WINDOW_S,
-            cooldown_s=_settings.MCP_LOOP_GUARD_COOLDOWN_S,
-        )
-    except (ValueError, OverflowError):
-        guard = LoopGuard()
-    _guard_instance = guard
-    return guard
+    with _GUARD_INIT_LOCK:
+        if _guard_instance is None:
+            try:
+                _guard_instance = LoopGuard(
+                    enabled=_settings.MCP_LOOP_GUARD_ENABLED,
+                    threshold=_settings.MCP_LOOP_GUARD_THRESHOLD,
+                    window_s=_settings.MCP_LOOP_GUARD_WINDOW_S,
+                    cooldown_s=_settings.MCP_LOOP_GUARD_COOLDOWN_S,
+                )
+            except (ValueError, OverflowError):
+                _guard_instance = LoopGuard()
+        return _guard_instance
 
 
 _guard_instance: LoopGuard | None = None
+_GUARD_INIT_LOCK = threading.Lock()
 
 _ATTRIBUTION_TOOLS = frozenset({"add", "raw_add", "search", "add_dialogue", "dialogue_add_async"})
 
@@ -4409,7 +4411,13 @@ def handle(msg: object, *, session: McpAppSession | None = None) -> dict | None:
             "error": {"code": -32600, "message": "invalid request: frame must be an object"},
         }
     mid = msg.get("id")
-    method = msg.get("method", "")
+    method = msg.get("method")
+    if not isinstance(method, str):
+        return {
+            "jsonrpc": "2.0",
+            "id": mid,
+            "error": {"code": -32600, "message": "invalid request: method must be a string"},
+        }
     active_tools = _get_active_tools()
     if method == "initialize":
         params = msg.get("params")

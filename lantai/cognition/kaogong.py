@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -349,7 +350,7 @@ class KaogongEngine:
             "details": details,
             "evaluated_at": iso_utc(utcnow()),
         }
-        _LATEST_KAOGONG_REPORT = report
+        _LATEST_KAOGONG_REPORT = deepcopy(report)
         logger.info(
             "考功：巡检完成（总计 %d，晋升长期 %d，降权 %d，保持 %d）",
             len(items),
@@ -363,4 +364,4 @@ class KaogongEngine:
         """获取最新考功评定审计报告。若尚无报告则执行一次。"""
         if _LATEST_KAOGONG_REPORT.get("evaluated_at") is None:
             return self.run_cycle()
-        return _LATEST_KAOGONG_REPORT
+        return deepcopy(_LATEST_KAOGONG_REPORT)
