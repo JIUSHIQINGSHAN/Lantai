@@ -16,6 +16,7 @@ from lantai.core.logger import logger
 # 而本模块被 `eval/offline.py` 等只装检索依赖的环境引用，减少耦合。
 # 单一真源仍是 `acl.SYSTEM_VIEWER`（值 "__system__"），此处只做等价判定。
 _SYSTEM_VIEWER = "__system__"
+_FTS_REBUILD_BATCH_SIZE = 500
 
 
 def _is_system_viewer(principal) -> bool:
@@ -245,15 +246,21 @@ def rebuild_fts(session) -> int:
             "WHERE content IS NOT NULL AND content != '' "
             "AND status NOT IN ('retracted', 'consolidated')"
         )
-    ).fetchall()
-    for memory_id, content in rows:
-        norm = normalize_for_index(content)
-        if norm and norm.strip():
-            conn.execute(
-                text("INSERT INTO memory_fts(memory_id, content) VALUES (:id, :content)"),
-                {"id": memory_id, "content": norm},
-            )
-    return len(rows)
+    )
+    insert = text("INSERT INTO memory_fts(memory_id, content) VALUES (:id, :content)")
+    count = 0
+    # Bound both source materialization and SQLAlchemy executions; the caller
+    # still owns the one transaction, including DELETE and all INSERT batches.
+    for batch in rows.partitions(_FTS_REBUILD_BATCH_SIZE):
+        count += len(batch)
+        values = []
+        for memory_id, content in batch:
+            norm = normalize_for_index(content)
+            if norm and norm.strip():
+                values.append({"id": memory_id, "content": norm})
+        if values:
+            conn.execute(insert, values)
+    return count
 
 
 _GRAM_TERMS_MAX = 24
@@ -399,10 +406,11 @@ def search_fts_bm25(
         match_query = " OR ".join('"' + k.replace('"', '""') + '"' for k in keywords)
 
         sql = """
-            SELECT f.memory_id, bm25(memory_fts, 10.0, 5.0) as score 
+            SELECT f.memory_id, f.rank as score
             FROM memory_fts f
             JOIN memoryitem m ON f.memory_id = m.id
             WHERE f.memory_fts MATCH ?
+              AND f.rank MATCH 'bm25(10.0, 5.0)'
         """
         params = [match_query]
 
@@ -444,7 +452,9 @@ def search_fts_bm25(
                 params.append(owner[1])
             # session 收窄摘除：裁决与依据同 `search_fts`（票 18）。
 
-        sql += " ORDER BY score LIMIT ?"
+        # Keep the original BM25 weights while letting FTS satisfy LIMIT in rank
+        # order, instead of building an external sort over every matching row.
+        sql += " ORDER BY f.rank LIMIT ?"
         params.append(top_k)
 
         cursor = conn.execute(sql, tuple(params))

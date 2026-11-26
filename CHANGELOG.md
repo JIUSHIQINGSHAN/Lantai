@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- FTS 全量重建改为有界流式读取和批量写入，保留归一、生命周期过滤、返回计数及调用方事务；BM25 使用等权重索引内排序，避免额外临时排序。新增隔离的冷启动、索引构建、串行及并发检索基准和真实 SQLite 性能回归。
+
 - MMR 多样性选择按正文缓存分词结果：原实现对「候选 × 已选」每一对都重跑一次 jieba 分词，实测 80 候选选 20 条要 3.8–5.2 秒；缓存后约 72 毫秒，选择结果逐条一致（`mmr_select`）。开关 `MMR_ENABLED` 默认关，本次只影响显式开启时的开销。
 - 检索预算（`budget_s`）传导到意图分类：此前 `classify_intent` 每次检索同步打一次外部 LLM 并走 3 次重试，实测 LLM 卡住时单这一步 6.5 秒，而宿主钩子外层硬墙只有 2 秒——整段注入被墙丢弃。现在有预算时按剩余预算单次调用，超预算回落 `DEFAULT_INTENT`。
 - 候选详情 / 巩固 / 反思 / TTL 四处取数改为批量或下推 SQL：`_evidence_rows` 不再逐条发 `select(MemoryItem)` 与 checkpoint 查询（评审详情页的 N+1）；沉潜拦截索引一轮只建一次而非每簇一次；`theme_triggered` 的窗口过滤下推 SQL 且成员判定改集合；候选到期扫描把 `review_due_at` 判定下推到 SQL。
