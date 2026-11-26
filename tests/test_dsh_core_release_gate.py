@@ -10,8 +10,11 @@ import pytest
 
 from scripts.release_check import suite_gate_issues
 
-_NODE_CONTRACT = """\
+_NODE = shutil.which("node")
+
+_NODE_CONTRACT = r"""\
 import os
+import re
 import subprocess
 
 import pytest
@@ -28,7 +31,7 @@ def node_version():
 
 
 def test_node_contract(node_version):
-    assert node_version
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", node_version), node_version
 """
 
 
@@ -85,11 +88,22 @@ def test_release_gate_passes_with_working_node_override(
     release_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """An explicit working command must reach and pass the isolated capability check."""
-    # The tiny contract accepts any real --version command, so this smoke also runs without Node.
-    monkeypatch.setenv("LANTAI_TEST_NODE", str(Path(sys.executable).absolute()))
+    if _NODE is None:
+        pytest.skip("Node is required for the positive release-gate case")
+    monkeypatch.setenv("LANTAI_TEST_NODE", _NODE)
 
     assert _run_gate(release_repo) == []
     assert "passed=2" in capsys.readouterr().out
+
+
+def test_release_gate_blocks_python_as_node_override(
+    release_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("LANTAI_TEST_NODE", str(Path(sys.executable).absolute()))
+
+    issues = _run_gate(release_repo)
+    assert any("全量测试未绿" in issue for issue in issues), issues
+    assert "failed=1, passed=1" in capsys.readouterr().out
 
 
 def test_release_gate_blocks_invalid_node_override(

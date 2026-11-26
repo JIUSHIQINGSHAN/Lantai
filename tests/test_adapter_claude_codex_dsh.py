@@ -20,13 +20,20 @@ CONFIGURE = BUNDLE / "configure.py"
 CORE = {"add", "core_memory_get", "feedback", "mem_recent", "offload_read", "search"}
 
 
-def configure(host, home, *extra):
+def legacy_console_env():
+    env = dict(os.environ)
+    env.update(PYTHONIOENCODING="cp936", PYTHONUTF8="0")
+    return env
+
+
+def configure(host, home, *extra, env=None):
     return subprocess.run(
         [sys.executable, str(CONFIGURE), "--host", host, "--home", str(home), *extra],
         cwd=home.parent,
         capture_output=True,
         text=True,
         encoding="utf-8",
+        env=env,
         timeout=30,
     )
 
@@ -47,6 +54,7 @@ def test_generated_configuration_routes_to_same_minimal_entry(tmp_path, host):
     home = tmp_path / "data with spaces"
     completed = configure(host, home)
     assert completed.returncode == 0, completed.stderr
+    assert configure(host, home).stdout == completed.stdout
     assert not home.exists(), "preview must not create data directories"
     files = json.loads(completed.stdout)
     if host == "claude-code":
@@ -70,12 +78,19 @@ def test_generated_configuration_routes_to_same_minimal_entry(tmp_path, host):
 
 def test_codex_configuration_preserves_non_bmp_unicode_paths(tmp_path):
     home = tmp_path / "data-\U0001f4c1"
-    completed = configure("codex", home)
+    completed = configure("codex", home, env=legacy_console_env())
     assert completed.returncode == 0, completed.stderr
     files = json.loads(completed.stdout)
     server = tomllib.loads(files[".codex/config.toml"])["mcp_servers"]["lantai"]
     assert server["env"]["LANTAI_HOME"] == str(home)
     assert not home.exists()
+
+
+def test_configuration_errors_use_utf8_under_legacy_console():
+    completed = configure("codex", Path("relative"), env=legacy_console_env())
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert "配置未生成" in completed.stderr
 
 
 @pytest.mark.parametrize("host", ["claude-code", "codex", "dsh"])
@@ -168,6 +183,7 @@ def test_public_builder_is_pure_and_rejects_invalid_configuration(tmp_path):
     assert not home.exists()
     for kwargs in (
         {"host": "other", "home": home},
+        {"host": "antigravity", "home": home},
         {"host": "codex", "home": Path("relative")},
         {"host": "codex", "home": home, "python": tmp_path / "missing-python"},
         {"host": "dsh", "home": home, "hooks": True},
@@ -181,7 +197,7 @@ def test_public_builder_is_pure_and_rejects_invalid_configuration(tmp_path):
 
 @pytest.mark.parametrize("name", ["data&command", "data%ADAPTER%", "data(command)"])
 def test_hook_configuration_handles_shell_expansion_paths(tmp_path, name):
-    completed = configure("codex", tmp_path / name, "--hooks")
+    completed = configure("codex", tmp_path / name, "--hooks", env=legacy_console_env())
     if os.name == "nt":
         assert completed.returncode == 2
         assert completed.stdout == ""
@@ -196,7 +212,8 @@ def test_hook_configuration_handles_shell_expansion_paths(tmp_path, name):
 
 @pytest.mark.parametrize("missing", ["API_KEY", "LANTAI_HOME"])
 def test_missing_runtime_configuration_stops_before_service_import(tmp_path, missing):
-    env = dict(os.environ, API_KEY="synthetic-secret", LANTAI_HOME=str(tmp_path / "data"))
+    env = legacy_console_env()
+    env.update(API_KEY="synthetic-secret", LANTAI_HOME=str(tmp_path / "data"))
     env.pop(missing)
     process = subprocess.run(
         [sys.executable, str(BUNDLE / "entry.py"), "mcp", "--host", "codex"],

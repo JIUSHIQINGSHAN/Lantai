@@ -39,6 +39,9 @@ def responder(tmp_path):
         "import json, os, sys\n"
         "for line in sys.stdin:\n"
         "    data = json.loads(line)\n"
+        "    if data.get('query') == 'malformed':\n"
+        "        print('not-json', flush=True)\n"
+        "        continue\n"
         "    print(json.dumps({'context': os.environ.get('LANTAI_HOST', '') "
         "+ ':' + data.get('query', ''), 'event_id': 'evt_1', "
         "'evidence': [{'id': 'mem_1'}]}, ensure_ascii=False), flush=True)\n",
@@ -69,6 +72,28 @@ def test_hermes_explicit_bad_hook_never_falls_back(monkeypatch, tmp_path, load_h
     mod.register(Host())
     assert hooks == {}
     assert mod._proc is None
+
+
+def test_hermes_malformed_reply_reaps_child_and_recovers(monkeypatch, responder, load_hermes):
+    monkeypatch.setenv("LANTAI_PYTHON", sys.executable)
+    monkeypatch.setenv("LANTAI_SHELL_HOOK", str(responder))
+    mod = load_hermes()
+    proc = mod._ensure_proc()
+    assert proc is not None
+    assert mod._wait_ready(timeout=2)
+    try:
+        assert mod._call_hook("malformed", session_id="bad-frame") is None
+        assert proc.poll() is not None, "malformed protocol output must not orphan the old child"
+        recovered = mod._call_hook("恢复", session_id="recovered")
+        assert recovered == {
+            "context": "hermes:恢复",
+            "event_id": "evt_1",
+            "evidence": [{"id": "mem_1"}],
+        }
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
 
 
 @pytest.mark.parametrize("variable", ["LANTAI_PYTHON", "LANTAI_SHELL_HOOK"])

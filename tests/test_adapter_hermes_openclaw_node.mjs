@@ -200,6 +200,16 @@ test("bridge close refuses later work", async () => {
   await assert.rejects(b.request({ query: "closed" }));
 });
 
+test("oversized request is rejected before child I/O and the bridge remains usable", async () => {
+  const b = createBridge(validateConfig(config()));
+  const before = frames().length;
+  try {
+    await assert.rejects(b.request({ query: "x".repeat(1024 * 1024) }), /invalid/i);
+    assert.equal(frames().length, before);
+    assert.equal((await b.request({ query: "after-oversize" })).echo.query, "after-oversize");
+  } finally { await b.close(); }
+});
+
 test("expired prompt records are retrieved again instead of reusing stale context", async () => {
   const h = host();
   const realNow = Date.now;
