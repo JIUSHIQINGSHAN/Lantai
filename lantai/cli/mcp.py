@@ -4430,7 +4430,7 @@ def handle(msg: object, *, session: McpAppSession | None = None) -> dict | None:
             "result": {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {}, "resources": {}},
-                "serverInfo": {"name": "lantai", "version": "0.69.1"},
+                "serverInfo": {"name": "lantai", "version": "0.70.0"},
             },
         }
     if mid is None and method.startswith("notifications/"):
