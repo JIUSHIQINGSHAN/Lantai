@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import sys
+import uuid
 from pathlib import Path
 
 
@@ -53,24 +54,91 @@ def backup_existing(target: Path, backups_dir: Path) -> Path | None:
         return None
     stamp = datetime.datetime.now().strftime("%Y%m%d")
     backups_dir.mkdir(parents=True, exist_ok=True)
-    backup = backups_dir / f"{PLUGIN_NAME}-{stamp}"
-    if backup.exists():
-        shutil.rmtree(backup)  # 仅清理同名旧备份（备份目录本身）
+    base = f"{PLUGIN_NAME}-{stamp}"
+    backup = backups_dir / base
+    suffix = 2
+    while backup.exists() or backup.is_symlink():
+        backup = backups_dir / f"{base}-{suffix}"
+        suffix += 1
     shutil.copytree(target, backup)
-    for fn in ("plugin.yaml", "plugin.yml"):
-        p = backup / fn
-        if p.is_file():
-            p.rename(p.with_name(fn + ".disabled"))
+    try:
+        for fn in ("plugin.yaml", "plugin.yml"):
+            p = backup / fn
+            if p.is_file():
+                p.rename(p.with_name(fn + ".disabled"))
+    except OSError:
+        shutil.rmtree(backup)
+        raise
     print(f"[OK] 旧插件已备份到 {backup}（manifest 已失效化）")
-    shutil.rmtree(target)
     return backup
 
 
+def _declared_plugins(plugins_dir: Path) -> list[Path]:
+    return [
+        child
+        for child in sorted(plugins_dir.iterdir())
+        if child.is_dir() and _manifest_name(child) == PLUGIN_NAME
+    ]
+
+
+def validate_no_competing_plugins(plugins_dir: Path) -> bool:
+    """部署前拒绝目标目录之外已声明同名的插件。"""
+    conflicts = [child for child in _declared_plugins(plugins_dir) if child.name != PLUGIN_NAME]
+    if conflicts:
+        print(
+            f"[ERR] 插件发现冲突：声明 name={PLUGIN_NAME} 的其他目录有 {len(conflicts)} 个: "
+            + ", ".join(str(child) for child in conflicts),
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
 def deploy(plugin_src: Path, plugins_dir: Path, backups_dir: Path) -> Path | None:
-    """部署插件并返回备份路径（无旧版时为 None）。"""
+    """先准备新插件，再切换目录；失败时恢复活动版本。"""
     target = plugins_dir / PLUGIN_NAME
-    backup = backup_existing(target, backups_dir)
-    shutil.copytree(plugin_src, target)
+    if not plugins_dir.is_dir():
+        raise ValueError(f"Hermes plugins directory does not exist: {plugins_dir}")
+    if not validate_no_competing_plugins(plugins_dir):
+        raise ValueError("another directory already declares the lantai-hook plugin")
+    if _manifest_name(plugin_src) != PLUGIN_NAME:
+        raise ValueError(f"plugin source must declare name={PLUGIN_NAME}")
+
+    stage_root = plugins_dir.parent / f".{PLUGIN_NAME}-stage-{uuid.uuid4().hex}"
+    previous_parent = stage_root / "previous"
+    stage_root.mkdir()
+    staged = stage_root / PLUGIN_NAME
+    previous = previous_parent / PLUGIN_NAME
+    keep_stage = False
+    try:
+        previous_parent.mkdir()
+        shutil.copytree(plugin_src, staged)
+        backup = backup_existing(target, backups_dir)
+        had_target = target.exists()
+        try:
+            if had_target:
+                target.rename(previous)
+            staged.rename(target)
+            if not validate_no_duplicate(plugins_dir):
+                raise ValueError("deployed plugin failed duplicate validation")
+        except Exception:
+            try:
+                if previous.exists():
+                    if target.exists():
+                        target.rename(staged)
+                    previous.rename(target)
+                elif not had_target and target.exists():
+                    target.rename(staged)
+            except OSError as restore_exc:
+                keep_stage = True
+                raise RuntimeError(
+                    f"plugin activation failed; previous plugin is retained at {previous}"
+                ) from restore_exc
+            raise
+    finally:
+        if not keep_stage and stage_root.exists():
+            shutil.rmtree(stage_root)
+
     print(f"[OK] 已部署到 {target}")
     print("[OK] 文件: " + ", ".join(p.name for p in plugin_src.iterdir() if p.is_file()))
     return backup
@@ -78,11 +146,7 @@ def deploy(plugin_src: Path, plugins_dir: Path, backups_dir: Path) -> Path | Non
 
 def validate_no_duplicate(plugins_dir: Path) -> bool:
     """自检：plugins/ 下声明同名插件的候选必须唯一且为目标目录。"""
-    candidates = [
-        child
-        for child in sorted(plugins_dir.iterdir())
-        if child.is_dir() and _manifest_name(child) == PLUGIN_NAME
-    ]
+    candidates = _declared_plugins(plugins_dir)
     if len(candidates) != 1 or candidates[0].name != PLUGIN_NAME:
         print(
             f"[ERR] 插件发现冲突：声明 name={PLUGIN_NAME} 的目录有 {len(candidates)} 个: "
@@ -111,9 +175,10 @@ def main() -> int:
         )
         return 1
 
-    deploy(PLUGIN_SRC, plugins_dir, hermes_home / "plugins-backup")
-
-    if not validate_no_duplicate(plugins_dir):
+    try:
+        deploy(PLUGIN_SRC, plugins_dir, hermes_home / "plugins-backup")
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"[ERR] 插件部署失败: {exc}", file=sys.stderr)
         return 1
 
     print("")
