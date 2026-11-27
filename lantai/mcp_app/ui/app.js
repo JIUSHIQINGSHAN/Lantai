@@ -164,8 +164,9 @@
       container.append(empty);
       return;
     }
-    for (const item of items) {
-      if (!isRecord(item)) continue;
+    for (const entry of items) {
+      if (!isRecord(entry)) continue;
+      const item = isRecord(entry.memory) ? entry.memory : entry;
       let body = "";
       for (const key of bodyFields) {
         if (item[key] !== undefined && item[key] !== null) {
@@ -221,9 +222,20 @@
 
   async function loadOverview() {
     setStatus("正在读取记忆…");
-    await loadCoreMemory();
-    await loadRecentMemory();
+    const results = await Promise.allSettled([loadCoreMemory(), loadRecentMemory()]);
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure) throw failure.reason;
     setStatus("记忆总览已更新");
+  }
+
+  async function refreshPanel(load) {
+    setStatus("正在读取记忆…");
+    try {
+      await load();
+      setStatus("记忆已更新");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "读取记忆失败");
+    }
   }
 
   async function runSearch(query) {
@@ -427,7 +439,7 @@
     if (typeof message.method !== "string") return;
     const params = isRecord(message.params) ? message.params : {};
     if (message.method === "ui/notifications/host-context-changed") {
-      applyHostContext(params.hostContext);
+      applyHostContext(params.hostContext || params);
     } else if (message.method === "ui/notifications/tool-input") {
       state.originalInput = isRecord(params.arguments) ? params.arguments : {};
       state.inputReceived = true;
@@ -448,9 +460,9 @@
     if (cancel) $("#decisionDialog").close();
     const refresh = target.closest("[data-refresh]");
     if (refresh && canCallServerTools()) {
-      void (refresh.dataset.refresh === "overview" ? loadCoreMemory() : loadRecentMemory());
+      void refreshPanel(refresh.dataset.refresh === "overview" ? loadCoreMemory : loadRecentMemory);
     }
-    if (target.closest("#refreshCrystals") && canCallServerTools()) void loadCrystals();
+    if (target.closest("#refreshCrystals") && canCallServerTools()) void refreshPanel(loadCrystals);
   });
 
   $("#panelTabs").addEventListener("keydown", (event) => {

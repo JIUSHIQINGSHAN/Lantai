@@ -8,6 +8,14 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
+  --color-background-primary: #f8fafb;
+  --color-background-secondary: #ffffff;
+  --color-background-info: #cde8e3;
+  --color-background-danger: #f6d4d0;
+  --color-text-primary: #17212b;
+  --color-text-secondary: #4b5963;
+  --color-border-primary: #b5c4cc;
+  --color-border-info: #176b68;
 }
 
 * {

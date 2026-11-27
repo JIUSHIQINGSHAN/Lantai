@@ -37,7 +37,7 @@ def build_bundle(
     if hooks and os.name == "nt":
         # list2cmdline quotes argv for CreateProcess, not cmd.exe expansion/operators.
         for path in (home, python, ENTRY):
-            if any(char in str(path) for char in '&|<>^%!"\r\n'):
+            if any(char in str(path) for char in '&|<>^%!"()\r\n'):
                 raise ValueError("hook paths must not contain Windows shell expansion characters")
     server = {
         "command": str(python),
@@ -113,7 +113,15 @@ def write_bundle(files: dict[str, str], output: Path) -> None:
             stream.write(content)
 
 
+def _configure_utf8_output() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="strict")
+
+
 def main() -> int:
+    _configure_utf8_output()
     parser = argparse.ArgumentParser(description="兰台三宿主配置预览与隔离导出")
     parser.add_argument("--host", choices=HOSTS, required=True)
     parser.add_argument("--home", type=Path, required=True)

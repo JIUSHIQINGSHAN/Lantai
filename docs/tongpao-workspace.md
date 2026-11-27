@@ -11,9 +11,7 @@
 from lantai.core.auth import create_api_key
 from lantai.storage.db import get_session
 
-raw_key, key = create_api_key(
-    "user-1", ["general"], tenant_id="tenant-1", agent_id="agent-a"
-)
+raw_key, key = create_api_key("user-1", ["general"], tenant_id="tenant-1", agent_id="agent-a")
 with get_session() as session:
     session.add(key)
     session.commit()

@@ -30,6 +30,16 @@
 
     * { box-sizing: border-box; }
 
+    :root[data-theme="dark"] {
+      --page: var(--color-background-primary, #171b19);
+      --surface: var(--color-background-secondary, #222824);
+      --surface-raised: var(--color-background-tertiary, #2b322e);
+      --ink: var(--color-text-primary, #e5ede8);
+      --muted: var(--color-text-secondary, #a4b4aa);
+      --line: var(--color-border-primary, #46534b);
+      --accent: var(--color-accent, #70c8aa);
+    }
+
     body {
       margin: 0;
       min-width: 0;
@@ -173,6 +183,23 @@
       border: 1px solid var(--line);
       border-radius: 4px;
       background: var(--surface-raised);
+    }
+
+    .graph-wrap {
+      position: relative;
+    }
+
+    .graph-empty {
+      position: absolute;
+      inset: 50% auto auto 50%;
+      width: min(360px, calc(100% - 32px));
+      transform: translate(-50%, -50%);
+      padding: 12px 16px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      color: var(--muted);
+      text-align: center;
     }
 
     .edge { stroke: var(--muted); stroke-opacity: 0.48; }
@@ -335,11 +362,12 @@
           <h2 id="graph-title">拓扑关系</h2>
           <p id="graph-summary">节点与关系将按当前时间切面显示</p>
         </div>
-        <figure>
+        <figure class="graph-wrap">
           <svg id="graph-svg" viewBox="0 0 840 420" role="img" aria-labelledby="graph-svg-title graph-svg-desc">
             <title id="graph-svg-title">悬镜记忆拓扑图</title>
             <desc id="graph-svg-desc">关系边连接记忆节点；可用节点列表或键盘选择节点。</desc>
           </svg>
+          <p id="graph-empty" class="graph-empty" hidden>暂无记忆节点</p>
           <figcaption class="sr-only">图谱节点与关系的可访问文本列表位于左侧节点区域。</figcaption>
         </figure>
         <div class="legend" aria-label="图例">
@@ -400,6 +428,8 @@
         selectedId: null,
         cutoff: null,
         initialized: false,
+        serverTools: false,
+        styleKeys: new Set(),
         requestId: 0,
         snapshotVersion: 0,
         loadingMore: false,
@@ -446,15 +476,19 @@
       }
 
       function applyHostContext(context = {}) {
+        if (!context || typeof context !== "object" || Array.isArray(context)) return;
         if (context.theme === "dark" || context.theme === "light") {
           document.documentElement.dataset.theme = context.theme;
           document.documentElement.style.colorScheme = context.theme;
         }
         const variables = context.styles?.variables;
+        for (const name of state.styleKeys) document.documentElement.style.removeProperty(name);
+        state.styleKeys.clear();
         if (variables && typeof variables === "object") {
           for (const [name, value] of Object.entries(variables)) {
             if (/^--[a-z0-9-]+$/i.test(name) && typeof value === "string") {
               document.documentElement.style.setProperty(name, value);
+              state.styleKeys.add(name);
             }
           }
         }
@@ -500,7 +534,7 @@
       function renderPagination() {
         const button = $("#load-more-button");
         button.hidden = !hasNextPage();
-        button.disabled = !state.initialized || state.loadingMore || $("#refresh-button").disabled;
+        button.disabled = !state.serverTools || state.loadingMore || $("#refresh-button").disabled;
         button.textContent = state.loadingMore ? "正在加载下一页…" : "加载更多节点";
       }
 
@@ -686,6 +720,9 @@
 
       function renderGraph() {
         const svg = $("#graph-svg");
+        const focusedNodeId = svg.contains(document.activeElement)
+          ? document.activeElement.dataset.nodeId
+          : null;
         svg.querySelectorAll(".rendered").forEach((item) => item.remove());
         const nodes = currentNodes();
         const ids = new Set(nodes.map((node) => node.id));
@@ -721,7 +758,14 @@
           group.setAttribute("aria-pressed", String(node.id === state.selectedId));
           group.addEventListener("click", () => selectNode(node.id));
           group.addEventListener("keydown", (event) => {
-            if (event.key === "Enter" || event.key === " ") {
+            if (event.key === " ") event.preventDefault();
+            if (event.key === "Enter") {
+              event.preventDefault();
+              selectNode(node.id);
+            }
+          });
+          group.addEventListener("keyup", (event) => {
+            if (event.key === " ") {
               event.preventDefault();
               selectNode(node.id);
             }
@@ -747,10 +791,20 @@
           svg.append(group);
         }
 
+        if (focusedNodeId) {
+          [...svg.querySelectorAll(".node-mark")]
+            .find((node) => node.dataset.nodeId === focusedNodeId)?.focus({ preventScroll: true });
+        }
+
         const selectedCount = nodes.filter((node) => {
           const query = $("#node-search").value.trim().toLocaleLowerCase();
           return !query || String(node.label || node.key || node.id).toLocaleLowerCase().includes(query);
         }).length;
+        const graphEmpty = $("#graph-empty");
+        graphEmpty.hidden = nodes.length > 0;
+        graphEmpty.textContent = state.graph.nodes.length
+          ? "当前切面没有匹配节点"
+          : "暂无记忆节点";
         $("#graph-summary").textContent = `${nodes.length} 个可见节点 · ${edges.length} 条关系边`;
         $("#visible-count").textContent = String(selectedCount);
       }
@@ -837,7 +891,7 @@
       }
 
       async function refreshGraph() {
-        if (!state.initialized) return;
+        if (!state.initialized || !state.serverTools) return;
         const snapshotVersion = ++state.snapshotVersion;
         state.loadingMore = false;
         setStatus("正在通过宿主读取图谱…");
@@ -863,7 +917,7 @@
       }
 
       async function loadMoreGraph() {
-        if (!state.initialized || state.loadingMore || !hasNextPage()) return;
+        if (!state.initialized || !state.serverTools || state.loadingMore || !hasNextPage()) return;
         const snapshotVersion = state.snapshotVersion;
         const cursor = state.graph.next_cursor;
         state.loadingMore = true;
@@ -903,7 +957,7 @@
           return;
         }
         if (message.method === "ui/notifications/host-context-changed") {
-          applyHostContext(message.params || {});
+          applyHostContext(message.params?.hostContext || message.params || {});
         } else if (message.method === "ui/notifications/tool-result") {
           receiveToolResult(message.params?.result || message.params || {});
         } else if (message.method === "ui/notifications/tool-cancelled") {
@@ -920,6 +974,10 @@
             appCapabilities: { availableDisplayModes: ["inline"] },
           });
           state.initialized = true;
+          state.serverTools = Boolean(result?.hostCapabilities?.serverTools);
+          for (const control of document.querySelectorAll("#refresh-button, #lane-filter, #domain-filter, #theme-filter")) {
+            control.disabled = !state.serverTools;
+          }
           applyHostContext(result?.hostContext || {});
           notifyHost("ui/notifications/initialized");
           renderPagination();

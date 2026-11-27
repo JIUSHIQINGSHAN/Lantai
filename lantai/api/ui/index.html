@@ -236,7 +236,7 @@
         <header class="topbar">
           <div>
             <h1>悬镜 · 3D 神经元记忆星图</h1>
-            <p id="xuanjingStatus">高悬明镜，照见万物脉络与因果溯源</p>
+            <p id="xuanjingStatus" role="status" aria-live="polite">高悬明镜，照见万物脉络与因果溯源</p>
           </div>
           <div class="top-actions">
             <span class="meta-tag" title="当前加载恒星节点数">节点 <b id="xuanjingNodeCount">0</b></span>
@@ -255,13 +255,17 @@
               <option value="250" selected>250 节点</option>
               <option value="500">500 节点</option>
             </select>
-            <input type="text" id="xuanjingSearchInput" placeholder="过滤星图节点..." class="search-input" style="width:160px;">
-            <button class="primary-btn" id="xuanjingRefreshBtn">↻ 重新观测</button>
+            <input type="text" id="xuanjingSearchInput" aria-label="过滤星图节点" placeholder="过滤星图节点..." class="search-input" style="width:160px;">
+            <button class="primary-btn" id="xuanjingRefreshBtn" aria-label="重新观测悬镜星图">↻ 重新观测</button>
           </div>
         </header>
         <div class="view-content xuanjing-workspace">
           <div class="xuanjing-stage" id="xuanjingSvgContainer">
-            <svg id="xuanjingSvg" class="xuanjing-svg"></svg>
+            <svg id="xuanjingSvg" class="xuanjing-svg" role="img" aria-labelledby="xuanjingSvgTitle" aria-describedby="xuanjingSvgDesc">
+              <title id="xuanjingSvgTitle">悬镜记忆星图</title>
+              <desc id="xuanjingSvgDesc">可用鼠标或键盘选择记忆节点查看详情。</desc>
+            </svg>
+            <div id="xuanjingState" class="xuanjing-state" data-state="loading" aria-hidden="true" hidden></div>
             <div class="xuanjing-legend">
               <div class="legend-row"><strong>恒星分轨</strong></div>
               <div class="legend-items">
@@ -280,10 +284,10 @@
           </div>
 
           <!-- 悬镜节点透视抽屉 -->
-          <div class="xuanjing-drawer" id="xuanjingDrawer" hidden>
+          <div class="xuanjing-drawer" id="xuanjingDrawer" role="dialog" aria-modal="false" aria-labelledby="xuanjingDrawerTitle" aria-hidden="true" hidden>
             <div class="drawer-header">
-              <h3>🌟 恒星记忆透视</h3>
-              <button class="icon-button" id="xuanjingCloseDrawer" title="关闭透视">×</button>
+              <h3 id="xuanjingDrawerTitle">🌟 恒星记忆透视</h3>
+              <button class="icon-button" id="xuanjingCloseDrawer" title="关闭透视" aria-label="关闭恒星记忆透视">×</button>
             </div>
             <div class="drawer-body">
               <div class="meta-row"><span>记忆编号</span><code id="xjdId">—</code></div>

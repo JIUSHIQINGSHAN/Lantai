@@ -159,16 +159,28 @@ def test_wipe_real_engine_clears_resident_and_spares_others():
     import lantai.storage.db as db_module
     from lantai.models.tables import CoreMemoryBlock, MemoryProposal
 
-    with Session(db_module.engine) as session:
-        session.add(CoreMemoryBlock(id="wipe-smoke-1", block="identity", content="x"))
-        session.add(MemoryProposal(id="wipe-smoke-p1", proposal_type="update"))
-        session.commit()
+    try:
+        with Session(db_module.engine) as session:
+            session.add(CoreMemoryBlock(id="wipe-smoke-1", block="identity", content="x"))
+            session.add(MemoryProposal(id="wipe-smoke-p1", proposal_type="update"))
+            session.commit()
 
-    conftest_mod._wipe_resident_channels()
+        conftest_mod._wipe_resident_channels()
 
-    with Session(db_module.engine) as session:
-        assert session.get(CoreMemoryBlock, "wipe-smoke-1") is None  # 常驻行真删
-        assert session.get(MemoryProposal, "wipe-smoke-p1") is not None  # 别表行存活
+        with Session(db_module.engine) as session:
+            assert session.get(CoreMemoryBlock, "wipe-smoke-1") is None  # 常驻行真删
+            assert session.get(MemoryProposal, "wipe-smoke-p1") is not None  # 别表行存活
+    finally:
+        # 普通业务行存活的判据验完再收尾，不能漏给后续的未决提案审计。
+        with Session(db_module.engine) as session:
+            for model, row_id in (
+                (CoreMemoryBlock, "wipe-smoke-1"),
+                (MemoryProposal, "wipe-smoke-p1"),
+            ):
+                row = session.get(model, row_id)
+                if row is not None:
+                    session.delete(row)
+            session.commit()
 
 
 def test_execute_phase_systemerror_is_also_retried(tmp_path, monkeypatch):

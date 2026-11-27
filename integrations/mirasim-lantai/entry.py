@@ -11,7 +11,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _configure_utf8_output() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="strict")
+
+
 def main() -> int:
+    _configure_utf8_output()
     parser = argparse.ArgumentParser(description="兰台客户端入口")
     parser.add_argument("mode", choices=("mcp", "hook"))
     parser.add_argument("--host", required=True, choices=("claude-code", "codex", "dsh"))

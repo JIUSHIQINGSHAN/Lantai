@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import closing
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -23,12 +24,14 @@ PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 results: list[tuple[str, str, str]] = []
 
 
-def check(name: str, ok: bool, detail: str = "") -> None:
-    results.append((PASS if ok else FAIL, name, detail))
-    print(f"[{PASS if ok else FAIL}] {name}" + (f" — {detail}" if detail else ""))
+def check(name: str, ok: bool | None, detail: str = "") -> None:
+    status = SKIP if ok is None else PASS if ok else FAIL
+    results.append((status, name, detail))
+    print(f"[{status}] {name}" + (f" — {detail}" if detail else ""))
 
 
 def main() -> int:
+    results.clear()
     print("=" * 60)
     print("兰台记忆接入自检")
     print("=" * 60)
@@ -49,9 +52,8 @@ def main() -> int:
         import sqlite3
 
         try:
-            conn = sqlite3.connect(str(db))
-            row = conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
-            conn.close()
+            with closing(sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)) as conn:
+                row = conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
             check("数据库可读", row and row[0] > 0, f"表对象数={row[0]}")
         except Exception as e:
             check("数据库可读", False, str(e))
@@ -97,10 +99,17 @@ def main() -> int:
             env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         )
         out = proc.stdout.strip()
-        parsed = json.loads(out) if out else {}
-        check(
-            "Shell Hook 契约（stdin→stdout JSON）", isinstance(parsed, dict), out[:80] or "(空输出)"
-        )
+        if proc.returncode != 0:
+            check("Shell Hook 契约", False, f"子进程退出码={proc.returncode}")
+        elif not out:
+            check("Shell Hook 契约", False, "子进程未输出 JSON 对象")
+        else:
+            parsed = json.loads(out)
+            check(
+                "Shell Hook 契约（stdin→stdout JSON）",
+                isinstance(parsed, dict),
+                out[:80] if isinstance(parsed, dict) else "stdout 必须为 JSON 对象",
+            )
     except subprocess.TimeoutExpired:
         check("Shell Hook 契约", False, "超时")
     except Exception as e:
@@ -110,18 +119,24 @@ def main() -> int:
     try:
         import httpx
 
-        r = httpx.get("http://127.0.0.1:8767/health", timeout=2)
-        check("REST /health", r.status_code == 200, f"HTTP {r.status_code}")
-    except Exception:
-        check("REST /health", False, "服务未启动（跳过即可，非必需）")
+        try:
+            r = httpx.get("http://127.0.0.1:8767/health", timeout=2, trust_env=False)
+        except httpx.ConnectError:
+            check("REST /health", None, "服务未启动（可选检查，已跳过）")
+        else:
+            check("REST /health", r.status_code == 200, f"HTTP {r.status_code}")
+    except Exception as exc:
+        check("REST /health", False, f"健康检查失败：{type(exc).__name__}")
 
     print("=" * 60)
     n_fail = sum(1 for s, _, _ in results if s == FAIL)
-    print(f"结果: {len(results) - n_fail}/{len(results)} 通过, {n_fail} 失败")
+    n_pass = sum(1 for s, _, _ in results if s == PASS)
+    n_skip = sum(1 for s, _, _ in results if s == SKIP)
+    print(f"结果: {n_pass} 通过, {n_skip} 跳过, {n_fail} 失败")
     if n_fail:
         print("存在 FAIL 项，请对照交接文档排查。")
         return 1
-    print("全部通过。")
+    print("全部必需检查通过。")
     return 0
 
 

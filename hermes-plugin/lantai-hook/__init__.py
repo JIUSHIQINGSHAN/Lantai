@@ -315,6 +315,23 @@ def _reap_after_kill(proc: subprocess.Popen) -> None:
         pass
 
 
+def _discard_proc(proc: subprocess.Popen) -> None:
+    """解除失效连接并结束旧子进程，避免下一次调用留下孤儿进程。"""
+    global _proc, _proc_ready
+    with _lock:
+        if _proc is proc:
+            _proc = None
+            _proc_ready = False
+    try:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=_REAP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        logger.warning("lantai-hook: 子进程回收超时 (pid=%s)", proc.pid)
+    except OSError:
+        pass
+
+
 def _request_line(proc: subprocess.Popen, line: bytes, timeout: float) -> bytearray:
     """写一行请求 + 读一行响应（调用方须持 _lock），整体受硬超时墙保护。
 
@@ -385,9 +402,11 @@ def _wait_ready(timeout: float = 15.0) -> bool:
                 logger.info("lantai-hook: 子进程就绪 (pid=%s)", proc.pid)
                 return True
             except json.JSONDecodeError:
-                __import__("time").sleep(0.5)
+                _discard_proc(proc)
+                return False
         return False
     except (OSError, AssertionError):
+        _discard_proc(proc)
         return False
 
 
@@ -416,6 +435,8 @@ def _call_hook(query: str, session_id: str = "") -> dict | None:
         if not out:
             return None
         data = json.loads(out)
+        if not isinstance(data, dict):
+            raise ValueError("serve response must be a JSON object")
         # 放行条件 = context 或 event_id（v0.68 票 74）：零命中 + 无常驻画像的
         # 轮次，serve 响应是 {"event_id": ...}（无 context）——票 01 起服务端
         # 零命中分支带出 event_id 供否决链用，这里丢了它 veto 帧就构造不出来。
@@ -425,10 +446,7 @@ def _call_hook(query: str, session_id: str = "") -> dict | None:
         return None
     except (json.JSONDecodeError, OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: call failed: %r", exc)
-        # 子进程可能已死，标记让下次自动重启
-        global _proc, _proc_ready
-        _proc = None
-        _proc_ready = False
+        _discard_proc(proc)
         return None
 
 
@@ -455,9 +473,7 @@ def _call_dialogue(text: str, session_id: str = "", turn: int | None = None) -> 
             _request_line(proc, line, _DIALOGUE_TIMEOUT)
     except (OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: dialogue call failed: %r", exc)
-        global _proc, _proc_ready
-        _proc = None
-        _proc_ready = False
+        _discard_proc(proc)
 
 
 def _call_backfill(event_id: str, used_ids: list[str]) -> None:
@@ -483,9 +499,7 @@ def _call_backfill(event_id: str, used_ids: list[str]) -> None:
             _request_line(proc, line, _REQUEST_TIMEOUT)
     except (OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: backfill call failed: %r", exc)
-        global _proc, _proc_ready
-        _proc = None
-        _proc_ready = False
+        _discard_proc(proc)
 
 
 def _call_veto(event_id: str) -> None:
@@ -508,9 +522,7 @@ def _call_veto(event_id: str) -> None:
             _request_line(proc, line, _REQUEST_TIMEOUT)
     except (OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: veto call failed: %r", exc)
-        global _proc, _proc_ready
-        _proc = None
-        _proc_ready = False
+        _discard_proc(proc)
 
 
 def _call_checkpoint() -> str | None:
@@ -528,13 +540,13 @@ def _call_checkpoint() -> str | None:
         if not out:
             return None
         data = json.loads(out)
-        ctx = data.get("context", "") if isinstance(data, dict) else ""
+        if not isinstance(data, dict):
+            raise ValueError("serve response must be a JSON object")
+        ctx = data.get("context", "")
         return str(ctx) if ctx else None
     except (json.JSONDecodeError, OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: checkpoint call failed: %r", exc)
-        global _proc, _proc_ready
-        _proc = None
-        _proc_ready = False
+        _discard_proc(proc)
         return None
 
 
@@ -557,9 +569,7 @@ def _call_checkpoint_write(session_id: str, blocks: dict) -> None:
             _request_line(proc, line, _REQUEST_TIMEOUT)
     except (OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: checkpoint write failed: %r", exc)
-        global _proc, _proc_ready
-        _proc = None
-        _proc_ready = False
+        _discard_proc(proc)
 
 
 def build_session_blocks(messages: list[str]) -> dict:
