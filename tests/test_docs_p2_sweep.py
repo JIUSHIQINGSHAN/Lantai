@@ -23,8 +23,8 @@ def test_readme_adr_count_never_rots():
 
 def test_plugin_version_bumped_with_behavior_change():
     yaml_text = _read("hermes-plugin/lantai-hook/plugin.yaml")
-    assert re.search(r"^version: 1\.2\.0$", yaml_text, re.M), (
-        "行为变更（PR #33 回执延后 + 票 01 挂载解耦）后插件版本应提升 1.2.0"
+    assert re.search(r"^version: 1\.2\.1$", yaml_text, re.M), (
+        "行为变更（PR #33 回执延后 + 票 01 挂载解耦；Hermes 宿主入口适配）后插件版本应为 1.2.1"
     )
 
 

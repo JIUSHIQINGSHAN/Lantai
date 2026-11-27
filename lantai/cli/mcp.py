@@ -28,6 +28,7 @@ import time
 import warnings
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
+from typing import Any
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -40,6 +41,14 @@ from lantai.core.attribution import (
 )
 from lantai.core.settings import settings as _settings
 from lantai.gate.prefilter import relevance_check
+from lantai.llm.fence import wrap_as_data
+from lantai.mcp_app.protocol import (
+    McpAppSession,
+    app_resources,
+    app_tools,
+    client_supports_mcp_apps,
+    read_app_resource,
+)
 from lantai.models.schemas import AddMemoryReq, FeedbackReq
 from lantai.retrieval.hybrid import hybrid_search
 from lantai.services.evolution_service import record_feedback_entry
@@ -182,20 +191,22 @@ class LoopGuard:
 def _get_guard() -> LoopGuard:
     """进程级守卫单例：配置取 settings（env 可覆写），值非法回落默认。"""
     global _guard_instance
-    try:
-        guard = LoopGuard(
-            enabled=_settings.MCP_LOOP_GUARD_ENABLED,
-            threshold=_settings.MCP_LOOP_GUARD_THRESHOLD,
-            window_s=_settings.MCP_LOOP_GUARD_WINDOW_S,
-            cooldown_s=_settings.MCP_LOOP_GUARD_COOLDOWN_S,
-        )
-    except (ValueError, OverflowError):
-        guard = LoopGuard()
-    _guard_instance = guard
-    return guard
+    with _GUARD_INIT_LOCK:
+        if _guard_instance is None:
+            try:
+                _guard_instance = LoopGuard(
+                    enabled=_settings.MCP_LOOP_GUARD_ENABLED,
+                    threshold=_settings.MCP_LOOP_GUARD_THRESHOLD,
+                    window_s=_settings.MCP_LOOP_GUARD_WINDOW_S,
+                    cooldown_s=_settings.MCP_LOOP_GUARD_COOLDOWN_S,
+                )
+            except (ValueError, OverflowError):
+                _guard_instance = LoopGuard()
+        return _guard_instance
 
 
 _guard_instance: LoopGuard | None = None
+_GUARD_INIT_LOCK = threading.Lock()
 
 _ATTRIBUTION_TOOLS = frozenset({"add", "raw_add", "search", "add_dialogue", "dialogue_add_async"})
 
@@ -224,7 +235,7 @@ def handle_search(params: dict) -> dict:
     # 归属（票 .scratch/readside-gaps/10）：MCP 没有 HTTP 鉴权层，宿主若透传
     # `user_id` 就据此构造 principal 落进检索事件；不透传留 NULL（与改动前逐字
     # 一致）——宁 miss 不脏写，不拿环境变量或进程名猜一个身份。
-    principal = _principal_from_params(params)
+    principal = _federated_principal_from_params(params)
     gate = relevance_check(query)
     if not force and not gate["needs_memory"]:
         # 拦截轮也落事件（zero_result 遥测），但原话写入即脱（v0.68 票 11，
@@ -374,9 +385,47 @@ def _principal_from_params(params: dict):
         tenant_id=None,
         user_id=user_id,
         agent_id=None,
+        federation_id=None,
         session_id=None,
         role="user",
         allowed_lanes=None,
+    )
+
+
+def _federated_principal_from_params(params: dict):
+    """Resolve federated identity only for tools that advertise these fields."""
+    principal = _principal_from_params(params)
+    if principal is None:
+        return None
+
+    from dataclasses import replace
+
+    from lantai.core.acl import active_bindings, resolve_federation_id
+
+    tenant_id = params.get("tenant_id")
+    agent_id = params.get("agent_id")
+    requested_federation_id = params.get("federation_id")
+    for name, value in (
+        ("tenant_id", tenant_id),
+        ("agent_id", agent_id),
+        ("federation_id", requested_federation_id),
+    ):
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"{name} must be a string")
+    if agent_id and active_bindings() and agent_id not in active_bindings():
+        raise ValueError("Agent not bound (ACL)")
+    try:
+        federation_id = resolve_federation_id(
+            tenant_id, principal.user_id, agent_id, requested_federation_id
+        )
+    except HTTPException as exc:
+        raise ValueError(exc.detail) from exc
+
+    return replace(
+        principal,
+        tenant_id=tenant_id,
+        agent_id=agent_id,
+        federation_id=federation_id,
     )
 
 
@@ -1332,7 +1381,7 @@ def handle_crystals_list(params: dict) -> dict:
     from lantai.services.crystal_service import list_crystals
 
     # 归属（票 .scratch/mcp-identity-gaps/01a）
-    return list_crystals(status, limit, principal=_principal_from_params(params))
+    return list_crystals(status, limit, principal=_federated_principal_from_params(params))
 
 
 def handle_crystals_detect(params: dict) -> dict:
@@ -1343,7 +1392,9 @@ def handle_crystals_detect(params: dict) -> dict:
     from lantai.services.crystal_service import run_crystal_detect_once
 
     # 归属（票 01a）：新建候选落 principal 的 user_id，否则又是无主行
-    return run_crystal_detect_once(dry_run=dry_run, principal=_principal_from_params(params))
+    return run_crystal_detect_once(
+        dry_run=dry_run, principal=_federated_principal_from_params(params)
+    )
 
 
 def handle_crystal_decide(params: dict) -> dict:
@@ -1358,11 +1409,15 @@ def handle_crystal_decide(params: dict) -> dict:
         raise ValueError("approve must be a boolean")
     if not isinstance(steps, list) or not all(isinstance(x, str) for x in steps):
         raise ValueError("steps must be a list of strings")
+    if not isinstance(reason, str):
+        raise ValueError("reason must be a string")
+    if not approve and not reason.strip():
+        raise ValueError("reject reason is required")
     from lantai.services.crystal_service import decide_crystal
 
     # 归属（票 01a）：裁决是破坏性操作，A 不能替 B 批准/驳回技能结晶
     return decide_crystal(
-        crystal_id, approve, steps, reason, principal=_principal_from_params(params)
+        crystal_id, approve, steps, reason, principal=_federated_principal_from_params(params)
     )
 
 
@@ -1370,7 +1425,7 @@ def handle_crystal_promote(params: dict) -> dict:
     """同袍（ADR-0058）：将技能结晶晋升发布至公共知识殿堂（swarm_shared）。"""
     crystal_id = params.get("crystal_id", "")
     steps = params.get("steps", []) or []
-    min_success_count = params.get("min_success_count", 1)
+    min_success_count = params.get("min_success_count", 3)
     if not isinstance(crystal_id, str) or not crystal_id.strip():
         raise ValueError("crystal_id must be a non-empty string")
     if not isinstance(steps, list) or not all(isinstance(x, str) for x in steps):
@@ -1378,16 +1433,16 @@ def handle_crystal_promote(params: dict) -> dict:
     if (
         not isinstance(min_success_count, int)
         or isinstance(min_success_count, bool)
-        or min_success_count < 0
+        or min_success_count < 1
     ):
-        raise ValueError("min_success_count must be a non-negative int")
+        raise ValueError("min_success_count must be a positive int")
     from lantai.evolution.crystal_promoter import promote_crystal
 
     return promote_crystal(
         crystal_id,
         steps=steps,
         min_success_count=min_success_count,
-        principal=_principal_from_params(params),
+        principal=_federated_principal_from_params(params),
     )
 
 
@@ -1461,15 +1516,41 @@ def handle_get_xuanjing_graph(params: dict) -> dict:
     from lantai.services.xuanjing_service import get_xuanjing_graph
 
     limit = params.get("limit", 250)
-    if not isinstance(limit, int) or limit < 1 or limit > 1000:
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 1000:
         raise ValueError("limit must be an integer between 1 and 1000")
     scene_id = params.get("scene_id")
+    domain = params.get("domain")
     lane = params.get("lane")
-    include_archived = bool(params.get("include_archived", False))
+    tag = params.get("tag")
+    tags = params.get("tags")
+    theme = params.get("theme")
+    cursor = params.get("cursor")
+    for name, value in (
+        ("scene_id", scene_id),
+        ("domain", domain),
+        ("lane", lane),
+        ("tag", tag),
+        ("theme", theme),
+        ("cursor", cursor),
+    ):
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"{name} must be a string")
+    if tags is not None and (
+        not isinstance(tags, list) or not all(isinstance(value, str) for value in tags)
+    ):
+        raise ValueError("tags must be a list of strings")
+    include_archived = params.get("include_archived", False)
+    if not isinstance(include_archived, bool):
+        raise ValueError("include_archived must be a boolean")
     return get_xuanjing_graph(
         limit=limit,
         scene_id=scene_id,
+        domain=domain,
         lane=lane,
+        tag=tag,
+        tags=tags,
+        theme=theme,
+        cursor=cursor,
         include_archived=include_archived,
         principal=_principal_from_params(params),
     )
@@ -2293,6 +2374,9 @@ TOOLS = {
                     },
                 },
                 "user_id": _USER_ID_PARAM,
+                "tenant_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "federation_id": {"type": "string"},
                 "query": {"type": "string", "description": "搜索查询"},
                 "top_k": {"type": "integer", "default": 5, "description": "返回条数 [1, 100]"},
                 "domain": {
@@ -3152,6 +3236,9 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "user_id": _USER_ID_PARAM,
+                "tenant_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "federation_id": {"type": "string"},
                 "status": {
                     "type": "string",
                     "default": "candidate",
@@ -3168,6 +3255,9 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "user_id": _USER_ID_PARAM,
+                "tenant_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "federation_id": {"type": "string"},
                 "dry_run": {"type": "boolean", "default": False, "description": "true=预演不写库"},
             },
         },
@@ -3178,6 +3268,9 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "user_id": _USER_ID_PARAM,
+                "tenant_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "federation_id": {"type": "string"},
                 "crystal_id": {"type": "string", "description": "候选 id（crystals_list 中可见）"},
                 "approve": {
                     "type": "boolean",
@@ -3203,16 +3296,19 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "user_id": _USER_ID_PARAM,
+                "tenant_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "federation_id": {"type": "string"},
                 "crystal_id": {"type": "string", "description": "技能结晶 ID"},
                 "steps": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "执行步骤列表（可选，未传时自 procedure 抽取）",
+                    "description": "兼容字段；发布内容以已观察的 procedure 为准",
                 },
                 "min_success_count": {
                     "type": "integer",
-                    "default": 1,
-                    "description": "最低验证成功门槛（默认 1）",
+                    "default": 3,
+                    "description": "最低验证成功门槛（默认 3）",
                 },
             },
             "required": ["crystal_id"],
@@ -3330,7 +3426,16 @@ TOOLS = {
                 "user_id": _USER_ID_PARAM,
                 "limit": {"type": "integer", "default": 250, "description": "最大节点数 [1, 1000]"},
                 "scene_id": {"type": "string", "description": "限定场景 ID（可选）"},
+                "domain": {"type": "string", "description": "限定辨域（可选）"},
                 "lane": {"type": "string", "description": "限定泳道（可选）"},
+                "tag": {"type": "string", "description": "精确标签（可选）"},
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "精确标签集合（可选）",
+                },
+                "theme": {"type": "string", "description": "主题搜索子串（可选）"},
+                "cursor": {"type": "string", "description": "快照分页游标（可选）"},
                 "include_archived": {
                     "type": "boolean",
                     "default": False,
@@ -4218,7 +4323,84 @@ def _get_active_tools() -> dict:
     return {k: v for k, v in TOOLS.items() if k in HERMES_CORE_TOOLS}
 
 
-def handle(msg: object) -> dict | None:
+_COGNITIVE_FENCE_TOOLS = frozenset(
+    {
+        "niyi_deliberate",
+        "jiaochou_collate",
+        "diben_anchor",
+        "shiyi_remedy",
+        "shiyi_pipeline",
+        "shishi_vault",
+    }
+)
+_COGNITIVE_TEXT_FIELDS = frozenset(
+    {
+        "content",
+        "document",
+        "text_a",
+        "text_b",
+        "synthesized_proposal",
+        "active_intent",
+        "next_action",
+        "working_context",
+        "key_decisions",
+        "open_notes",
+        "text_summary",
+        "query",
+        "deliberation_reason",
+        "drift_reason",
+        "audit_summary",
+        "description",
+        "reason",
+        "common_summary",
+        "divergence_summary",
+        "correction_suggestion",
+        "overlap_tokens",
+        "divergence_tokens",
+        "divergence_tokens_a",
+        "divergence_tokens_b",
+        "common_tokens",
+        "remedy_reason",
+        "metadata",
+        "structure",
+        "tags",
+        "after_patch",
+        "conflicting_fields",
+    }
+)
+_COGNITIVE_NAVIGATION_TOOLS = frozenset({"muci_catalog", "famen_skill"})
+_COGNITIVE_NAVIGATION_TEXT_FIELDS = frozenset({"tags", "topic", "summary", "task", "metadata"})
+
+
+def _fence_cognitive_result(
+    value: Any,
+    *,
+    data: bool = False,
+    text_fields: frozenset[str] = _COGNITIVE_TEXT_FIELDS,
+) -> Any:
+    """Fence canonical body fields too: a fenced sibling cannot protect a raw copy.
+
+    Keep this at the model-facing transport boundary. Engine/service dictionaries
+    remain usable for computation and REST clients; IDs, enums and numbers retain
+    their protocol meanings. Arbitrary patch and metadata values inherit fencing.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _fence_cognitive_result(
+                child, data=data or key in text_fields, text_fields=text_fields
+            )
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _fence_cognitive_result(child, data=data, text_fields=text_fields) for child in value
+        ]
+    if data and isinstance(value, str):
+        return wrap_as_data(value)
+    return value
+
+
+def handle(msg: object, *, session: McpAppSession | None = None) -> dict | None:
     if not isinstance(msg, dict):
         # 票 52：非对象 JSON 帧（[1]/"str"/null）此前在 msg.get("id") 即
         # AttributeError——serve 循环里一个畸形帧即打死进程。回 -32600
@@ -4229,16 +4411,26 @@ def handle(msg: object) -> dict | None:
             "error": {"code": -32600, "message": "invalid request: frame must be an object"},
         }
     mid = msg.get("id")
-    method = msg.get("method", "")
+    method = msg.get("method")
+    if not isinstance(method, str):
+        return {
+            "jsonrpc": "2.0",
+            "id": mid,
+            "error": {"code": -32600, "message": "invalid request: method must be a string"},
+        }
     active_tools = _get_active_tools()
     if method == "initialize":
+        params = msg.get("params")
+        capabilities = params.get("capabilities") if isinstance(params, dict) else None
+        if session is not None:
+            session.supports_mcp_apps = client_supports_mcp_apps(capabilities)
         return {
             "jsonrpc": "2.0",
             "id": mid,
             "result": {
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "lantai", "version": "0.69.1"},
+                "capabilities": {"tools": {}, "resources": {}},
+                "serverInfo": {"name": "lantai", "version": "0.70.0"},
             },
         }
     if mid is None and method.startswith("notifications/"):
@@ -4249,8 +4441,53 @@ def handle(msg: object) -> dict | None:
         return {
             "jsonrpc": "2.0",
             "id": mid,
-            "result": {"tools": [{"name": n, **meta} for n, meta in active_tools.items()]},
+            "result": {
+                "tools": app_tools(
+                    active_tools,
+                    enabled=session is not None and session.supports_mcp_apps,
+                )
+            },
         }
+    if method == "resources/list":
+        return {
+            "jsonrpc": "2.0",
+            "id": mid,
+            "result": {
+                "resources": app_resources(
+                    enabled=session is not None and session.supports_mcp_apps,
+                    active_tools=active_tools,
+                )
+            },
+        }
+    if method == "resources/read":
+        params = msg.get("params", {})
+        if not isinstance(params, dict):
+            return {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32602, "message": "params must be an object"},
+            }
+        if session is None or not session.supports_mcp_apps:
+            return {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32602, "message": "unknown resource"},
+            }
+        try:
+            content = read_app_resource(params.get("uri"), active_tools=active_tools)
+        except ValueError as exc:
+            return {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32602, "message": str(exc)},
+            }
+        except Exception as exc:
+            return {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32603, "message": f"resource read failed: {type(exc).__name__}"},
+            }
+        return {"jsonrpc": "2.0", "id": mid, "result": {"contents": [content]}}
     if method == "tools/call":
         params = msg.get("params", {})
         if not isinstance(params, dict):
@@ -4335,6 +4572,12 @@ def handle(msg: object) -> dict | None:
             # （checkpoint_latest）时 dumps 的 TypeError 此前冲出 handle() 杀死
             # 进程。allow_nan=False 把 NaN 静默非法 JSON（审计登记项）转成显式错。
             # 计入 guard 失败：恒返不可序列化输出的工具也要能被熔断。
+            if name in _COGNITIVE_FENCE_TOOLS:
+                result = _fence_cognitive_result(result)
+            elif name in _COGNITIVE_NAVIGATION_TOOLS:
+                result = _fence_cognitive_result(
+                    result, text_fields=_COGNITIVE_NAVIGATION_TEXT_FIELDS
+                )
             text = json.dumps(result, ensure_ascii=False, allow_nan=False)
         except Exception as e:
             if token is not None:
@@ -4427,8 +4670,13 @@ def _oversize_reject(line: str) -> dict | None:
     }
 
 
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON number: {value}")
+
+
 def main():
     _configure_stdio_utf8()
+    session = McpAppSession()
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -4449,15 +4697,17 @@ def main():
                 sys.stdout.flush()
             continue
         try:
-            msg = json.loads(line)
-        except json.JSONDecodeError:
+            msg = json.loads(line, parse_constant=_reject_json_constant)
+        except (ValueError, RecursionError):
+            # JSONDecodeError 之外，大整数和深层 JSON 也会在分发守卫前失败。
+            # 与桥接入口同口径：坏 JSON 静默丢弃，后续请求继续处理。
             continue
         # 票 52：单帧只值一条错误响应——handle 或响应组装的任何异常都不得冲出
         # 主循环（此前 checkpoint_latest 的裸 datetime 一帧即杀死整个 stdio
         # 服务，全部工具失联）。mid 先取，兜底帧保住请求关联。
         mid = msg.get("id") if isinstance(msg, dict) else None
         try:
-            resp = handle(msg)
+            resp = handle(msg, session=session)
         except Exception as e:
             _emit_error_frame(mid, type(e).__name__)
             continue

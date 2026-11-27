@@ -12,6 +12,11 @@ from lantai.core.auth import Principal
 from lantai.storage import db
 
 
+def _converge(principal: Principal | None) -> Principal:
+    """Anonymous external calls only see the default owner, as in shiyi_service."""
+    return principal if principal is not None else Principal(user_id="default")
+
+
 def deliberate_proposal_service(
     *,
     proposal_type: str,
@@ -21,7 +26,7 @@ def deliberate_proposal_service(
 ) -> dict[str, Any]:
     """模拟推演提案实施对系统拓扑与认知状态的影响。"""
     with db.get_session() as session:
-        engine = NiyiEngine(session=session, principal=principal)
+        engine = NiyiEngine(session=session, principal=_converge(principal))
         return engine.deliberate_proposal(
             proposal_type=proposal_type,
             patch_data=patch_data,
@@ -36,5 +41,5 @@ def audit_proposals_service(
 ) -> dict[str, Any]:
     """审计当前租户范围内的未决提案池，识别互斥与竞争冲突对。"""
     with db.get_session() as session:
-        engine = NiyiEngine(session=session, principal=principal)
+        engine = NiyiEngine(session=session, principal=_converge(principal))
         return engine.audit_pending_proposals(limit=limit)

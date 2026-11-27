@@ -18,7 +18,7 @@
   - 我的实测（见下）说明密钥现在会进三张表，还会发给外部提取模型（生产上是硅基流动）。
   - [HEAMS](https://arxiv.org/abs/2611.20144)（11-15）把记忆系统定义为“用户长期信息的保管者”，评测维度里专门有“在不合适的场合被披露”和“难以更正或删除”两项，不只看任务分数。
   - cognee v1.6.9（11-18）的 Hermes 集成 `capture_policy.py` 写明 `COGNEE_CAPTURE_REDACT` 默认开启，会清掉私钥、连接串、token、凭据赋值和厂商 key；规则解析失败时“什么都不存”（fail closed）。
-- **实测 1：真 Hermes 全链路**（`/home/sprite/hermes-e2e`，Hermes v0.23.1 + 兰台插件 + 假模型，兰台用本周 master）：
+- **实测 1：真 Hermes 全链路**（巡检机上的 `hermes-e2e` 目录，Hermes v0.23.1 + 兰台插件 + 假模型，兰台用本周 master）：
   - 会话 1 三轮：①“记一下：兰台的硅基流动 key 是 sk-abc…456，数据库连 postgres://lantai:Hunter2pass@10.0.0.5:5432/lantai”；②“顺便记住 GitHub token github_pat_11ABC…”；③“好的谢谢，我去吃饭了”。会话 2：“我上次做到哪了？”
   - 结果：兰台库里含这几样密钥的行：`rawdocument` 2、`memorycandidate` 2、`retrieval_event` 1。兰台调提取模型时，①②两句原文出现在发给模型的消息里。
   - 会话 2 发给 Hermes 模型的最后一次请求里没有出现这些密钥（这次没被注入回去），但它们已经躺在库里，以后命中相关问题就可能被检索出来。

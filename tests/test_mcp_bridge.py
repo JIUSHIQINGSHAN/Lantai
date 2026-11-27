@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -81,7 +82,11 @@ def peer():
 
         do_GET = do_POST = do_PUT = handle_request  # noqa: N815 (HTTP server dispatch contract)
 
-    with ThreadingHTTPServer(("127.0.0.1", 0), Peer) as http:
+    class PeerServer(ThreadingHTTPServer):
+        daemon_threads = False
+        block_on_close = True
+
+    with PeerServer(("127.0.0.1", 0), Peer) as http:
         thread = threading.Thread(target=http.serve_forever, daemon=True)
         thread.start()
         try:
@@ -89,6 +94,7 @@ def peer():
         finally:
             http.shutdown()
             thread.join(3)
+            assert not thread.is_alive(), "桥接测试服务线程未结束"
 
 
 def frame(req_id, method, **params):
@@ -100,7 +106,11 @@ def call(req_id, name, **arguments):
 
 
 def run_bridge(url, *frames, allow_http=True):
-    env = {k: v for k, v in os.environ.items() if k.upper() in {"SYSTEMROOT", "WINDIR", "PATH"}}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k.upper() in {"SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP", "TMPDIR"}
+    }
     env.update(
         LANTAI_BRIDGE_BASE_URL=url,
         LANTAI_BRIDGE_BEARER_TOKEN=TOKEN,
@@ -119,7 +129,10 @@ def run_bridge(url, *frames, allow_http=True):
 
 def read_replies(proc):
     assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
-    return {r["id"]: r for r in map(json.loads, proc.stdout.splitlines())}
+    responses = [json.loads(line) for line in proc.stdout.splitlines()]
+    assert all(response.get("jsonrpc") == "2.0" for response in responses)
+    assert len({response["id"] for response in responses}) == len(responses)
+    return {response["id"]: response for response in responses}
 
 
 def test_discovery_and_session_attribution(peer):
@@ -252,3 +265,59 @@ def test_rejects_insecure_configuration(url, allow_http):
     assert proc.returncode != 0
     assert b"LANTAI_BRIDGE_BASE_URL" in proc.stderr
     assert b"secret" not in proc.stderr and TOKEN.encode() not in proc.stderr
+
+
+def test_concurrent_bridge_clients_keep_session_headers_per_request(peer):
+    url, requests = peer
+
+    def invoke(label):
+        replies = read_replies(
+            run_bridge(
+                url,
+                call(1, "search", query=f"{label}-attributed", session_id=label),
+                call(2, "search", query=f"{label}-unattributed"),
+                frame(3, "ping"),
+            )
+        )
+        assert set(replies) == {1, 2, 3}
+        assert replies[3]["result"] == {}
+        assert all("error" not in reply for reply in replies.values())
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(invoke, ("session-A", "session-B")))
+
+    assert len(requests) == 4
+    by_query = {body["query"]: (headers, body) for _, _, headers, body in requests}
+    assert set(by_query) == {
+        "session-A-attributed",
+        "session-A-unattributed",
+        "session-B-attributed",
+        "session-B-unattributed",
+    }
+    for label in ("session-A", "session-B"):
+        for suffix in ("attributed", "unattributed"):
+            headers, body = by_query[f"{label}-{suffix}"]
+            headers = {key.lower(): value for key, value in headers.items()}
+            assert headers.get("x-session-id") == (label if suffix == "attributed" else None)
+            assert "session_id" not in body
+            assert headers["authorization"] == f"Bearer {TOKEN}"
+
+
+def test_invalid_bridge_frames_never_reach_http_and_next_request_survives(peer):
+    url, requests = peer
+    replies = read_replies(
+        run_bridge(
+            url,
+            {"jsonrpc": "2.0", "id": 1, "method": None},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": []},
+            frame(3, "tools/call", name="search", arguments=[]),
+            call(4, "search", query="test", top_k=True),
+            call(5, "shishi_vault"),
+            frame(6, "ping"),
+        )
+    )
+    assert set(replies) == {1, 2, 3, 4, 5, 6}
+    assert replies[1]["error"]["code"] == -32600
+    assert all(replies[index]["error"]["code"] == -32602 for index in (2, 3, 4, 5))
+    assert replies[6]["result"] == {}
+    assert requests == []

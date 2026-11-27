@@ -11,7 +11,9 @@ import { $ } from './dom.js';
 let simulation = null;
 let currentData = { nodes: [], edges: [], clusters: [], stats: {} };
 let selectedNode = null;
+let drawerReturnFocusId = null;
 let zoomBehavior = null;
+let loadVersion = 0;
 
 export function initXuanjing() {
   const refreshBtn = $('#xuanjingRefreshBtn');
@@ -38,6 +40,14 @@ export function initXuanjing() {
   if (closeDrawerBtn) {
     closeDrawerBtn.addEventListener('click', () => closeDrawer());
   }
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && $('#xuanjingView')?.classList.contains('active') &&
+        !document.querySelector('dialog[open]') && !$('#xuanjingDrawer')?.hasAttribute('hidden')) {
+      event.preventDefault();
+      closeDrawer();
+    }
+  });
 }
 
 export function activateXuanjingView() {
@@ -47,6 +57,7 @@ export function activateXuanjingView() {
 }
 
 export function deactivateXuanjing() {
+  loadVersion++;
   if (simulation) {
     simulation.stop();
   }
@@ -55,6 +66,10 @@ export function deactivateXuanjing() {
 export async function loadXuanjingGraph() {
   const container = $('#xuanjingSvgContainer');
   if (!container) return;
+  const version = ++loadVersion;
+  const refreshBtn = $('#xuanjingRefreshBtn');
+  const statusEl = $('#xuanjingStatus');
+  const fallback = { nodes: [], edges: [], clusters: [], stats: {} };
 
   const lane = $('#xuanjingLaneFilter')?.value || '';
   const limit = $('#xuanjingLimitFilter')?.value || '200';
@@ -64,23 +79,75 @@ export async function loadXuanjingGraph() {
   }
 
   try {
-    const statusEl = $('#xuanjingStatus');
-    if (statusEl) statusEl.textContent = '正在观测星图脉络…';
+    container.setAttribute('aria-busy', 'true');
+    if (refreshBtn) refreshBtn.disabled = true;
+    setXuanjingState('loading', '正在读取悬镜星图…');
+    if (statusEl) {
+      statusEl.dataset.state = 'loading';
+      statusEl.textContent = '正在观测星图脉络…';
+    }
 
     const data = await api(url);
-    currentData = data || { nodes: [], edges: [], clusters: [], stats: {} };
+    if (version !== loadVersion) return;
+    currentData = normalizeGraph(data, fallback);
 
     updateHeaderStats(currentData.stats);
     renderXuanjing(currentData);
+    filterNodes($('#xuanjingSearchInput')?.value);
+    const selection = currentData.nodes.find(node => node.id === selectedNode?.id);
+    if (selection) openDrawer(selection, {focus: false});
+    else closeDrawer();
 
     if (statusEl) {
-      statusEl.textContent = `已投射 ${currentData.nodes.length} 恒星节点 · ${currentData.edges.length} 引力因果边`;
+      statusEl.textContent = currentData.nodes.length
+        ? `已投射 ${currentData.nodes.length} 恒星节点 · ${currentData.edges.length} 引力因果边`
+        : '当前分轨暂无记忆节点';
+      statusEl.dataset.state = currentData.nodes.length ? 'ready' : 'empty';
     }
+    setXuanjingState(
+      currentData.nodes.length ? 'ready' : 'empty',
+      currentData.nodes.length ? '' : '当前分轨暂无记忆节点',
+    );
   } catch (err) {
+    if (version !== loadVersion) return;
     console.error('加载悬镜星图失败', err);
-    const statusEl = $('#xuanjingStatus');
-    if (statusEl) statusEl.textContent = `星图投射受阻: ${err.message}`;
+    const message = err instanceof Error ? err.message : String(err);
+    if (statusEl) {
+      statusEl.dataset.state = 'error';
+      statusEl.textContent = `星图投射受阻: ${message}`;
+    }
+    setXuanjingState('error', `星图投射受阻：${message}`);
+  } finally {
+    if (version === loadVersion) {
+      container.removeAttribute('aria-busy');
+      if (refreshBtn) refreshBtn.disabled = false;
+    }
   }
+}
+
+function normalizeGraph(data, fallback) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('悬镜图谱返回格式无效');
+  }
+  if (!Array.isArray(data.nodes) || !Array.isArray(data.edges)) {
+    throw new Error('悬镜图谱返回格式无效');
+  }
+  return {
+    ...fallback,
+    ...data,
+    nodes: data.nodes,
+    edges: data.edges,
+    clusters: Array.isArray(data.clusters) ? data.clusters : [],
+    stats: data.stats && typeof data.stats === 'object' ? data.stats : {},
+  };
+}
+
+function setXuanjingState(state, message) {
+  const stateEl = $('#xuanjingState');
+  if (!stateEl) return;
+  stateEl.dataset.state = state;
+  stateEl.textContent = message || '';
+  stateEl.toggleAttribute('hidden', state === 'ready');
 }
 
 function updateHeaderStats(stats) {
@@ -102,7 +169,7 @@ export function renderXuanjing(data) {
 
   const d3 = window.d3;
   const svg = d3.select(svgEl);
-  svg.selectAll('*').remove();
+  svg.selectAll('defs, .xuanjing-viewport').remove();
 
   const width = svgEl.clientWidth || 960;
   const height = svgEl.clientHeight || 640;
@@ -174,6 +241,11 @@ export function renderXuanjing(data) {
     .data(nodes)
     .join('g')
     .attr('class', 'xuanjing-node-item')
+    .attr('data-node-id', d => d.id)
+    .attr('role', 'button')
+    .attr('tabindex', 0)
+    .attr('aria-label', d => `${nodeLabel(d)}, ${d.lane || '未分轨'}`)
+    .attr('aria-pressed', d => String(d.id === selectedNode?.id))
     .style('cursor', 'pointer')
     .call(d3.drag()
       .on('start', dragstarted)
@@ -219,6 +291,20 @@ export function renderXuanjing(data) {
 
   // 节点交互事件
   nodeGroup.on('click', (event, d) => {
+    event.stopPropagation();
+    openDrawer(d);
+  });
+
+  nodeGroup.on('keydown', (event, d) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === 'Enter') openDrawer(d);
+  });
+
+  nodeGroup.on('keyup', (event, d) => {
+    if (event.key !== ' ') return;
+    event.preventDefault();
     event.stopPropagation();
     openDrawer(d);
   });
@@ -312,13 +398,26 @@ function filterNodes(keyword) {
   });
 }
 
-function openDrawer(node) {
+function nodeLabel(node) {
+  return node.content || node.key || node.id || '未命名节点';
+}
+
+function syncNodeSelection() {
+  const d3 = window.d3;
+  if (!d3) return;
+  d3.selectAll('.xuanjing-node-item')
+    .attr('aria-pressed', d => String(d.id === selectedNode?.id));
+}
+
+function openDrawer(node, {focus = true} = {}) {
+  if (focus) drawerReturnFocusId = node.id;
   selectedNode = node;
   const drawer = $('#xuanjingDrawer');
   if (!drawer) return;
 
   drawer.removeAttribute('hidden');
   drawer.classList.add('open');
+  drawer.setAttribute('aria-hidden', 'false');
 
   $('#xjdId').textContent = node.id || '—';
   $('#xjdContent').textContent = node.content || '（空）';
@@ -334,6 +433,8 @@ function openDrawer(node) {
 
   $('#xjdUseCount').textContent = node.use_count ?? 0;
   $('#xjdImportance').textContent = node.importance != null ? node.importance.toFixed(2) : '0.50';
+  syncNodeSelection();
+  if (focus) $('#xuanjingCloseDrawer')?.focus({preventScroll: true});
 }
 
 function closeDrawer() {
@@ -342,5 +443,11 @@ function closeDrawer() {
   if (drawer) {
     drawer.classList.remove('open');
     drawer.setAttribute('hidden', '');
+    drawer.setAttribute('aria-hidden', 'true');
   }
+  syncNodeSelection();
+  const returnFocus = [...document.querySelectorAll('#xuanjingSvg .xuanjing-node-item')]
+    .find(node => node.dataset.nodeId === drawerReturnFocusId);
+  drawerReturnFocusId = null;
+  returnFocus?.focus({preventScroll: true});
 }

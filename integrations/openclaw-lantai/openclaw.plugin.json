@@ -1,0 +1,29 @@
+{
+  "id": "lantai-memory",
+  "name": "Lantai memory bridge",
+  "description": "Scoped Lantai recall and optional current-user dialogue capture over a local NDJSON process.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["python", "shellHook", "userId", "agentId", "channels", "sessionKeys"],
+    "allOf": [{
+      "if": { "required": ["captureDialogue"], "properties": { "captureDialogue": { "const": true } } },
+      "then": { "properties": { "userId": { "const": "default" } } }
+    }],
+    "properties": {
+      "python": { "type": "string", "minLength": 1 },
+      "shellHook": { "type": "string", "minLength": 1 },
+      "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+      "agentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+      "channels": {
+        "type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true,
+        "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "sessionKeys": {
+        "type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true,
+        "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "captureDialogue": { "type": "boolean", "default": false }
+    }
+  }
+}

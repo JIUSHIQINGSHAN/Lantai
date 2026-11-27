@@ -16,6 +16,7 @@ fail-loud：拒绝执行本周期巩固并 ERROR 留痕——宁巩固停摆，�
 import contextlib
 import math
 from collections import defaultdict
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 
@@ -474,6 +475,7 @@ def consolidate_cluster(
                         "memory_type": master.memory_type,
                         "lane": getattr(master, "lane", "general") or "general",
                         "domain": getattr(master, "domain", "user") or "user",
+                        "federation_id": getattr(master, "federation_id", "") or "",
                         "tenant_id": getattr(master, "tenant_id", "") or "",
                         "user_id": getattr(master, "user_id", "") or "",
                         "session_id": getattr(master, "session_id", "") or "",
@@ -752,7 +754,7 @@ def run_consolidation_cycle(session: Session | None = None, principal=None) -> d
                 error=error,
             )
             report = _refused_report(illegal, error)
-            _LAST_CONSOLIDATION_REPORT = report
+            _LAST_CONSOLIDATION_REPORT = deepcopy(report)
             return report
 
         deadline_msg = _shadow_deadline_exceeded(s) if mode == "shadow" else None
@@ -772,7 +774,7 @@ def run_consolidation_cycle(session: Session | None = None, principal=None) -> d
                 error=deadline_msg,
             )
             report = _refused_report(mode, deadline_msg)
-            _LAST_CONSOLIDATION_REPORT = report
+            _LAST_CONSOLIDATION_REPORT = deepcopy(report)
             return report
 
         clusters = find_consolidation_clusters(s, principal=principal)
@@ -876,7 +878,7 @@ def run_consolidation_cycle(session: Session | None = None, principal=None) -> d
                 # 票 11 增量键：单簇/收尾失败明细（成功期空表）
                 "warnings": warnings,
             }
-            _LAST_CONSOLIDATION_REPORT = report
+            _LAST_CONSOLIDATION_REPORT = deepcopy(report)
 
         # 运行留痕（ADR-0050 决策 9）：验收比例的分母地基；off 期不留痕（零漂移）
         if mode in ("shadow", "enforce"):
@@ -1014,4 +1016,4 @@ def get_consolidation_report() -> dict:
     真正按调用方收窄属于**契约级决定**（收了等于单人部署看不到全局
     治理状况），归 02 号票，不在这条修。
     """
-    return _LAST_CONSOLIDATION_REPORT
+    return deepcopy(_LAST_CONSOLIDATION_REPORT)

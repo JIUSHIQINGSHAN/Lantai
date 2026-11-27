@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from lantai.core.acl import is_system_viewer
 from lantai.core.auth import Principal
@@ -146,10 +146,12 @@ class MuciEngine:
                 select(MemoryItem)
                 .where(
                     MemoryItem.status == "active",
-                    MemoryItem.lifecycle_status.in_(("active", "weakened")),
+                    col(MemoryItem.lifecycle_status).in_(("active", "weakened")),
                 )
                 .order_by(
-                    MemoryItem.importance.desc(), MemoryItem.updated_at.desc(), MemoryItem.id.asc()
+                    col(MemoryItem.importance).desc(),
+                    col(MemoryItem.updated_at).desc(),
+                    col(MemoryItem.id).asc(),
                 )
             )
 

@@ -452,6 +452,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     "memory_type": existing.memory_type,
                     "lane": getattr(existing, "lane", "general") or "general",
                     "domain": getattr(existing, "domain", "user") or "user",
+                    "federation_id": getattr(existing, "federation_id", "") or "",
                     "tenant_id": getattr(existing, "tenant_id", "") or "",
                     "user_id": getattr(existing, "user_id", "") or "",
                     "session_id": getattr(existing, "session_id", "") or "",
@@ -571,6 +572,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     "memory_type": master.memory_type,
                     "lane": getattr(master, "lane", "general") or "general",
                     "domain": getattr(master, "domain", "user") or "user",
+                    "federation_id": getattr(master, "federation_id", "") or "",
                     "tenant_id": getattr(master, "tenant_id", "") or "",
                     "user_id": getattr(master, "user_id", "") or "",
                     "session_id": getattr(master, "session_id", "") or "",
@@ -679,6 +681,8 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     mem_kwargs["user_id"] = src_cand.user_id
                 if src_cand.tenant_id:
                     mem_kwargs["tenant_id"] = src_cand.tenant_id
+                if getattr(src_cand, "federation_id", None):
+                    mem_kwargs["federation_id"] = src_cand.federation_id
                 if getattr(src_cand, "agent_id", None):
                     mem_kwargs["agent_id"] = src_cand.agent_id
                 if getattr(src_cand, "shared_scope", None):
@@ -734,6 +738,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     "lane": getattr(mem, "lane", "general") or "general",
                     "domain": getattr(mem, "domain", "user") or "user",
                     "shared_scope": getattr(mem, "shared_scope", "private") or "private",
+                    "federation_id": getattr(mem, "federation_id", "") or "",
                     "tenant_id": getattr(mem, "tenant_id", "") or "",
                     "user_id": getattr(mem, "user_id", "") or "",
                     "session_id": getattr(mem, "session_id", "") or "",
@@ -787,6 +792,7 @@ def apply_proposal(proposal_id: str, principal=None, *, xiezhi_bypass: bool = Fa
                     "memory_type": existing.memory_type,
                     "lane": getattr(existing, "lane", "general") or "general",
                     "domain": getattr(existing, "domain", "user") or "user",
+                    "federation_id": getattr(existing, "federation_id", "") or "",
                     "tenant_id": getattr(existing, "tenant_id", "") or "",
                     "user_id": getattr(existing, "user_id", "") or "",
                     "session_id": getattr(existing, "session_id", "") or "",
@@ -843,9 +849,17 @@ def rollback(memory_id: str, principal=None) -> dict:
             # 后 `len(ckpts) < 2` 的判定语义不变（排序已定，前两条即所需）。
             .limit(2)
         ).all()
-        if len(ckpts) < 2:
+        if len(ckpts) >= 2:
+            previous_snapshot = ckpts[1].after
+        elif (
+            ckpts
+            and ckpts[0].trigger == "proactive_probe_resolved"
+            and ckpts[0].before.get("version") == ckpts[0].version - 1
+        ):
+            # 首次探颐写入已带 before；没有初始 checkpoint 也可按既有快照还原。
+            previous_snapshot = ckpts[0].before
+        else:
             return {"ok": False, "reason": "no previous version"}
-        prev = ckpts[1]
         mem = s.get(MemoryItem, memory_id)
         if not mem:
             return {"ok": False, "reason": "memory missing"}
@@ -897,7 +911,7 @@ def rollback(memory_id: str, principal=None) -> dict:
         try:
             restored = {
                 k: (parse_iso_utc(v) if isinstance(v, str) and _is_datetime_column(k) else v)
-                for k, v in prev.after.items()
+                for k, v in previous_snapshot.items()
             }
         except ValueError as e:
             logger.warning(

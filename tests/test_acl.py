@@ -9,6 +9,28 @@ from lantai.models.tables import MemoryItem
 from lantai.storage.fts import init_fts, sync_fts
 
 
+def test_agent_binding_resolves_configured_federation_and_lanes(monkeypatch):
+    from lantai.core.acl import verify_agent
+    from lantai.core.settings import settings
+
+    monkeypatch.setattr(settings, "AGENT_LANE_BINDINGS", {"agent-a": ["general"]})
+    monkeypatch.setattr(
+        settings,
+        "AGENT_FEDERATION_BINDINGS",
+        {"tenant-a|user-a|agent-a": "fed-a"},
+    )
+
+    principal = verify_agent(
+        x_agent_id="agent-a",
+        x_tenant_id="tenant-a",
+        x_user_id="user-a",
+        x_federation_id="fed-a",
+    )
+
+    assert principal.federation_id == "fed-a"
+    assert principal.allowed_lanes == ["general"]
+
+
 @pytest.fixture
 def client():
     from unittest.mock import patch

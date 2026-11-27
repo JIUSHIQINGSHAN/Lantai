@@ -337,6 +337,23 @@ class TestMuciFamenZuozhengNone:
         assert (
             eng._check_access(owner_id="bob", tenant_id=None, shared_scope="swarm_shared") is True
         )
+        assert (
+            eng._check_access(
+                owner_id="bob",
+                tenant_id="tenant-a",
+                shared_scope="swarm_shared",
+            )
+            is False
+        )
+        assert (
+            eng._check_access(
+                owner_id="bob",
+                tenant_id=None,
+                federation_id="federation-a",
+                shared_scope="swarm_shared",
+            )
+            is False
+        )
 
         sys_eng = FamenEngine(principal=_principal(SYSTEM_VIEWER))
         assert sys_eng._check_access(owner_id="bob", tenant_id=None) is True

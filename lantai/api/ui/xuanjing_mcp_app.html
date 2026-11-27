@@ -1,0 +1,1014 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>悬镜拓扑观测台</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: var(--color-background-primary, #f4f6f5);
+      --surface: var(--color-background-secondary, #ffffff);
+      --surface-raised: var(--color-background-tertiary, #edf1ef);
+      --ink: var(--color-text-primary, #17221f);
+      --muted: var(--color-text-secondary, #65716d);
+      --line: var(--color-border-primary, #d5ddd9);
+      --accent: var(--color-accent, #13715d);
+      --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+      --warm: #b45d32;
+      --red: #bd4b48;
+      --cyan: #188396;
+      --green: #37784e;
+      --shadow: 0 1px 3px rgb(20 38 32 / 8%);
+      font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: var(--page);
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+    }
+
+    * { box-sizing: border-box; }
+
+    :root[data-theme="dark"] {
+      --page: var(--color-background-primary, #171b19);
+      --surface: var(--color-background-secondary, #222824);
+      --surface-raised: var(--color-background-tertiary, #2b322e);
+      --ink: var(--color-text-primary, #e5ede8);
+      --muted: var(--color-text-secondary, #a4b4aa);
+      --line: var(--color-border-primary, #46534b);
+      --accent: var(--color-accent, #70c8aa);
+    }
+
+    body {
+      margin: 0;
+      min-width: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    button, input, select { font: inherit; color: inherit; }
+
+    button, select, input[type="search"], input[type="text"] {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--surface);
+    }
+
+    button { cursor: pointer; padding: 6px 10px; }
+    button:hover { border-color: var(--accent); background: var(--accent-soft); }
+    button:active { transform: translateY(1px); }
+
+    :where(button, input, select, [tabindex]):focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    main { max-width: 1680px; margin: 0 auto; padding: 14px; }
+
+    .app-header, .header-meta, .section-heading, .timeline-heading,
+    .toolbar, .toolbar-group, .stat-row, .legend, .node-row, .edge-row,
+    .timeline-list { display: flex; align-items: center; }
+
+    .app-header {
+      min-height: 48px;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+
+    h1, h2, p, dl, dd, ol, ul, figure { margin: 0; }
+    h1 { font-size: 19px; font-weight: 650; }
+    h2 { font-size: 13px; font-weight: 650; }
+    .eyebrow { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+    .header-meta { gap: 12px; color: var(--muted); }
+    .readonly-badge {
+      border: 1px solid color-mix(in srgb, var(--green) 45%, var(--line));
+      border-radius: 3px;
+      padding: 3px 7px;
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .toolbar {
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      padding: 10px 0;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .toolbar label, .cutoff-control {
+      display: grid;
+      gap: 3px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .toolbar select, .toolbar input { min-width: 122px; padding: 5px 8px; }
+    .toolbar .theme-input { width: 180px; }
+    #refresh-button { align-self: end; border-color: var(--accent); color: var(--accent); }
+      #load-more-button { align-self: end; }
+
+    .stat-row {
+      gap: 22px;
+      min-height: 53px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .stat { display: grid; grid-template-columns: auto auto; gap: 8px; align-items: baseline; }
+    .stat dt { color: var(--muted); font-size: 11px; }
+    .stat dd { font-size: 15px; font-variant-numeric: tabular-nums; font-weight: 650; }
+    .watermark { margin-left: auto; color: var(--muted); font-size: 11px; }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(155px, 0.7fr) minmax(300px, 2.2fr) minmax(230px, 0.95fr);
+      gap: 12px;
+      padding: 12px 0;
+      min-height: 430px;
+    }
+
+    .pane, .graph-pane, .timeline-pane {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .pane { padding: 10px; }
+    .graph-pane { padding: 10px 12px; }
+    .section-heading { justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .section-heading p { color: var(--muted); font-size: 11px; }
+    #node-search { width: 100%; margin: 8px 0; padding: 5px 8px; }
+
+    .node-list, .selected-edges, .timeline-list {
+      list-style: none;
+      padding: 0;
+    }
+
+    .node-list { max-height: 325px; overflow: auto; }
+    .node-list button {
+      display: block;
+      width: 100%;
+      overflow: hidden;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      background: transparent;
+      padding: 7px 5px;
+      text-align: left;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .node-list button[aria-pressed="true"] {
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 650;
+    }
+
+    #graph-svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      min-height: 210px;
+      aspect-ratio: 2 / 1;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--surface-raised);
+    }
+
+    .graph-wrap {
+      position: relative;
+    }
+
+    .graph-empty {
+      position: absolute;
+      inset: 50% auto auto 50%;
+      width: min(360px, calc(100% - 32px));
+      transform: translate(-50%, -50%);
+      padding: 12px 16px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .edge { stroke: var(--muted); stroke-opacity: 0.48; }
+    .edge.is-incident { stroke-opacity: 0.95; }
+    .node-mark { cursor: pointer; }
+    .node-mark circle { stroke: var(--surface); stroke-width: 2; }
+    .node-mark[aria-pressed="true"] circle { stroke: var(--ink); stroke-width: 3; }
+    .node-mark:focus-visible circle { stroke: var(--accent); stroke-width: 4; }
+    .node-mark text { fill: var(--ink); font-size: 9px; pointer-events: none; }
+
+    .legend { flex-wrap: wrap; gap: 8px 14px; padding-top: 8px; color: var(--muted); font-size: 10px; }
+    .legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+    .legend .fact { background: var(--green); }
+    .legend .preference { background: var(--warm); }
+    .legend .causal { background: var(--cyan); }
+    .legend .support { background: var(--green); }
+    .legend .conflict { background: var(--red); }
+
+    .empty-note { padding: 12px 4px; color: var(--muted); }
+    .detail-title { margin: 4px 0 10px; overflow-wrap: anywhere; font-size: 15px; }
+    .detail-grid { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 5px 8px; }
+    .detail-grid dt { color: var(--muted); }
+    .detail-grid dd { min-width: 0; overflow-wrap: anywhere; }
+    .detail-content {
+      max-height: 126px;
+      margin: 9px 0;
+      overflow: auto;
+      border-left: 2px solid var(--line);
+      padding: 4px 7px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .selected-edges { margin-top: 9px; }
+    .edge-row { justify-content: space-between; gap: 8px; padding: 5px 0; border-top: 1px solid var(--line); }
+    .edge-row button { border: 0; padding: 3px; text-align: left; }
+    .edge-row small { color: var(--muted); white-space: nowrap; }
+
+    .timeline-pane { padding: 10px 12px; }
+    .timeline-heading { justify-content: space-between; gap: 16px; }
+    .cutoff-control { grid-template-columns: auto minmax(100px, 240px) auto; align-items: center; }
+    #time-cutoff { width: 100%; accent-color: var(--accent); }
+    #cutoff-label { min-width: 128px; text-align: right; font-variant-numeric: tabular-nums; }
+    .timeline-list {
+      gap: 7px;
+      margin-top: 9px;
+      overflow-x: auto;
+      scroll-snap-type: x proximity;
+      padding-bottom: 5px;
+    }
+
+    .timeline-list li { flex: 0 0 150px; scroll-snap-align: start; }
+    .timeline-list button {
+      display: grid;
+      width: 100%;
+      min-height: 58px;
+      gap: 3px;
+      border-left: 3px solid var(--cyan);
+      padding: 5px 7px;
+      text-align: left;
+    }
+
+    .timeline-list button[aria-current="true"] { border-left-color: var(--warm); background: var(--accent-soft); }
+    .timeline-date { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+    .timeline-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #app-status { min-height: 20px; padding: 5px 0; color: var(--muted); font-size: 11px; }
+    #app-status[data-state="error"] { color: var(--red); }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    @media (max-width: 980px) {
+      .workspace { grid-template-columns: minmax(145px, 0.75fr) minmax(0, 2fr); }
+      .inspect-pane { grid-column: 1 / -1; }
+      .detail-content { max-height: 90px; }
+    }
+
+    @media (max-width: 620px) {
+      main { padding: 10px; }
+      .app-header { align-items: flex-start; }
+      .header-meta { align-items: flex-end; flex-direction: column; gap: 4px; }
+      .toolbar { align-items: stretch; }
+      .toolbar label { flex: 1 1 130px; }
+      .toolbar .theme-input { width: 100%; }
+      #refresh-button { align-self: end; }
+      .stat-row { flex-wrap: wrap; gap: 5px 15px; padding: 8px 0; }
+      .watermark { flex-basis: 100%; margin-left: 0; }
+      .workspace { grid-template-columns: minmax(0, 1fr); }
+      .node-list { max-height: 130px; }
+      #graph-svg { min-height: 190px; }
+      .timeline-heading { align-items: flex-start; flex-direction: column; gap: 7px; }
+      .cutoff-control { width: 100%; grid-template-columns: auto minmax(80px, 1fr); }
+      #cutoff-label { grid-column: 1 / -1; text-align: left; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main id="app">
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">LANTAI / TOPOLOGY</p>
+        <h1>悬镜拓扑观测台</h1>
+      </div>
+      <div class="header-meta">
+        <span class="readonly-badge">只读沙箱</span>
+        <span id="connection-status" aria-live="polite">等待宿主数据</span>
+      </div>
+    </header>
+
+    <section class="toolbar" aria-label="图谱筛选">
+      <label>分轨
+        <select id="lane-filter">
+          <option value="">全部</option>
+        </select>
+      </label>
+      <label>辨域
+        <input id="domain-filter" type="text" maxlength="120" autocomplete="off" placeholder="全部辨域">
+      </label>
+      <label>主题
+        <input id="theme-filter" class="theme-input" type="search" maxlength="120" autocomplete="off" placeholder="搜索主题">
+      </label>
+      <button id="refresh-button" type="button">刷新图谱</button>
+      <button id="load-more-button" type="button" hidden>加载更多节点</button>
+    </section>
+
+    <section class="stat-row" aria-label="图谱概览">
+      <dl class="stat"><dt>节点</dt><dd id="node-count">—</dd></dl>
+      <dl class="stat"><dt>关系边</dt><dd id="edge-count">—</dd></dl>
+      <dl class="stat"><dt>平均衰减</dt><dd id="decay-average">—</dd></dl>
+      <p class="watermark">快照水位 <time id="watermark">—</time></p>
+    </section>
+
+    <section class="workspace">
+      <aside class="pane node-pane" aria-labelledby="node-list-title">
+        <div class="section-heading">
+          <h2 id="node-list-title">节点</h2>
+          <p id="visible-count">0</p>
+        </div>
+        <label class="sr-only" for="node-search">筛选节点名称</label>
+        <input id="node-search" type="search" maxlength="120" placeholder="筛选节点名称">
+        <ul id="node-list" class="node-list"></ul>
+        <p id="node-list-empty" class="empty-note">等待图谱数据</p>
+      </aside>
+
+      <section class="graph-pane" aria-labelledby="graph-title">
+        <div class="section-heading">
+          <h2 id="graph-title">拓扑关系</h2>
+          <p id="graph-summary">节点与关系将按当前时间切面显示</p>
+        </div>
+        <figure class="graph-wrap">
+          <svg id="graph-svg" viewBox="0 0 840 420" role="img" aria-labelledby="graph-svg-title graph-svg-desc">
+            <title id="graph-svg-title">悬镜记忆拓扑图</title>
+            <desc id="graph-svg-desc">关系边连接记忆节点；可用节点列表或键盘选择节点。</desc>
+          </svg>
+          <p id="graph-empty" class="graph-empty" hidden>暂无记忆节点</p>
+          <figcaption class="sr-only">图谱节点与关系的可访问文本列表位于左侧节点区域。</figcaption>
+        </figure>
+        <div class="legend" aria-label="图例">
+          <span><i class="fact"></i>事实</span>
+          <span><i class="preference"></i>偏好</span>
+          <span><i class="causal"></i>因果边</span>
+          <span><i class="support"></i>支持 / 演化边</span>
+          <span><i class="conflict"></i>矛盾边</span>
+          <span>节点大小对应记忆权重</span>
+        </div>
+      </section>
+
+      <aside class="pane inspect-pane" aria-labelledby="inspect-title">
+        <h2 id="inspect-title">节点详情</h2>
+        <p id="selection-empty" class="empty-note">选择一个节点查看其字段与相邻关系。</p>
+        <div id="selection-details" hidden>
+          <h3 id="selected-node-title" class="detail-title"></h3>
+          <dl class="detail-grid">
+            <dt>记忆编号</dt><dd id="detail-id"></dd>
+            <dt>分轨</dt><dd id="detail-lane"></dd>
+            <dt>辨域</dt><dd id="detail-domain"></dd>
+            <dt>状态</dt><dd id="detail-status"></dd>
+            <dt>衰减 / 权重</dt><dd id="detail-weight"></dd>
+            <dt>事件时间</dt><dd id="detail-event-time"></dd>
+            <dt>有效期</dt><dd id="detail-validity"></dd>
+          </dl>
+          <p id="detail-content" class="detail-content"></p>
+          <h2>相邻关系</h2>
+          <ul id="selected-edges" class="selected-edges"></ul>
+          <p id="edges-empty" class="empty-note">没有相邻关系边</p>
+        </div>
+      </aside>
+    </section>
+
+    <section class="timeline-pane" aria-labelledby="timeline-title">
+      <div class="timeline-heading">
+        <h2 id="timeline-title">时间轴</h2>
+        <label class="cutoff-control" for="time-cutoff">
+          <span>观察截至</span>
+          <input id="time-cutoff" type="range" min="0" max="0" value="0" disabled>
+          <time id="cutoff-label">暂无时间记录</time>
+        </label>
+      </div>
+      <ol id="timeline-list" class="timeline-list" aria-label="记忆事件时间线"></ol>
+      <p id="timeline-empty" class="empty-note">暂无可用事件时间。</p>
+    </section>
+
+    <p id="app-status" role="status" aria-live="polite">等待 MCP 宿主连接。</p>
+  </main>
+
+  <script>
+    (() => {
+      const RESOURCE_TOOL = "get_xuanjing_graph";
+      const PROTOCOL_VERSION = "2026-01-26";
+      const SVG_NS = "http://www.w3.org/2000/svg";
+      const state = {
+        graph: { nodes: [], edges: [], clusters: [], stats: {} },
+        selectedId: null,
+        cutoff: null,
+        initialized: false,
+        serverTools: false,
+        styleKeys: new Set(),
+        requestId: 0,
+        snapshotVersion: 0,
+        loadingMore: false,
+        pending: new Map(),
+      };
+
+      const $ = (selector) => document.querySelector(selector);
+      const element = (name, className, text) => {
+        const item = document.createElement(name);
+        if (className) item.className = className;
+        if (text !== undefined) item.textContent = text;
+        return item;
+      };
+
+      function setStatus(message, kind = "info") {
+        const status = $("#app-status");
+        status.textContent = message;
+        status.dataset.state = kind;
+        $("#connection-status").textContent = kind === "error" ? "读取失败" : message;
+      }
+
+      function requestHost(method, params) {
+        if (window.parent === window) {
+          return Promise.reject(new Error("未连接 MCP 宿主"));
+        }
+        const id = ++state.requestId;
+        return new Promise((resolve, reject) => {
+          const timer = window.setTimeout(() => {
+            state.pending.delete(id);
+            reject(new Error("宿主响应超时"));
+          }, 15000);
+          state.pending.set(id, {
+            resolve: (value) => { window.clearTimeout(timer); resolve(value); },
+            reject: (error) => { window.clearTimeout(timer); reject(error); },
+          });
+          window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+        });
+      }
+
+      function notifyHost(method, params = {}) {
+        if (window.parent !== window) {
+          window.parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
+        }
+      }
+
+      function applyHostContext(context = {}) {
+        if (!context || typeof context !== "object" || Array.isArray(context)) return;
+        if (context.theme === "dark" || context.theme === "light") {
+          document.documentElement.dataset.theme = context.theme;
+          document.documentElement.style.colorScheme = context.theme;
+        }
+        const variables = context.styles?.variables;
+        for (const name of state.styleKeys) document.documentElement.style.removeProperty(name);
+        state.styleKeys.clear();
+        if (variables && typeof variables === "object") {
+          for (const [name, value] of Object.entries(variables)) {
+            if (/^--[a-z0-9-]+$/i.test(name) && typeof value === "string") {
+              document.documentElement.style.setProperty(name, value);
+              state.styleKeys.add(name);
+            }
+          }
+        }
+      }
+
+      function parseToolResult(result) {
+        if (!result || typeof result !== "object" || result.isError) {
+          throw new Error("宿主未返回有效的悬镜图谱数据");
+        }
+        let graph;
+        if (result.structuredContent && typeof result.structuredContent === "object") {
+          graph = result.structuredContent;
+        } else {
+          const text = (result.content || []).find((block) => block.type === "text")?.text;
+          if (typeof text !== "string") throw new Error("工具结果缺少图谱正文");
+          graph = JSON.parse(text);
+        }
+        if (!graph || typeof graph !== "object" || Array.isArray(graph)
+            || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
+          throw new Error("工具结果不符合悬镜图谱结构");
+        }
+        if (graph.nodes.some((node) => !node || typeof node !== "object" || typeof node.id !== "string")
+            || graph.edges.some((edge) => !edge || typeof edge !== "object"
+              || typeof edge.source !== "string" || typeof edge.target !== "string")) {
+          throw new Error("工具结果不符合悬镜图谱结构");
+        }
+        if ((graph.has_more !== undefined && typeof graph.has_more !== "boolean")
+            || (graph.next_cursor !== undefined && graph.next_cursor !== null
+              && typeof graph.next_cursor !== "string")
+            || (graph.has_more === true
+              && (typeof graph.next_cursor !== "string" || graph.next_cursor.length === 0))) {
+          throw new Error("工具结果分页字段不符合悬镜图谱结构");
+        }
+        return graph;
+      }
+
+      function hasNextPage() {
+        return state.graph.has_more === true
+          && typeof state.graph.next_cursor === "string"
+          && state.graph.next_cursor.length > 0;
+      }
+
+      function renderPagination() {
+        const button = $("#load-more-button");
+        button.hidden = !hasNextPage();
+        button.disabled = !state.serverTools || state.loadingMore || $("#refresh-button").disabled;
+        button.textContent = state.loadingMore ? "正在加载下一页…" : "加载更多节点";
+      }
+
+      function receiveToolResult(result, { append = false } = {}) {
+        let graph;
+        try {
+          graph = parseToolResult(result);
+        } catch (error) {
+          setStatus(error.message || "图谱数据读取失败", "error");
+          return false;
+        }
+
+        const nodeMap = new Map(
+          (append ? state.graph.nodes : []).map((node) => [node.id, node]),
+        );
+        for (const node of graph.nodes) nodeMap.set(node.id, node);
+        const nodes = [...nodeMap.values()];
+        const edgeKey = (edge) => edge.id || JSON.stringify([
+          edge.source,
+          edge.target,
+          edge.relation,
+        ]);
+        const edgeMap = new Map(
+          (append ? state.graph.edges : []).map((edge) => [edgeKey(edge), edge]),
+        );
+        for (const edge of graph.edges) edgeMap.set(edgeKey(edge), edge);
+        const edges = [...edgeMap.values()];
+        const known = new Set(nodes.map((node) => node.id));
+        const visibleEdges = edges.filter((edge) => known.has(edge.source) && known.has(edge.target));
+        const stats = graph.stats && typeof graph.stats === "object" ? { ...graph.stats } : {};
+        if (append) {
+          const decayScores = nodes
+            .map((node) => node.decay_score)
+            .filter((score) => typeof score === "number" && Number.isFinite(score));
+          stats.node_count = nodes.length;
+          stats.total_nodes = nodes.length;
+          stats.edge_count = visibleEdges.length;
+          stats.total_edges = visibleEdges.length;
+          stats.avg_decay_score = decayScores.length
+            ? Number((decayScores.reduce((sum, score) => sum + score, 0) / decayScores.length).toFixed(3))
+            : null;
+        }
+        state.graph = {
+          ...graph,
+          stats,
+          nodes,
+          edges: visibleEdges,
+        };
+        if (!known.has(state.selectedId)) state.selectedId = null;
+        updateSnapshotStats();
+        updateTimeline();
+        renderGraph();
+        renderNodeList();
+        renderSelection();
+        renderPagination();
+        setStatus(`已读取 ${state.graph.nodes.length} 个节点、${state.graph.edges.length} 条关系边`);
+        return true;
+      }
+
+      function timestampFor(node) {
+        for (const field of ["event_time", "valid_from", "created_at", "updated_at"]) {
+          const raw = node[field];
+          if (typeof raw === "string") {
+            const timestamp = Date.parse(raw);
+            if (Number.isFinite(timestamp)) return { timestamp, field, raw };
+          }
+        }
+        return null;
+      }
+
+      function selectedNode() {
+        return state.graph.nodes.find((node) => node.id === state.selectedId) || null;
+      }
+
+      function formatDate(value, includeTime = true) {
+        if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return "—";
+        return new Intl.DateTimeFormat(undefined, {
+          dateStyle: "medium",
+          ...(includeTime ? { timeStyle: "short" } : {}),
+          timeZone: "UTC",
+        }).format(new Date(value));
+      }
+
+      function updateSnapshotStats() {
+        const stats = state.graph.stats || {};
+        $("#node-count").textContent = String(stats.total_nodes ?? state.graph.nodes.length);
+        $("#edge-count").textContent = String(stats.total_edges ?? state.graph.edges.length);
+        const average = stats.avg_decay_score;
+        $("#decay-average").textContent = typeof average === "number" ? `${Math.round(average * 100)}%` : "—";
+        $("#watermark").textContent = formatDate(state.graph.watermark || state.graph.generated_at);
+        $("#watermark").dateTime = state.graph.watermark || state.graph.generated_at || "";
+        const laneFilter = $("#lane-filter");
+        const previousLane = laneFilter.value;
+        const laneCounts = stats.lane_counts && typeof stats.lane_counts === "object" ? stats.lane_counts : {};
+        const lanes = new Set(Object.keys(laneCounts));
+        for (const node of state.graph.nodes) if (typeof node.lane === "string" && node.lane) lanes.add(node.lane);
+        laneFilter.replaceChildren(element("option", "", "全部"));
+        laneFilter.options[0].value = "";
+        const labels = { fact: "事实", preference: "偏好", experience: "经验", rule: "规则", procedural: "程序", profile: "画像" };
+        for (const lane of [...lanes].sort()) {
+          const option = element("option", "", labels[lane] || lane);
+          option.value = lane;
+          laneFilter.append(option);
+        }
+        laneFilter.value = lanes.has(previousLane) ? previousLane : "";
+      }
+
+      function currentNodes() {
+        if (state.cutoff === null) return state.graph.nodes;
+        return state.graph.nodes.filter((node) => {
+          const date = timestampFor(node);
+          return !date || date.timestamp <= state.cutoff;
+        });
+      }
+
+      function updateTimeline() {
+        const entries = state.graph.nodes
+          .map((node) => ({ node, date: timestampFor(node) }))
+          .filter((entry) => entry.date)
+          .sort((a, b) => a.date.timestamp - b.date.timestamp || a.node.id.localeCompare(b.node.id));
+        const slider = $("#time-cutoff");
+        const list = $("#timeline-list");
+        list.replaceChildren();
+        $("#timeline-empty").hidden = entries.length > 0;
+        slider.disabled = entries.length < 2;
+        if (!entries.length) {
+          state.cutoff = null;
+          $("#cutoff-label").textContent = "暂无时间记录";
+          slider.min = "0";
+          slider.max = "0";
+          slider.value = "0";
+          $("#visible-count").textContent = "0";
+          return;
+        }
+
+        const min = entries[0].date.timestamp;
+        const max = entries[entries.length - 1].date.timestamp;
+        slider.min = String(min);
+        slider.max = String(max);
+        if (state.cutoff === null || state.cutoff < min || state.cutoff > max) state.cutoff = max;
+        slider.value = String(state.cutoff);
+        $("#cutoff-label").textContent = formatDate(new Date(state.cutoff).toISOString());
+
+        for (const { node, date } of entries) {
+          const item = element("li");
+          const button = element("button");
+          button.type = "button";
+          button.dataset.timelineNode = node.id;
+          button.setAttribute("aria-current", String(node.id === state.selectedId));
+          button.append(
+            element("span", "timeline-date", formatDate(date.raw)),
+            element("span", "timeline-name", node.label || node.key || node.id),
+          );
+          button.addEventListener("click", () => selectNode(node.id));
+          item.append(button);
+          list.append(item);
+        }
+        $("#visible-count").textContent = String(currentNodes().length);
+      }
+
+      function nodePosition(index, count) {
+        if (count === 1) return { x: 420, y: 210 };
+        const angle = index * 2.399963229728653;
+        const radius = 32 + 156 * Math.sqrt((index + 0.5) / count);
+        return {
+          x: 420 + Math.cos(angle) * radius,
+          y: 210 + Math.sin(angle) * radius * 0.68,
+        };
+      }
+
+      function nodeColor(node) {
+        if (node.lane === "fact") return "#37784e";
+        if (node.lane === "preference") return "#b45d32";
+        return "#65716d";
+      }
+
+      function edgeColor(edge) {
+        if (["causes", "triggered_by", "leads_to"].includes(edge.relation)) return "#188396";
+        if (edge.relation === "contradicts") return "#bd4b48";
+        if (["supports", "refines", "supersedes"].includes(edge.relation)) return "#37784e";
+        return "#65716d";
+      }
+
+      function renderGraph() {
+        const svg = $("#graph-svg");
+        const focusedNodeId = svg.contains(document.activeElement)
+          ? document.activeElement.dataset.nodeId
+          : null;
+        svg.querySelectorAll(".rendered").forEach((item) => item.remove());
+        const nodes = currentNodes();
+        const ids = new Set(nodes.map((node) => node.id));
+        const edges = state.graph.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target));
+        const positions = new Map(nodes.map((node, index) => [node.id, nodePosition(index, nodes.length)]));
+
+        for (const edge of edges) {
+          const source = positions.get(edge.source);
+          const target = positions.get(edge.target);
+          const line = document.createElementNS(SVG_NS, "line");
+          line.classList.add("rendered", "edge");
+          if (state.selectedId === edge.source || state.selectedId === edge.target) line.classList.add("is-incident");
+          line.setAttribute("x1", String(source.x));
+          line.setAttribute("y1", String(source.y));
+          line.setAttribute("x2", String(target.x));
+          line.setAttribute("y2", String(target.y));
+          line.setAttribute("stroke", edgeColor(edge));
+          line.setAttribute("stroke-width", String(1 + Math.max(0, Math.min(1, Number(edge.confidence) || 0)) * 2));
+          const title = document.createElementNS(SVG_NS, "title");
+          title.textContent = `${edge.relation || "关联"}: ${edge.source} → ${edge.target}`;
+          line.append(title);
+          svg.append(line);
+        }
+
+        for (const node of nodes) {
+          const position = positions.get(node.id);
+          const group = document.createElementNS(SVG_NS, "g");
+          group.classList.add("rendered", "node-mark");
+          group.dataset.nodeId = node.id;
+          group.setAttribute("role", "button");
+          group.setAttribute("tabindex", "0");
+          group.setAttribute("aria-label", `${node.label || node.id}, ${node.lane || "未分轨"}`);
+          group.setAttribute("aria-pressed", String(node.id === state.selectedId));
+          group.addEventListener("click", () => selectNode(node.id));
+          group.addEventListener("keydown", (event) => {
+            if (event.key === " ") event.preventDefault();
+            if (event.key === "Enter") {
+              event.preventDefault();
+              selectNode(node.id);
+            }
+          });
+          group.addEventListener("keyup", (event) => {
+            if (event.key === " ") {
+              event.preventDefault();
+              selectNode(node.id);
+            }
+          });
+          const weight = Number(node.halo?.radius ?? node.weight ?? 1);
+          const radius = Math.max(5, Math.min(22, 5 + Math.sqrt(Math.max(0, weight)) * 2));
+          const circle = document.createElementNS(SVG_NS, "circle");
+          circle.setAttribute("cx", String(position.x));
+          circle.setAttribute("cy", String(position.y));
+          circle.setAttribute("r", String(radius));
+          circle.setAttribute("fill", nodeColor(node));
+          circle.setAttribute("fill-opacity", String(Math.max(0.25, Math.min(0.9, Number(node.halo?.opacity ?? node.decay_score ?? 0.65)))));
+          const title = document.createElementNS(SVG_NS, "title");
+          title.textContent = node.label || node.key || node.id;
+          group.append(circle, title);
+          if (node.id === state.selectedId || nodes.length <= 28) {
+            const label = document.createElementNS(SVG_NS, "text");
+            label.setAttribute("x", String(position.x + radius + 4));
+            label.setAttribute("y", String(position.y + 3));
+            label.textContent = (node.label || node.key || node.id).slice(0, 18);
+            group.append(label);
+          }
+          svg.append(group);
+        }
+
+        if (focusedNodeId) {
+          [...svg.querySelectorAll(".node-mark")]
+            .find((node) => node.dataset.nodeId === focusedNodeId)?.focus({ preventScroll: true });
+        }
+
+        const selectedCount = nodes.filter((node) => {
+          const query = $("#node-search").value.trim().toLocaleLowerCase();
+          return !query || String(node.label || node.key || node.id).toLocaleLowerCase().includes(query);
+        }).length;
+        const graphEmpty = $("#graph-empty");
+        graphEmpty.hidden = nodes.length > 0;
+        graphEmpty.textContent = state.graph.nodes.length
+          ? "当前切面没有匹配节点"
+          : "暂无记忆节点";
+        $("#graph-summary").textContent = `${nodes.length} 个可见节点 · ${edges.length} 条关系边`;
+        $("#visible-count").textContent = String(selectedCount);
+      }
+
+      function renderNodeList() {
+        const query = $("#node-search").value.trim().toLocaleLowerCase();
+        const list = $("#node-list");
+        const nodes = currentNodes().filter((node) => {
+          const label = String(node.label || node.key || node.id).toLocaleLowerCase();
+          return !query || label.includes(query);
+        });
+        list.replaceChildren();
+        $("#node-list-empty").hidden = nodes.length > 0;
+        if (!nodes.length) $("#node-list-empty").textContent = state.graph.nodes.length ? "当前切面没有匹配节点" : "暂无记忆节点";
+        for (const node of nodes) {
+          const item = element("li");
+          const button = element("button", "", node.label || node.key || node.id);
+          button.type = "button";
+          button.dataset.nodeId = node.id;
+          button.setAttribute("aria-pressed", String(node.id === state.selectedId));
+          button.addEventListener("click", () => selectNode(node.id));
+          item.append(button);
+          list.append(item);
+        }
+      }
+
+      function renderSelection() {
+        const node = selectedNode();
+        $("#selection-empty").hidden = Boolean(node);
+        $("#selection-details").hidden = !node;
+        if (!node) return;
+
+        $("#selected-node-title").textContent = node.label || node.key || node.id;
+        $("#detail-id").textContent = node.id;
+        $("#detail-lane").textContent = node.lane || "未分轨";
+        $("#detail-domain").textContent = node.domain || "未辨域";
+        $("#detail-status").textContent = node.lifecycle_status || "未知";
+        const decay = Number(node.decay_score);
+        const weight = Number(node.weight);
+        $("#detail-weight").textContent = `${Number.isFinite(decay) ? Math.round(decay * 100) : "—"}% / ${Number.isFinite(weight) ? weight.toFixed(1) : "—"}`;
+        $("#detail-event-time").textContent = formatDate(node.event_time);
+        $("#detail-validity").textContent = `${formatDate(node.valid_from, false)} 至 ${formatDate(node.valid_to, false)}`;
+        $("#detail-content").textContent = node.content || "无正文";
+
+        const connected = state.graph.edges.filter((edge) => edge.source === node.id || edge.target === node.id);
+        const list = $("#selected-edges");
+        list.replaceChildren();
+        $("#edges-empty").hidden = connected.length > 0;
+        for (const edge of connected) {
+          const otherId = edge.source === node.id ? edge.target : edge.source;
+          const other = state.graph.nodes.find((item) => item.id === otherId);
+          const item = element("li", "edge-row");
+          const button = element("button", "", `${edge.relation || "关联"} · ${other?.label || otherId}`);
+          button.type = "button";
+          button.dataset.edgeTarget = otherId;
+          button.addEventListener("click", () => selectNode(otherId));
+          item.append(button, element("small", "", `${Math.round((Number(edge.confidence) || 0) * 100)}%`));
+          list.append(item);
+        }
+      }
+
+      function selectNode(nodeId) {
+        const node = state.graph.nodes.find((item) => item.id === nodeId);
+        if (!node) return;
+        state.selectedId = nodeId;
+        const date = timestampFor(node);
+        if (date) state.cutoff = date.timestamp;
+        renderGraph();
+        renderNodeList();
+        updateTimeline();
+        renderSelection();
+      }
+
+      function currentFilters(cursor = null) {
+        const args = { limit: 250 };
+        const lane = $("#lane-filter").value;
+        const domain = $("#domain-filter").value.trim();
+        const theme = $("#theme-filter").value.trim();
+        if (lane) args.lane = lane;
+        if (domain) args.domain = domain;
+        if (theme) args.theme = theme;
+        if (typeof cursor === "string" && cursor) args.cursor = cursor;
+        return args;
+      }
+
+      async function refreshGraph() {
+        if (!state.initialized || !state.serverTools) return;
+        const snapshotVersion = ++state.snapshotVersion;
+        state.loadingMore = false;
+        setStatus("正在通过宿主读取图谱…");
+        $("#refresh-button").disabled = true;
+        renderPagination();
+        try {
+          const result = await requestHost("tools/call", {
+            name: RESOURCE_TOOL,
+            arguments: currentFilters(),
+          });
+          if (snapshotVersion !== state.snapshotVersion) return;
+          receiveToolResult(result);
+        } catch (error) {
+          if (snapshotVersion === state.snapshotVersion) {
+            setStatus(error.message || "图谱读取失败", "error");
+          }
+        } finally {
+          if (snapshotVersion === state.snapshotVersion) {
+            $("#refresh-button").disabled = false;
+            renderPagination();
+          }
+        }
+      }
+
+      async function loadMoreGraph() {
+        if (!state.initialized || !state.serverTools || state.loadingMore || !hasNextPage()) return;
+        const snapshotVersion = state.snapshotVersion;
+        const cursor = state.graph.next_cursor;
+        state.loadingMore = true;
+        renderPagination();
+        setStatus("正在读取下一页节点…");
+        try {
+          const result = await requestHost("tools/call", {
+            name: RESOURCE_TOOL,
+            arguments: currentFilters(cursor),
+          });
+          if (snapshotVersion !== state.snapshotVersion) return;
+          const previousCount = state.graph.nodes.length;
+          if (receiveToolResult(result, { append: true })) {
+            setStatus(`已追加 ${state.graph.nodes.length - previousCount} 个节点`);
+          }
+        } catch (error) {
+          if (snapshotVersion === state.snapshotVersion) {
+            setStatus(error.message || "下一页读取失败", "error");
+          }
+        } finally {
+          if (snapshotVersion === state.snapshotVersion) {
+            state.loadingMore = false;
+            renderPagination();
+          }
+        }
+      }
+
+      function onMessage(event) {
+        if (event.source !== window.parent || !event.data || typeof event.data !== "object") return;
+        const message = event.data;
+        if (message.jsonrpc !== "2.0") return;
+        if (message.id !== undefined && state.pending.has(message.id)) {
+          const pending = state.pending.get(message.id);
+          state.pending.delete(message.id);
+          if (message.error) pending.reject(new Error(message.error.message || "宿主请求失败"));
+          else pending.resolve(message.result);
+          return;
+        }
+        if (message.method === "ui/notifications/host-context-changed") {
+          applyHostContext(message.params?.hostContext || message.params || {});
+        } else if (message.method === "ui/notifications/tool-result") {
+          receiveToolResult(message.params?.result || message.params || {});
+        } else if (message.method === "ui/notifications/tool-cancelled") {
+          setStatus("宿主已取消图谱读取", "error");
+        }
+      }
+
+      async function initialize() {
+        window.addEventListener("message", onMessage);
+        try {
+          const result = await requestHost("ui/initialize", {
+            protocolVersion: PROTOCOL_VERSION,
+            appInfo: { name: "xuanjing-observatory", version: "1.0.0" },
+            appCapabilities: { availableDisplayModes: ["inline"] },
+          });
+          state.initialized = true;
+          state.serverTools = Boolean(result?.hostCapabilities?.serverTools);
+          for (const control of document.querySelectorAll("#refresh-button, #lane-filter, #domain-filter, #theme-filter")) {
+            control.disabled = !state.serverTools;
+          }
+          applyHostContext(result?.hostContext || {});
+          notifyHost("ui/notifications/initialized");
+          renderPagination();
+          setStatus("已连接 MCP 宿主，等待图谱数据");
+        } catch (error) {
+          setStatus(error.message || "MCP 宿主连接失败", "error");
+        }
+      }
+
+      $("#refresh-button").addEventListener("click", refreshGraph);
+      $("#load-more-button").addEventListener("click", loadMoreGraph);
+      $("#lane-filter").addEventListener("change", refreshGraph);
+      $("#domain-filter").addEventListener("change", refreshGraph);
+      $("#theme-filter").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") refreshGraph();
+      });
+      $("#node-search").addEventListener("input", () => {
+        renderGraph();
+        renderNodeList();
+      });
+      $("#time-cutoff").addEventListener("input", (event) => {
+        state.cutoff = Number(event.target.value);
+        $("#cutoff-label").textContent = formatDate(new Date(state.cutoff).toISOString());
+        if (!currentNodes().some((node) => node.id === state.selectedId)) state.selectedId = null;
+        renderGraph();
+        renderNodeList();
+        renderSelection();
+      });
+
+      initialize();
+    })();
+  </script>
+</body>
+</html>

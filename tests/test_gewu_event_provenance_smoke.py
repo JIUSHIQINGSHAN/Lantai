@@ -86,6 +86,8 @@ def test_provenance_by_memory_id(param_env):
 
     assert result["found"] is True
     assert result["target_id"] == "decision_nomock"
+    assert result["paths_truncated"] is False
+    assert result["critical_path"] == ["bug_fts", "outage_mock", "decision_nomock"]
     assert len(result["causal_chain"]) == 2
     assert result["root_cause_id"] == "bug_fts"
     assert "核心函数必须至少有一个不 mock" in result["narrative"]

@@ -1,8 +1,7 @@
 # 兰台记忆 MCP 客户端矩阵（跨客户端接入指南）
 
-> 调研依据：agentmemory 以「一个 memory server 服务 32+ 客户端」验证跨客户端单
-> server 模式成立；上游 aiduMEM 的 MCP 仍是 TODO，兰台已具备先发。本文档给
-> 各客户端的最小接入配置 + 验证清单。
+本文按仓库实际入口描述配置与验收。标准 MCP、宿主生命周期插件、MCP Apps 是三个
+独立能力；握手成功不代表自动注入、对话采集或内嵌面板已在实际客户端生效。
 
 ## 统一前提
 
@@ -21,10 +20,35 @@
   唯一全量入口是显式 `LANTAI_MCP_PROFILE=full`（96 项注册表）。
 - 双形态分工：Shell Hook 做读（上下文注入），MCP 做写/查（默认档 6 工具已覆盖
   search/add/feedback；`raw_add`/`rollback`/`conflicts`/`candidates` 等需 full 档）
+- CLI 只有 `lantai-mcp`、`lantai-mcp-bridge`、`lantai-server` 三个安装入口。
+  仓库没有 `lantai mcp` 或 `lantai hermes` 子命令。下方脚本从仓库根运行；源码入口
+  绑定当前检出，移动仓库后须重新生成。配置、初始化数据目录、启用宿主是独立步骤。
+- 各宿主显式选择同一个或各自独立的 `LANTAI_HOME`，配置非空 `API_KEY`，并先完成
+  [数据库初始化](../README.md)。生成配置不迁移数据、不写凭据、不自动启用插件。
 
 ## 各客户端接入
 
-### Claude Code（已验证命令形态）
+### Claude Code / Codex / DSH（仓库配置生成器）
+
+推荐使用 [三宿主接入包](../integrations/mirasim-lantai/README.md) 的纯预览入口，
+避免 PATH 指向其他 Python 环境：
+
+```powershell
+python integrations/mirasim-lantai/configure.py --host claude-code --home D:/LantaiData
+python integrations/mirasim-lantai/configure.py --host codex --home D:/LantaiData
+python integrations/mirasim-lantai/configure.py --host dsh --home D:/LantaiData
+```
+
+默认仅打印配置；`--output <新目录>` 才导出审阅文件，已有目录拒绝覆盖。可用
+`--python <绝对路径>` 选解释器。Claude Code/Codex 显式加 `--hooks` 才包含
+SessionStart / UserPromptSubmit 命令钩子；Windows 钩子拒绝 `&`、`%`、括号等
+命令解释器特殊字符路径，普通含空格路径可用。生成的 MCP 入口固定六工具核心档。
+
+DSH 输出 `cordis.patch.yml`，连接 [逐调用归因插件](../integrations/dsh-lantai/README.md)，
+默认禁用。不要和另一条同名 `lantai` 连接同时启用。该插件不自动启用
+[核心记忆与对话采集](../integrations/dsh-core-memory/README.md)。
+
+Claude Code 的原生命令形态另可参考：
 ```bash
 claude mcp add lantai -- <venv>\Scripts\python.exe -m lantai.cli.mcp
 claude mcp list          # 确认 lantai 已注册
@@ -44,23 +68,53 @@ claude mcp list          # 确认 lantai 已注册
 }
 ```
 
-### Gemini CLI / Codex CLI / 其他标准 MCP 客户端
-均为标准 MCP stdio 形状，仅配置入口不同（Gemini 用 `gemini config` 的 mcpServers，
-Codex 用 `~/.codex/config.toml` 的 mcp_servers；具体 CLI 旗标见各客户端文档）：
+### Antigravity / Gemini CLI / 其他标准 MCP 客户端
+
+使用客户端提供的 MCP stdio 配置入口，填写以下 command / args / env。
+这是通用配置形状，文件位置和导入方式由客户端自身决定；Codex 的 TOML 配置使用
+上面的生成器。仓库没有 Antigravity 专用 Hook 或自动对话采集适配，不将标准 MCP
+握手回归当成 Antigravity GUI 或 MCP Apps 的实机验收。
 ```json
 {
   "mcpServers": {
     "lantai": {
       "command": "<venv>\\Scripts\\python.exe",
-      "args": ["-m", "lantai.cli.mcp"]
+      "args": ["-m", "lantai.cli.mcp"],
+      "env": { "LANTAI_HOME": "<数据目录>", "LANTAI_MCP_PROFILE": "core" }
     }
   }
 }
 ```
 
 ### Hermes（既有接入）
-经 `scripts/install_hermes_plugin.py` 部署 lantai-hook 插件；MCP 由插件内嵌配置指向
-同一 server。
+
+`scripts/install_hermes_plugin.py` 只部署 `lantai-hook` Python 插件，不创建 MCP 配置。
+MCP 须在 Hermes 实际读取的 `config.yaml` 的 `mcp_servers` 中单独配置到同一 server，
+参见 [安装交接](hermes-install-handoff.md) 与 [插件说明](lantai-hermes-plugin.md)。
+CLI Shell Hook 与该插件择一启用，避免重复注入。可显式设 `LANTAI_PYTHON` 和
+`LANTAI_SHELL_HOOK` 为存在的绝对文件路径；显式空值、相对路径或目录会拒绝注册，
+不会悄悄回落到另一份源码。插件自行启动的子进程固定 `LANTAI_HOST=hermes`。
+
+### OpenClaw（原生生命周期插件）
+
+[OpenClaw 接入包](../integrations/openclaw-lantai/README.md) 单独配置 `python`、
+`shellHook`、属主及智能体/渠道/会话白名单。它通过常驻 NDJSON 子进程处理
+`before_prompt_build` 和 `agent_end`，与 MCP 配置分别管理。对话采集默认关闭；
+仅 `userId=default` 可显式开启。缺少原生运行身份、非用户触发或白名单不符均不执行。
+真实插件入口和子进程已由契约测试覆盖，是否在运行中的客户端加载仍需另验。
+
+## MCP Apps 边界
+
+核心记忆面板与悬镜资源通过支持 MCP Apps 的宿主沙箱展示，不是独立网页服务。
+初始化须由宿主传入工具上下文；后续查询需要 `hostCapabilities.serverTools`，缺少
+该能力时只展示宿主推送的结果，刷新与服务端筛选禁用。主题支持 light/dark 与宿主
+样式变量，接受直接或 `hostContext` 包装的主题通知。资源正文按纯文本展示。
+悬镜工具 `get_xuanjing_graph` 属于 full 档；核心档不会为显示面板而自动扩大权限。
+普通 `/ui#/xuanjing` 控制台通过同源 REST API 加载，与 MCP 沙箱通道独立。
+
+浏览器验收使用真实 Chromium、本地 HTTP 服务和真实工具分派器；错误及搜索嵌套结果
+在宿主消息边界注入合成帧。它证明产品页面与桥接行为，不代表六款客户端都已实机显示
+MCP Apps。测试准备见 [开发测试环境](project/development-environment.md)。
 
 ## 工具清单（full 档节选，全量 96 项以 `tools/list` 实测为准）
 

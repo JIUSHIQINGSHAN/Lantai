@@ -58,10 +58,11 @@ def test_recall_report_rejects_bad_days(param_env):
     assert resp["error"]["code"] == -32602
 
 
-def test_crystal_promote_frame_promotes_eligible_crystal(param_env):
+def test_crystal_promote_frame_promotes_eligible_crystal(param_env, monkeypatch):
     """crystal_promote 帧：合格结晶真晋升——status=promoted + 公共殿堂资产 + leads_to 边。"""
     from sqlmodel import select
 
+    from lantai.core.settings import settings
     from lantai.models.tables import MemoryEdge, MemoryItem, SkillCrystal
 
     session_factory, _ = param_env
@@ -71,15 +72,37 @@ def test_crystal_promote_frame_promotes_eligible_crystal(param_env):
             SkillCrystal(
                 id=crystal_id,
                 user_id="crystal-frame-smoke",
+                tenant_id="tenant-frame-smoke",
+                agent_id="agent-frame-smoke",
+                federation_id="fed-frame-smoke",
                 skill_name="帧驱动晋升冒烟技能",
                 procedure="第一步：校验\n第二步：晋升",
-                success_count=1,
+                success_count=3,
+                replica_agent_ids=["agent-frame-smoke", "agent-peer-frame"],
+                shadow_state="observing",
+                status="observing",
             )
         )
         s.commit()
 
+    monkeypatch.setattr(
+        settings,
+        "AGENT_FEDERATION_BINDINGS",
+        {"tenant-frame-smoke|crystal-frame-smoke|agent-frame-smoke": "fed-frame-smoke"},
+    )
     mod = _load_mcp()
-    resp = _call(mod, "crystal_promote", {"crystal_id": crystal_id, "steps": ["校验", "晋升"]})
+    resp = _call(
+        mod,
+        "crystal_promote",
+        {
+            "crystal_id": crystal_id,
+            "steps": ["改写为未经影子考评的步骤"],
+            "user_id": "crystal-frame-smoke",
+            "tenant_id": "tenant-frame-smoke",
+            "agent_id": "agent-frame-smoke",
+            "federation_id": "fed-frame-smoke",
+        },
+    )
     assert "result" in resp, resp
     payload = json.loads(resp["result"]["content"][0]["text"])
     assert payload.get("ok") is True, payload
@@ -90,5 +113,6 @@ def test_crystal_promote_frame_promotes_eligible_crystal(param_env):
         assert crystal.shared_scope == "swarm_shared"
         shared = s.exec(select(MemoryItem).where(MemoryItem.shared_scope == "swarm_shared")).all()
         assert shared, "公共殿堂 MemoryItem 未落库"
+        assert shared[0].structure["steps"] == ["第一步：校验", "第二步：晋升"]
         edges = s.exec(select(MemoryEdge).where(MemoryEdge.relation == "leads_to")).all()
         assert edges, "leads_to 溯源边未落库"

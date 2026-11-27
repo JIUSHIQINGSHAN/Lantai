@@ -141,6 +141,25 @@ def test_legacy_replay_lands_on_model_parity(snapshot_path, tmp_path):
     )
 
 
+def test_schema_parity_requires_named_skillcrystal_scope_index():
+    """表达式复合索引也必须纳入 parity，不能只检查普通列索引。"""
+    from lantai.models.tables import SkillCrystal
+
+    engine = create_engine("sqlite://")
+    SkillCrystal.__table__.create(engine)
+    conn = engine.raw_connection().driver_connection
+    try:
+        findings = parity.parity_findings(conn)
+        assert "skillcrystal: 缺 uq_skillcrystal_scope_name" not in findings["index_drift"]
+
+        conn.execute('DROP INDEX "uq_skillcrystal_scope_name"')
+        findings = parity.parity_findings(conn)
+        assert "skillcrystal: 缺 uq_skillcrystal_scope_name" in findings["index_drift"]
+    finally:
+        conn.close()
+        engine.dispose()
+
+
 @pytest.mark.parametrize("snapshot_path", SNAPSHOTS, ids=lambda p: p.stem)
 def test_replayed_legacy_db_actually_accepts_model_writes(snapshot_path, tmp_path):
     """不缺列不是纸面结论：老库升级后必须真能按模型写入并读回。"""

@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from lantai.cognition.shiyi import ShiyiEngine
 from lantai.core.acl import Principal
@@ -61,13 +61,16 @@ def remedy_pipeline_service(
     from lantai.retrieval.hybrid import hybrid_search
 
     with db.get_session() as session:
-        results = hybrid_search(
-            query=query,
-            top_k=top_k,
-            domain=domain,
-            session=session,
-            principal=_converge(principal),
-            enable_shiyi=allow_shiyi,
+        results = cast(
+            list[dict[str, Any]],
+            hybrid_search(
+                query=query,
+                top_k=top_k,
+                domain=domain,
+                session=session,
+                principal=_converge(principal),
+                enable_shiyi=allow_shiyi,
+            ),
         )
         is_remedied = any(r.get("is_remedied", False) for r in results)
         return {

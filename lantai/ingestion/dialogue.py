@@ -98,6 +98,7 @@ def ingest_dialogue(
     attribution: dict | Attribution | None = None,
     tenant_id: str | None = None,
     agent_id: str | None = None,
+    federation_id: str | None = None,
     _ingest_event_id: str | None = None,
 ) -> dict:
     """Receive one logical dialogue and keep its event through all later stages.
@@ -120,6 +121,7 @@ def ingest_dialogue(
             attribution=attribution,
             tenant_id=tenant_id,
             agent_id=agent_id,
+            federation_id=federation_id,
             _ingest_event_id=_ingest_event_id,
         )
     except OperationalError as exc:
@@ -141,6 +143,7 @@ def ingest_dialogue(
             attribution=attribution,
             tenant_id=tenant_id,
             agent_id=agent_id,
+            federation_id=federation_id,
             _ingest_event_id=_ingest_event_id,
         )
 
@@ -156,6 +159,7 @@ def _ingest_dialogue_entry(
     attribution: dict | Attribution | None = None,
     tenant_id: str | None = None,
     agent_id: str | None = None,
+    federation_id: str | None = None,
     _ingest_event_id: str | None = None,
 ) -> dict:
     context = resolve_attribution(session_id, attribution)
@@ -179,6 +183,7 @@ def _ingest_dialogue_entry(
             ingest_event_ids=[event_id],
             tenant_id=tenant_id,
             agent_id=agent_id,
+            federation_id=federation_id,
         )
     return {**result, "ingest_event_id": event_id}
 
@@ -194,6 +199,7 @@ def _ingest_dialogue(
     ingest_event_ids: list[str] | None = None,
     tenant_id: str | None = None,
     agent_id: str | None = None,
+    federation_id: str | None = None,
 ) -> dict:
     """对话文本 → 现有提取链。
 
@@ -243,6 +249,7 @@ def _ingest_dialogue(
             ingest_event_ids=ingest_event_ids,
             tenant_id=tenant_id,
             agent_id=agent_id,
+            federation_id=federation_id,
         )
         return _secret_guard_route(result, secret_hits)
 
@@ -261,6 +268,7 @@ def _ingest_dialogue(
             ingest_event_ids=ingest_event_ids,
             tenant_id=tenant_id,
             agent_id=agent_id,
+            federation_id=federation_id,
         )
 
     # 3) LLM 提取（extract_candidate 自带降级 fallback）→ 走现有 gate 分层
@@ -279,6 +287,7 @@ def _ingest_dialogue(
         ingest_event_ids=ingest_event_ids,
         tenant_id=tenant_id,
         agent_id=agent_id,
+        federation_id=federation_id,
     )
     # 密钥三态路由单一真源（X-06，票 17-4）：调用方不复制 mode 判据——
     # off 由 detect_secret_shapes 内部处理（恒空），shadow/enforce 由
@@ -329,6 +338,7 @@ def _create_candidate(
     ingest_event_ids: list[str] | None = None,
     tenant_id: str | None = None,
     agent_id: str | None = None,
+    federation_id: str | None = None,
 ) -> dict:
     """建 rawdocument（content_hash 去重复用）→ memorycandidate。
 
@@ -393,6 +403,7 @@ def _create_candidate(
             id=new_id("cand"),
             user_id=user_id or "default",
             tenant_id=tenant_id,
+            federation_id=federation_id,
             agent_id=agent_id,
             session_id=(session_id or "").strip() or None,
             document_id=doc.id,

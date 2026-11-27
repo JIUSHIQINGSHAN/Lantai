@@ -20,7 +20,7 @@ import jieba
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
-from lantai.core.acl import is_system_viewer, viewer_of
+from lantai.core.acl import federation_visible, is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import Evidence, MemoryEdge, MemoryItem
@@ -97,13 +97,14 @@ class ZuozhengEngine:
         *,
         owner_id: str | None,
         tenant_id: str | None,
+        federation_id: str | None = None,
         shared_scope: str = "private",
     ) -> bool:
         """行级安全隔离校验（宁 miss 不脏写）。"""
         if getattr(self.principal, "is_admin", False) or is_system_viewer(self.principal):
             return True
-        if shared_scope == "swarm_shared":
-            return True
+        if not federation_visible(self.principal, federation_id):
+            return False
 
         # 票 57：无身份收敛 "default"（同 zhaji 口径），不再全放
         if self.principal is None:
@@ -114,6 +115,9 @@ class ZuozhengEngine:
 
         if tenant_id and current_tenant and tenant_id != current_tenant:
             return False
+
+        if shared_scope == "swarm_shared":
+            return not tenant_id or tenant_id == current_tenant
 
         return not (owner_id is not None and owner_id != viewer)
 
@@ -145,6 +149,7 @@ class ZuozhengEngine:
         if not self._check_access(
             owner_id=target.user_id,
             tenant_id=target.tenant_id,
+            federation_id=getattr(target, "federation_id", None),
             shared_scope=getattr(target, "shared_scope", "private"),
         ):
             return ProofChain(target_memory_id=None, target_content="").to_dict()
@@ -209,6 +214,7 @@ class ZuozhengEngine:
                     if not self._check_access(
                         owner_id=src_mem.user_id,
                         tenant_id=src_mem.tenant_id,
+                        federation_id=getattr(src_mem, "federation_id", None),
                         shared_scope=getattr(src_mem, "shared_scope", "private"),
                     ):
                         continue

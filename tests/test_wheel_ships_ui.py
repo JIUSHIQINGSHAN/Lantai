@@ -47,3 +47,10 @@ def test_built_wheel_contains_ui_static_files(tmp_path):
     missing = [f for f in source_files if f"lantai/api/ui/{f}" not in names]
     assert not missing, f"wheel 漏打 UI 文件:{missing}"
     assert len(shipped) == len(source_files)
+
+    app_assets = {
+        "lantai/mcp_app/ui/index.html",
+        "lantai/mcp_app/ui/styles.css",
+        "lantai/mcp_app/ui/app.js",
+    }
+    assert app_assets <= names, f"wheel 漏打 MCP App 文件:{sorted(app_assets - names)}"

@@ -26,6 +26,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -46,8 +47,11 @@ def resolve_hook_paths() -> tuple[str, str]:
     4. sys.executable 回退
     """
     hook_path: Path | None = None
-    if os.environ.get("LANTAI_SHELL_HOOK") and Path(os.environ["LANTAI_SHELL_HOOK"]).is_file():
-        hook_path = Path(os.environ["LANTAI_SHELL_HOOK"]).resolve()
+    if "LANTAI_SHELL_HOOK" in os.environ:
+        explicit = Path(os.environ["LANTAI_SHELL_HOOK"])
+        if not explicit.is_absolute() or not explicit.is_file():
+            return "", ""
+        hook_path = explicit.resolve()
 
     if not hook_path:
         # 当前文件在 hermes-plugin/lantai-hook/__init__.py，上两层即为仓库根目录
@@ -71,8 +75,11 @@ def resolve_hook_paths() -> tuple[str, str]:
                 break
 
     py_path: Path | None = None
-    if os.environ.get("LANTAI_PYTHON") and Path(os.environ["LANTAI_PYTHON"]).is_file():
-        py_path = Path(os.environ["LANTAI_PYTHON"]).resolve()
+    if "LANTAI_PYTHON" in os.environ:
+        explicit = Path(os.environ["LANTAI_PYTHON"])
+        if not explicit.is_absolute() or not explicit.is_file():
+            return "", ""
+        py_path = explicit.resolve()
 
     if not py_path and hook_path:
         repo_root = hook_path.parent.parent
@@ -91,6 +98,11 @@ def resolve_hook_paths() -> tuple[str, str]:
 
 
 _VENV_PY, _SHELL_HOOK = resolve_hook_paths()
+
+
+def validate_config() -> bool:
+    """Only launch a local, existing interpreter and hook; never guess past bad overrides."""
+    return all(p and Path(p).is_absolute() and Path(p).is_file() for p in (_VENV_PY, _SHELL_HOOK))
 
 
 # ── 插件墙必须严格长于服务端墙（巡检 2026-11-08 1200）────────────────────
@@ -147,7 +159,7 @@ def _server_wall(name: str, default: float, hook_path: str | None = None) -> flo
         value = float(raw)
     except (TypeError, ValueError):
         return default
-    return value if value > 0 else default
+    return value if math.isfinite(value) and value > 0 else default
 
 
 def _plugin_walls(hook_path: str | None = None) -> tuple[float, float]:
@@ -245,9 +257,14 @@ def _ensure_proc() -> subprocess.Popen | None:
     with _lock:
         if _proc is not None and _proc.poll() is None:
             return _proc
+        if not validate_config():
+            logger.warning("lantai-hook: 配置无效，需指定有效的本地 Python 和 shell hook 路径")
+            return None
         env = dict(os.environ)
         env.pop("PYTHONPATH", None)
         env.pop("PYTHONHOME", None)
+        env["LANTAI_HOST"] = "hermes"
+        env["PYTHONIOENCODING"] = "utf-8"
         try:
             _proc = subprocess.Popen(
                 [_VENV_PY, _SHELL_HOOK, "--serve"],
@@ -294,6 +311,23 @@ def _reap_after_kill(proc: subprocess.Popen) -> None:
         logger.warning(
             "lantai-hook: kill 后 %.1fs 子进程仍未退出 (pid=%s)", _REAP_TIMEOUT, proc.pid
         )
+    except OSError:
+        pass
+
+
+def _discard_proc(proc: subprocess.Popen) -> None:
+    """解除失效连接并结束旧子进程，避免下一次调用留下孤儿进程。"""
+    global _proc, _proc_ready
+    with _lock:
+        if _proc is proc:
+            _proc = None
+            _proc_ready = False
+    try:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=_REAP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        logger.warning("lantai-hook: 子进程回收超时 (pid=%s)", proc.pid)
     except OSError:
         pass
 
@@ -368,9 +402,11 @@ def _wait_ready(timeout: float = 15.0) -> bool:
                 logger.info("lantai-hook: 子进程就绪 (pid=%s)", proc.pid)
                 return True
             except json.JSONDecodeError:
-                __import__("time").sleep(0.5)
+                _discard_proc(proc)
+                return False
         return False
     except (OSError, AssertionError):
+        _discard_proc(proc)
         return False
 
 
@@ -399,6 +435,8 @@ def _call_hook(query: str, session_id: str = "") -> dict | None:
         if not out:
             return None
         data = json.loads(out)
+        if not isinstance(data, dict):
+            raise ValueError("serve response must be a JSON object")
         # 放行条件 = context 或 event_id（v0.68 票 74）：零命中 + 无常驻画像的
         # 轮次，serve 响应是 {"event_id": ...}（无 context）——票 01 起服务端
         # 零命中分支带出 event_id 供否决链用，这里丢了它 veto 帧就构造不出来。
@@ -408,10 +446,7 @@ def _call_hook(query: str, session_id: str = "") -> dict | None:
         return None
     except (json.JSONDecodeError, OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: call failed: %r", exc)
-        # 子进程可能已死，标记让下次自动重启
-        global _proc, _proc_ready
-        _proc = None
-        _proc_ready = False
+        _discard_proc(proc)
         return None
 
 
@@ -438,9 +473,7 @@ def _call_dialogue(text: str, session_id: str = "", turn: int | None = None) -> 
             _request_line(proc, line, _DIALOGUE_TIMEOUT)
     except (OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: dialogue call failed: %r", exc)
-        global _proc, _proc_ready
-        _proc = None
-        _proc_ready = False
+        _discard_proc(proc)
 
 
 def _call_backfill(event_id: str, used_ids: list[str]) -> None:
@@ -466,9 +499,7 @@ def _call_backfill(event_id: str, used_ids: list[str]) -> None:
             _request_line(proc, line, _REQUEST_TIMEOUT)
     except (OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: backfill call failed: %r", exc)
-        global _proc, _proc_ready
-        _proc = None
-        _proc_ready = False
+        _discard_proc(proc)
 
 
 def _call_veto(event_id: str) -> None:
@@ -491,9 +522,7 @@ def _call_veto(event_id: str) -> None:
             _request_line(proc, line, _REQUEST_TIMEOUT)
     except (OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: veto call failed: %r", exc)
-        global _proc, _proc_ready
-        _proc = None
-        _proc_ready = False
+        _discard_proc(proc)
 
 
 def _call_checkpoint() -> str | None:
@@ -511,13 +540,13 @@ def _call_checkpoint() -> str | None:
         if not out:
             return None
         data = json.loads(out)
-        ctx = data.get("context", "") if isinstance(data, dict) else ""
+        if not isinstance(data, dict):
+            raise ValueError("serve response must be a JSON object")
+        ctx = data.get("context", "")
         return str(ctx) if ctx else None
     except (json.JSONDecodeError, OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: checkpoint call failed: %r", exc)
-        global _proc, _proc_ready
-        _proc = None
-        _proc_ready = False
+        _discard_proc(proc)
         return None
 
 
@@ -540,9 +569,7 @@ def _call_checkpoint_write(session_id: str, blocks: dict) -> None:
             _request_line(proc, line, _REQUEST_TIMEOUT)
     except (OSError, ValueError, AssertionError) as exc:
         logger.warning("lantai-hook: checkpoint write failed: %r", exc)
-        global _proc, _proc_ready
-        _proc = None
-        _proc_ready = False
+        _discard_proc(proc)
 
 
 def build_session_blocks(messages: list[str]) -> dict:
@@ -654,10 +681,32 @@ def _flush_session(session_id: str) -> None:
             _call_backfill(str(event_id), list(used_ids))
 
 
+def _valid_session_id(value) -> bool:
+    return (
+        isinstance(value, str)
+        and value == value.strip()
+        and len(value) <= 128
+        and not any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in value)
+    )
+
+
 def _on_pre_llm_call(**kwargs) -> dict | None:
     """pre_llm_call 回调：底本首轮注入 + 检索注入 + 会话缓冲 + 回执延后挂载。"""
     query = kwargs.get("user_message") or ""
-    session_id = kwargs.get("session_id") or ""
+    session_id = kwargs.get("session_id", "")
+    if session_id is None:
+        session_id = ""
+    if not _valid_session_id(session_id):
+        return None
+    if isinstance(query, list):
+        query = "\n".join(
+            part["text"]
+            for part in query
+            if isinstance(part, dict)
+            and part.get("type") == "text"
+            and isinstance(part.get("text"), str)
+            and part["text"].strip()
+        )
     if not isinstance(query, str):
         return None
     q = query.strip()
@@ -728,7 +777,7 @@ def _mark_checkpoint_injected(session_id: str) -> None:
 def _on_session_end(**kwargs) -> None:
     """on_session_end 回调：落底本五段块 + flush 会话缓冲 → 对话写通道。"""
     session_id = kwargs.get("session_id") or ""
-    if not session_id:
+    if not _valid_session_id(session_id) or not session_id:
         return
     if _is_readonly_turn(kwargs):
         # 非主会话只读：不写底本五段块、不 flush 对话写通道（pre_llm_call 也没缓冲）。
@@ -762,6 +811,11 @@ def _warmup() -> None:
 
 
 def register(ctx) -> None:
+    if not validate_config():
+        logger.warning(
+            "lantai-hook: 配置无效，插件未注册；请检查 LANTAI_PYTHON / LANTAI_SHELL_HOOK"
+        )
+        return
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
     ctx.register_hook("on_session_end", _on_session_end)
     threading.Thread(target=_warmup, daemon=True, name="lantai-hook-warmup").start()

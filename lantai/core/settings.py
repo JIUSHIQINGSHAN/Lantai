@@ -2,6 +2,7 @@ import logging
 import os
 import warnings
 from pathlib import Path
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # 数据根目录——为空时通过 __file__ 自解析仓库根
+    # 数据根目录——优先显式配置 / 旧变量，其次探测已有用户库，最后回退源码根
     LANTAI_HOME: str = ""
     # 兼容旧配置：REMEMBRANCE_HOME 仍在 .env/环境变量时自动沿用（LANTAI_HOME 优先）
     REMEMBRANCE_HOME: str = ""
@@ -157,6 +158,10 @@ class Settings(BaseSettings):
     CONFLICT_SALIENCE_DEMOTE_STEP: float = 0.2  # 每次降权幅度（下限 0，Checkpoint 可回滚）
     # DD-03：冲突检测向量召回候选数（替代硬编码 [:10] 插入序抽查）
     CONFLICT_CHECK_TOP_K: int = 10
+    # 探颐并陈（Surfacing Disagreement / ADR-0037）：认知上下文是否并陈未决冲突与上限
+    COGNITION_CONFLICTS_SURFACING_ENABLED: bool = True
+    COGNITION_CONFLICTS_MAX_IN_CONTEXT: int = 3
+
     # 新颖度判定参数（ADR-0002 零硬编码）
     GATE_NOVELTY_THRESHOLD: float = 0.15  # 语义高度重叠阈值
     GATE_NOVELTY_SAMPLE_SIZE: int = 50  # 新颖度计算最大样本数
@@ -380,6 +385,8 @@ class Settings(BaseSettings):
 
     # lane 级 ACL（借鉴 TencentDB Memory Hub Fixed Binding 窄版）：agent_id → lane 白名单；空 = 不启用
     AGENT_LANE_BINDINGS: dict[str, list[str]] = {}
+    # 同袍联邦归属由部署端绑定，不采信调用者自报；键为 tenant|user|agent。
+    AGENT_FEDERATION_BINDINGS: dict[str, str] = {}
 
     # 冷启动导入（借鉴腾讯 L0 会话记录 + v2.0.1 时间戳修正）：历史会话 JSONL 批量喂摄取链
     IMPORT_MAX_LINES: int = 5000  # 单次导入最大行数（防误喂超大文件）
@@ -478,7 +485,7 @@ class Settings(BaseSettings):
 
     # API 端点 allowlist（审计 M7）：LLM/reranker 客户端只允许访问这些 host
     ALLOWED_API_HOSTS: list = ["api.openai.com", "api.siliconflow.cn"]
-    # reranker 独立最小权限密钥；为空时回退 OPENAI_API_KEY（并记录警告）
+    # 精排独立密钥；为空时仅在两端点 hostname 相同才回退 OPENAI_API_KEY，否则跳过精排
     RERANKER_API_KEY: str = ""
 
     # 参数建议系统（论文驱动优化·辅助模式）——自身不可被论文建议修改
@@ -585,7 +592,7 @@ class Settings(BaseSettings):
         return Path(self.LANTAI_HOME) if self.LANTAI_HOME else _REPO_ROOT
 
     def model_post_init(self, __context):
-        """DATABASE_URL / CHROMADB_PATH 未显式设置时从 LANTAI_HOME 推导（兼容旧 REMEMBRANCE_HOME）。"""
+        """目录优先级：显式新变量、旧变量、已有用户库、源码根；显式存储路径不覆盖。"""
         if not self.LANTAI_HOME and self.REMEMBRANCE_HOME:
             self.LANTAI_HOME = self.REMEMBRANCE_HOME
         if not self.LANTAI_HOME:
@@ -610,9 +617,22 @@ class Settings(BaseSettings):
         """轻量校验——只 warn 不 crash。"""
         if not self.OPENAI_API_KEY:
             warnings.warn("OPENAI_API_KEY not set — LLM features will fail", stacklevel=2)
-        if self.RERANKER_ENABLED and not self.OPENAI_API_KEY:
+        reranker_key = self.RERANKER_API_KEY
+        if self.RERANKER_ENABLED and not reranker_key:
+            # 与 rerank 的凭据选择一致；这里只诊断，不连接服务或改变配置。
+            # 错误 URL 也保持「只告警、不抛异常」；出站合法性仍由客户端校验。
+            try:
+                reranker_host = urlparse(self.RERANKER_BASE_URL).hostname
+                llm_host = urlparse(self.OPENAI_BASE_URL).hostname
+                if reranker_host and reranker_host == llm_host:
+                    reranker_key = self.OPENAI_API_KEY
+            except ValueError:
+                pass
+        if self.RERANKER_ENABLED and not reranker_key:
             warnings.warn(
-                "Reranker enabled but no API key — will fall back to no rerank", stacklevel=2
+                "Reranker enabled but no usable API key — set RERANKER_API_KEY "
+                "or use the same host as OPENAI_BASE_URL; will fall back to no rerank",
+                stacklevel=2,
             )
         if not self.API_KEY:
             logger.warning("API_KEY 为空：API 将以无鉴权模式运行（仅建议本机开发）")

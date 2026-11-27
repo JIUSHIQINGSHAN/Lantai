@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>兰台记忆</title>
+    <!-- LANTAI_STYLES -->
+  </head>
+  <body>
+    <main id="app">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">LANTAI MEMORY</p>
+          <h1>兰台记忆</h1>
+        </div>
+        <span id="connectionState" class="connection-state" aria-label="宿主连接状态"></span>
+      </header>
+      <nav id="panelTabs" class="tab-list" role="tablist" aria-label="记忆面板">
+        <button id="tab-overview" type="button" role="tab" aria-selected="true" aria-controls="overviewPanel" data-tab="overview">总览</button>
+        <button id="tab-search" type="button" role="tab" aria-selected="false" aria-controls="searchPanel" data-tab="search" tabindex="-1">语义检索</button>
+        <button id="tab-crystals" type="button" role="tab" aria-selected="false" aria-controls="crystalsPanel" data-tab="crystals" tabindex="-1" hidden>结晶裁决</button>
+      </nav>
+      <p id="status" role="status" aria-live="polite">正在连接宿主…</p>
+      <section id="overviewPanel" class="view-panel" role="tabpanel" aria-labelledby="tab-overview" data-view="overview">
+        <section class="data-section" aria-labelledby="coreHeading">
+          <header class="section-heading">
+            <h2 id="coreHeading">核心记忆</h2>
+            <button type="button" class="quiet-button" data-refresh="overview" disabled>刷新</button>
+          </header>
+          <div id="coreBlocks" class="record-list" aria-live="polite"></div>
+        </section>
+        <section class="data-section" aria-labelledby="recentHeading">
+          <header class="section-heading">
+            <h2 id="recentHeading">最近记忆</h2>
+            <button type="button" class="quiet-button" data-refresh="recent" disabled>刷新</button>
+          </header>
+          <div id="recentMemories" class="record-list" aria-live="polite"></div>
+        </section>
+      </section>
+      <section id="searchPanel" class="view-panel" role="tabpanel" aria-labelledby="tab-search" data-view="search" hidden>
+        <form id="searchForm" class="search-form">
+          <label for="searchQuery">检索内容</label>
+          <div class="search-row">
+            <input id="searchQuery" name="query" type="search" maxlength="8000" autocomplete="off" required>
+            <button type="button" id="searchSubmit" disabled>检索</button>
+          </div>
+        </form>
+        <div id="searchResults" class="record-list" aria-live="polite"></div>
+      </section>
+      <section id="crystalsPanel" class="view-panel" role="tabpanel" aria-labelledby="tab-crystals" data-view="crystals" hidden>
+        <header class="section-heading">
+          <div>
+            <h2>待审结晶</h2>
+            <p class="muted">批准后生成技能；拒绝后归档候选。</p>
+          </div>
+          <button type="button" class="quiet-button" id="refreshCrystals" disabled>刷新</button>
+        </header>
+        <div id="crystalCandidates" class="record-list" aria-live="polite"></div>
+      </section>
+    </main>
+    <dialog id="decisionDialog" aria-labelledby="decisionTitle" aria-describedby="decisionSummary">
+      <form id="decisionForm">
+        <header class="dialog-heading">
+          <h2 id="decisionTitle">裁决结晶候选</h2>
+          <button type="button" class="quiet-button" data-cancel-decision aria-label="取消并关闭">关闭</button>
+        </header>
+        <p id="decisionSummary"></p>
+        <label id="stepsLabel" for="decisionSteps" hidden>技能步骤，每行一步</label>
+        <textarea id="decisionSteps" rows="5" maxlength="4000" hidden></textarea>
+        <label id="reasonLabel" for="decisionReason" hidden>拒绝理由</label>
+        <textarea id="decisionReason" rows="3" maxlength="1000" hidden></textarea>
+        <footer class="dialog-actions">
+          <button type="button" class="quiet-button" data-cancel-decision>取消</button>
+          <button type="button" id="decisionConfirm">确认</button>
+        </footer>
+      </form>
+    </dialog>
+    <!-- LANTAI_SCRIPT -->
+  </body>
+</html>

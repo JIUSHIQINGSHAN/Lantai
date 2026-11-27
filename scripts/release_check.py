@@ -439,13 +439,23 @@ try:
     _apply_migrations(_up_conn)
     idempotent = _before_second == _up_ix_names()
     index_drift = []
-    _insp_up = inspect(_up_engine)  # 必须 inspect upgrade 库本体——复用全新库的
-    # insp 会把索引对账看回全新库，漂移将再次不可见（票 25）
-    up_tables = set(_insp_up.get_table_names())
+    # 必须直接查升级库的 SQLite catalog；Inspector 不返回表达式索引，
+    # 而同袍结晶作用域的复合唯一索引依赖表达式归一化 NULL。
+    up_tables = {
+        row[0]
+        for row in _up_conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
     for _tname, _table in meta.items():
         if _tname not in up_tables:
             continue
-        _got = {r["name"] for r in _insp_up.get_indexes(_tname)}
+        _got = {
+            row[0]
+            for row in _up_conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?", (_tname,)
+            ).fetchall()
+        }
         for _nm in sorted({ix.name for ix in _table.indexes} - _got):
             index_drift.append(f"{_tname}: 缺 {_nm}")
 finally:

@@ -4,8 +4,10 @@
 测试不依赖 Hermes 进程——register(ctx) 用假 ctx；serve 子进程交互全部 mock。
 """
 
+import datetime
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -308,6 +310,74 @@ class TestInstallScriptBackup:
             "name: lantai-hook\nversion: 1.0.0\n", encoding="utf-8"
         )
         assert not inst.validate_no_duplicate(plugins)
+
+    def test_same_day_backup_collision_preserves_previous_recovery_point(self, tmp_path):
+        inst = self._load_script()
+        target = tmp_path / "plugins" / "lantai-hook"
+        target.mkdir(parents=True)
+        (target / "plugin.yaml").write_text("name: lantai-hook\nversion: 2.0\n", encoding="utf-8")
+        backups = tmp_path / "plugins-backup"
+        backups.mkdir()
+        first = backups / f"lantai-hook-{datetime.datetime.now():%Y%m%d}"
+        first.mkdir()
+        (first / "plugin.yaml.disabled").write_text("older recovery point", encoding="utf-8")
+
+        created = inst.backup_existing(target, backups)
+
+        assert created is not None and created != first
+        assert (first / "plugin.yaml.disabled").read_text(
+            encoding="utf-8"
+        ) == "older recovery point"
+        assert (created / "plugin.yaml.disabled").read_text(encoding="utf-8") == (
+            "name: lantai-hook\nversion: 2.0\n"
+        )
+        assert (target / "plugin.yaml").is_file()
+
+    def test_failed_plugin_swap_restores_previous_active_plugin(self, monkeypatch, tmp_path):
+        inst = self._load_script()
+        plugins = tmp_path / "plugins"
+        target = plugins / "lantai-hook"
+        target.mkdir(parents=True)
+        (target / "plugin.yaml").write_text("name: lantai-hook\nversion: 1.0\n", encoding="utf-8")
+        (target / "__init__.py").write_text("old plugin", encoding="utf-8")
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "plugin.yaml").write_text("name: lantai-hook\nversion: 2.0\n", encoding="utf-8")
+        (source / "__init__.py").write_text("new plugin", encoding="utf-8")
+        real_rename = Path.rename
+
+        def fail_staged_install(path, destination):
+            if path.name == "lantai-hook" and path.parent.name.startswith(".lantai-hook-stage-"):
+                raise OSError("simulated activation failure")
+            return real_rename(path, destination)
+
+        monkeypatch.setattr(Path, "rename", fail_staged_install)
+        with pytest.raises(OSError, match="simulated activation failure"):
+            inst.deploy(source, plugins, tmp_path / "plugins-backup")
+
+        assert (target / "plugin.yaml").read_text(encoding="utf-8") == (
+            "name: lantai-hook\nversion: 1.0\n"
+        )
+        assert (target / "__init__.py").read_text(encoding="utf-8") == "old plugin"
+
+    def test_duplicate_plugin_preflight_does_not_modify_live_plugin(self, monkeypatch, tmp_path):
+        inst = self._load_script()
+        home = tmp_path / "hermes"
+        plugins = home / "plugins"
+        active = plugins / "lantai-hook"
+        duplicate = plugins / "legacy-copy"
+        active.mkdir(parents=True)
+        duplicate.mkdir()
+        (active / "plugin.yaml").write_text("name: lantai-hook\nversion: 1.0\n", encoding="utf-8")
+        (active / "__init__.py").write_text("active old plugin", encoding="utf-8")
+        (duplicate / "plugin.yaml").write_text(
+            "name: lantai-hook\nversion: 0.9\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(sys, "argv", ["install_hermes_plugin.py", "--hermes-home", str(home)])
+
+        assert inst.main() == 1
+        assert (active / "__init__.py").read_text(encoding="utf-8") == "active old plugin"
+        assert not (home / "plugins-backup").exists()
 
 
 class TestInjectionSessionId:

@@ -11,6 +11,7 @@ const { once } = require('node:events');
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const { test } = require('node:test');
+const { installedDshManifest } = require('./installed-manifest.cjs');
 
 const WORKSPACE = path.resolve(__dirname, '../../..');
 const PLUGIN_FILE = path.resolve(__dirname, '../index.js');
@@ -103,7 +104,7 @@ async function startFixture() {
 test('installed DSH global switch and real model-request boundary', { timeout: 60000 }, async t => {
   assert.ok(process.versions.electron, 'run through the installed DSH Electron test script');
   const installed = createRequire(path.join(process.env.DSH_INSTALL_DIR, 'package.json'));
-  const manifest = installed('./package.json');
+  const manifest = installedDshManifest(installed);
   assert.equal(manifest.name, '@deepseek-ai/dsh');
   assert.equal(manifest.version, '0.2.2-rc.5', 'verify the native surfaces when DSH changes');
   const load = name => import(pathToFileURL(installed.resolve(`@deepseek-ai/${name}`)).href);

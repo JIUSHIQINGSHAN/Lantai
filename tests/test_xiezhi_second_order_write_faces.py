@@ -511,7 +511,7 @@ def skill_env(monkeypatch):
     return session_factory
 
 
-def _seed_crystal(session_factory, crystal_id, *, procedure=""):
+def _seed_crystal(session_factory, crystal_id, *, procedure="", replica_agent_ids=None):
     with session_factory() as s:
         s.add(
             SkillCrystal(
@@ -519,7 +519,12 @@ def _seed_crystal(session_factory, crystal_id, *, procedure=""):
                 skill_name=f"技巧-{crystal_id}",
                 trigger_rule="数据库发布前置检查",
                 procedure=procedure,
-                success_count=1,
+                success_count=3,
+                tenant_id="tenant-test",
+                user_id="crystal-user",
+                agent_id="agent-test",
+                federation_id="federation-test",
+                replica_agent_ids=replica_agent_ids or [],
                 status="candidate",
             )
         )
@@ -566,11 +571,18 @@ class TestCreateSkillGuard:
     def test_decide_crystal_blocked_skips_skill(self, skill_env):
         """自动资产化调用侧（crystal_service.decide_crystal）：命中 → skip+留痕，
         结晶维持 candidate 可重试，不落 skill 行、不抛异常打断调用面。"""
+        from lantai.core.auth import Principal
         from lantai.services.crystal_service import decide_crystal
 
         session_factory = skill_env
         _seed_crystal(session_factory, "cry_xz_1")
-        res = decide_crystal("cry_xz_1", approve=True, steps=[PAYLOAD_ZH])
+        principal = Principal(
+            tenant_id="tenant-test",
+            user_id="crystal-user",
+            agent_id="agent-test",
+            federation_id="federation-test",
+        )
+        res = decide_crystal("cry_xz_1", approve=True, steps=[PAYLOAD_ZH], principal=principal)
         assert res["ok"] is False
         assert "injection guard" in (res.get("error") or "")
         assert res.get("xiezhi_blocked") is True
@@ -582,12 +594,24 @@ class TestCreateSkillGuard:
         """对照臂：正常 steps 照常 approve 落库（调用侧捕获不得吞正常路径）。"""
         fake_store = type("VS", (), {"add": lambda self, **kw: None})()
         monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: fake_store)
+        from lantai.core.auth import Principal
         from lantai.services.crystal_service import decide_crystal
 
         session_factory = skill_env
         _seed_crystal(session_factory, "cry_ok_1")
+        principal = Principal(
+            tenant_id="tenant-test",
+            user_id="crystal-user",
+            agent_id="agent-test",
+            federation_id="federation-test",
+        )
         with patch("lantai.services.mem_command.embed", return_value=[[0.1] * 8]):
-            res = decide_crystal("cry_ok_1", approve=True, steps=["备份数据库", "执行迁移"])
+            res = decide_crystal(
+                "cry_ok_1",
+                approve=True,
+                steps=["备份数据库", "执行迁移"],
+                principal=principal,
+            )
         assert res["ok"] is True
         with session_factory() as s:
             assert s.get(SkillCrystal, "cry_ok_1").status == "approved"
@@ -598,11 +622,18 @@ class TestCreateSkillGuard:
     def test_promote_crystal_blocked_skips(self, skill_env):
         """自动资产化调用侧（crystal_promoter.promote_crystal）：命中 → skip+留痕，
         结晶维持 candidate 不标 promoted，不落 skill 行。"""
+        from lantai.core.auth import Principal
         from lantai.evolution.crystal_promoter import promote_crystal
 
         session_factory = skill_env
         _seed_crystal(session_factory, "cry_xz_2", procedure=f"1. {PAYLOAD_EN}\n2. 验证结果")
-        res = promote_crystal("cry_xz_2")
+        principal = Principal(
+            tenant_id="tenant-test",
+            user_id="crystal-user",
+            agent_id="agent-test",
+            federation_id="federation-test",
+        )
+        res = promote_crystal("cry_xz_2", principal=principal)
         assert res["ok"] is False
         assert "injection guard" in (res.get("reason") or "")
         assert res.get("xiezhi_blocked") is True
@@ -614,6 +645,7 @@ class TestCreateSkillGuard:
         """对照臂：procedure 是真实表格/日志 → 照常晋升落库。"""
         fake_store = type("VS", (), {"add": lambda self, **kw: None})()
         monkeypatch.setattr("lantai.retrieval.hybrid.get_vector_store", lambda: fake_store)
+        from lantai.core.auth import Principal
         from lantai.evolution.crystal_promoter import promote_crystal
 
         session_factory = skill_env
@@ -621,9 +653,16 @@ class TestCreateSkillGuard:
             session_factory,
             "cry_ok_2",
             procedure=f"1. 检查清单如下\n{REDLINE_TABLE}\n3. 完成后记录日志",
+            replica_agent_ids=["agent-test", "agent-peer"],
+        )
+        principal = Principal(
+            tenant_id="tenant-test",
+            user_id="crystal-user",
+            agent_id="agent-test",
+            federation_id="federation-test",
         )
         with patch("lantai.services.mem_command.embed", return_value=[[0.1] * 8]):
-            res = promote_crystal("cry_ok_2")
+            res = promote_crystal("cry_ok_2", principal=principal)
         assert res["ok"] is True, "真实表格被误杀——禁止提交"
         with session_factory() as s:
             assert s.get(SkillCrystal, "cry_ok_2").status == "promoted"

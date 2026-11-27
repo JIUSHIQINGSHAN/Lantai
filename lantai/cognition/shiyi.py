@@ -20,7 +20,7 @@ from typing import Any
 
 import jieba
 from sqlalchemy import or_
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from lantai.core.acl import active_bindings, allowed_lanes, viewer_of
 from lantai.core.auth import Principal
@@ -114,6 +114,7 @@ class ShiyiEngine:
         *,
         owner_id: str | None,
         tenant_id: str | None,
+        federation_id: str | None = None,
         shared_scope: str = "private",
         lane: str | None = None,
     ) -> bool:
@@ -137,8 +138,11 @@ class ShiyiEngine:
             return False
         viewer = viewer_of(self.principal)
         current_tenant = getattr(self.principal, "tenant_id", None)
+        current_federation = getattr(self.principal, "federation_id", None)
 
         if tenant_id and tenant_id != current_tenant:
+            return False
+        if federation_id and federation_id != current_federation:
             return False
         if shared_scope == "swarm_shared" and tenant_id and tenant_id == current_tenant:
             return True
@@ -153,7 +157,7 @@ class ShiyiEngine:
         limit: int = 5,
     ) -> dict[str, Any]:
         """针对指定查询启动分阶补救召回。"""
-        self._last_raw_candidates = []
+        self._last_raw_candidates: list[RemedyCandidate] = []
         if not query.strip() or limit <= 0 or not re.search(r"\w", query):
             return {
                 "query": query,
@@ -194,11 +198,11 @@ class ShiyiEngine:
         current_time = utcnow()
         base = select(MemoryItem).where(
             MemoryItem.status == "active",
-            MemoryItem.lifecycle_status.not_in(
+            col(MemoryItem.lifecycle_status).not_in(
                 [LifecycleStatus.SUPERSEDED, LifecycleStatus.RETIRED]
             ),
-            or_(MemoryItem.valid_from.is_(None), MemoryItem.valid_from <= current_time),
-            or_(MemoryItem.valid_to.is_(None), MemoryItem.valid_to > current_time),
+            or_(col(MemoryItem.valid_from).is_(None), col(MemoryItem.valid_from) <= current_time),
+            or_(col(MemoryItem.valid_to).is_(None), col(MemoryItem.valid_to) > current_time),
         )
         # 直连补救与主路同样排除逐字原文，回拨不能恢复已失效的主张。
         if not settings.VERBATIM_IN_RECALL:
@@ -224,13 +228,15 @@ class ShiyiEngine:
                 stmt = scope.where(
                     or_(
                         *[
-                            MemoryItem.content.like(f"%{like_escape(t)}%", escape=LIKE_ESCAPE_CHAR)
+                            col(MemoryItem.content).like(
+                                f"%{like_escape(t)}%", escape=LIKE_ESCAPE_CHAR
+                            )
                             for t in sorted(terms)
                         ]
                     )
                 )
                 if seen:
-                    stmt = stmt.where(MemoryItem.id.not_in(sorted(seen)))
+                    stmt = stmt.where(col(MemoryItem.id).not_in(sorted(seen)))
                 # 多取一行仅用于准确报告截断；不全量物化，也不在每阶重置配额。
                 rows = s.exec(
                     stmt.order_by(MemoryItem.id)
@@ -246,6 +252,7 @@ class ShiyiEngine:
                         if not self._check_access(
                             owner_id=mem.user_id,
                             tenant_id=mem.tenant_id,
+                            federation_id=getattr(mem, "federation_id", None),
                             shared_scope=mem.shared_scope,
                             lane=mem.lane,
                         ):

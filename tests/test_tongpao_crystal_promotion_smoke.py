@@ -7,6 +7,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -67,6 +68,94 @@ def test_crystal_model_has_federation_fields(tongpao_crystal_env):
         assert saved.source_agent_id == "agent_coder"
 
 
+def test_crystal_listing_isolated_by_agent_and_federation(tongpao_crystal_env):
+    session_factory, _ = tongpao_crystal_env
+    from lantai.services.crystal_service import list_crystals
+
+    with session_factory() as session:
+        session.add_all(
+            [
+                SkillCrystal(
+                    id="private-a",
+                    skill_name="private-a",
+                    user_id="user-shared",
+                    tenant_id="tenant-shared",
+                    agent_id="agent-a",
+                    federation_id="federation-a",
+                    status="candidate",
+                ),
+                SkillCrystal(
+                    id="private-b",
+                    skill_name="private-b",
+                    user_id="user-shared",
+                    tenant_id="tenant-shared",
+                    agent_id="agent-b",
+                    federation_id="federation-a",
+                    status="candidate",
+                ),
+                SkillCrystal(
+                    id="shared-a",
+                    skill_name="shared-b",
+                    user_id="user-shared",
+                    tenant_id="tenant-shared",
+                    agent_id="agent-b",
+                    federation_id="federation-a",
+                    shared_scope="swarm_shared",
+                    status="candidate",
+                ),
+            ]
+        )
+        session.commit()
+
+    principal_a = Principal(
+        user_id="user-shared",
+        tenant_id="tenant-shared",
+        agent_id="agent-a",
+        federation_id="federation-a",
+    )
+    rows = list_crystals(status="candidate", principal=principal_a)["crystals"]
+
+    assert {row["id"] for row in rows} == {"private-a", "shared-a"}
+
+
+def test_crystal_promotion_rejects_another_agents_private_crystal(tongpao_crystal_env):
+    session_factory, _ = tongpao_crystal_env
+    from lantai.evolution.crystal_promoter import promote_crystal
+
+    with session_factory() as session:
+        session.add(
+            SkillCrystal(
+                id="private-promotion-target",
+                skill_name="private-promotion-target",
+                trigger_rule="发布前验证",
+                procedure="- 执行私有验证步骤",
+                user_id="user-shared",
+                tenant_id="tenant-shared",
+                agent_id="agent-a",
+                source_agent_id="agent-a",
+                federation_id="federation-a",
+                success_count=3,
+                status="candidate",
+            )
+        )
+        session.commit()
+
+    principal_b = Principal(
+        user_id="user-shared",
+        tenant_id="tenant-shared",
+        agent_id="agent-b",
+        federation_id="federation-a",
+    )
+
+    with pytest.raises(HTTPException) as error:
+        promote_crystal("private-promotion-target", principal=principal_b)
+
+    assert error.value.status_code == 403
+    with session_factory() as session:
+        assert session.get(SkillCrystal, "private-promotion-target").status == "candidate"
+        assert session.exec(select(MemoryItem)).all() == []
+
+
 def test_crystal_promotion_evaluation_and_rejection(tongpao_crystal_env):
     """验证技能结晶晋升评考逻辑：不达标（如步骤空/无成功记录）予以拒绝（宁 miss 不脏写）。"""
     session_factory, _ = tongpao_crystal_env
@@ -104,18 +193,25 @@ def test_crystal_promote_pipeline_to_swarm_shared(tongpao_crystal_env):
                 trigger_rule="K8s 生产发布部署",
                 procedure="- 步骤一：执行 kubectl rollout status\n- 步骤二：检查健康探针",
                 tenant_id="tenant_alpha",
+                federation_id="federation_alpha",
                 user_id="user_dev",
                 agent_id="agent_devops",
                 source_agent_id="agent_devops",
                 hit_count=5,
                 success_count=3,
+                replica_agent_ids=["agent_devops", "agent-reviewer"],
                 status="candidate",
                 shared_scope="private",
             )
         )
         s.commit()
 
-    principal = Principal(tenant_id="tenant_alpha", user_id="user_dev", agent_id="agent_devops")
+    principal = Principal(
+        tenant_id="tenant_alpha",
+        user_id="user_dev",
+        agent_id="agent_devops",
+        federation_id="federation_alpha",
+    )
     res = promote_crystal(
         cid,
         steps=["执行 kubectl rollout status", "检查健康探针", "确认无回滚告警"],
@@ -140,6 +236,7 @@ def test_crystal_promote_pipeline_to_swarm_shared(tongpao_crystal_env):
         assert mem.memory_type == "skill"
         assert mem.shared_scope == "swarm_shared"
         assert mem.tenant_id == "tenant_alpha"
+        assert mem.federation_id == "federation_alpha"
 
         # 3. 验证图谱溯源边
         edges = s.exec(
@@ -164,7 +261,12 @@ def test_cross_agent_skill_inheritance_and_isolation(tongpao_crystal_env):
     from lantai.services.mem_command import create_skill
 
     # 1. Agent A 建立一个私有技能（未晋升）
-    p_a = Principal(tenant_id="tenant_alpha", user_id="user_dev", agent_id="agent_a")
+    p_a = Principal(
+        tenant_id="tenant_alpha",
+        user_id="user_dev",
+        agent_id="agent_a",
+        federation_id="federation_alpha",
+    )
     priv_skill = create_skill(
         name="agent-a-private-secret",
         description="Agent A 的私有秘籍内部步骤",
@@ -183,11 +285,13 @@ def test_cross_agent_skill_inheritance_and_isolation(tongpao_crystal_env):
                 trigger_rule="Python 模块分发与打包最佳实践",
                 procedure="使用 pyproject.toml 与 hatchling 构建 wheel",
                 tenant_id="tenant_alpha",
+                federation_id="federation_alpha",
                 user_id="user_dev",
                 agent_id="agent_a",
                 source_agent_id="agent_a",
                 hit_count=6,
                 success_count=4,
+                replica_agent_ids=["agent_a", "agent_b"],
                 status="candidate",
                 shared_scope="private",
             )
@@ -203,7 +307,12 @@ def test_cross_agent_skill_inheritance_and_isolation(tongpao_crystal_env):
     public_mem_id = prom_res["memory_id"]
 
     # 3. Agent B（属于同租户/用户，不同的 agent_id）发起检索
-    p_b = Principal(tenant_id="tenant_alpha", user_id="user_dev", agent_id="agent_b")
+    p_b = Principal(
+        tenant_id="tenant_alpha",
+        user_id="user_dev",
+        agent_id="agent_b",
+        federation_id="federation_alpha",
+    )
 
     # 检索 1：Agent B 搜 Agent A 的私有技能 -> 应当隔离，查不到
     res_priv = hybrid_search("agent-a-private-secret", principal=p_b)
@@ -216,7 +325,12 @@ def test_cross_agent_skill_inheritance_and_isolation(tongpao_crystal_env):
     assert public_mem_id in recalled_shared_ids
 
     # 检索 3：异租户 Agent C 发起检索 -> 物理隔离
-    p_c = Principal(tenant_id="tenant_other", user_id="user_other", agent_id="agent_c")
+    p_c = Principal(
+        tenant_id="tenant_other",
+        user_id="user_other",
+        agent_id="agent_c",
+        federation_id="federation_other",
+    )
     res_other = hybrid_search("public-python-packaging", principal=p_c)
     recalled_other_ids = [r["memory"]["id"] for r in res_other]
     assert public_mem_id not in recalled_other_ids

@@ -79,6 +79,12 @@ DECLARED = Counter(
             "Node 24 is unavailable; set LANTAI_TEST_NODE for DSH core-memory contract tests",
         ): 1,
         (
+            "tests/test_adapter_claude_codex_dsh.py",
+            "pytest.skip",
+            "select installed DSH runtime for real registry/SDK verification",
+        ): 1,
+        ("tests/test_xuanjing_mcp_app.py", "pytest.importorskip", "playwright.sync_api"): 1,
+        (
             "tests/test_digest_window_anchor.py",
             "pytest.mark.skipif",
             (
@@ -99,7 +105,7 @@ DECLARED = Counter(
         ): 3,
     }
 )
-DECLARED_TOTAL = 15
+DECLARED_TOTAL = 17
 
 # 无守卫的运行时弃权（能力探测循环走空后统一 skip）单独按申报集合管——它不是
 # 「凭被测返回值弃权」，但同样必须逐条可查。新增一个这类点同样判红。
