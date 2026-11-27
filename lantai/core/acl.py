@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 from fastapi import Header, HTTPException
+from sqlalchemy.sql.elements import ColumnElement
+from sqlmodel import SQLModel
 
 from lantai.core.settings import settings
 
@@ -18,6 +20,8 @@ class Principal:
     session_id: str | None = None
     role: str = "user"  # "admin", "system", "user"
     allowed_lanes: list[str] | None = None
+    workspace_bound: bool = False
+    federation_id: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -37,6 +41,71 @@ SESSION_ID_PATTERN = r"^[A-Za-z0-9_\-.]{3,128}$"
 
 def active_bindings() -> dict:
     return dict(settings.AGENT_LANE_BINDINGS or {})
+
+
+def _federation_binding_key(
+    tenant_id: str | None, user_id: str | None, agent_id: str | None
+) -> str:
+    return "|".join((tenant_id or "", user_id or "", agent_id or ""))
+
+
+def resolve_federation_id(
+    tenant_id: str | None,
+    user_id: str | None,
+    agent_id: str | None,
+    requested_federation_id: str | None,
+) -> str | None:
+    """Resolve federation membership from deployment bindings, never self-assertion.
+
+    A federation id is usable only when the deployment has a matching binding for
+    the tenant/user/agent identity (or the explicit agent-id compatibility key).
+    A caller-supplied id without a trusted binding is rejected fail-closed.
+    """
+    requested = (requested_federation_id or "").strip() or None
+    bindings = dict(getattr(settings, "AGENT_FEDERATION_BINDINGS", {}) or {})
+    if not bindings:
+        if requested:
+            raise HTTPException(status_code=403, detail="Agent federation is not bound")
+        return None
+    expected = bindings.get(_federation_binding_key(tenant_id, user_id, agent_id))
+    if expected is None and agent_id:
+        expected = bindings.get(agent_id)
+    if expected is None:
+        if requested:
+            raise HTTPException(status_code=403, detail="Agent federation is not bound")
+        return None
+    expected = str(expected).strip()
+    if requested and requested != expected:
+        raise HTTPException(status_code=403, detail="Agent federation mismatch")
+    return expected
+
+
+def federation_visible(principal: Principal | None, federation_id: str | None) -> bool:
+    """Whether a row's federation is visible to the current principal."""
+    if (
+        principal is None
+        or bool(getattr(principal, "is_admin", False))
+        or is_system_viewer(principal)
+    ):
+        return True
+    current = getattr(principal, "federation_id", None)
+    return federation_id is None or federation_id == current
+
+
+def federation_scope_clause(
+    model: type[SQLModel], principal: Principal | None
+) -> ColumnElement[bool] | None:
+    """Return a fail-closed SQL predicate; NULL rows are legacy-compatible."""
+    if (
+        principal is None
+        or bool(getattr(principal, "is_admin", False))
+        or is_system_viewer(principal)
+    ):
+        return None
+    federation_id = getattr(principal, "federation_id", None)
+    if federation_id:
+        return (model.federation_id == federation_id) | model.federation_id.is_(None)
+    return model.federation_id.is_(None)
 
 
 def allowed_lanes(agent_id: str) -> list[str] | None:
@@ -141,7 +210,20 @@ def vector_owner_filter(principal, extra: dict | None = None) -> dict | None:
         base = {"$or": [{"user_id": viewer}, {"user_id": ""}]}
     if base is None:
         return extra
+
     conds = [base]
+    federation_id = getattr(principal, "federation_id", None)
+    if federation_id:
+        # New vector rows carry the trusted federation; empty metadata is the
+        # legacy shape and remains eligible for the SQL/FTS compatibility path.
+        conds.append(
+            {
+                "$or": [
+                    {"federation_id": federation_id},
+                    {"federation_id": ""},
+                ]
+            }
+        )
     if extra:
         conds.extend([{k: v} for k, v in extra.items()])
     return conds[0] if len(conds) == 1 else {"$and": conds}
@@ -184,13 +266,16 @@ def verify_agent(
     x_agent_id: str | None = Header(None, alias="X-Agent-Id"),
     x_tenant_id: str | None = Header(None, alias="X-Tenant-Id"),
     x_user_id: str | None = Header(None, alias="X-User-Id"),
+    x_federation_id: str | None = Header(None, alias="X-Federation-Id"),
     x_session_id: str | None = Header(None, alias="X-Session-Id"),
 ) -> Principal:
+    federation_id = resolve_federation_id(x_tenant_id, x_user_id, x_agent_id, x_federation_id)
     if not active_bindings():
         return Principal(
             tenant_id=x_tenant_id,
             user_id=x_user_id,
             agent_id=x_agent_id,
+            federation_id=federation_id,
             session_id=x_session_id,
             allowed_lanes=None,
         )
@@ -201,6 +286,7 @@ def verify_agent(
         tenant_id=x_tenant_id,
         user_id=x_user_id,
         agent_id=x_agent_id,
+        federation_id=federation_id,
         session_id=x_session_id,
         allowed_lanes=allowed_lanes(x_agent_id),
     )

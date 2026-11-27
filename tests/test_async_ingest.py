@@ -53,6 +53,40 @@ class TestAsyncIngestService:
             assert st["status"] == "completed"
             assert st["result"]["memories_created"] == 1
 
+    def test_submit_worker_passes_federation_to_dialogue_ingest(self, param_env, monkeypatch):
+        import lantai.ingestion.dialogue as dialogue
+        import lantai.services.async_ingest_service as async_service
+
+        clear_tasks()
+        captured = {}
+
+        def ingest(**kwargs):
+            captured.update(kwargs)
+            return {"status": "candidate"}
+
+        class ImmediateExecutor:
+            def submit(self, fn, *args, **kwargs):
+                fn(*args, **kwargs)
+
+        monkeypatch.setattr(async_service, "claim", lambda *args, **kwargs: {"action": "claimed"})
+        monkeypatch.setattr(async_service, "settle", lambda *args, **kwargs: None)
+        monkeypatch.setattr(async_service, "_start_ingest_event_selfheal", lambda **_: "event-1")
+        monkeypatch.setattr(async_service, "_EXECUTOR", ImmediateExecutor())
+        monkeypatch.setattr(dialogue, "ingest_dialogue", ingest)
+
+        task = submit_async_dialogue(
+            text="记住：异步 worker 应收到联邦身份",
+            user_id="user-a",
+            tenant_id="tenant-a",
+            agent_id="agent-a",
+            federation_id="federation-a",
+        )
+
+        assert task["status"] == "queued"
+        assert get_task_status(task["task_id"])["status"] == "completed"
+        assert captured["federation_id"] == "federation-a"
+        clear_tasks()
+
 
 class TestAsyncIngestEndpointsAndMCP:
     """测试 REST 端点与 MCP 工具。"""
@@ -83,6 +117,38 @@ class TestAsyncIngestEndpointsAndMCP:
             r3 = client.get(f"/dialogue/tasks/{task_id}")
             assert r3.status_code == 200
             assert r3.json()["status"] == "completed"
+
+    def test_rest_async_dialogue_passes_authenticated_federation(self, param_env, monkeypatch):
+        from lantai.core.auth import Principal, get_current_user
+
+        captured = {}
+
+        def submit(*args, **kwargs):
+            if args:
+                captured["text"] = args[0]
+            captured.update(kwargs)
+            return {"task_id": "task_test", "status": "queued"}
+
+        monkeypatch.setitem(
+            app.dependency_overrides,
+            get_current_user,
+            lambda: Principal(
+                user_id="dialogue-user",
+                tenant_id="dialogue-tenant",
+                agent_id="dialogue-agent",
+                federation_id="trusted-federation",
+            ),
+        )
+        monkeypatch.setattr("lantai.services.async_ingest_service.submit_async_dialogue", submit)
+
+        response = TestClient(app).post(
+            "/dialogue/async", json={"text": "记住：异步对话也保留联邦身份"}
+        )
+
+        assert response.status_code == 200
+        assert captured["tenant_id"] == "dialogue-tenant"
+        assert captured["agent_id"] == "dialogue-agent"
+        assert captured["federation_id"] == "trusted-federation"
 
     def test_mcp_async_dialogue(self, param_env):
         from lantai.cli.mcp import handle_dialogue_add_async, handle_dialogue_task_status

@@ -312,6 +312,7 @@ class TestEvolveRunRouteAdminOnly:
             )
 
 
+@pytest.mark.usefixtures("core_service_state")
 class TestKaogongReportRoutesAdminOnly:
     def test_both_report_routes_admin_200_user_403(self, engine, monkeypatch):
         """两个考功报告路由（/evolution/kaogong/report 与姊妹 /kaogong/report）：
@@ -433,8 +434,9 @@ class TestKaogongReportPrincipalNotConsumed:
         `KaogongEngine.get_report`（cognition/kaogong.py:336-340）读模块级
         全局 `_LATEST_KAOGONG_REPORT`，函数体不触 `self.principal`——service
         层 `get_kaogong_report(principal=…)` 的「签名收窄」只到构造器为止。
-        真库直调（零 mock）：两不同 principal 取到**同一**全局快照对象，
-        `details[]` 他人记忆明文照见。全局快照手工备份还原。"""
+        真库直调（零 mock）：两不同 principal 取到内容相同的全局快照，
+        `details[]` 他人记忆明文照见。Stage 5-C 返回独立副本，另验调用方
+        修改不能污染另一身份的结果或缓存；全局快照手工备份还原。"""
         from lantai.cognition import kaogong as kaogong_mod
         from lantai.services.kaogong_service import get_kaogong_report
 
@@ -451,11 +453,18 @@ class TestKaogongReportPrincipalNotConsumed:
         try:
             ra = get_kaogong_report(principal=Principal(user_id="k19-viewer-a", role="user"))
             rb = get_kaogong_report(principal=Principal(user_id="k19-viewer-b", role="user"))
-            assert ra is rb, (
-                "不同 principal 取到不同报告——get_report 竟消费了身份（翻案前提不成立）"
-            )
+            assert ra == rb == seeded, "不同 principal 的报告内容仍须与全局快照一致"
+            assert ra is not rb and ra is not seeded and rb is not seeded
+            assert ra["details"] is not rb["details"]
+            assert ra["details"][0] is not rb["details"][0]
             assert ra["details"][0]["memory_id"] == "mem-other-user", (
                 "user-b 视角仍见他人记忆条目——收窄不存在，透传即假修的实锤"
+            )
+            ra["details"][0]["memory_id"] = "caller-owned-change"
+            assert rb["details"][0]["memory_id"] == "mem-other-user"
+            assert seeded["details"][0]["memory_id"] == "mem-other-user"
+            assert (
+                get_kaogong_report(principal=Principal(user_id="k19-viewer-b", role="user")) == rb
             )
         finally:
             kaogong_mod._LATEST_KAOGONG_REPORT = old

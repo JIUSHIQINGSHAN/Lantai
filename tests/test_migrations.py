@@ -471,3 +471,101 @@ class TestIndexCreationFailureIsLogged:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
         assert conn.execute("SELECT id, content FROM memoryitem").fetchall() == [("m1", "老数据")]
         conn.close()
+
+
+def test_v49_adds_tongpao_fields_and_scoped_crystal_uniqueness_idempotently(tmp_path):
+    """v47 SQLite 数据库升级后补齐联邦列并拆除结晶全局唯一，不丢旧数据。"""
+    conn = sqlite3.connect(str(tmp_path / "v47-tongpao.db"))
+    conn.executescript(
+        """
+        CREATE TABLE memoryitem (id TEXT PRIMARY KEY, content TEXT);
+        CREATE TABLE memorycandidate (id TEXT PRIMARY KEY, summary TEXT);
+        CREATE TABLE skillcrystal (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT,
+            user_id TEXT,
+            agent_id TEXT,
+            skill_name TEXT UNIQUE,
+            source_agent_id TEXT,
+            shared_scope TEXT
+        );
+        CREATE TABLE api_keys (id TEXT PRIMARY KEY, key_hash TEXT, user_id TEXT);
+        INSERT INTO memoryitem (id, content) VALUES ('m-old', '旧记忆');
+        INSERT INTO memorycandidate (id, summary) VALUES ('c-old', '旧候选');
+        INSERT INTO skillcrystal (id, skill_name) VALUES ('s-old', '旧结晶');
+        INSERT INTO api_keys (id, key_hash, user_id) VALUES ('k-old', 'hash', 'user-old');
+        PRAGMA user_version = 47;
+        """
+    )
+
+    apply_migrations(conn)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION == 49
+    assert {"federation_id"}.issubset(_columns(conn, "memoryitem"))
+    assert {"federation_id"}.issubset(_columns(conn, "memorycandidate"))
+    assert {
+        "federation_id",
+        "replica_agent_ids",
+        "failure_count",
+        "shadow_state",
+        "last_evaluated_at",
+    }.issubset(_columns(conn, "skillcrystal"))
+    assert {"agent_id"}.issubset(_columns(conn, "api_keys"))
+    assert conn.execute("SELECT id, content, federation_id FROM memoryitem").fetchone() == (
+        "m-old",
+        "旧记忆",
+        None,
+    )
+    assert conn.execute("SELECT id, summary, federation_id FROM memorycandidate").fetchone() == (
+        "c-old",
+        "旧候选",
+        None,
+    )
+    assert conn.execute(
+        "SELECT id, replica_agent_ids, failure_count, shadow_state, last_evaluated_at "
+        "FROM skillcrystal"
+    ).fetchone() == ("s-old", "[]", 0, "candidate", None)
+    assert conn.execute("SELECT id, agent_id FROM api_keys").fetchone() == ("k-old", None)
+
+    indexes = {
+        table: {row[1] for row in conn.execute(f'PRAGMA index_list("{table}")')}
+        for table in ("memoryitem", "memorycandidate", "skillcrystal")
+    }
+    assert "ix_memoryitem_federation_id" in indexes["memoryitem"]
+    assert "ix_memorycandidate_federation_id" in indexes["memorycandidate"]
+    assert "ix_skillcrystal_federation_id" in indexes["skillcrystal"]
+    assert "ix_skillcrystal_shadow_state" in indexes["skillcrystal"]
+    assert "ix_api_keys_agent_id" in {
+        row[1] for row in conn.execute('PRAGMA index_list("api_keys")')
+    }
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"skillpromotionaudit", "swarm_knowledge_event"}.issubset(tables)
+    scoped_indexes = {row[1] for row in conn.execute('PRAGMA index_list("skillcrystal")') if row[2]}
+    assert "uq_skillcrystal_scope_name" in scoped_indexes
+    conn.execute(
+        "INSERT INTO skillcrystal "
+        "(id, tenant_id, federation_id, user_id, agent_id, skill_name, shared_scope) "
+        "VALUES ('s-agent-a', 't1', 'fed1', 'u1', 'agent-a', 'same-skill', 'private')"
+    )
+    conn.execute(
+        "INSERT INTO skillcrystal "
+        "(id, tenant_id, federation_id, user_id, agent_id, skill_name, shared_scope) "
+        "VALUES ('s-agent-b', 't1', 'fed1', 'u1', 'agent-b', 'same-skill', 'private')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO skillcrystal "
+            "(id, tenant_id, federation_id, user_id, agent_id, skill_name, shared_scope) "
+            "VALUES ('s-agent-a-duplicate', 't1', 'fed1', 'u1', 'agent-a', 'same-skill', 'private')"
+        )
+
+    conn.execute("INSERT INTO skillcrystal (id, skill_name) VALUES ('s-unowned', 'legacy-skill')")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO skillcrystal (id, skill_name) VALUES ('s-unowned-duplicate', 'legacy-skill')"
+        )
+
+    apply_migrations(conn)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
+    assert conn.execute("SELECT content FROM memoryitem WHERE id='m-old'").fetchone() == ("旧记忆",)
+    conn.close()

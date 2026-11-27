@@ -15,6 +15,8 @@ from lantai.cognition.kaogong import KaogongEngine, KaogongResult
 from lantai.core.auth import Principal
 from lantai.models.tables import MemoryItem
 
+pytestmark = pytest.mark.usefixtures("core_service_state")
+
 
 @pytest.fixture(name="db_session")
 def fixture_db_session():

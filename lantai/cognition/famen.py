@@ -17,9 +17,9 @@ from datetime import datetime
 from typing import Any
 
 import jieba
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
-from lantai.core.acl import is_system_viewer, viewer_of
+from lantai.core.acl import federation_visible, is_system_viewer, viewer_of
 from lantai.core.auth import Principal
 from lantai.llm.fence import wrap_as_data
 from lantai.models.tables import MemoryItem, SkillCrystal
@@ -244,6 +244,7 @@ def _clean_list_item(value: Any) -> str:
 
 def _as_text_list(value: Any) -> list[str]:
     """把已有 SOP 列表字段规范成非空文本项。"""
+    values: list[Any] | tuple[Any, ...]
     if isinstance(value, str):
         values = value.splitlines()
     elif isinstance(value, (list, tuple)):
@@ -312,12 +313,12 @@ def _extract_sop(procedure: str, structure: dict[str, Any] | None = None) -> dic
 
     if isinstance(structure, dict):
         for field_name in _SOP_FIELDS:
-            value = structure.get(field_name)
+            structured_value = structure.get(field_name)
             if field_name == "description":
-                if isinstance(value, str) and value.strip():
-                    parsed[field_name] = value.strip()
+                if isinstance(structured_value, str) and structured_value.strip():
+                    parsed[field_name] = structured_value.strip()
             else:
-                structured_values = _as_text_list(value)
+                structured_values = _as_text_list(structured_value)
                 if structured_values:
                     parsed[field_name] = structured_values
 
@@ -439,6 +440,7 @@ class FamenEngine:
         *,
         owner_id: str | None,
         tenant_id: str | None,
+        federation_id: str | None = None,
         shared_scope: str = "private",
     ) -> bool:
         """行级安全隔离校验（宁 miss 不脏写）。
@@ -451,11 +453,12 @@ class FamenEngine:
             return True
 
         # 公共结晶开放给集群伙伴
-        if shared_scope == "swarm_shared":
-            return True
-
         # 票 57：无身份收敛 "default"（同 zhaji 口径），不再全放
         if self.principal is None:
+            if tenant_id is not None or federation_id is not None:
+                return False
+            if shared_scope == "swarm_shared":
+                return True
             return owner_id in (None, "default")
 
         viewer = viewer_of(self.principal)
@@ -463,6 +466,10 @@ class FamenEngine:
 
         if tenant_id and current_tenant and tenant_id != current_tenant:
             return False
+        if not federation_visible(self.principal, federation_id):
+            return False
+        if shared_scope == "swarm_shared":
+            return True
 
         return not (owner_id is not None and owner_id != viewer)
 
@@ -472,12 +479,13 @@ class FamenEngine:
 
         # 1. 扫描已审核/已晋升的 SkillCrystal
         crystals = s.exec(
-            select(SkillCrystal).where(SkillCrystal.status.in_(("approved", "promoted")))
+            select(SkillCrystal).where(col(SkillCrystal.status).in_(("approved", "promoted")))
         ).all()
         for sc in crystals:
             if not self._check_access(
                 owner_id=sc.user_id,
                 tenant_id=sc.tenant_id,
+                federation_id=getattr(sc, "federation_id", None),
                 shared_scope=sc.shared_scope,
             ):
                 continue
@@ -490,15 +498,17 @@ class FamenEngine:
                 # 票 62：lifecycle 过滤——supersede 只写 lifecycle_status=superseded
                 # （status 仍 active），只看 status 时已废除 SOP 照混进技能集。
                 # weakened 语义「仍参与检索但权重降低」放行。
-                MemoryItem.lifecycle_status.in_(("active", "weakened")),
-                (MemoryItem.decay_class == "procedural") | (MemoryItem.lane.in_(("rule", "skill"))),
+                col(MemoryItem.lifecycle_status).in_(("active", "weakened")),
+                (col(MemoryItem.decay_class) == "procedural")
+                | (col(MemoryItem.lane).in_(("rule", "skill"))),
             )
         ).all()
         for m in memories:
             if not self._check_access(
                 owner_id=m.user_id,
                 tenant_id=m.tenant_id,
-                shared_scope="private",
+                federation_id=getattr(m, "federation_id", None),
+                shared_scope=getattr(m, "shared_scope", "private"),
             ):
                 continue
             assets.append(_memory_asset(m))
@@ -525,6 +535,7 @@ class FamenEngine:
                 if not self._check_access(
                     owner_id=sc.user_id,
                     tenant_id=sc.tenant_id,
+                    federation_id=getattr(sc, "federation_id", None),
                     shared_scope=sc.shared_scope,
                 ):
                     return None
@@ -542,7 +553,8 @@ class FamenEngine:
                 if not self._check_access(
                     owner_id=m.user_id,
                     tenant_id=m.tenant_id,
-                    shared_scope="private",
+                    federation_id=getattr(m, "federation_id", None),
+                    shared_scope=getattr(m, "shared_scope", "private"),
                 ):
                     return None
                 return _memory_asset(m).to_dict(fenced=True)
@@ -599,15 +611,15 @@ class FamenEngine:
 
         scored: list[tuple[float, SkillAsset]] = []
         for a in all_assets:
-            s = _score(a)
-            if s >= 1.0:
-                scored.append((s, a))
+            score = _score(a)
+            if score >= 1.0:
+                scored.append((score, a))
 
         scored.sort(key=lambda x: (-x[0], -(x[1].confidence or 0.0), x[1].id))
         results: list[dict[str, Any]] = []
-        for s, a in scored[:limit]:
+        for score, a in scored[:limit]:
             d = a.to_dict(fenced=True)
-            d["score"] = round(s, 2)
+            d["score"] = round(score, 2)
             results.append(d)
 
         return results

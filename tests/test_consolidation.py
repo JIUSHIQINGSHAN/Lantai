@@ -58,6 +58,8 @@ from lantai.services.consolidation_service import (
     run_consolidation_cycle,
 )
 
+pytestmark = pytest.mark.usefixtures("core_service_state")
+
 _LLM_PURIFIED = {
     "consolidated_content": "大哥长期偏好饮用浙江新昌明前大佛龙井茶，冲泡水温偏好85度",
     "importance": 0.9,

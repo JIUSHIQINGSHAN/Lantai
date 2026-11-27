@@ -236,6 +236,18 @@ def test_env_context_restores_previous_value_exactly():
     assert absent not in os.environ
 
 
+def test_env_context_temporarily_unsets_and_restores_on_exception():
+    name = "LANTAI_MCP_PROFILE"
+    before = os.environ.get(name)
+    with env_context(name, "full"):
+        with pytest.raises(RuntimeError, match="probe"):
+            with env_context(name, None):
+                assert name not in os.environ
+                raise RuntimeError("probe")
+        assert os.environ[name] == "full"
+    assert os.environ.get(name) == before
+
+
 @pytest.fixture(scope="module")
 def harness_session_report(tmp_path_factory) -> dict:
     """真实子会话：模拟宿主已配真凭据，跑一次 pytest 会话，读它退出时落下的审计。"""

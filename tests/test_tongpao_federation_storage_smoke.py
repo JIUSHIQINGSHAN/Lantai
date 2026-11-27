@@ -22,11 +22,17 @@ from lantai.retrieval.hybrid import hybrid_search
 from lantai.services.memory_service import add_memory
 
 
-def _agent_principal(agent_id: str, user_id: str = "u1", tenant_id: str = "t1") -> Principal:
+def _agent_principal(
+    agent_id: str,
+    user_id: str = "u1",
+    tenant_id: str = "t1",
+    federation_id: str | None = None,
+) -> Principal:
     return Principal(
         user_id=user_id,
         tenant_id=tenant_id,
         agent_id=agent_id,
+        federation_id=federation_id,
         role="user",
         allowed_lanes=["general", "fact", "rule"],
     )
@@ -132,6 +138,211 @@ def test_federated_hybrid_search_agent_isolation_and_sharing(param_env):
         assert "mem_a_priv" not in ids_shared_only
 
 
+def test_hybrid_search_isolates_federations_and_preserves_legacy_shared_rows(
+    param_env, monkeypatch
+):
+    session_factory, _ = param_env
+    principal_a = _agent_principal(
+        "agent-a", user_id="user-1", tenant_id="tenant-1", federation_id="fed-a"
+    )
+    principal_b = _agent_principal(
+        "agent-b", user_id="user-1", tenant_id="tenant-1", federation_id="fed-b"
+    )
+    principal_without_federation = _agent_principal(
+        "agent-c", user_id="user-1", tenant_id="tenant-1"
+    )
+
+    rows = [
+        MemoryItem(
+            id="mem_fed_a_shared",
+            content="federation common shared protocol alpha",
+            user_id="user-1",
+            tenant_id="tenant-1",
+            agent_id="agent-a",
+            federation_id="fed-a",
+            shared_scope="swarm_shared",
+            lane="rule",
+            decay_score=1.0,
+        ),
+        MemoryItem(
+            id="mem_fed_b_shared",
+            content="federation common shared protocol beta",
+            user_id="user-1",
+            tenant_id="tenant-1",
+            agent_id="agent-b",
+            federation_id="fed-b",
+            shared_scope="swarm_shared",
+            lane="rule",
+            decay_score=1.0,
+        ),
+        MemoryItem(
+            id="mem_legacy_shared",
+            content="federation common shared protocol legacy",
+            user_id="user-1",
+            tenant_id="tenant-1",
+            shared_scope="swarm_shared",
+            lane="rule",
+            decay_score=1.0,
+        ),
+    ]
+
+    with session_factory() as session:
+        session.add_all(rows)
+        session.commit()
+        from lantai.storage.fts import search_fts, search_fts_bm25, sync_fts
+
+        for row in rows:
+            sync_fts(session, row.id, row.content)
+        session.commit()
+
+        from lantai.retrieval import hybrid as hybrid_module
+
+        class CandidateVectorStore:
+            def search(self, *_args, **_kwargs):
+                return [{"id": row.id, "distance": 0.1} for row in rows]
+
+        def unavailable_embedding(_queries):
+            raise RuntimeError("force keyword fallback")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(hybrid_module, "get_vector_store", lambda: CandidateVectorStore())
+            ids_a = {
+                result.get("id") or result.get("memory", {}).get("id")
+                for result in hybrid_search(
+                    "common shared protocol",
+                    session=session,
+                    principal=principal_a,
+                    use_rerank=False,
+                )
+            }
+            ids_b = {
+                result.get("id") or result.get("memory", {}).get("id")
+                for result in hybrid_search(
+                    "common shared protocol",
+                    session=session,
+                    principal=principal_b,
+                    use_rerank=False,
+                )
+            }
+            ids_without_federation = {
+                result.get("id") or result.get("memory", {}).get("id")
+                for result in hybrid_search(
+                    "common shared protocol",
+                    session=session,
+                    principal=principal_without_federation,
+                    use_rerank=False,
+                )
+            }
+            legacy_ids = {
+                result.get("id") or result.get("memory", {}).get("id")
+                for result in hybrid_search(
+                    "common shared protocol",
+                    session=session,
+                    principal=principal_a,
+                    use_rerank=False,
+                )
+            }
+            raw_conn = session.connection().connection.driver_connection
+            fts_a_ids = set(search_fts(raw_conn, "common shared protocol", principal=principal_a))
+            fts_without_federation_ids = set(
+                search_fts(
+                    raw_conn, "common shared protocol", principal=principal_without_federation
+                )
+            )
+            bm25_a_ids = {
+                memory_id
+                for memory_id, _score in search_fts_bm25(
+                    raw_conn, "common shared protocol", principal=principal_a
+                )
+            }
+            bm25_without_federation_ids = {
+                memory_id
+                for memory_id, _score in search_fts_bm25(
+                    raw_conn, "common shared protocol", principal=principal_without_federation
+                )
+            }
+
+            patch.setattr(hybrid_module, "embed", unavailable_embedding)
+            fallback_without_federation_ids = {
+                result.get("id") or result.get("memory", {}).get("id")
+                for result in hybrid_search(
+                    "common shared protocol",
+                    session=session,
+                    principal=principal_without_federation,
+                    use_rerank=False,
+                )
+            }
+
+    assert "mem_fed_a_shared" in ids_a
+    assert "mem_fed_b_shared" not in ids_a
+    assert "mem_fed_b_shared" in ids_b
+    assert "mem_fed_a_shared" not in ids_b
+    assert "mem_fed_a_shared" not in ids_without_federation
+    assert "mem_legacy_shared" in legacy_ids
+    assert "mem_fed_a_shared" in fts_a_ids
+    assert "mem_fed_b_shared" not in fts_a_ids
+    assert "mem_fed_a_shared" not in fts_without_federation_ids
+    assert "mem_fed_a_shared" in bm25_a_ids
+    assert "mem_fed_b_shared" not in bm25_a_ids
+    assert "mem_fed_a_shared" not in bm25_without_federation_ids
+    assert "mem_fed_a_shared" not in fallback_without_federation_ids
+
+
+def test_shiyi_remedy_preserves_federation_isolation(param_env):
+    """零召回补偿也必须拒绝同租户其他联邦的公共记忆。"""
+    session_factory, _ = param_env
+    principal_a = _agent_principal(
+        "agent-a", user_id="user-1", tenant_id="tenant-1", federation_id="fed-a"
+    )
+
+    with session_factory() as session:
+        session.add_all(
+            [
+                MemoryItem(
+                    id="mem_shiyi_fed_a",
+                    content="federation isolation marker shared knowledge",
+                    user_id="user-1",
+                    tenant_id="tenant-1",
+                    agent_id="agent-a",
+                    federation_id="fed-a",
+                    shared_scope="swarm_shared",
+                    lane="rule",
+                    decay_score=1.0,
+                ),
+                MemoryItem(
+                    id="mem_shiyi_fed_b",
+                    content="federation isolation marker shared knowledge",
+                    user_id="user-1",
+                    tenant_id="tenant-1",
+                    agent_id="agent-b",
+                    federation_id="fed-b",
+                    shared_scope="swarm_shared",
+                    lane="rule",
+                    decay_score=1.0,
+                ),
+                MemoryItem(
+                    id="mem_shiyi_legacy_shared",
+                    content="federation isolation marker shared knowledge",
+                    user_id="user-1",
+                    tenant_id="tenant-1",
+                    shared_scope="swarm_shared",
+                    lane="rule",
+                    decay_score=1.0,
+                ),
+            ]
+        )
+        session.commit()
+
+        from lantai.cognition.shiyi import ShiyiEngine
+
+        results = ShiyiEngine(session=session, principal=principal_a).remedy_search_pipeline(
+            "federation isolation marker", limit=10
+        )
+
+    result_ids = {item["memory"]["id"] for item in results}
+    assert result_ids == {"mem_shiyi_fed_a", "mem_shiyi_legacy_shared"}
+
+
 def test_add_raw_memory_with_shared_scope(param_env):
     """验证原文直存 add_raw_memory 写入 shared_scope 与 agent_id"""
     session_factory, _ = param_env
@@ -214,3 +425,55 @@ def test_api_and_mcp_shared_scope_integration(param_env):
         i.get("id") == "mem_mcp_shared" or i.get("memory", {}).get("id") == "mem_mcp_shared"
         for i in mcp_res["results"]
     )
+
+
+def test_mcp_search_uses_trusted_federation_and_isolates_other_agents(param_env, monkeypatch):
+    """真实 MCP 搜索须召回同联邦公共记忆，并挡住私有与异联邦记忆。"""
+    from lantai.cli.mcp import TOOLS, handle_search
+    from lantai.core.settings import settings
+    from lantai.storage.fts import sync_fts
+
+    session_factory, _ = param_env
+    with monkeypatch.context() as patch:
+        patch.setattr(settings, "AGENT_FEDERATION_BINDINGS", {"t1|u1|agent-b": "fed-a"})
+        with session_factory() as session:
+            for memory_id, federation_id, shared_scope in (
+                ("mcp-fed-shared", "fed-a", "swarm_shared"),
+                ("mcp-fed-private", "fed-a", "private"),
+                ("mcp-other-shared", "fed-b", "swarm_shared"),
+                ("mcp-legacy-shared", None, "swarm_shared"),
+            ):
+                row = MemoryItem(
+                    id=memory_id,
+                    content="federation shared protocol knowledge",
+                    user_id="u1",
+                    tenant_id="t1",
+                    agent_id="agent-a",
+                    federation_id=federation_id,
+                    shared_scope=shared_scope,
+                    lane="rule",
+                    decay_score=1.0,
+                )
+                session.add(row)
+                session.flush()
+                sync_fts(session, row.id, row.content)
+            session.commit()
+
+        arguments = {
+            "query": "federation shared protocol knowledge",
+            "user_id": "u1",
+            "tenant_id": "t1",
+            "agent_id": "agent-b",
+            "force": True,
+        }
+        for federation_params in ({}, {"federation_id": "fed-a"}):
+            result = handle_search({**arguments, **federation_params})
+            assert {item["memory"]["id"] for item in result["results"]} == {
+                "mcp-fed-shared",
+                "mcp-legacy-shared",
+            }
+        with pytest.raises(ValueError, match="federation mismatch"):
+            handle_search({**arguments, "federation_id": "fed-b"})
+
+    properties = TOOLS["search"]["inputSchema"]["properties"]
+    assert {"tenant_id", "agent_id", "federation_id"} <= properties.keys()

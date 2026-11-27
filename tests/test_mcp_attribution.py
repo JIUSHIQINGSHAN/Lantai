@@ -15,7 +15,7 @@ pytestmark = pytest.mark.mcp_full_surface()
 
 
 @pytest.fixture
-def sqlite_env(tmp_path, monkeypatch):
+def sqlite_env(tmp_path, monkeypatch, core_service_state):
     from lantai.core.settings import settings
     from lantai.services import async_ingest_service
     from lantai.storage import db, vector_store

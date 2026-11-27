@@ -129,6 +129,94 @@ def test_reset_fixture_is_autouse_and_roundtrips_content():
         pf._PATTERN_CACHE.update(original)
 
 
+@pytest.mark.parametrize(
+    "module_name,attr,field",
+    [
+        ("lantai.cognition.kaogong", "_LATEST_KAOGONG_REPORT", "details"),
+        ("lantai.services.consolidation_service", "_LAST_CONSOLIDATION_REPORT", "warnings"),
+    ],
+)
+def test_report_snapshot_does_not_alias_nested_mutable_values(module_name, attr, field):
+    import importlib
+    from copy import deepcopy
+
+    module = importlib.import_module(module_name)
+    original = getattr(module, attr)
+    saved = deepcopy(original)
+    cft = _conftest()
+    snapshot = cft._snapshot_module_state()
+    try:
+        original[field].append({"probe": ["nested-report-state"]})
+        assert snapshot[(module_name, attr)][field] == saved[field], (
+            "报告快照与运行态共享嵌套容器，原地修改会同时污染复位基线"
+        )
+        assert cft._restore_module_state(snapshot) == []
+        assert getattr(module, attr) is original
+        assert original == saved
+    finally:
+        original.clear()
+        original.update(saved)
+
+
+@pytest.mark.parametrize(
+    "nodeid,channel",
+    [
+        pytest.param(
+            "tests/test_mcp_attribution.py::"
+            "test_metadata_validation_safe_and_before_handler[private-body]",
+            "lantai.cli.mcp._guard_instance",
+            id="attribution-guard",
+        ),
+        pytest.param(
+            "tests/test_global_action_routes_identity.py::TestKaogongReportRoutesAdminOnly::"
+            "test_both_report_routes_admin_200_user_403",
+            "lantai.cognition.kaogong._LATEST_KAOGONG_REPORT",
+            id="report-route",
+        ),
+    ],
+)
+def test_core_service_fixture_restores_state_before_fallback_check(tmp_path, nodeid, channel):
+    home = tmp_path / "attribution-home"
+    home.mkdir()
+    env = dict(os.environ)
+    env.update(
+        LANTAI_HOME=str(home),
+        REMEMBRANCE_HOME=str(home),
+        DATABASE_URL=f"sqlite:///{(home / 'remembrance.db').as_posix()}",
+        CHROMADB_PATH=str(home / ".chromadb"),
+        PYTHONPATH=str(REPO_ROOT),
+        PYTHONIOENCODING="utf-8",
+        OPENAI_API_KEY="test-key",
+        OPENAI_BASE_URL="http://127.0.0.1:9/v1",
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            nodeid,
+            "--basetemp",
+            str(tmp_path / "child-pytest"),
+            "-q",
+            "-o",
+            "addopts=",
+            "-p",
+            "no:cacheprovider",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        # 全仓反向回归中，子 pytest 会与父进程共享冻结环境和磁盘；
+        # 启动/导入抖动可能超过单例运行时，但不改变子会话的断言与收尾判据。
+        timeout=180,
+    )
+    assert proc.returncode == 0, proc.stdout[-4000:] + proc.stderr[-2000:]
+    assert "1 passed" in proc.stdout
+    assert f"[已回滚] {channel}" not in proc.stdout, proc.stdout
+
+
 CHILD_CONFTEST = """
 import os
 from pathlib import Path
@@ -149,10 +237,12 @@ import lantai.cognition.kaogong as kaogong
 import lantai.cli.mcp as mcp_mod
 import lantai.gate.prefilter as pf
 import lantai.observability.metrics as metrics
+import lantai.services.consolidation_service as consolidation
 
 
 def test_a_plant_pollution():
     kaogong._LATEST_KAOGONG_REPORT = {"child": "planted-report"}
+    consolidation._LAST_CONSOLIDATION_REPORT["warnings"].append("child-nested-report")
     pf._PATTERN_CACHE.update(key="child-planted-key", pattern="child-planted-pattern")
     mcp_mod._guard_instance = mcp_mod.LoopGuard()
     mcp_mod._guard_instance.begin("child-planted-key")
@@ -172,12 +262,15 @@ import lantai.cognition.kaogong as kaogong
 import lantai.cli.mcp as mcp_mod
 import lantai.gate.prefilter as pf
 import lantai.observability.metrics as metrics
+import lantai.services.consolidation_service as consolidation
 
 
 def test_b_look_for_leakage():
     leaked = []
     if kaogong._LATEST_KAOGONG_REPORT.get("child") == "planted-report":
         leaked.append("kaogong._LATEST_KAOGONG_REPORT")
+    if "child-nested-report" in consolidation._LAST_CONSOLIDATION_REPORT["warnings"]:
+        leaked.append("consolidation._LAST_CONSOLIDATION_REPORT.warnings")
     if pf._PATTERN_CACHE.get("key") == "child-planted-key":
         leaked.append("prefilter._PATTERN_CACHE")
     if getattr(mcp_mod._guard_instance, "_states", None):

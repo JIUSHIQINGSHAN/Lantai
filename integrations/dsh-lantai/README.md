@@ -37,6 +37,10 @@ The Python REST bridge reports HTTP/domain failures with MCP `isError`, while ke
 
 ## Verification
 
+For a reviewed local six-tool entry, `integrations/mirasim-lantai/configure.py --host dsh --home <absolute-data-directory>` previews a disabled stdio row for this adapter. It uses the selected Python environment and current checkout without reading a profile or embedding credentials. See the sibling package's `ADAPTERS.md` for the scope and configuration contract.
+
+`tests/test_adapter_claude_codex_dsh.py` also drives that generated entry through the actual installed registry, SDK and isolated SQLite. Select the DSH package root containing `node_modules/@deepseek-ai/dsh-system-prompt` as `DSH_INSTALL_DIR` (in current desktop builds this is the `dsh` directory inside `app.asar`, rather than the ASAR root). The test supplies synthetic credentials; production credentials stay outside generated files.
+
 The tests use the Electron runtime selected by `DSH_NODE_EXECUTABLE` and resolve packages from `DSH_INSTALL_DIR`, so the bundle has no absolute installation-path dependency:
 
 ```powershell

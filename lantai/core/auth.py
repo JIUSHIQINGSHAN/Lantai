@@ -88,6 +88,8 @@ class Principal:
     session_id: str | None = None
     role: str = "user"
     allowed_lanes: list[str] | None = None
+    workspace_bound: bool = False
+    federation_id: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -104,14 +106,28 @@ def hash_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
 
-def create_api_key(user_id: str, allowed_lanes: list[str] = None) -> tuple[str, ApiKey]:
+def create_api_key(
+    user_id: str,
+    allowed_lanes: list[str] | None = None,
+    *,
+    tenant_id: str | None = None,
+    agent_id: str | None = None,
+) -> tuple[str, ApiKey]:
     """Create a new API key and return the raw key and the DB object."""
+    if tenant_id is not None or agent_id is not None:
+        if not all(
+            isinstance(value, str) and value and value.strip() == value
+            for value in (tenant_id, user_id, agent_id)
+        ):
+            raise ValueError("Workspace keys require tenant_id, user_id and agent_id")
     raw_key = f"sk-{secrets.token_urlsafe(32)}"
     api_key = ApiKey(
         id=new_id("apikey"),
         key_hash=hash_key(raw_key),
         user_id=user_id,
-        allowed_lanes=allowed_lanes or ["default"],
+        tenant_id=tenant_id,
+        agent_id=agent_id,
+        allowed_lanes=allowed_lanes if allowed_lanes is not None else ["default"],
     )
     return raw_key, api_key
 
@@ -122,26 +138,61 @@ def get_current_user(request: Request) -> Principal:
     x_api_key = request.headers.get("X-API-Key")
 
     tenant_id = request.headers.get("X-Tenant-Id")
+    claimed_user_id = request.headers.get("X-User-Id")
     agent_id = request.headers.get("X-Agent-Id")
+    federation_id = request.headers.get("X-Federation-Id")
     session_id = request.headers.get("X-Session-Id")
 
-    def make_principal(user_id: str, lanes: list[str], role: str = "user") -> Principal:
+    def make_principal(
+        user_id: str,
+        lanes: list[str],
+        role: str = "user",
+        *,
+        key_tenant: str | None = None,
+        key_agent: str | None = None,
+    ) -> Principal:
         request.state.user_id = user_id
         from lantai.core.acl import active_bindings
         from lantai.core.acl import allowed_lanes as acl_allowed_lanes
 
-        if role not in ("admin", "system") and agent_id and active_bindings():
-            if agent_id not in active_bindings():
+        bound = key_tenant is not None and key_agent is not None
+        if (key_tenant is None) != (key_agent is None):
+            raise HTTPException(403, "Incomplete workspace key binding")
+        if bound and (
+            (tenant_id is not None and tenant_id != key_tenant)
+            or (claimed_user_id is not None and claimed_user_id != user_id)
+            or (agent_id is not None and agent_id != key_agent)
+        ):
+            raise HTTPException(403, "Workspace identity does not match API key")
+        effective_agent = key_agent if bound else agent_id
+        if role not in ("admin", "system") and effective_agent and active_bindings():
+            if effective_agent not in active_bindings():
                 raise HTTPException(status_code=403, detail="Agent not bound (ACL)")
-            lanes = acl_allowed_lanes(agent_id) or []
+            allowed = acl_allowed_lanes(effective_agent) or []
+            # 绑定工作区密钥只收窄；旧未绑定密钥保留部署泳道覆盖契约。
+            lanes = [lane for lane in lanes if lane in allowed] if bound else allowed
 
+        from lantai.core.acl import resolve_federation_id
+
+        trusted_federation_id = (
+            None
+            if role in ("admin", "system")
+            else resolve_federation_id(
+                key_tenant if bound else tenant_id,
+                user_id,
+                effective_agent,
+                federation_id,
+            )
+        )
         return Principal(
-            tenant_id=tenant_id,
+            tenant_id=key_tenant if bound else tenant_id,
             user_id=user_id,
-            agent_id=agent_id,
+            agent_id=effective_agent,
+            federation_id=trusted_federation_id,
             session_id=session_id,
             role=role,
             allowed_lanes=lanes,
+            workspace_bound=bound,
         )
 
     # A: 环境变量 API_KEY（X-API-Key）→ admin
@@ -161,7 +212,12 @@ def get_current_user(request: Request) -> Principal:
             if not api_key or not api_key.is_active:
                 raise HTTPException(status_code=401, detail="Invalid API Key")
 
-            return make_principal(api_key.user_id, api_key.allowed_lanes)
+            return make_principal(
+                api_key.user_id,
+                api_key.allowed_lanes,
+                key_tenant=api_key.tenant_id,
+                key_agent=api_key.agent_id,
+            )
 
     # C: 受限 DEV MODE（仅回环 + 无 API_KEY + 空库）
     if dev_mode_allowed():

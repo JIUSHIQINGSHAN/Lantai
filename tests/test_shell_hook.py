@@ -540,6 +540,7 @@ def test_handle_one_uses_frame_event_name(monkeypatch):
     assert out["hookSpecificOutput"]["additionalContext"] == "上次会话底本"
 
 
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_handle_one_does_not_inject_on_stop(monkeypatch):
     """Stop/End 一类事件不得注入兜底画像——没带 prompt 的帧会被当成空查询。"""
     mod = _load_hook(monkeypatch, timeout=5.0)

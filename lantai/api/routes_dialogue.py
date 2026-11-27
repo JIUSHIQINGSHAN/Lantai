@@ -60,6 +60,7 @@ def dialogue_route(req: DialogueIngestReq, ctx: Principal = Depends(get_current_
             attribution=attribution_dict(req.attribution),
             tenant_id=ctx.tenant_id,
             agent_id=ctx.agent_id,
+            federation_id=ctx.federation_id,
         )
     except DialogueDisabledError as e:
         # 票 43：通道被 DIALOGUE_ENABLED=false 关闭是服务端配置拒绝（409），
@@ -86,6 +87,7 @@ def dialogue_async_route(req: DialogueIngestReq, ctx: Principal = Depends(get_cu
             idempotency_key=req.idempotency_key,
             tenant_id=ctx.tenant_id or "",
             agent_id=ctx.agent_id,
+            federation_id=ctx.federation_id,
         )
     except DialogueDisabledError as e:
         # 票 43：同 /dialogue 主路——配置拒绝译 409，不入 422 滥用口径

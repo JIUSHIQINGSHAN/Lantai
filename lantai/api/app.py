@@ -54,6 +54,7 @@ from lantai.api import (
     routes_sources_router,
     routes_tanyi_router,
     routes_terminal_router,
+    routes_tongpao_router,
     routes_tree_router,
     routes_ui_router,
     routes_verification_router,
@@ -135,7 +136,7 @@ def create_app() -> FastAPI:
     # `FastAPI\(title="...", version="..."`，拆行即版本一致性假红。行宽按
     # ruff 显示宽度口径（CJK 算 2 列）须 ≤100，局部名取短（docs_kw/app）
     # 即为压显示列数保单行，勿改名拉长。
-    app = FastAPI(title="兰台记忆（Lantai）", version="0.69.1", lifespan=lifespan, **docs_kw())
+    app = FastAPI(title="兰台记忆（Lantai）", version="0.70.0", lifespan=lifespan, **docs_kw())
 
     app.add_middleware(CognitiveMiddleware, excluded_prefix=routes_conversation_router.prefix)
 
@@ -265,6 +266,7 @@ CORE_ROUTERS = [
     routes_zhiming_router,
     routes_gouchen_router,
     routes_mokan_router,
+    routes_tongpao_router,
 ]
 
 EXT_ROUTERS = {

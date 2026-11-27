@@ -12,13 +12,14 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
-from lantai.core.acl import viewer_of
+from lantai.core.acl import federation_visible, viewer_of
 from lantai.core.auth import Principal
 from lantai.core.time import iso_utc, utcnow
 from lantai.llm.fence import wrap_as_data
@@ -122,6 +123,7 @@ class NiyiEngine:
         *,
         owner_id: str | None,
         tenant_id: str | None,
+        federation_id: str | None = None,
         shared_scope: str = "private",
     ) -> bool:
         """行级安全隔离校验（宁 miss 不脏写）。"""
@@ -129,14 +131,17 @@ class NiyiEngine:
             return True
         if getattr(self.principal, "is_admin", False):
             return True
-        if shared_scope == "swarm_shared":
-            return True
+        if not federation_visible(self.principal, federation_id):
+            return False
 
         viewer = viewer_of(self.principal)
         current_tenant = getattr(self.principal, "tenant_id", None)
 
         if tenant_id and current_tenant and tenant_id != current_tenant:
             return False
+
+        if shared_scope == "swarm_shared":
+            return not tenant_id or tenant_id == current_tenant
 
         return not (owner_id is not None and owner_id != viewer)
 
@@ -147,14 +152,14 @@ class NiyiEngine:
         missing = memory_ids - node_cache.keys()
         if not missing:
             return
-        nodes = s.exec(select(MemoryItem).where(MemoryItem.id.in_(missing))).all()
+        nodes = s.exec(select(MemoryItem).where(col(MemoryItem.id).in_(missing))).all()
         node_cache.update({node.id: node for node in nodes})
         node_cache.update({memory_id: None for memory_id in missing - {node.id for node in nodes}})
 
     def _edge_visibility(
         self,
         s: Session,
-        edges: list[MemoryEdge],
+        edges: Sequence[MemoryEdge],
         node_cache: dict[str, MemoryItem | None],
     ) -> dict[str, str]:
         endpoint_ids = {
@@ -179,6 +184,7 @@ class NiyiEngine:
                 not self._check_access(
                     owner_id=endpoint.user_id,
                     tenant_id=endpoint.tenant_id,
+                    federation_id=getattr(endpoint, "federation_id", None),
                     shared_scope=getattr(endpoint, "shared_scope", "private"),
                 )
                 for endpoint in endpoints
@@ -193,7 +199,7 @@ class NiyiEngine:
         self,
         s: Session,
         target_memory_id: str,
-        direct_edges: list[MemoryEdge],
+        direct_edges: Sequence[MemoryEdge],
         *,
         removing_target: bool,
     ) -> dict[str, Any]:
@@ -228,11 +234,11 @@ class NiyiEngine:
             remaining_edge_budget = _MAX_TOPOLOGY_EDGES - len(topology_edges)
             stmt = select(MemoryEdge).where(
                 (
-                    MemoryEdge.source_memory_id.in_(frontier)
-                    & MemoryEdge.relation.in_(("causes", "leads_to", "supports", "refines"))
+                    col(MemoryEdge.source_memory_id).in_(frontier)
+                    & col(MemoryEdge.relation).in_(("causes", "leads_to", "supports", "refines"))
                 )
                 | (
-                    MemoryEdge.target_memory_id.in_(frontier)
+                    col(MemoryEdge.target_memory_id).in_(frontier)
                     & (MemoryEdge.relation == "triggered_by")
                 )
             )
@@ -240,7 +246,7 @@ class NiyiEngine:
             if len(rows) > remaining_edge_budget:
                 truncated = True
                 rows = rows[:remaining_edge_budget]
-            visibility = self._edge_visibility(s, rows, node_cache)
+            row_visibility = self._edge_visibility(s, rows, node_cache)
             next_frontier: list[str] = []
             for edge in rows:
                 child_id = (
@@ -248,7 +254,7 @@ class NiyiEngine:
                     if edge.relation == "triggered_by"
                     else edge.target_memory_id
                 )
-                edge_visibility = visibility[edge.id]
+                edge_visibility = row_visibility[edge.id]
                 if edge_visibility != "accessible":
                     if edge.relation in _TOPOLOGY_RELATIONS:
                         if edge_visibility == "unresolved":
@@ -281,13 +287,13 @@ class NiyiEngine:
         disconnected_ids: set[str] = set()
         if removing_target and downstream_ids:
             incoming_stmt = select(MemoryEdge).where(
-                MemoryEdge.relation.in_(_TOPOLOGY_RELATIONS),
+                col(MemoryEdge.relation).in_(_TOPOLOGY_RELATIONS),
                 (
-                    MemoryEdge.target_memory_id.in_(downstream_ids)
-                    & MemoryEdge.relation.in_(("causes", "leads_to", "supports", "refines"))
+                    col(MemoryEdge.target_memory_id).in_(downstream_ids)
+                    & col(MemoryEdge.relation).in_(("causes", "leads_to", "supports", "refines"))
                 )
                 | (
-                    MemoryEdge.source_memory_id.in_(downstream_ids)
+                    col(MemoryEdge.source_memory_id).in_(downstream_ids)
                     & (MemoryEdge.relation == "triggered_by")
                 ),
             )
@@ -402,6 +408,7 @@ class NiyiEngine:
             and self._check_access(
                 owner_id=node.user_id,
                 tenant_id=node.tenant_id,
+                federation_id=getattr(node, "federation_id", None),
                 shared_scope=getattr(node, "shared_scope", "private"),
             )
         )
@@ -510,6 +517,7 @@ class NiyiEngine:
         if not mem or not self._check_access(
             owner_id=mem.user_id,
             tenant_id=mem.tenant_id,
+            federation_id=getattr(mem, "federation_id", None),
             shared_scope=getattr(mem, "shared_scope", "private"),
         ):
             # 目标不存在或无权限访问
@@ -587,6 +595,7 @@ class NiyiEngine:
             if source is None or not self._check_access(
                 owner_id=getattr(source, "user_id", None),
                 tenant_id=getattr(source, "tenant_id", None),
+                federation_id=getattr(source, "federation_id", None),
                 shared_scope=getattr(source, "shared_scope", "private"),
             ):
                 topology_impact["unresolved_node_ids"] = sorted(
@@ -770,17 +779,18 @@ class NiyiEngine:
         stmt = (
             select(MemoryProposal)
             .where(MemoryProposal.status == "pending")
-            .order_by(MemoryProposal.created_at.desc())
+            .order_by(col(MemoryProposal.created_at).desc())
         )
         if self.principal is not None and not bool(getattr(self.principal, "is_admin", False)):
             stmt = stmt.where(
-                (MemoryProposal.user_id == viewer_of(self.principal))
-                | MemoryProposal.user_id.is_(None)
+                (col(MemoryProposal.user_id) == viewer_of(self.principal))
+                | col(MemoryProposal.user_id).is_(None)
             )
             tenant_id = getattr(self.principal, "tenant_id", None)
             if tenant_id:
                 stmt = stmt.where(
-                    (MemoryProposal.tenant_id == tenant_id) | MemoryProposal.tenant_id.is_(None)
+                    (MemoryProposal.tenant_id == tenant_id)
+                    | col(MemoryProposal.tenant_id).is_(None)
                 )
         props = s.exec(stmt.limit(limit)).all()
 
